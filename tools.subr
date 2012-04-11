@@ -1,0 +1,109 @@
+
+change_cbsdpw()
+{
+oldmodes=`stty -g`
+pw="1"
+npw=""
+
+echo "Changing local password for cbsd user."
+
+while [ "$pw" != "${npw}" ]; do
+    printf "New Password: "
+    stty -echo
+    read pw
+    printf "\nRetype New Password: "
+    read npw
+    [ "$pw" = "${npw}" ] || echo "Mismatch; try again, EOF to quit."
+done
+stty $oldmodes
+echo
+echo ${npw} |/usr/sbin/pw mod user ${cbsduser} -h 0 -
+}
+
+# usage: modconf [0] /etc/rc.conf ifconfig_lo0 "127.0.0.1/8"
+# add or modify value for "^param="
+# [0] - do not modify if param already exist
+modconf()
+{
+FORCE=1
+
+[ "${1}" != "0" ] || {
+FORCE=0
+shift
+}
+
+FILE="${1}"
+PARAM="${2}"
+VAL="${3}"
+
+if [ -z "${FILE}" -o -z "${PARAM}" -o -z "${VAL}" ]; then
+    echo "Empty value in modconf"
+    return
+fi
+
+[ -f "${FILE}" ] || touch ${FILE}
+
+TMP="${FILE}.$$"
+cp ${FILE} ${TMP}
+trap "rm -f ${TMP}" 0
+
+if [ `grep ^${PARAM}\= ${FILE} | wc -l` = 0 ]; then
+# just add
+    cp ${FILE} $TMP
+    echo "${PARAM}=\"${VAL}\"" >> ${FILE}
+
+    sh -n ${FILE}
+
+    if [ $? -ne 0 ]; then
+        echo "Bad syntax, back to original"
+        mv ${TMP} ${FILE}
+	return
+    fi
+rm -f ${TMP}
+return
+fi
+
+# modify if not force
+[ $FORCE -eq 1 ] || {
+rm -f ${TMP}
+return
+}
+
+grep -v "^${PARAM}\=" ${TMP} > ${FILE}
+echo "${PARAM}=\"${VAL}\"" >> ${FILE}
+
+sh -n ${FILE}
+
+if [ $? -ne 0 ]; then
+    echo "Bad syntax, back to original"
+    mv ${TMP} ${FILE}
+fi
+rm -f ${TMP}
+}
+
+#return 0 errcode for undefined type
+#return 1 errcode for ipv4
+#return 2 errcode for ipv6
+iptype()
+{
+[ -n "${1}" ] || return 1
+#if [ `echo ${1} |egrep '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$'` ]; then
+#    return 0
+#else
+#    return 1
+#fi
+
+# Identify type {inet,inet6}.
+case "${1}" in
+*\.*\.*\.*)     return 1 ;;
+*:*)            return 2 ;;
+*)              return 0
+;;
+esac
+}
+
+
+resolvhost()
+{
+    HST=`host -4 -t a $1 | grep "has address " | head -n1 |awk {'printf $4"\n"'} |egrep '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$'`
+}

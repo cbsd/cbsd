@@ -1,0 +1,57 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG=""
+MYDESC="Disable NAT service for RFC1918 Networks"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+EXT_IFACE=`cbsd getnics-by-ip 0.0.0.0`
+
+[ -n "${natip}" ] || natip=`ifconfig ${EXT_IFACE} | grep "inet " |head -n1 |awk {'printf $2"\n"'}`
+
+[ -n "${EXT_IFACE}" -a -n "${natip}" ] || err 1 "Empty natip or/and ext_iface"
+
+case "${nat_enable}" in
+"ipnat")
+    truncate -s0 ${etcdir}/ipnat.rules
+    for NET in ${RFC1918}; do
+	NM=`echo ${NET} |tr "/" " "`
+	cbsd netmask ${NM} ${natip}
+if [ $? -ne 1 ]; then
+    cat >> ${etcdir}/ipnat.rules <<EOF
+    map ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}/32
+EOF
+fi
+    done
+    kldstat -q -m pf
+    [ $? -eq 0 ] || kldload pf
+    ipnat -CF -f ${etcdir}/ipnat.rules
+;;
+"ipfw")
+#    truncate -s0 ${etcdir}/ipnat.rules
+#    for NET in ${RFC1918}; do
+#	NM=`echo ${NET} |tr "/" " "`
+#	cbsd netmask ${NM} ${natip}
+#if [ $? -ne 1 ]; then
+#    cat >> ${etcdir}/ipnat.rules <<EOF
+#    map ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}/32
+#EOF
+#fi
+#    done
+    kldstat -q -m ipfw
+#    [ $? -eq 0 ] || kldload pf
+#    ipnat -CF -f ${etcdir}/ipnat.rules
+#00001 nat 123 ip from 10.0.0.0/16 to any
+#00001 nat 123 ip from any to 192.168.1.2
+
+
+;;
+esac
+

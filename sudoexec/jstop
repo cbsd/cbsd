@@ -1,0 +1,193 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname"
+MYDESC="Stop jail"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+
+fwcounter()
+{
+if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
+ echo "Setup FW counter"
+
+TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
+FWIN=$((ST * 2 + fwcount_st))
+FWOUT=$((FWIN + 1))
+
+[ ! -f "${TRAFDIR}/fwin" ] || rm -f ${TRAFDIR}/fwin
+[ ! -f "${TRAFDIR}/fwout" ] || rm -f ${TRAFDIR}/fwout
+
+### FWIN
+ FW=`/sbin/ipfw show ${FWIN}`
+ RCODE=$?
+ if [ ${RCODE} -eq 0 ]; then
+ /sbin/ipfw delete ${FWIN}
+ fi
+
+### FWOUT
+ FW=`/sbin/ipfw show ${FWOUT}`
+ RCODE=$?
+ if [ ${RCODE} -eq 0 ]; then
+ /sbin/ipfw delete ${FWOUT}
+ fi
+fi
+}
+
+
+master_prestop()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_master_prestop${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} Master exec prestop: ${CMD}"
+    ${CMD}
+    i=$((i + 1))
+done
+}
+
+
+prestop()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_exec_prestop${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} exec prestop: ${CMD}"
+    chroot ${rootdir} ${CMD}
+    i=$((i + 1))
+done
+}
+
+
+master_afterstop()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_master_afterstop${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} Master exec afterstop: ${CMD}"
+    ${CMD}
+    i=$((i + 1))
+done
+}
+
+afterstop()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_exec_afterstop${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} exec afterstop: ${CMD}"
+    chroot ${rootdir} ${CMD}
+    i=$((i + 1))
+done
+}
+
+unmountbase()
+{
+#basesrc="${basejaildir}/${basejailpref}_${base}"
+# umount devfs
+umount -f ${rootdir}/dev
+# Finally unmount root
+[ $baserw -eq 0 ] && umount -f ${rootdir}
+}
+
+if [ -n "$jname" ]; then
+    JLIST=$jname
+else
+    JLIST=$*
+fi
+
+for jname in ${JLIST}; do
+JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+
+[ -f  ${JAILRCCONF} ] || {
+    echo "no conf rc.conf file for jail"
+    continue
+}
+. ${JAILRCCONF}
+
+eval rootdir=\"\$jail_${jname}_rootdir\"
+eval hostname=\"\$jail_${jname}_hostname\"
+eval multiips=\"\$jail_${jname}_ip\"
+eval fstab=\"\$jail_${jname}_fstab\"
+eval exec_start=\"\$jail_${jname}_exec_start\"
+eval exec_stop=\"\$jail_${jname}_exec_stop\"
+eval interface=\"\$jail_${jname}_interface\"
+eval baserw=\"\$jail_${jname}_baserw\"
+eval data=\"\$jail_${jname}_data\"
+eval base=\"\$jail_${jname}_base\"
+[ $baserw -eq 1 ] && rootdir=$data
+
+##### check for running
+ST=`cbsd jstatus jname=${jname}`
+[ $? -ne 0 ] || err 1 "No such jail"
+
+[ ${ST} -ne 0 ] ||  {
+    echo "Not Running"
+    continue
+}
+
+fwcounter
+master_prestop
+prestop
+
+if [ "$base" = "empty" ]; then
+    rootdir="/"
+    exec_stop="${jailsysdir}/${jname}/stop.sh"
+fi
+
+/usr/sbin/jexec ${ST} ${exec_stop}
+/usr/sbin/jail -r ${ST} >/dev/null 2>&1
+
+master_afterstop
+afterstop
+
+[ -f "${fstab}.local" ] && cbsd unmountfstab jroot=${rootdir} fstab=${fstab}.local > /dev/null 2>&1
+[ "${base}" != "empty" ] && cbsd unmountfstab jroot=${rootdir} fstab=${fstab} > /dev/null 2>&1
+[ $baserw -eq 1 -o "${base}" != "empty" ] && unmountbase
+
+geniplist ${multiips}
+
+for pureip in ${IPS}; do
+iptype $pureip
+_inet=$?
+
+if [ -n "${interface}" ]; then
+iface=`cbsd getnics-by-ip ip=${pureip}`
+ipwmask ${pureip}
+
+[ -z "$IWM" ] || {
+	case ${_inet} in
+        1) MODIF="inet" ;;
+        2) MODIF="inet6" ;;
+        esac
+        /sbin/ifconfig ${iface} ${MODIF} ${pureip} -alias
+}
+
+fi
+done
+
+# make id file
+UNDHOSTNAME=`echo ${hostname} |tr  "." "_"`
+FID="/var/run/jail_${UNDHOSTNAME}.id"
+[ ! -f "${FID}" ] || rm -f ${FID}
+
+[ "$base" != "empty" ] && {
+    echo "Updating pkg_info..."
+    cbsd jpkg_info jname=${jname} update=1
+}
+
+cbsd jcleanup jname=${jname} > /dev/null 2>&1
+# end of for in JLIST
+done
+
+exit 0

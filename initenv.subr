@@ -1,0 +1,174 @@
+SYSINI="nodename nodeip nodeloc jnameserver nodeippool natip fbsdrepo zfsfeat"
+
+# if arg then force configure
+configure_nat()
+{
+RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+EXT_IFACE=`route -n get 0.0.0.0 |grep interface |awk {'printf $2"\n"'}`
+
+if [ `grep ^nat_enable ${inventory} |wc -l` = "1" -a -z "$1" ]; then
+    return
+fi
+
+
+# this question not neccessary when forcing config
+if [ -z "$1" ]; then
+    if ! getyesno "Configure NAT for RFC1918 Network?"; then
+	modconf ${inventory} nat_enable NO
+        return
+    fi
+fi
+
+answ=
+while [ "$answ" != "ok" ]; do
+printf "Which one NAT framework should be use: [ipfw or ipnat]\n"
+echo "(type FW name or \"exit\" for break)"
+read answ leftover
+[ "${answ}" != "exit" ] || return
+
+case "${answ}" in
+"ipnat")
+	modconf ${inventory} nat_enable ipnat
+        modconf /boot/loader.conf ipfw_nat_load NO
+        modconf /boot/loader.conf libalias_load NO
+        modconf /boot/loader.conf pf_load YES
+	modconf /boot/loader.conf ipl_load YES
+	modconf /boot/loader.conf ipfilter YES
+truncate -s0 ${etcdir}/ipnat.rules
+for NET in ${RFC1918}; do
+    NM=`echo ${NET} |tr "/" " "`
+    ${workdir}/sbin/netmask ${NM} ${natip}
+    if [ $? -ne 1 ]; then
+cat >> ${etcdir}/ipnat.rules <<EOF
+map ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}/32
+EOF
+    fi
+done
+answ="ok"
+;;
+"ipfw")
+        modconf ${inventory} nat_enable ipfw
+        modconf /boot/loader.conf ipfw_nat_load YES
+        modconf /boot/loader.conf libalias_load YES
+        modconf /boot/loader.conf pf_load NO
+	modconf /boot/loader.conf ipl_load NO
+	modconf /boot/loader.conf ipfilter NO
+	truncate -s0 ${etcdir}/ipfw.rules
+for NET in ${RFC1918}; do
+    NM=`echo ${NET} |tr "/" " "`
+    ${workdir}/sbin/netmask ${NM} ${natip}
+    if [ $? -ne 1 ]; then
+cat >> ${etcdir}/ipfw.rules <<EOF
+/sbin/ipfw -q add 10 nat 123 all from any to any
+#/sbin/ipfw -q add 10 nat 123 ip from ${NET} to any
+#/sbin/ipfw -q add 10 nat 123 ip from any to ${NET}
+EOF
+    fi
+done
+echo "/sbin/ipfw nat 123 config ip ${natip} reset same_ports" >> ${etcdir}/ipfw.rules
+answ="ok"
+;;
+esac
+done
+}
+
+# if arg then force configure
+configure_named()
+{
+FILE="/var/named/etc/namedb/named.conf"
+STRING="listen-on"
+
+if [ `grep ^nat_enable ${inventory} |wc -l` = "1" -a -z "$1" ]; then
+    return
+fi
+
+# this question not neccessary when forcing config
+if [ -z "$1" ]; then
+    if ! getyesno "Configure NAT for RFC1918 Network?"; then
+	modconf ${inventory} nat_enable NO
+        return
+    fi
+fi
+
+answ=
+while [ "$answ" != "ok" ]; do
+printf "Which one NAT framework should be use: [ipfw or ipnat]\n"
+echo "(type FW name or \"exit\" for break)"
+read answ leftover
+[ "${answ}" != "exit" ] || return
+
+case "${answ}" in
+"ipnat")
+	modconf ${inventory} nat_enable ipnat
+        modconf /boot/loader.conf ipfw_nat_load NO
+        modconf /boot/loader.conf libalias_load NO
+        modconf /boot/loader.conf pf_load YES
+	modconf /boot/loader.conf ipl_load YES
+	modconf /boot/loader.conf ipfilter YES
+truncate -s0 ${etcdir}/ipnat.rules
+for NET in ${RFC1918}; do
+    NM=`echo ${NET} |tr "/" " "`
+    ${workdir}/sbin/netmask ${NM} ${natip}
+    if [ $? -ne 1 ]; then
+cat >> ${etcdir}/ipnat.rules <<EOF
+map ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}/32
+EOF
+    fi
+done
+answ="ok"
+;;
+"ipfw")
+        modconf ${inventory} nat_enable ipfw
+        modconf /boot/loader.conf ipfw_nat_load YES
+        modconf /boot/loader.conf libalias_load YES
+        modconf /boot/loader.conf pf_load NO
+	modconf /boot/loader.conf ipl_load NO
+	modconf /boot/loader.conf ipfilter NO
+	truncate -s0 ${etcdir}/ipfw.rules
+for NET in ${RFC1918}; do
+    NM=`echo ${NET} |tr "/" " "`
+    ${workdir}/sbin/netmask ${NM} ${natip}
+    if [ $? -ne 1 ]; then
+cat >> ${etcdir}/ipfw.rules <<EOF
+/sbin/ipfw -q add 10 nat 123 all from any to any
+#/sbin/ipfw -q add 10 nat 123 ip from ${NET} to any
+#/sbin/ipfw -q add 10 nat 123 ip from any to ${NET}
+EOF
+    fi
+done
+echo "/sbin/ipfw nat 123 config ip ${natip} reset same_ports" >> ${etcdir}/ipfw.rules
+answ="ok"
+;;
+esac
+done
+}
+
+rsyncd_enable()
+{
+    [ ! -f "${inventory} " ] || . ${inventory}
+    modconf /etc/rc.conf rsyncd_enable YES
+#    [ -z "$nodeip" ] || modconf 0 /etc/rc.conf rsyncd_flags "--address=${nodeip} --config=${etcdir}/rsyncd.conf"
+    [ -z "$nodeip" ] || modconf 0 /etc/rc.conf rsyncd_flags "--config=${etcdir}/rsyncd.conf"
+    service rsyncd start
+}
+
+rsyncd_disable()
+{
+    service rsyncd stop
+    modconf /etc/rc.conf rsyncd_enable NO
+}
+
+configure_rsync()
+{
+
+if [ `grep rsyncd_enable /etc/rc.conf|wc -l` = "1" ]; then
+    return
+fi
+
+if ! getyesno "Configure RSYNC services for jail migration?"; then
+    rsyncd_disable
+else
+    rsyncd_enable
+fi
+}
+

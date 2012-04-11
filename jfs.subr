@@ -1,0 +1,154 @@
+
+rmempty()
+{
+ORIG=$1
+if [ -d "${ORIG}" -a -n "${ORIG}" ]; then
+	SZ=`/usr/bin/find ${ORIG} -maxdepth 1 -print | wc -l|awk {'printf $1'}`
+	[ $SZ -lt 2 ] && rm -d ${ORIG}
+fi
+}
+
+
+
+# migratedata from to mode
+# mode = cp, mv, rsync, rsyncforce (no warning for existance TO dir)
+# #migratedata /usr/jails/jails-data/jail1-data /mn rsync
+migratedata()
+{
+ORIG=$1
+TO=$2
+MODE=$3
+FORCE=0
+
+case $MODE in
+    "cp") GO="/bin/cp -Rp ";;
+    "rsync") GO="/usr/local/bin/rsync -avz --delete " ;;
+    "rsyncforce") GO="/usr/local/bin/rsync -avz --delete "; FORCE=1 ;;
+    "mv") GO="/bin/mv";;
+    *) err "Unsupported mode";;
+esac
+
+[ -d "${TO}" -a $FORCE -eq 0 ] && err 1 "${TO} directory exist. Please remove them"
+
+. ${zfstool}
+nomnt ${ORIG}
+_res=$?
+if [ -n "${ZPOOL}" ]; then
+    ORIGPOOL=$ZPOOL
+    ORIGZPART1=$ZPART1
+    ORIGZPART2=$ZPART2
+fi
+
+case $_res in
+0)
+if [ $zfsfeat -eq 1 ]; then
+	echo "Switch from directory to ZFS pool"
+	nomnt ${TO}
+	case $? in
+	0)  ZPOOL=`zfs list /usr/jails |tail +2 |awk '{printf $1}'`
+	    zfs create -o mountpoint=${TO} "${ZPOOL}/${jname}"
+	   ${GO} ${ORIG}/* ${TO}/
+	   ;;
+	1) ${GO} ${ORIG}/* ${TO}/
+	   ;;
+	2) zfs mount ${TO}
+	   ${GO} ${ORIG}/* ${TO}/
+	   ;;
+	esac
+        rmempty ${FROM}
+else
+	${GO} ${ORIG} ${TO}
+fi
+;;
+[12])
+if [ $zfsfeat -eq 1 ]; then
+	nomnt ${TO}
+	    zfs unmount ${ORIGPOOL}
+	    zfs set mountpoint=${TO} ${ORIGPOOL}
+	    [ -n "${ORIGZPART2}" -a "${jname}" != "${ORIGZPART2}" ] && {
+	    zfs rename ${ORIGPOOL} ${ORIGZPART1}/${jname}
+	    ORIGPOOL=${ORIGZPART1}/${jname}
+	    }
+	    zfs mount ${ORIGPOOL}
+	else
+	    echo "Switch from ZFS Pool to UFS directory"
+	    mkdir -p ${TO}
+	    mv ${ORIG}/* ${TO}/
+fi
+rmempty ${ORIG}
+;;
+esac
+
+}
+
+
+
+# clone data
+# mode = cp, rsync, rsyncforce (no warning for existance TO dir)
+# #clonedata /usr/jails/jails-data/jail1-data /mn rsync
+clonedata()
+{
+ORIG=$1
+TO=$2
+MODE=$3
+
+case $MODE in
+    "cp") GO="/bin/cp -Rp ";;
+    "rsync") GO="/usr/local/bin/rsync -avz --delete " ;;
+    "rsyncforce") GO="/usr/local/bin/rsync -avz --delete "; FORCE=1 ;;
+    *) err "Unsupported mode";;
+esac
+
+[ -z "${jname}" ] && err 1 "No jname"
+[ -d "${TO}" -a $FORCE -eq 0 ] && err 1 "${TO} directory exist. Please remove them"
+
+. ${zfstool}
+
+[ ! -d "${TO}" ] && {
+
+if [ $zfsfeat -eq 1 ]; then
+	ZPOOL=`zfs list ${jaildatadir} |tail +2 |awk '{printf $1}'`
+	zfs create -o mountpoint=${TO} ${ZPOOL}/${jname}
+else
+	    mkdir -p ${TO}
+fi
+}
+
+${GO} ${ORIG}/* ${TO}/
+}
+
+# remove data from disk
+removedata()
+{
+DATA=$1
+
+[ -d "${DATA}" -a -n "${DATA}" ] || return 1
+
+. ${zfstool}
+nomnt ${DATA}
+case $? in
+    0)	chflags -R noschg ${DATA} && rm -rf ${DATA} ;;
+    [12]) zfs unmount -f ${ZPOOL}
+	zfs destroy ${ZPOOL} ;;
+    *) err 1 "Unknown errcode from nomnt" ;;
+esac
+rmempty ${DATA}
+}
+
+
+
+# unmount if mount
+unmountdata()
+{
+DATA=$1
+
+[ -d "${DATA}" -a -n "${DATA}" ] || return 1
+
+. $zfstool
+nomnt ${DATA}
+if [ $? -eq 1 ]; then
+	[ -n "$zname" ] && zfs unmount -f $DATA
+	rmempty ${DATA}
+fi
+}
+

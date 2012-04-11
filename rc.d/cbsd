@@ -1,0 +1,108 @@
+#!/bin/sh
+#
+# PROVIDE: cbsd
+# REQUIRE: DAEMON sshd
+# KEYWORD: shutdown
+#
+#
+# cbsd_enable="YES"
+#
+
+. /etc/rc.subr
+
+name=cbsd
+load_rc_config $name
+
+workdir="${cbsd_workdir}"
+globalconf=${cbsd_globalconf:-"${workdir}/cbsd.conf"}
+
+export workdir=${workdir}
+
+if [ ! -f ${globalconf} ]; then
+    echo "no such conf file";
+    exit
+fi
+. ${globalconf}
+. ${inventory}
+
+if [ ! -f ${localcbsdconf} ]; then
+echo "no such local conf file";
+exit
+fi
+
+. ${localcbsdconf}
+
+start_precmd=${name}_prestart
+stop_precmd=${name}_prestop
+
+command="${workdir}/sbin/${name}"
+pidfile="/var/run/$name.pid"
+
+cbsd_prestart()
+{
+${rcddir}/cleartmp start
+${rcddir}/jails-astart start
+#/usr/sbin/daemon ${sbindir}/nodeinetd 200 ${sbindir}/sbin/ncctld
+${rcddir}/nodepinger start
+service rsyncd start
+
+if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`"  ]; then
+ echo "SSetup FW counter"
+ FWIN=${fwcount_st}
+ FWOUT=$((FWIN + 1))
+
+ ### FWIN
+ FW=`/sbin/ipfw show ${FWIN}`
+ RCODE=$?
+ if [ ${RCODE} -ne 0 ]; then
+    /sbin/ipfw -q add ${FWIN} count ip from any to me
+  else
+   /sbin/ipfw -q delete ${FWIN}
+   /sbin/ipfw -q add ${FWIN} count ip from any to me
+ fi
+
+ ### FWOUT
+ FW=`/sbin/ipfw show ${FWOUT}`
+ RCODE=$?
+ if [ ${RCODE} -ne 0 ]; then
+   /sbin/ipfw -q add ${FWOUT} count ip from me to any
+  else
+   /sbin/ipfw -q delete ${FWOUT}
+   /sbin/ipfw -q add ${FWOUT} count ip from me to any
+ fi
+fi
+
+}
+
+cbsd_prestop()
+{
+${rcddir}/jails-astart stop
+${rcddir}/nodepinger stop
+service rsyncd stop
+
+
+if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
+
+ echo "Setup FW counter"
+ FWIN=${fwcount_st}
+ FWOUT=$((FWIN + 1))
+
+ ### FWIN
+ FW=`/sbin/ipfw show ${FWIN}`
+ RCODE=$?
+ if [ ${RCODE} -eq 0 ]; then
+   /sbin/ipfw -q delete ${FWIN}
+ fi
+ ### FWOUT
+ FW=`/sbin/ipfw show ${FWOUT}`
+ RCODE=$?
+ if [ ${RCODE} -eq 0 ]; then
+   /sbin/ipfw -q delete ${FWOUT}
+ fi
+fi
+
+}
+
+run_rc_command "$1"
+
+

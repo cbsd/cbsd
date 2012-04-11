@@ -1,0 +1,49 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="node jname"
+MYOPTARG="start"
+MYDESC="Cold migrate (with save status) jail to remote node, set local jail as slave"
+ADDHELP="start=1 for forcing jail start on the remote node\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+init $*
+
+[ -n "${node}" ] || err 1 "Give me node"
+[ -n "${jname}" ] || err 1 "Give me jname"
+
+## all error on this stage is dangerouse, so break exec in any error
+#set -e
+printf "Coldmigrate"
+ST=`cbsd jstatus jname=${jname}`
+[ $? -eq 0 ] && err 1 "No such jail"
+
+cbsd j2prepare node=${node} jname=${jname} > $DEBLOG 2>&1
+dot "j2prepare_1"
+cbsd j2slave node=${node} jname=${jname} > $DEBLOG 2>&1
+dot "j2prepare_2"
+
+if [ $ST -gt 0 ]; then
+    trap "cbsd jstart jname=${jname} > /dev/null 2>&1 && echo \"Unsuccess\" && exit 1" 0
+    cbsd jstop jname=${jname} > $DEBLOG 2>&1
+    dot "jstop"
+    cbsd j2slave node=${node} jname=${jname} > $DEBLOG 2>&1
+    dot "j2slave"
+fi
+
+cbsd rexe node=${node} cbsd jswmode jname=${jname} status=master mode=force > $DEBLOG 2>&1
+dot "cbsd rexe"
+
+[ -n "${start}" ] && ST=${start}
+
+if [ $ST -gt 0 ]; then
+    cbsd rexe node=${node} cbsd sudo jstart jname=$jname > $DEBLOG 2>&1
+    dot "rexe"
+fi
+
+trap "" 0
+cbsd jswmode jname=${jname} status=slave mode=force > $DEBLOG 2>&1
+dot "jswmode"
+err 0 "ok"

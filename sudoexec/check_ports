@@ -1,0 +1,175 @@
+#!/bin/sh
+STATUSFILE="/var/db/check_ports"
+# nagios exit code
+OK=0
+WARNING=1
+CRITICAL=2
+
+# fatal error. Print message end quit with exitval
+err()
+{
+    exitval=$1
+    shift
+    echo "$*"
+    exit $exitval
+}
+
+usage()
+{
+echo "${0} [keys]"
+more << EOF
+keys (default is -a):
+-u       - print num of older ports
+-s       - print num of vulnerabilities ports
+-U       - update num of older ports
+-S       - update num of vulnerabilities ports
+-a       - print all num
+-A       - update all
+-j jname - makeit for jail jname (via cbsd)
+EOF
+exit
+}
+
+truncate_statusfile()
+{
+truncate -s0 ${JROOTDIR}${STATUSFILE}
+}
+
+
+get_oldnum()
+{
+OLDNUM=0
+if [ -n "${JNAME}" ]; then
+    OLDNUM=`/usr/local/bin/cbsd jexec jname=${JNAME} pkg_version -l "<" | wc -l |awk {'printf $1"\n"'}`
+else
+    OLDNUM=`pkg_version -l "<"| wc -l |awk {'printf $1"\n"'}`
+fi
+return ${OLDNUM}
+}
+
+
+get_secnum()
+{
+SECNUM=0
+if [ -n "${JNAME}" ]; then
+    SECNUM=`/usr/local/bin/cbsd jexec jname=${JNAME} /usr/local/sbin/portaudit -aq |wc -l |awk {'printf $1"\n"'}`
+else
+    SECNUM=`/usr/local/sbin/portaudit -aq |wc -l |awk {'printf $1"\n"'}`
+fi
+return ${SECNUM}
+}
+
+
+print_status()
+{
+get_prevsecnum
+secnum=$?
+get_prevoldnum
+oldnum=$?
+
+if [ $secnum -gt 0 ]; then
+MSG="${JNAME} PORTS CRITICAL - ${secnum} security problem(s). ${oldnum} package(s) available for upgrade"
+ERR=$CRITICAL
+else
+if [ $oldnum -gt 0 ]; then
+MSG="${JNAME} PORTS WARNING - ${oldnum} package(s) available for upgrade. 0 security problem(s)."
+ERR=$WARNING
+else
+MSG="${JNAME} PORTS OK - 0 security problem(s). 0 package(s) available for upgrade"
+ERR=$OK
+fi
+fi
+err $ERR $MSG
+}
+
+
+update_sec()
+{
+get_prevoldnum
+oldnum=$?
+get_secnum
+secnum=$?
+
+update_statusfile $secnum $oldnum
+}
+
+update_num()
+{
+get_prevsecnum
+secnum=$?
+get_oldnum
+oldnum=$?
+update_statusfile $secnum $oldnum
+}
+
+
+update_statusfile()
+{
+secnum=$1
+oldnum=$2
+truncate_statusfile
+
+echo "oldnum=\"${oldnum}\"" >> ${JROOTDIR}${STATUSFILE}
+echo "secnum=\"${secnum}\"" >> ${JROOTDIR}${STATUSFILE}
+}
+
+
+get_prevoldnum()
+{
+oldnum=0
+
+if [ -f "${JROOTDIR}${STATUSFILE}" ]; then
+. ${JROOTDIR}${STATUSFILE}
+eval oldnum=\"\$oldnum\"
+fi
+return $oldnum
+}
+
+
+get_prevsecnum()
+{
+secnum=0
+if [ -f "${JROOTDIR}${STATUSFILE}" ]; then
+. ${JROOTDIR}${STATUSFILE}
+eval secnum=\"\$secnum\"
+fi
+return $secnum
+}
+
+#update_num
+U=0
+#update_sec
+S=0
+#update all
+A=0
+
+while getopts USAj:wh opt 2>/dev/null
+do
+  case $opt in
+      U) U=1;;
+      S) S=1;;
+      A) A=1;;
+      j) export JNAME=${OPTARG};;
+      h) usage;;
+    esac
+done
+
+if [ -n "${JNAME}" ]; then
+    ST=`/usr/local/bin/cbsd jstatus jname=${JNAME}`
+        if [ $ST -eq 0 ]; then
+            err $WARNING "Jail ${JNAME} is not running"
+        fi
+    export JROOTDIR=`/usr/local/bin/cbsd jget jname=$JNAME rootdir |awk {'printf $2'}`
+fi
+
+
+[ $U -eq 0 ] || update_num
+[ $S -eq 0 ] || update_sec
+
+if [ $A -eq 1 ]; then
+    update_num
+    update_sec
+fi
+
+print_status
+

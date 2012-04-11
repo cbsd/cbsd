@@ -1,0 +1,382 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname"
+MYDESC="Start jail"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${system}
+init $*
+
+
+mkjhosts()
+{
+IP=$1
+JHOST=$2
+
+[ $applytpl -eq 0 -o $base = "empty" ] && return
+
+#check for dup
+for i in `egrep "[:blank:]*${hostname}" ${JHOST} |grep -v "^;"|awk {'printf $1"\n"'}`; do
+[ "$i" = "${IP}" ] || {
+    TMPH="/tmp/hosts.$$"
+    cp ${JHOST} ${TMPH}
+    grep -v "[:blank:]*${hostname}" ${TMPH} > ${JHOST}
+    rm -f ${TMPH}
+    }
+done
+
+[ `grep ^${IP} ${JHOST} |wc -l` = "0" ] && echo ${IP} ${hostname} >> ${JHOST}
+}
+
+
+master_afterstart()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_master_afterstart${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} Master exec afterstart: ${CMD}"
+    ${CMD}
+    i=$((i + 1))
+done
+}
+
+after_start()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_exec_afterstart${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} exec afterstart: ${CMD}"
+    chroot ${rootdir} ${CMD}
+    i=$((i + 1))
+done
+}
+
+master_prestart()
+{
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_master_prestart${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} master exec prestart: ${CMD}"
+    ${CMD}
+    i=$((i + 1))
+done
+}
+
+    
+prestart()
+{    
+i=0
+    while : ; do
+    eval CMD=\${jail_${jname}_exec_prestart${i}}
+    [ -z "${CMD}" ] && break
+    echo "${jname} exec prestart: ${CMD}"
+    chroot ${rootdir} ${CMD}
+    i=$((i + 1))
+done
+}
+
+mountbase()
+{
+if [ "${baserw}" = "0" ]; then
+    if [ -z "${arch}" ]; then
+        echo
+        echo "!WARNING: Jail conf for ${jname} doesnt have ARCH - please set this: WARNING!"
+        echo
+        arch=`uname -m`
+    fi
+    if [ -z "${basename}" ]; then
+            basesrc="${basejaildir}/${basejailpref}_${arch}_${base}"
+        else
+            basesrc="${basejaildir}/${basejailpref}_${basename}_${arch}_${base}"
+        fi
+else
+    basesrc="${data}"
+fi
+
+if is_mounted ${rootdir}; then
+    echo "Already mounted ${rootdir}"
+    continue
+fi
+
+# check for basesrc existance
+[ -d ${basesrc} ] || {
+echo "No such src base ${basesrc}"
+continue
+}
+
+[ -d ${rootdir} ] || mkdir -p ${rootdir}
+
+if [ ${baserw} -eq 0 ]; then
+#check for fast base location (postfix -md)
+    if [ -f "${basesrc}-md/COPYRIGHT" ]; then
+        echo "Mount fast disc location for base..."
+        mount -t nullfs -oro "${basesrc}-md" ${rootdir}
+    else
+        mount -t nullfs -oro ${basesrc} ${rootdir}
+    fi
+else
+    rootdir=$data
+fi
+
+# Finally mount devfs
+/sbin/mount -t devfs devfs ${rootdir}/dev
+
+if [ -n "$devfsrules" ]; then
+    . /etc/rc.subr
+    devfs_rulesets_from_file ${etcdir}/devfs.rules
+    devfs -m ${rootdir}/dev rule -s ${devfsrules} applyset
+fi
+}
+
+mountfstab()
+{
+A=`/usr/local/bin/cbsd mountfstab jroot=${rootdir} fstab=${fstab}`
+
+if [ $? -ne 0 ]; then
+# force unmount it better then..
+    A=`cbsd jcleanup jname=${jname}`
+    echo "Invalid fstab file"
+    continue
+fi
+
+if [ -f "${fstab}.local" ]; then
+    cbsd mountfstab jroot=${rootdir} fstab=${fstab}.local
+# cleanup for local?
+fi
+}
+
+mountips()
+{
+COMMAIPS4=""
+COMMAIPS6=""
+HOSTS4=""
+HOSTS6=""
+
+for a in ${IPS}; do
+iptype $a
+_inet=$?
+[ ${_inet} -eq 0 ] && continue
+
+[ -z "${interface}" ] || iface=`cbsd getnics-by-ip ip=${a}`
+    ipwmask ${a}
+    [ -n "$IWM" ] && {
+    if [ -n "${interface}" ]; then
+        case ${_inet} in
+        1) MODIF="inet" ;;
+        2) MODIF="inet6" ;;
+        esac
+        /sbin/ifconfig ${iface} ${MODIF} ${a} alias
+# IPv6 slowly start work-around
+        sleep 1
+    fi
+
+case ${_inet} in
+1)
+        if [ -z "$COMMAIPS4" ]; then
+            COMMAIPS4=$IWM
+            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+        else
+            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+            COMMAIPS4="$COMMAIPS4,$IWM"
+        fi
+
+
+;;
+2)
+        if [ -z "$COMMAIPS6" ]; then
+            COMMAIPS6=$IWM
+        else
+            COMMAIPS6="$COMMAIPS6,$IWM"
+        fi
+;;
+esac
+}
+
+done
+}
+
+
+fwcounter()
+{
+### FW Counter
+ST=`cbsd jstatus jname=${jname}`
+
+if [ $ST -eq 0 ]; then
+        echo "Can't determine JID for FW  counter"
+        continue
+#???? wtf
+        if [ -n "${interface}" ]; then
+        for i in ${IPS}; do
+        iface=`cbsd getnics-by-ip ip=${i}`
+        ifconfig ${iface} -alias ${i}
+        done
+        fi
+        unmount -f ${rootdir}/dev
+        unmount -f ${rootdir}
+        echo "Can't determine JID for FW counter"
+        continue
+fi
+        
+# make id file
+UNDHOSTNAME=`echo ${hostname} |tr  "." "_"`
+FID="/var/run/jail_${UNDHOSTNAME}.id"
+echo ${ST} > ${FID}
+
+if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
+
+echo "Setup FW counter"
+TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
+[ -d "${TRAFDIR}" ] || mkdir -p ${TRAFDIR}
+
+ FWIN=$((jid * 2 + fwcount_st))
+ FWOUT=$((FWIN + 1))
+
+echo $FWIN > ${TRAFDIR}/fwin
+echo $FWOUT > ${TRAFDIR}/fwout
+
+ ### FWIN
+ FW=`/sbin/ipfw show ${FWIN}`
+ RCODE=$?
+ if [ ${RCODE} -ne 0 ]; then
+    /sbin/ipfw -q add ${FWIN} count ip from any to me jail ${ST}
+  else
+   /sbin/ipfw -q delete ${FWIN}
+   /sbin/ipfw -q add ${FWIN} count ip from any to me jail ${ST}
+ fi
+ ### FWOUT
+ FW=`/sbin/ipfw show ${FWOUT}`
+ RCODE=$?
+ if [ ${RCODE} -ne 0 ]; then
+   /sbin/ipfw -q add ${FWOUT} count ip from me to any jail ${ST}
+  else
+   /sbin/ipfw -q delete ${FWOUT}
+   /sbin/ipfw -q add ${FWOUT} count ip from me to any jail ${ST}
+ fi
+fi
+
+}
+
+makeresolv()
+{
+if [ -f ${data}/etc/resolv.conf ]; then
+    cp ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
+    grep -v nameserver ${data}/etc/resolv.conf.bak > ${data}/etc/resolv.conf
+fi
+grep nameserver ${jailskeldir}/resolv.conf >> ${data}/etc/resolv.conf
+}
+
+
+
+# MAIN
+if [ -n "$jname" ]; then
+    JLIST=$jname
+else
+    JLIST=$*
+fi
+
+for jname in ${JLIST}; do
+JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+
+[ -f  ${JAILRCCONF} ] || {
+    echo "no conf rc.conf file for ${jname}"
+    continue
+}
+. ${JAILRCCONF}
+
+shortnm=$jname
+eval rootdir=\"\$jail_${jname}_rootdir\"
+eval hostname=\"\$jail_${jname}_hostname\"
+eval multiips=\"\$jail_${jname}_ip\"
+eval fstab=\"\$jail_${jname}_fstab\"
+eval data=\"\$jail_${jname}_data\"
+eval floatresolv=\"\$jail_${jname}_floatresolv\"
+eval exec_start=\"\$jail_${jname}_exec_start\"
+eval exec_stop=\"\$jail_${jname}_exec_stop\"
+eval base=\"\$jail_${jname}_base\"
+eval baserw=\"\$jail_${jname}_baserw\"
+eval basename=\"\$jail_${jname}_basename\"
+eval interface=\"\$jail_${jname}_interface\"
+eval arch=\"\$jail_${jname}_arch\"
+eval mkhostsfile=\"\$jail_${jname}_mkhostsfile\"
+eval devfsrules=\"\$jail_${jname}_devfsrules_jail\"
+eval applytpl=\"\$jail_${jname}_applytpl\"
+
+##### check for already running
+ST=`cbsd jstatus jname=${jname}`
+[ $? -ne 0 ] || err 1 "No such jail"
+[ ${ST} -eq 0 ] ||  {
+    echo "Already running: ${ST}"
+    continue
+}
+[ -d ${rootdir} ] || mkdir ${rootdir}
+
+geniplist ${multiips}
+
+if [ -n "${interface}" ]; then
+### CHECK FOR IP ####
+for ips in ${IPS}; do
+
+A=`cbsd checkip ip=${ips} check=1`
+IPUSE=$?
+case ${IPUSE} in
+0)
+echo "ip ${ips} not in pool range"
+continue
+;;
+1)
+;;
+2)
+echo "Ip ${ips} already exists in LAN"
+continue
+;;
+default)
+echo "Unkown error with ${ips}"
+continue
+;;
+esac
+done
+#####################
+fi
+
+
+# cp local default resolv.conf skel
+if [ ${floatresolv} -eq 1 -a "${base}" != "empty" ]; then
+	makeresolv
+fi
+
+if [ $applytpl -eq 1 -a "${base}" != "empty" ]; then
+[  -d "${data}/usr/local/libexec/nagios/check_ports" ] || mkdir -p ${data}/usr/local/libexec/nagios
+    cp ${systemsudoexecdir}/check_ports ${data}/usr/local/libexec/nagios/check_ports
+fi
+
+if [ "${base}" != "empty" ]; then
+    mountbase
+    mountfstab
+fi
+
+mountips
+master_prestart
+prestart
+
+if [ "$base" = "empty" ]; then
+    rootdir="/"
+    exec_start="${jailsysdir}/${jname}/run.sh"
+fi
+
+/usr/sbin/jail -c path=$rootdir host.hostname=$hostname ip4.addr=${COMMAIPS4} ip6.addr=${COMMAIPS6} allow.socket_af allow.chflags allow.raw_sockets allow.sysvipc command=${exec_start}
+
+fwcounter
+sync
+
+master_afterstart
+after_start
+
+done
