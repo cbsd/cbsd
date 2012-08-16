@@ -1,0 +1,379 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="action"
+# action=list,get,put
+# source=src,obj,base,kernel,img
+MYOPTARG="mode arch ver sources name stable"
+#mode=check,update,upgrade
+MYDESC="Working with CBSD Repository"
+ADDHELP="action can be: list, get, put
+sources can be: src, obj, base, kernel, img\
+mode can be: check, update, upgrade, quiet\n\
+stable=1 for RELENG_X\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+fetchme()
+{
+cbsd cfetch -u $1 -o ${TF}
+return $?
+}
+
+checkmd5()
+{
+DIR=$1
+GOOD=0
+
+for i in `find ${DIR} -type f -depth 1 -name *.md5 -print`; do
+FILE=`echo $i |sed 's/\.md5//g'`
+OMD5=`cat ${FILE}.md5`
+RMD5=`md5 -q ${FILE}`
+if [ "${RMD5}" != "${OMD5}" ]; then
+    GOOD=$((GOOD + 1))
+fi
+done
+
+return $GOOD
+}
+
+
+
+REPO=`cbsd getinfo -q repo`
+checkrepo()
+{
+if [ -z $1 ]; then
+printf "Check for repository: ${REPO} ..."
+fi
+
+if fetchme "${REPO}/cbsd.index" >/dev/null 2>&1; then
+    cat ${TF}
+else
+    echo "Offline"
+exit
+fi
+}
+
+
+getsrc()
+{
+if [ -d "${srcdir}/${DIR}" ]; then
+    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+    cbsd removesrc ver=${ver}
+fi
+
+if fetchme "${REPO}/${DIR}/cbsd.index"; then
+    echo "Fetching source for ${ver}..."
+else
+    err 1 "No such index"
+fi
+
+cbsd cfetch -o ${MYDIR}/src.txz -u ${REPO}/${DIR}/src.txz
+cbsd cfetch -o ${MYDIR}/src.txz.md5 -u ${REPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
+
+[ -d "${MYDIR}" ] || err 1 "No source dir"
+
+if checkmd5 ${MYDIR}; then
+    echo "MD5sum correct."
+	else
+    err 1 "MD5sum incorrect."
+fi
+
+ARCHIVE="${workdir}/tmp/src_${ver}.txz"
+[ ! -f "${ARCHIVE}" ] || rm -f ${ARCHIVE}
+
+rm -f ${MYDIR}/cbsd.index
+
+echo "Extracting..."
+cd $workdir/tmp
+tar xfz ${MYDIR}/src.txz
+rm -f ${MYDIR}/src.txz
+mkdir -p ${srcdir}/src_${ver}
+mv ${workdir}/tmp/src_${ver} ${srcdir}/
+echo "Done..."
+DT=`/bin/date "+%Y%m%d"`
+#nc -U ${workdir}/tmp/cbsd.sock  << EOF
+#update src_${ver} ${DT}
+#EOF
+}
+
+getbase()
+{
+if [ -z "${name}" ]; then
+    BDIR="${basejailpref}_${arch}_${ver}"
+else
+    BDIR="${basejailpref}_${name}_${arch}_${ver}"
+fi
+
+DST="${basejaildir}/${BDIR}"
+MIRROR="http://ftp.freebsd.org"
+Bver=`echo ${ver} |tr "_" "."`
+BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${Bver}-RELEASE/base.txz"
+
+if [ -d "${DST}" ]; then
+    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+    cbsd removebase ver=${ver} arch=${arch}
+fi
+
+if [ "$fbsdrepo" = "1" -a -z "${name}" ]; then
+## OFficial fbsd repo
+printf "Looking for official FreeBSD mirror.."
+ARCHIVE="$MYDIR/base.txz"
+cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+if [ $? -eq 0 ]; then
+printf "\nExtracting base...\n"
+mkdir $DST
+cd $DST
+tar xfz ${ARCHIVE}
+rm -f ${ARCHIVE}
+
+BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${Bver}-RELEASE/lib32.txz"
+ARCHIVE="$MYDIR/lib32.txz"
+cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+if [ $? -eq 0 ]; then
+    printf "\nExtracting lib32...\n"
+    cd $DST
+    tar xfz ${ARCHIVE}
+    rm -f ${ARCHIVE}
+else
+    printf "Lib32 not found\n"
+fi
+
+cbsd preparebase dst=${DST}
+
+echo "Done..."
+return 0
+fi
+
+printf "Not found\n"
+
+### Official fbsd repo end ###
+fi
+
+
+if fetchme "${REPO}/${DIR}/cbsd.index" >/dev/null 2>&1; then
+    echo "Fetching base for ${arch} ${ver}..."
+else
+    err 1 "No cbsd index..."
+fi
+
+if [ -z "${name}" ]; then
+    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz -u ${REPO}/${DIR}/base_${arch}_${ver}.txz
+    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${REPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+else
+    cbsd cfetch -o ${MYDIR}/base_${name}_${arch}_${ver}.txz -u ${REPO}/${DIR}/base_${name}_${arch}_${ver}.txz
+    cbsd cfetch -o ${MYDIR}/base_${name}_${arch}_${ver}.txz.md5 -u ${REPO}/${DIR}/base_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+fi
+
+if checkmd5 ${MYDIR}; then
+echo "MD5sum correct."
+    else
+err 1 "MD5sum incorrect."
+fi
+
+rm -f ${MYDIR}/cbsd.index 
+if [ -z "${name}" ]; then
+    rm -f  ${MYDIR}/base_${arch}_${ver}.txz.md5
+else
+    rm -f ${MYDIR}/base_${name}_${arch}_${ver}.txz.md5
+fi
+
+echo "Extracting..."
+[ -d "$basejaildir" ] | mkdir -p ${basejaildir}
+#/base_${arch}_${ver}
+cd $basejaildir
+#/base_${arch}_${ver}
+
+if [ -z "${name}" ]; then
+    tar xfz ${MYDIR}/base_${arch}_${ver}.txz
+    rm -f ${MYDIR}/base_${arch}_${ver}.txz.md5
+else
+    tar xfz ${MYDIR}/base_${name}_${arch}_${ver}.txz
+    rm -f ${MYDIR}/base_${name}_${arch}_${ver}.txz.md5
+fi
+
+echo "Done..."
+return 0
+}
+
+
+getobj()
+{
+if [ -z "${name}" ]; then
+    DST="${srcdir}/obj_${arch}_${ver}"
+else
+    DST="${srcdir}/obj_${name}_${arch}_${ver}"
+fi
+
+if [ -d "${DST}" ]; then
+    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+    cbsd removeobj ver=${ver} arch=${arch}
+fi
+
+if fetchme "${REPO}/${DIR}/cbsd.index" > /dev/null 2>&1; then
+    echo "Fetching obj for ${arch} ${ver}..."
+else
+    err 1 "No such index..."
+fi
+
+cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${REPO}/${DIR}/obj_${arch}_${ver}.txz
+cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${REPO}/${DIR}/obj_${arch}_${ver}.md5 >/dev/null 2>&1
+
+if checkmd5 ${MYDIR}; then
+echo "MD5sum correct."
+    else
+err 1 "MD5sum incorrect."
+exit
+fi
+
+rm -f ${MYDIR}/cbsd.index ${MYDIR}/obj_${arch}_${ver}.txz.md5
+
+echo "Extracting..."
+cd $srcdir
+tar xfz ${MYDIR}/obj_${arch}_${ver}.txz
+rm -f ${MYDIR}/obj_${arch}_${ver}.txz
+echo "Done..."
+#DT=`/bin/date "+%Y%m%d"`
+#nc -U ${workdir}/tmp/cbsd.sock  << EOF
+#update obj_${ver} ${DT}
+#EOF
+}
+
+
+getkernel()
+{
+[ -z "${name}" ] && name="GENERIC"
+DST="${basejaildir}/kernel_${name}_${arch}_${ver}"
+
+if [ -d "${DST}" ]; then
+    [ $UPGRADE -eq 1 ] || err 1 "You already have kernel ${name} for ${ver} "
+    cbsd removekernel ver=${ver} arch=${arch} name=${name}
+fi
+
+if fetchme "${REPO}/${DIR}/cbsd.index" > /dev/null 2>&1; then
+    echo "Fetching kernel for ${arch} ${ver}..."
+else
+    err 1 "No such index..."
+fi
+
+cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${REPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz
+cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${REPO}/${DIR}/kernel_${name}_${arch}_${ver}.md5 >/dev/null 2>&1
+
+if checkmd5 ${MYDIR}; then
+echo "MD5sum correct."
+    else
+err 1 "MD5sum incorrect."
+exit
+fi
+
+rm -f ${MYDIR}/cbsd.index ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
+
+echo "Extracting..."
+cd $basejaildir
+tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+echo "Done..."
+}
+
+
+getimg()
+{
+DST="${importdir}/${name}.img"
+[ ! -f "${DST}" ] || err 1 "You already have ${DST}"
+
+JAILRCCONF="${jailrcconfdir}/rc.conf_${name}"
+[ ! -f  ${JAILRCCONF} ] || err 1 "You already have installed jail ${name}"
+
+echo "Fetching ${name}..."
+cbsd cfetch -o ${DST} -u ${REPO}/${DIR}
+[ $? -eq 0 ] || err 1 "No such remote file or network problem"
+echo "Done... Importing..."
+cbsd jimport jname=${name}
+}
+
+#### MAIN ####
+UPGRADE=0
+QUIET=0
+TF="/tmp/test.$$"
+MYDIR="${workdir}/tmp/src.$$"
+
+[ -z "${action}" ] && err 1 "Give me action"
+
+case "${mode}" in
+    "upgrade") UPGRADE=1;;
+    "quiet") QUIET=1;;
+esac
+
+case "${action}" in
+"ping")
+    if [ $QUIET -eq 1 ]; then
+	checkrepo quiet
+    else
+	checkrepo
+    fi
+;;
+"list")
+if fetchme "${REPO}/${sources}ls" >/dev/null 2>&1; then
+	echo "Available sources:"
+	cat ${TF}
+fi
+;;
+"get")
+[ -z "${sources}" ] && err 1 "Give me sources"
+[ -n "${ver}" ] || ver=`/sbin/sysctl -n kern.osrelease|cut -d "-" -f1 |tr "." "_"`
+[ "${stable}" = "1" ] && ver=${ver%%_*}
+[ -n "${arch}" ] || arch=`/sbin/sysctl -n hw.machine_arch`
+
+case "${sources}" in
+"src")
+    DIR="src_${ver}"; 
+    DST="${srcdir}/src_${ver}"
+    LOCKFILE=${DST}.lock
+    makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}" safe
+    mkdir -p ${MYDIR}
+    getsrc ;;
+"base")
+    if [ -z "${name}" ]; then
+	DIR="base_${arch}_${ver}"; 
+    else
+	DIR="base_${name}_${arch}_${ver}"; 
+    fi
+    SRC="${srcdir}/src_${ver}"
+    LOCKFILE=${SRC}.lock
+    makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+    mkdir -p ${MYDIR}
+    getbase ;;
+"obj")
+    if [ -z "${name}" ]; then
+	DIR="obj_${arch}_${ver}";
+    else
+	DIR="obj_${name}_${arch}_${ver}";
+    fi
+
+    SRC="${srcdir}/src_${ver}"
+    LOCKFILE=${SRC}.lock
+    makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+    mkdir -p ${MYDIR}
+    getobj ;;
+"kernel")
+    [ -z "${name}" ] && name="GENERIC"
+    DIR="kernel_${name}_${arch}_${ver}"
+    SRC="${srcdir}/src_${ver}"
+    LOCKFILE=${SRC}.lock
+    makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+    mkdir -p ${MYDIR}
+    getkernel ;;
+"img")
+    [ -z "${name}" ] && err 1 "Give me name"
+    DIR="img_${arch}_${ver}_${name}/${name}.img"
+    LOCKFILE="${jaildir}/${name}.lock"
+    makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}"
+    mkdir -p ${MYDIR}
+    getimg ;;
+esac ## END of source case
+
+esac ## END of action case

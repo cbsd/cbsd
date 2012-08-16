@@ -1,0 +1,104 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="jname out"
+MYOPTARG=""
+MYDESC="Make jailv2 config file"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${tools}
+init $*
+
+mkjhosts()
+{
+IP=$1
+JHOST=$2
+
+[ $applytpl -eq 0 -o $base = "empty" ] && return
+
+#check for dup
+for i in `egrep "[:blank:]*${host_hostname}" ${JHOST} |grep -v "^;"|awk {'printf $1"\n"'}`; do
+[ "$i" = "${IP}" ] || {
+    TMPH="/tmp/hosts.$$"
+    cp ${JHOST} ${TMPH}
+    grep -v "[:blank:]*${host_hostname}" ${TMPH} > ${JHOST}
+    rm -f ${TMPH}
+    }
+done
+
+[ `grep ^${IP} ${JHOST} |wc -l` = "0" ] && echo ${IP} ${host_hostname} >> ${JHOST}
+}
+
+
+JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+[ -f  ${JAILRCCONF} ] || err 1 "no conf rc.conf file for jail"
+
+. ${JAILRCCONF}
+
+eval multiips4=\"\$ip4_addr\"
+
+[ $baserw -eq 1 ] && path=$data
+
+cat > ${out} << EOF
+${jname} {
+exec.start = "${exec_start}";
+exec.stop = "${exec_stop}";
+exec.clean;
+#mount.devfs;
+host.hostname = "${host_hostname}";
+path = "${path}";
+allow.raw_sockets;
+allow.socket_af;
+allow.chflags;
+allow.sysvipc;
+EOF
+
+[ -z "${interface}" ] |
+ALIAS4=""
+ALIAS6=""
+ips=`echo ${multiips4}|tr "," " "`
+for a in ${ips}; do
+iptype $a
+_inet=$?
+[ ${_inet} -eq 0 ] && continue
+
+[ -z "${interface}" ] || iface=`cbsd getnics-by-ip ip=${a}`
+ipwmask ${a}
+
+case ${_inet} in
+1)
+        if [ -z "$ALIAS4" ]; then
+            echo "ip4.addr = ${a};" >> ${out}
+            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+            ALIAS4="1"
+        else
+            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+            echo "ip4.addr += ${a};" >> ${out}
+        fi
+
+
+;;
+2)
+        if [ -z "$ALIAS6" ]; then
+            echo "ip6.addr = ${a};" >> ${out}
+	    ALIAS6="1"
+        else
+            echo "ip6.addr += ${a};" >> ${out}
+        fi
+;;
+esac
+done
+
+[ -n "${interface}" ] && echo "interface=\"${interface}\";" >> $out
+if [ "$devfs" = "NO" ]; then
+    echo "mount.nodevfs;" >> ${out}
+else
+    echo "mount.devfs;" >> ${out}
+fi
+
+[ -n "${devfs_ruleset}" ] && echo "devfs_ruleset=\"${devfs_ruleset}\";" >> $out
+
+echo "}" >> ${out}

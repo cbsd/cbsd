@@ -1,0 +1,554 @@
+#!/bin/sh
+export workdir=${workdir:-"/usr/jails"}
+export distdir=${distdir:-"/usr/local/cbsd/9.1.0"}
+globalconf="${distdir}/cbsd.conf";
+MYLOCK="/tmp/initenv.lock"
+MYDESC="Node re-initialization"
+MYARG=""
+MYOPTARG=""
+
+if [ ! -f ${globalconf} ]; then
+echo "no such conf file";
+exit
+fi
+
+. ${globalconf}
+. ${distdir}/nc.subr
+. ${distdir}/tools.subr
+. ${distdir}/initenv.subr
+
+[ "$1" != "--help" ] || {
+err 0 "${MYDESC}"
+}
+
+
+desc_question()
+{
+IP=`/sbin/ifconfig \`route get default |grep interface: |awk {'printf $2'}\` |grep "inet " |head -n1 |awk {'printf $2'}`
+
+[ -z "${IP}" ] && IP="8.8.8.8"
+
+case "$1" in
+"nodename")
+    echo "Hint: short form for node name, e.g like hostname: `hostname`"
+;;
+"nodeip")
+    echo "Hint: Persistent managment IP address for node interconnection. e.g: ${IP}"
+;;
+"nodeloc")
+    echo "Hint: Node location, information field, e.g: Moscow, Russia, CBSD Datacenter#1"
+;;
+"jnameserver")
+    echo "Hint: Default DNS nameserver for jails resolv.conf, e.g.: ${IP},8.8.8.8"
+;;
+"nodeippool")
+     echo "Hint: Pool of IP addresses from which jail can work"
+     echo " Use space as delimer for  multiple networks, e.g.: 10.0.0.0/16 ${IP}/29"
+;;
+"natip")
+    echo "Hint: Set IP address as the aliasing NAT address, e.g: ${IP}"
+;;
+"fbsdrepo")
+    echo "Hint: Use official repository FreeBSD for fetching base via repo, e.g: 1"
+    echo " 1 - try to freebsd.org repository first"
+    echo " 2 - don't use freebsd.org repository, only bsdstore.ru"
+;;
+"zfsfeat")
+    echo "You running on ZFS-based system. Do you want to use ZFS features? e.g: 1"
+    echo " 1 - Yes"
+    echo " 2 - No"
+esac
+}
+
+
+check_pkg()
+{
+MYSTUFF="/usr/ports/security/libssh2 \
+/usr/ports/security/sudo \
+/usr/ports/www/lighttpd \
+/usr/ports/databases/sqlite3 \
+/usr/ports/net/rsync \
+/usr/ports/lang/php5 \
+/usr/ports/www/php5-session \
+/usr/ports/textproc/php5-ctype \
+/usr/ports/textproc/php5-dom \
+/usr/ports/sysutils/php5-fileinfo \
+/usr/ports/security/php5-filter \
+/usr/ports/devel/php5-gettext \
+/usr/ports/security/php5-hash \
+/usr/ports/converters/php5-iconv \
+/usr/ports/devel/php5-json \
+/usr/ports/security/php5-openssl \
+/usr/ports/databases/php5-pdo \
+/usr/ports/sysutils/php5-posix \
+/usr/ports/textproc/php5-simplexml \
+/usr/ports/databases/php5-sqlite3 \
+/usr/ports/devel/php5-tokenizer \
+/usr/ports/textproc/php5-xml \
+/usr/ports/textproc/php5-xmlreader \
+/usr/ports/textproc/php5-xmlwriter \
+/usr/ports/databases/php5-pdo_sqlite"
+
+NOPORTS=""
+for i in ${MYSTUFF}; do
+        pkg info -e `basename ${i}` > /dev/null 2>&1
+        [ $? -eq 1 ] && NOPORTS="${NOPORTS} ${i}"
+done
+
+
+[ -z "${NOPORTS}" ] && return
+
+P=""
+for i in ${NOPORTS}; do
+    P="${P} `basename ${i}`"
+done
+
+echo
+echo "The following packages is requred:"
+echo ${P}
+echo
+case "${PKG}" in
+1)
+    if getyesno "Install via pkg ('no' for install via ports)"; then
+	pkg install -y ${P}
+    fi
+;;
+0)
+    if getyesno "Install via ports?"; then
+    [ ! -f "/usr/ports/Makefile" ] && err 1 "No ports tree. Please execute: portsnap fetch extract"
+    echo "Building. Please wait"
+	for i in ${NOPORTS}; do
+	    env BATCH=no make -C ${i} clean install
+	done
+    fi
+;;
+esac
+}
+
+phase1()
+{
+/bin/echo "[Stage 1: directory hier]"
+DIRHIER="${workdir} \
+${jobdir} \
+${spooldir} \
+${taskdir} \
+${srcdir} \
+${basejaildir} \
+${jaildatadir} \
+${jaildir} \
+${jailrcconfdir} \
+${jailfstabdir} \
+${jailsysdir}
+${tmpdir} \
+${templatedir} \
+${aticdir} \
+${dbdir} \
+${sharedir} \
+${jailskeldir} \
+${sudoexecdir} \
+${bindir} \
+${logdir} \
+${etcdir} \
+${jailctldir} \
+${nodectl} \
+${rcddir} \
+${sbindir} \
+${systemdir} \
+${toolsdir} \
+${upgradedir} \
+${sshdir} \
+${rsshdir} \
+${vardir} \
+${logdir} \
+${importdir} \
+${exportdir}"
+
+for _dir in ${DIRHIER}; do
+if [ ! -d ${_dir} ]; then
+  /bin/echo "Creating ${_dir} from scratch..."
+  /bin/mkdir -p ${_dir}
+  else
+  /bin/echo "${_dir} is ok";
+  fi
+done
+/bin/echo
+
+}
+
+phase2()
+{
+/bin/echo "[Stage 2: build tools]"
+PKG=1
+check_pkg
+PKG=0
+check_pkg
+
+#	    if getyesno "${PKGNAME} port required.  Install via pkg?"; then
+#		pkg install ${PKGNAME}
+#	    fi
+#	fi
+#done
+
+if [ ! -f ${etcdir}/rsyncd.conf ]; then
+cat > ${etcdir}/rsyncd.conf << EOF
+pid file = /var/run/rsyncd-cbsd.pid
+uid = root
+gid = wheel
+list = no
+port = 1873
+
+EOF
+fi
+
+/usr/bin/cc ${distdir}/bin/cbsdsftp.c -o ${bindir}/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
+/usr/bin/cc ${distdir}/bin/cbsdssh.c -o ${bindir}/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
+/usr/bin/cc ${distdir}/bin/cbsdlogtail.c -o ${bindir}/cbsdlogtail
+/usr/bin/cc ${distdir}/bin/cfetch.c -o ${bindir}/cfetch -lfetch
+
+cp ${distdir}/etc/php.ini /usr/local/etc/
+
+cp ${distdir}/cbsdphp/etc/* /etc
+
+mkdir -p /var/log/httpd && touch /var/log/httpd/php.err
+
+if [ ! -d "/cf" ]; then
+    cp -R ${distdir}/cbsdphp/cf /
+    ln -s /cf/conf /conf
+fi
+
+if [ ! -d "/var/etc" ]; then
+    cp -R ${distdir}/cbsdphp/var_etc /var/etc
+fi
+
+cp ${distdir}/bin/rexe ${bindir}/rexe
+cp ${distdir}/bin/ncshell ${bindir}/ncshell
+
+/usr/bin/cc ${distdir}/bin/nodepinger.c -o ${bindir}/nodepinger
+/usr/bin/cc ${distdir}/sbin/netmask.c -o ${sbindir}/netmask
+/usr/bin/cc ${distdir}/sbin/ncctld.c -o ${sbindir}/ncctld
+/usr/bin/cc ${distdir}/sbin/nodeinetd.c -o ${sbindir}/nodeinetd
+/usr/bin/cc ${distdir}/sbin/cbsd.c -o ${sbindir}/cbsd
+/usr/bin/cc ${distdir}/tools/ipfw-tables.c -o ${toolsdir}/ipfw-tables
+
+#### CP SCRIPTS with override
+DIRHIER="jailctl \
+nodectl \
+rc.d \
+system \
+tools \
+upgrade"
+
+for D in ${DIRHIER}; do
+LDIR="${workdir}/${D}"
+RDIR="${distdir}/${D}"
+[ -d "${LDIR}" ] || mkdir -p ${LDIR}
+/usr/bin/find ${RDIR} -depth 1 -type f -exec cp -f {} ${LDIR} \;
+done
+
+
+#### CP SCRIPTS without override
+DIRHIER="share \
+share/jail-skel \
+etc"
+
+cat > ${etcdir}/cbsd_sudoers <<EOF
+Defaults     env_keep += "workdir"
+Cmnd_Alias   CBSD_CMD = ${sudoexecdir}/*,/usr/local/cbsd/${myversion}/sudoexec/*
+${cbsduser}   ALL=(ALL) NOPASSWD: CBSD_CMD
+EOF
+
+
+for D in ${DIRHIER}; do
+LDIR="${workdir}/${D}"
+RDIR="${distdir}/${D}"
+[ -d "${LDIR}" ] || mkdir -p ${LDIR}
+/usr/bin/find ${RDIR} -depth 1 -type f -exec cp -n {} ${LDIR} \;
+#/usr/bin/find ${RDIR} -depth 1 -type f -exec cp {} ${LDIR} \;
+done
+
+cp ${globalconf} ${workdir}
+cp ${distdir}/nc.subr ${workdir}
+cp ${distdir}/zfs.subr ${workdir}
+cp ${distdir}/tools.subr ${workdir}
+cp ${distdir}/initenv.subr ${workdir}
+cp ${distdir}/bin/cbsd ${bindir}
+cp ${distdir}/securecmd ${workdir}
+cp ${distdir}/system.subr ${workdir}
+cp ${distdir}/jfs.subr ${workdir}
+
+make -C ${distdir}/jail
+cp ${distdir}/jail/jail /usr/sbin/
+cp ${distdir}/jail/jail.8.gz /usr/share/man/man8/
+cp ${distdir}/jail/jail.conf.5.gz /usr/share/man/man5/
+make -C ${distdir}/jail clean
+
+modconf $bindir/cbsd workdir "\${workdir:-\"${workdir}\"}"
+echo "go \$@" >> ${bindir}/cbsd
+
+cp ${distdir}/bin/sbsd ${bindir}
+
+cp ${distdir}/share/jail-arg ${sharedir}
+
+[ -d /usr/local/etc/sudoers.d ] || mkdir /usr/local/etc/sudoers.d
+
+cp ${etcdir}/cbsd_sudoers /usr/local/etc/sudoers.d/cbsd_sudoers
+chown root:wheel /usr/local/etc/sudoers.d/cbsd_sudoers
+chmod 0440 /usr/local/etc/sudoers.d/cbsd_sudoers
+
+[ -d ${sshdir} ] || mkdir -m 0700 ${sshdir}
+[ -d "${sshdir}/sockets" ] || mkdir -m 0700 "${sshdir}/sockets"
+[ -f "${sshdir}/config" ] || cp ${distdir}/.ssh/config ${sshdir}
+
+[ ! -d "/usr/local/libexec/nagios" ] && mkdir -p /usr/local/libexec/nagios
+cp ${distdir}/sudoexec/check_ports /usr/local/libexec/nagios/
+}
+
+
+
+phase3()
+{
+/bin/echo "[Stage 3: local settings ]"
+
+
+namenotset=1
+
+while [ $namenotset ]; do
+   HNAME=`/bin/hostname`
+   SHNAME=`/bin/hostname -s`
+
+    if [ -z $HNAME ]; then
+       echo "Hostname is empty. Please set. This information will be stored in global rc.conf"
+       read p
+         if getyesno "I will be use hostname: $p"; then
+          hostname $p
+          HNAME=`/bin/hostname`
+          SHNAME=`/bin/hostname -s`
+         fi
+     fi
+
+     if [ "${HNAME}" = "${SHNAME}"  ]; then
+        echo "${HNAME} - Wrong hostname. Full hostname equal short hostname. Please set FQDN"
+        read p
+            if getyesno "I will be use hostname: $p"; then
+            hostname $p
+            fi
+     else break;
+    fi
+done
+
+modconf /etc/rc.conf hostname "${HNAME}"
+IFACE=`${workdir}/tools/nics-list |xargs`
+
+/bin/echo "Updating interface list..."
+modconf ${inventory} jail_interface "${IFACE}"
+
+MYFS="ufs"
+/sbin/zfs list ${workdir} > /dev/null 2>&1
+[ $? -eq 0 ] && MYFS="zfs"
+modconf ${inventory} fs ${MYFS}
+
+[ $MYFS != "zfs" ] && modconf ${inventory} zfsfeat 0
+
+for checkme in ${SYSINI}; do
+if [ `/usr/bin/grep ${checkme} ${inventory} | /usr/bin/wc -l` = 0 ]; then
+    /bin/echo "Please fill ${checkme}:"
+
+[ "${checkme}" = "zfsfeat" -a $MYFS != "zfs" ] && continue
+    desc_question ${checkme}
+# todo: input validation here
+    read answ
+    modconf ${inventory} ${checkme} ${answ}
+fi
+done
+
+# FIXME
+modconf 0 ${inventory} repo http://bsdstore.ru
+modconf 0 ${inventory} workdir $workdir
+# FIXME
+}
+
+
+phase4()
+{
+/bin/echo "[Stage 4: startup scripts]"
+
+rm -f /usr/local/etc/rc.d/cbsd
+/bin/ln -s ${workdir}/rc.d/cbsd /usr/local/etc/rc.d/cbsd
+
+rm -f /usr/local/bin/cbsd
+/bin/ln -s ${workdir}/bin/cbsd /usr/local/bin/cbsd
+
+rm -f /usr/local/bin/sbsd
+/bin/ln -s ${workdir}/bin/sbsd /usr/local/bin/sbsd
+
+hash -r
+}
+
+
+
+phase5()
+{
+. ${workdir}/${localcbsdconffile}
+. ${inventory}
+
+/bin/echo "[Stage 5: account & permission]"
+/usr/bin/id ${cbsduser} > /dev/null 2>&1
+
+if [ $? -eq 1 ]; then
+/usr/sbin/pw groupadd ${cbsduser}
+/usr/sbin/pw useradd ${cbsduser} -g ${cbsduser} -d ${workdir}
+change_cbsdpw
+fi
+
+MD5NAME=`md5 -qs ${nodename}`
+KEYFILE="${sshdir}/${MD5NAME}.id_rsa"
+PUBFILE="${sshdir}/authorized_keys"
+
+if [ ! -f ${KEYFILE} ]; then
+    [ -d ${sshdir} ] || /bin/mkdir -p ${sshdir}
+    /usr/bin/ssh-keygen -t rsa -f ${KEYFILE} -N ''
+    /bin/cp ${KEYFILE}.pub ${PUBFILE}
+fi
+
+chmod 0400 ${KEYFILE} && chown ${cbsduser}:${cbsduser} ${KEYFILE}
+chmod 0400 ${PUBFILE} && chown ${cbsduser}:${cbsduser} ${PUBFILE}
+
+[ -d ${rsshdir} ] || /bin/mkdir -p ${rsshdir}
+
+/usr/sbin/chown -R ${cbsduser}:${cbsduser} ${rsshdir}
+/usr/sbin/chown -R ${cbsduser}:${cbsduser} ${sshdir}
+/usr/sbin/chown -R ${cbsduser}:${cbsduser} ${tmpdir}
+/usr/sbin/chown ${cbsduser}:${cbsduser} ${etcdir}
+/usr/sbin/chown -R ${cbsduser}:${cbsduser} ${logdir}
+
+cp $etcdir/devfs.rules /etc
+
+chown ${cbsduser}:${cbsduser} ${jailrcconfdir} ${jailfstabdir} ${jaildatadir} ${jailsysdir}
+}
+
+
+phase6()
+{
+/bin/echo "[Stage 6: update skel files]"
+
+for i in $(echo $jnameserver | tr "," " "); do
+
+    if [ `/usr/bin/grep ${i} ${jailskeldir}/resolv.conf | /usr/bin/wc -l` = 0 ]; then
+    TMPR="/tmp/resolv.$$"
+    # system nserver must be always last
+    echo "nameserver ${i}" > ${TMPR}
+    cat ${jailskeldir}/resolv.conf >> ${TMPR}
+    mv ${TMPR} ${jailskeldir}/resolv.conf
+fi
+
+done
+
+}
+
+
+phase7()
+{
+/bin/echo "[Stage 7: preparing for ipfw]"
+
+if [ `grep ipfw_enable ${inventory} | wc -l` = 0 ]; then
+FW=`sysctl -qn net.inet.ip.fw.enable`
+if [ "${FW}" = "1" ]; then
+    /bin/echo "ipfw_enable=1" >> ${inventory}
+else
+    /bin/echo "ipfw_enable=0" >> ${inventory}
+fi
+fi
+
+}
+
+
+phase8()
+{
+hash -r
+/bin/echo "[Stage 7: Patches]"
+[ -d "${workdir}/upgrade" ] && find ${workdir}/upgrade/ -type f -depth 1 -name patch-\* -exec cbsd {} \;
+}
+
+phase9()
+{
+/bin/echo "[Stage 8: Fresh inventory]"
+cbsd mkinventory
+}
+
+
+############ start locking section #############
+start()
+{
+if [ "${globalconf}" = "${localcbsdconf}" ]; then
+    echo "Please use difference path for workdir. Not ${distdir} "
+    exit
+fi
+
+/usr/bin/more << EOF_HEADER
+----[${product} v.${myversion}]-------
+ This is install/upgrade scripts for CBSD and all NC stuff for current platforms
+
+-----------------------
+EOF_HEADER
+
+if ! getyesno "Do you want prepare or upgrade hier environment for CBSD now?"; then
+err 1 "exit"
+fi
+
+/bin/echo ">>> Installing or upgrading "
+phase1
+phase2
+phase3
+phase4
+phase5
+phase6
+phase7
+phase8
+phase9
+
+configure_nat
+configure_rsync
+
+modconf 0 /etc/rc.conf cbsd_enable YES
+modconf /etc/rc.conf cbsd_workdir "${workdir}"
+modconf 0 /etc/rc.conf sshd_enable "YES"
+modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
+modconf 0 /etc/rc.conf rcshutdown_timeout "900"
+modconf 0 /etc/rc.conf sendmail_enable "NO"
+
+modconf 0 /etc/make.conf WITH_PKGNG yes
+
+modconf 0 /etc/rc.conf lighttpd_enable "NO"
+modconf 0 /etc/rc.conf lighttpd_conf "/usr/local/cbsd/9.1.0/etc/cbsdhttpd.conf"
+
+# + /etc/aliases
+# + /etc/root/inetd.conf
+# + /etc/syslogd.conf
+
+#[ -d /usr/local/etc/nginx/vhosts ] || mkdir -p /usr/local/etc/nginx/vhosts
+#cp ${distdir}/cbsdphp/cbsdphp.conf.php /usr/local/etc/nginx/vhosts/cbsdphp.conf
+exit 0
+
+### BUMP VERSION
+if [ -d ${workdir}/.svn ]; then
+    NCVER=`/usr/local/bin/svn info /usr/local/cbsd |/usr/bin/grep "^Revision: " |/usr/bin/awk {'printf $2"\n"'}`
+    CURVER="${ncmajorversion}${NCVER}"
+
+if [ -d ${workdir} ]; then
+mv ${workdir}/ver ${workdir}/ver
+fi
+
+        if [ "${ncversion}" != "${CURVER}" ]; then
+        /bin/echo "Bump version to ${CURVER}"
+        echo "ncversion=\"${CURVER}\"" > ${workdir}/ver
+        fi
+fi
+}
+
+### MAIN ###
+[ $# -eq 1 ] || /usr/bin/lockf -t0 -s ${MYLOCK} $0 start
+
+case "$1" in
+start)
+    start;;
+esac

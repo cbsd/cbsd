@@ -1,0 +1,389 @@
+#!/bin/sh
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG=""
+MYDESC="Ncurses based jail creation wizard"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+DIALOG=${DIALOG=/usr/bin/dialog}
+
+gen_newjail_conf()
+{
+A=`cbsd jconstruct-fromargs jname=$jname fqdn=$fqdn ips=$ips base=$base baserw=$baserw srcmount=$srcmount portsmount=$portsmount astart=$astart oninterface=$oninterface vnet=$vnet applytpl=$applytpl floatresolv=$floatresolv arch=$arch`
+ERR=$?
+
+[ $ERR -eq 0 ] || err 1 "Bad conf"
+err 0 ${A}
+}
+
+# $jname
+get_jname()
+{
+$DIALOG --title "jname" --clear \
+        --inputbox "jail short name (one word):" -1 -1 "jail1" 2> /tmp/inputbox.tmp.$$
+retval=$?
+input=`cat /tmp/inputbox.tmp.$$`
+rm -f /tmp/inputbox.tmp.$$
+case $retval in
+  0)
+    echo "Input string is '$input'";;
+  1)
+    echo "Cancel pressed.";;
+  255)
+    [ -z "$input" ] || echo $input ;
+    echo "ESC pressed.";;
+esac
+export jname=$input
+}
+
+# $fqdn
+get_jail_fqdn()
+{
+if [ -z ${jname} ]; then
+$DIALOG --title "jname" --clear \
+        --inputbox "jail FQDN (one word):" -1 -1 "jail1.my.domain" 2> /tmp/inputbox.tmp.$$
+else
+$DIALOG --title "jname" --clear \
+        --inputbox "jail FQDN (one word):" -1 -1 "${jname}.my.domain" 2> /tmp/inputbox.tmp.$$
+fi
+
+retval=$?
+input=`cat /tmp/inputbox.tmp.$$`
+rm -f /tmp/inputbox.tmp.$$
+case $retval in
+  0)
+    echo "Input string is '$input'";;
+  1)
+    echo "Cancel pressed.";;
+  255)
+    [ -z "$input" ] || echo $input ;
+    echo "ESC pressed.";;
+esac
+export fqdn=$input
+}
+
+# $ips
+get_jail_ips()
+{
+$DIALOG --title "jname" --clear \
+        --inputbox "Enter jail ip (from NC pool!) \n\
+use IP/PREFIX form: ${nodeippool} " -1 -1 "" 2> /tmp/inputbox.tmp.$$
+retval=$?
+input=`cat /tmp/inputbox.tmp.$$`
+rm -f /tmp/inputbox.tmp.$$
+case $retval in
+  0)
+    echo "Input string is '$input'";;
+  1)
+    echo "Cancel pressed.";;
+  255)
+    [ -z "$input" ] || echo $input ;
+    echo "ESC pressed.";;
+esac
+export ips=$input
+}
+
+# $oninterface
+get_jail_oninterface()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Auto create and remove IP from interface when jail on/off?" 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export oninterface=$st
+}
+
+# $vnet
+get_jail_vnet()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Jail with VIMAGE feature?" 5 40
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export vnet=$st
+}
+
+# $base
+get_jail_base()
+{
+$DIALOG --title "jname" --clear \
+        --inputbox "choose jail base source:" -1 -1 "9_1" 2> /tmp/inputbox.tmp.$$
+retval=$?
+input=`cat /tmp/inputbox.tmp.$$`
+rm -f /tmp/inputbox.tmp.$$
+case $retval in
+  0)
+    echo "Input string is '$input'";;
+  1)
+    echo "Cancel pressed.";;
+  255)
+    [ -z "$input" ] || echo $input ;
+    echo "ESC pressed.";;
+esac
+export base=$input
+}
+
+# $baserw
+get_jail_baserw()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Write access for base (no nullfs mount)?" 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export baserw=$st
+}
+
+# $srcmount
+get_jail_srcmount()
+{
+echo "Jail with /usr/src via nullfs[y/n]: "
+$DIALOG --title "BOX" --clear \
+        --yesno "Jail with /usr/src (via nullfs)? " 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export srcmount=$st
+}
+
+# $objmount
+get_jail_objmount()
+{
+st=
+
+while [ x$st = x ]; do
+echo "Jail with /usr/obj via nullfs [y/n]: "
+
+read reply leftover
+    case $reply in
+         y* | Y*)
+            st=1
+                        ;;
+                n* | n*)
+	    st=0
+                        ;;
+        esac
+done
+
+export objmount=$st
+}
+
+# $portsmount
+get_jail_portsmount()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Jail with /usr/ports (via nullfs)" 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export portsmount=$st
+}
+
+
+# $applytpl
+get_jail_applytpl()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Apply standart NC skel template when jail create" 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+export applytpl=$st
+}
+
+# $floatresolv
+get_jail_floatresolv()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Float resolv (recommended)" 5 66
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+export floatresolv=$st
+}
+
+# $arch
+get_jail_arch()
+{
+$DIALOG --title "jname" --clear \
+        --inputbox "Enter target arch (i386 or amd64):" -1 -1 "`uname -p`" 2> /tmp/inputbox.tmp.$$
+
+retval=$?
+input=`cat /tmp/inputbox.tmp.$$`
+rm -f /tmp/inputbox.tmp.$$
+case $retval in
+  0)
+    echo "Input string is '$input'";;
+  1)
+    echo "Cancel pressed.";;
+  255)
+    [ -z "$input" ] || echo $input ;
+    echo "ESC pressed.";;
+esac
+
+export arch=$input
+}
+
+
+
+
+
+
+# $astart
+get_jail_astart()
+{
+$DIALOG --title "BOX" --clear \
+        --yesno "Jail auto startup with system?" 5 60
+case $? in
+  0)
+    st=1;;
+  1)
+    st=0;;
+  255)
+    echo "ESC pressed.";;
+esac
+
+export astart=$st
+}
+
+
+
+#### [ MAIN AREA ] ####
+globalconf="${workdir}/cbsd.conf";
+
+if [ ! -f ${globalconf} ]; then
+echo "no such conf file";
+exit
+fi
+
+. ${globalconf}
+
+
+if [ ! -f ${localcbsdconf} ]; then
+echo "no such conf file";
+exit
+fi
+
+. ${localcbsdconf}
+. ${inventory}
+
+
+#defaults
+[ -z "${base}" ] && base=`uname -r|cut -d "-" -f1 |tr "." "_"`
+[ -z "${baserw}" ] && baserw=0
+[ -z "${srcmount}" ] && srcmount=0
+[ -z "${portsmount}" ] && portsmount=1
+[ -z "${astart}" ] && astart=1
+[ -z "${oninterface}" ] && oninterface=1
+[ -z "${vnet}" ] && vnet=0
+[ -z "${applytpl}" ] && applytpl=1
+[ -z "${floatresolv}" ] && floatresolv=1
+[ -z "$arch" ] && arch=`uname -m`
+
+
+while [ 1 ]; do
+$DIALOG --clear --title "JConf constructor v${myversion}" \
+        --menu "           Welcome to jail constructor script. \n\
+\n\
+For Shell-based script use jconstruct utility
+For X11 based menu use jconstruct-x11 utility
+For WEB based forms use http:// page.
+\n\
+ fill all data before creation:" -1 -1 14 \
+        "jname" "A short jail name [${jname}]" \
+        "fqdn"  "Full (FQDN) jail hostname [$fqdn]" \
+        "ips" "Assing IP address [$ips]" \
+        "base" "choose code base [$base]" \
+        "baserw"  "Write access base [$baserw]" \
+        "srcmount"  "Mount /usr/src ? [$srcmount]" \
+        "portsmount" "Mount /usr/ports ? [$portsmount]" \
+        "astart"  "Auto start-up with system [$astart]" \
+        "oninterface" "Interface selection and aliasing mode [$oninterface]" \
+        "vnet" "VIMAGE options [$vnet]" \
+        "applytpl"  "Apply NodeCenter standart template [$applytpl]" \
+        "floatresolv" "Float resolv.conf [$floatresolv]" \
+        "arch" "target arch [$arch]" \
+        "GO" "PROCEED!" 2> /tmp/menu.tmp.$$
+
+retval=$?
+
+choice=`cat /tmp/menu.tmp.$$`
+rm -f /tmp/menu.tmp.$$
+
+case $retval in
+  0)
+[ ! $choice = "jname" ] || get_jname
+[ ! $choice = "fqdn" ] || get_jail_fqdn
+[ ! $choice = "ips" ] || get_jail_ips
+[ ! $choice = "base" ] || get_jail_base
+[ ! $choice = "baserw" ] || get_jail_baserw
+[ ! $choice = "srcmount" ] || get_jail_srcmount
+[ ! $choice = "portsmount" ] || get_jail_portsmount
+[ ! $choice = "astart" ] || get_jail_astart
+[ ! $choice = "oninterface" ] || get_jail_oninterface
+[ ! $choice = "vnet" ] || get_jail_vnet
+[ ! $choice = "applytpl" ] || get_jail_applytpl
+[ ! $choice = "floatresolv" ] || get_jail_floatresolv
+[ ! $choice = "arch" ] || get_jail_arch
+[ ! $choice = "GO" ] || gen_newjail_conf
+;;
+
+  1)
+    echo "Cancel pressed."
+    exit;;
+  255)
+    [ -z "$choice" ] || echo $choice ;
+    echo "ESC pressed."
+    exit;;
+esac
+
+
+done
+

@@ -1,0 +1,96 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="mode"
+MYOPTARG="node port pw"
+MYDESC="Manipulate with remote nodes"
+ADDHELP="mode = add , del , list\n\
+node = remote node ip or fqdn\n\
+port = ssh port of remote node\n\
+pw = password of cbsd user from remote node\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${tools}
+init $*
+
+nodeadd()
+{
+[ -n "${node}" ] || err 1 "Empty node"
+[ -z "${port}" ] && port=22222
+[ -z "${pw}" ] && err 1 "Empty pw"
+
+if iptype $node; then
+    resolvhost ${node}
+    node=$HST
+fi
+
+NODENAME=`cbsd cbsdssh $node $port $cbsduser $pw cbsd getinfo -q nodename`
+
+case $? in
+0)
+[ -z "$NODENAME" ] && err 1 "No nodename found. Check remote cbsd settings"
+echo "$node has nodename ${NODENAME}"
+;;
+1)
+err 1 "Connection problem with $node"
+;;
+2)
+err 1 "Bad password or system user"
+;;
+esac
+
+MD5NAME=`md5 -qs ${NODENAME}`
+cbsd nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > $DEBLOG 2>&1
+
+case $? in
+0)
+echo "${node} Added successfull"
+
+LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
+modconf ${rsshdir}/${NODENAME}.node SSHKEY $LOCALKEY
+modconf ${rsshdir}/${NODENAME}.node IP $node
+modconf ${rsshdir}/${NODENAME}.node PORT $port
+
+;;
+1)
+    cat ${DEBLOG}
+    err 1 "Error: Bad password" ;;
+2)
+    cat ${DEBLOG}
+    err 1 "Error: No key found or wrong hostname. Make initenv on remote machine" ;;
+*)
+    cat ${DEBLOG}
+    err 1 "Error: Unkown error" ;;
+esac
+}
+
+nodedel()
+{
+[ -n "${node}" ] || err 1 "Empty node"
+
+NODECONF="${rsshdir}/${node}.node"
+
+[ -f "${NODECONF}" ] || err 1 "No such node config"
+. ${NODECONF}
+
+[ -f ${SSHKEY} ] && rm -f ${SSHKEY}
+rm -f ${NODECONF}
+echo "Removed"
+}
+
+case "${mode}" in
+"add")
+    nodeadd
+;;
+"del")
+    nodedel
+;;
+"list")
+    ls -C1 ${rsshdir} |grep \.node$ |sed 's/\.node//g'
+;;
+*)
+err 1 "Unknown mode"
+;;
+esac

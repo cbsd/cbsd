@@ -1,0 +1,70 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname list"
+#mode=ls
+MYDESC="Import jail from image"
+ADDHELP="list=1 for list images\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+if [ -n "$list" ]; then
+    ls -C1 ${importdir} |grep .img$ |sed 's/\.img//g'
+    exit
+fi
+
+[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && err 1 "Give me jname or full path"
+
+DATA="${importdir}"
+SRC="${DATA}/${jname}.img"
+
+if [ ! -f "${SRC}" ]; then
+    SRC=$jname
+    [ ! -f "${SRC}" ] && err 1 "No such image here"
+fi
+
+TMPDIR="${tmpdir}/header.$$"
+trap "rm -f ${TMPDIR}" 0 1 2 3
+
+cbsd imgpart mode=extract jname=${SRC} part=header out=${TMPDIR}
+
+[ -f "${TMPDIR}" ] || err 1 "No header info extracted"
+
+. "$TMPDIR"
+cbsd jstatus jname=$jname > /dev/null 2>&1
+[ $? -eq 0 ] || err 1 "Jail with some name already exist"
+
+JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
+JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+
+# check for already existance and offline
+if [ -d "${JAILDIR}" ]; then
+    err 1 "Jail datadir already exist for ${jname}. Remove first"
+fi
+
+cbsd imgpart mode=extract jname=${SRC} part=rcconf out=${JAILRCCONF}
+. ${JAILRCCONF}
+
+cbsd imgpart mode=extract jname=${SRC} part=fstab out=${JAILFSTAB}
+cbsd imgpart mode=extract jname=${SRC} part=sysdata out=${jailsysdir} > /dev/null
+
+case $zfsfeat in
+    0) mkdir ${JAILDIR} ;;
+    1) . $zfstool
+	    ZPOOL=`zfs get -Ho value name ${jaildatadir}`
+	    if [ -n "${ZPOOL}" ]; then
+		if zfsroot $jname; then
+		    err 1 "ZFS with $jname in pool already exist"
+		fi
+		zfs create -o atime=off -o mountpoint=${JAILDIR} ${ZPOOL}/$jname
+		fi ;;
+esac
+
+cbsd imgpart mode=extract jname=${SRC} part=data out=${jaildatadir} > /dev/null

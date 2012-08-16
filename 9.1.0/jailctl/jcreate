@@ -1,0 +1,223 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="jconf"
+MYOPTARG=""
+MYDESC="Create jail from config file"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+mkfstab() {
+if [ $baserw -eq 1 ]; then
+cat > ${mount_fstab} << EOF
+EOF
+else
+cat > ${mount_fstab} << EOF
+${data}/etc /etc nullfs rw 0 0
+${data}/root /root nullfs rw 0 0
+${data}/tmp /tmp nullfs rw 0 0
+${data}/usr/home /usr/home nullfs rw 0 0
+${data}/usr/local /usr/local nullfs rw 0 0
+${data}/var /var nullfs rw 0 0
+/var/cache/pkg /var/cache/pkg nullfs rw 0 0
+#
+EOF
+fi
+
+if [ $srcmount -eq 1 ]; then
+SOURCE="$srcdir/src_${base}"
+cat >> ${mount_fstab} << EOF
+${SOURCE}/src /usr/src nullfs rw 0 0
+EOF
+fi
+
+if [ $portsmount -eq 1 ]; then
+cat >> ${mount_fstab} << EOF
+/usr/ports /usr/ports nullfs rw 0 0
+EOF
+fi
+}
+
+
+mkrcconf() {
+    cp $jconf $rcconf
+}
+
+[ -f "$jconf" ] || err 1 "no such jconf file";
+. ${jconf}
+
+#export param from jconf
+eval jname=\"\$jname\"
+eval path=\"\$path\"
+eval host_hostname=\"\$host_hostname\"
+eval ip4_addr=\"\$ip4_addr\"
+eval mount_devfs=\"\$mount_devfs\"
+eval allow_mount=\"\$allow_mount\"
+eval mount_fstab=\"\$mount_fstab\"
+eval interface=\"\$interface\"
+eval base=\"\$base\"
+eval baserw=\"\$baserw\"
+eval srcmount=\"\$srcmount\"
+eval objmount=\"\$objmount\"
+eval portsmount=\"\$portsmount\"
+eval astart=\"\$astart\"
+eval data=\"\$data\"
+eval vnet_interface=\"\$vnet_interface\"
+eval applytpl=\"\$applytpl\"
+eval floatreslv=\"\$floatresolv\"
+eval arch=\"\$arch\"
+eval rcconf=\"\$rcconf\"
+
+cbsd jstatus jname=${jname} > /dev/null 2>&1
+[ $? -eq 0 ] || err 1 "Jail with $jname already exist"
+
+if [ -z "${arch}" ]; then
+    arch=`uname -m`
+fi
+
+
+### CURRENT
+[ "$base" = "10_0" ] && base="."
+src="${basejaildir}/${basejailpref}_${arch}_${base}"
+
+CPEXE="/bin/cp -Rp "
+
+JAILNODATA=".cshrc \
+bin \
+media \
+rescue \
+sys \
+var \
+.profile \
+boot \
+lib \
+mnt \
+COPYRIGHT \
+libexec \
+proc \
+sbin \
+usr/bin \
+usr/games \
+usr/include \
+usr/lib \
+usr/lib32 \
+usr/libdata \
+usr/libexec \
+usr/local \
+usr/sbin \
+usr/share"
+
+if [ ! -d "${src}" ]; then
+    [ "${base}" = "empty" ] || err 1 "No data at ${src}"
+fi
+
+if [ -n "${interface}" ]; then
+### CHECK FOR IP ( 1 - check for interfaces) ####
+cbsd checkip ip=${ips} check=1 > /dev/null 2>&1
+case $? in
+0)
+err 1 "Ip not in pool range";;
+1)
+;;
+2)
+echo "Warning: Ip already exists in LAN";;
+default)
+exit;;
+esac
+#####################
+fi
+
+[ -d "${data}" ] && {
+
+case $zfsfeat in
+0)
+    chflags -R noschg ${data}
+    rm -rf "${data}"
+;;
+1)
+    . $zfstool
+    ZPOOL=`zfs get -Ho value name ${jaildatadir}`
+    [ -z "${ZPOOL}" ] && err 1 "Cant find working ZFS pool"
+    nomnt ${data}
+    case $? in
+	0) break ;;
+	1) echo "Remove stale zfs"
+	[ -n "${zname}" ] && {
+	/sbin/zfs unmount ${ZPOOL}/${jname} && zfs destroy ${ZPOOL}/${jname}
+	}
+	;;
+	2) break;
+    esac
+;;
+esac
+
+}
+
+case $zfsfeat in
+"0") [ -d ${data} ] || mkdir -p ${data} ;;
+"1")
+. $zfstool
+ZPOOL=`zfs get -Ho value name ${jaildatadir}`
+
+if zfsroot $jname; then
+    err 1 "$ZPOOL/$jname already in use"
+fi
+
+zfs create -o atime=off -o mountpoint=${data} ${ZPOOL}/$jname ;;
+esac
+
+[ -d "${data}" ] || err 1 "Can't create datadir"
+[ -d ${path} ] || mkdir -p ${path}
+[ -d ${jailfstabdir}  ] || mkdir -p ${jailfstabdir}
+[ -d ${jailrcconfdir}  ] || mkdir -p ${jailrcconfdir}
+
+
+### COPY FROM BASE
+if [ "${base}" != "empty" ]; then
+
+    $CPEXE $src/ $data/
+
+    if [ $baserw -ne 1 ]; then
+	for _RES in ${JAILNODATA}; do
+	res="$data/${_RES}"
+	    if [ -f ${res} -a -L ${res} ]; then
+		chflags noschg ${res}
+		rm -f ${res}
+	    else
+	    if [ -d ${res} ]; then
+		chflags -R noschg ${res}
+		rm -rf ${res}
+	    fi
+	fi
+	done
+    fi
+
+touch "${data}/etc/fstab"
+
+[ -d ${data}/var ] || mkdir ${data}/var
+[ -d ${data}/usr/local ] || mkdir ${data}/usr/local
+[ -d ${data}/usr/compat ] || mkdir ${data}/usr/compat
+[ -d ${data}/usr/ports ] || mkdir ${data}/usr/ports
+
+if [ ${applytpl} -eq 1 ]; then
+
+[ -f ${jailskeldir}/master.passwd ] && {
+    cp ${jailskeldir}/master.passwd ${data}/etc
+    /usr/sbin/pwd_mkdb -d ${data}/etc ${data}/etc/master.passwd
+}
+[ -f ${jailskeldir}/rc.conf ] && cp ${jailskeldir}/rc.conf ${data}/etc
+[ -f ${jailskeldir}/make.conf ] && cp ${jailskeldir}/make.conf ${data}/etc
+[ -f ${jailskeldir}/crontab ] && cp ${jailskeldir}/crontab ${data}/etc
+[ -f ${jailskeldir}/resolv.conf ] && cp ${jailskeldir}/crontab ${data}/etc
+[ -f /etc/localtime ] && cp /etc/localtime ${data}/etc
+fi
+
+
+fi  # if base = empty
+
+mkfstab
+mkrcconf

@@ -1,9 +1,0 @@
-<?php
- $MySQL_Host="localhost";
- $MySQL_User="root";
- $MySQL_Passw="";
- $db="fosvm";
- $tbl_usr="Users";
- $tbl_traffic="Traffic";
- $workdir="/usr/jails";
-?>
