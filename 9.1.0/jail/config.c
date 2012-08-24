@@ -25,7 +25,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/usr.sbin/jail/config.c 235789 2012-05-22 16:33:10Z bapt $");
+__FBSDID("$FreeBSD: head/usr.sbin/jail/config.c 239601 2012-08-23 01:43:01Z jamie $");
 
 #include <sys/types.h>
 #include <sys/errno.h>
@@ -598,7 +598,7 @@ check_intparams(struct cfjail *j)
 					error = -1;	
 				}
 				*cs = '\0';
-				s->len = cs - s->s + 1;
+				s->len = cs - s->s;
 			}
 		}
 	}
@@ -622,7 +622,7 @@ check_intparams(struct cfjail *j)
 					error = -1;	
 				}
 				*cs = '\0';
-				s->len = cs - s->s + 1;
+				s->len = cs - s->s;
 			}
 		}
 	}
@@ -714,12 +714,11 @@ import_params(struct cfjail *j)
 			value = alloca(vallen);
 			cs = value;
 			TAILQ_FOREACH_SAFE(s, &p->val, tq, ts) {
-				strcpy(cs, s->s);
-				if (ts != NULL) {
-					cs += s->len + 1;
-					cs[-1] = ',';
-				}
+				memcpy(cs, s->s, s->len);
+				cs += s->len + 1;
+				cs[-1] = ',';
 			}
+			value[vallen - 1] = '\0';
 		}
 		if (jailparam_import(jp, value) < 0) {
 			error = -1;
