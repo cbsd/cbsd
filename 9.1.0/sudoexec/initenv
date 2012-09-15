@@ -24,7 +24,8 @@ err 0 "${MYDESC}"
 
 desc_question()
 {
-IP=`/sbin/ifconfig \`route get default |grep interface: |awk {'printf $2'}\` |grep "inet " |head -n1 |awk {'printf $2'}`
+#IP=`/sbin/ifconfig \`route get default |grep interface: |awk {'printf $2'}\` |grep "inet " |head -n1 |awk {'printf $2'}`
+IP=`/sbin/ifconfig \`route -n get 0.0.0.0 | awk '/interface/{print $2}'\` |awk '/inet /{print $2}'|head -n1`
 
 [ -z "${IP}" ] && IP="8.8.8.8"
 
@@ -63,11 +64,14 @@ esac
 
 check_pkg()
 {
+[ -d "/var/cache/pkg" ] || mkdir -p /var/cache/pkg
+
 MYSTUFF="/usr/ports/security/libssh2 \
 /usr/ports/security/sudo \
-/usr/ports/www/lighttpd \
+/usr/ports/net/rsync"
+
+MYWEBSTUFF="/usr/ports/www/lighttpd \
 /usr/ports/databases/sqlite3 \
-/usr/ports/net/rsync \
 /usr/ports/lang/php5 \
 /usr/ports/www/php5-session \
 /usr/ports/textproc/php5-ctype \
@@ -88,6 +92,7 @@ MYSTUFF="/usr/ports/security/libssh2 \
 /usr/ports/textproc/php5-xmlreader \
 /usr/ports/textproc/php5-xmlwriter \
 /usr/ports/databases/php5-pdo_sqlite"
+
 
 NOPORTS=""
 for i in ${MYSTUFF}; do
@@ -191,7 +196,7 @@ check_pkg
 
 if [ ! -f ${etcdir}/rsyncd.conf ]; then
 cat > ${etcdir}/rsyncd.conf << EOF
-pid file = /var/run/rsyncd-cbsd.pid
+pid file = /var/run/cbsdrsyncd.pid
 uid = root
 gid = wheel
 list = no
@@ -291,6 +296,7 @@ cp ${distdir}/share/jail-arg ${sharedir}
 
 [ -d /usr/local/etc/sudoers.d ] || mkdir /usr/local/etc/sudoers.d
 
+cp -Rp ${distdir}/etc/periodic ${etcdir}/
 cp ${etcdir}/cbsd_sudoers /usr/local/etc/sudoers.d/cbsd_sudoers
 chown root:wheel /usr/local/etc/sudoers.d/cbsd_sudoers
 chmod 0440 /usr/local/etc/sudoers.d/cbsd_sudoers
@@ -337,6 +343,26 @@ while [ $namenotset ]; do
 done
 
 modconf /etc/rc.conf hostname "${HNAME}"
+
+if [ -f /var/cron/tabs/root ]; then
+    if [ `/usr/bin/grep -c "/tmp/periodic_minutes" /var/cron/tabs/root` = 0 ]; then
+	echo "* * * * * /usr/bin/lockf -s -t0 /tmp/periodic_minutes /usr/sbin/periodic minutes" >> /var/cron/tabs/root
+    fi
+else
+    echo "* * * * * /usr/bin/lockf -s -t0 /tmp/periodic_minutes /usr/sbin/periodic minutes" > /var/cron/tabs/root
+fi
+
+if [ -f /var/cron/tabs/root ]; then
+    if [ `/usr/bin/grep -c "/tmp/periodic_hourly" /var/cron/tabs/root` = 0 ]; then
+	echo "0 * * * * /usr/bin/lockf -s -t0 /tmp/periodic_hourly /usr/sbin/periodic hourly" >> /var/cron/tabs/root
+    fi
+else
+    echo "0 * * * * /usr/bin/lockf -s -t0 /tmp/periodic_hourly /usr/sbin/periodic hourly" > /var/cron/tabs/root
+fi
+
+
+
+
 IFACE=`${workdir}/tools/nics-list |xargs`
 
 /bin/echo "Updating interface list..."
@@ -350,7 +376,7 @@ modconf ${inventory} fs ${MYFS}
 [ $MYFS != "zfs" ] && modconf ${inventory} zfsfeat 0
 
 for checkme in ${SYSINI}; do
-if [ `/usr/bin/grep ${checkme} ${inventory} | /usr/bin/wc -l` = 0 ]; then
+if [ `/usr/bin/grep -c ${checkme} ${inventory}` = 0 ]; then
     /bin/echo "Please fill ${checkme}:"
 
 [ "${checkme}" = "zfsfeat" -a $MYFS != "zfs" ] && continue
@@ -433,7 +459,7 @@ phase6()
 
 for i in $(echo $jnameserver | tr "," " "); do
 
-    if [ `/usr/bin/grep ${i} ${jailskeldir}/resolv.conf | /usr/bin/wc -l` = 0 ]; then
+    if [ `/usr/bin/grep -c ${i} ${jailskeldir}/resolv.conf` = 0 ]; then
     TMPR="/tmp/resolv.$$"
     # system nserver must be always last
     echo "nameserver ${i}" > ${TMPR}
@@ -450,7 +476,7 @@ phase7()
 {
 /bin/echo "[Stage 7: preparing for ipfw]"
 
-if [ `grep ipfw_enable ${inventory} | wc -l` = 0 ]; then
+if [ `grep -c ipfw_enable ${inventory}` = 0 ]; then
 FW=`sysctl -qn net.inet.ip.fw.enable`
 if [ "${FW}" = "1" ]; then
     /bin/echo "ipfw_enable=1" >> ${inventory}
@@ -521,6 +547,8 @@ modconf 0 /etc/make.conf WITH_PKGNG yes
 modconf 0 /etc/rc.conf lighttpd_enable "NO"
 modconf 0 /etc/rc.conf lighttpd_conf "/usr/local/cbsd/9.1.0/etc/cbsdhttpd.conf"
 
+modconf 0 /etc/periodic.conf local_periodic "/usr/local/etc/periodic ${workdir}/etc/periodic"
+
 # + /etc/aliases
 # + /etc/root/inetd.conf
 # + /etc/syslogd.conf
@@ -528,21 +556,6 @@ modconf 0 /etc/rc.conf lighttpd_conf "/usr/local/cbsd/9.1.0/etc/cbsdhttpd.conf"
 #[ -d /usr/local/etc/nginx/vhosts ] || mkdir -p /usr/local/etc/nginx/vhosts
 #cp ${distdir}/cbsdphp/cbsdphp.conf.php /usr/local/etc/nginx/vhosts/cbsdphp.conf
 exit 0
-
-### BUMP VERSION
-if [ -d ${workdir}/.svn ]; then
-    NCVER=`/usr/local/bin/svn info /usr/local/cbsd |/usr/bin/grep "^Revision: " |/usr/bin/awk {'printf $2"\n"'}`
-    CURVER="${ncmajorversion}${NCVER}"
-
-if [ -d ${workdir} ]; then
-mv ${workdir}/ver ${workdir}/ver
-fi
-
-        if [ "${ncversion}" != "${CURVER}" ]; then
-        /bin/echo "Bump version to ${CURVER}"
-        echo "ncversion=\"${CURVER}\"" > ${workdir}/ver
-        fi
-fi
 }
 
 ### MAIN ###

@@ -127,7 +127,7 @@ DHCP=0
 if getyesno "Should use automatic network configure (DHCP) [yes/no]?"; then
     echo "Try to detect via DHCP..."
     /sbin/dhclient ${mynic}
-	if [ `ifconfig ${mynic} |grep "inet " |wc -l` = 0 ]; then
+	if [ `ifconfig -c ${mynic} |grep "inet "` = 0 ]; then
 	    echo "No DHCP servers found. please set ip manually"
 	else
 	    DHCP=1; return
@@ -228,7 +228,7 @@ if getyesno "Do you want configure CBSD via WEB interface?"; then
 fi
 
 # Determine my position and choose correct direction
-if [ `kenv vfs.root.mountfrom |grep CBSD_INSTALL|wc -l` = 1 ]; then
+if [ `kenv vfs.root.mountfrom |grep -c CBSD_INSTALL` = 1 ]; then
 printf "$WELCOME: phase1 - install to disk ==\n"
 select_dsk
 install_ufs
