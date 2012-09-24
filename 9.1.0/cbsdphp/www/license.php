@@ -2,6 +2,7 @@
 <?php
 /*
 	license.php
+	
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 NAS4Free team <info@nas4free.org>.
 	All rights reserved.
@@ -91,15 +92,15 @@ $pgtitle = array(gettext("Help"), gettext("License & Credits"));
             <tr>
             	<td class="listt">
             <p>The following persons have contributed to NAS4Free code:</p>                         
-              <div>Daisuke Aoyama (<a href="mailto:aoyama@peach.ne.jp">aoyama@peach.ne.jp</a>)<br />              
+              <div>Daisuke Aoyama (<a href="mailto:aoyama@nas4free.org">aoyama@nas4free.org</a>)<br />              
               &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Developer & Project leader</font></em></div><br />
-             <div>Michael Zoon (<a href="mailto:zoon01@nas4.org">zoon01@nas4free.org</a>)<br />             
+             <div>Michael Zoon (<a href="mailto:zoon01@nas4free.org">zoon01@nas4free.org</a>)<br />             
               &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Developer & Project leader</font></em></div><br />
-             <div>Volker Theile (<a href="mailto:votdev@gmx.de">votdev@gmx.de</a>)<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Developer</font></em></div><br />
             <hr size="1" />
             <p>The following persons have contributed to NAS4Free support:</p>
               <div>Christian Degen alias bubulein (<a href="mailto:degen@nas4free.org">degen@nas4free.org</a>)<br />
+              &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">User guide and Live support on irc #nas4free|IRC Freenode <a href="http://webchat.freenode.net/?channels=#nas4free">http://webchat.freenode.net</a></font></em></div><br />
+              <div>Samuel Tunis alias killermist (<a href="mailto:killermist@nas4free.org">killermist@nas4free.org</a>)<br />
               &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">User guide and Live support on irc #nas4free|IRC Freenode <a href="http://webchat.freenode.net/?channels=#nas4free">http://webchat.freenode.net</a></font></em></div><br />
             <hr size="1" />
             <p>The following persons have contributed to NAS4Free documentation project:</p>
@@ -120,7 +121,7 @@ $pgtitle = array(gettext("Help"), gettext("License & Credits"));
             <div>Raul Fernandez Garcia (<a href="mailto:raulfg3@gmail.com">raulfg3@gmail.com</a>)<br />
 	      &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Spanish translator of the WebGUI</font></em></div><br />
 	    <div>Kevin Fowler (<a href="mailto:kfowler@nas4free.org">kfowler@nas4free.org</a>)<br />
-              &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Webmaster, Documentation, NAS4Free code</font></em></div><br />	                                           
+              &nbsp;&nbsp;&nbsp;&nbsp;<em><font color="#666666">Webmaster, Documentation & Coder</font></em></div><br />	                                           
 						</td></tr>						
             <?php html_separator();?>
             <?php html_titleline(gettext("Software used"));?>

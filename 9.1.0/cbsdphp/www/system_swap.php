@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -128,14 +124,14 @@ function type_change() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-				<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-				<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-				<li class="tabact"><a href="system_swap.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Swap");?></span></a></li>
-				<li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-				<li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-				<li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-				<li class="tabinact"><a href="system_sysctl.php"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+				<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+				<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+				<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+				<li class="tabact"><a href="system_swap.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Swap");?></span></a></li>
+				<li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+				<li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+				<li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+				<li class="tabinact"><a href="system_sysctl.php"><span><?=gettext("sysctl.conf");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -152,7 +148,7 @@ function type_change() {
 					<?php html_inputbox("devicespecialfile", gettext("Device"), $pconfig['devicespecialfile'], sprintf(gettext("Name of the device to use as swap device, e.g. %s."), "/dev/ad0s3"), true, 20);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" onclick="enable_change(true)" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

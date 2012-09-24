@@ -7,18 +7,8 @@
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 
-	Modified by Michael Zoon <zoon01@nas4free.org>.
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
-
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -107,9 +97,45 @@ function check_firmware_version($locale) {
 	return null;
 }
 
+function get_path_version($rss) {
+	$version = get_product_version();
+
+	$resp = "$version";
+	// e.g. version = 9.1.0.1 -> 9001, 0001
+	if (preg_match("/^.*(\d+)\.(\d+)\.(\d)\.(\d).*$/", $version, $m)) {
+		$os_ver = $m[1] * 1000 + $m[2];
+		$pd_ver = $m[3] * 1000 + $m[4];
+	} else {
+		return $resp;
+	}
+
+	$xml = @simplexml_load_file($rss);
+	if (empty($xml)) return $resp;
+	foreach ($xml->channel->item as $item) {
+		$title = $item->title;
+		$parts = pathinfo($title);
+		if ($parts['dirname'] === "/") {
+			if (preg_match("/^.*(\d+)\.(\d+)\.(\d)\.(\d).*$/",
+			    $parts['basename'], $m)) {
+			    	$os_ver2 = $m[1] * 1000 + $m[2];
+				$pd_ver2 = $m[3] * 1000 + $m[4];
+				$rss_version = sprintf("%d.%d.%d.%d",
+				    $m[1], $m[2], $m[3], $m[4]);
+				// Compare with rss version, equal or greater?
+				if ($os_ver2 > $os_ver
+				    || ($os_ver2 == $os_ver && $pd_ver2 >= $pd_ver)) {
+				    $resp = $rss_version;
+				    break;
+				}
+			}
+		}
+	}
+	return $resp;
+}
+
 function get_latest_file($rss) {
 	global $g;
-	$product =get_product_name();
+	$product = get_product_name();
 	$platform = $g['fullplatform'];
 	$version = get_product_version();
 	$revision = get_product_revision();
@@ -150,18 +176,26 @@ function get_latest_file($rss) {
 }
 
 function check_firmware_version_rss($locale) {
-	$rss_stable = "http://sourceforge.net/api/file/index/project-id/722987/path/NAS4Free-9.0-Stable/mtime/desc/limit/20/rss";
-	$rss_nightly = "http://sourceforge.net/api/file/index/project-id/722987/path/NAS4Free-9.0-Nightly/mtime/desc/limit/20/rss";
+	$rss_path = "http://sourceforge.net/api/file/index/project-id/722987/mtime/desc/limit/20/rss";
+	$rss_release = "http://sourceforge.net/api/file/index/project-id/722987/path/NAS4Free-@@VERSION@@/mtime/desc/limit/20/rss";
+	$rss_beta = "http://sourceforge.net/api/file/index/project-id/722987/path/NAS4Free-Beta/mtime/desc/limit/20/rss";
 
-	$stable = get_latest_file($rss_stable);
-	$nightly = get_latest_file($rss_nightly);
+	// replace with existing version
+	$path_version = get_path_version($rss_path);
+	if (empty($path_version)) {
+		return "";
+	}
+	$rss_release = str_replace('@@VERSION@@', $path_version, $rss_release);
+
+	$release = get_latest_file($rss_release);
+	$beta = get_latest_file($rss_beta);
 	$resp = "";
-	if (!empty($stable)) {
-		$resp .= sprintf(gettext("Latest stable build: %s"), $stable);
+	if (!empty($release)) {
+		$resp .= sprintf(gettext("Latest Release: %s"), $release);
 		$resp .= "<br />\n";
 	}
-	if (!empty($nightly)) {
-		$resp .= sprintf(gettext("Latest nightly build: %s"), $nightly);
+	if (!empty($beta)) {
+		$resp .= sprintf(gettext("Latest Beta Build: %s"), $beta);
 		$resp .= "<br />\n";
 	}
 	return $resp;
@@ -263,7 +297,7 @@ if ($mode === "default" || $mode === "enable" || $mode === "disable") {
 			<?php if ($savemsg) print_info_box($savemsg); ?>
 			<table width="100%" border="0" cellpadding="6" cellspacing="0">
 			<?php html_titleline(gettext("Firmware"));?>
-			<?php html_text("version", gettext("Version"), sprintf("%s %s (%s)", get_product_name(), get_product_version(), get_product_revision()));?>
+			<?php html_text("Current version", gettext("Current Version:"), sprintf("%s %s (%s)", get_product_name(), get_product_version(), get_product_revision()));?>
 			<?php html_separator();?>
 			<?php if ($fwinfo) {
 				html_titleline(gettext("Online version check"));
@@ -288,29 +322,29 @@ if ($mode === "default" || $mode === "enable" || $mode === "disable") {
 			</form>
 			<?php else:?>
 			<?php if (!file_exists($d_firmwarelock_path)):?>
-			<?php echo gettext("Click &quot;Enable firmware upload&quot; below, then choose the image file to be uploaded.<br />Click &quot;Upgrade firmware&quot; to start the upgrade process.");?>
+			<?=gettext("Click &quot;Enable firmware upload&quot; below, then choose the image file to be uploaded.<br />Click &quot;Upgrade firmware&quot; to start the upgrade process.");?>
 			<form action="system_firmware.php" method="post" enctype="multipart/form-data">
 				<?php if (!file_exists($d_sysrebootreqd_path)):?>
 					<?php if (!file_exists($d_fwupenabled_path)):?>
 					<div id="submit">
-					<input name="Submit" id="Enable" type="submit" class="formbtn" value="<?php echo gettext("Enable firmware upload");?>" />
+					<input name="Submit" id="Enable" type="submit" class="formbtn" value="<?=gettext("Enable firmware upload");?>" />
 					</div>
 					<?php else:?>
 					<div id="submit">
-					<input name="Submit" id="Disable" type="submit" class="formbtn" value="<?php echo gettext("Disable firmware upload");?>" />
+					<input name="Submit" id="Disable" type="submit" class="formbtn" value="<?=gettext("Disable firmware upload");?>" />
 					</div>
 					<div id="submit">
-					<strong><?php echo gettext("Firmware image file");?> </strong>&nbsp;<input name="ulfile" type="file" class="formfld" size="40" />
+					<strong><?=gettext("Firmware image file");?> </strong>&nbsp;<input name="ulfile" type="file" class="formfld" size="40" />
 					</div>
 					<div id="submit">
-					<input name="Submit" id="Upgrade" type="submit" class="formbtn" value="<?php echo gettext("Upgrade firmware");?>" />
+					<input name="Submit" id="Upgrade" type="submit" class="formbtn" value="<?=gettext("Upgrade firmware");?>" />
 					</div>
 					<?php endif;?>
 				<?php else:?>
-				<strong><?php echo gettext("You must reboot the system before you can upgrade the firmware.");?></strong>
+				<strong><?=gettext("You must reboot the system before you can upgrade the firmware.");?></strong>
 				<?php endif;?>
 				<div id="remarks">
-					<?php html_remark("warning", gettext("Warning"), sprintf(gettext("DO NOT abort the firmware upgrade once it has started. %s will reboot automatically after storing the new firmware. The configuration will be maintained.<br />You need a minimum of %d Mb RAM to perform the firmware update.<br />It is strongly recommended that you <a href='%s'>Backup</a> the System configuration before doing a Firmware upgrade."), get_product_name(), 384, "system_backup.php"));?>
+					<?php html_remark("warning", gettext("Warning"), sprintf(gettext("DO NOT abort the firmware upgrade once it has started. %s will reboot automatically after storing the new firmware. The configuration will be maintained.<br />You need a minimum of %d Mb RAM to perform the firmware update.<br />It is strongly recommended that you <a href='%s'>Backup</a> the System configuration before doing a Firmware upgrade."), get_product_name(), 512, "system_backup.php"));?>
 				</div>
 				<?php include("formend.inc");?>
 			</form>

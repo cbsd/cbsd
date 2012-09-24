@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -74,18 +70,18 @@ if (!isset($do_action)) {
 <table width="100%" border="0" cellpadding="0" cellspacing="0">
 <tr><td class="tabnavtbl">
   <ul id="tabnav">
-	<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?php echo gettext("JBOD");?></span></a></li>
-	<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?php echo gettext("RAID 0");?></span></a></li>
-	<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?php echo gettext("RAID 1");?></span></a></li>
-	<li class="tabinact"><a href="disks_raid_graid5.php"><span><?php echo gettext("RAID 5");?></span></a></li>
-	<li class="tabact"><a href="disks_raid_gvinum.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("RAID 0/1/5");?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?=gettext("JBOD");?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?=gettext("RAID 0");?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?=gettext("RAID 1");?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_graid5.php"><span><?=gettext("RAID 5");?></span></a></li>
+	<li class="tabact"><a href="disks_raid_gvinum.php" title="<?=gettext("Reload page");?>"><span><?=gettext("RAID 0/1/5");?></span></a></li>
   </ul>
   </td></tr>
   <tr><td class="tabnavtbl">
   <ul id="tabnav2">
-	<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?php echo gettext("Management"); ?></span></a></li>
-	<li class="tabact"><a href="disks_raid_gvinum_tools.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Tools");?></span></a></li>
-	<li class="tabinact"><a href="disks_raid_gvinum_info.php"><span><?php echo gettext("Information"); ?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?=gettext("Management"); ?></span></a></li>
+	<li class="tabact"><a href="disks_raid_gvinum_tools.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Tools");?></span></a></li>
+	<li class="tabinact"><a href="disks_raid_gvinum_info.php"><span><?=gettext("Information"); ?></span></a></li>
   </ul>
   </td></tr>
   <tr>
@@ -94,13 +90,13 @@ if (!isset($do_action)) {
 			<form action="disks_raid_gvinum_tools.php" method="post" name="iform" id="iform">
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr>
-					  <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Object name");?></td>
+					  <td width="22%" valign="top" class="vncellreq"><?=gettext("Object name");?></td>
 					  <td width="78%" class="vtable">
-	          	<input name="object" type="text" class="formfld" id="object" size="20" value="<?php htmlspecialchars($disk);?>" />
+	          	<input name="object" type="text" class="formfld" id="object" size="20" value="<?=htmlspecialchars($disk);?>" />
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Unix Command");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Unix Command");?></td>
             <td width="78%" class="vtable">
 	            <select name="action" class="formfld" id="action">
 	              <option value="start" <?php if ($action == "start") echo "selected=\"selected\""; ?>>start</option>
@@ -114,7 +110,7 @@ if (!isset($do_action)) {
 	        </tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Send Command!");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Send Command!");?>" />
 				</div>
 				<?php if ($do_action) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -62,29 +58,29 @@ $raidstatus = get_sraid_disks_list();
 		<td class="tabcont">
 			<table width="100%" border="0" cellpadding="0" cellspacing="0">
 				<tr>
-					<td width="5%" class="listhdrlr"><?php echo gettext("Disk");?></td>
-					<td width="6%" class="listhdrr"><?php echo gettext("Size");?></td>
-					<td width="17%" class="listhdrr"><?php echo gettext("Description");?></td>
-					<td width="16%" class="listhdrr"><?php echo gettext("Device model"); ?></td>
-					<td width="13%" class="listhdrr"><?php echo gettext("Serial number"); ?></td>
-					<td width="9%" class="listhdrr"><?php echo gettext("File system"); ?></td>
-					<td width="18%" class="listhdrr"><?php echo gettext("I/O statistics");?></td>
-					<td width="8%" class="listhdrr"><?php echo gettext("Temperature");?></td>
-					<td width="8%" class="listhdrr"><?php echo gettext("Status");?></td>
+					<td width="5%" class="listhdrlr"><?=gettext("Disk");?></td>
+					<td width="6%" class="listhdrr"><?=gettext("Size");?></td>
+					<td width="17%" class="listhdrr"><?=gettext("Description");?></td>
+					<td width="16%" class="listhdrr"><?=gettext("Device model"); ?></td>
+					<td width="13%" class="listhdrr"><?=gettext("Serial number"); ?></td>
+					<td width="9%" class="listhdrr"><?=gettext("File system"); ?></td>
+					<td width="18%" class="listhdrr"><?=gettext("I/O statistics");?></td>
+					<td width="8%" class="listhdrr"><?=gettext("Temperature");?></td>
+					<td width="8%" class="listhdrr"><?=gettext("Status");?></td>
 				</tr>
 				<?php foreach ($a_disk_conf as $disk):?>
 				<?php (($iostat = system_get_device_iostat($disk['name'])) === FALSE) ? $iostat = gettext("n/a") : $iostat = sprintf("%s KiB/t, %s tps, %s MiB/s", $iostat['kpt'], $iostat['tps'], $iostat['mps']);?>
 				<?php (($temp = system_get_device_temp($disk['name'])) === FALSE) ? $temp = htmlspecialchars(gettext("n/a")) : $temp = sprintf("%s &deg;C", htmlspecialchars($temp));?>
 				<tr>
-					<td class="listlr"><?php echo htmlspecialchars($disk['name']);?></td>
-					<td class="listr"><?php echo htmlspecialchars($disk['size']);?></td>
-					<td class="listr"><?php echo htmlspecialchars($disk['desc']);?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
-					<td class="listr"><?php ($disk['fstype']) ? htmlspecialchars(get_fstype_shortdesc($disk['fstype'])) : htmlspecialchars(gettext("Unknown or unformatted"))?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars($iostat);?>&nbsp;</td>
-					<td class="listr"><?php echo $temp;?>&nbsp;</td>
-					<td class="listbg"><?php (0 == disks_exists($disk['devicespecialfile'])) ? gettext("ONLINE") : gettext("MISSING");?>&nbsp;</td>
+					<td class="listlr"><?=htmlspecialchars($disk['name']);?></td>
+					<td class="listr"><?=htmlspecialchars($disk['size']);?></td>
+					<td class="listr"><?=htmlspecialchars($disk['desc']);?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
+					<td class="listr"><?=($disk['fstype']) ? htmlspecialchars(get_fstype_shortdesc($disk['fstype'])) : htmlspecialchars(gettext("Unknown or unformatted"))?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars($iostat);?>&nbsp;</td>
+					<td class="listr"><?=$temp;?>&nbsp;</td>
+					<td class="listbg"><?=(0 == disks_exists($disk['devicespecialfile'])) ? gettext("ONLINE") : gettext("MISSING");?>&nbsp;</td>
 				</tr>
 				<?php endforeach; ?>
 				<?php if (isset($raidstatus)):?>
@@ -92,15 +88,15 @@ $raidstatus = get_sraid_disks_list();
 				<?php (($iostat = system_get_device_iostat($diskk)) === FALSE) ? $iostat = gettext("n/a") : $iostat = sprintf("%s KiB/t, %s tps, %s MiB/s", $iostat['kpt'], $iostat['tps'], $iostat['mps']);?>
 				<?php (($temp = system_get_device_temp($diskk)) === FALSE) ? $temp = gettext("n/a") : $temp = sprintf("%s &deg;C", $temp);?>
 				<tr>
-					<td class="listlr"><?php echo htmlspecialchars($diskk);?></td>
-					<td class="listr"><?php echo htmlspecialchars($diskv['size']);?></td>
-					<td class="listr"><?php echo htmlspecialchars(gettext("Software RAID"));?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars(gettext("n/a"));?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars(gettext("n/a"));?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars(($disk['fstype']));?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars($iostat);?>&nbsp;</td>
-					<td class="listr"><?php echo htmlspecialchars($temp);?>&nbsp;</td>
-					<td class="listbg"><?php echo htmlspecialchars($diskv['state']);?>&nbsp;</td>
+					<td class="listlr"><?=htmlspecialchars($diskk);?></td>
+					<td class="listr"><?=htmlspecialchars($diskv['size']);?></td>
+					<td class="listr"><?=htmlspecialchars(gettext("Software RAID"));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(gettext("n/a"));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(gettext("n/a"));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(($disk['fstype']));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars($iostat);?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars($temp);?>&nbsp;</td>
+					<td class="listbg"><?=htmlspecialchars($diskv['state']);?>&nbsp;</td>
 				</tr>
 				<?php endforeach;?>
 				<?php endif;?>

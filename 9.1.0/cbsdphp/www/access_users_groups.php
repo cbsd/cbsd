@@ -6,9 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -105,8 +102,8 @@ function userdbgroup_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="access_users.php"><span><?php echo gettext("Users");?></span></a></li>
-				<li class="tabact"><a href="access_users_groups.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Groups");?></span></a></li>
+				<li class="tabinact"><a href="access_users.php"><span><?=gettext("Users");?></span></a></li>
+				<li class="tabact"><a href="access_users_groups.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Groups");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -125,21 +122,21 @@ function userdbgroup_process_updatenotification($mode, $data) {
 						<td>
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
-									<td width="45%" class="listhdrlr"><?php echo gettext("Group");?></td>
-									<td width="5%" class="listhdrr"><?php echo gettext("GID");?></td>
-									<td width="40%" class="listhdrr"><?php echo gettext("Description");?></td>
+									<td width="45%" class="listhdrlr"><?=gettext("Group");?></td>
+									<td width="5%" class="listhdrr"><?=gettext("GID");?></td>
+									<td width="40%" class="listhdrr"><?=gettext("Description");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php foreach ($a_group_conf as $groupv):?>
 								<?php $notificationmode = updatenotify_get_mode("userdb_group", $groupv['uuid']); ?>
 								<tr>
-									<td class="listlr"><?php htmlspecialchars($groupv['name']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($groupv['id']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($groupv['desc']);?>&nbsp;</td>
+									<td class="listlr"><?=htmlspecialchars($groupv['name']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($groupv['id']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($groupv['desc']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 										<td valign="middle" nowrap="nowrap" class="list">
-											<a href="access_users_groups_edit.php?uuid=<?php $groupv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit group");?>" border="0" alt="<?php echo gettext("Edit group");?>" /></a>&nbsp;
-											<a href="access_users_groups.php?act=del&amp;uuid=<?php $groupv["uuid"];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this group?");?>')"><img src="x.gif" title="<?php echo gettext("Delete group");?>" border="0" alt="<?php echo gettext("Delete group");?>" /></a>
+											<a href="access_users_groups_edit.php?uuid=<?=$groupv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit group");?>" border="0" alt="<?=gettext("Edit group");?>" /></a>&nbsp;
+											<a href="access_users_groups.php?act=del&amp;uuid=<?=$groupv["uuid"];?>" onclick="return confirm('<?=gettext("Do you really want to delete this group?");?>')"><img src="x.gif" title="<?=gettext("Delete group");?>" border="0" alt="<?=gettext("Delete group");?>" /></a>
 										</td>
 									<?php else: ?>
 										<td valign="middle" nowrap="nowrap" class="list">
@@ -151,7 +148,7 @@ function userdbgroup_process_updatenotification($mode, $data) {
 								<tr>
 									<td class="list" colspan="3"></td>
 									<td class="list">
-										<a href="access_users_groups_edit.php"><img src="plus.gif" title="<?php echo gettext("Add group");?>" border="0" alt="<?php echo gettext("Add group");?>" /></a>
+										<a href="access_users_groups_edit.php"><img src="plus.gif" title="<?=gettext("Add group");?>" border="0" alt="<?=gettext("Add group");?>" /></a>
 									</td	>
 								</tr>
 							</table>
@@ -169,17 +166,17 @@ function userdbgroup_process_updatenotification($mode, $data) {
 						<td>
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
-									<td width="45%" class="listhdrlr"><?php echo gettext("Group");?></td>
-									<td width="5%" class="listhdrr"><?php echo gettext("GID");?></td>
-									<td width="40%" class="listhdrr"><?php echo gettext("Description");?></td>
+									<td width="45%" class="listhdrlr"><?=gettext("Group");?></td>
+									<td width="5%" class="listhdrr"><?=gettext("GID");?></td>
+									<td width="40%" class="listhdrr"><?=gettext("Description");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php foreach ($a_group as $groupk => $groupv):?>
 								<?php if (false !== array_search_ex($groupv, $a_group_conf, "id")) continue; // Do not display user defined groups twice. ?>
 								<tr>
-									<td class="listlr"><?php $groupk;?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($groupv);?>&nbsp;</td>
-									<td class="listr"><?php echo gettext("System");?>&nbsp;</td>
+									<td class="listlr"><?=$groupk;?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($groupv);?>&nbsp;</td>
+									<td class="listr"><?=gettext("System");?>&nbsp;</td>
 								</tr>
 								<?php endforeach;?>
 							</table>

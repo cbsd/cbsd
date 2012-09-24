@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -83,7 +78,7 @@ if(!isset($do_action)) {
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="system_packages.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Packages");?></span></a></li>
+				<li class="tabact"><a href="system_packages.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Packages");?></span></a></li>
   		</ul>
   	</td>
 	</tr>
@@ -94,15 +89,15 @@ if(!isset($do_action)) {
 				<?php if ($savemsg) print_info_box($savemsg); ?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Package file");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Package file");?></td>
 						<td width="78%" class="vtable">
 							<input name="ulfile" type="file" class="formfld" />
-							<br /><?php echo gettext("Select the FreeBSD package to be installed.");?>
+							<br /><?=gettext("Select the FreeBSD package to be installed.");?>
 						</td>
 					</tr>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Install")?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Install")?>" />
 				</div>
 				<?php if($do_action)
 				{

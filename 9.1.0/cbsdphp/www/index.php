@@ -6,18 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
-
-	Modified by Michael Zoon (zoon01@nas4free.org)
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Improved by Stefan Hendricks (info@henmedia.de)
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -50,10 +41,12 @@
 */
 // Configure page permission
 $pgperm['allowuser'] = TRUE;
+
 require("auth.inc");
 require("guiconfig.inc");
 require("zfs.inc");
 require("sajax/sajax.php");
+
 $pgtitle = array(gettext("System information"));
 $pgtitle_omit = true;
 
@@ -70,7 +63,7 @@ sajax_export("update_controls");
 sajax_handle_client_request();
 
 if(function_exists("date_default_timezone_set") and function_exists("date_default_timezone_get"))
-     date_default_timezone_set(date_default_timezone_get());
+     @date_default_timezone_set(@date_default_timezone_get());
 ?>
 <?php include("fbegin.inc");?>
 <script type="text/javascript">//<![CDATA[
@@ -86,62 +79,62 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
     <td class="tabcont">
     	<table width="100%" border="0" cellspacing="0" cellpadding="0">
  			  <tr>
-			    <td colspan="2" class="listtopic"><?php echo gettext("System information");?></td>
+			    <td colspan="2" class="listtopic"><?=gettext("System information");?></td>
 			  </tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("Hostname");?></td>
-			    <td width="75%" class="listr"><?php echo system_get_hostname();?></td>
+			    <td width="25%" class="vncellt"><?=gettext("Hostname");?></td>
+			    <td width="75%" class="listr"><?=system_get_hostname();?></td>
 			  </tr>
 			  <tr>
-			    <td width="25%" valign="top" class="vncellt"><?php echo gettext("Version");?></td>
-			    <td width="75%" class="listr"><strong><?php echo get_product_version();?> <?php echo get_product_versionname();?></strong> (<?php echo gettext("revision");?> <?php echo get_product_revision();?>)</td>
+			    <td width="25%" valign="top" class="vncellt"><?=gettext("Version");?></td>
+			    <td width="75%" class="listr"><strong><?=get_product_version();?> <?=get_product_versionname();?></strong> (<?=gettext("revision");?> <?=get_product_revision();?>)</td>
 			  </tr>
 			  <tr>
-			    <td width="25%" valign="top" class="vncellt"><?php echo gettext("Built date");?></td>
-			    <td width="75%" class="listr"><?php echo get_product_buildtime();?>
+			    <td width="25%" valign="top" class="vncellt"><?=gettext("Built date");?></td>
+			    <td width="75%" class="listr"><?=get_product_buildtime();?>
 			    </td>
 			  </tr>
 			  <tr>
-			    <td width="25%" valign="top" class="vncellt"><?php echo gettext("Platform OS");?></td>
+			    <td width="25%" valign="top" class="vncellt"><?=gettext("Platform OS");?></td>
 			    <td width="75%" class="listr">
-			      <?php
+			      <?
 			        exec("/sbin/sysctl -n kern.ostype", $ostype);
 			        exec("/sbin/sysctl -n kern.osrelease", $osrelease);
-			        exec("/sbin/sysctl -n kern.osrevision", $osrevision);
-			        echo("$ostype[0] $osrelease[0] (revision $osrevision[0])");
+			        exec("/sbin/sysctl -n kern.osreldate", $osreldate);
+			        echo("$ostype[0] $osrelease[0] (reldate $osreldate[0])");
 			      ?>
 			    </td>
 			  </tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("Platform");?></td>
+			    <td width="25%" class="vncellt"><?=gettext("Platform");?></td>
 			    <td width="75%" class="listr">
-			    	<?php echo sprintf(gettext("%s on %s"), $g['fullplatform'], $cpuinfo['model']);?>
+			    	<?=sprintf(gettext("%s on %s"), $g['fullplatform'], $cpuinfo['model']);?>
 			    </td>
 			  </tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("System");?></td>
-			    <td width="75%" class="listr"><?php echo htmlspecialchars($smbios['planar']['maker']);?> <?php echo htmlspecialchars($smbios['planar']['product']);?> <?php echo sprintf(gettext("Bios:"));?> <?php echo htmlspecialchars($smbios['bios']['version']);?> <?php echo htmlspecialchars($smbios['bios']['reldate']);?></td>
+			    <td width="25%" class="vncellt"><?=gettext("System");?></td>
+			    <td width="75%" class="listr"><?=htmlspecialchars($smbios['planar']['maker']);?> <?=htmlspecialchars($smbios['planar']['product']);?> <?=sprintf(gettext("Bios:"));?> <?=htmlspecialchars($smbios['bios']['version']);?> <?=htmlspecialchars($smbios['bios']['reldate']);?></td>
 			    </td>
 			  </tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("System time");?></td>
+			    <td width="25%" class="vncellt"><?=gettext("System time");?></td>
 			    <td width="75%" class="listr">
-			      <input style="padding: 0; border: 0;" size="30" name="date" id="date" value="<?php echo htmlspecialchars(shell_exec("date"));?>" />
+			      <input style="padding: 0; border: 0;" size="30" name="date" id="date" value="<?=htmlspecialchars(shell_exec("date"));?>" />
 			    </td>
 			  </tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("System uptime");?></td>
+			    <td width="25%" class="vncellt"><?=gettext("System uptime");?></td>
 			    <td width="75%" class="listr">
 						<?php $uptime = system_get_uptime();?>
-						<span name="uptime" id="uptime"><?php echo htmlspecialchars($uptime);?></span>
+						<span name="uptime" id="uptime"><?=htmlspecialchars($uptime);?></span>
 			    </td>
 			  </tr>
 			  <?php if (Session::isAdmin()):?>
 			  <?php if ($config['lastchange']):?>
 		    <tr>
-		      <td width="25%" class="vncellt"><?php echo gettext("Last config change");?></td>
+		      <td width="25%" class="vncellt"><?=gettext("Last config change");?></td>
 		      <td width="75%" class="listr">
-						<input style="padding: 0; border: 0;" size="30" name="lastchange" id="lastchange" value="<?php echo htmlspecialchars(date("D M j G:i:s T Y", $config['lastchange']));?>" />
+						<input style="padding: 0; border: 0;" size="30" name="lastchange" id="lastchange" value="<?=htmlspecialchars(date("D M j G:i:s T Y", $config['lastchange']));?>" />
 		      </td>
 		    </tr>
 				<?php endif;?>
@@ -162,22 +155,22 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
 				?>
 				<?php elseif (!empty($cpuinfo['temperature'])):?>
 				<tr>
-					<td width="25%" class="vncellt"><?php echo gettext("CPU temperature");?></td>
+					<td width="25%" class="vncellt"><?=gettext("CPU temperature");?></td>
 					<td width="75%" class="listr">
-						<input style="padding: 0; border: 0;" size="30" name="cputemp" id="cputemp" value="<?php echo htmlspecialchars($cpuinfo['temperature']);?>" />
+						<input style="padding: 0; border: 0;" size="30" name="cputemp" id="cputemp" value="<?=htmlspecialchars($cpuinfo['temperature']);?>" />
 					</td>
 				</tr>
 				<?php endif;?>
 				<?php if (!empty($cpuinfo['freq'])):?>
 				<tr>
-					<td width="25%" class="vncellt"><?php echo gettext("CPU frequency");?></td>
+					<td width="25%" class="vncellt"><?=gettext("CPU frequency");?></td>
 					<td width="75%" class="listr">
-						<input style="padding: 0; border: 0;" size="30" name="cpufreq" id="cpufreq" value="<?php echo htmlspecialchars($cpuinfo['freq']);?>MHz" title="<?php echo sprintf(gettext("Levels (MHz/mW): %s"), $cpuinfo['freqlevels']);?>" />
+						<input style="padding: 0; border: 0;" size="30" name="cpufreq" id="cpufreq" value="<?=htmlspecialchars($cpuinfo['freq']);?>MHz" title="<?=sprintf(gettext("Levels (MHz/mW): %s"), $cpuinfo['freqlevels']);?>" />
 					</td>
 				</tr>
 				<?php endif;?>
 				<tr>
-					<td width="25%" class="vncellt"><?php echo gettext("CPU usage");?></td>
+					<td width="25%" class="vncellt"><?=gettext("CPU usage");?></td>
 					<td width="75%" class="listr">
 				    	<table width="100%" border="0" cellspacing="0" cellpadding="0"><tr><td>
 						<?php
@@ -187,7 +180,7 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
 						echo "<img src='bar_gray.gif' name='cpuusagef' id='cpuusagef' width='" . (100 - $percentage) . "' class='progbarc' alt='' />";
 						echo "<img src='bar_right.gif' class='progbarr' alt='' /> ";
 						?>
-						<input style="padding: 0; border: 0;" size="30" name="cpuusage" id="cpuusage" value="<?php echo gettext("Updating in 5 seconds.");?>" />
+						<input style="padding: 0; border: 0;" size="30" name="cpuusage" id="cpuusage" value="<?=gettext("Updating in 5 seconds.");?>" />
 					</td></tr>
 						<?php
 						$cpus = system_get_cpus();
@@ -209,7 +202,7 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
 					</td>
 				</tr>
 			  <tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("Memory usage");?></td>
+			    <td width="25%" class="vncellt"><?=gettext("Memory usage");?></td>
 			    <td width="75%" class="listr">
 						<?php
 						$raminfo = system_get_ram_info();
@@ -219,12 +212,12 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
 						echo "<img src='bar_gray.gif' name='memusagef' id='memusagef' width='" . (100 - $percentage) . "' class='progbarc' alt='' />";
 						echo "<img src='bar_right.gif' class='progbarr' alt='' /> ";
 						?>
-						<input style="padding: 0; border: 0;" size="30" name="memusage" id="memusage" value="<?php echo sprintf(gettext("%d%% of %dMiB"), $percentage, round($raminfo['physical'] / 1024 / 1024));?>" />
+						<input style="padding: 0; border: 0;" size="30" name="memusage" id="memusage" value="<?=sprintf(gettext("%d%% of %dMiB"), $percentage, round($raminfo['physical'] / 1024 / 1024));?>" />
 			    </td>
 			  </tr>
 				<?php $swapinfo = system_get_swap_info(); if (!empty($swapinfo)):?>
 				<tr>
-					<td width="25%" class="vncellt"><?php echo gettext("Swap usage");?></td>
+					<td width="25%" class="vncellt"><?=gettext("Swap usage");?></td>
 					<td width="75%" class="listr">
 						<table width="100%" border="0" cellspacing="0" cellpadding="1">
 							<?php
@@ -260,18 +253,18 @@ if(function_exists("date_default_timezone_set") and function_exists("date_defaul
 				</tr>
 				<?php endif;?>
 				<tr>
-			  	<td width="25%" class="vncellt"><?php echo gettext("Load averages");?></td>
+			  	<td width="25%" class="vncellt"><?=gettext("Load averages");?></td>
 					<td width="75%" class="listr">
 						<?php
 						exec("uptime", $result);
 						$loadaverage = substr(strrchr($result[0], "load averages:"), 15);
 						?>
-						<input style="padding: 0; border: 0;" size="14" name="loadaverage" id="loadaverage" value="<?php echo $loadaverage;?>" />
-						<?php echo "<small>[<a href='status_process.php'>".gettext("Show process information")."</a></small>]";?>
+						<input style="padding: 0; border: 0;" size="14" name="loadaverage" id="loadaverage" value="<?=$loadaverage;?>" />
+						<?="<small>[<a href='status_process.php'>".gettext("Show process information")."</a></small>]";?>
 			    </td>
 			  </tr>
 				<tr>
-			    <td width="25%" class="vncellt"><?php echo gettext("Disk space usage");?></td>
+			    <td width="25%" class="vncellt"><?=gettext("Disk space usage");?></td>
 			    <td width="75%" class="listr">
 				    <table width="100%" border="0" cellspacing="0" cellpadding="1">
 				      <?php

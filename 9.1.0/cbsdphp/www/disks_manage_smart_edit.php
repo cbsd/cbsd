@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -158,9 +153,9 @@ function enable_change(enable_change) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="disks_manage.php"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabact"><a href="disks_manage_smart.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
+      	<li class="tabinact"><a href="disks_manage.php"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabact"><a href="disks_manage_smart.php" title="<?=gettext("Reload page");?>"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -170,64 +165,64 @@ function enable_change(enable_change) {
 				<?php if ($input_errors) print_input_errors($input_errors);?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr>
-			      <td valign="top" class="vncellreq"><?php echo gettext("Disk"); ?></td>
+			      <td valign="top" class="vncellreq"><?=gettext("Disk"); ?></td>
 			      <td class="vtable">
 			        <select name="disk" class="formfld" id="disk">
-								<option value=""><?php echo gettext("Must choose one");?></option>
+								<option value=""><?=gettext("Must choose one");?></option>
 								<?php foreach ($a_disk as $diskv):?>
 								<?php if (0 == strcmp($diskv['size'], "NA")) continue;?>
 								<?php if (1 == disks_exists($diskv['devicespecialfile'])) continue;?>
 								<?php if (!isset($diskv['smart'])) continue;?>
-								<option value="<?php $diskv['devicespecialfile'];?>" <?php if ($diskv['devicespecialfile'] === $pconfig['devicespecialfile']) echo "selected=\"selected\"";?>>
+								<option value="<?=$diskv['devicespecialfile'];?>" <?php if ($diskv['devicespecialfile'] === $pconfig['devicespecialfile']) echo "selected=\"selected\"";?>>
 								<?php $diskinfo = disks_get_diskinfo($diskv['devicespecialfile']); echo htmlspecialchars("{$diskv['name']}: {$diskinfo['mediasize_mbytes']}MB ({$diskv['desc']})");?>
 								</option>
 								<?php endforeach;?>
 			        </select><br />
-			        <span class="vexpl"><?php echo gettext("Select a disk that is enabled for S.M.A.R.T. monitoring.");?></span>
+			        <span class="vexpl"><?=gettext("Select a disk that is enabled for S.M.A.R.T. monitoring.");?></span>
 			      </td>
 					</tr>
 					<tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Type");?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("Type");?></td>
             <td width="78%" class="vtable">
               <select name="type" class="formfld" id="type">
               <?php $types = explode(",", "Short Self-Test,Long Self-Test,Conveyance Self-Test,Offline Immediate Test"); $vals = explode(" ", "S L C O");?>
               <?php $j = 0; for ($j = 0; $j < count($vals); $j++):?>
-                <option value="<?php $vals[$j];?>" <?php if ($vals[$j] == $pconfig['type']) echo "selected=\"selected\"";?>>
-                <?php htmlspecialchars($types[$j]);?>
+                <option value="<?=$vals[$j];?>" <?php if ($vals[$j] == $pconfig['type']) echo "selected=\"selected\"";?>>
+                <?=htmlspecialchars($types[$j]);?>
                 </option>
               <?php endfor;?>
               </select>
             </td>
           </tr>
 			    <tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Time");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Time");?></td>
 						<td width="78%" class="vtable">
 							<table width="100%" border="0" cellpadding="4" cellspacing="0">
 								<tr>
-									<td class="listhdrlr"><?php echo gettext("Hours");?></td>
-									<td class="listhdrr"><?php echo gettext("Days");?></td>
-									<td class="listhdrr"><?php echo gettext("Months");?></td>
-									<td class="listhdrr"><?php echo gettext("Week days");?></td>
+									<td class="listhdrlr"><?=gettext("Hours");?></td>
+									<td class="listhdrr"><?=gettext("Days");?></td>
+									<td class="listhdrr"><?=gettext("Months");?></td>
+									<td class="listhdrr"><?=gettext("Week days");?></td>
 								</tr>
 								<tr>
 									<td class="listlr" valign="top">
 										<input type="radio" name="all_hours" id="all_hours1" value="1" <?php if (1 == $pconfig['all_hours']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("All");?><br />
+										<?=gettext("All");?><br />
 										<input type="radio" name="all_hours" id="all_hours2" value="0" <?php if (1 != $pconfig['all_hours']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("Selected");?> ..<br />
+										<?=gettext("Selected");?> ..<br />
 										<table>
 											<tr>
 												<td valign="top">
 													<select multiple="multiple" size="12" name="hour[]" id="hours1" onchange="set_selected('all_hours')">
 														<?php for ($i = 0; $i <= 11; $i++):?>
-														<option value="<?php $i;?>" <?php if (is_array($pconfig['hour']) && in_array("$i", $pconfig['hour'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($i);?></option>
+														<option value="<?=$i;?>" <?php if (is_array($pconfig['hour']) && in_array("$i", $pconfig['hour'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($i);?></option>
 														<?php endfor;?>
 													</select>
 												</td>
 												<td valign="top">
 													<select multiple="multiple" size="12" name="hour[]" id="hours2" onchange="set_selected('all_hours')">
 														<?php for ($i = 12; $i <= 23; $i++):?>
-														<option value="<?php $i;?>" <?php if (is_array($pconfig['hour']) && in_array("$i", $pconfig['hour'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($i);?></option>
+														<option value="<?=$i;?>" <?php if (is_array($pconfig['hour']) && in_array("$i", $pconfig['hour'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($i);?></option>
 														<?php endfor;?>
 													</select>
 												</td>
@@ -236,29 +231,29 @@ function enable_change(enable_change) {
 									</td>
 									<td class="listr" valign="top">
 										<input type="radio" name="all_days" id="all_days1" value="1" <?php if (1 == $pconfig['all_days']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("All");?><br />
+										<?=gettext("All");?><br />
 										<input type="radio" name="all_days" id="all_days2" value="0" <?php if (1 != $pconfig['all_days']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("Selected");?> ..<br />
+										<?=gettext("Selected");?> ..<br />
 										<table>
 											<tr>
 												<td valign="top">
 													<select multiple="multiple" size="12" name="day[]" id="days1" onchange="set_selected('all_days')">
 														<?php for ($i = 1; $i <= 12; $i++):?>
-														<option value="<?php $i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($i);?></option>
+														<option value="<?=$i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($i);?></option>
 														<?php endfor;?>
 													</select>
 												</td>
 												<td valign="top">
 													<select multiple="multiple" size="12" name="day[]" id="days2" onchange="set_selected('all_days')">
 														<?php for ($i = 13; $i <= 24; $i++):?>
-														<option value="<?php $i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($i);?></option>
+														<option value="<?=$i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($i);?></option>
 														<?php endfor;?>
 													</select>
 												</td>
 												<td valign="top">
 													<select multiple="multiple" size="7" name="day[]" id="days3" onchange="set_selected('all_days')">
 														<?php for ($i = 25; $i <= 31; $i++):?>
-														<option value="<?php $i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($i);?></option>
+														<option value="<?=$i;?>" <?php if (is_array($pconfig['day']) && in_array("$i", $pconfig['day'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($i);?></option>
 														<?php endfor;?>
 													</select>
 												</td>
@@ -267,15 +262,15 @@ function enable_change(enable_change) {
 									</td>
 									<td class="listr" valign="top">
 										<input type="radio" name="all_months" id="all_months1" value="1" <?php if (1 == $pconfig['all_months']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("All");?><br />
+										<?=gettext("All");?><br />
 										<input type="radio" name="all_months" id="all_months2" value="0" <?php if (1 != $pconfig['all_months']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("Selected");?> ..<br />
+										<?=gettext("Selected");?> ..<br />
 										<table>
 											<tr>
 												<td valign="top">
 													<select multiple="multiple" size="12" name="month[]" id="months" onchange="set_selected('all_months')">
 														<?php $i = 1; foreach ($a_months as $month):?>
-														<option value="<?php $i;?>" <?php if (isset($pconfig['month']) && in_array("$i", $pconfig['month'])) echo "selected=\"selected\"";?>><?php htmlspecialchars($month);?></option>
+														<option value="<?=$i;?>" <?php if (isset($pconfig['month']) && in_array("$i", $pconfig['month'])) echo "selected=\"selected\"";?>><?=htmlspecialchars($month);?></option>
 														<?php $i++; endforeach;?>
 													</select>
 												</td>
@@ -284,15 +279,15 @@ function enable_change(enable_change) {
 									</td>
 									<td class="listr" valign="top">
 										<input type="radio" name="all_weekdays" id="all_weekdays1" value="1" <?php if (1 == $pconfig['all_weekdays']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("All");?><br />
+										<?=gettext("All");?><br />
 										<input type="radio" name="all_weekdays" id="all_weekdays2" value="0" <?php if (1 != $pconfig['all_weekdays']) echo "checked=\"checked\"";?> />
-										<?php echo gettext("Selected");?> ..<br />
+										<?=gettext("Selected");?> ..<br />
 										<table>
 											<tr>
 												<td valign="top">
 													<select multiple="multiple" size="7" name="weekday[]" id="weekdays" onchange="set_selected('all_weekdays')">
 														<?php $i = 0; foreach ($a_weekdays as $day):?>
-														<option value="<?php $i;?>" <?php if (isset($pconfig['weekday']) && in_array("$i", $pconfig['weekday'])) echo "selected=\"selected\"";?>><?php $day;?></option>
+														<option value="<?=$i;?>" <?php if (isset($pconfig['weekday']) && in_array("$i", $pconfig['weekday'])) echo "selected=\"selected\"";?>><?=$day;?></option>
 														<?php $i++; endforeach;?>
 													</select>
 												</td>
@@ -301,20 +296,20 @@ function enable_change(enable_change) {
 									</td>
 								</tr>
 							</table>
-							<span class="vexpl"><?php echo gettext("Note: Ctrl-click (or command-click on the Mac) to select and de-select minutes, hours, days and months.");?></span>
+							<span class="vexpl"><?=gettext("Note: Ctrl-click (or command-click on the Mac) to select and de-select minutes, hours, days and months.");?></span>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Description");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Description");?></td>
 						<td width="78%" class="vtable">
-							<input name="desc" type="text" class="formfld" id="desc" size="40" value="<?php htmlspecialchars($pconfig['desc']);?>" />
+							<input name="desc" type="text" class="formfld" id="desc" size="40" value="<?=htmlspecialchars($pconfig['desc']);?>" />
 						</td>
 					</tr>
 	      </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

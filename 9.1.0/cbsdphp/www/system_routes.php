@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -107,10 +103,10 @@ function routes_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("routes")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="15%" class="listhdrlr"><?php echo gettext("Interface");?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Network");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Gateway");?></td>
-						<td width="30%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="15%" class="listhdrlr"><?=gettext("Interface");?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Network");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Gateway");?></td>
+						<td width="30%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_routes as $route):?>
@@ -123,13 +119,13 @@ function routes_process_updatenotification($mode, $data) {
 					  	$iflabels['opt' . $j] = $config['interfaces']['opt' . $j]['descr'];
 					  	echo htmlspecialchars($iflabels[$route['interface']]);?>
 						</td>
-	          <td class="listr"><?php strtolower($route['network']);?>&nbsp;</td>
-	          <td class="listr"><?php strtolower($route['gateway']);?>&nbsp;</td>
-	          <td class="listbg"><?php htmlspecialchars($route['descr']);?>&nbsp;</td>
+	          <td class="listr"><?=strtolower($route['network']);?>&nbsp;</td>
+	          <td class="listr"><?=strtolower($route['gateway']);?>&nbsp;</td>
+	          <td class="listbg"><?=htmlspecialchars($route['descr']);?>&nbsp;</td>
 	          <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 	          <td valign="middle" nowrap="nowrap" class="list">
-							<a href="system_routes_edit.php?uuid=<?php $route['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit Route");?>" border="0" alt="<?php echo gettext("Edit Route");?>" /></a>
-	          	<a href="system_routes.php?act=del&amp;uuid=<?php $route['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this route?");?>')"><img src="x.gif" title="<?php echo gettext("Delete Route");?>" border="0" alt="<?php echo gettext("Delete Route");?>" /></a>
+							<a href="system_routes_edit.php?uuid=<?=$route['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit Route");?>" border="0" alt="<?=gettext("Edit Route");?>" /></a>
+	          	<a href="system_routes.php?act=del&amp;uuid=<?=$route['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this route?");?>')"><img src="x.gif" title="<?=gettext("Delete Route");?>" border="0" alt="<?=gettext("Delete Route");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -141,7 +137,7 @@ function routes_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="4"></td>
 						<td class="list">
-							<a href="system_routes_edit.php"><img src="plus.gif" title="<?php echo gettext("Add Route");?>" border="0" alt="<?php echo gettext("Add Route");?>" /></a>
+							<a href="system_routes_edit.php"><img src="plus.gif" title="<?=gettext("Add Route");?>" border="0" alt="<?=gettext("Add Route");?>" /></a>
 						</td>
 					</tr>
 				</table>

@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -78,8 +74,8 @@ if (!isset($do_traceroute)) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="diag_ping.php"><span><?php echo gettext("Ping");?></span></a></li>
-				<li class="tabact"><a href="diag_traceroute.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Traceroute");?></span></a></li>
+				<li class="tabinact"><a href="diag_ping.php"><span><?=gettext("Ping");?></span></a></li>
+				<li class="tabact"><a href="diag_traceroute.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Traceroute");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -94,7 +90,7 @@ if (!isset($do_traceroute)) {
 					<?php html_checkbox("resolve", gettext("Resolve"), $resolve ? true : false, gettext("Resolve IP addresses to hostnames"), "", false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Traceroute");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Traceroute");?>" />
 				</div>
 				<?php if ($do_traceroute) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

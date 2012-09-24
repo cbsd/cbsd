@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -204,18 +199,18 @@ function enable_change(enable_change) {
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<?php html_titleline_checkbox("enable", gettext("System firewall"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Rules");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Rules");?></td>
 						<td width="78%" class="vtable">
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
 									<td width="4%" class="listhdrlr">&nbsp;</td>
-									<td width="5%" class="listhdrr"><?php echo gettext("Proto");?></td>
-									<td width="20%" class="listhdrr"><?php echo gettext("Source");?></td>
-									<td width="5%" class="listhdrr"><?php echo gettext("Port");?></td>
-									<td width="20%" class="listhdrr"><?php echo gettext("Destination");?></td>
-									<td width="5%" class="listhdrr"><?php echo gettext("Port");?></td>
-									<td width="5%" class="listhdrr"><?php htmlspecialchars(gettext("<->"));?></td>
-									<td width="26%" class="listhdrr"><?php echo gettext("Description");?></td>
+									<td width="5%" class="listhdrr"><?=gettext("Proto");?></td>
+									<td width="20%" class="listhdrr"><?=gettext("Source");?></td>
+									<td width="5%" class="listhdrr"><?=gettext("Port");?></td>
+									<td width="20%" class="listhdrr"><?=gettext("Destination");?></td>
+									<td width="5%" class="listhdrr"><?=gettext("Port");?></td>
+									<td width="5%" class="listhdrr"><?=htmlspecialchars(gettext("<->"));?></td>
+									<td width="26%" class="listhdrr"><?=gettext("Description");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php foreach ($a_rule as $rule):?>
@@ -234,18 +229,18 @@ function enable_change(enable_change) {
 											break;
 									}
 									?>
-									<td class="<?php $enable?"listlr":"listlrd";?>"><img src="<?php $actionimg;?>" alt="" /></td>
-									<td class="<?php $enable?"listr":"listrd";?>"><?php strtoupper($rule['protocol']);?>&nbsp;</td>
-									<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars(empty($rule['src']) ? "*" : $rule['src']);?>&nbsp;</td>
-									<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars(empty($rule['srcport']) ? "*" : $rule['srcport']);?>&nbsp;</td>
-									<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars(empty($rule['dst']) ? "*" : $rule['dst']);?>&nbsp;</td>
-									<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars(empty($rule['dstport']) ? "*" : $rule['dstport']);?>&nbsp;</td>
-									<td class="<?php $enable?"listrc":"listrcd";?>"><?php empty($rule['direction']) ? "*" : strtoupper($rule['direction']);?>&nbsp;</td>
-									<td class="listbg"><?php htmlspecialchars($rule['desc']);?>&nbsp;</td>
+									<td class="<?=$enable?"listlr":"listlrd";?>"><img src="<?=$actionimg;?>" alt="" /></td>
+									<td class="<?=$enable?"listr":"listrd";?>"><?=strtoupper($rule['protocol']);?>&nbsp;</td>
+									<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars(empty($rule['src']) ? "*" : $rule['src']);?>&nbsp;</td>
+									<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars(empty($rule['srcport']) ? "*" : $rule['srcport']);?>&nbsp;</td>
+									<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars(empty($rule['dst']) ? "*" : $rule['dst']);?>&nbsp;</td>
+									<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars(empty($rule['dstport']) ? "*" : $rule['dstport']);?>&nbsp;</td>
+									<td class="<?=$enable?"listrc":"listrcd";?>"><?=empty($rule['direction']) ? "*" : strtoupper($rule['direction']);?>&nbsp;</td>
+									<td class="listbg"><?=htmlspecialchars($rule['desc']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 									<td valign="middle" nowrap="nowrap" class="list">
-										<a href="system_firewall_edit.php?uuid=<?php $rule['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit rule");?>" border="0" alt="<?php echo gettext("Edit rule");?>" /></a>
-										<a href="system_firewall.php?act=del&amp;uuid=<?php $rule['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this rule?");?>')"><img src="x.gif" title="<?php echo gettext("Delete rule");?>" border="0" alt="<?php echo gettext("Delete rule");?>" /></a>
+										<a href="system_firewall_edit.php?uuid=<?=$rule['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit rule");?>" border="0" alt="<?=gettext("Edit rule");?>" /></a>
+										<a href="system_firewall.php?act=del&amp;uuid=<?=$rule['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this rule?");?>')"><img src="x.gif" title="<?=gettext("Delete rule");?>" border="0" alt="<?=gettext("Delete rule");?>" /></a>
 									</td>
 									<?php else:?>
 									<td valign="middle" nowrap="nowrap" class="list">
@@ -257,9 +252,9 @@ function enable_change(enable_change) {
 								<tr>
 									<td class="list" colspan="8"></td>
 									<td class="list">
-										<a href="system_firewall_edit.php"><img src="plus.gif" title="<?php echo gettext("Add rule");?>" border="0" alt="<?php echo gettext("Add rule");?>" /></a>
+										<a href="system_firewall_edit.php"><img src="plus.gif" title="<?=gettext("Add rule");?>" border="0" alt="<?=gettext("Add rule");?>" /></a>
 										<?php if (!empty($a_rule)):?>
-										<a href="system_firewall.php?act=del&amp;uuid=all" onclick="return confirm('<?php echo gettext("Do you really want to delete all rules?");?>')"><img src="x.gif" title="<?php echo gettext("Delete all rules");?>" border="0" alt="<?php echo gettext("Delete all rules");?>" /></a>
+										<a href="system_firewall.php?act=del&amp;uuid=all" onclick="return confirm('<?=gettext("Do you really want to delete all rules?");?>')"><img src="x.gif" title="<?=gettext("Delete all rules");?>" border="0" alt="<?=gettext("Delete all rules");?>" /></a>
 										<?php endif;?>
 									</td>
 								</tr>
@@ -269,25 +264,25 @@ function enable_change(enable_change) {
 					<tr>
 						<td width="22%" valign="top" class="vncell">&nbsp;</td>
 						<td width="78%" class="vtable">
-							<?php echo gettext("Download firewall rules.");?><br />
+							<?=gettext("Download firewall rules.");?><br />
 							<div id="submit">
-								<input name="export" type="submit" class="formbtn" value="<?php echo gettext("Export");?>" /><br />
+								<input name="export" type="submit" class="formbtn" value="<?=gettext("Export");?>" /><br />
 							</div>
 						</td>
 					</tr>
 					<tr>
 						<td width="22%" valign="top" class="vncell">&nbsp;</td>
 						<td width="78%" class="vtable">
-							<?php echo gettext("Import firewall rules.");?><br />
+							<?=gettext("Import firewall rules.");?><br />
 							<div id="submit">
 								<input name="rulesfile" type="file" class="formfld" id="rulesfile" size="40" accept="*.rules" />&nbsp;
-								<input name="import" type="submit" class="formbtn" id="import" value="<?php echo gettext("Import");?>" /><br />
+								<input name="import" type="submit" class="formbtn" id="import" value="<?=gettext("Import");?>" /><br />
 							</div>
 						</td>
 					</tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" />
 				</div>
 			</td>
 		</tr>

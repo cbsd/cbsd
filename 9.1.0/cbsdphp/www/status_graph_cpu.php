@@ -7,14 +7,6 @@
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 
-	Modified for XHTML by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
-	All rights reserved.
-
-	Modified by Michael Zoon <zoon01@nas4free.org>
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
-
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
 	All rights reserved.
@@ -56,8 +48,8 @@ $pgtitle = array(gettext("Status"), gettext("Graph"), gettext("CPU load"));?>
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-        <li class="tabinact"><a href="status_graph.php"><span><?php echo gettext("Traffic graph");?></span></a></li>
-        <li class="tabact"><a href="status_graph_cpu.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("CPU load");?></span></a></li>
+        <li class="tabinact"><a href="status_graph.php"><span><?=gettext("Traffic graph");?></span></a></li>
+        <li class="tabact"><a href="status_graph_cpu.php" title="<?=gettext("Reload page");?>"><span><?=gettext("CPU load");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -71,7 +63,7 @@ $pgtitle = array(gettext("Status"), gettext("Graph"), gettext("CPU load"));?>
 
 ?>
 <?php include("formend.inc");?>
-</form><?php echo gettext("Graph shows last 120 seconds");?>
+</form><?=gettext("Graph shows last 120 seconds");?>
 
 
       <div align="center">

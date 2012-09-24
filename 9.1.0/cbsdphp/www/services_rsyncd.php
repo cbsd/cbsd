@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -117,17 +113,17 @@ function enable_change(enable_change) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="services_rsyncd.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Server");?></span></a></li>
-				<li class="tabinact"><a href="services_rsyncd_client.php"><span><?php echo gettext("Client");?></span></a></li>
-				<li class="tabinact"><a href="services_rsyncd_local.php"><span><?php echo gettext("Local");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Server");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd_client.php"><span><?=gettext("Client");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd_local.php"><span><?=gettext("Local");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="services_rsyncd.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_rsyncd_module.php"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd_module.php"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -139,28 +135,28 @@ function enable_change(enable_change) {
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<?php html_titleline_checkbox("enable", gettext("Rsync"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 					<tr>
-						<td valign="top" class="vncellreq"><?php echo gettext("Map to user");?></td>
+						<td valign="top" class="vncellreq"><?=gettext("Map to user");?></td>
 						<td class="vtable">
 							<select name="rsyncd_user" class="formfld" id="rsyncd_user">
-								<option value="ftp" <?php if ("ftp" === $pconfig['rsyncd_user']) echo "selected=\"selected\"";?>><?php echo gettext("Guest");?></option>
+								<option value="ftp" <?php if ("ftp" === $pconfig['rsyncd_user']) echo "selected=\"selected\"";?>><?=gettext("Guest");?></option>
 								<?php foreach ($a_user as $user):?>
-								<option value="<?php $user['login'];?>" <?php if ($user['login'] === $pconfig['rsyncd_user']) echo "selected=\"selected\"";?>><?php echo htmlspecialchars($user['login']);?></option>
+								<option value="<?=$user['login'];?>" <?php if ($user['login'] === $pconfig['rsyncd_user']) echo "selected=\"selected\"";?>><?php echo htmlspecialchars($user['login']);?></option>
 								<?php endforeach;?>
 							</select>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("TCP port");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("TCP port");?></td>
 						<td width="78%" class="vtable">
-							<input name="port" type="text" class="formfld" id="port" size="20" value="<?php htmlspecialchars($pconfig['port']);?>" />
-							<br /><?php echo gettext("Alternate TCP port. Default is 873");?>
+							<input name="port" type="text" class="formfld" id="port" size="20" value="<?=htmlspecialchars($pconfig['port']);?>" />
+							<br /><?=gettext("Alternate TCP port. Default is 873");?>
 						</td>
 					</tr>
 					<?php html_textarea("motd", gettext("MOTD"), $pconfig['motd'], gettext("Message of the day."), false, 65, 7, false, false);?>
 					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters will be added to [global] settings in %s."), "rsyncd.conf") . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://rsync.samba.org/ftp/rsync/rsyncd.conf.html"), false, 65, 5, false, false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

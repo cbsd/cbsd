@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -109,19 +104,19 @@ function zfsdataset_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Dataset");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset_info.php"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Dataset");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset_info.php"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -132,21 +127,21 @@ function zfsdataset_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("zfsdataset")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="20%" class="listhdrlr"><?php echo gettext("Pool");?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Name");?></td>
-						<td width="45%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("Pool");?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Name");?></td>
+						<td width="45%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_dataset as $datasetv):?>
 					<?php $notificationmode = updatenotify_get_mode("zfsdataset", $datasetv['uuid']);?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($datasetv['pool'][0]);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($datasetv['name']);?>&nbsp;</td>
-						<td class="listbg"><?php htmlspecialchars($datasetv['desc']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($datasetv['pool'][0]);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($datasetv['name']);?>&nbsp;</td>
+						<td class="listbg"><?=htmlspecialchars($datasetv['desc']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_zfs_dataset_edit.php?uuid=<?php $datasetv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit dataset");?>" border="0" alt="<?php echo gettext("Edit dataset");?>" /></a>&nbsp;
-							<a href="disks_zfs_dataset.php?act=del&amp;uuid=<?php $datasetv['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this dataset?");?>')"><img src="x.gif" title="<?php echo gettext("Delete dataset");?>" border="0" alt="<?php echo gettext("Delete dataset");?>" /></a>
+							<a href="disks_zfs_dataset_edit.php?uuid=<?=$datasetv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit dataset");?>" border="0" alt="<?=gettext("Edit dataset");?>" /></a>&nbsp;
+							<a href="disks_zfs_dataset.php?act=del&amp;uuid=<?=$datasetv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this dataset?");?>')"><img src="x.gif" title="<?=gettext("Delete dataset");?>" border="0" alt="<?=gettext("Delete dataset");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -158,7 +153,7 @@ function zfsdataset_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="3"></td>
 						<td class="list">
-							<a href="disks_zfs_dataset_edit.php"><img src="plus.gif" title="<?php echo gettext("Add dataset");?>" border="0" alt="<?php echo gettext("Add dataset");?>" /></a>
+							<a href="disks_zfs_dataset_edit.php"><img src="plus.gif" title="<?=gettext("Add dataset");?>" border="0" alt="<?=gettext("Add dataset");?>" /></a>
 						</td>
 					</tr>
 				</table>

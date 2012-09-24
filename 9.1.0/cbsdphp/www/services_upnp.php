@@ -7,16 +7,8 @@
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 
-	Copyright (C) 2012 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
-
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2010 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -220,22 +212,22 @@ function transcoding_change() {
 					<?php html_interfacecombobox("if", gettext("Interface"), $pconfig['if'], gettext("Interface to listen to."), true);?>
 					-->
 				<tr>
-					<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Interface");?></td>
+					<td width="22%" valign="top" class="vncellreq"><?=gettext("Interface");?></td>
 					<td width="78%" class="vtable">
 					<select name="if" class="formfld" id="xif">
 						<?php foreach($a_interface as $if => $ifinfo):?>
 							<?php $ifinfo = get_interface_info($if); if (("up" == $ifinfo['status']) || ("associated" == $ifinfo['status'])):?>
-							<option value="<?php $if;?>"<?php if ($if == $pconfig['if']) echo "selected=\"selected\"";?>><?php $if?></option>
+							<option value="<?=$if;?>"<?php if ($if == $pconfig['if']) echo "selected=\"selected\"";?>><?=$if?></option>
 							<?php endif;?>
 						<?php endforeach;?>
 					</select>
-					<br /><?php echo gettext("Interface to listen to.");?>
+					<br /><?=gettext("Interface to listen to.");?>
 					</td>
 				</tr>
 					<?php html_inputbox("port", gettext("Port"), $pconfig['port'], sprintf(gettext("Port to listen on. Only dynamic or private ports can be used (from %d through %d). Default port is %d."), 1025, 65535, 49152), true, 5);?>
 					<?php html_filechooser("home", gettext("Database directory"), $pconfig['home'], gettext("Location where the content database file will be stored."), $g['media_path'], true, 60);?>
 					<?php html_folderbox("content", gettext("Content"), $pconfig['content'], gettext("Location of the files to share."), $g['media_path'], true);?>
-					<?php html_combobox("profile", gettext("Profile"), $pconfig['profile'], array("default" => gettext("Default"), "DLNA" => "DLNA", "Denon_AVR-4306" => "DENON AVR-4306", "PS3" => "Sony Playstation 3", "Telegent_TG100" => "Telegent TG100", "ZyXEL_DMA1000" => "ZyXEL DMA-1000", "Helios_X3000" => "Helios X3000", "DLink_DSM320" => "D-Link DSM320", "Microsoft_XBox360" => "Microsoft XBox 360", "Terratec_Noxon_iRadio" => "Terratec Noxon iRadio", "Yamaha_RXN600" => "Yamaha RX-N600", "Loewe_Connect" => "Loewe Connect"), gettext("Compliant profile to be used."), true, false, "profile_change()");?>
+					<?php html_combobox("profile", gettext("Profile"), $pconfig['profile'], array("default" => gettext("Default"), "DLNA" => "DLNA", "Denon_AVR" => "DENON Network A/V Receiver", "PS3" => "Sony Playstation 3", "Telegent_TG100" => "Telegent TG100", "ZyXEL_DMA1000" => "ZyXEL DMA-1000", "Helios_X3000" => "Helios X3000", "DLink_DSM320" => "D-Link DSM320", "Microsoft_XBox360" => "Microsoft XBox 360", "Terratec_Noxon_iRadio" => "Terratec Noxon iRadio", "Yamaha_RXN600" => "Yamaha RX-N600", "Loewe_Connect" => "Loewe Connect"), gettext("Compliant profile to be used."), true, false, "profile_change()");?>
 					<?php html_inputbox("deviceip", gettext("Device IP"), $pconfig['deviceip'], gettext("The device's IP address."), true, 20);?>
 					<?php html_checkbox("transcoding", gettext("Transcoding"), $pconfig['transcoding'] ? true : false, gettext("Enable transcoding."), "", false, "transcoding_change()");?>
 					<?php html_filechooser("tempdir", gettext("Temporary directory"), $pconfig['tempdir'], gettext("Temporary directory to store transcoded files."), $g['media_path'], true, 60);?>
@@ -251,7 +243,7 @@ function transcoding_change() {
 					<?php html_text("url", gettext("URL"), $text);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="onsubmit_content(); enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="onsubmit_content(); enable_change(true)" />
 				</div>
 			</td>
 		</tr>

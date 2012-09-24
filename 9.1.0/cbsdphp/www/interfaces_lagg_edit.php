@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -138,9 +133,9 @@ function get_nextlagg_id() {
 	<tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav">
-				<li class="tabinact"><a href="interfaces_assign.php"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="interfaces_vlan.php"><span><?php echo gettext("VLAN");?></span></a></li>
-				<li class="tabact"><a href="interfaces_lagg.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("LAGG");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_assign.php"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_vlan.php"><span><?=gettext("VLAN");?></span></a></li>
+				<li class="tabact"><a href="interfaces_lagg.php" title="<?=gettext("Reload page");?>"><span><?=gettext("LAGG");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -156,11 +151,11 @@ function get_nextlagg_id() {
 					<?php html_inputbox("desc", gettext("Description"), $pconfig['desc'], gettext("You may enter a description here for your reference."), false, 40);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="enable" type="hidden" value="<?php $pconfig['enable'];?>" />
-					<input name="if" type="hidden" value="<?php $pconfig['if'];?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="enable" type="hidden" value="<?=$pconfig['enable'];?>" />
+					<input name="if" type="hidden" value="<?=$pconfig['if'];?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

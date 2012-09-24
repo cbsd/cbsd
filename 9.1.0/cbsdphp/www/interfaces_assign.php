@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -206,9 +202,9 @@ if ($_GET['act'] == "add") {
 	<tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav">
-				<li class="tabact"><a href="interfaces_assign.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="interfaces_vlan.php"><span><?php echo gettext("VLAN");?></span></a></li>
-				<li class="tabinact"><a href="interfaces_lagg.php"><span><?php echo gettext("LAGG");?></span></a></li>
+				<li class="tabact"><a href="interfaces_assign.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_vlan.php"><span><?=gettext("VLAN");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_lagg.php"><span><?=gettext("LAGG");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -219,8 +215,8 @@ if ($_GET['act'] == "add") {
 				<?php if (file_exists($d_sysrebootreqd_path)) print_info_box(get_std_save_message(0));?>
 				<table border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td class="listhdrlr"><?php echo gettext("Interface");?></td>
-						<td class="listhdrr"><?php echo gettext("Network port");?></td>
+						<td class="listhdrlr"><?=gettext("Interface");?></td>
+						<td class="listhdrr"><?=gettext("Network port");?></td>
 						<td class="list">&nbsp;</td>
 					</tr>
 					<?php foreach ($config['interfaces'] as $ifname => $iface):
@@ -230,11 +226,11 @@ if ($_GET['act'] == "add") {
 						$ifdescr = strtoupper($ifname);
 					?>
 					<tr>
-						<td class="listlr" valign="middle"><strong><?php echo $ifdescr;?></strong></td>
+						<td class="listlr" valign="middle"><strong><?=$ifdescr;?></strong></td>
 					  <td valign="middle" class="listr">
-							<select name="<?php echo $ifname;?>" class="formfld" id="<?php echo $ifname;?>">
+							<select name="<?=$ifname;?>" class="formfld" id="<?=$ifname;?>">
 							  <?php foreach ($portlist as $portname => $portinfo):?>
-							  <option value="<?php echo $portname;?>" <?php if ($portname == $iface['if']) echo "selected=\"selected\"";?>>
+							  <option value="<?=$portname;?>" <?php if ($portname == $iface['if']) echo "selected=\"selected\"";?>>
 							  	<?php
 									if ($portinfo['isvirtual']) {
 										$descr = $portinfo['if'];
@@ -252,7 +248,7 @@ if ($_GET['act'] == "add") {
 						</td>
 						<td valign="middle" class="list">
 							<?php if (($ifname != 'lan') && ($ifname != 'wan')):?>
-							<a href="interfaces_assign.php?act=del&amp;id=<?php echo $ifname;?>"><img src="x.gif" title="<?php echo gettext("Delete interface");?>" border="0" alt="<?php echo gettext("Delete interface");?>" /></a>
+							<a href="interfaces_assign.php?act=del&amp;id=<?=$ifname;?>"><img src="x.gif" title="<?=gettext("Delete interface");?>" border="0" alt="<?=gettext("Delete interface");?>" /></a>
 							<?php endif;?>
 						</td>
 					</tr>
@@ -261,7 +257,7 @@ if ($_GET['act'] == "add") {
 				  <tr>
 						<td class="list" colspan="2"></td>
 						<td class="list" nowrap="nowrap">
-							<a href="interfaces_assign.php?act=add"><img src="plus.gif" title="<?php echo gettext("Add interface");?>" border="0" alt="<?php echo gettext("Add interface");?>" /></a>
+							<a href="interfaces_assign.php?act=add"><img src="plus.gif" title="<?=gettext("Add interface");?>" border="0" alt="<?=gettext("Add interface");?>" /></a>
 						</td>
 				  </tr>
 				  <?php else:?>
@@ -271,10 +267,10 @@ if ($_GET['act'] == "add") {
 				  <?php endif;?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" />
 				</div>
 				<div id="remarks">
-					<?php echo html_remark("warning", gettext("Warning"), sprintf(gettext("After you click &quot;Save&quot;, you must reboot %s to make the changes take effect. You may also have to do one or more of the following steps before you can access your NAS again: <ul><li><span class='vexpl'>change the IP address of your computer</span></li><li><span class='vexpl'>access the webGUI with the new IP address</span></li></ul>"), get_product_name()));?>
+					<?php html_remark("warning", gettext("Warning"), sprintf(gettext("After you click &quot;Save&quot;, you must reboot %s to make the changes take effect. You may also have to do one or more of the following steps before you can access your NAS again: <ul><li><span class='vexpl'>change the IP address of your computer</span></li><li><span class='vexpl'>access the webGUI with the new IP address</span></li></ul>"), get_product_name()));?>
 				</div>
 				<?php include("formend.inc");?>
 			</form>

@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -100,9 +95,9 @@ if (!isset($do_action)) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabinact"><a href="disks_mount.php"><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabact"><a href="disks_mount_tools.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Tools");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?php echo gettext("Fsck");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount.php"><span><?=gettext("Management");?></span></a></li>
+        <li class="tabact"><a href="disks_mount_tools.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Tools");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?=gettext("Fsck");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -115,7 +110,7 @@ if (!isset($do_action)) {
 					<?php html_combobox("action", gettext("Command"), $action, array("mount" => gettext("mount"), "umount" => gettext("umount")), "", true);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Execute");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Execute");?>" />
 				</div>
 				<?php if(($do_action) && (!$errormsg)) {
 					echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

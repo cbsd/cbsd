@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -102,9 +97,9 @@ if ($_GET['act'] === "del") {
 	<tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav">
-				<li class="tabinact"><a href="interfaces_assign.php"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="interfaces_vlan.php"><span><?php echo gettext("VLAN");?></span></a></li>
-				<li class="tabact"><a href="interfaces_lagg.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("LAGG");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_assign.php"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="interfaces_vlan.php"><span><?=gettext("VLAN");?></span></a></li>
+				<li class="tabact"><a href="interfaces_lagg.php" title="<?=gettext("Reload page");?>"><span><?=gettext("LAGG");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -115,26 +110,26 @@ if ($_GET['act'] === "del") {
 				<?php if (file_exists($d_sysrebootreqd_path)) print_info_box(get_std_save_message(0));?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="20%" class="listhdrlr"><?php echo gettext("Virtual interface");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Ports");?></td>
-						<td width="45%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("Virtual interface");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Ports");?></td>
+						<td width="45%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_lagg as $lagg):?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($lagg['if']);?></td>
-						<td class="listr"><?php htmlspecialchars(implode(" ", $lagg['laggport']));?></td>
-						<td class="listbg"><?php htmlspecialchars($lagg['desc']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($lagg['if']);?></td>
+						<td class="listr"><?=htmlspecialchars(implode(" ", $lagg['laggport']));?></td>
+						<td class="listbg"><?=htmlspecialchars($lagg['desc']);?>&nbsp;</td>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="interfaces_lagg_edit.php?uuid=<?php $lagg['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit interface");?>" border="0" alt="<?php echo gettext("Edit interface");?>" /></a>&nbsp;
-							<a href="interfaces_lagg.php?act=del&amp;uuid=<?php $lagg['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this interface?");?>')"><img src="x.gif" title="<?php echo gettext("Delete interface");?>" border="0" alt="<?php echo gettext("Delete interface");?>" /></a>
+							<a href="interfaces_lagg_edit.php?uuid=<?=$lagg['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit interface");?>" border="0" alt="<?=gettext("Edit interface");?>" /></a>&nbsp;
+							<a href="interfaces_lagg.php?act=del&amp;uuid=<?=$lagg['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this interface?");?>')"><img src="x.gif" title="<?=gettext("Delete interface");?>" border="0" alt="<?=gettext("Delete interface");?>" /></a>
 						</td>
 					</tr>
 					<?php endforeach;?>
 					<tr>
 						<td class="list" colspan="3">&nbsp;</td>
 						<td class="list">
-							<a href="interfaces_lagg_edit.php"><img src="plus.gif" title="<?php echo gettext("Add interface");?>" border="0" alt="<?php echo gettext("Add interface");?>" /></a>
+							<a href="interfaces_lagg_edit.php"><img src="plus.gif" title="<?=gettext("Add interface");?>" border="0" alt="<?=gettext("Add interface");?>" /></a>
 						</td>
 					</tr>
 				</table>

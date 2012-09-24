@@ -9,8 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -308,12 +306,12 @@ function sizeunit_change() {
 	  <tr>
 	    <td class="tabnavtbl">
 	      <ul id="tabnav">
-					<li class="tabinact"><a href="services_iscsitarget.php"><span><?php echo gettext("Settings");?></span></a></li>
-					<li class="tabact"><a href="services_iscsitarget_target.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Targets");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?php echo gettext("Initiators");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?php echo gettext("Auths");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget.php"><span><?=gettext("Settings");?></span></a></li>
+					<li class="tabact"><a href="services_iscsitarget_target.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Targets");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?=gettext("Initiators");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?=gettext("Auths");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
 	      </ul>
 	    </td>
 	  </tr>
@@ -327,24 +325,24 @@ function sizeunit_change() {
 	      <?php html_combobox("device", gettext("Device"), $pconfig['path'], $a_device, "", true);?>
 	      <?php html_combobox("zvol", gettext("ZFS volume"), $pconfig['path'], $a_zvol, "", true);?>
 	      <tr id="size_tr">
-	        <td width="22%" valign="top" class="vncellreq"><?php echo gettext("File size");?></td>
+	        <td width="22%" valign="top" class="vncellreq"><?=gettext("File size");?></td>
 	        <td width="78%" class="vtable">
-	          <input name="size" type="text" class="formfld" id="size" size="10" value="<?php htmlspecialchars($pconfig['size']);?>" />
+	          <input name="size" type="text" class="formfld" id="size" size="10" value="<?=htmlspecialchars($pconfig['size']);?>" />
 	          <select name="sizeunit" onclick="sizeunit_change()"> 
-	            <option value="MB" <?php if ($pconfig['sizeunit'] === "MB") echo "selected=\"selected\"";?>><?php htmlspecialchars(gettext("MiB"));?></option>
-	            <option value="GB" <?php if ($pconfig['sizeunit'] === "GB") echo "selected=\"selected\"";?>><?php htmlspecialchars(gettext("GiB"));?></option>
-	            <option value="TB" <?php if ($pconfig['sizeunit'] === "TB") echo "selected=\"selected\"";?>><?php htmlspecialchars(gettext("TiB"));?></option>
-	            <option value="auto" <?php if ($pconfig['sizeunit'] === "auto") echo "selected=\"selected\"";?>><?php htmlspecialchars(gettext("Auto"));?></option>
+	            <option value="MB" <?php if ($pconfig['sizeunit'] === "MB") echo "selected=\"selected\"";?>><?=htmlspecialchars(gettext("MiB"));?></option>
+	            <option value="GB" <?php if ($pconfig['sizeunit'] === "GB") echo "selected=\"selected\"";?>><?=htmlspecialchars(gettext("GiB"));?></option>
+	            <option value="TB" <?php if ($pconfig['sizeunit'] === "TB") echo "selected=\"selected\"";?>><?=htmlspecialchars(gettext("TiB"));?></option>
+	            <option value="auto" <?php if ($pconfig['sizeunit'] === "auto") echo "selected=\"selected\"";?>><?=htmlspecialchars(gettext("Auto"));?></option>
 	          </select><br />
-	          <span class="vexpl"><?php echo gettext("Size offered to the initiator. (up to 8EiB=8388608TiB. actual size is depend on your disks.)");?></span>
+	          <span class="vexpl"><?=gettext("Size offered to the initiator. (up to 8EiB=8388608TiB. actual size is depend on your disks.)");?></span>
 	        </td>
 	      </tr>
 	      <?php html_inputbox("comment", gettext("Comment"), $pconfig['comment'], gettext("You may enter a description here for your reference."), false, 40);?>
 	      </table>
 	      <div id="submit">
-		      <input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-		      <input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-		      <input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+		      <input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+		      <input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+		      <input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 	      </div>
 	    </td>
 	  </tr>

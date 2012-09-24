@@ -9,8 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -290,12 +288,12 @@ function normalize_ipv6addr($v6addr) {
 	  <tr>
 	    <td class="tabnavtbl">
 	      <ul id="tabnav">
-					<li class="tabinact"><a href="services_iscsitarget.php"><span><?php echo gettext("Settings");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?php echo gettext("Targets");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?php echo gettext("Initiators");?></span></a></li>
-					<li class="tabact"><a href="services_iscsitarget_ag.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Auths");?></span></a></li>
-					<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget.php"><span><?=gettext("Settings");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?=gettext("Targets");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?=gettext("Initiators");?></span></a></li>
+					<li class="tabact"><a href="services_iscsitarget_ag.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Auths");?></span></a></li>
+					<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
 	      </ul>
 	    </td>
 	  </tr>
@@ -317,28 +315,28 @@ function normalize_ipv6addr($v6addr) {
 	      <?php html_titleline_checkbox("$ldelete", sprintf("%s%d", gettext("User"), $i), false, gettext("Delete"), false);?>
 	      <?php html_inputbox("$luser", gettext("User"), $pconfig["$luser"], gettext("Target side user name. It is usually the initiator name by default."), false, 60);?>
 	      <tr>
-	        <td width="22%" valign="top" class="vncell"><?php echo gettext("Secret");?></td>
+	        <td width="22%" valign="top" class="vncell"><?=gettext("Secret");?></td>
 	        <td width="78%" class="vtable">
-	          <input name="<?php $lsecret;?>" type="password" class="formfld" id="<?php $lsecret;?>" size="30" value="<?php htmlspecialchars($pconfig[$lsecret]);?>" /><br />
-	          <input name="<?php $lsecret2;?>" type="password" class="formfld" id="<?php $lsecret2;?>" size="30" value="<?php htmlspecialchars($pconfig[$lsecret2]);?>" />&nbsp;(<?php echo gettext("Confirmation");?>)<br />
-	          <span class="vexpl"><?php echo gettext("Target side secret.");?></span>
+	          <input name="<?=$lsecret;?>" type="password" class="formfld" id="<?=$lsecret;?>" size="30" value="<?=htmlspecialchars($pconfig[$lsecret]);?>" /><br />
+	          <input name="<?=$lsecret2;?>" type="password" class="formfld" id="<?=$lsecret2;?>" size="30" value="<?=htmlspecialchars($pconfig[$lsecret2]);?>" />&nbsp;(<?=gettext("Confirmation");?>)<br />
+	          <span class="vexpl"><?=gettext("Target side secret.");?></span>
 	        </td>
 	      </tr>
 	      <?php html_inputbox("$lmuser", gettext("Peer User"), $pconfig["$lmuser"], gettext("Initiator side user name. (for mutual CHAP authentication)"), false, 60);?>
 	      <tr>
-	        <td width="22%" valign="top" class="vncell"><?php echo gettext("Peer Secret");?></td>
+	        <td width="22%" valign="top" class="vncell"><?=gettext("Peer Secret");?></td>
 	        <td width="78%" class="vtable">
-	          <input name="<?php $lmsecret;?>" type="password" class="formfld" id="<?php $lmsecret;?>" size="30" value="<?php htmlspecialchars($pconfig[$lmsecret]);?>" /><br />
-	          <input name="<?php $lmsecret2;?>" type="password" class="formfld" id="<?php $lmsecret2;?>" size="30" value="<?php htmlspecialchars($pconfig[$lmsecret2]);?>" />&nbsp;(<?php echo gettext("Confirmation");?>)<br />
-	          <span class="vexpl"><?php echo gettext("Initiator side secret. (for mutual CHAP autentication)");?></span>
+	          <input name="<?=$lmsecret;?>" type="password" class="formfld" id="<?=$lmsecret;?>" size="30" value="<?=htmlspecialchars($pconfig[$lmsecret]);?>" /><br />
+	          <input name="<?=$lmsecret2;?>" type="password" class="formfld" id="<?=$lmsecret2;?>" size="30" value="<?=htmlspecialchars($pconfig[$lmsecret2]);?>" />&nbsp;(<?=gettext("Confirmation");?>)<br />
+	          <span class="vexpl"><?=gettext("Initiator side secret. (for mutual CHAP autentication)");?></span>
 	        </td>
 	      </tr>
 	      <?php endfor;?>
 	      </table>
 	      <div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-		      <input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+		      <input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 	      </div>
 	    </td>
 	  </tr>

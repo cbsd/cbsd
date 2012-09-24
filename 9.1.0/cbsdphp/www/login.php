@@ -4,18 +4,6 @@
 	
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
-	All rights reserved.	
-	
-	Modified for XHTML by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
-	All rights reserved.
-
-	Modified by Michael Zoon
-	Copyright (C) 2010-2011 Michael Zoon <michael.zoon@freenas.org>.
-	All rights reserved.
-
-	Modified by Volker Theile
-	Copyright (C) 2009 Volker Theile (votdev@gmx.de)
 	All rights reserved.
 
 	Portions of FreeNAS (http://www.freenas.org)
@@ -90,7 +78,6 @@ function genhtmltitle($title) {
 
 // Menu items.
 // Info and Manual
-/*
 $menu['info']['desc'] = gettext("Information & Manuals");
 $menu['info']['visible'] = TRUE;
 $menu['info']['link'] = "http://wiki.nas4free.org/";
@@ -110,7 +97,7 @@ $menu['donate']['desc'] = gettext("Donate");
 $menu['donate']['visible'] = TRUE;
 $menu['donate']['link'] = "https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=info%40nas4free%2eorg&lc=US&item_name=NAS4Free%20Project&no_note=0&currency_code=USD&bn=PP%2dDonationsBF%3abtn_donateCC_LG%2egif%3aNonHostedGuest";
 $menu['donate']['menuitem']['visible'] = FALSE;
-*/
+
 
 function display_menu($menuid) {
 	global $menu;
@@ -156,14 +143,14 @@ function display_menu($menuid) {
 */
 ?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="<?php system_get_language_code();?>" lang="<?php system_get_language_code();?>">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="<?=system_get_language_code();?>" lang="<?=system_get_language_code();?>">
 <head>
-	<title><?php htmlspecialchars(genhtmltitle($pgtitle));?></title>
-	<meta http-equiv="Content-Type" content="text/html; charset=<?php system_get_language_codeset();?>" />
+	<title><?=htmlspecialchars(genhtmltitle($pgtitle));?></title>
+	<meta http-equiv="Content-Type" content="text/html; charset=<?=system_get_language_codeset();?>" />
 	<meta http-equiv="Content-Script-Type" content="text/javascript" />
 	<meta http-equiv="Content-Style-Type" content="text/css" />
 	<?php if ($pgrefresh):?>
-	<meta http-equiv="refresh" content="<?php $pgrefresh;?>" />
+	<meta http-equiv="refresh" content="<?=$pgrefresh;?>" />
 	<?php endif;?>
 	<link href="gui.css" rel="stylesheet" type="text/css" />
 	<link href="navbar.css" rel="stylesheet" type="text/css" />
@@ -187,32 +174,32 @@ function display_menu($menuid) {
 <body onload='document.iform.username.focus();'>
 <div id="header">
 	<div id="headerlogo">
-		<a title="www.<?php get_product_url();?>" href="http://<?php get_product_url();?>" target="_blank"></a>
+		<a title="www.<?=get_product_url();?>" href="http://<?=get_product_url();?>" target="_blank"><img src="header_logo.png" alt="logo" /></a>
 	</div>
 	<div id="headerrlogo">
 		<div class="hostname">
-			<span><?php system_get_hostname();?>&nbsp;</span>
+			<span><?=system_get_hostname();?>&nbsp;</span>
 		</div>
 	</div>
 </div>
 <div id="headernavbar">
 	<ul id="navbarmenu">
-		<?php display_menu("system");?>
-		<?php display_menu("network");?>
-		<?php display_menu("disks");?>
-		<?php display_menu("services");?>
+		<?=display_menu("system");?>
+		<?=display_menu("network");?>
+		<?=display_menu("disks");?>
+		<?=display_menu("services");?>
 		<!-- Begin extension section -->
 		<?php if (Session::isAdmin() && is_dir("{$g['www_path']}/ext")):?>
 		<li>
-			<a href="index.php" onmouseover="mopen('extensions')" onmouseout="mclosetime()"><?php echo gettext("Extensions");?></a>
+			<a href="index.php" onmouseover="mopen('extensions')" onmouseout="mclosetime()"><?=gettext("Extensions");?></a>
 			<div id="extensions" onmouseover="mcancelclosetime()" onmouseout="mclosetime()">
 				<?php
-				$dh = opendir("{$g['www_path']}/ext");
+				$dh = @opendir("{$g['www_path']}/ext");
 				if ($dh) {
 					while (($extd = readdir($dh)) !== false) {
 						if (($extd === ".") || ($extd === ".."))
 							continue;
-						include("{$g['www_path']}/ext/" . $extd . "/menu.inc");
+						@include("{$g['www_path']}/ext/" . $extd . "/menu.inc");
 					}
 					closedir($dh);
 				}?>
@@ -220,10 +207,10 @@ function display_menu($menuid) {
 		</li>
 		<?php endif;?>
 		<!-- End extension section -->
-		<?php display_menu("forum");?>
-		<?php display_menu("info");?>
-		<?php display_menu("irc");?>
-		<?php display_menu("donate");?>
+		<?=display_menu("forum");?>
+		<?=display_menu("info");?>
+		<?=display_menu("irc");?>
+		<?=display_menu("donate");?>
 	</ul>
 	<div style="clear:both"></div>
 </div>
@@ -240,20 +227,20 @@ function display_menu($menuid) {
 										<tr>
 											<td align="center">
 												<div class="shadow">
-													<div id="loginboxheader"><b><?php echo gettext("CBSD WebGUI Login");?></b></div>
+													<div id="loginboxheader"><b><?=gettext("NAS4Free WebGUI Login");?></b></div>
 													<div id="loginbox">
 														<table background="vncell_bg.png">
 															<tbody>
 																<tr>
-																	<td><b><?php echo gettext("Username");?>:</b></td>
+																	<td><b><?=gettext("Username");?>:</b></td>
 																	<td><input class="formfld" type="text" name="username" value="" /></td>
 																</tr>
 																<tr>
-																	<td><b><?php echo gettext("Password");?>:</b></td>
+																	<td><b><?=gettext("Password");?>:</b></td>
 																	<td><input class="formfld" type="password" name="password" value="" /></td>
 																</tr>
 																<tr>
-																	<td align="right" colspan="2"><input class="formbtn" type="submit" value="<?php echo gettext("Login");?>" /></td>
+																	<td align="right" colspan="2"><input class="formbtn" type="submit" value="<?=gettext("Login");?>" /></td>
 																</tr>
 															</tbody>
 														</table>
@@ -270,7 +257,7 @@ function display_menu($menuid) {
 			</table>
         </div>
         <div id="pagefooter">
-			<span><p><a title="www.<?php get_product_url();?>" href="http://<?php get_product_url();?>" target="_blank"></a> <?php str_replace("Copyright (C)","&copy;",get_product_copyright());?></a></p></span>
+			<span><p><a title="www.<?=get_product_url();?>" href="http://<?=get_product_url();?>" target="_blank"></a> <?=str_replace("Copyright (C)","&copy;",get_product_copyright());?></a></p></span>
 		</div>
     </body>
 </html>

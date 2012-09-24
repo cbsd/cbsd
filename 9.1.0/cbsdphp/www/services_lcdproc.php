@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2012 Daisuke Aoyama <aoyama@peach.ne.jp>
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -54,6 +53,7 @@ $pconfig['enable'] = isset($config['lcdproc']['enable']);
 $pconfig['driver'] = $config['lcdproc']['driver'];
 $pconfig['port'] = $config['lcdproc']['port'];
 $pconfig['waittime'] = $config['lcdproc']['waittime'];
+$pconfig['titlespeed'] = $config['lcdproc']['titlespeed'];
 $pconfig['lcdproc_enable'] = isset($config['lcdproc']['lcdproc']['enable']);
 if (is_array($config['lcdproc']['param']))
 	$pconfig['param'] = implode("\n", $config['lcdproc']['param']);
@@ -69,9 +69,9 @@ if ($_POST) {
 	$pconfig = $_POST;
 
 	// Input validation.
-	$reqdfields = explode(" ", "driver port waittime");
-	$reqdfieldsn = array(gettext("Driver"), gettext("Port"), gettext("Wait time"));
-	$reqdfieldst = explode(" ", "string numeric numeric");
+	$reqdfields = explode(" ", "driver port waittime titlespeed");
+	$reqdfieldsn = array(gettext("Driver"), gettext("Port"), gettext("Wait time"), gettext("TitleSpeed"));
+	$reqdfieldst = explode(" ", "string numeric numeric numeric");
 
 	do_input_validation($_POST, $reqdfields, $reqdfieldsn, $input_errors);
 	do_input_validation_type($_POST, $reqdfields, $reqdfieldsn, $reqdfieldst, $input_errors);
@@ -81,6 +81,7 @@ if ($_POST) {
 		$config['lcdproc']['driver'] = $_POST['driver'];
 		$config['lcdproc']['port'] = $_POST['port'];
 		$config['lcdproc']['waittime'] = $_POST['waittime'];
+		$config['lcdproc']['titlespeed'] = $_POST['titlespeed'];
 		$config['lcdproc']['lcdproc']['enable'] = $_POST['lcdproc_enable'] ? true : false;
 
 		# Write additional parameters.
@@ -132,6 +133,7 @@ function enable_change(enable_change) {
 	document.iform.driver.disabled = endis;
 	document.iform.port.disabled = endis;
 	document.iform.waittime.disabled = endis;
+	document.iform.titlespeed.disabled = endis;
 	document.iform.param.disabled = endis;
 	document.iform.auxparam.disabled = endis;
 }
@@ -154,6 +156,7 @@ function lcdproc_enable_change(enable_change) {
 	<?php html_inputbox("driver", gettext("Driver"), $pconfig['driver'], sprintf(gettext("The driver used to connect with the LCD. The list of available <a href='%s' target='_blank'>drivers</a>."), "http://lcdproc.omnipotent.net/hardware.php3"), true, 30);?>
 	<?php html_inputbox("port", gettext("Port"), $pconfig['port'], sprintf(gettext("Port to listen on. Default port is %d."), 13666), true, 10);?>
 	<?php html_inputbox("waittime", gettext("Wait time"), $pconfig['waittime'], gettext("The default time in seconds to display a screen."), true, 10);?>
+	<?php html_inputbox("titlespeed", gettext("TitleSpeed"), $pconfig['titlespeed'], gettext("Set title scrolling speed between 0-10 (default 10)."), true, 10);?>
 	<?php html_textarea("param", gettext("Driver parameters"), $pconfig['param'], gettext("Additional parameters to the hardware-specific part of the driver."), false, 65, 10, false, false);?>
 	<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], "", false, 65, 5, false, false);?>
 	<?php html_separator();?>
@@ -162,7 +165,7 @@ function lcdproc_enable_change(enable_change) {
 	<?php html_textarea("lcdproc_auxparam", gettext("Auxiliary parameters"), $pconfig['lcdproc_auxparam'], "", false, 65, 5, false, false);?>
 	</table>
 	<div id="submit">
-	  <input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true); lcdproc_enable_change(true);" />
+	  <input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true); lcdproc_enable_change(true);" />
 	</div>
 	<div id="remarks">
 	  <?php html_remark("note", gettext("Note"), sprintf(gettext("To get more information how to configure LCDproc check the LCDproc <a href='%s' target='_blank'>documentation</a>."), "http://lcdproc.omnipotent.net"));?>

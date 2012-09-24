@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -119,20 +114,20 @@ function gvinum_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?php echo gettext("JBOD");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?php echo gettext("RAID 0");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?php echo gettext("RAID 1");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_graid5.php"><span><?php echo gettext("RAID 5");?></span></a></li>
-				<li class="tabact"><a href="disks_raid_gvinum.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("RAID 0/1/5");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?=gettext("JBOD");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?=gettext("RAID 0");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?=gettext("RAID 1");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_graid5.php"><span><?=gettext("RAID 5");?></span></a></li>
+				<li class="tabact"><a href="disks_raid_gvinum.php" title="<?=gettext("Reload page");?>"><span><?=gettext("RAID 0/1/5");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_raid_gvinum.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gvinum_tools.php"><span><?php echo gettext("Tools"); ?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gvinum_info.php"><span><?php echo gettext("Information"); ?></span></a></li>
+				<li class="tabact"><a href="disks_raid_gvinum.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gvinum_tools.php"><span><?=gettext("Tools"); ?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gvinum_info.php"><span><?=gettext("Information"); ?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -145,10 +140,10 @@ function gvinum_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("raid_gvinum")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="25%" class="listhdrlr"><?php echo gettext("Volume Name");?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Type");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Size");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Status");?></td>
+						<td width="25%" class="listhdrlr"><?=gettext("Volume Name");?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Type");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Size");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Status");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php $raidstatus = get_gvinum_disks_list();?>
@@ -177,14 +172,14 @@ function gvinum_process_updatenotification($mode, $data) {
 					}
           ?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($raid['name']);?></td>
-						<td class="listr"><?php htmlspecialchars($raid['type']);?></td>
-						<td class="listr"><?php $size;?>&nbsp;</td>
-						<td class="listbg"><?php $status;?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($raid['name']);?></td>
+						<td class="listr"><?=htmlspecialchars($raid['type']);?></td>
+						<td class="listr"><?=$size;?>&nbsp;</td>
+						<td class="listbg"><?=$status;?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_raid_gvinum_edit.php?id=<?php $i;?>"><img src="e.gif" title="<?php echo gettext("Edit RAID"); ?>" border="0" alt="<?php echo gettext("Edit RAID"); ?>" /></a>&nbsp;
-							<a href="disks_raid_gvinum.php?act=del&amp;id=<?php $i;?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this volume?\\n!!! Note, all data will get lost and can not be recovered. !!!") ;?>')"><img src="x.gif" title="<?php echo gettext("Delete RAID") ;?>" border="0" alt="<?php echo gettext("Delete RAID") ;?>" /></a>
+							<a href="disks_raid_gvinum_edit.php?id=<?=$i;?>"><img src="e.gif" title="<?=gettext("Edit RAID"); ?>" border="0" alt="<?=gettext("Edit RAID"); ?>" /></a>&nbsp;
+							<a href="disks_raid_gvinum.php?act=del&amp;id=<?=$i;?>" onclick="return confirm('<?=gettext("Do you really want to delete this volume?\\n!!! Note, all data will get lost and can not be recovered. !!!") ;?>')"><img src="x.gif" title="<?=gettext("Delete RAID") ;?>" border="0" alt="<?=gettext("Delete RAID") ;?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -196,7 +191,7 @@ function gvinum_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="4"></td>
 						<td class="list">
-							<a href="disks_raid_gvinum_edit.php"><img src="plus.gif" title="<?php echo gettext("Add RAID");?>" border="0" alt="<?php echo gettext("Add RAID");?>" /></a>
+							<a href="disks_raid_gvinum_edit.php"><img src="plus.gif" title="<?=gettext("Add RAID");?>" border="0" alt="<?=gettext("Add RAID");?>" /></a>
 						</td>
 					</tr>
 				</table>

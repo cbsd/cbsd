@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -57,21 +53,21 @@ $a_phy_disk = array_merge((array)get_physical_disks_list());
   <tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="diag_infos.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Disks");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ata.php"><span><?php echo gettext("Disks (ATA)");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_part.php"><span><?php echo gettext("Partitions");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_smart.php"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_space.php"><span><?php echo gettext("Space Used");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_mount.php"><span><?php echo gettext("Mounts");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_raid.php"><span><?php echo gettext("Software RAID");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ad.php"><span><?php echo gettext("MS Domain");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_samba.php"><span><?php echo gettext("CIFS/SMB");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ftpd.php"><span><?php echo gettext("FTP");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_rsync_client.php"><span><?php echo gettext("RSYNC Client");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_sockets.php"><span><?php echo gettext("Sockets");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ups.php"><span><?php echo gettext("UPS");?></span></a></li>
+				<li class="tabact"><a href="diag_infos.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Disks");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ata.php"><span><?=gettext("Disks (ATA)");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_part.php"><span><?=gettext("Partitions");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_smart.php"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_space.php"><span><?=gettext("Space Used");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_mount.php"><span><?=gettext("Mounts");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_raid.php"><span><?=gettext("Software RAID");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ad.php"><span><?=gettext("MS Domain");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_samba.php"><span><?=gettext("CIFS/SMB");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ftpd.php"><span><?=gettext("FTP");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_rsync_client.php"><span><?=gettext("RSYNC Client");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_swap.php"><span><?=gettext("Swap");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_sockets.php"><span><?=gettext("Sockets");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ups.php"><span><?=gettext("UPS");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -83,19 +79,19 @@ $a_phy_disk = array_merge((array)get_physical_disks_list());
 					<td>
 			<table width="100%" border="0" cellpadding="0" cellspacing="0">
 				<tr>
-					<td width="4%" class="listhdrlr"><?php echo gettext("Disk");?></td>
-					<td width="10%" class="listhdrr"><?php echo gettext("Size");?></td>
-					<td width="40%" class="listhdrr"><?php echo gettext("Device model"); ?></td>
-					<td width="40%" class="listhdrr"><?php echo gettext("Serial number"); ?></td>
-					<td width="6%" class="listhdrr"><?php echo gettext("Status");?></td>
+					<td width="4%" class="listhdrlr"><?=gettext("Disk");?></td>
+					<td width="10%" class="listhdrr"><?=gettext("Size");?></td>
+					<td width="40%" class="listhdrr"><?=gettext("Device model"); ?></td>
+					<td width="40%" class="listhdrr"><?=gettext("Serial number"); ?></td>
+					<td width="6%" class="listhdrr"><?=gettext("Status");?></td>
 				</tr>
 				<?php foreach ($a_phy_disk as $disk):?>
 				<tr>
-					<td class="listlr"><?php htmlspecialchars($disk['name']);?></td>
-					<td class="listr"><?php htmlspecialchars($disk['size']);?></td>
-					<td class="listr"><?php htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
-					<td class="listr"><?php htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
-					<td class="listbg"><?php (0 == disks_exists($disk['devicespecialfile'])) ? gettext("ONLINE") : gettext("MISSING");?>&nbsp;</td>
+					<td class="listlr"><?=htmlspecialchars($disk['name']);?></td>
+					<td class="listr"><?=htmlspecialchars($disk['size']);?></td>
+					<td class="listr"><?=htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
+					<td class="listr"><?=htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
+					<td class="listbg"><?=(0 == disks_exists($disk['devicespecialfile'])) ? gettext("ONLINE") : gettext("MISSING");?>&nbsp;</td>
 				</tr>
 				<?php endforeach;?>
 				</table>

@@ -6,15 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008 Nelson Silva (nsilva@hotlap.org)
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -131,14 +125,14 @@ if ($_POST) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-        <li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabact"><a href="system_sysctl.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+        <li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabact"><a href="system_sysctl.php" title="<?=gettext("Reload page");?>"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -153,9 +147,9 @@ if ($_POST) {
 					<?php html_inputbox("comment", gettext("Comment"), $pconfig['comment'], gettext("You may enter a description here for your reference."), false, 40);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 			  </div>
 			  <?php include("formend.inc");?>
 			</form>

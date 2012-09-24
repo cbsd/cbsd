@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Set time function added by Paul Wheels (pwheels@users.sourceforge.net).
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -188,6 +187,7 @@ if ($_POST) {
 		$config['system']['dnsallowoverride'] = $_POST['dnsallowoverride'] ? true : false;
 
 		write_config();
+		set_php_timezone();
 
 		// Check if a reboot is required.
 		if (($oldwebguiproto != $config['system']['webgui']['protocol']) ||
@@ -284,8 +284,8 @@ function webguiproto_change() {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabact"><a href="system.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("General");?></span></a></li>
-      	<li class="tabinact"><a href="system_password.php"><span><?php echo gettext("Password");?></span></a></li>
+      	<li class="tabact"><a href="system.php" title="<?=gettext("Reload page");?>"><span><?=gettext("General");?></span></a></li>
+      	<li class="tabinact"><a href="system_password.php"><span><?=gettext("Password");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -296,28 +296,28 @@ function webguiproto_change() {
 				<?php if ($savemsg) print_info_box($savemsg);?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			  	<tr>
-						<td colspan="2" valign="top" class="listtopic"><?php echo gettext("Hostname");?></td>
+						<td colspan="2" valign="top" class="listtopic"><?=gettext("Hostname");?></td>
 					</tr>
 					<?php html_inputbox("hostname", gettext("Hostname"), $pconfig['hostname'], sprintf(gettext("Name of the NAS host, without domain part e.g. %s."), "<em>" . strtolower(get_product_name()) ."</em>"), true, 40);?>
 					<?php html_inputbox("domain", gettext("Domain"), $pconfig['domain'], sprintf(gettext("e.g. %s"), "<em>com, local</em>"), false, 40);?>
 					<?php html_separator();?>
 					<?php html_titleline(gettext("DNS settings"));?>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("IPv4 DNS servers");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("IPv4 DNS servers");?></td>
 			      <td width="78%" class="vtable">
 							<?php $readonly = ("dhcp" === $config['interfaces']['lan']['ipaddr']) ? "readonly=\"readonly\"" : "";?>
-							<input name="dns1" type="text" class="formfld" id="dns1" size="20" value="<?php echo htmlspecialchars($pconfig['dns1']);?>" <?php $readonly;?> /><br />
-							<input name="dns2" type="text" class="formfld" id="dns2" size="20" value="<?php echo htmlspecialchars($pconfig['dns2']);?>" <?php $readonly;?> /><br />
-							<span class="vexpl"><?php echo gettext("IPv4 addresses");?></span><br />
+							<input name="dns1" type="text" class="formfld" id="dns1" size="20" value="<?=htmlspecialchars($pconfig['dns1']);?>" <?=$readonly;?> /><br />
+							<input name="dns2" type="text" class="formfld" id="dns2" size="20" value="<?=htmlspecialchars($pconfig['dns2']);?>" <?=$readonly;?> /><br />
+							<span class="vexpl"><?=gettext("IPv4 addresses");?></span><br />
 			      </td>
 			    </tr>
 				  <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("IPv6 DNS servers");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("IPv6 DNS servers");?></td>
 			      <td width="78%" class="vtable">
 							<?php $readonly = (!isset($config['interfaces']['lan']['ipv6_enable']) || ("auto" === $config['interfaces']['lan']['ipv6addr'])) ? "readonly=\"readonly\"" : "";?>
-							<input name="ipv6dns1" type="text" class="formfld" id="ipv6dns1" size="20" value="<?php echo htmlspecialchars($pconfig['ipv6dns1']);?>" <?php $readonly;?> /><br />
-							<input name="ipv6dns2" type="text" class="formfld" id="ipv6dns2" size="20" value="<?php echo htmlspecialchars($pconfig['ipv6dns2']);?>" <?php $readonly;?> /><br />
-							<span class="vexpl"><?php echo gettext("IPv6 addresses");?></span><br />
+							<input name="ipv6dns1" type="text" class="formfld" id="ipv6dns1" size="20" value="<?=htmlspecialchars($pconfig['ipv6dns1']);?>" <?=$readonly;?> /><br />
+							<input name="ipv6dns2" type="text" class="formfld" id="ipv6dns2" size="20" value="<?=htmlspecialchars($pconfig['ipv6dns2']);?>" <?=$readonly;?> /><br />
+							<span class="vexpl"><?=gettext("IPv6 addresses");?></span><br />
 			      </td>
 			    </tr>
 			    <?php html_separator();?>
@@ -332,12 +332,12 @@ function webguiproto_change() {
 					<?php html_titleline(gettext("Time"));?>
 					<?php html_timezonecombobox("timezone", gettext("Time zone"), $pconfig['timezone'], gettext("Select the location closest to you."), false);?>
 			    <tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("System time");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("System time");?></td>
 						<td width="78%" class="vtable">
 							<input id="systime" size="20" maxlength="20" name="systime" type="text" value="" />
 							<img src="cal.gif" onclick="showChooser(this, 'systime', 'chooserSpan', 1950, 2020, Date.patterns.Default, true);" alt="" />
 							<div id="chooserSpan" class="dateChooser select-free" style="display: none; visibility: hidden; width: 160px;"></div><br />
-							<span class="vexpl"><?php echo gettext("Enter desired system time directly (format mm/dd/yyyy hh:mm) or use icon to select it.");?></span>
+							<span class="vexpl"><?=gettext("Enter desired system time directly (format mm/dd/yyyy hh:mm) or use icon to select it.");?></span>
 						</td>
 			    </tr>
 					<?php html_checkbox("ntp_enable", gettext("Enable NTP"), $pconfig['ntp_enable'] ? true : false, gettext("Use the specified NTP server."), "", false, "ntp_change()");?>
@@ -345,7 +345,7 @@ function webguiproto_change() {
 					<?php html_inputbox("ntp_updateinterval", gettext("Time update interval"), $pconfig['ntp_updateinterval'], gettext("Minutes between network time sync."), true, 20);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

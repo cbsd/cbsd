@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -130,26 +126,26 @@ function hosts_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("hosts")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Hostname database");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Hostname database");?></td>
 						<td width="78%" class="vtable">
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
-									<td width="25%" class="listhdrlr"><?php echo gettext("Hostname");?></td>
-									<td width="30%" class="listhdrr"><?php echo gettext("IP address");?></td>
-									<td width="35%" class="listhdrr"><?php echo gettext("Description");?></td>
+									<td width="25%" class="listhdrlr"><?=gettext("Hostname");?></td>
+									<td width="30%" class="listhdrr"><?=gettext("IP address");?></td>
+									<td width="35%" class="listhdrr"><?=gettext("Description");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php foreach ($a_hosts as $host):?>
 								<?php if (empty($host['uuid'])) continue;?>
 								<?php $notificationmode = updatenotify_get_mode("hosts", $host['uuid']);?>
 								<tr>
-									<td class="listlr"><?php htmlspecialchars($host['name']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($host['address']);?>&nbsp;</td>
-									<td class="listbg"><?php htmlspecialchars($host['descr']);?>&nbsp;</td>
+									<td class="listlr"><?=htmlspecialchars($host['name']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($host['address']);?>&nbsp;</td>
+									<td class="listbg"><?=htmlspecialchars($host['descr']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 									<td valign="middle" nowrap="nowrap" class="list">
-										<a href="system_hosts_edit.php?uuid=<?php $host['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit Host");?>" border="0" alt="<?php echo gettext("Edit Host");?>" /></a>
-										<a href="system_hosts.php?act=del&amp;uuid=<?php $host['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this host?");?>')"><img src="x.gif" title="<?php echo gettext("Delete Host");?>" border="0" alt="<?php echo gettext("Delete Host");?>" /></a>
+										<a href="system_hosts_edit.php?uuid=<?=$host['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit Host");?>" border="0" alt="<?=gettext("Edit Host");?>" /></a>
+										<a href="system_hosts.php?act=del&amp;uuid=<?=$host['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this host?");?>')"><img src="x.gif" title="<?=gettext("Delete Host");?>" border="0" alt="<?=gettext("Delete Host");?>" /></a>
 									</td>
 									<?php else:?>
 									<td valign="middle" nowrap="nowrap" class="list">
@@ -160,7 +156,7 @@ function hosts_process_updatenotification($mode, $data) {
 								<?php endforeach;?>
 								<tr>
 									<td class="list" colspan="3"></td>
-									<td class="list"><a href="system_hosts_edit.php"><img src="plus.gif" title="<?php echo gettext("Add Host");?>" border="0" alt="<?php echo gettext("Add Host");?>" /></a></td>
+									<td class="list"><a href="system_hosts_edit.php"><img src="plus.gif" title="<?=gettext("Add Host");?>" border="0" alt="<?=gettext("Add Host");?>" /></a></td>
 								</tr>
 							</table>
 						</td>
@@ -168,7 +164,7 @@ function hosts_process_updatenotification($mode, $data) {
 					<?php html_textarea("hostsacl", gettext("Host access control"), $pconfig['hostsacl'], gettext("The basic configuration usually takes the form of 'daemon : address : action'. Where daemon is the daemon name of the service started. The address can be a valid hostname, an IP address or an IPv6 address enclosed in brackets. The action field can be either allow or deny to grant or deny access appropriately. Keep in mind that configuration works off a first rule match semantic, meaning that the configuration file is scanned in ascending order for a matching rule. When a match is found the rule is applied and the search process will halt.") . " " . sprintf(gettext("To get detailed informations about TCP Wrappers check the FreeBSD <a href='%s' target='_blank'>documentation</a>."), "http://www.freebsd.org/doc/en/books/handbook/tcpwrappers.html"), false, 80, 8, false, false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

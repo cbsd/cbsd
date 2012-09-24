@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -275,8 +271,8 @@ function anonymousonly_change() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="services_ftp.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_ftp_mod.php"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabact"><a href="services_ftp.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_ftp_mod.php"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -319,7 +315,7 @@ function anonymousonly_change() {
 					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters are added to %s."), "proftpd.conf") . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://www.proftpd.org/docs/directives/linked/configuration.html"), false, 65, 5, false, false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

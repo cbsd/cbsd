@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -84,9 +79,9 @@ if (!isset($do_action)) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-				<li class="tabinact"><a href="disks_mount.php"><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
-				<li class="tabact"><a href="disks_mount_fsck.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Fsck");?></span></a></li>
+				<li class="tabinact"><a href="disks_mount.php"><span><?=gettext("Management");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_tools.php"><span><?=gettext("Tools");?></span></a></li>
+				<li class="tabact"><a href="disks_mount_fsck.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Fsck");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -96,13 +91,13 @@ if (!isset($do_action)) {
 			<form action="disks_mount_fsck.php" method="post" name="iform" id="iform">
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
           <tr>
-            <td valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+            <td valign="top" class="vncellreq"><?=gettext("Disk");?></td>
             <td class="vtable">
               <select name="disk" class="formfld" id="disk">
-              	<option value=""><?php echo gettext("Must choose one");?></option>
+              	<option value=""><?=gettext("Must choose one");?></option>
                 <?php foreach ($a_mount as $mountv):?>
 								<?php if (strcmp($mountv['fstype'],"cd9660") == 0) continue;?>
-                <option value="<?php $mountv['devicespecialfile'];?>" <?php if ($mountv['devicespecialfile'] === $disk) echo "selected=\"selected\"";?>>
+                <option value="<?=$mountv['devicespecialfile'];?>" <?php if ($mountv['devicespecialfile'] === $disk) echo "selected=\"selected\"";?>>
                 <?php echo htmlspecialchars($mountv['sharename'] . ": " . $mountv['devicespecialfile']);?>
                 </option>
                 <?php endforeach;?>
@@ -113,13 +108,13 @@ if (!isset($do_action)) {
             <td width="22%" valign="top" class="vncell"></td>
             <td width="78%" class="vtable">
               <input name="umount" type="checkbox" id="umount" value="yes" <?php if ($umount) echo "checked=\"checked\""; ?> />
-              <strong><?php echo gettext("Unmount disk/partition");?></strong><span class="vexpl"><br />
-              <?php echo gettext("If the selected disk/partition is mounted it will be unmounted temporarily to perform selected command, otherwise the commands work in read-only mode.<br />Service disruption to users accessing this mount will occur during this process.");?></span>
+              <strong><?=gettext("Unmount disk/partition");?></strong><span class="vexpl"><br />
+              <?=gettext("If the selected disk/partition is mounted it will be unmounted temporarily to perform selected command, otherwise the commands work in read-only mode.<br />Service disruption to users accessing this mount will occur during this process.");?></span>
             </td>
           </tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Execute");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Execute");?>" />
 				</div>
 				<?php if($do_action) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

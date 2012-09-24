@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -176,17 +172,17 @@ function trapenable_change() {
 					<?php html_separator();?>
 					<?php html_titleline(gettext("Modules"));?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("SNMP Modules");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("SNMP Modules");?></td>
 						<td width="78%" class="vtable">
-							<input name="mibii" type="checkbox" id="mibii" value="yes" <?php if ($pconfig['mibii']) echo "checked=\"checked\""; ?> /><?php echo gettext("MibII");?><br />
-							<input name="netgraph" type="checkbox" id="netgraph" value="yes" <?php if ($pconfig['netgraph']) echo "checked=\"checked\""; ?> /><?php echo gettext("Netgraph");?><br />
-							<input name="hostres" type="checkbox" id="hostres" value="yes" <?php if ($pconfig['hostres']) echo "checked=\"checked\""; ?> /><?php echo gettext("Host resources");?><br />
-							<input name="ucd" type="checkbox" id="ucd" value="yes" <?php if ($pconfig['ucd']) echo "checked=\"checked\""; ?> /><?php echo gettext("UCD-SNMP-MIB");?>
+							<input name="mibii" type="checkbox" id="mibii" value="yes" <?php if ($pconfig['mibii']) echo "checked=\"checked\""; ?> /><?=gettext("MibII");?><br />
+							<input name="netgraph" type="checkbox" id="netgraph" value="yes" <?php if ($pconfig['netgraph']) echo "checked=\"checked\""; ?> /><?=gettext("Netgraph");?><br />
+							<input name="hostres" type="checkbox" id="hostres" value="yes" <?php if ($pconfig['hostres']) echo "checked=\"checked\""; ?> /><?=gettext("Host resources");?><br />
+							<input name="ucd" type="checkbox" id="ucd" value="yes" <?php if ($pconfig['ucd']) echo "checked=\"checked\""; ?> /><?=gettext("UCD-SNMP-MIB");?>
 						</td>
 					</tr>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("note", gettext("Note"), sprintf(gettext("The associated MIB files can be found at %s."), "/usr/share/snmp/mibs"));?>

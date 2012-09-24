@@ -6,9 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -44,6 +41,7 @@
 */
 require("auth.inc");
 require("guiconfig.inc");
+
 $pgtitle = array(gettext("Access"), gettext("Users"));
 
 if ($_POST) {
@@ -104,60 +102,58 @@ function userdbuser_process_updatenotification($mode, $data) {
 	return $retval;
 }
 ?>
-<?php include("fbegin.inc"); ?>
+<?php include("fbegin.inc");?>
 <table width="100%" border="0" cellpadding="0" cellspacing="0">
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="access_users.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Users");?></span></a></li>
-				<li class="tabinact"><a href="access_users_groups.php"><span><?php echo gettext("Groups");?></span></a></li>
+				<li class="tabact"><a href="access_users.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Users");?></span></a></li>
+				<li class="tabinact"><a href="access_users_groups.php"><span><?=gettext("Groups");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
   <tr>
     <td class="tabcont">
 			<form action="access_users.php" method="post">
-				 <?php if ($savemsg) print_info_box($savemsg);
-				 if (updatenotify_exists("userdb_user")) print_config_change_box();?>
+				<?php if ($savemsg) print_info_box($savemsg);?>
+				<?php if (updatenotify_exists("userdb_user")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="20%" class="listhdrlr">gettext("User");?></td>
-						<td width="35%" class="listhdrr">gettext("Full Name");?></td>
-						<td width="5%" class="listhdrr">gettext("UID");?></td>
-						<td width="30%" class="listhdrr">gettext("Group");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("User");?></td>
+						<td width="35%" class="listhdrr"><?=gettext("Full Name");?></td>
+						<td width="5%" class="listhdrr"><?=gettext("UID");?></td>
+						<td width="30%" class="listhdrr"><?=gettext("Group");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
-					<?php
-					 foreach ($a_user as $userv):
-					 $notificationmode = updatenotify_get_mode("userdb_user", $userv['uuid']);
-					 ?>
+					<?php foreach ($a_user as $userv):?>
+					<?php $notificationmode = updatenotify_get_mode("userdb_user", $userv['uuid']);?>
 					<tr>
-						<td class="listlr"><?php echo htmlspecialchars($userv['login']);?>&nbsp;</td>
-						<td class="listr"><?php echo htmlspecialchars($userv['fullname']);?>&nbsp;</td>
-						<td class="listr"><?php echo htmlspecialchars($userv['id']);?>&nbsp;</td>
-						<td class="listr"><?php array_search($userv['primarygroup'], $a_group);?>&nbsp;</td>
-						 <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
+						<td class="listlr"><?=htmlspecialchars($userv['login']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($userv['fullname']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($userv['id']);?>&nbsp;</td>
+						<td class="listr"><?=array_search($userv['primarygroup'], $a_group);?>&nbsp;</td>
+						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="access_users_edit.php?uuid=$userv['uuid'];?>"><img src="e.gif" title="gettext("Edit user");?>" border="0" alt="gettext("Edit user");?>" /></a>&nbsp;
-							<a href="access_users.php?act=del&amp;uuid=$userv['uuid'];?>" onclick="return confirm('gettext("Do you really want to delete this user?");?>')"><img src="x.gif" title="gettext("Delete user");?>" border="0" alt="gettext("Delete user");?>" /></a>
+							<a href="access_users_edit.php?uuid=<?=$userv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit user");?>" border="0" alt="<?=gettext("Edit user");?>" /></a>&nbsp;
+							<a href="access_users.php?act=del&amp;uuid=<?=$userv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this user?");?>')"><img src="x.gif" title="<?=gettext("Delete user");?>" border="0" alt="<?=gettext("Delete user");?>" /></a>
 						</td>
-						 else:?>
+						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
 							<img src="del.gif" border="0" alt="" />
 						</td>
-						 endif;?>
+						<?php endif;?>
 					</tr>
-					 endforeach;?>
+					<?php endforeach;?>
 					<tr>
 						<td class="list" colspan="4"></td>
 						<td class="list">
-							<a href="access_users_edit.php"><img src="plus.gif" title="gettext("Add user");?>" border="0" alt="gettext("Add user");?>" /></a>
+							<a href="access_users_edit.php"><img src="plus.gif" title="<?=gettext("Add user");?>" border="0" alt="<?=gettext("Add user");?>" /></a>
 						</td>
 					</tr>
 				</table>
-				 include("formend.inc");?>
+				<?php include("formend.inc");?>
 			</form>
 		</td>
 	</tr>
 </table>
- include("fend.inc");?>
+<?php include("fend.inc");?>

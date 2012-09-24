@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -150,17 +145,17 @@ if ($_POST) {
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="services_rsyncd.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Server");?></span></a></li>
-			  <li class="tabinact"><a href="services_rsyncd_client.php"><span><?php echo gettext("Client");?></span></a></li>
-			  <li class="tabinact"><a href="services_rsyncd_local.php"><span><?php echo gettext("Local");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Server");?></span></a></li>
+			  <li class="tabinact"><a href="services_rsyncd_client.php"><span><?=gettext("Client");?></span></a></li>
+			  <li class="tabinact"><a href="services_rsyncd_local.php"><span><?=gettext("Local");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="services_rsyncd.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabact"><a href="services_rsyncd_module.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd_module.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -170,85 +165,85 @@ if ($_POST) {
 				<?php if ($input_errors) print_input_errors($input_errors); ?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			  	<tr>
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Name");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Name");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="name" type="text" class="formfld" id="name" size="30" value="<?php htmlspecialchars($pconfig['name']);?>" />
+			        <input name="name" type="text" class="formfld" id="name" size="30" value="<?=htmlspecialchars($pconfig['name']);?>" />
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Comment");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Comment");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="comment" type="text" class="formfld" id="comment" size="30" value="<?php htmlspecialchars($pconfig['comment']);?>" />
+			        <input name="comment" type="text" class="formfld" id="comment" size="30" value="<?=htmlspecialchars($pconfig['comment']);?>" />
 			      </td>
 			    </tr>
 			    <tr>
-				  <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Path");?></td>
+				  <td width="22%" valign="top" class="vncellreq"><?=gettext("Path");?></td>
 				  <td width="78%" class="vtable">
-				  	<input name="path" type="text" class="formfld" id="path" size="60" value="<?php htmlspecialchars($pconfig['path']);?>" />
-				  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.path; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?php $g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
-				  	<span class="vexpl"><?php echo gettext("Path to be shared.");?></span>
+				  	<input name="path" type="text" class="formfld" id="path" size="60" value="<?=htmlspecialchars($pconfig['path']);?>" />
+				  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.path; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?=$g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
+				  	<span class="vexpl"><?=gettext("Path to be shared.");?></span>
 				  </td>
 				</tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("List");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("List");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="list" type="checkbox" id="list" value="yes" <?php if ($pconfig['list']) echo "checked=\"checked\""; ?> />
-			      	<?php echo gettext("Enable module listing.");?><br />
-			        <span class="vexpl"><?php echo gettext("This option determines if this module should be listed when the client asks for a listing of available modules. By setting this to false you can create hidden modules.");?></span>
+			      	<?=gettext("Enable module listing.");?><br />
+			        <span class="vexpl"><?=gettext("This option determines if this module should be listed when the client asks for a listing of available modules. By setting this to false you can create hidden modules.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Access mode");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Access mode");?></td>
 			      <td width="78%" class="vtable">
 			        <select name="rwmode" size="1" id="rwmode">
-		            <option value="ro" <?php if ("ro" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?php echo gettext("Read only");?></option>
-		            <option value="rw" <?php if ("rw" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?php echo gettext("Read/Write");?></option>
-		            <option value="wo" <?php if ("wo" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?php echo gettext("Write only");?></option>
+		            <option value="ro" <?php if ("ro" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?=gettext("Read only");?></option>
+		            <option value="rw" <?php if ("rw" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?=gettext("Read/Write");?></option>
+		            <option value="wo" <?php if ("wo" === $pconfig['rwmode']) echo "selected=\"selected\"";?>><?=gettext("Write only");?></option>
 			        </select><br />
-			        <span class="vexpl"><?php echo gettext("This controls the access a remote host has to this module.");?></span>
+			        <span class="vexpl"><?=gettext("This controls the access a remote host has to this module.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Maximum connections");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Maximum connections");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="maxconnections" type="text" id="maxconnections" size="5" value="<?php htmlspecialchars($pconfig['maxconnections']);?>" /><br />
-			        <span class="vexpl"><?php echo gettext("Maximum number of simultaneous connections. Default is 0 (unlimited).");?></span>
+			        <input name="maxconnections" type="text" id="maxconnections" size="5" value="<?=htmlspecialchars($pconfig['maxconnections']);?>" /><br />
+			        <span class="vexpl"><?=gettext("Maximum number of simultaneous connections. Default is 0 (unlimited).");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("User ID");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("User ID");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="uid" type="text" class="formfld" id="uid" size="60" value="<?php htmlspecialchars($pconfig['uid']);?>" /><br />
-			        <span class="vexpl"><?php sprintf(gettext("This option specifies the user name or user ID that file transfers to and from that module should take place. In combination with the '%s' option this determines what file permissions are available. Leave this field empty to use default settings."), gettext("Group ID"));?></span>
+			        <input name="uid" type="text" class="formfld" id="uid" size="60" value="<?=htmlspecialchars($pconfig['uid']);?>" /><br />
+			        <span class="vexpl"><?=sprintf(gettext("This option specifies the user name or user ID that file transfers to and from that module should take place. In combination with the '%s' option this determines what file permissions are available. Leave this field empty to use default settings."), gettext("Group ID"));?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Group ID");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Group ID");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="gid" type="text" class="formfld" id="gid" size="60" value="<?php htmlspecialchars($pconfig['gid']);?>" /><br />
-			        <span class="vexpl"><?php echo gettext("This option specifies the group name or group ID that file transfers to and from that module should take place. Leave this field empty to use default settings.");?></span>
+			        <input name="gid" type="text" class="formfld" id="gid" size="60" value="<?=htmlspecialchars($pconfig['gid']);?>" /><br />
+			        <span class="vexpl"><?=gettext("This option specifies the group name or group ID that file transfers to and from that module should take place. Leave this field empty to use default settings.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Hosts allow");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Hosts allow");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="hostsallow" type="text" class="formfld" id="hostsallow" size="60" value="<?php htmlspecialchars($pconfig['hostsallow']);?>" /><br />
-			        <span class="vexpl"><?php echo gettext("This option is a comma, space, or tab delimited set of hosts which are permitted to access this module. You can specify the hosts by name or IP number. Leave this field empty to use default settings.");?></span>
+			        <input name="hostsallow" type="text" class="formfld" id="hostsallow" size="60" value="<?=htmlspecialchars($pconfig['hostsallow']);?>" /><br />
+			        <span class="vexpl"><?=gettext("This option is a comma, space, or tab delimited set of hosts which are permitted to access this module. You can specify the hosts by name or IP number. Leave this field empty to use default settings.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Hosts deny");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Hosts deny");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="hostsdeny" type="text" class="formfld" id="hostsdeny" size="60" value="<?php htmlspecialchars($pconfig['hostsdeny']);?>" /><br />
-			        <span class="vexpl"><?php echo gettext("This option is a comma, space, or tab delimited set of host which are NOT permitted to access this module. Where the lists conflict, the allow list takes precedence. In the event that it is necessary to deny all by default, use the keyword ALL (or the netmask 0.0.0.0/0) and then explicitly specify to the hosts allow parameter those hosts that should be permitted access. Leave this field empty to use default settings.");?></span>
+			        <input name="hostsdeny" type="text" class="formfld" id="hostsdeny" size="60" value="<?=htmlspecialchars($pconfig['hostsdeny']);?>" /><br />
+			        <span class="vexpl"><?=gettext("This option is a comma, space, or tab delimited set of host which are NOT permitted to access this module. Where the lists conflict, the allow list takes precedence. In the event that it is necessary to deny all by default, use the keyword ALL (or the netmask 0.0.0.0/0) and then explicitly specify to the hosts allow parameter those hosts that should be permitted access. Leave this field empty to use default settings.");?></span>
 			      </td>
 			    </tr>
 			    <?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], gettext("These parameters will be added to the module configuration in rsyncd.conf.") . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://rsync.samba.org/ftp/rsync/rsync.html"), false, 65, 5, false, false);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

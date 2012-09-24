@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified by Michael Zoon <michael.zoon@nas4free.org>.
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2004-2005 T. Lechat <dev@lechat.org> and Manuel Kasper <mk@neon1.net>.
 	All rights reserved.
 	
 	portions of m0n0wall (http://m0n0.ch/wall)
@@ -81,22 +76,22 @@ header("Pragma: no-cache"); // HTTP/1.0
 header("Content-type: image/svg+xml");
 echo "<?xml version=\"1.0\" encoding=\"{$encoding}\"?>\n";
 ?>
-<svg width="100%" height="100%" viewBox="0 0 <?php $width?> <?php $height?>" preserveAspectRatio="none" xml:space="preserve" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="init(evt)">
+<svg width="100%" height="100%" viewBox="0 0 <?=$width?> <?=$height?>" preserveAspectRatio="none" xml:space="preserve" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="init(evt)">
   <g id="graph">
-    <rect id="bg" x1="0" y1="0" width="100%" height="100%" <?php $attribs['bg']?>/>
-    <line id="axis_x" x1="0" y1="0" x2="0" y2="100%" <?php $attribs['axis']?>/>
-    <line id="axis_y" x1="0" y1="100%" x2="100%" y2="100%" <?php $attribs['axis']?>/>
-    <path id="graph_cpu"  d="M0 <?php $height?> L 0 <?php $height?>" <?php $attribs['graph_cpu']?>/>
-    <text id="graph_in_lbl" x="5" y="8" <?php $attribs['cpu']?>><?php echo gettext("CPU load");?> <tspan id="graph_cpu_txt" <?php $attribs['cpu']?>> </tspan></text>
-    <path id="grid"  d="M0 <?php $height/4*1?> L <?php $width?> <?php $height/4*1?> M0 <?php $height/4*2?> L <?php $width?> <?php $height/4*2?> M0 <?php $height/4*3?> L <?php $width?> <?php $height/4*3?>" <?php $attribs['grid']?>/>
-    <text id="grid_txt1" x="<?php $width*0.99?>" y="<?php $height/4*1?>" <?php $attribs['grid_txt']?> text-anchor="end">75%</text>
-    <text id="grid_txt2" x="<?php $width*0.99?>" y="<?php $height/4*2?>" <?php $attribs['grid_txt']?> text-anchor="end">50%</text>
-    <text id="grid_txt3" x="<?php $width*0.99?>" y="<?php $height/4*3?>" <?php $attribs['grid_txt']?> text-anchor="end">25%</text>
-    <text id="datetime" x="<?php $width*0.51?>" y="5" <?php $attribs['legend']?>> </text>
+    <rect id="bg" x1="0" y1="0" width="100%" height="100%" <?=$attribs['bg']?>/>
+    <line id="axis_x" x1="0" y1="0" x2="0" y2="100%" <?=$attribs['axis']?>/>
+    <line id="axis_y" x1="0" y1="100%" x2="100%" y2="100%" <?=$attribs['axis']?>/>
+    <path id="graph_cpu"  d="M0 <?=$height?> L 0 <?=$height?>" <?=$attribs['graph_cpu']?>/>
+    <text id="graph_in_lbl" x="5" y="8" <?=$attribs['cpu']?>><?=gettext("CPU load");?> <tspan id="graph_cpu_txt" <?=$attribs['cpu']?>> </tspan></text>
+    <path id="grid"  d="M0 <?=$height/4*1?> L <?=$width?> <?=$height/4*1?> M0 <?=$height/4*2?> L <?=$width?> <?=$height/4*2?> M0 <?=$height/4*3?> L <?=$width?> <?=$height/4*3?>" <?=$attribs['grid']?>/>
+    <text id="grid_txt1" x="<?=$width*0.99?>" y="<?=$height/4*1?>" <?=$attribs['grid_txt']?> text-anchor="end">75%</text>
+    <text id="grid_txt2" x="<?=$width*0.99?>" y="<?=$height/4*2?>" <?=$attribs['grid_txt']?> text-anchor="end">50%</text>
+    <text id="grid_txt3" x="<?=$width*0.99?>" y="<?=$height/4*3?>" <?=$attribs['grid_txt']?> text-anchor="end">25%</text>
+    <text id="datetime" x="<?=$width*0.51?>" y="5" <?=$attribs['legend']?>> </text>
 
-    <polygon id="axis_arrow_x" <?php $attribs['axis']?> points="<?php ($width) . "," . ($height)?> <?php ($width-2) . "," . ($height-2)?> <?php ($width-2) . "," . $height?>"/>
-    <text id="error" x="<?php $width*0.5?>" y="<?php $height*0.4?>"  visibility="hidden" <?php $attribs['error']?> text-anchor="middle"><?php $error_text?></text>
-    <text id="collect_initial" x="<?php $width*0.5?>" y="<?php $height*0.4?>" visibility="hidden" <?php $attribs['collect_initial']?> text-anchor="middle"><?php echo gettext("Collecting initial data, please wait...");?></text>
+    <polygon id="axis_arrow_x" <?=$attribs['axis']?> points="<?=($width) . "," . ($height)?> <?=($width-2) . "," . ($height-2)?> <?=($width-2) . "," . $height?>"/>
+    <text id="error" x="<?=$width*0.5?>" y="<?=$height*0.4?>"  visibility="hidden" <?=$attribs['error']?> text-anchor="middle"><?=$error_text?></text>
+    <text id="collect_initial" x="<?=$width*0.5?>" y="<?=$height*0.4?>" visibility="hidden" <?=$attribs['collect_initial']?> text-anchor="middle"><?=gettext("Collecting initial data, please wait...");?></text>
   </g>
   <script type="text/ecmascript">
     <![CDATA[
@@ -148,8 +143,8 @@ if (typeof getURL == 'undefined') {
 var SVGDoc = null;
 var plot_cpu = new Array();
 
-var max_num_points = <?php $nb_plot?>;  // maximum number of plot data points
-var step = <?php $width?> / max_num_points ;
+var max_num_points = <?=$nb_plot?>;  // maximum number of plot data points
+var step = <?=$width?> / max_num_points ;
 
 function formatString(x) {
   return (x < 0 || x > 9 ? "" : "0") + x;
@@ -161,7 +156,7 @@ function init(evt) {
 }
 
 function fetch_data() {
-  getURL('<?php $fetch_link?>', plot_data);
+  getURL('<?=$fetch_link?>', plot_data);
 }
 
 function plot_data(obj) {
@@ -185,7 +180,7 @@ function plot_data(obj) {
   	case 0:
   		SVGDoc.getElementById("collect_initial").setAttributeNS(null, 'visibility', 'visible');
       plot_cpu[0] = cpu;
-      setTimeout('fetch_data()',<?php 1000*$time_interval?>);
+      setTimeout('fetch_data()',<?=1000*$time_interval?>);
       return;
 	case 1:
     	SVGDoc.getElementById("collect_initial").setAttributeNS(null, 'visibility', 'hidden');
@@ -204,25 +199,25 @@ function plot_data(obj) {
 
 	SVGDoc.getElementById('graph_cpu_txt').firstChild.data = plot_cpu[index_plot] + '%';
 
-	scale = <?php $height?> / 100;
+	scale = <?=$height?> / 100;
 
-  var path_cpu = "M 0 " + (<?php $height?> - (plot_cpu[0] * scale));
+  var path_cpu = "M 0 " + (<?=$height?> - (plot_cpu[0] * scale));
   for (i = 1; i < plot_cpu.length; i++)
   {
     var x = step * i;
-    var y_cpu = <?php $height?> - (plot_cpu[i] * scale);
+    var y_cpu = <?=$height?> - (plot_cpu[i] * scale);
     path_cpu += " L" + x + " " + y_cpu;
   }
 
   SVGDoc.getElementById('error').setAttributeNS(null, 'visibility', 'hidden');
   SVGDoc.getElementById('graph_cpu').setAttributeNS(null, 'd', path_cpu);
 
-	setTimeout('fetch_data()',<?php 1000*$time_interval?>);
+	setTimeout('fetch_data()',<?=1000*$time_interval?>);
 }
 
 function handle_error() {
   SVGDoc.getElementById("error").setAttributeNS(null, 'visibility', 'visible');
-  setTimeout('fetch_data()',<?php 1000*$time_interval?>);
+  setTimeout('fetch_data()',<?=1000*$time_interval?>);
 }
 
 function isNumber(a) {

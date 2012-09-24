@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -108,14 +107,14 @@ function rcconf_process_updatenotification($mode, $data) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-        <li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabact"><a href="system_rcconf.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabinact"><a href="system_sysctl.php"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+        <li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabact"><a href="system_rcconf.php" title="<?=gettext("Reload page");?>"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabinact"><a href="system_sysctl.php"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -126,22 +125,22 @@ function rcconf_process_updatenotification($mode, $data) {
 	    	<?php if (updatenotify_exists("rcconf")) print_config_change_box();?>
 	      <table width="100%" border="0" cellpadding="0" cellspacing="0">
 	        <tr>
-	          <td width="40%" class="listhdrlr"><?php echo gettext("Variable");?></td>
-	          <td width="20%" class="listhdrr"><?php echo gettext("Value");?></td>
-	          <td width="30%" class="listhdrr"><?php echo gettext("Comment");?></td>
+	          <td width="40%" class="listhdrlr"><?=gettext("Variable");?></td>
+	          <td width="20%" class="listhdrr"><?=gettext("Value");?></td>
+	          <td width="30%" class="listhdrr"><?=gettext("Comment");?></td>
 	          <td width="10%" class="list"></td>
 	        </tr>
 				  <?php foreach($a_rcvar as $rcvarv):?>
 				  <?php $notificationmode = updatenotify_get_mode("rcconf", $rcvarv['uuid']);?>
 	        <tr>
 	        	<?php $enable = isset($rcvarv['enable']);?>
-	          <td class="<?php $enable?"listlr":"listlrd";?>"><?php htmlspecialchars($rcvarv['name']);?>&nbsp;</td>
-	          <td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars($rcvarv['value']);?>&nbsp;</td>
-	          <td class="listbg"><?php htmlspecialchars($rcvarv['comment']);?>&nbsp;</td>
+	          <td class="<?=$enable?"listlr":"listlrd";?>"><?=htmlspecialchars($rcvarv['name']);?>&nbsp;</td>
+	          <td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($rcvarv['value']);?>&nbsp;</td>
+	          <td class="listbg"><?=htmlspecialchars($rcvarv['comment']);?>&nbsp;</td>
 	          <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 	          <td valign="middle" nowrap="nowrap" class="list">
-	            <a href="system_rcconf_edit.php?uuid=<?php $rcvarv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit option");?>" border="0" alt="<?php echo gettext("Edit option");?>" /></a>
-	            <a href="system_rcconf.php?act=del&amp;uuid=<?php $rcvarv['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this option?");?>')"><img src="x.gif" title="<?php echo gettext("Delete option");?>" border="0" alt="<?php echo gettext("Delete option");?>" /></a>
+	            <a href="system_rcconf_edit.php?uuid=<?=$rcvarv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit option");?>" border="0" alt="<?=gettext("Edit option");?>" /></a>
+	            <a href="system_rcconf.php?act=del&amp;uuid=<?=$rcvarv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this option?");?>')"><img src="x.gif" title="<?=gettext("Delete option");?>" border="0" alt="<?=gettext("Delete option");?>" /></a>
 	          </td>
 	          <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -153,9 +152,9 @@ function rcconf_process_updatenotification($mode, $data) {
 	        <tr>
 	          <td class="list" colspan="3"></td>
 	          <td class="list">
-							<a href="system_rcconf_edit.php"><img src="plus.gif" title="<?php echo gettext("Add option");?>" border="0" alt="<?php echo gettext("Add option");?>" /></a>
+							<a href="system_rcconf_edit.php"><img src="plus.gif" title="<?=gettext("Add option");?>" border="0" alt="<?=gettext("Add option");?>" /></a>
 	          	<?php if (!empty($a_rcvar)):?>
-							<a href="system_rcconf.php?act=del&amp;uuid=all" onclick="return confirm('<?php echo gettext("Do you really want to delete all options?");?>')"><img src="x.gif" title="<?php echo gettext("Delete all options");?>" border="0" alt="<?php echo gettext("Delete all options");?>" /></a>
+							<a href="system_rcconf.php?act=del&amp;uuid=all" onclick="return confirm('<?=gettext("Do you really want to delete all options?");?>')"><img src="x.gif" title="<?=gettext("Delete all options");?>" border="0" alt="<?=gettext("Delete all options");?>" /></a>
 							<?php endif;?>
 						</td>
 	        </tr>

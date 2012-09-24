@@ -9,8 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -559,12 +557,12 @@ function sizeunit_change() {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-				<li class="tabinact"><a href="services_iscsitarget.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_target.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Targets");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?php echo gettext("Initiators");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?php echo gettext("Auths");?></span></a></li>
-				<li class="tabact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_target.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Targets");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?=gettext("Initiators");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?=gettext("Auths");?></span></a></li>
+				<li class="tabact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -585,10 +583,10 @@ function sizeunit_change() {
       <?php html_checkbox("media_uctlsave", gettext("Save"), $pconfig['media_uctlsave'] ? true : false, gettext("Save login information in configuration file."), "", false);?>
       <tr>
         <td colspan="1" valign="top">
-          <input name="Scan" type="submit" class="formbtn" value="<?php echo gettext("Scan Targets");?>" />
+          <input name="Scan" type="submit" class="formbtn" value="<?=gettext("Scan Targets");?>" />
         </td>
         <td colspan="1" valign="top" align="right">
-          <input name="Delete" type="submit" class="formbtn" value="<?php echo gettext("Delete Login Info");?>" />
+          <input name="Delete" type="submit" class="formbtn" value="<?=gettext("Delete Login Info");?>" />
         </td>
       </tr>
       <?php target_list($pconfig) ?>

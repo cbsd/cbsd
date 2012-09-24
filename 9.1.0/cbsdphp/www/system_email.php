@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -143,14 +142,14 @@ function auth_change() {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabact"><a href="system_email.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-      	<li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabinact"><a href="system_sysctl.php"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabact"><a href="system_email.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+      	<li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabinact"><a href="system_sysctl.php"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -171,8 +170,8 @@ function auth_change() {
 					<?php html_combobox("authmethod", gettext("Authentication method"), $pconfig['authmethod'], array("plain" => "Plain", "cram-md5" => "Cram-MD5", "digest-md5" => "Digest-MD5", "gssapi" => "GSSAPI", "external" => "External", "login" => "Login", "ntlm" => "NTLM", "on" => gettext("Best available")), "", true);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" />
-					<input name="Submit" id="sendnow" type="submit" class="formbtn" value="<?php echo gettext("Send test email");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" />
+					<input name="Submit" id="sendnow" type="submit" class="formbtn" value="<?=gettext("Send test email");?>" />
 			  </div>
 			  <?php include("formend.inc");?>
 			</form>

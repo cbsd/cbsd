@@ -6,15 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008 Nelson Silva (nsilva@hotlap.org)
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -112,14 +106,14 @@ function sysctl_process_updatenotification($mode, $data) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-        <li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabact"><a href="system_sysctl.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+        <li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabact"><a href="system_sysctl.php" title="<?=gettext("Reload page");?>"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -130,22 +124,22 @@ function sysctl_process_updatenotification($mode, $data) {
 	    	<?php if (updatenotify_exists("sysctl")) print_config_change_box();?>
 	      <table width="100%" border="0" cellpadding="0" cellspacing="0">
 	        <tr>
-	          <td width="40%" class="listhdrlr"><?php echo gettext("MIB");?></td>
-	          <td width="20%" class="listhdrr"><?php echo gettext("Value");?></td>
-	          <td width="30%" class="listhdrr"><?php echo gettext("Comment");?></td>
+	          <td width="40%" class="listhdrlr"><?=gettext("MIB");?></td>
+	          <td width="20%" class="listhdrr"><?=gettext("Value");?></td>
+	          <td width="30%" class="listhdrr"><?=gettext("Comment");?></td>
 	          <td width="10%" class="list"></td>
 	        </tr>
 				  <?php foreach($a_sysctlvar as $sysctlvarv):?>
 				  <?php $notificationmode = updatenotify_get_mode("sysctl", $sysctlvarv['uuid']);?>
 	        <tr>
 	        	<?php $enable = isset($sysctlvarv['enable']);?>
-	          <td class="<?php $enable?"listlr":"listlrd";?>"><?php htmlspecialchars($sysctlvarv['name']);?>&nbsp;</td>
-	          <td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars($sysctlvarv['value']);?>&nbsp;</td>
-	          <td class="listbg"><?php htmlspecialchars($sysctlvarv['comment']);?>&nbsp;</td>
+	          <td class="<?=$enable?"listlr":"listlrd";?>"><?=htmlspecialchars($sysctlvarv['name']);?>&nbsp;</td>
+	          <td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($sysctlvarv['value']);?>&nbsp;</td>
+	          <td class="listbg"><?=htmlspecialchars($sysctlvarv['comment']);?>&nbsp;</td>
 	          <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 	          <td valign="middle" nowrap="nowrap" class="list">
-	            <a href="system_sysctl_edit.php?uuid=<?php $sysctlvarv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit MIB");?>" border="0" alt="<?php echo gettext("Edit MIB");?>" /></a>
-	            <a href="system_sysctl.php?act=del&amp;uuid=<?php $sysctlvarv['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this MIB?");?>')"><img src="x.gif" title="<?php echo gettext("Delete MIB");?>" border="0" alt="<?php echo gettext("Delete MIB");?>" /></a>
+	            <a href="system_sysctl_edit.php?uuid=<?=$sysctlvarv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit MIB");?>" border="0" alt="<?=gettext("Edit MIB");?>" /></a>
+	            <a href="system_sysctl.php?act=del&amp;uuid=<?=$sysctlvarv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this MIB?");?>')"><img src="x.gif" title="<?=gettext("Delete MIB");?>" border="0" alt="<?=gettext("Delete MIB");?>" /></a>
 	          </td>
 	          <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -156,9 +150,9 @@ function sysctl_process_updatenotification($mode, $data) {
 	        <?php endforeach;?>
 					<tr>
 	          <td class="list" colspan="3"></td>
-	          <td class="list"><a href="system_sysctl_edit.php"><img src="plus.gif" title="<?php echo gettext("Add MIB");?>" border="0" alt="<?php echo gettext("Add MIB");?>" /></a>
+	          <td class="list"><a href="system_sysctl_edit.php"><img src="plus.gif" title="<?=gettext("Add MIB");?>" border="0" alt="<?=gettext("Add MIB");?>" /></a>
 	          	<?php if (!empty($a_sysctlvar)):?>
-							<a href="system_sysctl.php?act=del&amp;id=all" onclick="return confirm('<?php echo gettext("Do you really want to delete all MIBs?");?>')"><img src="x.gif" title="<?php echo gettext("Delete all MIBs");?>" border="0" alt="<?php echo gettext("Delete all MIBs");?>" /></a>
+							<a href="system_sysctl.php?act=del&amp;id=all" onclick="return confirm('<?=gettext("Do you really want to delete all MIBs?");?>')"><img src="x.gif" title="<?=gettext("Delete all MIBs");?>" border="0" alt="<?=gettext("Delete all MIBs");?>" /></a>
 							<?php endif;?>
 						</td>
 	        </tr>

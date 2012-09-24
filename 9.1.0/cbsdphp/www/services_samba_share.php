@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -102,8 +97,8 @@ function smbshare_process_updatenotification($mode, $data) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-				<li class="tabinact"><a href="services_samba.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabact"><a href="services_samba_share.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Shares");?></span></a></li>
+				<li class="tabinact"><a href="services_samba.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="services_samba_share.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Shares");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -114,25 +109,25 @@ function smbshare_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("smbshare")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-          	<td width="30%" class="listhdrlr"><?php echo gettext("Path");?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Name");?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Comment");?></td>
-            <td width="10%" class="listhdrr"><?php echo gettext("Browseable");?></td>
-            <td width="10%" class="listhdrr"><?php echo gettext("Guest");?></td>
+          	<td width="30%" class="listhdrlr"><?=gettext("Path");?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Name");?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Comment");?></td>
+            <td width="10%" class="listhdrr"><?=gettext("Browseable");?></td>
+            <td width="10%" class="listhdrr"><?=gettext("Guest");?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php foreach($a_share as $sharev):?>
   			  <?php $notificationmode = updatenotify_get_mode("smbshare", $sharev['uuid']);?>
           <tr>
-          	<td class="listlr"><?php htmlspecialchars($sharev['path']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($sharev['name']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($sharev['comment']);?>&nbsp;</td>
-            <td class="listbg"><?php htmlspecialchars(isset($sharev['browseable'])?gettext("Yes"):gettext("No"));?></td>
-            <td class="listbg"><?php htmlspecialchars(isset($sharev['guest'])?gettext("Yes"):gettext("No"));?></td>
+          	<td class="listlr"><?=htmlspecialchars($sharev['path']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($sharev['name']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($sharev['comment']);?>&nbsp;</td>
+            <td class="listbg"><?=htmlspecialchars(isset($sharev['browseable'])?gettext("Yes"):gettext("No"));?></td>
+            <td class="listbg"><?=htmlspecialchars(isset($sharev['guest'])?gettext("Yes"):gettext("No"));?></td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-              <a href="services_samba_share_edit.php?uuid=<?php $sharev['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit share");?>" border="0" alt="<?php echo gettext("Edit share");?>" /></a>
-              <a href="services_samba_share.php?act=del&amp;uuid=<?php $sharev['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this share?");?>')"><img src="x.gif" title="<?php echo gettext("Delete share");?>" border="0" alt="<?php echo gettext("Delete share");?>" /></a>
+              <a href="services_samba_share_edit.php?uuid=<?=$sharev['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit share");?>" border="0" alt="<?=gettext("Edit share");?>" /></a>
+              <a href="services_samba_share.php?act=del&amp;uuid=<?=$sharev['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this share?");?>')"><img src="x.gif" title="<?=gettext("Delete share");?>" border="0" alt="<?=gettext("Delete share");?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -143,7 +138,7 @@ function smbshare_process_updatenotification($mode, $data) {
           <?php endforeach;?>
           <tr> 
             <td class="list" colspan="5"></td>
-            <td class="list"><a href="services_samba_share_edit.php"><img src="plus.gif" title="<?php echo gettext("Add share");?>" border="0" alt="<?php echo gettext("Add share");?>" /></a></td>
+            <td class="list"><a href="services_samba_share_edit.php"><img src="plus.gif" title="<?=gettext("Add share");?>" border="0" alt="<?=gettext("Add share");?>" /></a></td>
           </tr>
         </table>
         <?php include("formend.inc");?>

@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -106,9 +102,9 @@ function rsyncclient_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="services_rsyncd.php"><span><?php echo gettext("Server");?></span></a></li>
-				<li class="tabact"><a href="services_rsyncd_client.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Client");?></span></a></li>
-				<li class="tabinact"><a href="services_rsyncd_local.php"><span><?php echo gettext("Local");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd.php"><span><?=gettext("Server");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd_client.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Client");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd_local.php"><span><?=gettext("Local");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -119,26 +115,26 @@ function rsyncclient_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("rsyncclient")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-						<td width="20%" class="listhdrlr"><?php echo gettext("Remote module (source)");?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("Remote address");?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("Local share (destination)");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Who");?></td>
-						<td width="30%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("Remote module (source)");?></td>
+						<td width="15%" class="listhdrr"><?=gettext("Remote address");?></td>
+						<td width="15%" class="listhdrr"><?=gettext("Local share (destination)");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Who");?></td>
+						<td width="30%" class="listhdrr"><?=gettext("Description");?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php foreach($a_rsyncclient as $rsyncclient):?>
   			  <?php $notificationmode = updatenotify_get_mode("rsyncclient", $rsyncclient['uuid']);?>
           <tr>
           	<?php $enable = isset($rsyncclient['enable']);?>
-						<td class="<?php $enable?"listlr":"listlrd";?>"><?php htmlspecialchars($rsyncclient['remoteshare']);?>&nbsp;</td>
-						<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars($rsyncclient['rsyncserverip']);?>&nbsp;</td>
-						<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars($rsyncclient['localshare']);?>&nbsp;</td>
-						<td class="<?php $enable?"listr":"listrd";?>"><?php htmlspecialchars($rsyncclient['who']);?>&nbsp;</td>
-						<td class="listbg"><?php htmlspecialchars($rsyncclient['description']);?>&nbsp;</td>
+						<td class="<?=$enable?"listlr":"listlrd";?>"><?=htmlspecialchars($rsyncclient['remoteshare']);?>&nbsp;</td>
+						<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($rsyncclient['rsyncserverip']);?>&nbsp;</td>
+						<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($rsyncclient['localshare']);?>&nbsp;</td>
+						<td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($rsyncclient['who']);?>&nbsp;</td>
+						<td class="listbg"><?=htmlspecialchars($rsyncclient['description']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-							<a href="services_rsyncd_client_edit.php?uuid=<?php $rsyncclient['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit Rsync job");?>" border="0" alt="<?php echo gettext("Edit Rsync job");?>" /></a>&nbsp;
-              <a href="services_rsyncd_client.php?act=del&amp;uuid=<?php $rsyncclient['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this Rsync job?");?>')"><img src="x.gif" title="<?php echo gettext("Delete Rsync job"); ?>" border="0" alt="<?php echo gettext("Delete Rsync job"); ?>" /></a>
+							<a href="services_rsyncd_client_edit.php?uuid=<?=$rsyncclient['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit Rsync job");?>" border="0" alt="<?=gettext("Edit Rsync job");?>" /></a>&nbsp;
+              <a href="services_rsyncd_client.php?act=del&amp;uuid=<?=$rsyncclient['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this Rsync job?");?>')"><img src="x.gif" title="<?=gettext("Delete Rsync job"); ?>" border="0" alt="<?=gettext("Delete Rsync job"); ?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -149,7 +145,7 @@ function rsyncclient_process_updatenotification($mode, $data) {
           <?php endforeach;?>
           <tr> 
             <td class="list" colspan="5"></td>
-            <td class="list"><a href="services_rsyncd_client_edit.php"><img src="plus.gif" title="<?php echo gettext("Add Rsync job");?>" border="0" alt="<?php echo gettext("Add Rsync job");?>" /></a></td>
+            <td class="list"><a href="services_rsyncd_client_edit.php"><img src="plus.gif" title="<?=gettext("Add Rsync job");?>" border="0" alt="<?=gettext("Add Rsync job");?>" /></a></td>
 			    </tr>
         </table>
         <?php include("formend.inc");?>

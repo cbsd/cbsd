@@ -5,19 +5,14 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for HTML4.01 by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Parts of code are take from 'File Browser Class'
-	Copyright @ 2005 Gabriel Dunne
-	gdunne@quilime.com	
+	Copyright @ 2005 Gabriel Dunne <gdunne@quilime.com>.
+	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
 	modification, are permitted provided that the following conditions are met: 
@@ -525,10 +520,10 @@ EOD;
 ?>
 <?php header("Content-Type: text/html; charset=" . system_get_language_codeset());?>
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
-<html lang="<?php system_get_language_code();?>">
+<html lang="<?=system_get_language_code();?>">
   <head>
-	<title><?php htmlspecialchars(gettext("filechooser"));?></title>
-	<meta http-equiv="Content-Type" content="text/html; charset=<?php system_get_language_codeset();?>">
+	<title><?=htmlspecialchars(gettext("filechooser"));?></title>
+	<meta http-equiv="Content-Type" content="text/html; charset=<?=system_get_language_codeset();?>">
 	<meta http-equiv="Content-Script-Type" content="text/javascript">
 	<meta http-equiv="Content-Style-Type" content="text/css">
   	<link href="gui.css" rel="stylesheet" type="text/css">

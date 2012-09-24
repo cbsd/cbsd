@@ -9,8 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -56,11 +54,13 @@ if ($_POST) {
 		if (!file_exists($d_sysrebootreqd_path)) {
 			$retval |= updatenotify_process("iscsitarget_ag", "iscsitargetag_process_updatenotification");
 			config_lock();
-			$retval |= rc_update_service("iscsi_target");
+			$retval |= rc_update_reload_service("iscsi_target");
 			config_unlock();
 		}
 		$savemsg = get_std_save_message($retval);
 		if ($retval == 0) {
+			$savemsg .= "<br>";
+			$savemsg .= sprintf(gettext("The reloading request has been sent to the daemon. You can see the result by <a href=\"%s\">Log</a>."), "diag_log.php?log=2");
 			updatenotify_delete("iscsitarget_ag");
 		}
 	}
@@ -124,12 +124,12 @@ function iscsitargetag_process_updatenotification($mode, $data) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabinact"><a href="services_iscsitarget.php"><span><?php echo gettext("Settings");?></span></a></li>
-        <li class="tabinact"><a href="services_iscsitarget_target.php"><span><?php echo gettext("Targets");?></span></a></li>
-        <li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?php echo gettext("Initiators");?></span></a></li>
-				<li class="tabact"><a href="services_iscsitarget_ag.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Auths");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+        <li class="tabinact"><a href="services_iscsitarget.php"><span><?=gettext("Settings");?></span></a></li>
+        <li class="tabinact"><a href="services_iscsitarget_target.php"><span><?=gettext("Targets");?></span></a></li>
+        <li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?=gettext("Initiators");?></span></a></li>
+				<li class="tabact"><a href="services_iscsitarget_ag.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Auths");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -140,16 +140,17 @@ function iscsitargetag_process_updatenotification($mode, $data) {
       <?php if (updatenotify_exists("iscsitarget_ag")) print_config_change_box();?>
       <table width="100%" border="0" cellpadding="6" cellspacing="0">
       <tr>
-        <td colspan="2" valign="top" class="listtopic"><?php echo gettext("Auth Groups");?></td>
+        <td colspan="2" valign="top" class="listtopic"><?=gettext("Auth Groups");?></td>
       </tr>
       <tr>
-        <td width="22%" valign="top" class="vncell"><?php echo gettext("Auth Group");?></td>
+        <td width="22%" valign="top" class="vncell"><?=gettext("Auth Group");?></td>
         <td width="78%" class="vtable">
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="10%" class="listhdrlr"><?php echo gettext("Tag");?></td>
-          <td width="40%" class="listhdrr"><?php echo gettext("CHAP Users");?></td>
-          <td width="40%" class="listhdrr"><?php echo gettext("Mutual CHAP Users");?></td>
+          <td width="5%" class="listhdrlr"><?=gettext("Tag");?></td>
+          <td width="30%" class="listhdrr"><?=gettext("CHAP Users");?></td>
+          <td width="30%" class="listhdrr"><?=gettext("Mutual CHAP Users");?></td>
+          <td width="25%" class="listhdrr"><?=gettext("Comment");?></td>
           <td width="10%" class="list"></td>
         </tr>
         <?php foreach($config['iscsitarget']['authgroup'] as $ag):?>
@@ -160,7 +161,7 @@ function iscsitargetag_process_updatenotification($mode, $data) {
         ?>
         <?php $notificationmode = updatenotify_get_mode("iscsitarget_ag", $ag['uuid']);?>
         <tr>
-          <td class="listlr"><?php htmlspecialchars($ag['tag']);?>&nbsp;</td>
+          <td class="listlr"><?=htmlspecialchars($ag['tag']);?>&nbsp;</td>
           <td class="listr">
           <?php if (count($ag['agauth']) == 0) echo "&nbsp;"; ?>
           <?php foreach ($ag['agauth'] as $agauth): ?>
@@ -173,10 +174,11 @@ function iscsitargetag_process_updatenotification($mode, $data) {
           <?php echo htmlspecialchars($agauth['authmuser'])."<br />\n"; ?>
           <?php endforeach; ?>
           </td>
+          <td class="listr"><?=htmlspecialchars($ag['comment']);?>&nbsp;</td>
           <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
           <td valign="middle" nowrap="nowrap" class="list">
-            <a href="services_iscsitarget_ag_edit.php?uuid=<?php $ag['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit auth group");?>" border="0" alt="<?php echo gettext("Edit auth group");?>" /></a>
-            <a href="services_iscsitarget_ag.php?act=del&amp;type=ag&amp;uuid=<?php $ag['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this auth group?");?>')"><img src="x.gif" title="<?php echo gettext("Delete auth group");?>" border="0" alt="<?php echo gettext("Delete auth group");?>" /></a>
+            <a href="services_iscsitarget_ag_edit.php?uuid=<?=$ag['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit auth group");?>" border="0" alt="<?=gettext("Edit auth group");?>" /></a>
+            <a href="services_iscsitarget_ag.php?act=del&amp;type=ag&amp;uuid=<?=$ag['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this auth group?");?>')"><img src="x.gif" title="<?=gettext("Delete auth group");?>" border="0" alt="<?=gettext("Delete auth group");?>" /></a>
           </td>
           <?php else:?>
           <td valign="middle" nowrap="nowrap" class="list">
@@ -186,11 +188,11 @@ function iscsitargetag_process_updatenotification($mode, $data) {
         </tr>
         <?php endforeach;?>
         <tr>
-          <td class="list" colspan="3"></td>
-          <td class="list"><a href="services_iscsitarget_ag_edit.php"><img src="plus.gif" title="<?php echo gettext("Add auth group");?>" border="0" alt="<?php echo gettext("Add auth group");?>" /></a></td>
+          <td class="list" colspan="4"></td>
+          <td class="list"><a href="services_iscsitarget_ag_edit.php"><img src="plus.gif" title="<?=gettext("Add auth group");?>" border="0" alt="<?=gettext("Add auth group");?>" /></a></td>
         </tr>
         </table>
-        <?php echo gettext("A Auth Group contains authorised users and secrets for additional security.");?>
+        <?=gettext("A Auth Group contains authorised users and secrets for additional security.");?>
         </td>
       </tr>
       </table>

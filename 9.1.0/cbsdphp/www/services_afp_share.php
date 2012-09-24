@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -105,8 +101,8 @@ function afpshare_process_updatenotification($mode, $data) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabinact"><a href="services_afp.php"><span><?php echo gettext("Settings");?></span></a></li>
-        <li class="tabact"><a href="services_afp_share.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Shares");?></span></a></li>
+        <li class="tabinact"><a href="services_afp.php"><span><?=gettext("Settings");?></span></a></li>
+        <li class="tabact"><a href="services_afp_share.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Shares");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -117,21 +113,21 @@ function afpshare_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("afpshare")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-          	<td width="15%" class="listhdrlr"><?php echo gettext("Name");?></td>
-            <td width="35%" class="listhdrr"><?php echo gettext("Path");?></td>
-            <td width="40%" class="listhdrr"><?php echo gettext("Comment");?></td>
+          	<td width="15%" class="listhdrlr"><?=gettext("Name");?></td>
+            <td width="35%" class="listhdrr"><?=gettext("Path");?></td>
+            <td width="40%" class="listhdrr"><?=gettext("Comment");?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php foreach ($a_share as $sharev):?>
   			  <?php $notificationmode = updatenotify_get_mode("afpshare", $sharev['uuid']);?>
           <tr>
-            <td class="listlr"><?php htmlspecialchars($sharev['name']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($sharev['path']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($sharev['comment']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($sharev['name']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($sharev['path']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($sharev['comment']);?>&nbsp;</td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-              <a href="services_afp_share_edit.php?uuid=<?php $sharev['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit share");?>" border="0" alt="<?php echo gettext("Edit share");?>" /></a>
-              <a href="services_afp_share.php?act=del&amp;uuid=<?php $sharev['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this share?");?>')"><img src="x.gif" title="<?php echo gettext("Delete share");?>" border="0" alt="<?php echo gettext("Delete share");?>" /></a>
+              <a href="services_afp_share_edit.php?uuid=<?=$sharev['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit share");?>" border="0" alt="<?=gettext("Edit share");?>" /></a>
+              <a href="services_afp_share.php?act=del&amp;uuid=<?=$sharev['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this share?");?>')"><img src="x.gif" title="<?=gettext("Delete share");?>" border="0" alt="<?=gettext("Delete share");?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -143,7 +139,7 @@ function afpshare_process_updatenotification($mode, $data) {
           <tr>
             <td class="list" colspan="3"></td>
             <td class="list">
-							<a href="services_afp_share_edit.php"><img src="plus.gif" title="<?php echo gettext("Add share");?>" border="0" alt="<?php echo gettext("Add share");?>" /></a>
+							<a href="services_afp_share_edit.php"><img src="plus.gif" title="<?=gettext("Add share");?>" border="0" alt="<?=gettext("Add share");?>" /></a>
 						</td>
           </tr>
         </table>

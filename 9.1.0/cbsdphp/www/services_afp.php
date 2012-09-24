@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -101,8 +97,8 @@ function enable_change(enable_change) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="services_afp.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-        <li class="tabinact"><a href="services_afp_share.php"><span><?php echo gettext("Shares");?></span></a></li>
+        <li class="tabact"><a href="services_afp.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+        <li class="tabinact"><a href="services_afp_share.php"><span><?=gettext("Shares");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -114,25 +110,25 @@ function enable_change(enable_change) {
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<?php html_titleline_checkbox("enable", gettext("Apple Filing Protocol"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Server Name");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Server Name");?></td>
 						<td width="78%" class="vtable">
-							<input name="afpname" type="text" class="formfld" id="afpname" size="30" value="<?php htmlspecialchars($pconfig['afpname']);?>" /><br />
-							<?php echo gettext("Name of the server. If this field is left empty the default server is specified.");?><br />
+							<input name="afpname" type="text" class="formfld" id="afpname" size="30" value="<?=htmlspecialchars($pconfig['afpname']);?>" /><br />
+							<?=gettext("Name of the server. If this field is left empty the default server is specified.");?><br />
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><strong><?php echo gettext("Authentication");?></strong></td>
+						<td width="22%" valign="top" class="vncell"><strong><?=gettext("Authentication");?></strong></td>
 						<td width="78%" class="vtable">
 							<input name="guest" id="guest" type="checkbox" value="yes" <?php if ($pconfig['guest']) echo "checked=\"checked\"";?> />
-							<?php echo gettext("Enable guest access.");?><br />
+							<?=gettext("Enable guest access.");?><br />
 							<input name="local" id="local" type="checkbox" value="yes" <?php if ($pconfig['local']) echo "checked=\"checked\"";?> />
-							<?php echo gettext("Enable local user authentication.");?>
+							<?=gettext("Enable local user authentication.");?>
 						</td>
 					</tr>
 					<?php html_checkbox("noddp", gettext("DDP"), $pconfig['noddp'] ? true : false, gettext("Disable AFP-over-Appletalk to prevent DDP connections."));?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("note", gettext("Note"), sprintf(gettext("You have to activate <a href='%s'>Zeroconf/Bonjour</a> to advertise this service to clients."), "system_advanced.php"));?>

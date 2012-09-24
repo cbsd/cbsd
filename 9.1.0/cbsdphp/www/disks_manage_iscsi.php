@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -106,9 +102,9 @@ function iscsiinitiator_process_updatenotification($mode, $data) {
 <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="disks_manage.php"><span><?php echo gettext("Management");?></span></a></li>
-      	<li class="tabinact"><a href="disks_manage_smart.php"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabact"><a href="disks_manage_iscsi.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
+      	<li class="tabinact"><a href="disks_manage.php"><span><?=gettext("Management");?></span></a></li>
+      	<li class="tabinact"><a href="disks_manage_smart.php"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabact"><a href="disks_manage_iscsi.php" title="<?=gettext("Reload page");?>"><span><?=gettext("iSCSI Initiator");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -119,21 +115,21 @@ function iscsiinitiator_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("iscsiinitiator")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-            <td width="25%" class="listhdrlr"><?php echo gettext("Name"); ?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Target name"); ?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Target address"); ?></td>
+            <td width="25%" class="listhdrlr"><?=gettext("Name"); ?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Target name"); ?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Target address"); ?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php foreach($a_iscsiinit as $iscsiinit):?>
   			  <?php $notificationmode = updatenotify_get_mode("iscsiinitiator", $iscsiinit['uuid']);?>
           <tr>
-            <td class="listlr"><?php htmlspecialchars($iscsiinit['name']);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($iscsiinit['targetname']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($iscsiinit['targetaddress']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($iscsiinit['name']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($iscsiinit['targetname']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($iscsiinit['targetaddress']);?>&nbsp;</td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_manage_iscsi_edit.php?uuid=<?php $iscsiinit['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit initiator");?>" border="0" alt="<?php echo gettext("Edit initiator");?>" /></a>
-							<a href="disks_manage_iscsi.php?act=del&amp;uuid=<?php $iscsiinit['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this initiator? All elements that still use it will become invalid (e.g. share)!");?>')"><img src="x.gif" title="<?php echo gettext("Delete initiator"); ?>" border="0" alt="<?php echo gettext("Delete initiator"); ?>" /></a>
+							<a href="disks_manage_iscsi_edit.php?uuid=<?=$iscsiinit['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit initiator");?>" border="0" alt="<?=gettext("Edit initiator");?>" /></a>
+							<a href="disks_manage_iscsi.php?act=del&amp;uuid=<?=$iscsiinit['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this initiator? All elements that still use it will become invalid (e.g. share)!");?>')"><img src="x.gif" title="<?=gettext("Delete initiator"); ?>" border="0" alt="<?=gettext("Delete initiator"); ?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -144,7 +140,7 @@ function iscsiinitiator_process_updatenotification($mode, $data) {
           <?php endforeach;?>
           <tr> 
             <td class="list" colspan="3"></td>
-            <td class="list"><a href="disks_manage_iscsi_edit.php"><img src="plus.gif" title="<?php echo gettext("Add initiator");?>" border="0" alt="<?php echo gettext("Add initiator");?>" /></a></td>
+            <td class="list"><a href="disks_manage_iscsi_edit.php"><img src="plus.gif" title="<?=gettext("Add initiator");?>" border="0" alt="<?=gettext("Add initiator");?>" /></a></td>
 			    </tr>
         </table>
         <?php include("formend.inc");?>

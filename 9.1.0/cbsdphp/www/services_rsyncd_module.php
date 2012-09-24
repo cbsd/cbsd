@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -102,17 +97,17 @@ function rsyncd_process_updatenotification($mode, $data) {
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="services_rsyncd.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Server");?></span></a></li>
-			  <li class="tabinact"><a href="services_rsyncd_client.php"><span><?php echo gettext("Client");?></span></a></li>
-			  <li class="tabinact"><a href="services_rsyncd_local.php"><span><?php echo gettext("Local");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Server");?></span></a></li>
+			  <li class="tabinact"><a href="services_rsyncd_client.php"><span><?=gettext("Client");?></span></a></li>
+			  <li class="tabinact"><a href="services_rsyncd_local.php"><span><?=gettext("Local");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="services_rsyncd.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabact"><a href="services_rsyncd_module.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabinact"><a href="services_rsyncd.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="services_rsyncd_module.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -123,25 +118,25 @@ function rsyncd_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("rsyncd")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-          	<td width="15%" class="listhdrlr"><?php echo gettext("Name");?></td>
-            <td width="35%" class="listhdrr"><?php echo gettext("Path");?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Comment");?></td>
-            <td width="10%" class="listhdrr"><?php echo gettext("List");?></td>
-            <td width="10%" class="listhdrr"><?php echo gettext("Access mode");?></td>
+          	<td width="15%" class="listhdrlr"><?=gettext("Name");?></td>
+            <td width="35%" class="listhdrr"><?=gettext("Path");?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Comment");?></td>
+            <td width="10%" class="listhdrr"><?=gettext("List");?></td>
+            <td width="10%" class="listhdrr"><?=gettext("Access mode");?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php foreach($a_module as $modulev):?>
   			  <?php $notificationmode = updatenotify_get_mode("rsyncd", $modulev['uuid']);?>
           <tr>
-            <td class="listlr"><?php htmlspecialchars($modulev['name']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($modulev['path']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($modulev['comment']);?>&nbsp;</td>
-            <td class="listbg"><?php htmlspecialchars(isset($modulev['list'])?gettext("Yes"):gettext("No"));?></td>
-            <td class="listbg"><?php htmlspecialchars($modulev['rwmode']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($modulev['name']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($modulev['path']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($modulev['comment']);?>&nbsp;</td>
+            <td class="listbg"><?=htmlspecialchars(isset($modulev['list'])?gettext("Yes"):gettext("No"));?></td>
+            <td class="listbg"><?=htmlspecialchars($modulev['rwmode']);?>&nbsp;</td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-              <a href="services_rsyncd_module_edit.php?uuid=<?php $modulev['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit module");?>" border="0" alt="<?php echo gettext("Edit module");?>" /></a>
-              <a href="services_rsyncd_module.php?act=del&amp;uuid=<?php $modulev['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this module?");?>')"><img src="x.gif" title="<?php echo gettext("Delete module");?>" border="0" alt="<?php echo gettext("Delete module");?>" /></a>
+              <a href="services_rsyncd_module_edit.php?uuid=<?=$modulev['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit module");?>" border="0" alt="<?=gettext("Edit module");?>" /></a>
+              <a href="services_rsyncd_module.php?act=del&amp;uuid=<?=$modulev['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this module?");?>')"><img src="x.gif" title="<?=gettext("Delete module");?>" border="0" alt="<?=gettext("Delete module");?>" /></a>
             </td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -152,7 +147,7 @@ function rsyncd_process_updatenotification($mode, $data) {
           <?php endforeach;?>
           <tr>
             <td class="list" colspan="5"></td>
-            <td class="list"><a href="services_rsyncd_module_edit.php"><img src="plus.gif" title="<?php echo gettext("Add module");?>" border="0" alt="<?php echo gettext("Add module");?>" /></a></td>
+            <td class="list"><a href="services_rsyncd_module_edit.php"><img src="plus.gif" title="<?=gettext("Add module");?>" border="0" alt="<?=gettext("Add module");?>" /></a></td>
           </tr>
         </table>
         <?php include("formend.inc");?>

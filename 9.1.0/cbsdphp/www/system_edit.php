@@ -6,25 +6,10 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
-	
-	Copyright (C) 2004, 2005 Scott Ullrich
-	All rights reserved.
-
-	Adapted for FreeNAS by Volker Theile (votdev@gmx.de)
-	Copyright (C) 2006-2010 Volker Theile
-
-	Using dp.SyntaxHighlighter for syntax highlighting
-	http://www.dreamprojections.com/SyntaxHighlighter
-	Copyright (C) 2004-2006 Alex Gorbatchev. All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
 	modification, are permitted provided that the following conditions are met: 
@@ -119,22 +104,22 @@ else
 				<table width="100%" cellpadding='9' cellspacing='9' bgcolor='#eeeeee'>
 					<tr>
 						<td>
-							<span class="label"><?php echo gettext("File path");?></span>
-							<input size="42" id="savetopath" name="savetopath" value="<?php $savetopath;?>" />
+							<span class="label"><?=gettext("File path");?></span>
+							<input size="42" id="savetopath" name="savetopath" value="<?=$savetopath;?>" />
 							<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.savetopath; filechooser = window.open("filechooser.php?p="+escape(ifield.value), "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." />
-							<input name="submit" type="submit" class="formbtn" id="Load" value="<?php echo gettext("Load");?>" />
-							<input name="submit" type="submit" class="formbtn" id="Save" value="<?php echo gettext("Save");?>" />
+							<input name="submit" type="submit" class="formbtn" id="Load" value="<?=gettext("Load");?>" />
+							<input name="submit" type="submit" class="formbtn" id="Save" value="<?=gettext("Save");?>" />
 							<hr noshade="noshade" />
 							<?php if($_POST['highlight'] == "no"): ?>
-							<?php echo gettext("Rows"); ?>: <input size="3" name="rows" value="<? echo $rows; ?>" />
-							<?php echo gettext("Cols"); ?>: <input size="3" name="cols" value="<? echo $cols; ?>" />
+							<?=gettext("Rows"); ?>: <input size="3" name="rows" value="<? echo $rows; ?>" />
+							<?=gettext("Cols"); ?>: <input size="3" name="cols" value="<? echo $cols; ?>" />
 							|
 							<?php endif; ?>
-							<?php echo gettext("Highlighting"); ?>:
+							<?=gettext("Highlighting"); ?>:
 							<input id="highlighting_enabled" name="highlight" type="radio" value="yes" <?php if($highlight == "yes") echo " checked=\"checked\""; ?> />
-							<label for="highlighting_enabled"><?php echo gettext("Enabled"); ?></label>
+							<label for="highlighting_enabled"><?=gettext("Enabled"); ?></label>
 							<input id="highlighting_disabled" name="highlight" type="radio" value="no"<?php if($highlight == "no") echo " checked=\"checked\""; ?> />
-							<label for="highlighting_disabled"><?php echo gettext("Disabled"); ?></label>
+							<label for="highlighting_disabled"><?=gettext("Disabled"); ?></label>
 						</td>
 					</tr>
 				</table>

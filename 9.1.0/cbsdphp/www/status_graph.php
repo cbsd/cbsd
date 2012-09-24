@@ -7,14 +7,6 @@
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 
-	Modified for XHTML by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010-2011 Daisuke Aoyama <aoyama@peach.ne.jp>.
-	All rights reserved.
-
-	Modified by Michael Zoon <zoon01@nas4free.org>
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
-
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
 	All rights reserved.
@@ -62,8 +54,8 @@ $ifnum = get_ifname($config['interfaces'][$curif]['if']);
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="status_graph.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Traffic graph");?></span></a></li>
-				<li class="tabinact"><a href="status_graph_cpu.php"><span><?php echo gettext("CPU load");?></span></a></li>
+				<li class="tabact"><a href="status_graph.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Traffic graph");?></span></a></li>
+				<li class="tabinact"><a href="status_graph_cpu.php"><span><?=gettext("CPU load");?></span></a></li>
   		</ul>
   	</td>
 	</tr>
@@ -76,7 +68,7 @@ for ($j = 1; isset($config['interfaces']['opt' . $j]); $j++) {
 }
 ?>
 <form name="form1" action="status_graph.php" method="get" style="padding-bottom: 10px; margin-bottom: 14px; border-bottom: 1px solid #999999">
-<?php echo gettext("Interface");?>:
+<?=gettext("Interface");?>:
 <select name="if" class="formfld" onchange="document.form1.submit()">
 <?php
 foreach ($ifdescrs as $ifn => $ifd) {
@@ -87,14 +79,14 @@ foreach ($ifdescrs as $ifn => $ifd) {
 ?>
 </select>
 <?php include("formend.inc");?>
-</form><?php echo gettext("Graph shows last 120 seconds");?>
+</form><?=gettext("Graph shows last 120 seconds");?>
 <div align="center">
 <object id="graph"
-        data="graph.php?ifnum=<?php $ifnum;?>&amp;ifname=<?php rawurlencode($ifdescrs[$curif]);?>"
+        data="graph.php?ifnum=<?=$ifnum;?>&amp;ifname=<?=rawurlencode($ifdescrs[$curif]);?>"
         type="image/svg+xml"
         width="550"
         height="275">
-  <param name="src" value="graph.php?ifnum=<?php $ifnum;?>&amp;ifname=<?php rawurlencode($ifdescrs[$curif]);?>" />
+  <param name="src" value="graph.php?ifnum=<?=$ifnum;?>&amp;ifname=<?=rawurlencode($ifdescrs[$curif]);?>" />
   Your browser does not support this object type! You need to either use Firefox, Internet Explorer 9 or download RENESIS Player<br /><span class="red"><strong>Note:</strong></span> The <a href="http://de.brothersoft.com/Renesis-Player-download-141155.html" target="_blank">RENESIS Player</a> is required to view the graph.
 </object>
 

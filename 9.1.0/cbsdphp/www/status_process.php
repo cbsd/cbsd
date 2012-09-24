@@ -11,12 +11,6 @@
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
 	All rights reserved.
 
-	Modified by Daisuke Aoyama (aoyama@peach.ne.jp)
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.
-	Modified by Michael Zoon (zoon01@nas4free.org)
-	Copyright (C) 2008-2011 Michael Zoon (zoon01@nas4free.org).
-	All rights reserved.
-
 	Redistribution and use in source and binary forms, with or without
 	modification, are permitted provided that the following conditions are met: 
 
@@ -66,10 +60,10 @@ sajax_handle_client_request();
   <tr>
     <td class="tabcont">
 			<table width="100%" border="0" cellspacing="0" cellpadding="0">
-				<?php echo html_titleline(gettext("Processes information"));?>
+				<?php html_titleline(gettext("Processes information"));?>
 			  <tr>
 			    <td class="listt">
-			    	<pre><textarea style="width: 98%;" id="procinfo" name="procinfo" class="listcontent" cols="95" rows="30" readonly="readonly"><?php echo htmlspecialchars(get_process_info());?></textarea></pre>
+			    	<pre><textarea style="width: 98%;" id="procinfo" name="procinfo" class="listcontent" cols="95" rows="30" readonly="readonly"><?=htmlspecialchars(get_process_info());?></textarea></pre>
 			    </td>
 			  </tr>
 			</table>

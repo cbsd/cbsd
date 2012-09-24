@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -137,20 +133,20 @@ if ($_POST) {
   <tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav">
-				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?php echo gettext("JBOD"); ?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?php echo gettext("RAID 0"); ?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?php echo gettext("RAID 1"); ?></span></a></li>
-				<li class="tabact"><a href="disks_raid_graid5.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("RAID 5");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?php echo gettext("RAID 0/1/5");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?=gettext("JBOD"); ?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?=gettext("RAID 0"); ?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?=gettext("RAID 1"); ?></span></a></li>
+				<li class="tabact"><a href="disks_raid_graid5.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("RAID 5");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?=gettext("RAID 0/1/5");?></span></a></li>
 		  </ul>
 	  </td>
 	</tr>
   <tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav2">
-				<li class="tabact"><a href="disks_raid_graid5.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_graid5_tools.php"><span><?php echo gettext("Tools"); ?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_graid5_info.php"><span><?php echo gettext("Information"); ?></span></a></li>
+				<li class="tabact"><a href="disks_raid_graid5.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_graid5_tools.php"><span><?=gettext("Tools"); ?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_graid5_info.php"><span><?=gettext("Information"); ?></span></a></li>
 		  </ul>
 	  </td>
 	</tr>
@@ -161,34 +157,34 @@ if ($_POST) {
 				<?php if ($input_errors) print_input_errors($input_errors); ?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			    <tr>
-			      <td valign="top" class="vncellreq"><?php echo gettext("Raid name");?></td>
+			      <td valign="top" class="vncellreq"><?=gettext("Raid name");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="name" type="text" class="formfld" id="name" size="15" value="<?php htmlspecialchars($pconfig['name']);?>" <?php if (isset($id)) echo "readonly=\"readonly\"";?> />
+			        <input name="name" type="text" class="formfld" id="name" size="15" value="<?=htmlspecialchars($pconfig['name']);?>" <?php if (isset($id)) echo "readonly=\"readonly\"";?> />
 			      </td>
 			    </tr>
 			    <tr>
-			      <td valign="top" class="vncellreq"><?php echo gettext("Type"); ?></td>
+			      <td valign="top" class="vncellreq"><?=gettext("Type"); ?></td>
 			      <td width="78%" class="vtable">
-			      RAID 5 (<?php echo gettext("rotated block-interleaved parity"); ?>)
+			      RAID 5 (<?=gettext("rotated block-interleaved parity"); ?>)
 			      </td>
 			    </tr>
 			    <?php $a_provider = array(); foreach ($a_disk as $diskv) { if (isset($id) && !(is_array($pconfig['device']) && in_array($diskv['devicespecialfile'], $pconfig['device']))) { continue; } if (!isset($id) && false !== array_search_ex($diskv['devicespecialfile'], $all_raid, "device")) { continue; } $a_provider[$diskv[devicespecialfile]] = htmlspecialchars("$diskv[name] ($diskv[size], $diskv[desc])"); }?>
 			    <?php html_listbox("device", gettext("Provider"), $pconfig['device'], $a_provider, gettext("Note: Ctrl-click (or command-click on the Mac) to select multiple entries."), true, isset($id));?>
 			    <?php if (!isset($id)):?>
 			    <tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Initialize");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Initialize");?></td>
 			      <td width="78%" class="vtable">
 							<input name="init" type="checkbox" id="init" value="yes" <?php if (true === $pconfig['init']) echo "checked=\"checked\""; ?> />
-							<?php echo gettext("Create and initialize RAID.");?><br />
-							<span class="vexpl"><?php echo gettext("This will erase ALL data on the selected disks! Do not use this option if you want to add an already existing RAID again.");?></span>
+							<?=gettext("Create and initialize RAID.");?><br />
+							<span class="vexpl"><?=gettext("This will erase ALL data on the selected disks! Do not use this option if you want to add an already existing RAID again.");?></span>
 			      </td>
 			    </tr>
 					<?php endif;?>
 			  </table>
 			  <?php if (!isset($id)):?>
 			  <div id="submit">
-			  	<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Add");?>" />
-			  	<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
+			  	<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Add");?>" />
+			  	<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
 				</div>
 			  <?php endif;?>
 			  <?php include("formend.inc");?>

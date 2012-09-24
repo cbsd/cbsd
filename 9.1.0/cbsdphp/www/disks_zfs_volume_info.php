@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -67,19 +62,19 @@ function zfs_volume_display_properties() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_volume.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_volume.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volume");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_volume_info.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volume");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_volume_info.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -89,13 +84,13 @@ function zfs_volume_display_properties() {
 				<?php html_titleline(gettext("ZFS volume information and status"));?>
 				<tr>
 					<td class="listt">
-						<pre><span id="zfs_volume_list"><?php zfs_volume_display_list();?></span></pre>
+						<pre><span id="zfs_volume_list"><?=zfs_volume_display_list();?></span></pre>
 					</td>
 				</tr>
 				<?php html_titleline(gettext("ZFS volume properties"));?>
 				<tr>
 					<td class="listt">
-						<pre><span id="zfs_volume_properties"><?php zfs_volume_display_properties();?></span></pre>
+						<pre><span id="zfs_volume_properties"><?=zfs_volume_display_properties();?></span></pre>
 					</td>
 				</tr>
 			</table>

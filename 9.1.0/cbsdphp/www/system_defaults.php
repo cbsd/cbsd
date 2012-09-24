@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -64,13 +63,13 @@ if ($_POST) {
 	    <td class="tabcont">
 				<p>
 					<strong>
-						<?php sprintf(gettext("If you click 'Yes', %s will be reset to factory defaults and will reboot immediately. The entire system configuration will be overwritten. The LAN IP address will be reset to %s and the password will be set to '%s'."), get_product_name(), $g['default_ip'], $g['default_passwd']);?><br /><br />
-						<?php echo gettext("Are you sure you want to proceed?");?>
+						<?=sprintf(gettext("If you click 'Yes', %s will be reset to factory defaults and will reboot immediately. The entire system configuration will be overwritten. The LAN IP address will be reset to %s and the password will be set to '%s'."), get_product_name(), $g['default_ip'], $g['default_passwd']);?><br /><br />
+						<?=gettext("Are you sure you want to proceed?");?>
 					</strong>
 				</p>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Yes");?>" />
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("No");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Yes");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("No");?>" />
 				</div>
 			</td>
 		</tr>

@@ -6,15 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
-	Copyright (c) 2008 Nelson Silva
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -110,22 +104,22 @@ $a_poolstatus = zfs_get_pool_list();
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="disks_zfs_zpool_vdevice.php"><span><?php echo gettext("Virtual device");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_info.php"><span><?php echo gettext("Information");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_io.php"><span><?php echo gettext("I/O statistics");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_vdevice.php"><span><?=gettext("Virtual device");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_tools.php"><span><?=gettext("Tools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_info.php"><span><?=gettext("Information");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_io.php"><span><?=gettext("I/O statistics");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -136,14 +130,14 @@ $a_poolstatus = zfs_get_pool_list();
 				<?php if (updatenotify_exists("zfszpool")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="15%" class="listhdrlr"><?php echo gettext("Name");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Size");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Used");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Free");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Capacity");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Dedup");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Health");?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("AltRoot");?></td>
+						<td width="15%" class="listhdrlr"><?=gettext("Name");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Size");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Used");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Free");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Capacity");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Dedup");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Health");?></td>
+						<td width="15%" class="listhdrr"><?=gettext("AltRoot");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_pool as $poolk => $poolv):?>
@@ -161,18 +155,18 @@ $a_poolstatus = zfs_get_pool_list();
 					}
 					?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($poolv['name']);?>&nbsp;</td>
-						<td class="listr"><?php $size;?>&nbsp;</td>
-						<td class="listr"><?php $used;?>&nbsp;</td>
-						<td class="listr"><?php $avail;?>&nbsp;</td>
-						<td class="listr"><?php $cap;?>&nbsp;</td>
-						<td class="listr"><?php $dedup;?>&nbsp;</td>
-						<td class="listbg"><a href="disks_zfs_zpool_info.php?pool=<?php $poolv['name']?>"><?php $health;?></a>&nbsp;</td>
-						<td class="listr"><?php $altroot;?>&nbsp;</td>	
+						<td class="listlr"><?=htmlspecialchars($poolv['name']);?>&nbsp;</td>
+						<td class="listr"><?=$size;?>&nbsp;</td>
+						<td class="listr"><?=$used;?>&nbsp;</td>
+						<td class="listr"><?=$avail;?>&nbsp;</td>
+						<td class="listr"><?=$cap;?>&nbsp;</td>
+						<td class="listr"><?=$dedup;?>&nbsp;</td>
+						<td class="listbg"><a href="disks_zfs_zpool_info.php?pool=<?=$poolv['name']?>"><?=$health;?></a>&nbsp;</td>
+						<td class="listr"><?=$altroot;?>&nbsp;</td>	
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>	
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_zfs_zpool_edit.php?uuid=<?php $poolv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit pool");?>" border="0" alt="<?php echo gettext("Edit pool");?>" /></a>&nbsp;
-							<a href="disks_zfs_zpool.php?act=del&amp;uuid=<?php $poolv['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this pool?");?>')"><img src="x.gif" title="<?php echo gettext("Delete pool");?>" border="0" alt="<?php echo gettext("Delete pool");?>" /></a>
+							<a href="disks_zfs_zpool_edit.php?uuid=<?=$poolv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit pool");?>" border="0" alt="<?=gettext("Edit pool");?>" /></a>&nbsp;
+							<a href="disks_zfs_zpool.php?act=del&amp;uuid=<?=$poolv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this pool?");?>')"><img src="x.gif" title="<?=gettext("Delete pool");?>" border="0" alt="<?=gettext("Delete pool");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -184,7 +178,7 @@ $a_poolstatus = zfs_get_pool_list();
 					<tr>
 						<td class="list" colspan="8"></td>
 						<td class="list">
-							<a href="disks_zfs_zpool_edit.php"><img src="plus.gif" title="<?php echo gettext("Add pool");?>" border="0" alt="<?php echo gettext("Add pool");?>" /></a>
+							<a href="disks_zfs_zpool_edit.php"><img src="plus.gif" title="<?=gettext("Add pool");?>" border="0" alt="<?=gettext("Add pool");?>" /></a>
 						</td>
 					</tr>
 				</table>

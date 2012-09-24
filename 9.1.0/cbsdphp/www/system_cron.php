@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -100,14 +99,14 @@ function cronjob_process_updatenotification($mode, $data) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-      	<li class="tabinact"><a href="system_rc.php"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabact"><a href="system_cron.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabinact"><a href="system_sysctl.php"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+      	<li class="tabinact"><a href="system_rc.php"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabact"><a href="system_cron.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabinact"><a href="system_sysctl.php"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -118,22 +117,22 @@ function cronjob_process_updatenotification($mode, $data) {
 	    	<?php if (updatenotify_exists("cronjob")) print_config_change_box();?>
 	      <table width="100%" border="0" cellpadding="0" cellspacing="0">
 	        <tr>
-						<td width="40%" class="listhdrlr"><?php echo gettext("Command");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Who");?></td>
-						<td width="40%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="40%" class="listhdrlr"><?=gettext("Command");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Who");?></td>
+						<td width="40%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 	        </tr>
 				  <?php foreach($a_cron as $job):?>
 				  <?php $notificationmode = updatenotify_get_mode("cronjob", $job['uuid']);?>
 	        <tr>
 	        	<?php $enable = isset($job['enable']);?>
-	        	<td class="<?php echo $enable?"listlr":"listlrd";?>"><?php echo htmlspecialchars($job['command']);?>&nbsp;</td>
-	          <td class="<?php echo $enable?"listr":"listrd";?>"><?php echo htmlspecialchars($job['who']);?>&nbsp;</td>
-	          <td class="listbg"><?php echo htmlspecialchars($job['desc']);?>&nbsp;</td>
+	        	<td class="<?=$enable?"listlr":"listlrd";?>"><?=htmlspecialchars($job['command']);?>&nbsp;</td>
+	          <td class="<?=$enable?"listr":"listrd";?>"><?=htmlspecialchars($job['who']);?>&nbsp;</td>
+	          <td class="listbg"><?=htmlspecialchars($job['desc']);?>&nbsp;</td>
 	          <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 	          <td valign="middle" nowrap="nowrap" class="list">
-							<a href="system_cron_edit.php?uuid=<?php $job['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit job");?>" border="0" alt="<?php echo gettext("Edit job");?>" /></a>
-							<a href="system_cron.php?act=del&amp;uuid=<?php $job['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this cron job?");?>')"><img src="x.gif" title="<?php echo gettext("Delete job");?>" border="0" alt="<?php echo gettext("Delete job");?>" /></a>
+							<a href="system_cron_edit.php?uuid=<?=$job['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit job");?>" border="0" alt="<?=gettext("Edit job");?>" /></a>
+							<a href="system_cron.php?act=del&amp;uuid=<?=$job['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this cron job?");?>')"><img src="x.gif" title="<?=gettext("Delete job");?>" border="0" alt="<?=gettext("Delete job");?>" /></a>
 	          </td>
 	          <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -145,7 +144,7 @@ function cronjob_process_updatenotification($mode, $data) {
 	        <tr>
 	          <td class="list" colspan="3"></td>
 	          <td class="list">
-							<a href="system_cron_edit.php"><img src="plus.gif" title="<?php echo gettext("Add job");?>" border="0" alt="<?php echo gettext("Add job");?>" /></a>
+							<a href="system_cron_edit.php"><img src="plus.gif" title="<?=gettext("Add job");?>" border="0" alt="<?=gettext("Add job");?>" /></a>
 						</td>
 	        </tr>
 	      </table>

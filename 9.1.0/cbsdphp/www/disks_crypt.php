@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -113,8 +109,8 @@ function geli_process_updatenotification($mode, $data) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="disks_crypt.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabinact"><a href="disks_crypt_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
+        <li class="tabact"><a href="disks_crypt.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Management");?></span></a></li>
+        <li class="tabinact"><a href="disks_crypt_tools.php"><span><?=gettext("Tools");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -126,17 +122,17 @@ function geli_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("geli")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-            <td width="25%" class="listhdrlr"><?php echo gettext("Disk"); ?></td>
-            <td width="25%" class="listhdrr"><?php echo gettext("Data integrity"); ?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Encryption"); ?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Status") ;?></td>
+            <td width="25%" class="listhdrlr"><?=gettext("Disk"); ?></td>
+            <td width="25%" class="listhdrr"><?=gettext("Data integrity"); ?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Encryption"); ?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Status") ;?></td>
             <td width="10%" class="list"></td>
           </tr>
   			  <?php $i = 0; foreach($a_geli as $geli): ?>
           <tr>
-            <td class="listlr"><?php htmlspecialchars($geli['name']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($geli['aalgo']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($geli['ealgo']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($geli['name']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($geli['aalgo']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($geli['ealgo']);?>&nbsp;</td>
             <td class="listbg">
               <?php
               if (updatenotify_exists("geli")) {
@@ -159,8 +155,8 @@ function geli_process_updatenotification($mode, $data) {
             </td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_crypt_tools.php?disk=<?php $geli['devicespecialfile'];?>&amp;action=setkey"><img src="e.gif" title="<?php echo gettext("Change password"); ?>" border="0" alt="<?php echo gettext("Change password"); ?>" /></a>&nbsp;
-              <a href="disks_crypt.php?act=del&amp;uuid=<?php $geli['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this volume?\\n!!! Note, all data will get lost and can not be recovered. !!!");?>')"><img src="x.gif" title="<?php echo gettext("Kill encrypted volume"); ?>" border="0" alt="<?php echo gettext("Kill encrypted volume"); ?>" /></a>
+							<a href="disks_crypt_tools.php?disk=<?=$geli['devicespecialfile'];?>&amp;action=setkey"><img src="e.gif" title="<?=gettext("Change password"); ?>" border="0" alt="<?=gettext("Change password"); ?>" /></a>&nbsp;
+              <a href="disks_crypt.php?act=del&amp;uuid=<?=$geli['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this volume?\\n!!! Note, all data will get lost and can not be recovered. !!!");?>')"><img src="x.gif" title="<?=gettext("Kill encrypted volume"); ?>" border="0" alt="<?=gettext("Kill encrypted volume"); ?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -172,7 +168,7 @@ function geli_process_updatenotification($mode, $data) {
           <tr>
             <td class="list" colspan="4"></td>
             <td class="list">
-							<a href="disks_crypt_edit.php"><img src="plus.gif" title="<?php echo gettext("Create encrypted volume");?>" border="0" alt="<?php echo gettext("Create encrypted volume");?>" /></a>
+							<a href="disks_crypt_edit.php"><img src="plus.gif" title="<?=gettext("Create encrypted volume");?>" border="0" alt="<?=gettext("Create encrypted volume");?>" /></a>
 						</td>
 			    </tr>
         </table>

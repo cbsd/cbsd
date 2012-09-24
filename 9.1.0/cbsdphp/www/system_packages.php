@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -65,7 +60,7 @@ if ($_GET['act'] == "del") {
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="system_packages.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Packages");?></span></a></li>
+				<li class="tabact"><a href="system_packages.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Packages");?></span></a></li>
   		</ul>
   	</td>
 	</tr>
@@ -77,20 +72,20 @@ if ($_GET['act'] == "del") {
 				<?php if (file_exists($d_packagesconfdirty_path)) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 			    <tr>
-			      <td width="40%" class="listhdrlr"><?php echo gettext("Package Name");?></td>
-			      <td width="50%" class="listhdrr"><?php echo gettext("Description");?></td>
+			      <td width="40%" class="listhdrlr"><?=gettext("Package Name");?></td>
+			      <td width="50%" class="listhdrr"><?=gettext("Description");?></td>
 			      <td width="10%" class="list"></td>
 			    </tr>
 				  <?php $i = 0; foreach($a_packages as $packagev): ?>
 			    <tr>
-			      <td class="listr"><?php htmlspecialchars($packagev['name']);?>&nbsp;</td>
-			      <td class="listbg"><?php htmlspecialchars($packagev['desc']);?>&nbsp;</td>
-			      <td valign="middle" nowrap="nowrap" class="list"> <a href="system_packages.php?act=del&amp;id=<?php $i;?>" onclick="return confirm('<?php echo gettext("Do you really want to uninstall this package?"); ?>')"><img src="x.gif" title="<?php echo gettext("Uninstall package"); ?>" border="0" alt="<?php echo gettext("Uninstall package"); ?>" /></a></td>
+			      <td class="listr"><?=htmlspecialchars($packagev['name']);?>&nbsp;</td>
+			      <td class="listbg"><?=htmlspecialchars($packagev['desc']);?>&nbsp;</td>
+			      <td valign="middle" nowrap="nowrap" class="list"> <a href="system_packages.php?act=del&amp;id=<?=$i;?>" onclick="return confirm('<?=gettext("Do you really want to uninstall this package?"); ?>')"><img src="x.gif" title="<?=gettext("Uninstall package"); ?>" border="0" alt="<?=gettext("Uninstall package"); ?>" /></a></td>
 			    </tr>
 			    <?php $i++; endforeach; ?>
 			    <tr>
 						<td class="list" colspan="2"></td>
-						<td class="list"> <a href="system_packages_edit.php"><img src="plus.gif" title="<?php echo gettext("Install package"); ?>" border="0" alt="<?php echo gettext("Install package"); ?>" /></a></td>
+						<td class="list"> <a href="system_packages_edit.php"><img src="plus.gif" title="<?=gettext("Install package"); ?>" border="0" alt="<?=gettext("Install package"); ?>" /></a></td>
 					</tr>
 			  </table>
 			  <?php include("formend.inc");?>

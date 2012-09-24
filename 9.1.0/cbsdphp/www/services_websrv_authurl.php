@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -120,9 +115,9 @@ if ($_POST) {
 				<?php html_inputbox("realm", gettext("Realm"), $pconfig['realm'], gettext("String displayed in the dialog presented to the user when accessing the URL."), true, 20);?>
 			</table>
 			<div id="submit">
-				<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-				<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-				<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+				<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+				<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+				<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 			</div>
 			<?php include("formend.inc");?>
 		</form>

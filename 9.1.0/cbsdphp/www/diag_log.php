@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -85,8 +80,8 @@ function log_change() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="diag_log.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Log");?></span></a></li>
-				<li class="tabinact"><a href="diag_log_settings.php"><span><?php echo gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="diag_log.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Log");?></span></a></li>
+				<li class="tabinact"><a href="diag_log_settings.php"><span><?=gettext("Settings");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -96,12 +91,12 @@ function log_change() {
 				<select id="log" class="formfld" onchange="log_change()" name="log">
 					<?php foreach($loginfo as $loginfok => $loginfov):?>
 					<?php if (FALSE === $loginfov['visible']) continue;?>
-					<option value="<?php $loginfok;?>" <?php if ($loginfok == $log) echo "selected=\"selected\"";?>><?php htmlspecialchars($loginfov['desc']);?></option>
+					<option value="<?=$loginfok;?>" <?php if ($loginfok == $log) echo "selected=\"selected\"";?>><?=htmlspecialchars($loginfov['desc']);?></option>
 					<?php endforeach;?>
 				</select>
-				<input name="clear" type="submit" class="formbtn" value="<?php echo gettext("Clear");?>" />
-				<input name="download" type="submit" class="formbtn" value="<?php echo gettext("Download");?>" />
-				<input name="refresh" type="submit" class="formbtn" value="<?php echo gettext("Refresh");?>" />
+				<input name="clear" type="submit" class="formbtn" value="<?=gettext("Clear");?>" />
+				<input name="download" type="submit" class="formbtn" value="<?=gettext("Download");?>" />
+				<input name="refresh" type="submit" class="formbtn" value="<?=gettext("Refresh");?>" />
 				<br /><br />
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 				  <?php log_display($loginfo[$log]);?>

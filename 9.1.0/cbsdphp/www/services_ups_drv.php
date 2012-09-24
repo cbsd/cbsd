@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -73,17 +72,17 @@ function nut_get_driverlist() {
 	    <td class="tabcont">
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-          	<td width="25%" class="listhdrlr"><?php echo gettext("Manufacturer");?></td>
-            <td width="25%" class="listhdrr"><?php echo gettext("Model name");?></td>
-            <td width="25%" class="listhdrr"><?php echo gettext("Model extra");?></td>
-            <td width="25%" class="listhdrr"><?php echo gettext("Driver");?></td>
+          	<td width="25%" class="listhdrlr"><?=gettext("Manufacturer");?></td>
+            <td width="25%" class="listhdrr"><?=gettext("Model name");?></td>
+            <td width="25%" class="listhdrr"><?=gettext("Model extra");?></td>
+            <td width="25%" class="listhdrr"><?=gettext("Driver");?></td>
           </tr>
   			  <?php foreach(nut_get_driverlist() as $driverinfov):?>
           <tr>
-          	<td class="listlr"><?php htmlspecialchars($driverinfov['manufacturer']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($driverinfov['modelname']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($driverinfov['modelextra']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($driverinfov['driver']);?>&nbsp;</td>
+          	<td class="listlr"><?=htmlspecialchars($driverinfov['manufacturer']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($driverinfov['modelname']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($driverinfov['modelextra']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($driverinfov['driver']);?>&nbsp;</td>
           </tr>
           <?php endforeach;?>
         </table>

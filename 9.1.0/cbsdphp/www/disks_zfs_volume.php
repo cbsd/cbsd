@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -114,19 +109,19 @@ function zfsvolume_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_volume.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_volume.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_zfs_volume.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Volume");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume_info.php"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_volume.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Volume");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume_info.php"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -137,27 +132,27 @@ function zfsvolume_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("zfsvolume")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="20%" class="listhdrlr"><?php echo gettext("Pool");?></td>
-						<td width="25%" class="listhdrr"><?php echo gettext("Name");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Size");?></td>
-						<td width="35%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("Pool");?></td>
+						<td width="25%" class="listhdrr"><?=gettext("Name");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Size");?></td>
+						<td width="35%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_volume as $volumev):?>
 					<?php $notificationmode = updatenotify_get_mode("zfsvolume", $volumev['uuid']);?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($volumev['pool'][0]);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($volumev['name']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($volumev['pool'][0]);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($volumev['name']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_MODIFIED == $notificationmode || UPDATENOTIFY_MODE_NEW == $notificationmode):?>
-						<td class="listr"><?php htmlspecialchars($volumev['volsize']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($volumev['volsize']);?>&nbsp;</td>
 						<?php else:?>
-						<td class="listr"><?php htmlspecialchars(get_volsize($volumev['pool'][0], $volumev['name']));?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars(get_volsize($volumev['pool'][0], $volumev['name']));?>&nbsp;</td>
 						<?php endif;?>
-						<td class="listbg"><?php htmlspecialchars($volumetv['desc']);?>&nbsp;</td>
+						<td class="listbg"><?=htmlspecialchars($volumetv['desc']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_zfs_volume_edit.php?uuid=<?php $volumev['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit volume");?>" border="0" alt="<?php echo gettext("Edit volume");?>" /></a>&nbsp;
-							<a href="disks_zfs_volume.php?act=del&amp;uuid=<?php $volumev['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this volume?");?>')"><img src="x.gif" title="<?php echo gettext("Delete volume");?>" border="0" alt="<?php echo gettext("Delete volume");?>" /></a>
+							<a href="disks_zfs_volume_edit.php?uuid=<?=$volumev['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit volume");?>" border="0" alt="<?=gettext("Edit volume");?>" /></a>&nbsp;
+							<a href="disks_zfs_volume.php?act=del&amp;uuid=<?=$volumev['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this volume?");?>')"><img src="x.gif" title="<?=gettext("Delete volume");?>" border="0" alt="<?=gettext("Delete volume");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -169,7 +164,7 @@ function zfsvolume_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="4"></td>
 						<td class="list">
-							<a href="disks_zfs_volume_edit.php"><img src="plus.gif" title="<?php echo gettext("Add volume");?>" border="0" alt="<?php echo gettext("Add volume");?>" /></a>
+							<a href="disks_zfs_volume_edit.php"><img src="plus.gif" title="<?=gettext("Add volume");?>" border="0" alt="<?=gettext("Add volume");?>" /></a>
 						</td>
 					</tr>
 				</table>

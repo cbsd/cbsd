@@ -9,8 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -264,12 +262,12 @@ function uctlenable_change(enable_change) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-	<li class="tabact"><a href="services_iscsitarget.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-	<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?php echo gettext("Targets");?></span></a></li>
-	<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-	<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?php echo gettext("Initiators");?></span></a></li>
-	<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?php echo gettext("Auths");?></span></a></li>
-	<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+	<li class="tabact"><a href="services_iscsitarget.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+	<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?=gettext("Targets");?></span></a></li>
+	<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+	<li class="tabinact"><a href="services_iscsitarget_ig.php"><span><?=gettext("Initiators");?></span></a></li>
+	<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?=gettext("Auths");?></span></a></li>
+	<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -331,10 +329,10 @@ function uctlenable_change(enable_change) {
 	<?php html_filechooser("mediadirectory", gettext("Media Directory"), $pconfig['mediadirectory'], gettext("Directory that contains removable media. (e.g /mnt/iscsi/)"), $g['media_path'], true);?>
 	</table>
 	<div id="submit">
-	  <input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+	  <input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 	</div>
 	<div id="remarks">
-	  <?php html_remark("note", gettext("Note"), sprintf(gettext("You must have a minimum of %dMB of RAM for using iSCSI target."), 384));?>
+	  <?php html_remark("note", gettext("Note"), sprintf(gettext("You must have a minimum of %dMB of RAM for using iSCSI target."), 512));?>
 	</div>
 	<?php include("formend.inc");?>
       </form>

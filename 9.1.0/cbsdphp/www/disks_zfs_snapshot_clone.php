@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -134,21 +129,21 @@ function zfsclone_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshot");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_snapshot_clone.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Clone");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?php echo gettext("Auto Snapshot");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_info.php"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshot");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot_clone.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Clone");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?=gettext("Auto Snapshot");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_info.php"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -160,21 +155,21 @@ function zfsclone_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("zfsclone")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="30%" class="listhdrlr"><?php echo gettext("Path");?></td>
-						<td width="40%" class="listhdrr"><?php echo gettext("Origin");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Creation");?></td>
+						<td width="30%" class="listhdrlr"><?=gettext("Path");?></td>
+						<td width="40%" class="listhdrr"><?=gettext("Origin");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Creation");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_clone as $clonev):?>
 					<?php $notificationmode = updatenotify_get_mode("zfsclone", serialize(array('path' => $clonev['path'])));?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($clonev['path']);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($clonev['origin']);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($clonev['creation']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($clonev['path']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($clonev['origin']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($clonev['creation']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
 							&nbsp; &nbsp; &nbsp;
-							<a href="disks_zfs_snapshot_clone.php?act=del&amp;path=<?php urlencode($clonev['path']);?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this clone?");?>')"><img src="x.gif" title="<?php echo gettext("Delete clone");?>" border="0" alt="<?php echo gettext("Delete clone");?>" /></a>
+							<a href="disks_zfs_snapshot_clone.php?act=del&amp;path=<?=urlencode($clonev['path']);?>" onclick="return confirm('<?=gettext("Do you really want to delete this clone?");?>')"><img src="x.gif" title="<?=gettext("Delete clone");?>" border="0" alt="<?=gettext("Delete clone");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">

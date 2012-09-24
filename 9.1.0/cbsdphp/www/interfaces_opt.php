@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -339,8 +334,8 @@ function encryption_change() {
 											<?php if (isset($optcfg['wireless'])) wireless_config_print();?>
 										</table>
 										<div id="submit">
-											<input name="index" type="hidden" value="<?php $index;?>" />
-											<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" onclick="enable_change(true)" />
+											<input name="index" type="hidden" value="<?=$index;?>" />
+											<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" onclick="enable_change(true)" />
 										</div>
 									</td>
 								</tr>
@@ -353,6 +348,6 @@ enable_change(false);
 //-->
 </script>
 <?php else:?>
-<strong>Optional <?php $index;?> has been disabled because there is no OPT<?php $index;?> interface.</strong>
+<strong>Optional <?=$index;?> has been disabled because there is no OPT<?=$index;?> interface.</strong>
 <?php endif; ?>
 <?php include("fend.inc");?>

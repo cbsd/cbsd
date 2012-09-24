@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -48,7 +43,8 @@ $pgtitle = array(gettext("Disks"), gettext("ZFS"), gettext("Snapshots"), gettext
 if (!isset($config['zfs']['snapshots']['snapshot']) || !is_array($config['zfs']['snapshots']['snapshot']))
 	$config['zfs']['snapshots']['snapshot'] = array();
 
-$a_snapshot = &$config['zfs']['snapshots']['snapshot'];
+// snapshot is always reading from the pool
+//$a_snapshot = &$config['zfs']['snapshots']['snapshot'];
 
 function zfs_snapshot_display_list() {
 	mwexec2("zfs list -t snapshot 2>&1", $rawdata);
@@ -70,21 +66,21 @@ function zfs_snapshot_display_properties() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshot");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_clone.php"><span><?php echo gettext("Clone");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?php echo gettext("Auto Snapshot");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_snapshot_info.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshot");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_clone.php"><span><?=gettext("Clone");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?=gettext("Auto Snapshot");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot_info.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -94,13 +90,13 @@ function zfs_snapshot_display_properties() {
 				<?php html_titleline(gettext("ZFS snapshot information and status"));?>
 				<tr>
 					<td class="listt">
-						<pre><span id="zfs_snapshot_list"><?php zfs_snapshot_display_list();?></span></pre>
+						<pre><span id="zfs_snapshot_list"><?=zfs_snapshot_display_list();?></span></pre>
 					</td>
 				</tr>
 				<?php html_titleline(gettext("ZFS snapshot properties"));?>
 				<tr>
 					<td class="listt">
-						<pre><span id="zfs_snapshot_properties"><?php zfs_snapshot_display_properties();?></span></pre>
+						<pre><span id="zfs_snapshot_properties"><?=zfs_snapshot_display_properties();?></span></pre>
 					</td>
 				</tr>
 			</table>

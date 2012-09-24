@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -74,17 +69,17 @@ $a_service[] = array("desc" => gettext("LCDproc"), "link" => "services_lcdproc.p
 			<form action="services_info.php" method="post">
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="90%" class="listhdrlr"><?php echo gettext("Service");?></td>
-						<td width="5%" class="listhdrc"><?php echo gettext("Enabled");?></td>
-						<td width="5%" class="listhdrc"><?php echo gettext("Status");?></td>
+						<td width="90%" class="listhdrlr"><?=gettext("Service");?></td>
+						<td width="5%" class="listhdrc"><?=gettext("Enabled");?></td>
+						<td width="5%" class="listhdrc"><?=gettext("Status");?></td>
 					</tr>
 					<?php foreach ($a_service as $servicev):?>
 					<tr>
 						<?php $enable = isset($config[$servicev['config']]['enable']);?>
 						<?php $status = rc_is_service_running($servicev['scriptname']);?>
-						<td class="<?php echo $enable?"listlr":"listlrd";?>"><?php echo htmlspecialchars($servicev['desc']);?>&nbsp;</td>
-						<td class="<?php echo $enable?"listrc":"listrcd";?>">
-							<a href="<?php echo $servicev['link'];?>">
+						<td class="<?=$enable?"listlr":"listlrd";?>"><?=htmlspecialchars($servicev['desc']);?>&nbsp;</td>
+						<td class="<?=$enable?"listrc":"listrcd";?>">
+							<a href="<?=$servicev['link'];?>">
 								<?php if ($enable):?>
 								<img src="status_enabled.png" border="0" alt="" />
 								<?php else:?>
@@ -92,11 +87,11 @@ $a_service[] = array("desc" => gettext("LCDproc"), "link" => "services_lcdproc.p
 								<?php endif;?>
 							</a>
 						</td>
-						<td class="<?php echo $enable?"listrc":"listrcd";?>">
+						<td class="<?=$enable?"listrc":"listrcd";?>">
 							<?php if (0 === $status):?>
-							<a title="<?php echo gettext("Running");?>"><img src="status_enabled.png" border="0" alt="" /></a>
+							<a title="<?=gettext("Running");?>"><img src="status_enabled.png" border="0" alt="" /></a>
 							<?php else:?>
-							<a title="<?php echo gettext("Stopped");?>"><img src="status_disabled.png" border="0" alt="" /></a>
+							<a title="<?=gettext("Stopped");?>"><img src="status_disabled.png" border="0" alt="" /></a>
 							<?php endif;?>
 						</td>
 					</tr>

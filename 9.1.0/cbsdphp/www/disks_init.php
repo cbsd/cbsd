@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -151,14 +147,14 @@ if (!isset($do_format)) {
 				<?php if($errormsg) print_error_box($errormsg);?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			    <tr>
-			      <td valign="top" class="vncellreq"><?php echo gettext("Disk"); ?></td>
+			      <td valign="top" class="vncellreq"><?=gettext("Disk"); ?></td>
 			      <td class="vtable">
 			        <select name="disk" class="formfld" id="disk" onchange="disk_change()">
-								<option value=""><?php echo gettext("Must choose one");?></option>
+								<option value=""><?=gettext("Must choose one");?></option>
 								<?php foreach ($a_disk as $diskv):?>
 								<?php if (0 == strcmp($diskv['size'], "NA")) continue;?>
 								<?php if (1 == disks_exists($diskv['devicespecialfile'])) continue;?>
-								<option value="<?php $diskv['devicespecialfile'];?>" <?php if ($diskv['devicespecialfile'] === $disk) echo "selected=\"selected\"";?>>
+								<option value="<?=$diskv['devicespecialfile'];?>" <?php if ($diskv['devicespecialfile'] === $disk) echo "selected=\"selected\"";?>>
 								<?php $diskinfo = disks_get_diskinfo($diskv['devicespecialfile']); echo htmlspecialchars("{$diskv['name']}: {$diskinfo['mediasize_mbytes']}MB ({$diskv['desc']})");?>
 								</option>
 								<?php endforeach;?>
@@ -166,45 +162,45 @@ if (!isset($do_format)) {
 			      </td>
 					</tr>
 					<tr>
-				    <td valign="top" class="vncellreq"><?php echo gettext("File system");?></td>
+				    <td valign="top" class="vncellreq"><?=gettext("File system");?></td>
 				    <td class="vtable">
 				      <select name="type" class="formfld" id="type" onchange="type_change()">
 				        <?php foreach ($a_fst as $fstval => $fstname): ?>
-				        <option value="<?php $fstval;?>" <?php if($type == $fstval) echo 'selected="selected"';?>><?php htmlspecialchars($fstname);?></option>
+				        <option value="<?=$fstval;?>" <?php if($type == $fstval) echo 'selected="selected"';?>><?=htmlspecialchars($fstname);?></option>
 				        <?php endforeach; ?>
 				       </select>
 				    </td>
 					</tr>
 					<tr id="volumelabel_tr">
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Volume label");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Volume label");?></td>
 						<td width="78%" class="vtable">
-							<input name="volumelabel" type="text" class="formfld" id="volumelabel" size="20" value="<?php htmlspecialchars($volumelabel);?>" /><br />
-							<?php echo gettext("Volume label of the new file system.");?>
+							<input name="volumelabel" type="text" class="formfld" id="volumelabel" size="20" value="<?=htmlspecialchars($volumelabel);?>" /><br />
+							<?=gettext("Volume label of the new file system.");?>
 						</td>
 					</tr>
 					<tr id="minspace_tr">
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Minimum free space");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Minimum free space");?></td>
 						<td width="78%" class="vtable">
 							<select name="minspace" class="formfld" id="minspace">
 							<?php $types = explode(",", "8,7,6,5,4,3,2,1"); $vals = explode(" ", "8 7 6 5 4 3 2 1");?>
 							<?php $j = 0; for ($j = 0; $j < count($vals); $j++): ?>
-								<option value="<?php $vals[$j];?>"><?php htmlspecialchars($types[$j]);?></option>
+								<option value="<?=$vals[$j];?>"><?=htmlspecialchars($types[$j]);?></option>
 							<?php endfor; ?>
 							</select>
-							<br /><?php echo gettext("Specify the percentage of space held back from normal users. Note that lowering the threshold can adversely affect performance and auto-defragmentation.") ;?>
+							<br /><?=gettext("Specify the percentage of space held back from normal users. Note that lowering the threshold can adversely affect performance and auto-defragmentation.") ;?>
 						</td>
 					</tr>
 			    <?php html_checkbox("aft4k", gettext("Advanced Format"), $pconfig['aft4k'] ? true : false, gettext("Enable Advanced Format (4KB sector)"), "", false, "");?>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Don't Erase MBR");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Don't Erase MBR");?></td>
 			      <td width="78%" class="vtable">
 			        <input name="notinitmbr" id="notinitmbr" type="checkbox" value="yes" />
-			        <?php echo gettext("Don't erase the MBR (useful for some RAID controller cards)");?>
+			        <?=gettext("Don't erase the MBR (useful for some RAID controller cards)");?>
 						</td>
 				  </tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Format disk");?>" onclick="return confirm('<?php echo gettext("Do you really want to format this disk? All data will be lost!");?>')" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Format disk");?>" onclick="return confirm('<?=gettext("Do you really want to format this disk? All data will be lost!");?>')" />
 				</div>
 				<?php if ($do_format) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

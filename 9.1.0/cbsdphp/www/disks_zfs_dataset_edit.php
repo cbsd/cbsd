@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -72,6 +67,7 @@ if (isset($uuid) && (FALSE !== ($cnid = array_search_ex($uuid, $a_dataset, "uuid
 	$pconfig['pool'] = $a_dataset[$cnid]['pool'][0];
 	$pconfig['compression'] = $a_dataset[$cnid]['compression'];
 	$pconfig['dedup'] = $a_dataset[$cnid]['dedup'];
+	$pconfig['atime'] = $a_dataset[$cnid]['atime'];	
 	$pconfig['canmount'] = isset($a_dataset[$cnid]['canmount']);
 	$pconfig['readonly'] = isset($a_dataset[$cnid]['readonly']);
 	$pconfig['xattr'] = isset($a_dataset[$cnid]['xattr']);
@@ -84,6 +80,7 @@ if (isset($uuid) && (FALSE !== ($cnid = array_search_ex($uuid, $a_dataset, "uuid
 	$pconfig['pool'] = "";
 	$pconfig['compression'] = "off";
 	$pconfig['dedup'] = "off";
+	$pconfig['atime'] = "off";	
 	$pconfig['canmount'] = true;
 	$pconfig['readonly'] = false;
 	$pconfig['xattr'] = true;
@@ -93,6 +90,10 @@ if (isset($uuid) && (FALSE !== ($cnid = array_search_ex($uuid, $a_dataset, "uuid
 }
 if ($pconfig['dedup'] == "") {
 	$pconfig['dedup'] = "off";
+}
+
+if ($pconfig['atime'] == "") {
+	$pconfig['atime'] = "off";
 }
 
 if ($_POST) {
@@ -119,6 +120,7 @@ if ($_POST) {
 		$dataset['pool'] = $_POST['pool'];
 		$dataset['compression'] = $_POST['compression'];
 		$dataset['dedup'] = $_POST['dedup'];
+		$dataset['atime'] = $_POST['atime'];
 		$dataset['canmount'] = $_POST['canmount'] ? true : false;
 		$dataset['readonly'] = $_POST['readonly'] ? true : false;
 		$dataset['xattr'] = $_POST['xattr'] ? true : false;
@@ -155,19 +157,19 @@ function enable_change(enable_change) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Dataset");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset_info.php"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_dataset.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Dataset");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset_info.php"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -183,8 +185,10 @@ function enable_change(enable_change) {
 					<?php html_combobox("pool", gettext("Pool"), $pconfig['pool'], $a_poollist, "", true);?>
 					<?php $a_compressionmode = array("on" => gettext("On"), "off" => gettext("Off"), "lzjb" => "lzjb", "gzip" => "gzip", "zle" => "zle"); for ($n = 1; $n <= 9; $n++) { $mode = "gzip-{$n}"; $a_compressionmode[$mode] = $mode; }?>
 					<?php html_combobox("compression", gettext("Compression"), $pconfig['compression'], $a_compressionmode, gettext("Controls the compression algorithm used for this dataset. The 'lzjb' compression algorithm is optimized for performance while providing decent data compression. Setting compression to 'On' uses the 'lzjb' compression algorithm. You can specify the 'gzip' level by using the value 'gzip-N', where N is an integer from 1 (fastest) to 9 (best compression ratio). Currently, 'gzip' is equivalent to 'gzip-6'."), true);?>
-					<?php $a_dedup = array("on" => gettext("On"), "off" => gettext("Off"), "verify" => "verify", "sha256" => "sha256", "sha256,verify" => "sha256,verify"); ?>
-					<?php html_combobox("dedup", gettext("Dedup"), $pconfig['dedup'], $a_dedup, gettext("Controls the dedup method."), true);?>
+					<?php $a_dedup = array("on" => gettext("On"), "off" => gettext("Off"), "verify" => "verify", "sha256" => "sha256", "sha256,verify" => "sha256,verify"); ?>					
+					<?php html_combobox("dedup", gettext("Dedup"), $pconfig['dedup'], $a_dedup, gettext("Controls the dedup method. <br><b><font color='red'>NOTE/WARNING</font>: See <a href='http://wiki.nas4free.org/doku.php?id=documentation:setup_and_user_guide:disks_zfs_datasets_dataset' target='_blank'>ZFS datasets & deduplication</a> wiki article BEFORE using this feature.</b></br>"), true);?>
+					<?php $a_atime = array("on" => gettext("On"), "off" => gettext("Off")); ?>
+					<?php html_combobox("atime", gettext("Access Time (atime)"), $pconfig['atime'], $a_atime, gettext("Turn access time on or off for this dataset"), true);?>
 					<?php html_checkbox("canmount", gettext("Canmount"), $pconfig['canmount'] ? true : false, gettext("If this property is disabled, the file system cannot be mounted."), "", false);?>
 					<?php html_checkbox("readonly", gettext("Readonly"), $pconfig['readonly'] ? true : false, gettext("Controls whether this dataset can be modified."), "", false);?>
 					<?php html_checkbox("xattr", gettext("Extended attributes"), $pconfig['xattr'] ? true : false, gettext("Enable extended attributes for this file system."), "", false);?>
@@ -193,9 +197,9 @@ function enable_change(enable_change) {
 					<?php html_inputbox("desc", gettext("Description"), $pconfig['desc'], gettext("You may enter a description here for your reference."), false, 40);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php ((isset($uuid) && (FALSE !== $cnid))) ? gettext("Save") : gettext("Add");?>" onclick="enable_change(true)" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=((isset($uuid) && (FALSE !== $cnid))) ? gettext("Save") : gettext("Add");?>" onclick="enable_change(true)" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

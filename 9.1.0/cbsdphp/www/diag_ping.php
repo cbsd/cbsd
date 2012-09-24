@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -86,8 +82,8 @@ function get_interface_addr($ifdescr) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="diag_ping.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Ping");?></span></a></li>
-				<li class="tabinact"><a href="diag_traceroute.php"><span><?php echo gettext("Traceroute");?></span></a></li>
+				<li class="tabact"><a href="diag_ping.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Ping");?></span></a></li>
+				<li class="tabinact"><a href="diag_traceroute.php"><span><?=gettext("Traceroute");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -102,7 +98,7 @@ function get_interface_addr($ifdescr) {
 					<?php html_combobox("count", gettext("Count"), $count, $a_count, gettext("Stop after sending (and receiving) N packets."), true);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Ping");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Ping");?>" />
 				</div>
 				<?php if ($do_ping) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

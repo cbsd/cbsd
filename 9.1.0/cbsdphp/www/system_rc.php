@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -81,14 +80,14 @@ if ($_GET['act'] == "del")
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system_advanced.php"><span><?php echo gettext("Advanced");?></span></a></li>
-      	<li class="tabinact"><a href="system_email.php"><span><?php echo gettext("Email");?></span></a></li>
-      	<li class="tabinact"><a href="system_proxy.php"><span><?php echo gettext("Proxy");?></span></a></li>
-      	<li class="tabinact"><a href="system_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-        <li class="tabact"><a href="system_rc.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Command scripts");?></span></a></li>
-        <li class="tabinact"><a href="system_cron.php"><span><?php echo gettext("Cron");?></span></a></li>
-        <li class="tabinact"><a href="system_rcconf.php"><span><?php echo gettext("rc.conf");?></span></a></li>
-        <li class="tabinact"><a href="system_sysctl.php"><span><?php echo gettext("sysctl.conf");?></span></a></li>
+      	<li class="tabinact"><a href="system_advanced.php"><span><?=gettext("Advanced");?></span></a></li>
+      	<li class="tabinact"><a href="system_email.php"><span><?=gettext("Email");?></span></a></li>
+      	<li class="tabinact"><a href="system_proxy.php"><span><?=gettext("Proxy");?></span></a></li>
+      	<li class="tabinact"><a href="system_swap.php"><span><?=gettext("Swap");?></span></a></li>
+        <li class="tabact"><a href="system_rc.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Command scripts");?></span></a></li>
+        <li class="tabinact"><a href="system_cron.php"><span><?=gettext("Cron");?></span></a></li>
+        <li class="tabinact"><a href="system_rcconf.php"><span><?=gettext("rc.conf");?></span></a></li>
+        <li class="tabinact"><a href="system_sysctl.php"><span><?=gettext("sysctl.conf");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -96,43 +95,43 @@ if ($_GET['act'] == "del")
     <td class="tabcont">
       <table width="100%" border="0" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="80%" class="listhdrlr"><?php echo gettext("Command");?></td>
-          <td width="10%" class="listhdrr"><?php echo gettext("Type");?></td>
+          <td width="80%" class="listhdrlr"><?=gettext("Command");?></td>
+          <td width="10%" class="listhdrr"><?=gettext("Type");?></td>
           <td width="10%" class="list"></td>
         </tr>
 			  <?php $i = 0; foreach($config['rc']['preinit']['cmd'] as $cmd): ?>
         <tr>
-          <td class="listlr"><?php htmlspecialchars($cmd);?>&nbsp;</td>
+          <td class="listlr"><?=htmlspecialchars($cmd);?>&nbsp;</td>
           <td class="listbg"><?php echo(gettext("PreInit"));?>&nbsp;</td>
           <td valign="middle" nowrap="nowrap" class="list">
-            <a href="system_rc_edit.php?id=<?php $i;?>&amp;type=PREINIT"><img src="e.gif" title="<?php echo gettext("Edit command");?>" border="0" alt="<?php echo gettext("Edit command");?>" /></a>&nbsp;
-            <a href="system_rc.php?act=del&amp;id=<?php $i;?>&amp;type=PREINIT" onclick="return confirm('<?php echo gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?php echo gettext("Delete command");?>" border="0" alt="<?php echo gettext("Delete command");?>" /></a>
+            <a href="system_rc_edit.php?id=<?=$i;?>&amp;type=PREINIT"><img src="e.gif" title="<?=gettext("Edit command");?>" border="0" alt="<?=gettext("Edit command");?>" /></a>&nbsp;
+            <a href="system_rc.php?act=del&amp;id=<?=$i;?>&amp;type=PREINIT" onclick="return confirm('<?=gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?=gettext("Delete command");?>" border="0" alt="<?=gettext("Delete command");?>" /></a>
           </td>
         </tr>
         <?php $i++; endforeach;?>
         <?php $i = 0; foreach($config['rc']['postinit']['cmd'] as $cmd): ?>
         <tr>
-          <td class="listlr"><?php htmlspecialchars($cmd);?>&nbsp;</td>
+          <td class="listlr"><?=htmlspecialchars($cmd);?>&nbsp;</td>
           <td class="listbg"><?php echo(gettext("PostInit"));?>&nbsp;</td>
           <td valign="middle" nowrap="nowrap" class="list">
-            <a href="system_rc_edit.php?id=<?php $i;?>&amp;type=POSTINIT"><img src="e.gif" title="<?php echo gettext("Edit command");?>" border="0" alt="<?php echo gettext("Edit command");?>" /></a>&nbsp;
-            <a href="system_rc.php?act=del&amp;id=<?php $i;?>&amp;type=POSTINIT" onclick="return confirm('<?php echo gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?php echo gettext("Delete command");?>" border="0" alt="<?php echo gettext("Delete command");?>" /></a>
+            <a href="system_rc_edit.php?id=<?=$i;?>&amp;type=POSTINIT"><img src="e.gif" title="<?=gettext("Edit command");?>" border="0" alt="<?=gettext("Edit command");?>" /></a>&nbsp;
+            <a href="system_rc.php?act=del&amp;id=<?=$i;?>&amp;type=POSTINIT" onclick="return confirm('<?=gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?=gettext("Delete command");?>" border="0" alt="<?=gettext("Delete command");?>" /></a>
           </td>
         </tr>
         <?php $i++; endforeach;?>
         <?php $i = 0; foreach($config['rc']['shutdown']['cmd'] as $cmd): ?>
         <tr>
-          <td class="listlr"><?php htmlspecialchars($cmd);?>&nbsp;</td>
+          <td class="listlr"><?=htmlspecialchars($cmd);?>&nbsp;</td>
           <td class="listbg"><?php echo(gettext("Shutdown"));?>&nbsp;</td>
           <td valign="middle" nowrap="nowrap" class="list">
-            <a href="system_rc_edit.php?id=<?php $i;?>&amp;type=SHUTDOWN"><img src="e.gif" title="<?php echo gettext("Edit command");?>" border="0" alt="<?php echo gettext("Edit command");?>" /></a>&nbsp;
-            <a href="system_rc.php?act=del&amp;id=<?php $i;?>&amp;type=SHUTDOWN" onclick="return confirm('<?php echo gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?php echo gettext("Delete command");?>" border="0" alt="<?php echo gettext("Delete command");?>" /></a>
+            <a href="system_rc_edit.php?id=<?=$i;?>&amp;type=SHUTDOWN"><img src="e.gif" title="<?=gettext("Edit command");?>" border="0" alt="<?=gettext("Edit command");?>" /></a>&nbsp;
+            <a href="system_rc.php?act=del&amp;id=<?=$i;?>&amp;type=SHUTDOWN" onclick="return confirm('<?=gettext("Do you really want to delete this command?");?>')"><img src="x.gif" title="<?=gettext("Delete command");?>" border="0" alt="<?=gettext("Delete command");?>" /></a>
           </td>
         </tr>
         <?php $i++; endforeach;?>
         <tr>
           <td class="list" colspan="2"></td>
-          <td class="list"><a href="system_rc_edit.php"><img src="plus.gif" title="<?php echo gettext("Add command");?>" border="0" alt="<?php echo gettext("Add command");?>" /></a></td>
+          <td class="list"><a href="system_rc_edit.php"><img src="plus.gif" title="<?=gettext("Add command");?>" border="0" alt="<?=gettext("Add command");?>" /></a></td>
         </tr>
       </table>
       <div id="remarks">

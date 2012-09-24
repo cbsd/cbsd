@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -173,8 +169,8 @@ function action_change() {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabinact"><a href="disks_crypt.php"><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabact"><a href="disks_crypt_tools.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Tools");?></span></a></li>
+        <li class="tabinact"><a href="disks_crypt.php"><span><?=gettext("Management");?></span></a></li>
+        <li class="tabact"><a href="disks_crypt_tools.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Tools");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -186,12 +182,12 @@ function action_change() {
 			<form action="disks_crypt_tools.php" method="post" name="iform" id="iform" enctype="multipart/form-data">
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
           <tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("Disk");?></td>
             <td width="78%" class="vtable">
               <select name="disk" class="formfld" id="disk">
-              	<option value=""><?php echo gettext("Must choose one");?></option>
+              	<option value=""><?=gettext("Must choose one");?></option>
                 <?php foreach ($a_geli as $geliv):?>
-								<option value="<?php $geliv['devicespecialfile'];?>" <?php if ($geliv['devicespecialfile'] === $pconfig['disk']) echo "selected=\"selected\"";?>>
+								<option value="<?=$geliv['devicespecialfile'];?>" <?php if ($geliv['devicespecialfile'] === $pconfig['disk']) echo "selected=\"selected\"";?>>
 								<?php echo htmlspecialchars("{$geliv['name']}: {$geliv['size']} ({$geliv['desc']})");?>
                 </option>
                 <?php endforeach;?>
@@ -201,27 +197,27 @@ function action_change() {
 					<?php $options = array("attach" => "attach", "detach" => "detach", "setkey" => "setkey", "list" => "list", "status" => "status", "backup" => "backup", "restore" => "restore");?>
 					<?php html_combobox("action", gettext("Command"), $pconfig['action'], $options, "", true, false, "action_change()");?>
           <tr id="oldpassphrase_tr" style="display: none">
-						<td width="22%" valign="top" class="vncellreq"><?php htmlspecialchars(gettext("Old passphrase"));?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=htmlspecialchars(gettext("Old passphrase"));?></td>
 						<td width="78%" class="vtable">
 							<input name="oldpassphrase" type="password" class="formfld" id="oldpassphrase" size="20" />
 						</td>
 					</tr>
           <tr id="passphrase_tr" style="display: none">
-						<td width="22%" valign="top" class="vncellreq"><?php htmlspecialchars(gettext("Passphrase"));?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=htmlspecialchars(gettext("Passphrase"));?></td>
 						<td width="78%" class="vtable">
 							<input name="passphrase" type="password" class="formfld" id="passphrase" size="20" />
 						</td>
 					</tr>
 					<tr id="backupfile_tr" style="display: none">
-						<td width="22%" valign="top" class="vncellreq"><?php htmlspecialchars(gettext("Backup file"));?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=htmlspecialchars(gettext("Backup file"));?></td>
 						<td width="78%" class="vtable">
 							<input name="backupfile" type="file" class="formfld" size="40" /><br />
-							<span class="vexpl"><?php echo gettext("Restore metadata from the given file to the given provider.");?></span>
+							<span class="vexpl"><?=gettext("Restore metadata from the given file to the given provider.");?></span>
 						</td>
 					</tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Execute");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Execute");?>" />
 				</div>
 				<?php if ($pconfig['do_action']) {
 					echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

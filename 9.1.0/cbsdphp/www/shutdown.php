@@ -58,8 +58,8 @@ if ($_POST) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="shutdown.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Now");?></span></a></li>
-        <li class="tabinact"><a href="shutdown_sched.php"><span><?php echo gettext("Scheduled");?></span></a></li>
+        <li class="tabact"><a href="shutdown.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Now");?></span></a></li>
+        <li class="tabinact"><a href="shutdown_sched.php"><span><?=gettext("Scheduled");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -67,10 +67,10 @@ if ($_POST) {
     <td class="tabcont">
       <?php if ($rebootmsg): echo print_info_box($rebootmsg); system_halt(); else:?>
       <form action="shutdown.php" method="post">
-				<strong><?php echo gettext("Are you sure you want to shutdown the system?");?></strong>
+				<strong><?=gettext("Are you sure you want to shutdown the system?");?></strong>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Yes");?>" />
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("No");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Yes");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("No");?>" />
 				</div>
 				<?php include("formend.inc");?>
       </form>

@@ -5,10 +5,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -173,9 +169,9 @@ function smart_enable_change() {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="disks_manage.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_smart.php"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
+				<li class="tabact"><a href="disks_manage.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_smart.php"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -185,13 +181,13 @@ function smart_enable_change() {
 				<?php if ($input_errors) print_input_errors($input_errors); ?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Disk");?></td>
 						<td width="78%" class="vtable">
 							<select name="name" class="formfld" id="name">
 								<?php foreach ($a_phy_disk as $diskk => $diskv):?>
 								<?php // Do not display disks that are already configured. (Create mode);?>
 								<?php if (!isset($uuid) && (false !== array_search_ex($diskk, $a_disk, "name"))) continue;?>
-								<option value="<?php echo $diskk;?>" <?php if ($diskk == $pconfig['name']) echo "selected=\"selected\"";?>><?php echo htmlspecialchars($diskk . ": " .$diskv['size'] . " (" . $diskv['desc'] . ")");?></option>
+								<option value="<?=$diskk;?>" <?php if ($diskk == $pconfig['name']) echo "selected=\"selected\"";?>><?php echo htmlspecialchars($diskk . ": " .$diskv['size'] . " (" . $diskv['desc'] . ")");?></option>
 								<?php endforeach;?>
 							</select>
 					  </td>
@@ -211,9 +207,9 @@ function smart_enable_change() {
 					<?php html_combobox("fstype", gettext("Preformatted file system"), $pconfig['fstype'], $options, gettext("This allows you to set the file system for preformatted hard disks containing data.") . " " . sprintf(gettext("Leave '%s' for unformated disks and format them using <a href='%s'>format</a> menu."), "Unformated", "disks_init.php"), false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

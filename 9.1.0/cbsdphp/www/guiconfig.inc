@@ -5,20 +5,12 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
-
-	Modified by Michael Zoon (zoon01@nas4free.org)
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
 	All rights reserved.
 	
-	Based on m0n0wall (http://m0n0.ch/wall)
+	Portions of m0n0wall (http://m0n0.ch/wall)
 	Copyright (C) 2003-2006 Manuel Kasper <mk@neon1.net>.
 	All rights reserved.	
 
@@ -49,7 +41,7 @@
 
 if(function_exists("date_default_timezone_set") and function_exists("date_default_timezone_get"))
      @date_default_timezone_set(@date_default_timezone_get());
-$omit_nocacheheaders = true;
+
 /* make sure nothing is cached */
 if (!$omit_nocacheheaders) {
 	header("Expires: 0");
@@ -94,7 +86,7 @@ $tcpflags = array("fin", "syn", "rst", "psh", "ack", "urg");
 /* platforms that support firmware updating */
 $fwupplatforms = array('net45xx', 'net48xx', 'embedded', 'wrap', 'full');
 
-function do_input_validation($postdata, $reqdfields, $reqdfieldsn, $input_errors) {
+function do_input_validation($postdata, $reqdfields, $reqdfieldsn, &$input_errors) {
 	/* check for bad control characters */
 	foreach ($postdata as $pn => $pd) {
 		if (is_string($pd) && preg_match("/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]/", $pd)) {
@@ -110,7 +102,7 @@ function do_input_validation($postdata, $reqdfields, $reqdfieldsn, $input_errors
 }
 
 /* Validate attribute type. */
-function do_input_validation_type($postdata, $reqdfields, $reqdfieldsn, $reqdfieldst, $input_errors) {
+function do_input_validation_type($postdata, $reqdfields, $reqdfieldsn, $reqdfieldst, &$input_errors) {
 	/* Validate type. */
 	for ($i = 0; $i < count($reqdfields); $i++) {
 		if (isset($postdata[$reqdfields[$i]]) && ($postdata[$reqdfields[$i]] !== "")) {
@@ -186,7 +178,7 @@ function do_input_validation_type($postdata, $reqdfields, $reqdfieldsn, $reqdfie
 	}
 }
 
-function do_input_validate_synctime($postdata, $input_errors) {
+function do_input_validate_synctime($postdata, &$input_errors) {
 	$data = array();
 	$data[] = array("field" => "minute", "all" => "all_mins", "text" => "minutes");
 	$data[] = array("field" => "hour", "all" => "all_hours", "text" => "hours");

@@ -6,15 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
-	Copyright (c) 2008 Nelson Silva
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -108,22 +102,22 @@ function zfsvdev_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_zpool.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot.php"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_zfs_zpool_vdevice.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Virtual device");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_info.php"><span><?php echo gettext("Information");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_zpool_io.php"><span><?php echo gettext("I/O statistics");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_zpool_vdevice.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Virtual device");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_tools.php"><span><?=gettext("Tools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_info.php"><span><?=gettext("Information");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool_io.php"><span><?=gettext("I/O statistics");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -134,21 +128,21 @@ function zfsvdev_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("zfsvdev")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="20%" class="listhdrlr"><?php echo gettext("Name");?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("Type");?></td>
-						<td width="55%" class="listhdrr"><?php echo gettext("Description");?></td>
+						<td width="20%" class="listhdrlr"><?=gettext("Name");?></td>
+						<td width="15%" class="listhdrr"><?=gettext("Type");?></td>
+						<td width="55%" class="listhdrr"><?=gettext("Description");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_vdevice as $vdevicev):?>
 					<?php $notificationmode = updatenotify_get_mode("zfsvdev", $vdevicev['uuid']);?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($vdevicev['name']);?></td>
-						<td class="listr"><?php htmlspecialchars($vdevicev['type']);?></td>
-						<td class="listbg"><?php htmlspecialchars($vdevicev['desc']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($vdevicev['name']);?></td>
+						<td class="listr"><?=htmlspecialchars($vdevicev['type']);?></td>
+						<td class="listbg"><?=htmlspecialchars($vdevicev['desc']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_zfs_zpool_vdevice_edit.php?uuid=<?php $vdevicev['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit device");?>" border="0" alt="<?php echo gettext("Edit device");?>" /></a>&nbsp;
-							<a href="disks_zfs_zpool_vdevice.php?act=del&amp;uuid=<?php $vdevicev['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this device?");?>')"><img src="x.gif" title="<?php echo gettext("Delete device");?>" border="0" alt="<?php echo gettext("Delete device");?>" /></a>
+							<a href="disks_zfs_zpool_vdevice_edit.php?uuid=<?=$vdevicev['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit device");?>" border="0" alt="<?=gettext("Edit device");?>" /></a>&nbsp;
+							<a href="disks_zfs_zpool_vdevice.php?act=del&amp;uuid=<?=$vdevicev['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this device?");?>')"><img src="x.gif" title="<?=gettext("Delete device");?>" border="0" alt="<?=gettext("Delete device");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -160,7 +154,7 @@ function zfsvdev_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="3"></td>
 						<td class="list">
-							<a href="disks_zfs_zpool_vdevice_edit.php"><img src="plus.gif" title="<?php echo gettext("Add device");?>" border="0" alt="<?php echo gettext("Add device");?>" /></a>
+							<a href="disks_zfs_zpool_vdevice_edit.php"><img src="plus.gif" title="<?=gettext("Add device");?>" border="0" alt="<?=gettext("Add device");?>" /></a>
 						</td>
 					</tr>
 				</table>

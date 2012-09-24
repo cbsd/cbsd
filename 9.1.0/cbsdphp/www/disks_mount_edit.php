@@ -7,10 +7,6 @@
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
-
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
 	All rights reserved.
@@ -375,9 +371,9 @@ function enable_change(enable_change) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="disks_mount.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?php echo gettext("Fsck");?></span></a></li>
+        <li class="tabact"><a href="disks_mount.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_tools.php"><span><?=gettext("Tools");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?=gettext("Fsck");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -389,12 +385,12 @@ function enable_change(enable_change) {
 					<?php html_titleline(gettext("Settings"));?>
 					<?php html_combobox("type", gettext("Type"), $pconfig['type'], array("disk" => gettext("Disk"), "iso" => "ISO"), "", true, false, "type_change()");?>
 					<tr id="mdisk_tr">
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Disk");?></td>
 			      <td class="vtable">
 							<select name="mdisk" class="formfld" id="mdisk">
-								<option value=""><?php echo gettext("Must choose one");?></option>
+								<option value=""><?=gettext("Must choose one");?></option>
 								<?php foreach ($a_disk as $diskv):?>
-								<option value="<?php $diskv['devicespecialfile'];?>" <?php if ($pconfig['mdisk'] === $diskv['devicespecialfile']) echo "selected=\"selected\"";?>>
+								<option value="<?=$diskv['devicespecialfile'];?>" <?php if ($pconfig['mdisk'] === $diskv['devicespecialfile']) echo "selected=\"selected\"";?>>
 								<?php $diskinfo = disks_get_diskinfo($diskv['devicespecialfile']); echo htmlspecialchars("{$diskv['name']}: {$diskinfo['mediasize_mbytes']}MB ({$diskv['desc']})");?>
 								</option>
 								<?php endforeach;?>
@@ -402,14 +398,14 @@ function enable_change(enable_change) {
 			      </td>
 			    </tr>
 			    <tr id="partitiontype_tr">
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Partition type");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Partition type");?></td>
 			      <td class="vtable">
 							<select name="partitiontype" class="formfld" id="partitiontype" onclick="partitiontype_change()">
-								<option value="p" <?php if ($pconfig['partitiontype'] === "p") echo "selected=\"selected\"";?>><?php echo gettext("GPT partition");?></option>
-								<option value="s" <?php if ($pconfig['partitiontype'] === "s") echo "selected=\"selected\"";?>><?php echo gettext("MBR partition");?></option>
-								<option value=" " <?php if (empty($pconfig['partitiontype'])) echo "selected=\"selected\"";?>><?php echo gettext("CD/DVD");?></option>
+								<option value="p" <?php if ($pconfig['partitiontype'] === "p") echo "selected=\"selected\"";?>><?=gettext("GPT partition");?></option>
+								<option value="s" <?php if ($pconfig['partitiontype'] === "s") echo "selected=\"selected\"";?>><?=gettext("MBR partition");?></option>
+								<option value=" " <?php if (empty($pconfig['partitiontype'])) echo "selected=\"selected\"";?>><?=gettext("CD/DVD");?></option>
 							</select><br />
-							<span class="vexpl"><?php echo gettext("<b>EFI GPT partition</b> if you want to mount a GPT formatted drive (<b>default partition</b>).<br/><b>MBR partition</b> if you want to mount a UFS formatted drive or do imported disks from other OS.<br/><b>CD/DVD volume</b> if you want to mount a CD/DVD volume.");?></span>
+							<span class="vexpl"><?=gettext("<b>EFI GPT partition</b> if you want to mount a GPT formatted drive (<b>default partition</b>).<br/><b>MBR partition</b> if you want to mount a UFS formatted drive or do imported disks from other OS.<br/><b>CD/DVD volume</b> if you want to mount a CD/DVD volume.");?></span>
 			      </td>
 			    </tr>
 					<?php html_inputbox("partitionnum", gettext("Partition number"), $pconfig['partitionnum'], "", true, 3);?>
@@ -426,30 +422,30 @@ function enable_change(enable_change) {
 					<?php $a_group = array(); foreach (system_get_group_list() as $groupk => $groupv) { $a_group[$groupk] = htmlspecialchars($groupk); }?>
 					<?php html_combobox("group", gettext("Group"), $pconfig['group'], $a_group, "", false);?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Mode");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Mode");?></td>
 			      <td width="78%" class="vtable">
 			      	<table width="100%" border="0" cellpadding="0" cellspacing="0">
 				        <tr>
 				        	<td width="20%" class="listhdrlr">&nbsp;</td>
-									<td width="20%" class="listhdrc"><?php echo gettext("Read");?></td>
-									<td width="50%" class="listhdrc"><?php echo gettext("Write");?></td>
-									<td width="20%" class="listhdrc"><?php echo gettext("Execute");?></td>
+									<td width="20%" class="listhdrc"><?=gettext("Read");?></td>
+									<td width="50%" class="listhdrc"><?=gettext("Write");?></td>
+									<td width="20%" class="listhdrc"><?=gettext("Execute");?></td>
 									<td width="10%" class="list"></td>
 				        </tr>
 				        <tr>
-									<td class="listlr"><?php echo gettext("Owner");?>&nbsp;</td>
+									<td class="listlr"><?=gettext("Owner");?>&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_owner[]" id="owner_read" value="r" <?php if (in_array("r", $pconfig['mode_owner'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_owner[]" id="owner_write" value="w" <?php if (in_array("w", $pconfig['mode_owner'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_owner[]" id="owner_execute" value="x" <?php if (in_array("x", $pconfig['mode_owner'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 				        </tr>
 				        <tr>
-				          <td class="listlr"><?php echo gettext("Group");?>&nbsp;</td>
+				          <td class="listlr"><?=gettext("Group");?>&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_group[]" id="group_read" value="r" <?php if (in_array("r", $pconfig['mode_group'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_group[]" id="group_write" value="w" <?php if (in_array("w", $pconfig['mode_group'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_group[]" id="group_execute" value="x" <?php if (in_array("x", $pconfig['mode_group'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 				        </tr>
 				        <tr>
-				          <td class="listlr"><?php echo gettext("Others");?>&nbsp;</td>
+				          <td class="listlr"><?=gettext("Others");?>&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_others[]" id="others_read" value="r" <?php if (in_array("r", $pconfig['mode_others'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_others[]" id="others_write" value="w" <?php if (in_array("w", $pconfig['mode_others'])) echo "checked=\"checked\"";?> />&nbsp;</td>
 									<td class="listrc" align="center"><input type="checkbox" name="mode_others[]" id="others_execute" value="x" <?php if (in_array("x", $pconfig['mode_others'])) echo "checked=\"checked\"";?> />&nbsp;</td>
@@ -459,9 +455,9 @@ function enable_change(enable_change) {
 			    </tr>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" onclick="enable_change(true)" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("warning", gettext("Warning"), sprintf(gettext("You can't mount the partition '%s' where the config file is stored.<br />"),htmlspecialchars($cfdevice)) . sprintf(gettext("UFS and variants are the NATIVE file format for FreeBSD (the underlying OS of %s). Attempting to use other file formats such as FAT, FAT32, EXT2, EXT3, or NTFS can result in unpredictable results, file corruption, and loss of data!"), get_product_name()));?>

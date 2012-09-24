@@ -2,14 +2,13 @@
 <?php
 /*
 	services_iscsitarget_ig.php
+	
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2009-2010 Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall)
@@ -55,11 +54,13 @@ if ($_POST) {
 		if (!file_exists($d_sysrebootreqd_path)) {
 			$retval |= updatenotify_process("iscsitarget_ig", "iscsitargetig_process_updatenotification");
 			config_lock();
-			$retval |= rc_update_service("iscsi_target");
+			$retval |= rc_update_reload_service("iscsi_target");
 			config_unlock();
 		}
 		$savemsg = get_std_save_message($retval);
 		if ($retval == 0) {
+			$savemsg .= "<br>";
+			$savemsg .= sprintf(gettext("The reloading request has been sent to the daemon. You can see the result by <a href=\"%s\">Log</a>."), "diag_log.php?log=2");
 			updatenotify_delete("iscsitarget_ig");
 		}
 	}
@@ -120,12 +121,12 @@ function iscsitargetig_process_updatenotification($mode, $data) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-				<li class="tabinact"><a href="services_iscsitarget.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?php echo gettext("Targets");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?php echo gettext("Portals");?></span></a></li>
-				<li class="tabact"><a href="services_iscsitarget_ig.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Initiators");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?php echo gettext("Auths");?></span></a></li>
-				<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?php echo gettext("Media");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_target.php"><span><?=gettext("Targets");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_pg.php"><span><?=gettext("Portals");?></span></a></li>
+				<li class="tabact"><a href="services_iscsitarget_ig.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Initiators");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_ag.php"><span><?=gettext("Auths");?></span></a></li>
+				<li class="tabinact"><a href="services_iscsitarget_media.php"><span><?=gettext("Media");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -136,22 +137,23 @@ function iscsitargetig_process_updatenotification($mode, $data) {
       <?php if (updatenotify_exists("iscsitarget_ig")) print_config_change_box();?>
       <table width="100%" border="0" cellpadding="6" cellspacing="0">
       <tr>
-        <td colspan="2" valign="top" class="listtopic"><?php echo gettext("Initiator Groups");?></td>
+        <td colspan="2" valign="top" class="listtopic"><?=gettext("Initiator Groups");?></td>
       </tr>
       <tr>
-        <td width="22%" valign="top" class="vncell"><?php echo gettext("Initiator Group");?></td>
+        <td width="22%" valign="top" class="vncell"><?=gettext("Initiator Group");?></td>
         <td width="78%" class="vtable">
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="10%" class="listhdrlr"><?php echo gettext("Tag");?></td>
-          <td width="40%" class="listhdrr"><?php echo gettext("Initiators");?></td>
-          <td width="40%" class="listhdrr"><?php echo gettext("Networks");?></td>
+          <td width="5%" class="listhdrlr"><?=gettext("Tag");?></td>
+          <td width="30%" class="listhdrr"><?=gettext("Initiators");?></td>
+          <td width="25%" class="listhdrr"><?=gettext("Networks");?></td>
+          <td width="30%" class="listhdrr"><?=gettext("Comment");?></td>
           <td width="10%" class="list"></td>
         </tr>
         <?php foreach($config['iscsitarget']['initiatorgroup'] as $ig):?>
         <?php $notificationmode = updatenotify_get_mode("iscsitarget_ig", $ig['uuid']);?>
         <tr>
-          <td class="listlr"><?php htmlspecialchars($ig['tag']);?>&nbsp;</td>
+          <td class="listlr"><?=htmlspecialchars($ig['tag']);?>&nbsp;</td>
           <td class="listr">
           <?php foreach ($ig['iginitiatorname'] as $initiator): ?>
           <?php echo htmlspecialchars($initiator)."<br />\n"; ?>
@@ -162,10 +164,11 @@ function iscsitargetig_process_updatenotification($mode, $data) {
           <?php echo htmlspecialchars($netmask)."<br />\n"; ?>
           <?php endforeach;?>
           </td>
+          <td class="listr"><?=htmlspecialchars($ig['comment']);?>&nbsp;</td>
           <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
           <td valign="middle" nowrap="nowrap" class="list">
-            <a href="services_iscsitarget_ig_edit.php?uuid=<?php $ig['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit initiator group");?>" border="0" alt="<?php echo gettext("Edit initiator group");?>" /></a>
-            <a href="services_iscsitarget_ig.php?act=del&amp;type=ig&amp;uuid=<?php $ig['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this initiator group?");?>')"><img src="x.gif" title="<?php echo gettext("Delete initiator group");?>" border="0" alt="<?php echo gettext("Add initiator group");?>" /></a>
+            <a href="services_iscsitarget_ig_edit.php?uuid=<?=$ig['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit initiator group");?>" border="0" alt="<?=gettext("Edit initiator group");?>" /></a>
+            <a href="services_iscsitarget_ig.php?act=del&amp;type=ig&amp;uuid=<?=$ig['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this initiator group?");?>')"><img src="x.gif" title="<?=gettext("Delete initiator group");?>" border="0" alt="<?=gettext("Add initiator group");?>" /></a>
           </td>
           <?php else:?>
           <td valign="middle" nowrap="nowrap" class="list">
@@ -175,13 +178,13 @@ function iscsitargetig_process_updatenotification($mode, $data) {
         </tr>
         <?php endforeach;?>
         <tr>
-          <td class="list" colspan="3"></td>
+          <td class="list" colspan="4"></td>
           <td class="list">
-						<a href="services_iscsitarget_ig_edit.php"><img src="plus.gif" title="<?php echo gettext("Add initiator group");?>" border="0" alt="<?php echo gettext("Add initiator group");?>" /></a>
+						<a href="services_iscsitarget_ig_edit.php"><img src="plus.gif" title="<?=gettext("Add initiator group");?>" border="0" alt="<?=gettext("Add initiator group");?>" /></a>
 					</td>
         </tr>
         </table>
-        <?php echo gettext("A Initiator Group contains authorised initiator names and networks to access the target.");?>
+        <?=gettext("A Initiator Group contains authorised initiator names and networks to access the target.");?>
         </td>
       </tr>
       </table>

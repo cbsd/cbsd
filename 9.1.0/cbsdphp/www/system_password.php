@@ -9,7 +9,6 @@
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -96,8 +95,8 @@ if ($_POST) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="system.php"><span><?php echo gettext("General");?></span></a></li>
-      	<li class="tabact"><a href="system_password.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Password");?></span></a></li>
+      	<li class="tabinact"><a href="system.php"><span><?=gettext("General");?></span></a></li>
+      	<li class="tabact"><a href="system_password.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Password");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -111,7 +110,7 @@ if ($_POST) {
 					<?php html_passwordconfbox("password_new", "password_confirm", gettext("Password"), "", "", gettext("If you want to change the password for accessing the WebGUI, enter it here twice."), true);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

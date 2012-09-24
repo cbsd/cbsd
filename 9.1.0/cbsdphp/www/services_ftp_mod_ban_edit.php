@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -114,8 +109,8 @@ if ($_POST) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="services_ftp.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabact"><a href="services_ftp_mod.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabinact"><a href="services_ftp.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="services_ftp_mod.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -130,9 +125,9 @@ if ($_POST) {
 					<?php html_inputbox("expire", gettext("Expire"), $pconfig['expire'], gettext("Specifies the time in hh:mm:ss after which the ban expires."), true, 8);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

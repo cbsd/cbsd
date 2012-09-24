@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -161,25 +157,25 @@ if ($_POST) {
           <?php $interfaces = array('lan' => 'LAN'); for ($i = 1; isset($config['interfaces']['opt' . $i]); $i++) { $interfaces['opt' . $i] = $config['interfaces']['opt' . $i]['descr']; }?>
           <?php html_combobox("interface", gettext("Interface"), $pconfig['interface'], $interfaces, gettext("Choose which interface this route applies to."), true);?>
           <tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Destination network");?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("Destination network");?></td>
             <td width="78%" class="vtable"> 
-							<input name="network" type="text" class="formfld" id="network" size="20" value="<?php htmlspecialchars($pconfig['network']);?>" /> 
+							<input name="network" type="text" class="formfld" id="network" size="20" value="<?=htmlspecialchars($pconfig['network']);?>" /> 
 							/
 							<select name="network_subnet" class="formfld" id="network_subnet">
 								<?php for ($i = 32; $i > 0; $i--):?>
-								<option value="<?php $i;?>" <?php if ($i == $pconfig['network_subnet']) echo "selected=\"selected\"";?>><?php $i;?></option>
+								<option value="<?=$i;?>" <?php if ($i == $pconfig['network_subnet']) echo "selected=\"selected\"";?>><?=$i;?></option>
 								<?php endfor;?>
 							</select>
-							<br /><span class="vexpl"><?php echo gettext("Destination network for this static route");?></span>
+							<br /><span class="vexpl"><?=gettext("Destination network for this static route");?></span>
 						</td>
           </tr>
           <?php html_inputbox("gateway", gettext("Gateway"), $pconfig['gateway'], gettext("Gateway to be used to reach the destination network."), true, 40);?>
           <?php html_inputbox("descr", gettext("Description"), $pconfig['descr'], gettext("You may enter a description here for your reference."), false, 40);?>
         </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 			  </div>
 			  <?php include("formend.inc");?>
 			</form>

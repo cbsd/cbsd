@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Based on m0n0wall (http://m0n0.ch/wall)
@@ -53,8 +48,9 @@ $pgtitle = array(gettext("Disks"), gettext("ZFS"), gettext("Snapshots"), gettext
 if (!isset($config['zfs']['snapshots']['snapshot']) || !is_array($config['zfs']['snapshots']['snapshot']))
 	$config['zfs']['snapshots']['snapshot'] = array();
 
-array_sort_key($config['zfs']['snapshots']['snapshot'], "name");
-$a_snapshot = &$config['zfs']['snapshots']['snapshot'];
+// snapshot is always reading from the pool
+//array_sort_key($config['zfs']['snapshots']['snapshot'], "name");
+//$a_snapshot = &$config['zfs']['snapshots']['snapshot'];
 
 function get_zfs_snapshots() {
 	$result = array();
@@ -178,21 +174,21 @@ function zfssnapshot_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?php echo gettext("Pools");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?php echo gettext("Datasets");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?php echo gettext("Volumes");?></span></a></li>
-				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Snapshots");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_config.php"><span><?php echo gettext("Configuration");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_zpool.php"><span><?=gettext("Pools");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_dataset.php"><span><?=gettext("Datasets");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_volume.php"><span><?=gettext("Volumes");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Snapshots");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_config.php"><span><?=gettext("Configuration");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Snapshot");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_clone.php"><span><?php echo gettext("Clone");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?php echo gettext("Auto Snapshot");?></span></a></li>
-				<li class="tabinact"><a href="disks_zfs_snapshot_info.php"><span><?php echo gettext("Information");?></span></a></li>
+				<li class="tabact"><a href="disks_zfs_snapshot.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Snapshot");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_clone.php"><span><?=gettext("Clone");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_auto.php"><span><?=gettext("Auto Snapshot");?></span></a></li>
+				<li class="tabinact"><a href="disks_zfs_snapshot_info.php"><span><?=gettext("Information");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -204,7 +200,7 @@ function zfssnapshot_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("zfssnapshot")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<tr id="filter_tr">
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Filter"); ?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Filter"); ?></td>
 						<td width="78%" class="vtable">
 							<select name='filter_time' class='formfld' id='filter_time' >
 							<?
@@ -214,34 +210,34 @@ function zfssnapshot_process_updatenotification($mode, $data) {
 								}
 							?>
 							</select>
-							<input name="filter" type="submit" class="formbtn" id="filter" value="<?php echo gettext("Apply");?>" />
+							<input name="filter" type="submit" class="formbtn" id="filter" value="<?=gettext("Apply");?>" />
 						</td>
 					</tr>
 					<?php html_separator();?>
 				</table>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="40%" class="listhdrlr"><?php echo gettext("Path");?><? echo sprintf(" (%d/%d)", count($a_snapshot), count($a_snapshot_all)); ?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Name");?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Used");?></td>
-						<td width="20%" class="listhdrr"><?php echo gettext("Creation");?></td>
+						<td width="40%" class="listhdrlr"><?=gettext("Path");?><? echo sprintf(" (%d/%d)", count($a_snapshot), count($a_snapshot_all)); ?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Name");?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Used");?></td>
+						<td width="20%" class="listhdrr"><?=gettext("Creation");?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_snapshot as $snapshotv):?>
 					<?php $notificationmode = updatenotify_get_mode("zfssnapshot", serialize(array('snapshot' => $snapshotv['snapshot'], 'recursive'=> false)));?>
 					<tr>
-						<td class="listlr"><?php htmlspecialchars($snapshotv['path']);?>&nbsp;</td>
-						<td class="listr"><?php htmlspecialchars($snapshotv['name']);?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($snapshotv['path']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($snapshotv['name']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_MODIFIED == $notificationmode):?>
-						<td class="listr"><?php htmlspecialchars($snapshotv['used']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($snapshotv['used']);?>&nbsp;</td>
 						<?php else:?>
-						<td class="listr"><?php htmlspecialchars($snapshotv['used']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($snapshotv['used']);?>&nbsp;</td>
 						<?php endif;?>
-						<td class="listr"><?php htmlspecialchars($snapshotv['creation']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars($snapshotv['creation']);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_zfs_snapshot_edit.php?snapshot=<?php urlencode($snapshotv['snapshot']);?>"><img src="e.gif" title="<?php echo gettext("Edit snapshot");?>" border="0" alt="<?php echo gettext("Edit snapshot");?>" /></a>&nbsp;
-							<a href="disks_zfs_snapshot.php?act=del&amp;snapshot=<?php urlencode($snapshotv['snapshot']);?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this snapshot?");?>')"><img src="x.gif" title="<?php echo gettext("Delete snapshot");?>" border="0" alt="<?php echo gettext("Delete snapshot");?>" /></a>
+							<a href="disks_zfs_snapshot_edit.php?snapshot=<?=urlencode($snapshotv['snapshot']);?>"><img src="e.gif" title="<?=gettext("Edit snapshot");?>" border="0" alt="<?=gettext("Edit snapshot");?>" /></a>&nbsp;
+							<a href="disks_zfs_snapshot.php?act=del&amp;snapshot=<?=urlencode($snapshotv['snapshot']);?>" onclick="return confirm('<?=gettext("Do you really want to delete this snapshot?");?>')"><img src="x.gif" title="<?=gettext("Delete snapshot");?>" border="0" alt="<?=gettext("Delete snapshot");?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -253,7 +249,7 @@ function zfssnapshot_process_updatenotification($mode, $data) {
 					<tr>
 						<td class="list" colspan="4"></td>
 						<td class="list">
-							<a href="disks_zfs_snapshot_add.php"><img src="plus.gif" title="<?php echo gettext("Add snapshot");?>" border="0" alt="<?php echo gettext("Add snapshot");?>" /></a>
+							<a href="disks_zfs_snapshot_add.php"><img src="plus.gif" title="<?=gettext("Add snapshot");?>" border="0" alt="<?=gettext("Add snapshot");?>" /></a>
 						</td>
 					</tr>
 				</table>

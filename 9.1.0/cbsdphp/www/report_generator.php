@@ -5,17 +5,13 @@
 
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
-	All rights reserved.
-	
-	Modified by Michael Zoon (C) 2010 <zoon01@nas4free.org>
 	All rights reserved.	
 
 	Portions of FreeNAS (http://www.freenas.org)
-	Copyright (C) 2005-2010 Olivier Cochard <olivier@freenas.org>
-	Copyright (C) 2009-2010 Dan Merschi
+	Copyright (C) 2005-2011 Olivier Cochard <olivier@freenas.org>
 	All rights reserved.
 
-	Part of code from:
+	Portions of code from:
 	Exec+ v1.02-000 - Copyright 2001-2003, All rights reserved
 	Created by technologEase (http://www.technologEase.com).
 	Modified for m0n0wall by Manuel Kasper <mk@neon1.net>)
@@ -91,37 +87,37 @@ EOD;
 		$cpuinfo['model'],
 		round($meminfo['real'] / 1024 / 1024));
 ?>
-<form action="<?php $_SERVER['SCRIPT_NAME'];?>" method="post" enctype="multipart/form-data" name="iform">
+<form action="<?=$_SERVER['SCRIPT_NAME'];?>" method="post" enctype="multipart/form-data" name="iform">
   <table>
 		<tr>
-			<td class="label" align="right"><?php echo gettext("Info");?></td>
-			<td class="text" align="left"><?php $sys_summary;?></td>
+			<td class="label" align="right"><?=gettext("Info");?></td>
+			<td class="text" align="left"><?=$sys_summary;?></td>
 		</tr>
 		<tr>
-			<td class="label" align="right"><?php echo gettext("Subject");?></td>
+			<td class="label" align="right"><?=gettext("Subject");?></td>
 			<td class="text"><input id="txtSubject" name="txtSubject" type="text" size="130" value="<?php echo $_POST['txtSubject']; ?>" /></td>
 		</tr>
 		<tr>
-			<td class="label" align="right"><?php echo gettext("Description");?></td>
-			<td class="text"><textarea id="txtDescription" name="txtDescription" rows="7" cols="80" wrap="on"><?php htmlspecialchars($_POST['txtDescription']);?></textarea></td>
+			<td class="label" align="right"><?=gettext("Description");?></td>
+			<td class="text"><textarea id="txtDescription" name="txtDescription" rows="7" cols="80" wrap="on"><?=htmlspecialchars($_POST['txtDescription']);?></textarea></td>
 		</tr>
 		<tr>
-			<td align="right"><?php echo gettext("Error");?></td>
-			<td class="text"><textarea id="txtError" name="txtError" rows="3" cols="80" wrap="on"><?php htmlspecialchars($_POST['txtError']);?></textarea></td>
+			<td align="right"><?=gettext("Error");?></td>
+			<td class="text"><textarea id="txtError" name="txtError" rows="3" cols="80" wrap="on"><?=htmlspecialchars($_POST['txtError']);?></textarea></td>
 		</tr>
 		<tr>
-			<td align="right"><?php echo gettext("Hardware");?></td>
-			<td class="type" valign="top"><input name="chk_Hardware" type="checkbox" id="chk_Hardware" checked="checked" /><?php echo gettext("Include basic hardware information.");?></td>
+			<td align="right"><?=gettext("Hardware");?></td>
+			<td class="type" valign="top"><input name="chk_Hardware" type="checkbox" id="chk_Hardware" checked="checked" /><?=gettext("Include basic hardware information.");?></td>
 		</tr>
 		<tr>
-			<td align="right"><?php echo gettext("phpBB");?></td>
-			<td class="type" valign="top"><input name="chk_phpBB" type="checkbox" id="chk_phpBB" checked="checked" /><?php echo gettext("Format the report for phpBB forum.");?></td>
+			<td align="right"><?=gettext("phpBB");?></td>
+			<td class="type" valign="top"><input name="chk_phpBB" type="checkbox" id="chk_phpBB" checked="checked" /><?=gettext("Format the report for phpBB forum.");?></td>
 		</tr>
 		<tr>
 			<td valign="top">&nbsp;&nbsp;&nbsp;</td>
 			<td valign="top" align="center" class="label">
-				<input type="submit" class="button" value="<?php echo gettext("Generate");?>" />
-				<input type="button" class="button" value="<?php echo gettext("Clear");?>" onclick="return Reset_onClick( this.form )" />
+				<input type="submit" class="button" value="<?=gettext("Generate");?>" />
+				<input type="button" class="button" value="<?=gettext("Clear");?>" onclick="return Reset_onClick( this.form )" />
 			</td>
 		</tr>
   </table>

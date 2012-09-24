@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -271,8 +266,8 @@ function aio_change() {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="services_samba.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_samba_share.php"><span><?php echo gettext("Shares");?></span></a></li>
+        <li class="tabact"><a href="services_samba.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_samba_share.php"><span><?=gettext("Shares");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -286,36 +281,36 @@ function aio_change() {
 					<?php html_combobox("security", gettext("Authentication"), $pconfig['security'], array("share" => gettext("Anonymous"), "user" => gettext("Local User"), "ads" => gettext("Active Directory")), "", true, false, "authentication_change()");?>
 					<?php html_combobox("maxprotocol", gettext("Max Protocol"), $pconfig['maxprotocol'], array("SMB2" => gettext("SMB2"), "NT1" => gettext("NT1")), gettext("SMB2 is for recent OS like Windows 7 and Vista. NT1 is for legacy OS like XP."), true, false, "");?>
           <tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("NetBIOS name");?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("NetBIOS name");?></td>
             <td width="78%" class="vtable">
-              <input name="netbiosname" type="text" class="formfld" id="netbiosname" size="30" value="<?php htmlspecialchars($pconfig['netbiosname']);?>" />
+              <input name="netbiosname" type="text" class="formfld" id="netbiosname" size="30" value="<?=htmlspecialchars($pconfig['netbiosname']);?>" />
             </td>
           </tr>
           <tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Workgroup") ; ?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("Workgroup") ; ?></td>
             <td width="78%" class="vtable">
-              <input name="workgroup" type="text" class="formfld" id="workgroup" size="30" value="<?php htmlspecialchars($pconfig['workgroup']);?>" />
-              <br /><?php echo gettext("Workgroup the server will appear to be in when queried by clients (maximum 15 characters).");?>
+              <input name="workgroup" type="text" class="formfld" id="workgroup" size="30" value="<?=htmlspecialchars($pconfig['workgroup']);?>" />
+              <br /><?=gettext("Workgroup the server will appear to be in when queried by clients (maximum 15 characters).");?>
             </td>
           </tr>
           <tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Description") ;?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Description") ;?></td>
             <td width="78%" class="vtable">
-              <input name="serverdesc" type="text" class="formfld" id="serverdesc" size="30" value="<?php htmlspecialchars($pconfig['serverdesc']);?>" />
-              <br /><?php echo gettext("Server description. This can usually be left blank.") ;?>
+              <input name="serverdesc" type="text" class="formfld" id="serverdesc" size="30" value="<?=htmlspecialchars($pconfig['serverdesc']);?>" />
+              <br /><?=gettext("Server description. This can usually be left blank.") ;?>
             </td>
           </tr>
           <?php html_combobox("doscharset", gettext("Dos charset"), $pconfig['doscharset'], array("CP437" => gettext("CP437 (Latin US)"), "CP850" => gettext("CP850 (Latin 1)"), "CP852" => gettext("CP852 (Latin 2)"), "CP866" => gettext("CP866 (Cyrillic CIS 1)"), "CP932" => gettext("CP932 (Japanese Shift-JIS)"), "CP936" => gettext("CP936 (Simplified Chinese GBK)"), "CP949" => gettext("CP949 (Korean)"), "CP950" => gettext("CP950 (Traditional Chinese Big5)"), "CP1251" => gettext("CP1251 (Cyrillic)"), "ASCII" => "ASCII"), "", false);?>
           <?php html_combobox("unixcharset", gettext("Unix charset"), $pconfig['unixcharset'], array("UTF-8" => "UTF-8", "iso-8859-1" => "iso-8859-1", "iso-8859-15" => "iso-8859-15", "gb2312" => "gb2312", "EUC-JP" => "EUC-JP", "ASCII" => "ASCII"), "", false);?>
           <?php html_combobox("loglevel", gettext("Log Level"), $pconfig['loglevel'], array("1" => gettext("Minimum"), "2" => gettext("Normal"), "3" => gettext("Full"), "10" => gettext("Debug")), "", false);?>
           <tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Local Master Browser"); ?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Local Master Browser"); ?></td>
             <td width="78%" class="vtable">
               <select name="localmaster" class="formfld" id="localmaster">
               <?php $types = array(gettext("Yes"),gettext("No")); $vals = explode(" ", "yes no");?>
               <?php $j = 0; for ($j = 0; $j < count($vals); $j++): ?>
-                <option value="<?php $vals[$j];?>" <?php if ($vals[$j] == $pconfig['localmaster']) echo "selected=\"selected\"";?>>
-                <?php htmlspecialchars($types[$j]);?>
+                <option value="<?=$vals[$j];?>" <?php if ($vals[$j] == $pconfig['localmaster']) echo "selected=\"selected\"";?>>
+                <?=htmlspecialchars($types[$j]);?>
                 </option>
               <?php endfor; ?>
               </select>
@@ -323,13 +318,13 @@ function aio_change() {
             </td>
           </tr>
           <tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Time server"); ?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Time server"); ?></td>
             <td width="78%" class="vtable">
               <select name="timesrv" class="formfld" id="timesrv">
               <?php $types = array(gettext("Yes"),gettext("No")); $vals = explode(" ", "yes no");?>
               <?php $j = 0; for ($j = 0; $j < count($vals); $j++): ?>
-                <option value="<?php $vals[$j];?>" <?php if ($vals[$j] == $pconfig['timesrv']) echo "selected=\"selected\"";?>>
-                <?php htmlspecialchars($types[$j]);?>
+                <option value="<?=$vals[$j];?>" <?php if ($vals[$j] == $pconfig['timesrv']) echo "selected=\"selected\"";?>>
+                <?=htmlspecialchars($types[$j]);?>
                 </option>
               <?php endfor; ?>
               </select>
@@ -337,84 +332,84 @@ function aio_change() {
             </td>
           </tr>
           <tr id="winssrv_tr">
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("WINS server"); ?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("WINS server"); ?></td>
             <td width="78%" class="vtable">
-              <input name="winssrv" type="text" class="formfld" id="winssrv" size="30" value="<?php htmlspecialchars($pconfig['winssrv']);?>" />
-              <br /><?php echo gettext("WINS server IP address (e.g. from MS Active Directory server).");?>
+              <input name="winssrv" type="text" class="formfld" id="winssrv" size="30" value="<?=htmlspecialchars($pconfig['winssrv']);?>" />
+              <br /><?=gettext("WINS server IP address (e.g. from MS Active Directory server).");?>
             </td>
   				</tr>
           <tr>
 			      <td colspan="2" class="list" height="12"></td>
 			    </tr>
 			    <tr>
-			      <td colspan="2" valign="top" class="listtopic"><?php echo gettext("Advanced settings");?></td>
+			      <td colspan="2" valign="top" class="listtopic"><?=gettext("Advanced settings");?></td>
 			    </tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Guest account");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Guest account");?></td>
 						<td width="78%" class="vtable">
-							<input name="guestaccount" type="text" class="formfld" id="guestaccount" size="30" value="<?php htmlspecialchars($pconfig['guestaccount']);?>" />
-							<br /><?php echo gettext("Use this option to override the username ('ftp' by default) which will be used for access to services which are specified as guest. Whatever privileges this user has will be available to any client connecting to the guest service. This user must exist in the password file, but does not require a valid login.");?>
+							<input name="guestaccount" type="text" class="formfld" id="guestaccount" size="30" value="<?=htmlspecialchars($pconfig['guestaccount']);?>" />
+							<br /><?=gettext("Use this option to override the username ('ftp' by default) which will be used for access to services which are specified as guest. Whatever privileges this user has will be available to any client connecting to the guest service. This user must exist in the password file, but does not require a valid login.");?>
 						</td>
 					</tr>
 					<?php html_combobox("maptoguest", gettext("Map to guest"), $pconfig['maptoguest'], array("Never" => gettext("Never - default"), "Bad User" => gettext("Bad User - non existing users")), "", false, false, "");?>
 					<tr id="createmask_tr">
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Create mask"); ?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Create mask"); ?></td>
 						<td width="78%" class="vtable">
-							<input name="createmask" type="text" class="formfld" id="createmask" size="30" value="<?php htmlspecialchars($pconfig['createmask']);?>" />
-							<br /><?php echo gettext("Use this option to override the file creation mask (0666 by default).");?>
+							<input name="createmask" type="text" class="formfld" id="createmask" size="30" value="<?=htmlspecialchars($pconfig['createmask']);?>" />
+							<br /><?=gettext("Use this option to override the file creation mask (0666 by default).");?>
 						</td>
 					</tr>
 					<tr id="directorymask_tr">
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Directory mask"); ?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Directory mask"); ?></td>
 						<td width="78%" class="vtable">
-							<input name="directorymask" type="text" class="formfld" id="directorymask" size="30" value="<?php htmlspecialchars($pconfig['directorymask']);?>" />
-							<br /><?php echo gettext("Use this option to override the directory creation mask (0777 by default).");?>
+							<input name="directorymask" type="text" class="formfld" id="directorymask" size="30" value="<?=htmlspecialchars($pconfig['directorymask']);?>" />
+							<br /><?=gettext("Use this option to override the directory creation mask (0777 by default).");?>
 						</td>
 					</tr>
 	        <tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Send Buffer Size"); ?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Send Buffer Size"); ?></td>
             <td width="78%" class="vtable">
-              <input name="sndbuf" type="text" class="formfld" id="sndbuf" size="30" value="<?php htmlspecialchars($pconfig['sndbuf']);?>" />
-              <br /><?php sprintf(gettext("Size of send buffer (%d by default)."), 64240); ?>
+              <input name="sndbuf" type="text" class="formfld" id="sndbuf" size="30" value="<?=htmlspecialchars($pconfig['sndbuf']);?>" />
+              <br /><?=sprintf(gettext("Size of send buffer (%d by default)."), 64240); ?>
             </td>
   				</tr>
   				<tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Receive Buffer Size") ; ?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Receive Buffer Size") ; ?></td>
             <td width="78%" class="vtable">
-              <input name="rcvbuf" type="text" class="formfld" id="rcvbuf" size="30" value="<?php htmlspecialchars($pconfig['rcvbuf']);?>" />
-              <br /><?php sprintf(gettext("Size of receive buffer (%d by default)."), 64240); ?>
+              <input name="rcvbuf" type="text" class="formfld" id="rcvbuf" size="30" value="<?=htmlspecialchars($pconfig['rcvbuf']);?>" />
+              <br /><?=sprintf(gettext("Size of receive buffer (%d by default)."), 64240); ?>
             </td>
   				</tr>
   				<tr>
-            <td width="22%" valign="top" class="vncell"><?php echo gettext("Large read/write");?></td>
+            <td width="22%" valign="top" class="vncell"><?=gettext("Large read/write");?></td>
             <td width="78%" class="vtable">
               <input name="largereadwrite" type="checkbox" id="largereadwrite" value="yes" <?php if ($pconfig['largereadwrite']) echo "checked=\"checked\""; ?> />
-              <?php echo gettext("Enable large read/write");?><span class="vexpl"><br />
-              <?php echo gettext("Use the new 64k streaming read and write varient SMB requests introduced with Windows 2000.");?></span>
+              <?=gettext("Enable large read/write");?><span class="vexpl"><br />
+              <?=gettext("Use the new 64k streaming read and write varient SMB requests introduced with Windows 2000.");?></span>
             </td>
           </tr>
 					<?php html_checkbox("usesendfile", gettext("Use sendfile"), $pconfig['usesendfile'] ? true : false, gettext("Enable use sendfile."), gettext("This may make more efficient use of the system CPU's and cause Samba to be faster. Samba automatically turns this off for clients that use protocol levels lower than NT LM 0.12 and when it detects a client is Windows 9x."), false);?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("EA support");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("EA support");?></td>
 						<td width="78%" class="vtable">
 							<input name="easupport" type="checkbox" id="easupport" value="yes" <?php if ($pconfig['easupport']) echo "checked=\"checked\""; ?> />
-							<?php echo gettext("Enable extended attribute support");?><span class="vexpl"><br />
-							<?php echo gettext("Allow clients to attempt to store OS/2 style extended attributes on a share.");?></span>
+							<?=gettext("Enable extended attribute support");?><span class="vexpl"><br />
+							<?=gettext("Allow clients to attempt to store OS/2 style extended attributes on a share.");?></span>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Store DOS attributes");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Store DOS attributes");?></td>
 						<td width="78%" class="vtable">
 							<input name="storedosattributes" type="checkbox" id="storedosattributes" value="yes" <?php if ($pconfig['storedosattributes']) echo "checked=\"checked\""; ?> />
-							<?php echo gettext("Enable store DOS attributes");?><span class="vexpl"><br />
-							<?php echo gettext("If this parameter is set, Samba attempts to first read DOS attributes (SYSTEM, HIDDEN, ARCHIVE or READ-ONLY) from a filesystem extended attribute, before mapping DOS attributes to UNIX permission bits. When set, DOS attributes will be stored onto an extended attribute in the UNIX filesystem, associated with the file or directory.");?></span>
+							<?=gettext("Enable store DOS attributes");?><span class="vexpl"><br />
+							<?=gettext("If this parameter is set, Samba attempts to first read DOS attributes (SYSTEM, HIDDEN, ARCHIVE or READ-ONLY) from a filesystem extended attribute, before mapping DOS attributes to UNIX permission bits. When set, DOS attributes will be stored onto an extended attribute in the UNIX filesystem, associated with the file or directory.");?></span>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Null passwords");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Null passwords");?></td>
 						<td width="78%" class="vtable">
 							<input name="nullpasswords" type="checkbox" id="nullpasswords" value="yes" <?php if ($pconfig['nullpasswords']) echo "checked=\"checked\""; ?> />
-							<?php echo gettext("Allow client access to accounts that have null passwords.");?>
+							<?=gettext("Allow client access to accounts that have null passwords.");?>
 						</td>
 					</tr>
 					<?php html_checkbox("aio", gettext("Asynchronous I/O (AIO)"), $pconfig['aio'] ? true : false, gettext("Enable Asynchronous I/O (AIO)"), "", false, "aio_change()");?>
@@ -424,7 +419,7 @@ function aio_change() {
 					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters are added to [Global] section of %s."), "smb.conf") . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://us1.samba.org/samba/docs/man/manpages-3/smb.conf.5.html"), false, 65, 5, false, false);?>
         </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("note", gettext("Note"), sprintf(gettext("To increase CIFS performance try the following:<div id='enumeration'><ul><li>Enable 'Asynchronous I/O (AIO)' switch</li><li>Enable 'Large read/write' switch</li><li>Enable '<a href='%s'>Tuning</a>' switch</li></ul></div>"), "system_advanced.php", "interfaces_lan.php"));?>

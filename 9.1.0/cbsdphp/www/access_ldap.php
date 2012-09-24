@@ -1,5 +1,5 @@
 #!/usr/local/bin/php
-
+<?php
 /*
 	acces_ldap.php
 	Part of NAS4Free (http://www.nas4free.org)
@@ -143,7 +143,7 @@ if ($_POST) {
 	}
 }
 ?>
- include("fbegin.inc"); ?>
+<?php include("fbegin.inc"); ?>
 <script type="text/javascript">
 <!--
 function enable_change(enable_change) {
@@ -184,31 +184,31 @@ function anonymousbind_change() {
 	<table width="100%" border="0" cellpadding="0" cellspacing="0">
 		<tr>
 			<td class="tabcont">
-				 if ($input_errors) print_input_errors($input_errors);?>
-				 if ($savemsg) print_info_box($savemsg);?>
+				<?php if ($input_errors) print_input_errors($input_errors);?>
+				<?php if ($savemsg) print_info_box($savemsg);?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
-					 html_titleline_checkbox("enable", gettext("Lightweight Directory Access Protocol"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
-					 html_inputbox("hostname", gettext("Host name"), $pconfig['hostname'], gettext("The name or IP address of the LDAP server."), true, 20);?>
-					 html_inputbox("base", gettext("Base DN"), $pconfig['base'], sprintf(gettext("The default base distinguished name (DN) to use for searches, e.g. %s"), "dc=test,dc=org"), true, 40);?>
-					 html_checkbox("anonymousbind", gettext("Anonymous bind"), $pconfig['anonymousbind'] ? true : false, gettext("Enable anonymous bind."), "", true, "anonymousbind_change()");?>
-					 html_inputbox("binddn", gettext("Bind DN"), $pconfig['binddn'], sprintf(gettext("The distinguished name with which to bind to the directory server, e.g. %s"), "cn=admin,dc=test,dc=org"), true, 40);?>
-					 html_passwordconfbox("bindpw", "bindpw2", gettext("Bind password"), $pconfig['bindpw'], $pconfig['bindpw2'], gettext("The cleartext credentials with which to bind."), true);?>
-					 html_inputbox("rootbinddn", gettext("Root bind DN"), $pconfig['rootbinddn'], sprintf(gettext("The distinguished name with which to bind to the directory server, e.g. %s"), "cn=admin,dc=test,dc=org"), true, 40);?>
-					 html_passwordconfbox("rootbindpw", "rootbindpw2", gettext("Root bind password"), $pconfig['rootbindpw'], $pconfig['rootbindpw2'], gettext("The credentials with which to bind."), true);?>
-					 html_combobox("pam_password", gettext("Password encryption"), $pconfig['pam_password'], array("clear" => "clear", "crypt" => "crypt", "md5" => "md5", "nds" => "nds", "racf" => "racf", "ad" => "ad", "exop" => "exop"), gettext("The password change protocol to use."), true);?>
-					 html_inputbox("user_suffix", gettext("User suffix"), $pconfig['user_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for users when these are added to the LDAP directory, e.g. %s"), "ou=Users"), true, 20);?>
-					 html_inputbox("group_suffix", gettext("Group suffix"), $pconfig['group_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for groups when these are added to the LDAP directory, e.g. %s"), "ou=Groups"), true, 20);?>
-					 html_inputbox("password_suffix", gettext("Password suffix"), $pconfig['password_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for passwords when these are added to the LDAP directory, e.g. %s"), "ou=Users"), true, 20);?>
-					 html_inputbox("machine_suffix", gettext("Machine suffix"), $pconfig['machine_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for machines when these are added to the LDAP directory, e.g. %s"), "ou=Computers"), true, 20);?>
-					 html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters are added to %s."), "ldap.conf"), false, 65, 5, false, false);?>
+					<?php html_titleline_checkbox("enable", gettext("Lightweight Directory Access Protocol"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
+					<?php html_inputbox("hostname", gettext("Host name"), $pconfig['hostname'], gettext("The name or IP address of the LDAP server."), true, 20);?>
+					<?php html_inputbox("base", gettext("Base DN"), $pconfig['base'], sprintf(gettext("The default base distinguished name (DN) to use for searches, e.g. %s"), "dc=test,dc=org"), true, 40);?>
+					<?php html_checkbox("anonymousbind", gettext("Anonymous bind"), $pconfig['anonymousbind'] ? true : false, gettext("Enable anonymous bind."), "", true, "anonymousbind_change()");?>
+					<?php html_inputbox("binddn", gettext("Bind DN"), $pconfig['binddn'], sprintf(gettext("The distinguished name with which to bind to the directory server, e.g. %s"), "cn=admin,dc=test,dc=org"), true, 40);?>
+					<?php html_passwordconfbox("bindpw", "bindpw2", gettext("Bind password"), $pconfig['bindpw'], $pconfig['bindpw2'], gettext("The cleartext credentials with which to bind."), true);?>
+					<?php html_inputbox("rootbinddn", gettext("Root bind DN"), $pconfig['rootbinddn'], sprintf(gettext("The distinguished name with which to bind to the directory server, e.g. %s"), "cn=admin,dc=test,dc=org"), true, 40);?>
+					<?php html_passwordconfbox("rootbindpw", "rootbindpw2", gettext("Root bind password"), $pconfig['rootbindpw'], $pconfig['rootbindpw2'], gettext("The credentials with which to bind."), true);?>
+					<?php html_combobox("pam_password", gettext("Password encryption"), $pconfig['pam_password'], array("clear" => "clear", "crypt" => "crypt", "md5" => "md5", "nds" => "nds", "racf" => "racf", "ad" => "ad", "exop" => "exop"), gettext("The password change protocol to use."), true);?>
+					<?php html_inputbox("user_suffix", gettext("User suffix"), $pconfig['user_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for users when these are added to the LDAP directory, e.g. %s"), "ou=Users"), true, 20);?>
+					<?php html_inputbox("group_suffix", gettext("Group suffix"), $pconfig['group_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for groups when these are added to the LDAP directory, e.g. %s"), "ou=Groups"), true, 20);?>
+					<?php html_inputbox("password_suffix", gettext("Password suffix"), $pconfig['password_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for passwords when these are added to the LDAP directory, e.g. %s"), "ou=Users"), true, 20);?>
+					<?php html_inputbox("machine_suffix", gettext("Machine suffix"), $pconfig['machine_suffix'], sprintf(gettext("This parameter specifies the suffix that is used for machines when these are added to the LDAP directory, e.g. %s"), "ou=Computers"), true, 20);?>
+					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters are added to %s."), "ldap.conf"), false, 65, 5, false, false);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="gettext("Save");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" onclick="enable_change(true)" />
 				</div>
 			</td>
 		</tr>
 	</table>
-	 include("formend.inc");?>
+	<?php include("formend.inc");?>
 </form>
 <script type="text/javascript">
 <!--
@@ -216,4 +216,4 @@ anonymousbind_change();
 enable_change(false);
 //-->
 </script>
- include("fend.inc");?>
+<?php include("fend.inc");?>

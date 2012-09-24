@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -117,9 +113,9 @@ function diskmanagement_process_updatenotification($mode, $data) {
   <tr>
 		<td class="tabnavtbl">
   		<ul id="tabnav">
-				<li class="tabact"><a href="disks_manage.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_smart.php"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
+				<li class="tabact"><a href="disks_manage.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_smart.php"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
   		</ul>
   	</td>
 	</tr>
@@ -130,14 +126,14 @@ function diskmanagement_process_updatenotification($mode, $data) {
 				<?php if (updatenotify_exists("device")) print_config_change_box();?>
 				<table width="100%" border="0" cellpadding="0" cellspacing="0">
 					<tr>
-						<td width="5%" class="listhdrlr"><?php echo gettext("Disk"); ?></td>
-						<td width="5%" class="listhdrr"><?php echo gettext("Size"); ?></td>
-						<td width="22%" class="listhdrr"><?php echo gettext("Description"); ?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("Device model"); ?></td>
-						<td width="15%" class="listhdrr"><?php echo gettext("Serial number"); ?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("Standby time"); ?></td>
-						<td width="10%" class="listhdrr"><?php echo gettext("File system"); ?></td>
-						<td width="8%" class="listhdrr"><?php echo gettext("Status"); ?></td>
+						<td width="5%" class="listhdrlr"><?=gettext("Disk"); ?></td>
+						<td width="5%" class="listhdrr"><?=gettext("Size"); ?></td>
+						<td width="22%" class="listhdrr"><?=gettext("Description"); ?></td>
+						<td width="15%" class="listhdrr"><?=gettext("Device model"); ?></td>
+						<td width="15%" class="listhdrr"><?=gettext("Serial number"); ?></td>
+						<td width="10%" class="listhdrr"><?=gettext("Standby time"); ?></td>
+						<td width="10%" class="listhdrr"><?=gettext("File system"); ?></td>
+						<td width="8%" class="listhdrr"><?=gettext("Status"); ?></td>
 						<td width="10%" class="list"></td>
 					</tr>
 					<?php foreach ($a_disk_conf as $disk):?>
@@ -159,18 +155,18 @@ function diskmanagement_process_updatenotification($mode, $data) {
 					}
 					?>
 					<tr>
-						<td class="listlr"><?php echo htmlspecialchars($disk['name']);?></td>
-						<td class="listr"><?php echo htmlspecialchars($disk['size']);?></td>
-						<td class="listr"><?php echo htmlspecialchars($disk['desc']);?>&nbsp;</td>
-						<td class="listr"><?php echo htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
-						<td class="listr"><?php echo htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
+						<td class="listlr"><?=htmlspecialchars($disk['name']);?></td>
+						<td class="listr"><?=htmlspecialchars($disk['size']);?></td>
+						<td class="listr"><?=htmlspecialchars($disk['desc']);?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars(system_get_volume_model($disk['devicespecialfile']));?>&nbsp;</td>
+						<td class="listr"><?=htmlspecialchars(system_get_volume_serial($disk['devicespecialfile']));?>&nbsp;</td>
 						<td class="listr"><?php if ($disk['harddiskstandby']) { echo htmlspecialchars($disk['harddiskstandby']); } else { echo htmlspecialchars(gettext("Always on")); }?>&nbsp;</td>
-						<td class="listr"><?php echo ($disk['fstype']) ? htmlspecialchars(get_fstype_shortdesc($disk['fstype'])) : htmlspecialchars(gettext("Unknown or unformatted"))?>&nbsp;</td>
-						<td class="listbg"><?php echo htmlspecialchars($status);?>&nbsp;</td>
+						<td class="listr"><?=($disk['fstype']) ? htmlspecialchars(get_fstype_shortdesc($disk['fstype'])) : htmlspecialchars(gettext("Unknown or unformatted"))?>&nbsp;</td>
+						<td class="listbg"><?=htmlspecialchars($status);?>&nbsp;</td>
 						<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 						<td valign="middle" nowrap="nowrap" class="list">
-							<a href="disks_manage_edit.php?uuid=<?php echo $disk['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit disk");?>" border="0" alt="<?php echo gettext("Edit disk");?>" /></a>&nbsp;
-							<a href="disks_manage.php?act=del&amp;uuid=<?php echo $disk['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this disk? All elements that still use it will become invalid (e.g. share)!"); ?>')"><img src="x.gif" title="<?php echo gettext("Delete disk"); ?>" border="0" alt="<?php echo gettext("Delete disk"); ?>" /></a>
+							<a href="disks_manage_edit.php?uuid=<?=$disk['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit disk");?>" border="0" alt="<?=gettext("Edit disk");?>" /></a>&nbsp;
+							<a href="disks_manage.php?act=del&amp;uuid=<?=$disk['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this disk? All elements that still use it will become invalid (e.g. share)!"); ?>')"><img src="x.gif" title="<?=gettext("Delete disk"); ?>" border="0" alt="<?=gettext("Delete disk"); ?>" /></a>
 						</td>
 						<?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -181,11 +177,11 @@ function diskmanagement_process_updatenotification($mode, $data) {
 					<?php endforeach;?>
 					<tr>
 						<td class="list" colspan="8"></td>
-						<td class="list"> <a href="disks_manage_edit.php"><img src="plus.gif" title="<?php echo gettext("Add disk"); ?>" border="0" alt="<?php echo gettext("Add disk"); ?>" /></a></td>
+						<td class="list"> <a href="disks_manage_edit.php"><img src="plus.gif" title="<?=gettext("Add disk"); ?>" border="0" alt="<?=gettext("Add disk"); ?>" /></a></td>
 					</tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Rescan disks");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Rescan disks");?>" />
 					<input type="hidden" name="disks_rescan" value="1" />
 				</div>
 				<?php

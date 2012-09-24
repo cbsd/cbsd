@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -213,8 +208,8 @@ function adisk_change() {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabinact"><a href="services_afp.php"><span><?php echo gettext("Settings");?></span></a></li>
-        <li class="tabact"><a href="services_afp_share.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Shares");?></span></a></li>
+        <li class="tabinact"><a href="services_afp.php"><span><?=gettext("Settings");?></span></a></li>
+        <li class="tabact"><a href="services_afp_share.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Shares");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -224,66 +219,66 @@ function adisk_change() {
 				<?php if ($input_errors) print_input_errors($input_errors); ?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			  	<tr>
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Name");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Name");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="name" type="text" class="formfld" id="name" size="30" value="<?php htmlspecialchars($pconfig['name']);?>" />
+			        <input name="name" type="text" class="formfld" id="name" size="30" value="<?=htmlspecialchars($pconfig['name']);?>" />
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Comment");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("Comment");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="comment" type="text" class="formfld" id="comment" size="30" value="<?php htmlspecialchars($pconfig['comment']);?>" />
+			        <input name="comment" type="text" class="formfld" id="comment" size="30" value="<?=htmlspecialchars($pconfig['comment']);?>" />
 			      </td>
 			    </tr>
 			    <tr>
-					  <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Path");?></td>
+					  <td width="22%" valign="top" class="vncellreq"><?=gettext("Path");?></td>
 					  <td width="78%" class="vtable">
-					  	<input name="path" type="text" class="formfld" id="path" size="60" value="<?php htmlspecialchars($pconfig['path']);?>" />
-					  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.path; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?php $g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
-					  	<span class="vexpl"><?php echo gettext("Path to be shared.");?></span>
+					  	<input name="path" type="text" class="formfld" id="path" size="60" value="<?=htmlspecialchars($pconfig['path']);?>" />
+					  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.path; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?=$g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
+					  	<span class="vexpl"><?=gettext("Path to be shared.");?></span>
 					  </td>
 					</tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Share Password");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Share Password");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="volpasswd" type="text" class="formfld" id="volpasswd" size="16" value="<?php htmlspecialchars($pconfig['volpasswd']);?>" />
-			        <?php echo gettext("Set share password.");?><br />
-			        <span class="vexpl"><?php echo gettext("This controls the access to this share with an access password.");?></span>
+			        <input name="volpasswd" type="text" class="formfld" id="volpasswd" size="16" value="<?=htmlspecialchars($pconfig['volpasswd']);?>" />
+			        <?=gettext("Set share password.");?><br />
+			        <span class="vexpl"><?=gettext("This controls the access to this share with an access password.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Share Character Set");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Share Character Set");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="volcharset" type="text" class="formfld" id="volcharset" size="16" value="<?php htmlspecialchars($pconfig['volcharset']);?>" /><br />
-			        <span class="vexpl"><?php echo gettext("Specifies the share character set. For example UTF8, UTF8-MAC, ISO-8859-15, etc.");?></span>
+			        <input name="volcharset" type="text" class="formfld" id="volcharset" size="16" value="<?=htmlspecialchars($pconfig['volcharset']);?>" /><br />
+			        <span class="vexpl"><?=gettext("Specifies the share character set. For example UTF8, UTF8-MAC, ISO-8859-15, etc.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Allow");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Allow");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="allow" type="text" class="formfld" id="allow" size="60" value="<?php htmlspecialchars($pconfig['allow']);?>" /><br />
-			        <?php echo gettext("This option allows the users and groups that access a share to be specified. Users and groups are specified, delimited by commas. Groups are designated by a @ prefix.");?>
+			        <input name="allow" type="text" class="formfld" id="allow" size="60" value="<?=htmlspecialchars($pconfig['allow']);?>" /><br />
+			        <?=gettext("This option allows the users and groups that access a share to be specified. Users and groups are specified, delimited by commas. Groups are designated by a @ prefix.");?>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Deny");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Deny");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="deny" type="text" class="formfld" id="deny" size="60" value="<?php htmlspecialchars($pconfig['deny']);?>" /><br />
-			        <?php echo gettext("The  deny  option specifies users and groups who are not allowed access to the share. It follows the same  format  as  the  allow option.");?>
+			        <input name="deny" type="text" class="formfld" id="deny" size="60" value="<?=htmlspecialchars($pconfig['deny']);?>" /><br />
+			        <?=gettext("The  deny  option specifies users and groups who are not allowed access to the share. It follows the same  format  as  the  allow option.");?>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Read Only Access");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Read Only Access");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="rolist" type="text" class="formfld" id="rolist" size="60" value="<?php htmlspecialchars($pconfig['rolist']);?>" /><br />
-			        <?php echo gettext("Allows certain users and groups to have read-only  access  to  a share. This follows the allow option format.");?>
+			        <input name="rolist" type="text" class="formfld" id="rolist" size="60" value="<?=htmlspecialchars($pconfig['rolist']);?>" /><br />
+			        <?=gettext("Allows certain users and groups to have read-only  access  to  a share. This follows the allow option format.");?>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Read/Write Access");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Read/Write Access");?></td>
 			      <td width="78%" class="vtable">
-			        <input name="rwlist" type="text" class="formfld" id="rwlist" size="60" value="<?php htmlspecialchars($pconfig['rwlist']);?>" /><br />
-			        <?php echo gettext("Allows  certain  users and groups to have read/write access to a share. This follows the allow option format.");?>
+			        <input name="rwlist" type="text" class="formfld" id="rwlist" size="60" value="<?=htmlspecialchars($pconfig['rwlist']);?>" /><br />
+			        <?=gettext("Allows  certain  users and groups to have read/write access to a share. This follows the allow option format.");?>
 			      </td>
 			    </tr>
 				<?php html_checkbox("adisk_enable", gettext("Automatic disk discovery"), $pconfig['adisk_enable'] ? true : false, gettext("Enable automatic disk discovery."), "", false, "adisk_change()");?>
@@ -291,102 +286,102 @@ function adisk_change() {
 				<?php html_separator();?>
 				<?php html_titleline(gettext("Advanced Options"));?>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Case Folding");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Case Folding");?></td>
 			      <td width="78%" class="vtable">
 							<select name="casefold" size="1" id="casefold">
-			          <option value="none" <?php if ($pconfig['casefold'] === "none") echo "selected=\"selected\"";?>><?php echo gettext("No case folding");?></option>
-								<option value="tolower" <?php if ($pconfig['casefold'] === "tolower") echo "selected=\"selected\"";?>><?php echo gettext("Lowercases names in both directions");?></option>
-								<option value="toupper" <?php if ($pconfig['casefold'] === "toupper") echo "selected=\"selected\"";?>><?php echo gettext("Uppercases names in both directions");?></option>
-								<option value="xlatelower" <?php if ($pconfig['casefold'] === "xlatelower") echo "selected=\"selected\"";?>><?php echo gettext("Client sees lowercase, server sees uppercase");?></option>
-								<option value="xlateupper" <?php if ($pconfig['casefold'] === "xlateupper") echo "selected=\"selected\"";?>><?php echo gettext("Client sees uppercase, server sees lowercase");?></option>
+			          <option value="none" <?php if ($pconfig['casefold'] === "none") echo "selected=\"selected\"";?>><?=gettext("No case folding");?></option>
+								<option value="tolower" <?php if ($pconfig['casefold'] === "tolower") echo "selected=\"selected\"";?>><?=gettext("Lowercases names in both directions");?></option>
+								<option value="toupper" <?php if ($pconfig['casefold'] === "toupper") echo "selected=\"selected\"";?>><?=gettext("Uppercases names in both directions");?></option>
+								<option value="xlatelower" <?php if ($pconfig['casefold'] === "xlatelower") echo "selected=\"selected\"";?>><?=gettext("Client sees lowercase, server sees uppercase");?></option>
+								<option value="xlateupper" <?php if ($pconfig['casefold'] === "xlateupper") echo "selected=\"selected\"";?>><?=gettext("Client sees uppercase, server sees lowercase");?></option>
 			        </select><br />
-			        <span class="vexpl"><?php echo gettext("This controls how the case of filenames are viewed and stored.");?></span>
+			        <span class="vexpl"><?=gettext("This controls how the case of filenames are viewed and stored.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-					  <td width="22%" valign="top" class="vncell"><?php echo gettext("dbpath");?></td>
+					  <td width="22%" valign="top" class="vncell"><?=gettext("dbpath");?></td>
 					  <td width="78%" class="vtable">
-					  	<input name="dbpath" type="text" class="formfld" id="dbpath" size="60" value="<?php htmlspecialchars($pconfig['dbpath']);?>" />
-					  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.dbpath; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?php $g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
-					  	<span class="vexpl"><?php echo gettext("Sets the database information to be stored in path. You have to specifiy a writable location, even if the volume is read only.");?></span>
+					  	<input name="dbpath" type="text" class="formfld" id="dbpath" size="60" value="<?=htmlspecialchars($pconfig['dbpath']);?>" />
+					  	<input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.dbpath; filechooser = window.open("filechooser.php?p="+escape(ifield.value)+"&amp;sd=<?=$g['media_path'];?>", "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." /><br />
+					  	<span class="vexpl"><?=gettext("Sets the database information to be stored in path. You have to specifiy a writable location, even if the volume is read only.");?></span>
 					  </td>
 					</tr>
 					<?php html_combobox("cnidscheme", gettext("cnidscheme"), $pconfig['cnidscheme'], array("" => "Default", "dbd" => "dbd", "last" => "last"), gettext("Set the CNID backend to be used for the volume."));?>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("cachecnid");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("cachecnid");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="cachecnid" type="checkbox" id="cachecnid" value="yes" <?php if ($pconfig['cachecnid']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("If set afpd uses the ID information stored in AppleDouble V2 header files to reduce database load. Don't set this option if the volume is modified by non AFP clients (NFS/SMB/local).");?></span>
+			        <span class="vexpl"><?=gettext("If set afpd uses the ID information stored in AppleDouble V2 header files to reduce database load. Don't set this option if the volume is modified by non AFP clients (NFS/SMB/local).");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("crlf");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("crlf");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="crlf" type="checkbox" id="crlf" value="yes" <?php if ($pconfig['crlf']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Enables crlf translation for TEXT files, automatically converting macintosh line breaks into Unix ones. Use of this option might be dangerous since some older programs store binary data files as type 'TEXT' when saving and switch the filetype in a second step. Afpd will potentially destroy such files when 'erroneously' changing bytes in order to do line break translation.");?></span>
+			        <span class="vexpl"><?=gettext("Enables crlf translation for TEXT files, automatically converting macintosh line breaks into Unix ones. Use of this option might be dangerous since some older programs store binary data files as type 'TEXT' when saving and switch the filetype in a second step. Afpd will potentially destroy such files when 'erroneously' changing bytes in order to do line break translation.");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("mswindows");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("mswindows");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="mswindows" type="checkbox" id="mswindows" value="yes" <?php if ($pconfig['mswindows']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("This forces filenames to be restricted to the character set used by Windows. This is not recommended for shares used principally by Mac computers.");?></span>
+			        <span class="vexpl"><?=gettext("This forces filenames to be restricted to the character set used by Windows. This is not recommended for shares used principally by Mac computers.");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("noadouble");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("noadouble");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="noadouble" type="checkbox" id="noadouble" value="yes" <?php if ($pconfig['noadouble']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("This controls whether the .AppleDouble directory gets created unless absolutely needed. This option should not be used if files are access mostly by Mac computers.");?></span>
+			        <span class="vexpl"><?=gettext("This controls whether the .AppleDouble directory gets created unless absolutely needed. This option should not be used if files are access mostly by Mac computers.");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("nodev");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("nodev");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="nodev" type="checkbox" id="nodev" value="yes" <?php if ($pconfig['nodev']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Always use 0 for device number, helps when the device number is not constant across a reboot, cluster, ...");?></span>
+			        <span class="vexpl"><?=gettext("Always use 0 for device number, helps when the device number is not constant across a reboot, cluster, ...");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("nofileid");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("nofileid");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="nofileid" type="checkbox" id="nofileid" value="yes" <?php if ($pconfig['nofileid']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Don't advertise createfileid, resolveid, deleteid calls.");?></span>
+			        <span class="vexpl"><?=gettext("Don't advertise createfileid, resolveid, deleteid calls.");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("nohex");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("nohex");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="nohex" type="checkbox" id="nohex" value="yes" <?php if ($pconfig['nohex']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Disables :hex translations for anything except dot files. This option makes the '/' character illegal.");?></span>
+			        <span class="vexpl"><?=gettext("Disables :hex translations for anything except dot files. This option makes the '/' character illegal.");?></span>
 			      </td>
 			    </tr>
 					<tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("prodos");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("prodos");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="prodos" type="checkbox" id="prodos" value="yes" <?php if ($pconfig['prodos']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Provides compatibility with Apple II clients.");?></span>
+			        <span class="vexpl"><?=gettext("Provides compatibility with Apple II clients.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("nostat");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("nostat");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="nostat" type="checkbox" id="nostat" value="yes" <?php if ($pconfig['nostat']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Don't stat volume path when enumerating volumes list, useful for automounting or volumes created by a preexec script.");?></span>
+			        <span class="vexpl"><?=gettext("Don't stat volume path when enumerating volumes list, useful for automounting or volumes created by a preexec script.");?></span>
 			      </td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("upriv");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("upriv");?></td>
 			      <td width="78%" class="vtable">
 			      	<input name="upriv" type="checkbox" id="upriv" value="yes" <?php if ($pconfig['upriv']) echo "checked=\"checked\"";?> />
-			        <span class="vexpl"><?php echo gettext("Use AFP3 unix privileges.");?></span>
+			        <span class="vexpl"><?=gettext("Use AFP3 unix privileges.");?></span>
 			      </td>
 			    </tr>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php (isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
-					<input name="uuid" type="hidden" value="<?php $pconfig['uuid'];?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=(isset($uuid) && (FALSE !== $cnid)) ? gettext("Save") : gettext("Add")?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
+					<input name="uuid" type="hidden" value="<?=$pconfig['uuid'];?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

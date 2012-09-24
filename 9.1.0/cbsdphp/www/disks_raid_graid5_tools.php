@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -90,12 +85,12 @@ function raid_change() {
 	// Insert entries for disk combobox.
 	switch(document.iform.raid.value) {
 		<?php foreach ($a_raid as $raidv): ?>
-    case "<?php $raidv['name'];?>":
+    case "<?=$raidv['name'];?>":
       <?php foreach($raidv['device'] as $devicen => $devicev): ?>
 				<?php $name = str_replace("/dev/","",$devicev);?>
 				if(document.all) // MS IE workaround.
 					next = document.iform.disk.length;
-				document.iform.disk.add(new Option("<?php $name;?>","<?php $name;?>",false,<?php if($name === $disk){echo "true";}else{echo "false";};?>), next);
+				document.iform.disk.add(new Option("<?=$name;?>","<?=$name;?>",false,<?php if($name === $disk){echo "true";}else{echo "false";};?>), next);
 				<?php endforeach; ?>
 				break;
      <?php endforeach;?>
@@ -107,20 +102,20 @@ function raid_change() {
 	<tr>
 		<td class="tabnavtbl">
 		  <ul id="tabnav">
-				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?php echo gettext("JBOD");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?php echo gettext("RAID 0");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?php echo gettext("RAID 1");?></span></a></li>
-				<li class="tabact"><a href="disks_raid_graid5.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("RAID 5");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?php echo gettext("RAID 0/1/5");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gconcat.php"><span><?=gettext("JBOD");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gstripe.php"><span><?=gettext("RAID 0");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gmirror.php"><span><?=gettext("RAID 1");?></span></a></li>
+				<li class="tabact"><a href="disks_raid_graid5.php" title="<?=gettext("Reload page");?>"><span><?=gettext("RAID 5");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_gvinum.php"><span><?=gettext("RAID 0/1/5");?></span></a></li>
 		  </ul>
   	</td>
 	</tr>
   <tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav2">
-				<li class="tabinact"><a href="disks_raid_graid5.php"><span><?php echo gettext("Management"); ?></span></a></li>
-				<li class="tabact"><a href="disks_raid_graid5_tools.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Tools");?></span></a></li>
-				<li class="tabinact"><a href="disks_raid_graid5_info.php"><span><?php echo gettext("Information"); ?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_graid5.php"><span><?=gettext("Management"); ?></span></a></li>
+				<li class="tabact"><a href="disks_raid_graid5_tools.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Tools");?></span></a></li>
+				<li class="tabinact"><a href="disks_raid_graid5_info.php"><span><?=gettext("Information"); ?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -130,12 +125,12 @@ function raid_change() {
 			<form action="disks_raid_graid5_tools.php" method="post" name="iform" id="iform">
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
           <tr>
-          	<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Volume Name");?></td>
+          	<td width="22%" valign="top" class="vncellreq"><?=gettext("Volume Name");?></td>
       			<td width="78%" class="vtable">
 			    	 <select name="raid" class="formfld" id="raid" onchange="raid_change()">
-			    	 	<option value=""><?php echo gettext("Must choose one");?></option>
+			    	 	<option value=""><?=gettext("Must choose one");?></option>
 			    	  <?php foreach ($a_raid as $raidv): ?>
-			    				<option value="<?php $raidv['name'];?>" <?php if ($raid === $raidv['name']) echo "selected=\"selected\"";?>>
+			    				<option value="<?=$raidv['name'];?>" <?php if ($raid === $raidv['name']) echo "selected=\"selected\"";?>>
 			    				<?php echo htmlspecialchars($raidv['name']);	?>
 			    				</option>
 			    		  <?php endforeach; ?>
@@ -143,13 +138,13 @@ function raid_change() {
 			      </td>
 			    </tr>
 					<tr>
-            <td width="22%" valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+            <td width="22%" valign="top" class="vncellreq"><?=gettext("Disk");?></td>
             <td width="78%" class="vtable">
              <select name="disk" class="formfld" id="disk"></select>
              </td>
           </tr>
 					<tr>
-          	<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Command");?></td>
+          	<td width="22%" valign="top" class="vncellreq"><?=gettext("Command");?></td>
       			<td width="78%" class="vtable">
               <select name="action" class="formfld" id="action">
                 <option value="list" <?php if ($action == "list") echo "selected=\"selected\""; ?>>list</option>
@@ -166,7 +161,7 @@ function raid_change() {
           </tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Send Command!");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Send Command!");?>" />
 				</div>
 				<?php if ($do_action) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

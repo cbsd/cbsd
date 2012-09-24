@@ -5,10 +5,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -136,13 +132,13 @@ function wireless_config_print() {
 								<?php html_combobox("standard", gettext("Standard"), $pconfig['standard'], $a_standard, "", true);?>
 								<?php html_inputbox("ssid", gettext("SSID"), $pconfig['ssid'], gettext("Set the desired Service Set Identifier (aka network name)."), true, 20);?>
 								<tr>
-									<td valign="top" class="vncellreq"><?php echo gettext("Channel");?></td>
+									<td valign="top" class="vncellreq"><?=gettext("Channel");?></td>
 									<td class="vtable">
 										<select name="channel" class="formfld" id="channel">
-											<option <?php if ("any" === $pconfig['channel']) echo "selected";?> value="any"><?php echo gettext("Auto");?></option>
+											<option <?php if ("any" === $pconfig['channel']) echo "selected";?> value="any"><?=gettext("Auto");?></option>
 											<?php foreach (interfaces_wireless_get_channellist($optcfg['if']) as $channelk => $channelv):?>
 											<?php if ($channelv['mode'] === "11g") $mode = "11b/g"; else $mode = $channelv['mode'];?>
-											<option <?php if ($channelk == $pconfig['channel']) echo "selected";?> value="<?php $channelk;?>"><?php "{$channelv['channel']} ({$channelv['freq']} MHz, {$mode})";?></option>
+											<option <?php if ($channelk == $pconfig['channel']) echo "selected";?> value="<?=$channelk;?>"><?="{$channelv['channel']} ({$channelv['freq']} MHz, {$mode})";?></option>
 											<?php endforeach;?>
 										</select>
 									</td>

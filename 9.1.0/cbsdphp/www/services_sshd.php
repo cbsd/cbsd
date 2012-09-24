@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -143,42 +139,42 @@ function enable_change(enable_change) {
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<?php html_titleline_checkbox("enable", gettext("Secure Shell"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 			    <tr>
-			      <td width="22%" valign="top" class="vncellreq"><?php echo gettext("TCP port");?></td>
+			      <td width="22%" valign="top" class="vncellreq"><?=gettext("TCP port");?></td>
 			      <td width="78%" class="vtable">
-							<input name="port" type="text" class="formfld" id="port" size="20" value="<?php htmlspecialchars($pconfig['port']);?>" />
-							<br /><?php echo gettext("Alternate TCP port. Default is 22");?></td>
+							<input name="port" type="text" class="formfld" id="port" size="20" value="<?=htmlspecialchars($pconfig['port']);?>" />
+							<br /><?=gettext("Alternate TCP port. Default is 22");?></td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Permit root login");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Permit root login");?></td>
 			      <td width="78%" class="vtable">
 			        <input name="permitrootlogin" type="checkbox" id="permitrootlogin" value="yes" <?php if ($pconfig['permitrootlogin']) echo "checked=\"checked\""; ?> />
-			        <?php echo gettext("Specifies whether it is allowed to login as superuser (root) directly.");?></td>
+			        <?=gettext("Specifies whether it is allowed to login as superuser (root) directly.");?></td>
 			    </tr>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Password authentication");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Password authentication");?></td>
 						<td width="78%" class="vtable">
 							<input name="passwordauthentication" type="checkbox" id="passwordauthentication" value="yes" <?php if ($pconfig['passwordauthentication']) echo "checked=\"checked\""; ?> />
-							<?php echo gettext("Enable keyboard-interactive authentication.");?></td>
+							<?=gettext("Enable keyboard-interactive authentication.");?></td>
 					</tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("TCP forwarding");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("TCP forwarding");?></td>
 			      <td width="78%" class="vtable">
 			        <input name="tcpforwarding" type="checkbox" id="tcpforwarding" value="yes" <?php if ($pconfig['tcpforwarding']) echo "checked=\"checked\""; ?> />
-			        <?php echo gettext("Permit to do SSH Tunneling.");?></td>
+			        <?=gettext("Permit to do SSH Tunneling.");?></td>
 			    </tr>
 			    <tr>
-			      <td width="22%" valign="top" class="vncell"><?php echo gettext("Compression");?></td>
+			      <td width="22%" valign="top" class="vncell"><?=gettext("Compression");?></td>
 			      <td width="78%" class="vtable">
 			        <input name="compression" type="checkbox" id="compression" value="yes" <?php if ($pconfig['compression']) echo "checked=\"checked\""; ?> />
-			        <?php echo gettext("Enable compression.");?><br />
-			        <span class="vexpl"><?php echo gettext("Compression is worth using if your connection is slow. The efficiency of the compression depends on the type of the file, and varies widely. Useful for internet transfer only.");?></span></td>
+			        <?=gettext("Enable compression.");?><br />
+			        <span class="vexpl"><?=gettext("Compression is worth using if your connection is slow. The efficiency of the compression depends on the type of the file, and varies widely. Useful for internet transfer only.");?></span></td>
 			    </tr>
 					<?php html_textarea("key", gettext("Private Key"), $pconfig['key'], gettext("Paste a DSA PRIVATE KEY in PEM format here."), false, 65, 7, false, false);?>
 			    <?php html_inputbox("subsystem", gettext("Subsystem"), $pconfig['subsystem'], gettext("Leave this field empty to use default settings."), false, 40);?>
 			    <?php html_textarea("auxparam", gettext("Extra options"), $pconfig['auxparam'], gettext("Extra options to /etc/ssh/sshd_config (usually empty). Note, incorrect entered options prevent SSH service to be started.") . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://www.freebsd.org/cgi/man.cgi?query=sshd_config&amp;apropos=0&amp;sektion=0&amp;manpath=FreeBSD+${os_release}-RELEASE&amp;format=html"), false, 65, 5, false, false);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 			</td>
 		</tr>

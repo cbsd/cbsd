@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -106,8 +102,8 @@ function enable_change(enable_change) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabact"><a href="services_nfs.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabinact"><a href="services_nfs_share.php"><span><?php echo gettext("Shares");?></span></a></li>
+				<li class="tabact"><a href="services_nfs.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="services_nfs_share.php"><span><?=gettext("Shares");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -121,7 +117,7 @@ function enable_change(enable_change) {
 					<?php html_inputbox("numproc", gettext("Number of servers"), $pconfig['numproc'], gettext("Specifies how many servers to create.") . " " . gettext("There should be enough to handle the maximum level of concurrency from its clients, typically four to six."), false, 2);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

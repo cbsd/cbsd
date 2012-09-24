@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -187,9 +182,9 @@ function enable_change(enable_change) {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-      	<li class="tabinact"><a href="disks_manage.php"><span><?php echo gettext("Management");?></span></a></li>
-				<li class="tabact"><a href="disks_manage_smart.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
+      	<li class="tabinact"><a href="disks_manage.php"><span><?=gettext("Management");?></span></a></li>
+				<li class="tabact"><a href="disks_manage_smart.php" title="<?=gettext("Reload page");?>"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="disks_manage_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -205,20 +200,20 @@ function enable_change(enable_change) {
 					<?php html_titleline_checkbox("enable", gettext("Self-Monitoring, Analysis and Reporting Technology"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(this)");?>
 					<?php html_inputbox("interval", gettext("Check interval"), $pconfig['interval'], gettext("Sets the interval between disk checks to N seconds. The minimum allowed value is 10."), true, 5);?>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Power mode");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Power mode");?></td>
 						<td width="78%" class="vtable">
 							<select name="powermode" class="formfld" id="powermode">
 								<?php $types = explode(" ", "Never Sleep Standby Idle"); $vals = explode(" ", "never sleep standby idle");?>
 								<?php $j = 0; for ($j = 0; $j < count($vals); $j++):?>
-								<option value="<?php $vals[$j];?>" <?php if ($vals[$j] == $pconfig['powermode']) echo "selected=\"selected\"";?>><?php htmlspecialchars($types[$j]);?></option>
+								<option value="<?=$vals[$j];?>" <?php if ($vals[$j] == $pconfig['powermode']) echo "selected=\"selected\"";?>><?=htmlspecialchars($types[$j]);?></option>
 								<?php endfor;?>
 							</select>
 							<div id="enumeration">
 								<ul>
-									<li><?php echo gettext("Never - Poll (check) the device regardless of its power mode. This may cause a disk which is spun-down to be spun-up when it is checked.");?></li>
-									<li><?php echo gettext("Sleep - Check the device unless it is in SLEEP mode.");?></li>
-									<li><?php echo gettext("Standby - Check the device unless it is in SLEEP or STANDBY mode. In these modes most disks are not spinning, so if you want to prevent a laptop disk from spinning up each poll, this is probably what you want.");?></li>
-									<li><?php echo gettext("Idle - Check the device unless it is in SLEEP, STANDBY or IDLE mode. In the IDLE state, most disks are still spinning, so this is probably not what you want.");?></li>
+									<li><?=gettext("Never - Poll (check) the device regardless of its power mode. This may cause a disk which is spun-down to be spun-up when it is checked.");?></li>
+									<li><?=gettext("Sleep - Check the device unless it is in SLEEP mode.");?></li>
+									<li><?=gettext("Standby - Check the device unless it is in SLEEP or STANDBY mode. In these modes most disks are not spinning, so if you want to prevent a laptop disk from spinning up each poll, this is probably what you want.");?></li>
+									<li><?=gettext("Idle - Check the device unless it is in SLEEP, STANDBY or IDLE mode. In the IDLE state, most disks are still spinning, so this is probably not what you want.");?></li>
 								</ul>
 							</div>
 						</td>
@@ -226,48 +221,48 @@ function enable_change(enable_change) {
 					<?php html_separator();?>
 					<?php html_titleline(gettext("Temperature monitoring"));?>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Difference");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Difference");?></td>
 						<td width="78%" class="vtable">
-							<input name="temp_diff" type="text" class="formfld" id="temp_diff" size="5" value="<?php htmlspecialchars($pconfig['temp_diff']);?>" />&nbsp;&deg;C<br />
-							<span class="vexpl"><?php echo gettext("Report if the temperature had changed by at least N degrees Celsius since last report. Set to 0 to disable this report.");?></span>
+							<input name="temp_diff" type="text" class="formfld" id="temp_diff" size="5" value="<?=htmlspecialchars($pconfig['temp_diff']);?>" />&nbsp;&deg;C<br />
+							<span class="vexpl"><?=gettext("Report if the temperature had changed by at least N degrees Celsius since last report. Set to 0 to disable this report.");?></span>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Informal");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Informal");?></td>
 						<td width="78%" class="vtable">
-							<input name="temp_info" type="text" class="formfld" id="temp_info" size="5" value="<?php htmlspecialchars($pconfig['temp_info']);?>" />&nbsp;&deg;C<br />
-							<span class="vexpl"><?php echo gettext("Report if the temperature is greater or equal than N degrees Celsius. Set to 0 to disable this report.");?></span>
+							<input name="temp_info" type="text" class="formfld" id="temp_info" size="5" value="<?=htmlspecialchars($pconfig['temp_info']);?>" />&nbsp;&deg;C<br />
+							<span class="vexpl"><?=gettext("Report if the temperature is greater or equal than N degrees Celsius. Set to 0 to disable this report.");?></span>
 						</td>
 					</tr>
 					<tr>
-						<td width="22%" valign="top" class="vncellreq"><?php echo gettext("Critical");?></td>
+						<td width="22%" valign="top" class="vncellreq"><?=gettext("Critical");?></td>
 						<td width="78%" class="vtable">
-							<input name="temp_crit" type="text" class="formfld" id="temp_crit" size="5" value="<?php htmlspecialchars($pconfig['temp_crit']);?>" />&nbsp;&deg;C<br />
-							<span class="vexpl"><?php echo gettext("Report if the temperature is greater or equal than N degrees Celsius. Set to 0 to disable this report.");?></span>
+							<input name="temp_crit" type="text" class="formfld" id="temp_crit" size="5" value="<?=htmlspecialchars($pconfig['temp_crit']);?>" />&nbsp;&deg;C<br />
+							<span class="vexpl"><?=gettext("Report if the temperature is greater or equal than N degrees Celsius. Set to 0 to disable this report.");?></span>
 						</td>
 					</tr>
 					<?php html_separator();?>
 					<?php html_titleline(gettext("Scheduled self-tests"));?>
 				  <tr>
-			    	<td width="22%" valign="top" class="vncell"><?php echo gettext("Scheduled self-tests");?></td>
+			    	<td width="22%" valign="top" class="vncell"><?=gettext("Scheduled self-tests");?></td>
 						<td width="78%" class="vtable">
 				      <table width="100%" border="0" cellpadding="0" cellspacing="0">
 				        <tr>
-									<td width="20%" class="listhdrlr"><?php echo gettext("Disk");?></td>
-									<td width="30%" class="listhdrr"><?php echo gettext("Type");?></td>
-									<td width="40%" class="listhdrr"><?php echo gettext("Description");?></td>
+									<td width="20%" class="listhdrlr"><?=gettext("Disk");?></td>
+									<td width="30%" class="listhdrr"><?=gettext("Type");?></td>
+									<td width="40%" class="listhdrr"><?=gettext("Description");?></td>
 									<td width="10%" class="list"></td>
 				        </tr>
 							  <?php foreach($a_selftest as $selftest):?>
 							  <?php $notificationmode = updatenotify_get_mode("smartssd", $selftest['uuid']);?>
 				        <tr>
-				          <td class="listlr"><?php htmlspecialchars($selftest['devicespecialfile']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars(gettext($a_type[$selftest['type']]));?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($selftest['desc']);?>&nbsp;</td>
+				          <td class="listlr"><?=htmlspecialchars($selftest['devicespecialfile']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars(gettext($a_type[$selftest['type']]));?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($selftest['desc']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 				          <td valign="middle" nowrap="nowrap" class="list">
-				          	<a href="disks_manage_smart_edit.php?uuid=<?php $selftest['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit self-test");?>" border="0" alt="<?php echo gettext("Edit self-test");?>" /></a>
-				            <a href="disks_manage_smart.php?act=del&amp;uuid=<?php $selftest['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this scheduled self-test?");?>')"><img src="x.gif" title="<?php echo gettext("Delete self-test");?>" border="0" alt="<?php echo gettext("Delete self-test");?>" /></a>
+				          	<a href="disks_manage_smart_edit.php?uuid=<?=$selftest['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit self-test");?>" border="0" alt="<?=gettext("Edit self-test");?>" /></a>
+				            <a href="disks_manage_smart.php?act=del&amp;uuid=<?=$selftest['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this scheduled self-test?");?>')"><img src="x.gif" title="<?=gettext("Delete self-test");?>" border="0" alt="<?=gettext("Delete self-test");?>" /></a>
 				          </td>
 				          <?php else:?>
 									<td valign="middle" nowrap="nowrap" class="list">
@@ -279,14 +274,14 @@ function enable_change(enable_change) {
 				        <tr>
 				          <td class="list" colspan="3"></td>
 				          <td class="list">
-										<a href="disks_manage_smart_edit.php"><img src="plus.gif" title="<?php echo gettext("Add self-test");?>" border="0" alt="<?php echo gettext("Add self-test");?>" /></a>
+										<a href="disks_manage_smart_edit.php"><img src="plus.gif" title="<?=gettext("Add self-test");?>" border="0" alt="<?=gettext("Add self-test");?>" /></a>
 										<?php if (!empty($a_selftest)):?>
-										<a href="disks_manage_smart.php?act=del&amp;uuid=all" onclick="return confirm('<?php echo gettext("Do you really want to delete all scheduled self-tests?");?>')"><img src="x.gif" title="<?php echo gettext("Delete all self-tests");?>" border="0" alt="<?php echo gettext("Delete all self-tests");?>" /></a>
+										<a href="disks_manage_smart.php?act=del&amp;uuid=all" onclick="return confirm('<?=gettext("Do you really want to delete all scheduled self-tests?");?>')"><img src="x.gif" title="<?=gettext("Delete all self-tests");?>" border="0" alt="<?=gettext("Delete all self-tests");?>" /></a>
 										<?php endif;?>
 									</td>
 						    </tr>
 							</table>
-							<span class="vexpl"><?php echo gettext("Add additional scheduled self-test.");?></span>
+							<span class="vexpl"><?=gettext("Add additional scheduled self-test.");?></span>
 						</td>
 					</tr>
 					<?php html_separator();?>
@@ -295,7 +290,7 @@ function enable_change(enable_change) {
 					<?php html_checkbox("email_testemail", gettext("Test email"), $pconfig['email_testemail'] ? true : false, gettext("Send a TEST warning email on startup."));?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("note", gettext("Note"), gettext("Activate email report if you want to be notified if a failure or a new error has been detected, or if a S.M.A.R.T. command to a disk fails."));?>

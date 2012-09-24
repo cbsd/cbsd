@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -54,21 +49,21 @@ $pgtitle = array(gettext("Diagnostics"), gettext("Information"), gettext("UPS"))
   <tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="diag_infos.php"><span><?php echo gettext("Disks");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ata.php"><span><?php echo gettext("Disks (ATA)");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_part.php"><span><?php echo gettext("Partitions");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_smart.php"><span><?php echo gettext("S.M.A.R.T.");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_space.php"><span><?php echo gettext("Space Used");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_mount.php"><span><?php echo gettext("Mounts");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_raid.php"><span><?php echo gettext("Software RAID");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_iscsi.php"><span><?php echo gettext("iSCSI Initiator");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ad.php"><span><?php echo gettext("MS Domain");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_samba.php"><span><?php echo gettext("CIFS/SMB");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_ftpd.php"><span><?php echo gettext("FTP");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_rsync_client.php"><span><?php echo gettext("RSYNC Client");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_swap.php"><span><?php echo gettext("Swap");?></span></a></li>
-				<li class="tabinact"><a href="diag_infos_sockets.php"><span><?php echo gettext("Sockets");?></span></a></li>
-				<li class="tabact"><a href="diag_infos_ups.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("UPS");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos.php"><span><?=gettext("Disks");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ata.php"><span><?=gettext("Disks (ATA)");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_part.php"><span><?=gettext("Partitions");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_smart.php"><span><?=gettext("S.M.A.R.T.");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_space.php"><span><?=gettext("Space Used");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_mount.php"><span><?=gettext("Mounts");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_raid.php"><span><?=gettext("Software RAID");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_iscsi.php"><span><?=gettext("iSCSI Initiator");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ad.php"><span><?=gettext("MS Domain");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_samba.php"><span><?=gettext("CIFS/SMB");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_ftpd.php"><span><?=gettext("FTP");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_rsync_client.php"><span><?=gettext("RSYNC Client");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_swap.php"><span><?=gettext("Swap");?></span></a></li>
+				<li class="tabinact"><a href="diag_infos_sockets.php"><span><?=gettext("Sockets");?></span></a></li>
+				<li class="tabact"><a href="diag_infos_ups.php" title="<?=gettext("Reload page");?>"><span><?=gettext("UPS");?></span></a></li>
 			</ul>
   	</td>
 	</tr>
@@ -79,7 +74,7 @@ $pgtitle = array(gettext("Diagnostics"), gettext("Information"), gettext("UPS"))
 				<?php if (!isset($config['ups']['enable'])):?>
 				<tr>
 					<td>
-						<pre><?php echo gettext("UPS disabled");?></pre>
+						<pre><?=gettext("UPS disabled");?></pre>
 					</td>
 				</tr>
 				<?php else:?>

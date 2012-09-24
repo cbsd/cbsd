@@ -51,7 +51,7 @@ $menu['system']['visible'] = TRUE;
 $menu['system']['link'] = "";
 $menu['system']['menuitem'] = array();
 $menu['system']['menuitem'][] = array("desc" => gettext("General"), "link" => "system.php", "visible" => Session::isAdmin());
-//$menu['system']['menuitem'][] = array("desc" => gettext("Advanced"), "link" => "system_advanced.php", "visible" => Session::isAdmin());
+$menu['system']['menuitem'][] = array("desc" => gettext("Advanced"), "link" => "system_advanced.php", "visible" => Session::isAdmin());
 $menu['system']['menuitem'][] = array("desc" => gettext("Password"), "link" => "userportal_system_password.php", "visible" => !Session::isAdmin());
 $menu['system']['menuitem'][] = array("type" => "separator", "visible" => Session::isAdmin());
 if ("full" === $g['platform']) {
@@ -82,19 +82,6 @@ $menu['network']['menuitem'][] = array("type" => "separator", "visible" => TRUE)
 $menu['network']['menuitem'][] = array("desc" => gettext("Hosts"), "link" => "system_hosts.php", "visible" => TRUE);
 $menu['network']['menuitem'][] = array("desc" => gettext("Static Routes"), "link" => "system_routes.php", "visible" => TRUE);
 $menu['network']['menuitem'][] = array("desc" => gettext("Firewall"), "link" => "system_firewall.php", "visible" => TRUE);
-
-
-// CBSD
-$menu['cbsd']['desc'] = gettext("CBSD");
-$menu['cbsd']['visible'] = Session::isAdmin();
-$menu['cbsd']['link'] = "";
-$menu['cbsd']['menuitem'] = array();
-$menu['cbsd']['menuitem'][] = array("desc" => gettext("Node Management"), "link" => "cbsd_node.php", "visible" => TRUE);
-$menu['cbsd']['menuitem'][] = array("desc" => gettext("Jails Management"), "link" => "cbsd_jails.php", "visible" => TRUE);
-$menu['cbsd']['menuitem'][] = array("type" => "separator", "visible" => TRUE);
-//$menu['cbsd']['menuitem'][] = array("desc" => gettext("Hosts"), "link" => "system_hosts.php", "visible" => TRUE);
-//$menu['cbsd']['menuitem'][] = array("desc" => gettext("Static Routes"), "link" => "system_routes.php", "visible" => TRUE);
-//$menu['cbsd']['menuitem'][] = array("desc" => gettext("Firewall"), "link" => "system_firewall.php", "visible" => TRUE);
 
 // Disks
 $menu['disks']['desc'] = gettext("Disks");
@@ -179,7 +166,6 @@ $menu['diagnostics']['menuitem'][] = array("desc" => gettext("ARP Tables"), "lin
 $menu['diagnostics']['menuitem'][] = array("desc" => gettext("Routes"), "link" => "diag_routes.php", "visible" => TRUE);
 
 // Help
-/*
 $menu['help']['desc'] = gettext("Help");
 $menu['help']['visible'] = TRUE;
 $menu['help']['link'] = "";
@@ -193,8 +179,6 @@ $menu['help']['menuitem'][] = array("type" => "separator", "visible" => TRUE);
 $menu['help']['menuitem'][] = array("desc" => gettext("Release Notes"), "link" => "changes.php", "visible" => TRUE);
 $menu['help']['menuitem'][] = array("desc" => gettext("License & Credits"), "link" => "license.php", "visible" => TRUE);
 $menu['help']['menuitem'][] = array("desc" => gettext("Donate"), "link" => "https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=info%40nas4free%2eorg&lc=US&item_name=NAS4Free%20Project&no_note=0&currency_code=USD&bn=PP%2dDonationsBF%3abtn_donateCC_LG%2egif%3aNonHostedGuest", "visible" => TRUE, "target" => "_blank");
-*/
-
 function display_menu($menuid) {
 	global $menu;
 
@@ -239,14 +223,14 @@ function display_menu($menuid) {
 */
 ?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="<?php system_get_language_code();?>" lang="<?php system_get_language_code();?>">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="<?=system_get_language_code();?>" lang="<?=system_get_language_code();?>">
 <head>
-	<title><?php echo htmlspecialchars(genhtmltitle($pgtitle));?></title>
-	<meta http-equiv="Content-Type" content="text/html; charset=<?php system_get_language_codeset();?>" />
+	<title><?=htmlspecialchars(genhtmltitle($pgtitle));?></title>
+	<meta http-equiv="Content-Type" content="text/html; charset=<?=system_get_language_codeset();?>" />
 	<meta http-equiv="Content-Script-Type" content="text/javascript" />
 	<meta http-equiv="Content-Style-Type" content="text/css" />
 	<?php if ($pgrefresh):?>
-	<meta http-equiv="refresh" content="<?php $pgrefresh;?>" />
+	<meta http-equiv="refresh" content="<?=$pgrefresh;?>" />
 	<?php endif;?>
     <link href="gui.css" rel="stylesheet" type="text/css" />
 	<link href="navbar.css" rel="stylesheet" type="text/css" />
@@ -270,28 +254,27 @@ function display_menu($menuid) {
 <body>
 <div id="header">
 	<div id="headerlogo">
-		<a title="www.<?php echo get_product_url();?>" href="http://<?php echo get_product_url();?>" target="_blank"></a>
+		<a title="www.<?=get_product_url();?>" href="http://<?=get_product_url();?>" target="_blank"><img src="header_logo.png" alt="logo" /></a>
 	</div>
 	<div id="headerrlogo">
 		<div class="hostname">
-			<span><?php echo system_get_hostname();?>&nbsp;</span>
+			<span><?=system_get_hostname();?>&nbsp;</span>
 		</div>
 	</div>
 </div>
 <div id="headernavbar">
 	<ul id="navbarmenu">
-		<?php display_menu("system");?>
-		<?php display_menu("network");?>
-		<?php display_menu("cbsd");?>
-		<?php display_menu("disks");?>
-		<?php display_menu("services");?>
+		<?=display_menu("system");?>
+		<?=display_menu("network");?>
+		<?=display_menu("disks");?>
+		<?=display_menu("services");?>
 		<!-- Begin extension section -->
 		<?php if (Session::isAdmin() && is_dir("{$g['www_path']}/ext")):?>
 		<li>
-			<a href="index.php" onmouseover="mopen('extensions')" onmouseout="mclosetime()"><?php echo gettext("Extensions");?></a>
+			<a href="index.php" onmouseover="mopen('extensions')" onmouseout="mclosetime()"><?=gettext("Extensions");?></a>
 			<div id="extensions" onmouseover="mcancelclosetime()" onmouseout="mclosetime()">
 				<?php
-				$dh = opendir("{$g['www_path']}/ext");
+				$dh = @opendir("{$g['www_path']}/ext");
 				if ($dh) {
 					while (($extd = readdir($dh)) !== false) {
 						if (($extd === ".") || ($extd === ".."))
@@ -304,11 +287,11 @@ function display_menu($menuid) {
 		</li>
 		<?php endif;?>
 		<!-- End extension section -->
-		<?php display_menu("access");?>
-		<?php display_menu("status");?>
-		<?php display_menu("diagnostics");?>
-		<?php display_menu("advanced");?>
-		<?php display_menu("help");?>
+		<?=display_menu("access");?>
+		<?=display_menu("status");?>
+		<?=display_menu("diagnostics");?>
+		<?=display_menu("advanced");?>
+		<?=display_menu("help");?>
 	</ul>
 	<div style="clear:both"></div>
 </div>
@@ -320,5 +303,5 @@ function display_menu($menuid) {
 	        <tr>
 						<td>
 							<?php if (!$pgtitle_omit): ?>
-	      			<p class="pgtitle"><?php echo htmlspecialchars(gentitle($pgtitle));?></p>
+	      			<p class="pgtitle"><?=htmlspecialchars(gentitle($pgtitle));?></p>
 							<?php endif;?>

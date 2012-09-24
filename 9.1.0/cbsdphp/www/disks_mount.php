@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -154,9 +149,9 @@ function mountmanagement_process_updatenotification($mode, $data) {
   <tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="disks_mount.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
-        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?php echo gettext("Fsck");?></span></a></li>
+        <li class="tabact"><a href="disks_mount.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Management");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_tools.php"><span><?=gettext("Tools");?></span></a></li>
+        <li class="tabinact"><a href="disks_mount_fsck.php"><span><?=gettext("Fsck");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -167,11 +162,11 @@ function mountmanagement_process_updatenotification($mode, $data) {
         <?php if (updatenotify_exists("mountpoint")) print_config_change_box();?>
         <table width="100%" border="0" cellpadding="0" cellspacing="0">
           <tr>
-            <td width="25%" class="listhdrlr"><?php echo gettext("Disk");?></td>
-            <td width="15%" class="listhdrr"><?php echo gettext("File system");?></td>
-            <td width="15%" class="listhdrr"><?php echo gettext("Name");?></td>
-            <td width="20%" class="listhdrr"><?php echo gettext("Description");?></td>
-            <td width="15%" class="listhdrr"><?php echo gettext("Status");?></td>
+            <td width="25%" class="listhdrlr"><?=gettext("Disk");?></td>
+            <td width="15%" class="listhdrr"><?=gettext("File system");?></td>
+            <td width="15%" class="listhdrr"><?=gettext("Name");?></td>
+            <td width="20%" class="listhdrr"><?=gettext("Description");?></td>
+            <td width="15%" class="listhdrr"><?=gettext("Status");?></td>
             <td width="10%" class="list"></td>
           </tr>
 					<?php foreach($a_mount as $mount):?>
@@ -198,18 +193,18 @@ function mountmanagement_process_updatenotification($mode, $data) {
 					?>
           <tr>
           	<?php if ("disk" === $mount['type']):?>
-            <td class="listlr"><?php htmlspecialchars($mount['devicespecialfile']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($mount['devicespecialfile']);?>&nbsp;</td>
             <?php else:?>
-            <td class="listlr"><?php htmlspecialchars($mount['filename']);?>&nbsp;</td>
+            <td class="listlr"><?=htmlspecialchars($mount['filename']);?>&nbsp;</td>
             <?php endif;?>
-            <td class="listr"><?php htmlspecialchars($mount['fstype']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($mount['sharename']);?>&nbsp;</td>
-            <td class="listr"><?php htmlspecialchars($mount['desc']);?>&nbsp;</td>
-            <td class="listbg"><?php $status;?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($mount['fstype']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($mount['sharename']);?>&nbsp;</td>
+            <td class="listr"><?=htmlspecialchars($mount['desc']);?>&nbsp;</td>
+            <td class="listbg"><?=$status;?>&nbsp;</td>
             <?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
             <td valign="middle" nowrap="nowrap" class="list">
-              <a href="disks_mount_edit.php?uuid=<?php $mount['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit mount point");?>" border="0" alt="<?php echo gettext("Edit mount point");?>" /></a>&nbsp;
-              <a href="disks_mount.php?act=del&amp;uuid=<?php $mount['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this mount point? All elements that still use it will become invalid (e.g. share)!");?>')"><img src="x.gif" title="<?php echo gettext("Delete mount point");?>" border="0" alt="<?php echo gettext("Delete mount point");?>" /></a>
+              <a href="disks_mount_edit.php?uuid=<?=$mount['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit mount point");?>" border="0" alt="<?=gettext("Edit mount point");?>" /></a>&nbsp;
+              <a href="disks_mount.php?act=del&amp;uuid=<?=$mount['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this mount point? All elements that still use it will become invalid (e.g. share)!");?>')"><img src="x.gif" title="<?=gettext("Delete mount point");?>" border="0" alt="<?=gettext("Delete mount point");?>" /></a>
             </td>
             <?php else:?>
 						<td valign="middle" nowrap="nowrap" class="list">
@@ -220,7 +215,7 @@ function mountmanagement_process_updatenotification($mode, $data) {
           <?php endforeach;?>
           <tr>
             <td class="list" colspan="5"></td>
-            <td class="list"><a href="disks_mount_edit.php"><img src="plus.gif" title="<?php echo gettext("Add mount point");?>" border="0" alt="<?php echo gettext("Add mount point");?>" /></a></td>
+            <td class="list"><a href="disks_mount_edit.php"><img src="plus.gif" title="<?=gettext("Add mount point");?>" border="0" alt="<?=gettext("Add mount point");?>" /></a></td>
           </tr>
         </table>
         <div id="remarks">

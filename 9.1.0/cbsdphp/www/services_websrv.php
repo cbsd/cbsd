@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -56,6 +51,7 @@ $pconfig['enable'] = isset($config['websrv']['enable']);
 $pconfig['protocol'] = $config['websrv']['protocol'];
 $pconfig['port'] = $config['websrv']['port'];
 $pconfig['documentroot'] = $config['websrv']['documentroot'];
+$pconfig['runasuser'] = $config['websrv']['runasuser'];
 $pconfig['privatekey'] = base64_decode($config['websrv']['privatekey']);
 $pconfig['certificate'] = base64_decode($config['websrv']['certificate']);
 $pconfig['authentication'] = isset($config['websrv']['authentication']['enable']);
@@ -99,6 +95,7 @@ if ($_POST) {
 		$config['websrv']['protocol'] = $_POST['protocol'];
 		$config['websrv']['port'] = $_POST['port'];
 		$config['websrv']['documentroot'] = $_POST['documentroot'];
+		$config['websrv']['runasuser'] = $_POST['runasuser'];
 		$config['websrv']['privatekey'] = base64_encode($_POST['privatekey']);
 		$config['websrv']['certificate'] = base64_encode($_POST['certificate']);
 		$config['websrv']['authentication']['enable'] = $_POST['authentication'] ? true : false;
@@ -167,6 +164,7 @@ function enable_change(enable_change) {
 	document.iform.port.disabled = endis;
 	document.iform.documentroot.disabled = endis;
 	document.iform.documentrootbrowsebtn.disabled = endis;
+	document.iform.runasuser.disabled = endis;
 	document.iform.privatekey.disabled = endis;
 	document.iform.certificate.disabled = endis;
 	document.iform.authentication.disabled = endis;
@@ -212,6 +210,7 @@ function authentication_change() {
 					<?php html_titleline_checkbox("enable", gettext("Webserver"), $pconfig['enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 					<?php html_combobox("protocol", gettext("Protocol"), $pconfig['protocol'], array("http" => "HTTP", "https" => "HTTPS"), "", true, false, "protocol_change()");?>
 					<?php html_inputbox("port", gettext("Port"), $pconfig['port'], gettext("TCP port to bind the server to."), true, 5);?>
+					<?php html_combobox("runasuser", gettext("Run as"), $pconfig['runasuser'], array("server.username = \"www\"" => "www", "" => "root"), gettext("Set what user the service will run as (www by default). <br><b><font color='red'>NOTE</font>: Running as root is <u>not recommended</u> for security reasons, use it on your own risk!.</b></br>"), true);?>	
 					<?php html_textarea("certificate", gettext("Certificate"), $pconfig['certificate'], gettext("Paste a signed certificate in X.509 PEM format here."), true, 65, 7, false, false);?>
 					<?php html_textarea("privatekey", gettext("Private key"), $pconfig['privatekey'], gettext("Paste an private key in PEM format here."), true, 65, 7, false, false);?>
 					<?php html_filechooser("documentroot", gettext("Document root"), $pconfig['documentroot'], gettext("Document root of the webserver. Home of the web page files."), $g['media_path'], true, 60);?>
@@ -221,20 +220,20 @@ function authentication_change() {
 						<td width="78%" class="vtable">
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
-									<td width="45%" class="listhdrlr"><?php echo gettext("URL");?></td>
-									<td width="45%" class="listhdrr"><?php echo gettext("Realm");?></td>
+									<td width="45%" class="listhdrlr"><?=gettext("URL");?></td>
+									<td width="45%" class="listhdrr"><?=gettext("Realm");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php foreach ($config['websrv']['authentication']['url'] as $urlv):?>
 								<?php $notificationmode = updatenotify_get_mode("websrvauth", $urlv['uuid']);?>
 								<tr>
-									<td class="listlr"><?php htmlspecialchars($urlv['path']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($urlv['realm']);?>&nbsp;</td>
+									<td class="listlr"><?=htmlspecialchars($urlv['path']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($urlv['realm']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 									<td valign="middle" nowrap="nowrap" class="list">
 										<?php if (isset($config['websrv']['enable'])):?>
-										<a href="services_websrv_authurl.php?uuid=<?php $urlv['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit URL");?>" border="0" alt="<?php echo gettext("Edit URL");?>" /></a>&nbsp;
-										<a href="services_websrv.php?act=del&amp;uuid=<?php $urlv['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this URL?");?>')"><img src="x.gif" title="<?php echo gettext("Delete URL");?>" border="0" alt="<?php echo gettext("Delete URL");?>" /></a>
+										<a href="services_websrv_authurl.php?uuid=<?=$urlv['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit URL");?>" border="0" alt="<?=gettext("Edit URL");?>" /></a>&nbsp;
+										<a href="services_websrv.php?act=del&amp;uuid=<?=$urlv['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this URL?");?>')"><img src="x.gif" title="<?=gettext("Delete URL");?>" border="0" alt="<?=gettext("Delete URL");?>" /></a>
 										<?php endif;?>
 									</td>
 									<?php else:?>
@@ -247,18 +246,18 @@ function authentication_change() {
 								<tr>
 									<td class="list" colspan="2"></td>
 									<td class="list">
-										<a href="services_websrv_authurl.php"><img src="plus.gif" title="<?php echo gettext("Add URL");?>" border="0" alt="<?php echo gettext("Add URL");?>" /></a>
+										<a href="services_websrv_authurl.php"><img src="plus.gif" title="<?=gettext("Add URL");?>" border="0" alt="<?=gettext("Add URL");?>" /></a>
 									</td>
 								</tr>
 							</table>
-							<span class="vexpl"><?php echo gettext("Define directories/URL's that require authentication.");?></span>
+							<span class="vexpl"><?=gettext("Define directories/URL's that require authentication.");?></span>
 						</td>
 					</tr>
 					<?php html_checkbox("dirlisting", gettext("Directory listing"), $pconfig['dirlisting'] ? true : false, gettext("Enable directory listing."), gettext("A directory listing is generated if a directory is requested and no index-file (index.php, index.html, index.htm or default.htm) was found in that directory."), false);?>
-					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters will be added to %s."), "wersrv.conf")  . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://redmine.lighttpd.net/wiki/lighttpd"), false, 65, 5, false, false);?>
+					<?php html_textarea("auxparam", gettext("Auxiliary parameters"), $pconfig['auxparam'], sprintf(gettext("These parameters will be added to %s."), "wersrv.conf")  . " " . sprintf(gettext("Please check the <a href='%s' target='_blank'>documentation</a>."), "http://redmine.lighttpd.net/projects/lighttpd/wiki"), false, 65, 5, false, false);?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" onclick="enable_change(true)" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

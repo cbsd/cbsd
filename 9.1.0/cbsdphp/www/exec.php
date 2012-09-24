@@ -7,14 +7,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2007-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 	
 	portions of m0n0wall (http://m0n0.ch/wall)
@@ -191,7 +186,7 @@ if (isBlank( $_POST['txtRecallBuffer'] )) {
 //-->
 </script>
 <?php if (isBlank($_POST['txtCommand'])): ?>
-<p class="red"><strong><?php echo gettext("Note");?>: <?php echo gettext("This function is unsupported. Use it on your own risk!");?></strong></p>
+<p class="red"><strong><?=gettext("Note");?>: <?=gettext("This function is unsupported. Use it on your own risk!");?></strong></p>
 <?php endif; ?>
 <?php if ($ulmsg) echo "<p><strong>" . $ulmsg . "</strong></p>\n"; ?>
 <?php
@@ -221,20 +216,20 @@ if (!isBlank($_POST['txtPHPCommand'])) {
 	puts("</pre>");
 }
 ?>
-<form action="<?php $HTTP_SERVER_VARS['SCRIPT_NAME'];?>" method="post" enctype="multipart/form-data" name="frmExecPlus" id="frmExecPlus" onsubmit="return frmExecPlus_onSubmit( this );">
+<form action="<?=$HTTP_SERVER_VARS['SCRIPT_NAME'];?>" method="post" enctype="multipart/form-data" name="frmExecPlus" id="frmExecPlus" onsubmit="return frmExecPlus_onSubmit( this );">
   <table>
     <tr>
-      <td class="label" align="right"><?php echo gettext("Command");?></td>
+      <td class="label" align="right"><?=gettext("Command");?></td>
       <td class="type"><input name="txtCommand" type="text" size="80" value="" onkeypress="txtCommand_onKey(event);" /></td>
     </tr>
     <tr>
       <td valign="top">&nbsp;</td>
       <td valign="top" class="label">
-         <input type="hidden" name="txtRecallBuffer" value="<?php $_POST['txtRecallBuffer'] ?>" />
+         <input type="hidden" name="txtRecallBuffer" value="<?=$_POST['txtRecallBuffer'] ?>" />
          <input type="button" class="formbtn" name="btnRecallPrev" value="&lt;" onclick="btnRecall_onClick( this.form, -1 );" />
-         <input type="submit" class="formbtn" value="<?php echo gettext("Execute");?>" />
+         <input type="submit" class="formbtn" value="<?=gettext("Execute");?>" />
          <input type="button" class="formbtn" name="btnRecallNext" value="&gt;" onclick="btnRecall_onClick( this.form,  1 );" />
-         <input type="button"  class="formbtn" value="<?php echo gettext("Clear");?>" onclick="return Reset_onClick( this.form );" />
+         <input type="button"  class="formbtn" value="<?=gettext("Clear");?>" onclick="return Reset_onClick( this.form );" />
       </td>
     </tr>
     <tr>
@@ -242,30 +237,30 @@ if (!isBlank($_POST['txtPHPCommand'])) {
       <td></td>
     </tr>
     <tr>
-      <td align="right"><?php echo gettext("Download");?></td>
+      <td align="right"><?=gettext("Download");?></td>
       <td>
         <input name="dlPath" type="text" id="dlPath" size="50" value="" />
         <input name="browse" type="button" class="formbtn" id="Browse" onclick='ifield = form.dlPath; filechooser = window.open("filechooser.php?p="+escape(ifield.value), "filechooser", "scrollbars=yes,toolbar=no,menubar=no,statusbar=no,width=550,height=300"); filechooser.ifield = ifield; window.ifield = ifield;' value="..." />
-        <input name="submit" type="submit" class="formbtn" id="download" value="<?php echo gettext("Download");?>" />
+        <input name="submit" type="submit" class="formbtn" id="download" value="<?=gettext("Download");?>" />
         </td>
     </tr>
     <tr>
-      <td align="right"><?php echo gettext("Upload");?></td>
+      <td align="right"><?=gettext("Upload");?></td>
       <td valign="top" class="label">
         <input name="ulfile" type="file" class="formbtn" id="ulfile" />
-        <input name="submit" type="submit"  class="formbtn" id="upload" value="<?php echo gettext("Upload");?>" /></td>
+        <input name="submit" type="submit"  class="formbtn" id="upload" value="<?=gettext("Upload");?>" /></td>
     </tr>
 		<tr>
 			<td colspan="2" valign="top" height="16"></td>
 		</tr>
 		<tr>
-			<td align="right"><?php echo gettext("PHP Command");?></td>
-			<td class="type"><textarea id="txtPHPCommand" name="txtPHPCommand" rows="3" cols="50" wrap="off"><?php htmlspecialchars($_POST['txtPHPCommand']);?></textarea></td>
+			<td align="right"><?=gettext("PHP Command");?></td>
+			<td class="type"><textarea id="txtPHPCommand" name="txtPHPCommand" rows="3" cols="50" wrap="off"><?=htmlspecialchars($_POST['txtPHPCommand']);?></textarea></td>
 		</tr>
 		<tr>
 			<td valign="top">&nbsp;&nbsp;&nbsp;</td>
 			<td valign="top" class="label">
-				<input type="submit" class="button" value="<?php echo gettext("Execute");?>" />
+				<input type="submit" class="button" value="<?=gettext("Execute");?>" />
 			</td>
 		</tr>
   </table>

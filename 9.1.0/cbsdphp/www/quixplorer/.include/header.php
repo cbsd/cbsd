@@ -227,12 +227,12 @@ function show_header($title) {			// header for html-page
 	header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
 	header("Cache-Control: no-cache, must-revalidate");
 	header("Pragma: no-cache");
-	header("Content-Type: text/html; charset=".$GLOBALS["charset"]);
+	header("Content-Type: text/html; charset=".system_get_language_codeset());
 
 /* NAS4FREE & QUIXPLORER CODE*/
 	// Html & Page Headers
 	echo "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n";
-	echo "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"".system_get_language_code()."\" lang=\"".$GLOBALS["language"]."\" dir=\"".$GLOBALS["text_dir"]."\">\n";
+	echo "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"".system_get_language_code()."\" lang=\"".system_get_language_code()."\" dir=\"".$GLOBALS["text_dir"]."\">\n";
 	echo "<head>\n";
 	echo "<meta http-equiv=\"Content-Type\" content=\"text/html\" charset=\"".$GLOBALS["charset"]."\">\n";
 	echo "<title>Nas4free.local - File Manager</title>\n";

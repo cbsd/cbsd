@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -215,19 +211,19 @@ function get_HostName($mac, $ip) {
     <td class="tabcont">
 			<table width="100%" border="0" cellpadding="0" cellspacing="0">
 			  <tr>
-			    <td class="listhdrlr"><?php echo gettext("IP address");?></td>
-			    <td class="listhdrr"><?php echo gettext("MAC address");?></td>
-			    <td class="listhdrr"><?php echo gettext("Hostname");?></td>
-			    <td class="listhdrr"><?php echo gettext("Interface");?></td>
+			    <td class="listhdrlr"><?=gettext("IP address");?></td>
+			    <td class="listhdrr"><?=gettext("MAC address");?></td>
+			    <td class="listhdrr"><?=gettext("Hostname");?></td>
+			    <td class="listhdrr"><?=gettext("Interface");?></td>
 			    <td class="list"></td>
 			  </tr>
 			  <?php $i = 0; foreach ($data as $entry): ?>
 			  <tr>
-			    <td class="listlr"><?php htmlspecialchars($entry['ip']);?></td>
-			    <td class="listr"><?php htmlspecialchars($entry['mac']);?></td>
-			    <td class="listr"><?php htmlspecialchars(get_HostName($entry['mac'], $entry['ip']));?>&nbsp;</td>
-			    <td class="listr"><?php htmlspecialchars($hwif[$entry['interface']]);?>&nbsp;</td>
-			    <td valign="middle" nowrap="nowrap" class="list"><a href="diag_arp.php?act=del&amp;id=<?php $entry['ip'];?>"><img src="x.gif" title="<?php echo gettext("Delete ARP entry");?>" border="0" alt="<?php echo gettext("Delete ARP entry");?>" /></a></td>
+			    <td class="listlr"><?=htmlspecialchars($entry['ip']);?></td>
+			    <td class="listr"><?=htmlspecialchars($entry['mac']);?></td>
+			    <td class="listr"><?=htmlspecialchars(get_HostName($entry['mac'], $entry['ip']));?>&nbsp;</td>
+			    <td class="listr"><?=htmlspecialchars($hwif[$entry['interface']]);?>&nbsp;</td>
+			    <td valign="middle" nowrap="nowrap" class="list"><a href="diag_arp.php?act=del&amp;id=<?=$entry['ip'];?>"><img src="x.gif" title="<?=gettext("Delete ARP entry");?>" border="0" alt="<?=gettext("Delete ARP entry");?>" /></a></td>
 			  </tr>
 			  <?php $i++; endforeach; ?>
 			  <tr>
@@ -235,7 +231,7 @@ function get_HostName($mac, $ip) {
 			  </tr>
 			  <tr>
 			    <td class="list" colspan="4"></td>
-			    <td class="list"><a href="diag_arp.php?act=del"><img src="x.gif" title="<?php echo gettext("Remove all entries from ARP table");?>" border="0" alt="<?php echo gettext("Remove all entries from ARP table");?>" /></a></td>
+			    <td class="list"><a href="diag_arp.php?act=del"><img src="x.gif" title="<?=gettext("Remove all entries from ARP table");?>" border="0" alt="<?=gettext("Remove all entries from ARP table");?>" /></a></td>
 			  </tr>
 			</table>
 			<div id="remarks">

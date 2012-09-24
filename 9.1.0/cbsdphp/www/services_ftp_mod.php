@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -112,8 +107,8 @@ function ftpd_mod_ban_process_updatenotification($mode, $data) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="services_ftp.php"><span><?php echo gettext("Settings");?></span></a></li>
-				<li class="tabact"><a href="services_ftp_mod.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Modules");?></span></a></li>
+				<li class="tabinact"><a href="services_ftp.php"><span><?=gettext("Settings");?></span></a></li>
+				<li class="tabact"><a href="services_ftp_mod.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Modules");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -125,25 +120,25 @@ function ftpd_mod_ban_process_updatenotification($mode, $data) {
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
 					<?php html_titleline_checkbox("mod_ban_enable", gettext("Ban list"), $pconfig['mod_ban_enable'] ? true : false, gettext("Enable"), "enable_change(false)");?>
 					<tr>
-						<td width="22%" valign="top" class="vncell"><?php echo gettext("Rules");?></td>
+						<td width="22%" valign="top" class="vncell"><?=gettext("Rules");?></td>
 						<td width="78%" class="vtable">
 							<table width="100%" border="0" cellpadding="0" cellspacing="0">
 								<tr>
-									<td width="30%" class="listhdrlr"><?php echo gettext("Event");?></td>
-									<td width="30%" class="listhdrr"><?php echo gettext("Frequency");?></td>
-									<td width="30%" class="listhdrr"><?php echo gettext("Expire");?></td>
+									<td width="30%" class="listhdrlr"><?=gettext("Event");?></td>
+									<td width="30%" class="listhdrr"><?=gettext("Frequency");?></td>
+									<td width="30%" class="listhdrr"><?=gettext("Expire");?></td>
 									<td width="10%" class="list"></td>
 								</tr>
 								<?php $i = 0; foreach ($a_rule as $rule):?>
 								<?php $notificationmode = updatenotify_get_mode("ftpd_mod_ban", $rule['uuid']);?>
 								<tr>
-									<td class="listlr"><?php htmlspecialchars($rule['event']);?>&nbsp;</td>
-									<td class="listr"><?php htmlspecialchars($rule['occurrence']);?>/<?php htmlspecialchars($rule['timeinterval']);?></td>
-									<td class="listr"><?php htmlspecialchars($rule['expire']);?>&nbsp;</td>
+									<td class="listlr"><?=htmlspecialchars($rule['event']);?>&nbsp;</td>
+									<td class="listr"><?=htmlspecialchars($rule['occurrence']);?>/<?=htmlspecialchars($rule['timeinterval']);?></td>
+									<td class="listr"><?=htmlspecialchars($rule['expire']);?>&nbsp;</td>
 									<?php if (UPDATENOTIFY_MODE_DIRTY != $notificationmode):?>
 									<td valign="middle" nowrap="nowrap" class="list">
-										<a href="services_ftp_mod_ban_edit.php?uuid=<?php $rule['uuid'];?>"><img src="e.gif" title="<?php echo gettext("Edit rule");?>" border="0" alt="<?php echo gettext("Edit rule");?>" /></a>
-										<a href="services_ftp_mod.php?act=del&amp;mod=mod_ban&amp;uuid=<?php $rule['uuid'];?>" onclick="return confirm('<?php echo gettext("Do you really want to delete this rule?");?>')"><img src="x.gif" title="<?php echo gettext("Delete rule");?>" border="0" alt="<?php echo gettext("Delete rule");?>" /></a>
+										<a href="services_ftp_mod_ban_edit.php?uuid=<?=$rule['uuid'];?>"><img src="e.gif" title="<?=gettext("Edit rule");?>" border="0" alt="<?=gettext("Edit rule");?>" /></a>
+										<a href="services_ftp_mod.php?act=del&amp;mod=mod_ban&amp;uuid=<?=$rule['uuid'];?>" onclick="return confirm('<?=gettext("Do you really want to delete this rule?");?>')"><img src="x.gif" title="<?=gettext("Delete rule");?>" border="0" alt="<?=gettext("Delete rule");?>" /></a>
 									</td>
 									<?php else:?>
 									<td valign="middle" nowrap="nowrap" class="list">
@@ -155,9 +150,9 @@ function ftpd_mod_ban_process_updatenotification($mode, $data) {
 								<tr>
 									<td class="list" colspan="3"></td>
 									<td class="list">
-										<a href="services_ftp_mod_ban_edit.php"><img src="plus.gif" title="<?php echo gettext("Add rule");?>" border="0" alt="<?php echo gettext("Add rule");?>" /></a>
+										<a href="services_ftp_mod_ban_edit.php"><img src="plus.gif" title="<?=gettext("Add rule");?>" border="0" alt="<?=gettext("Add rule");?>" /></a>
 										<?php if (!empty($a_rule)):?>
-										<a href="services_ftp_mod.php?act=del&amp;mod=mod_ban&amp;uuid=all" onclick="return confirm('<?php echo gettext("Do you really want to delete all rules?");?>')"><img src="x.gif" title="<?php echo gettext("Delete all rules");?>" border="0" alt="<?php echo gettext("Delete all rules");?>" /></a>
+										<a href="services_ftp_mod.php?act=del&amp;mod=mod_ban&amp;uuid=all" onclick="return confirm('<?=gettext("Do you really want to delete all rules?");?>')"><img src="x.gif" title="<?=gettext("Delete all rules");?>" border="0" alt="<?=gettext("Delete all rules");?>" /></a>
 										<?php endif;?>
 									</td>
 								</tr>
@@ -169,7 +164,7 @@ function ftpd_mod_ban_process_updatenotification($mode, $data) {
 					</tr>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save and Restart");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save and Restart");?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

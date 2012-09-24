@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -122,8 +118,8 @@ function enable_change(enable_change) {
 	<tr>
 		<td class="tabnavtbl">
 			<ul id="tabnav">
-				<li class="tabinact"><a href="diag_log.php"><span><?php echo gettext("Log");?></span></a></li>
-				<li class="tabact"><a href="diag_log_settings.php" title="<?php echo gettext("Reload page");?>"><span><?php echo gettext("Settings");?></span></a></li>
+				<li class="tabinact"><a href="diag_log.php"><span><?=gettext("Log");?></span></a></li>
+				<li class="tabact"><a href="diag_log_settings.php" title="<?=gettext("Reload page");?>"><span><?=gettext("Settings");?></span></a></li>
 			</ul>
 		</td>
 	</tr>
@@ -137,20 +133,20 @@ function enable_change(enable_change) {
 	          <td width="22%" valign="top" class="vncell">&nbsp;</td>
 	          <td width="78%" class="vtable">
 							<input name="reverse" type="checkbox" id="reverse" value="yes" <?php if ($pconfig['reverse']) echo "checked=\"checked\""; ?> />
-	            <strong><?php echo gettext("Show log entries in reverse order (newest entries on top)");?></strong>
+	            <strong><?=gettext("Show log entries in reverse order (newest entries on top)");?></strong>
 						</td>
 	        </tr>
 	        <tr>
 	          <td width="22%" valign="top" class="vncell">&nbsp;</td>
 	          <td width="78%" class="vtable">
-							<?php echo gettext("Number of log entries to show");?>:
-	            <input name="nentries" id="nentries" type="text" class="formfld" size="4" value="<?php htmlspecialchars($pconfig['nentries']);?>" /></td>
+							<?=gettext("Number of log entries to show");?>:
+	            <input name="nentries" id="nentries" type="text" class="formfld" size="4" value="<?=htmlspecialchars($pconfig['nentries']);?>" /></td>
 	        </tr>
 	        <tr>
 	          <td width="22%" valign="top" class="vncell">&nbsp;</td>
 	          <td width="78%" class="vtable">
 							<input name="resolve" type="checkbox" id="resolve" value="yes" <?php if ($pconfig['resolve']) echo "checked=\"checked\""; ?> />
-	            <strong><?php echo gettext("Resolve IP addresses to hostnames");?></strong><br />
+	            <strong><?=gettext("Resolve IP addresses to hostnames");?></strong><br />
 	            <?php echo sprintf(gettext("Hint: If this is checked, IP addresses in %s logs are resolved to real hostnames where possible."), get_product_name());?><br />
 							<?php echo sprintf(gettext("Warning: This can cause a huge delay in loading the %s log page!"), get_product_name());?>
 						</td>
@@ -159,31 +155,31 @@ function enable_change(enable_change) {
 	          <td width="22%" valign="top" class="vncell">&nbsp;</td>
 	          <td width="78%" class="vtable">
 							<input name="enable" type="checkbox" id="enable" value="yes" <?php if ($pconfig['enable']) echo "checked=\"checked\""; ?> onclick="enable_change(false)" />
-	            <strong><?php echo gettext("Enable syslog'ing to remote syslog server");?></strong></td>
+	            <strong><?=gettext("Enable syslog'ing to remote syslog server");?></strong></td>
 	        </tr>
 	        <tr>
-	          <td width="22%" valign="top" class="vncell"><?php echo gettext("Remote syslog server");?></td>
+	          <td width="22%" valign="top" class="vncell"><?=gettext("Remote syslog server");?></td>
 	          <td width="78%" class="vtable">
-							<input name="ipaddr" id="ipaddr" type="text" class="formfld" size="20" value="<?php htmlspecialchars($pconfig['ipaddr']);?>" />
+							<input name="ipaddr" id="ipaddr" type="text" class="formfld" size="20" value="<?=htmlspecialchars($pconfig['ipaddr']);?>" />
 	            <br />
-	            <?php echo gettext("IP address of remote syslog server");?><br /><br />
+	            <?=gettext("IP address of remote syslog server");?><br /><br />
 							<input name="system" id="system" type="checkbox" value="yes" <?php if ($pconfig['system']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("System events");?><br />
+	            <?=gettext("System events");?><br />
 							<input name="ftp" id="ftp" type="checkbox" value="yes" <?php if ($pconfig['ftp']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("FTP events");?><br />
+	            <?=gettext("FTP events");?><br />
 							<input name="rsyncd" id="rsyncd" type="checkbox" value="yes" <?php if ($pconfig['rsyncd']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("RSYNC events");?><br />
+	            <?=gettext("RSYNC events");?><br />
 							<input name="sshd" id="sshd" type="checkbox" value="yes" <?php if ($pconfig['sshd']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("SSH events");?><br />
+	            <?=gettext("SSH events");?><br />
 	            <input name="smartd" id="smartd" type="checkbox" value="yes" <?php if ($pconfig['smartd']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("S.M.A.R.T. events");?><br />
+	            <?=gettext("S.M.A.R.T. events");?><br />
 	            <input name="daemon" id="daemon" type="checkbox" value="yes" <?php if ($pconfig['daemon']) echo "checked=\"checked\""; ?> />
-	            <?php echo gettext("Daemon events");?><br />
+	            <?=gettext("Daemon events");?><br />
 	          </td>
 	        </tr>
 	      </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" onclick="enable_change(true)" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" onclick="enable_change(true)" />
 				</div>
 				<div id="remarks">
 					<?php html_remark("note", gettext("Note"), sprintf(gettext("Syslog sends UDP datagrams to port 514 on the specified remote syslog server. Be sure to set syslogd on the remote server to accept syslog messages from %s."), get_product_name()));?>

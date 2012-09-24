@@ -6,14 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2006-2009 Volker Theile <votdev@gmx.de>.
 	All rights reserved.	
 
 	Redistribution and use in source and binary forms, with or without
@@ -103,7 +98,7 @@ if ($_POST) {
 <table width="100%" border="0" cellpadding="0" cellspacing="0">
 	<tr>
 		<td class="tabcont">
-			<form action="<?php $_SERVER['SCRIPT_NAME'];?>" method="post" name="iform" id="iform">
+			<form action="<?=$_SERVER['SCRIPT_NAME'];?>" method="post" name="iform" id="iform">
 				<?php if ($input_errors) print_input_errors($input_errors);?>
 				<?php if ($savemsg) print_info_box($savemsg);?>
 				<table width="100%" border="0" cellpadding="6" cellspacing="0">
@@ -111,7 +106,7 @@ if ($_POST) {
 					<?php html_passwordconfbox("password_new", "password_confirm", gettext("Password"), "", "", "", true);?>
 				</table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Save");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Save");?>" />
 				</div>
 				<?php include("formend.inc");?>
 			</form>

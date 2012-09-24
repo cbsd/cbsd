@@ -6,10 +6,6 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
@@ -173,8 +169,8 @@ function ealgo_change() {
 	<tr>
     <td class="tabnavtbl">
       <ul id="tabnav">
-        <li class="tabact"><a href="disks_crypt.php" title="<?php echo gettext("Reload page");?>" ><span><?php echo gettext("Management");?></span></a></li>
-        <li class="tabinact"><a href="disks_crypt_tools.php"><span><?php echo gettext("Tools");?></span></a></li>
+        <li class="tabact"><a href="disks_crypt.php" title="<?=gettext("Reload page");?>" ><span><?=gettext("Management");?></span></a></li>
+        <li class="tabinact"><a href="disks_crypt_tools.php"><span><?=gettext("Tools");?></span></a></li>
       </ul>
     </td>
   </tr>
@@ -187,16 +183,16 @@ function ealgo_change() {
 				<?php if ($input_errors) print_input_errors($input_errors);?>
 			  <table width="100%" border="0" cellpadding="6" cellspacing="0">
 			    <tr>
-			      <td valign="top" class="vncellreq"><?php echo gettext("Disk");?></td>
+			      <td valign="top" class="vncellreq"><?=gettext("Disk");?></td>
 			      <td class="vtable">
 							<select name="disk" class="formfld" id="disk">
-								<option value=""><?php echo gettext("Must choose one");?></option>
+								<option value=""><?=gettext("Must choose one");?></option>
 								<?php $i = -1; foreach ($a_alldisk as $diskv):?>
 								<?php ++$i;?>
 								<?php if (0 == strcmp($diskv['class'], "geli")) continue;?>
 								<?php if (0 == strcmp($diskv['size'], "NA")) continue;?>
 								<?php if (1 == disks_exists($diskv['devicespecialfile'])) continue;?>
-								<option value="<?php $i;?>" <?php if ($pconfig['disk'] == $i) echo "selected=\"selected\"";?>>
+								<option value="<?=$i;?>" <?php if ($pconfig['disk'] == $i) echo "selected=\"selected\"";?>>
 								<?php $diskinfo = disks_get_diskinfo($diskv['devicespecialfile']); echo htmlspecialchars("{$diskv['name']}: {$diskinfo['mediasize_mbytes']}MB ({$diskv['desc']})");?>
 								</option>
 								<?php endforeach;?>
@@ -206,7 +202,7 @@ function ealgo_change() {
 					<?php
 					/* Remove Data Intergrity Algorithhm : there is a bug when enabled
 					<tr>
-						<td valign="top" class="vncellreq"><?php echo gettext("Data integrity algorithm");?></td>
+						<td valign="top" class="vncellreq"><?=gettext("Data integrity algorithm");?></td>
 			      <td class="vtable">
 			        <select name="aalgo" class="formfld" id="aalgo">
 								<option value="none" <?php if ($pconfig['aalgo'] === "none") echo "selected=\"selected\""; ?>>none</option>
@@ -229,8 +225,8 @@ function ealgo_change() {
 					<?php html_checkbox("init", gettext("Initialize"), $pconfig['init'] ? true : false, gettext("Initialize and encrypt disk."), gettext("This will erase ALL data on your disk! Do not use this option if you want to add an existing encrypted disk."));?>
 			  </table>
 				<div id="submit">
-					<input name="Submit" type="submit" class="formbtn" value="<?php echo gettext("Add");?>" />
-					<input name="Cancel" type="submit" class="formbtn" value="<?php echo gettext("Cancel");?>" />
+					<input name="Submit" type="submit" class="formbtn" value="<?=gettext("Add");?>" />
+					<input name="Cancel" type="submit" class="formbtn" value="<?=gettext("Cancel");?>" />
 				</div>
 				<?php if ($pconfig['do_action']) {
 				echo(sprintf("<div id='cmdoutput'>%s</div>", gettext("Command output:")));

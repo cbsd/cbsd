@@ -6,15 +6,9 @@
 	Part of NAS4Free (http://www.nas4free.org).
 	Copyright (C) 2012 by NAS4Free Team <info@nas4free.org>.
 	All rights reserved.
-	
-	Modified for XHTML by Daisuke Aoyama <aoyama@peach.ne.jp>
-	Copyright (C) 2010 Daisuke Aoyama <aoyama@peach.ne.jp>.	
-	All rights reserved.
 
 	Portions of freenas (http://www.freenas.org).
 	Copyright (C) 2005-2011 by Olivier Cochard <olivier@freenas.org>.
-	Copyright (C) 2008-2009 Volker Theile <votdev@gmx.de>.
-	Copyright (C) 2010-2011 Michael Zoon <zoon01@nas4free.org>.
 	All rights reserved.
 	
 	Portions of m0n0wall (http://m0n0.ch/wall).
@@ -112,14 +106,14 @@ if ($_POST) {
 				<?php if ($savemsg) print_info_box($savemsg);?>
 			  <table width="100%" border="0" cellspacing="0" cellpadding="6">
 			    <tr>
-			      <td colspan="2" class="listtopic"><?php echo gettext("Backup configuration");?></td>
+			      <td colspan="2" class="listtopic"><?=gettext("Backup configuration");?></td>
 			    </tr>
 			    <tr>
 					<td width="22%" valign="baseline" class="vncell">&nbsp;</td>
 					<td width="78%" class="vtable">
-						<?php echo gettext("Click this button to download the system configuration in XML format.");?><br />
+						<?=gettext("Click this button to download the system configuration in XML format.");?><br />
 						<div id="submit">
-							<input name="Submit" type="submit" class="formbtn" id="download" value="<?php echo gettext("Download configuration");?>" />
+							<input name="Submit" type="submit" class="formbtn" id="download" value="<?=gettext("Download configuration");?>" />
 						</div>
 					</td>
 			    </tr>
@@ -127,7 +121,7 @@ if ($_POST) {
 			      <td colspan="2" class="list" height="12"></td>
 			    </tr>
 			    <tr>
-			      <td colspan="2" class="listtopic"><?php echo gettext("Restore configuration");?></td>
+			      <td colspan="2" class="listtopic"><?=gettext("Restore configuration");?></td>
 			    </tr>
 			    <tr>
 					<td width="22%" valign="baseline" class="vncell">&nbsp;</td>
@@ -140,7 +134,7 @@ if ($_POST) {
 						<input name="conffile" type="file" class="formfld" id="conffile" size="40" />
 						</div>
 						<div id="submit">
-						<input name="Submit" type="submit" class="formbtn" id="restore" value="<?php echo gettext("Restore configuration");?>" />
+						<input name="Submit" type="submit" class="formbtn" id="restore" value="<?=gettext("Restore configuration");?>" />
 						</div>
 					</td>
 			    </tr>
