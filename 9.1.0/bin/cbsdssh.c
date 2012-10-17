@@ -23,6 +23,29 @@
 
 #define MAXCMD 10000
 
+const char *username    = "user";
+const char *password    = "password";
+
+static void kbd_callback(const char *name, int name_len,
+                         const char *instruction, int instruction_len,
+                         int num_prompts,
+                         const LIBSSH2_USERAUTH_KBDINT_PROMPT *prompts,
+                         LIBSSH2_USERAUTH_KBDINT_RESPONSE *responses,
+                         void **abstract)
+{
+    (void)name;
+    (void)name_len;
+    (void)instruction;
+    (void)instruction_len;
+    if (num_prompts == 1) {
+        responses[0].text = strdup(password);
+        responses[0].length = strlen(password);
+    }
+    (void)prompts;
+    (void)abstract;
+} /* kbd_callback */
+
+
 static int waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 {
     struct timeval timeout;
@@ -57,8 +80,6 @@ int main(int argc, char *argv[])
 {
     const char *hostname = "127.0.0.1";
     char commandline[MAXCMD];
-    const char *username    = "user";
-    const char *password    = "password";
     int port =22;
     unsigned long hostaddr;
     int sock;
@@ -67,17 +88,15 @@ int main(int argc, char *argv[])
     LIBSSH2_SESSION *session;
     LIBSSH2_CHANNEL *channel;
     int rc,i;
-    int exitcode;
+    int exitcode=0;
     char *exitsignal=(char *)"none";
     int bytecount = 0;
     size_t len;
     LIBSSH2_KNOWNHOSTS *nh;
     int type;
+    char *userauthlist;
+    int auth_pw = 0;
 
-#ifdef WIN32
-    WSADATA wsadata;
-    WSAStartup(MAKEWORD(2,0), &wsadata);
-#endif
     if (argc > 1)
         /* must be ip address only */
         hostname = argv[1];
@@ -94,10 +113,11 @@ int main(int argc, char *argv[])
     }
 
 memset(commandline,0,sizeof(commandline));
-for (i=5;i<argc;i++) {
-    strcat(commandline,argv[i]);
-    if (i+1!=argc) strcat(commandline," ");
-}
+
+    for (i=5;i<argc;i++) {
+	strcat(commandline,argv[i]);
+	if (i+1!=argc) strcat(commandline," ");
+    }
 
     rc = libssh2_init (0);
     if (rc != 0) {
@@ -122,99 +142,53 @@ for (i=5;i<argc;i++) {
         return 1;
     }
 
-    /* Create a session instance */
     session = libssh2_session_init();
-    if (!session)
+    if (libssh2_session_startup(session, sock)) {
+        fprintf(stderr, "Failure establishing SSH session\n");
         return 1;
+    }
 
-    /* tell libssh2 we want it all done non-blocking */
-    libssh2_session_set_blocking(session, 0);
 
-    /* ... start it up. This will trade welcome banners, exchange keys,
-     * and setup crypto, compression, and MAC layers
+/* At this point we havn't authenticated,
+     * The first thing to do is check the hostkey's fingerprint against our known hosts
+     * Your app may have it hard coded, may go to a file, may present it to the user, that's your call
      */
-    while ((rc = libssh2_session_handshake(session, sock)) ==
-           LIBSSH2_ERROR_EAGAIN);
-    if (rc) {
-        fprintf(stderr, "Failure establishing SSH session: %d\n", rc);
-        return -1;
+    fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
+//    printf("Fingerprint: ");
+//    for(i = 0; i < 20; i++) {
+//        printf("%02X ", (unsigned char)fingerprint[i]);
+//    }
+//    printf("\n");
+
+
+/* check what authentication methods are available */
+    userauthlist = libssh2_userauth_list(session, username, strlen(username));
+//    printf("Available authentication methods: %s\n", userauthlist);
+    if (strstr(userauthlist, "password") != NULL) {
+        auth_pw |= 1;
+    }
+    if (strstr(userauthlist, "keyboard-interactive") != NULL) {
+        auth_pw |= 2;
+    }
+    if (strstr(userauthlist, "publickey") != NULL) {
+        auth_pw |= 4;
     }
 
-    nh = libssh2_knownhost_init(session);
-    if(!nh) {
-        /* eeek, do cleanup here */
-        return 2;
-    }
-
-    /* read all hosts from here */
-    libssh2_knownhost_readfile(nh, "known_hosts",
-                               LIBSSH2_KNOWNHOST_FILE_OPENSSH);
-
-    /* store all known hosts to here */
-//    libssh2_knownhost_writefile(nh, "dumpfile",
-//                                LIBSSH2_KNOWNHOST_FILE_OPENSSH);
-
-    fingerprint = libssh2_session_hostkey(session, &len, &type);
-    if(fingerprint) {
-        struct libssh2_knownhost *host;
-#if LIBSSH2_VERSION_NUM >= 0x010206
-        /* introduced in 1.2.6 */
-        int check = libssh2_knownhost_checkp(nh, hostname, 22,
-                                             fingerprint, len,
-                                             LIBSSH2_KNOWNHOST_TYPE_PLAIN|
-                                             LIBSSH2_KNOWNHOST_KEYENC_RAW,
-                                             &host);
-#else
-        /* 1.2.5 or older */
-        int check = libssh2_knownhost_check(nh, hostname,
-                                            fingerprint, len,
-                                            LIBSSH2_KNOWNHOST_TYPE_PLAIN|
-                                            LIBSSH2_KNOWNHOST_KEYENC_RAW,
-                                            &host);
-#endif
-//        fprintf(stderr, "Host check: %d, key: %s\n", check,
-//                (check <= LIBSSH2_KNOWNHOST_CHECK_MISMATCH)?
-//                host->key:"<none>");
-
-        /*****
-         * At this point, we could verify that 'check' tells us the key is
-         * fine or bail out.
-         *****/
-    }
-    else {
-        /* eeek, do cleanup here */
-        return 3;
-    }
-    libssh2_knownhost_free(nh);
-
-    if ( strlen(password) != 0 ) {
+if (auth_pw & 1) {
         /* We could authenticate via password */
-        while ((rc = libssh2_userauth_password(session, username, password)) ==
-               LIBSSH2_ERROR_EAGAIN);
-        if (rc) {
-//            fprintf(stderr, "Authentication by password failed.\n");
-libssh2_session_disconnect(session,
-                               "Normal Shutdown, Thank you for playing");
-    libssh2_session_free(session);
-    close(sock);
-    libssh2_exit();
-    exit(2);
-}
-    }
-    else {
-        /* Or by public key */
-        while ((rc = libssh2_userauth_publickey_fromfile(session, username,
-                                                         "/home/user/"
-                                                         ".ssh/id_rsa.pub",
-                                                         "/home/user/"
-                                                         ".ssh/id_rsa",
-                                                         password)) ==
-               LIBSSH2_ERROR_EAGAIN);
-        if (rc) {
-            fprintf(stderr, "\tAuthentication by public key failed\n");
+        if (libssh2_userauth_password(session, username, password)) {
+    	    exitcode=1;
             goto shutdown;
-        }
-    }
+	    }
+} else if (auth_pw & 2) {
+        /* Or via keyboard-interactive */
+        if (libssh2_userauth_keyboard_interactive(session, username,
+                                                  &kbd_callback) ) {
+            exitcode=1;
+            goto shutdown;
+	    }
+}
+
 
 #if 0
     libssh2_trace(session, ~0 );
@@ -297,5 +271,5 @@ shutdown:
 
     libssh2_exit();
 
-    return 0;
+    return exitcode;
 }

@@ -69,15 +69,14 @@ fetch_files(char *urls, char *fout)
 	progress = 0;
 	total_bytes = 0;
 	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0) total_bytes += ustat.size;
-	else
-	return 1;
 
-	printf("Size: %d Mb\n",((int)total_bytes / 1024 / 1024));
 	fetchTimeout = 30;
 
 	fetch_out=fetchXGetURL(urls,&ustat,"");
+	if (fetch_out == NULL ) return 1;
 	file_out=fopen(fout,"w+");
 
+        printf("Size: %d Mb\n",((int)total_bytes / 1024 / 1024));
 	current_bytes = 0;
 		while ((chunk = fread(block, 1, sizeof(block), fetch_out))
 		    > 0) {

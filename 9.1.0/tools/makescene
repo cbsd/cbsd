@@ -1,0 +1,196 @@
+#!/bin/sh
+#v9.1.1
+globalconf="${workdir}/cbsd.conf";
+MYARG="scene mode"
+MYOPTARG="new"
+MYDESC="Make jail or packages from scenario file"
+ADDHELP="new = 0 for continue building, without cleanup\n\
+mode = prepare (build package), mkjail (make jail), all (prepare+mkjail)\n"
+
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${tools}
+init $*
+
+CCSIZE="4"
+CCACHEDIR="/root/.ccache"
+mroot="/root/bases"
+
+
+unmount_all()
+{
+    echo "Unmount all nullfs"
+    cd /
+    umount -f ${cdir}/var/db/ports > /dev/null 2>&1
+    umount -f ${cdir}${CCACHEDIR} > /dev/null 2>&1
+    umount -f ${cdir}/dev > /dev/null 2>&1
+    umount -f ${cdir}/usr/ports > /dev/null 2>&1
+}
+
+
+mkjail()
+{
+
+/usr/local/bin/cbsd jremove ${myenv}
+cbsd jcreate jconf=${etcdir}/scenes/${myenv}.jconf
+. ${jailrcconfdir}/rc.conf_${myenv}
+
+[ "${arch}" = "native" ] && arch=`uname -m`
+
+modconf ${jailrcconfdir}/rc.conf_${myenv} arch $arch
+
+mkdir -p ${path}
+mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
+cbsd mountfstab jroot=${path} fstab=${mount_fstab}
+mount -t devfs devfs ${path}/dev
+txzroot="${mroot}/repo/${myenv}"
+cp -Rp ${txzroot}/All ${path}/root/
+buildme
+umount ${path}/dev
+cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
+umount ${path}
+
+# system dir
+if [ -d "${etcdir}/scenes/${myenv}" ]; then
+    [ -d "${jailsysdir}/${myenv}" ] && rm -rf "${jailsysdir}/${myenv}"
+    cp -Rp ${etcdir}/scenes/${myenv} ${jailsysdir}/${myenv}
+fi
+
+### CLEANUP
+rm -f ${data}/root/make.sh
+#rm -rf ${data}/var/cache/pkg/All
+### end of CLEANUP
+
+cbsd jpkg_info jname=${myenv} update=1
+cbsd jexport jname=${myenv}
+
+DSTDIR="${mroot}/repo/dl.bsdstore.ru/img_${arch}_${ver}_${myenv}"
+mkdir -p ${DSTDIR} > /dev/null 2>&1
+mv $exportdir/${myenv}.img ${DSTDIR}/
+echo "Stored to ${DSTDIR}"
+}
+
+txz_step1()
+{
+txzroot="${mroot}/repo/${myenv}"
+[ -d "${txzroot}" ] && rm -rf "${txzroot}"
+mkdir -p ${txzroot}
+cd ${txzroot}
+cat >${cdir}/scene3.sh << EOF
+#!/bin/sh
+mkdir All
+pkg info | awk '{printf "pkg create -n "\$1"\n"}' > All/1.sh
+cd All
+/bin/sh 1.sh
+rm -f 1.sh
+EOF
+chmod +x ${cdir}/scene3.sh
+chroot ${cdir} /scene3.sh
+mv ${cdir}/All ${txzroot}
+#cd ${txzroot}
+#pkg repo ${txzroot}
+}
+
+prepare_base()
+{
+[ ! -d "${mroot}" ] && mkdir -p ${mroot}
+cd ${mroot}
+
+if [ "${new}" = "1" ]; then
+    echo "Populate new bases"
+    [ ! -d "${cdir}" ] || chflags -R noschg ${cdir} && rm -rf ${cdir}
+    [ -d "${mybase}" ] || err 1 "No such ${mybase}. please fetch bases"
+    cp -Rp ${mybase} ${cdir}
+fi
+
+[ ! -d "${cdir}/dev" ] && mkdir $cdir/dev
+mount -t devfs devfs ${cdir}/dev
+
+[ $? -ne 0 ] && err 1 "Unable to mount devfs - check for allow options for jail"
+
+DBPORTS="${mroot}/${myenv}-ports"
+[ ! -d "${DBPORTS}" ] && mkdir -p ${DBPORTS}
+
+mount -t nullfs ${DBPORTS} ${cdir}/var/db/ports
+
+[ $? -ne 0 ] && err 1 "Unable to mount nullfs - check for allow options for jail"
+
+[ ! -d "${cdir}${CCACHEDIR}" ] && mkdir ${cdir}${CCACHEDIR}
+[ ! -d "${CCACHEDIR}" ] && mkdir ${CCACHEDIR}
+
+mount -t nullfs ${CCACHEDIR} ${cdir}${CCACHEDIR}
+[ ! -d ${cdir}/usr/ports ] && mkdir ${cdir}/usr/ports
+mount -t nullfs /usr/ports ${cdir}/usr/ports
+find /usr/ports -type d -name work -exec rm -rf {} \;
+
+ETCFILES="csh.cshrc make.conf rc.conf resolv.conf"
+
+if [ "${new}" = "1" ]; then
+    for i in $ETCFILES; do
+	if [ -f "${etcdir}/scenes/${myenv}-${i}" ]; then
+		cp ${etcdir}/scenes/${myenv}-${i} ${cdir}/etc/${i}
+	else
+	    cp ${etcdir}/scenes/${i} ${cdir}/etc/
+	fi
+    done
+
+cat > ${cdir}/scene1.sh << EOF
+#!/bin/sh
+env NO_CCACHE=yes make -C /usr/ports/ports-mgmt/pkg install
+env NO_CCACHE=yes make -C /usr/ports/devel/distcc clean install
+env NO_CCACHE=yes make -C /usr/ports/devel/ccache clean install
+EOF
+chroot ${cdir} sh /scene1.sh
+chroot ${cdir} ccache -M ${CCSIZE}G
+fi
+}
+
+
+build_me()
+{
+cat >scene2.sh << EOF
+#!/bin/sh
+
+truncate -s0 /tmp/mypkg
+EOF
+
+for i in ${pkg}; do
+cat >>scene2.sh <<EOF
+pkg info -e ${i} || printf "\nmake -C /usr/ports/${i} config-recursive install\n" >> /tmp/mypkg
+EOF
+done
+
+mv scene2.sh ${cdir}/
+chroot ${cdir} service ldconfig restart
+chroot ${cdir} /bin/sh /scene2.sh
+chroot ${cdir} /bin/sh /tmp/mypkg
+}
+
+### MAIN
+
+[ -z "${new}" ] && new="1"
+
+. ${scene}
+
+[ "${arch}" = "native" ] && arch=`uname -m`
+
+#my chroot dir
+cdir="${mroot}/${myenv}"
+mybase="${basejaildir}/${basejailpref}_${arch}_${ver}"
+
+if [ "$mode" = "prepare" -o "${mode}" = "all" ]; then
+    cd /
+    unmount_all
+    prepare_base
+    build_me
+    txz_step1
+    unmount_all
+fi
+
+if [ "${mode}" = "mkjail" -o "${mode}" = "all" ]; then
+    mkjail
+fi
+

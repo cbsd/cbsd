@@ -18,7 +18,7 @@ WRKSRC=		${WRKDIR}/cbsd-9.1.0/9.1.0
 
 .include <bsd.port.pre.mk>
 
-.if ${OSVERSION} < 901500
+.if ${OSVERSION} < 901000
 BROKEN=         does not work on FreeBSD < 9.1
 .endif
 
