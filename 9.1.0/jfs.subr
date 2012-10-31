@@ -4,83 +4,47 @@ rmempty()
 ORIG=$1
 if [ -d "${ORIG}" -a -n "${ORIG}" ]; then
     SZ=`ls -la ${ORIG} | awk '/^total/{print $2}'`
-    [ $SZ -lt 2 ] && rm -d ${ORIG}
+    [ $SZ -le 3 ] && rm -d ${ORIG}
 fi
 }
 
 
-
-# migratedata from to mode
-# mode = cp, mv, rsync, rsyncforce (no warning for existance TO dir)
-# #migratedata /usr/jails/jails-data/jail1-data /mn rsync
-migratedata()
+# movedata $1-from $2-to
+mvdata()
 {
 ORIG=$1
 TO=$2
-MODE=$3
-FORCE=0
 
-case $MODE in
-    "cp") GO="/bin/cp -Rp ";;
-    "rsync") GO="/usr/local/bin/rsync -avz --delete " ;;
-    "rsyncforce") GO="/usr/local/bin/rsync -avz --delete "; FORCE=1 ;;
-    "mv") GO="/bin/mv";;
-    *) err "Unsupported mode";;
-esac
+[ -z "${ORIG}" -o -z "${TO}" ] && err 1 "mvdata: empty sources of destination"
+[ -d "${TO}" ] && err 1 "${TO} directory exist. Please remove them first"
 
-[ -d "${TO}" -a $FORCE -eq 0 ] && err 1 "${TO} directory exist. Please remove them"
+if [ "${zfsfeat}" = "0" ]; then
+    mv ${ORIG} ${TO}
+    [ -d "${ORIG}" ] && removedata ${ORIG}
+    return 0
+fi
 
-. ${zfstool}
-nomnt ${ORIG}
+. $zfstool
+zfsmnt "${ORIG}"
 _res=$?
-if [ -n "${ZPOOL}" ]; then
-    ORIGPOOL=$ZPOOL
-    ORIGZPART1=$ZPART1
-    ORIGZPART2=$ZPART2
-fi
-
 case $_res in
-0)
-if [ $zfsfeat -eq 1 ]; then
-	echo "Switch from directory to ZFS pool"
-	nomnt ${TO}
-	case $? in
-	0)  ZPOOL=`zfs list /usr/jails |tail +2 |awk '{printf $1}'`
-	    zfs create -o atime=off -o mountpoint=${TO} "${ZPOOL}/${jname}"
-	   ${GO} ${ORIG}/* ${TO}/
-	   ;;
-	1) ${GO} ${ORIG}/* ${TO}/
-	   ;;
-	2) zfs mount ${TO}
-	   ${GO} ${ORIG}/* ${TO}/
-	   ;;
-	esac
-        rmempty ${FROM}
-else
-	${GO} ${ORIG} ${TO}
-fi
-;;
-[12])
-if [ $zfsfeat -eq 1 ]; then
-	nomnt ${TO}
-	    zfs unmount ${ORIGPOOL}
-	    zfs set mountpoint=${TO} ${ORIGPOOL}
-	    [ -n "${ORIGZPART2}" -a "${jname}" != "${ORIGZPART2}" ] && {
-	    zfs rename ${ORIGPOOL} ${ORIGZPART1}/${jname}
-	    ORIGPOOL=${ORIGZPART1}/${jname}
-	    }
-	    zfs mount ${ORIGPOOL}
-	else
-	    echo "Switch from ZFS Pool to UFS directory"
-	    mkdir -p ${TO}
-	    mv ${ORIG}/* ${TO}/
-fi
-rmempty ${ORIG}
-;;
+    0) 	echo "Switch to ZFS pool"
+	zfsmnt ${workdir}
+	zfs create -o atime=off -o mountpoint=${TO} "${ZPOOL}${TO}"
+	mv ${ORIG}/* ${TO}/
+	;;
+    [12])
+	zfs umount -f ${ORIG} > /dev/null 2>&1
+	zfs set mountpoint=${TO} ${ZPOOL}
+	zfs mount ${ZPOOL}
+	;;
 esac
 
-}
+return 0
+[ -d "${ORIG}" ] && chflags -R noschg ${ORIG} && rm -rf ${ORIG}
 
+return 0
+}
 
 
 # clone data
@@ -118,21 +82,25 @@ ${GO} ${ORIG}/* ${TO}/
 }
 
 # remove data from disk
+# Warning: $jname param must be present
 removedata()
 {
 DATA=$1
 
-[ -d "${DATA}" -a -n "${DATA}" ] || return 1
+[ -d "${DATA}" ] || return 1
 
-. ${zfstool}
-nomnt ${DATA}
-case $? in
-    0)	chflags -R noschg ${DATA} && rm -rf ${DATA} ;;
-    [12]) zfs unmount -f ${ZPOOL}
-	zfs destroy -r ${ZPOOL} ;;
-    *) err 1 "Unknown errcode from nomnt" ;;
-esac
-rmempty ${DATA}
+if [ $zfsfeat -eq 1 ]; then
+    . $zfstool
+    zfsmnt ${DATA}
+    case $? in
+        1) zfs unmount -f "${DATA}"; zfs destroy -r "${ZPOOL}"; rm -rf "${DATA}" ;;
+        2) zfs destroy -r "${ZPOOL}"; rm -rf "${DATA}" ;;
+    esac
+else
+    chflags -R noschg ${DATA}
+fi
+
+rm -rf ${DATA}
 }
 
 
@@ -142,13 +110,12 @@ unmountdata()
 {
 DATA=$1
 
-[ -d "${DATA}" -a -n "${DATA}" ] || return 1
+[ -n "${DATA}" -a -d "${DATA}" ] || return 1
 
 . $zfstool
-nomnt ${DATA}
+zfsmnt ${DATA}
 if [ $? -eq 1 ]; then
-	[ -n "$zname" ] && zfs unmount -f $DATA
+	zfs unmount -f $DATA
 	rmempty ${DATA}
 fi
 }
-

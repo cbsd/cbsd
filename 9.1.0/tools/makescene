@@ -26,6 +26,7 @@ unmount_all()
     cd /
     umount -f ${cdir}/var/db/ports > /dev/null 2>&1
     umount -f ${cdir}${CCACHEDIR} > /dev/null 2>&1
+    umount -f ${cdir}/repo > /dev/null 2>&1
     umount -f ${cdir}/dev > /dev/null 2>&1
     umount -f ${cdir}/usr/ports > /dev/null 2>&1
 }
@@ -46,10 +47,12 @@ mkdir -p ${path}
 mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
 cbsd mountfstab jroot=${path} fstab=${mount_fstab}
 mount -t devfs devfs ${path}/dev
-txzroot="${mroot}/repo/${myenv}"
-cp -Rp ${txzroot}/All ${path}/root/
+[ ! -d "$path/repo" ] && mkdir -p "$path/repo"
+mount -t nullfs ${mroot}/repo ${path}/repo
 buildme
 umount ${path}/dev
+umount ${path}/repo
+rm -rf ${path}/repo
 cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
 umount ${path}
 
@@ -61,6 +64,7 @@ fi
 
 ### CLEANUP
 rm -f ${data}/root/make.sh
+rm -rf ${data}/root/All
 #rm -rf ${data}/var/cache/pkg/All
 ### end of CLEANUP
 
@@ -71,27 +75,6 @@ DSTDIR="${mroot}/repo/dl.bsdstore.ru/img_${arch}_${ver}_${myenv}"
 mkdir -p ${DSTDIR} > /dev/null 2>&1
 mv $exportdir/${myenv}.img ${DSTDIR}/
 echo "Stored to ${DSTDIR}"
-}
-
-txz_step1()
-{
-txzroot="${mroot}/repo/${myenv}"
-[ -d "${txzroot}" ] && rm -rf "${txzroot}"
-mkdir -p ${txzroot}
-cd ${txzroot}
-cat >${cdir}/scene3.sh << EOF
-#!/bin/sh
-mkdir All
-pkg info | awk '{printf "pkg create -n "\$1"\n"}' > All/1.sh
-cd All
-/bin/sh 1.sh
-rm -f 1.sh
-EOF
-chmod +x ${cdir}/scene3.sh
-chroot ${cdir} /scene3.sh
-mv ${cdir}/All ${txzroot}
-#cd ${txzroot}
-#pkg repo ${txzroot}
 }
 
 prepare_base()
@@ -108,8 +91,10 @@ fi
 
 [ ! -d "${cdir}/dev" ] && mkdir $cdir/dev
 mount -t devfs devfs ${cdir}/dev
-
 [ $? -ne 0 ] && err 1 "Unable to mount devfs - check for allow options for jail"
+
+[ ! -d "${cdir}/repo" ] && mkdir $cdir/repo
+[ -d "${mroot}/repo" ] && mount -t nullfs ${mroot}/repo ${cdir}/repo
 
 DBPORTS="${mroot}/${myenv}-ports"
 [ ! -d "${DBPORTS}" ] && mkdir -p ${DBPORTS}
@@ -137,11 +122,32 @@ if [ "${new}" = "1" ]; then
 	fi
     done
 
+STPORT="devel/distcc devel/ccache"
+truncate -s0 ${cdir}/scene1.sh
 cat > ${cdir}/scene1.sh << EOF
 #!/bin/sh
-env NO_CCACHE=yes make -C /usr/ports/ports-mgmt/pkg install
-env NO_CCACHE=yes make -C /usr/ports/devel/distcc clean install
-env NO_CCACHE=yes make -C /usr/ports/devel/ccache clean install
+env ASSUME_ALWAYS_YES=yes pkg
+[ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
+EOF
+
+for i in ${STPORT}; do
+MYPORT="/usr/ports/${i}"
+PORTNAME=`make -C ${MYPORT} package-name`
+TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
+
+cat >> ${cdir}/scene1.sh << EOF
+if [ -f "${TXZPATH}" ]; then
+    cd /repo/${repoversion}
+    env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
+else
+    env NO_CCACHE=yes make -C /usr/ports/${i} install
+    env ASSUME_ALWAYS_YES=yes pkg create -a -o /repo/${repoversion}
+fi
+
+EOF
+done
+cat >> ${cdir}/scene1.sh << EOF
+env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
 EOF
 chroot ${cdir} sh /scene1.sh
 chroot ${cdir} ccache -M ${CCSIZE}G
@@ -151,22 +157,32 @@ fi
 
 build_me()
 {
-cat >scene2.sh << EOF
+cat >${cdir}/scene2.sh << EOF
 #!/bin/sh
-
 truncate -s0 /tmp/mypkg
+[ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
 EOF
 
 for i in ${pkg}; do
-cat >>scene2.sh <<EOF
-pkg info -e ${i} || printf "\nmake -C /usr/ports/${i} config-recursive install\n" >> /tmp/mypkg
+MYPORT="/usr/ports/${i}"
+PORTNAME=`make -C ${MYPORT} package-name`
+TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
+
+cat >> ${cdir}/scene2.sh << EOF
+env ASSUME_ALWAYS_YES=yes pkg
+if  [ -f "${TXZPATH}" ]; then
+    cd /repo/${repoversion}
+    env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
+else
+    make -C /usr/ports/${i} config-recursive install
+    cd /repo/${repoversion}/
+    env ASSUME_ALWAYS_YES=yes pkg create -a -o /repo/${repoversion}
+fi
 EOF
 done
 
-mv scene2.sh ${cdir}/
 chroot ${cdir} service ldconfig restart
 chroot ${cdir} /bin/sh /scene2.sh
-chroot ${cdir} /bin/sh /tmp/mypkg
 }
 
 ### MAIN
@@ -186,7 +202,6 @@ if [ "$mode" = "prepare" -o "${mode}" = "all" ]; then
     unmount_all
     prepare_base
     build_me
-    txz_step1
     unmount_all
 fi
 
