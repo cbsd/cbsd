@@ -22,11 +22,11 @@ int usage(char *myname)
 
 long int getoffset(char *offsetfile)
 {
-long int offset=0;
+unsigned long long offset=0;
 FILE *fp,*fo;
 char tmp[B_SIZE+sizeof(long)];
 char tmp2[B_SIZE+sizeof(long)];
-int i=0,n=0;
+int i=0,n=0,tmplen=0;
 
 fp = fopen(offsetfile, "r");
 if(fp) {
@@ -34,10 +34,13 @@ memset(tmp,0,sizeof(tmp));
 fgets(tmp,B_SIZE+sizeof(long),fp);
 fclose(fp);
 
-if(strlen(tmp)==0) return 0;
+tmplen=strlen(tmp);
+if(tmplen==0) return 0;
 
-for (i=0;i<strlen(tmp),n==0;i++)
+for (i=0;i<tmplen;i++)
 if (tmp[i]==':') { tmp[i]=' '; n=i; break;}
+
+tmplen=0;
 
 if (n>0) {
 memset(tmp2,0,sizeof(tmp2));
@@ -61,7 +64,7 @@ else offset=0;
 return offset;
 }
 
-putoffset(char *offsetfile, char *str)
+int putoffset(char *offsetfile, char *str)
 {
 FILE *fp;
 fp = fopen(offsetfile, "w");
@@ -78,7 +81,7 @@ char *show_myportion(long int offset)
 FILE *fp;
 char line[B_SIZE];
 char *lst;
-long int ipos;
+unsigned long long ipos;
 
 fp=fopen(findex,"r");
 if (fp==NULL) {
@@ -97,7 +100,7 @@ ipos = ftell(fp)-strlen(line);
 fclose(fp);
 
 lst=malloc(sizeof(line)+sizeof(ipos)+5);
-memset(lst,0,sizeof(lst));
+memset(lst,0,strlen(lst));
 sprintf(lst,"%llu:%s",ipos,line);
 
 return lst;
@@ -118,13 +121,14 @@ i=getoffset(offsetfile);
 lst=show_myportion(i);
 if(lst) putoffset(offsetfile,lst);
 free(offsetfile);
+return 0;
 }
 
 
 int
 main(int argc, char **argv)
 {
-int i;
+int i=0,c=0;
 myname = argv[0];
 
 findex=argv[argc-1];
@@ -132,7 +136,6 @@ facil=basename(findex);
 
 while (1)
 {
-        int c;
         c = getopt(argc, argv, "d:f:");
         /* Detect the end of the options. */
         if (c == -1)
@@ -142,9 +145,6 @@ while (1)
 	  case 'd':
 	    offsetdir=optarg;
 	    /* if user didn't put trailing / do it for them */
-//	    if(offsetdir[strlen(offsetdir)] != '/') {
-//	        strcat(offsetdir, "/");
-//	    }
 	      break;
 	  case 'f':
 	    facil=optarg;
@@ -156,5 +156,5 @@ while (1)
 if (findex==myname) usage(myname);
 
 get_myportion();
-
+return 0;
 }

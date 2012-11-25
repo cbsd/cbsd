@@ -91,7 +91,7 @@ fetch_files(char *urls, char *fout)
 				progress = (current_bytes*100)/total_bytes; 
 			}
 
-	if ((progress%10 == 0)&&(lprg!=progress)) { lprg=progress; printf("Progress: %d percent \n",progress); }
+	if ((progress%10 == 0)&&(lprg!=progress)) { lprg=progress; printf("Progress: %d%% \n",progress); }
 
 			}
 

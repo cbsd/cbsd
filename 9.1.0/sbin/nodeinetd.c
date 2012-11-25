@@ -26,7 +26,7 @@ main( int argc, char* argv[] )
     char** child_argv;
     int listen_fd, conn_fd;
     struct sockaddr_in sin;
-    int sz;
+    unsigned int sz;
     fd_set lfdset;
     int maxfd;
 

@@ -13,6 +13,7 @@ mode = prepare (build package), mkjail (make jail), all (prepare+mkjail)\n"
 . ${subr}
 . ${inventory}
 . ${tools}
+. ${system}
 init $*
 
 CCSIZE="4"
@@ -24,8 +25,8 @@ unmount_all()
 {
     echo "Unmount all nullfs"
     cd /
-    umount -f ${cdir}/var/db/ports > /dev/null 2>&1
     umount -f ${cdir}${CCACHEDIR} > /dev/null 2>&1
+    umount -f ${cdir}/var/db/ports > /dev/null 2>&1
     umount -f ${cdir}/repo > /dev/null 2>&1
     umount -f ${cdir}/dev > /dev/null 2>&1
     umount -f ${cdir}/usr/ports > /dev/null 2>&1
@@ -46,20 +47,39 @@ modconf ${jailrcconfdir}/rc.conf_${myenv} arch $arch
 mkdir -p ${path}
 mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
 cbsd mountfstab jroot=${path} fstab=${mount_fstab}
+
 mount -t devfs devfs ${path}/dev
 [ ! -d "$path/repo" ] && mkdir -p "$path/repo"
 mount -t nullfs ${mroot}/repo ${path}/repo
+
+#Overwrite skel files
+SKELDIR="${etcdir}/scenes/${myenv}/skel"
+
+if [ -d "${SKELDIR}" ]; then
+    cp -rPf ${SKELDIR}/* ${path}/
+fi
+
 buildme
+rm -rf ${path}/var/db/ports
+cp -Rp ${mroot}/repo/${repoversion}/ports ${path}/var/db
+rm -rf ${path}/var/cache/pkg
 umount ${path}/dev
 umount ${path}/repo
 rm -rf ${path}/repo
 cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
+cbsd jcleanup jname=${myenv}
+unmountbase
 umount ${path}
 
 # system dir
 if [ -d "${etcdir}/scenes/${myenv}" ]; then
     [ -d "${jailsysdir}/${myenv}" ] && rm -rf "${jailsysdir}/${myenv}"
     cp -Rp ${etcdir}/scenes/${myenv} ${jailsysdir}/${myenv}
+fi
+
+if [ -f "${etcdir}/scenes/${myenv}/${myenv}-descr" ]; then
+    [ ! -d "${jailsysdir}/${myenv}" ] && mkdir ${jailsysdir}/${myenv}
+    cp ${etcdir}/scenes/${myenv}/${myenv}-descr ${jailsysdir}/${myenv}/
 fi
 
 ### CLEANUP
@@ -96,7 +116,7 @@ mount -t devfs devfs ${cdir}/dev
 [ ! -d "${cdir}/repo" ] && mkdir $cdir/repo
 [ -d "${mroot}/repo" ] && mount -t nullfs ${mroot}/repo ${cdir}/repo
 
-DBPORTS="${mroot}/${myenv}-ports"
+DBPORTS="${mroot}/repo/${repoversion}/ports"
 [ ! -d "${DBPORTS}" ] && mkdir -p ${DBPORTS}
 
 mount -t nullfs ${DBPORTS} ${cdir}/var/db/ports
@@ -111,46 +131,48 @@ mount -t nullfs ${CCACHEDIR} ${cdir}${CCACHEDIR}
 mount -t nullfs /usr/ports ${cdir}/usr/ports
 find /usr/ports -type d -name work -exec rm -rf {} \;
 
-ETCFILES="csh.cshrc make.conf rc.conf resolv.conf"
+ETCFILES="csh.cshrc make.conf resolv.conf"
 
 if [ "${new}" = "1" ]; then
     for i in $ETCFILES; do
-	if [ -f "${etcdir}/scenes/${myenv}-${i}" ]; then
+	    if [ -f "${etcdir}/scenes/${myenv}-${i}" ]; then
 		cp ${etcdir}/scenes/${myenv}-${i} ${cdir}/etc/${i}
-	else
-	    cp ${etcdir}/scenes/${i} ${cdir}/etc/
-	fi
+	    else
+		cp ${etcdir}/scenes/${i} ${cdir}/etc/
+	    fi
     done
 
-STPORT="devel/distcc devel/ccache"
-truncate -s0 ${cdir}/scene1.sh
-cat > ${cdir}/scene1.sh << EOF
+    STPORT="devel/distcc devel/ccache"
+    truncate -s0 ${cdir}/scene1.sh
+
+    cat > ${cdir}/scene1.sh << EOF
 #!/bin/sh
 env ASSUME_ALWAYS_YES=yes pkg
 [ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
 EOF
 
-for i in ${STPORT}; do
-MYPORT="/usr/ports/${i}"
-PORTNAME=`make -C ${MYPORT} package-name`
-TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
+    for i in ${STPORT}; do
+	MYPORT="/usr/ports/${i}"
+	PORTNAME=`make -C ${MYPORT} package-name`
+	TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
 
-cat >> ${cdir}/scene1.sh << EOF
+    cat >> ${cdir}/scene1.sh << EOF
 if [ -f "${TXZPATH}" ]; then
     cd /repo/${repoversion}
     env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
 else
+    echo "No such $TXZPATH"
     env NO_CCACHE=yes make -C /usr/ports/${i} install
-    env ASSUME_ALWAYS_YES=yes pkg create -a -o /repo/${repoversion}
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
 fi
 
 EOF
-done
-cat >> ${cdir}/scene1.sh << EOF
+    done
+    cat >> ${cdir}/scene1.sh << EOF
 env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
 EOF
-chroot ${cdir} sh /scene1.sh
-chroot ${cdir} ccache -M ${CCSIZE}G
+    chroot ${cdir} sh /scene1.sh
+    chroot ${cdir} ccache -M ${CCSIZE}G
 fi
 }
 
@@ -159,7 +181,6 @@ build_me()
 {
 cat >${cdir}/scene2.sh << EOF
 #!/bin/sh
-truncate -s0 /tmp/mypkg
 [ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
 EOF
 
@@ -169,14 +190,20 @@ PORTNAME=`make -C ${MYPORT} package-name`
 TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
 
 cat >> ${cdir}/scene2.sh << EOF
-env ASSUME_ALWAYS_YES=yes pkg
 if  [ -f "${TXZPATH}" ]; then
+    echo "Get from repository"
     cd /repo/${repoversion}
     env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
 else
+    echo "No such ${TXZPATH}. Building"
     make -C /usr/ports/${i} config-recursive install
+    [ $? -ne 0 ] && {
+	echo "Got problem while install ${i}"
+	read p
+    }
+    echo "Make pkg for ${TXZPATH}"
     cd /repo/${repoversion}/
-    env ASSUME_ALWAYS_YES=yes pkg create -a -o /repo/${repoversion}
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
 fi
 EOF
 done

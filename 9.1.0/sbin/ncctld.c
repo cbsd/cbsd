@@ -5,6 +5,10 @@
 #include <ctype.h>
 #include <netinet/in.h>
 
+#include <sys/types.h>
+#include <arpa/inet.h>
+
+
 #include <math.h>
 
 #include <sys/socket.h>         /* for PF_LINK */
@@ -44,6 +48,7 @@ int squeezechar(char *l, int ch);
 int check_external_cmd(char *,int );
 int mysystem(char *path);
 char *rmws(char *);
+int argum(char *);
 
 //arguments
 struct arg_data *arg_list = NULL;
@@ -84,7 +89,8 @@ int main(int argc, char *argv[])
 {
 char argum[1024];
 char *args;
-int i=0,shutdown=0;
+int shutdown=0;
+unsigned int i=0;
 struct sockaddr_in peer;
 char remotehost[20];
 FILE *fp;
@@ -145,7 +151,7 @@ int i=0;
 squeezechar(argument,' ');
 
 if (!*argument)
-return;
+return 0;
 
 flush_arg_struct();
 //flush_subarg_struct(); //must be flushed when user come away from interactive mode
@@ -165,13 +171,17 @@ st=a->arg;
     for (length = strlen(st), cmd = 0; *cmd_info[cmd].command != '\n'; cmd++)
     {
         if (!strncmp(cmd_info[cmd].command, st, length))
-        if (argnum==cmd_info[cmd].subcmd) {
-          if ((mode!=cmd_info[cmd].minimum_level)&&(cmd_info[cmd].minimum_level!=ANY)) {
-          printf("Not allowed in current state\r\n");return 1;
+         {
+          if (argnum==cmd_info[cmd].subcmd) {
+             if ((mode!=cmd_info[cmd].minimum_level)&&(cmd_info[cmd].minimum_level!=ANY)) {
+             printf("Not allowed in current state\r\n");return 1;
+             }
           }
           {((*cmd_info[cmd].command_pointer) (argument,1)); return 0;}
         }
-    else {printf("510 Need %d arguments for %s command\r\n",cmd_info[cmd].subcmd,cmd_info[cmd].command);return 1;}
+    else {
+         printf("510 Need %d arguments for %s command\r\n",cmd_info[cmd].subcmd,cmd_info[cmd].command);return 1;
+         }
     }
 
 
@@ -180,6 +190,8 @@ cmd=check_external_cmd(st,argnum);
 if (cmd==1) printf("Sorry [%s]- WTF?\r\n",st);
 else
 if (cmd==2) printf("Not compatible version, please update\r\n");
+
+return 0;
 }
 
 //return 0 if ok
@@ -442,4 +454,6 @@ char cmd[5048];
   }
   //printf("Execution [%s]\n",cmd);
   system(cmd);
+
+return 0;
 }

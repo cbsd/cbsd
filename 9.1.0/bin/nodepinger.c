@@ -97,6 +97,10 @@ static unsigned ke_vec_used = 0;
 static char const protoname[] = "tcp";
 static char const servname[] = "echo";
 
+int tolog(char *);
+int make_node_list(char *, int);
+int nodeping();
+int updatenodecenter(char *,int);
 
 void handler(int signo)
 {
@@ -152,6 +156,7 @@ for (newnode = nodelist; newnode; newnode = newnode -> next)
         return 0;
     }
     }
+return 0;
 }
 
 static void
@@ -442,18 +447,24 @@ main (register int const argc, register char *const argv[])
   char *mpath;
 
 (void)chdir("/");
-fd = _open(_PATH_DEVNULL, O_RDWR, 0);
-(void)_dup2(fd, STDIN_FILENO);
-(void)_dup2(fd, STDOUT_FILENO);
-(void)_dup2(fd, STDERR_FILENO);
-//if (fd > 2) 
-(void)_close(fd);
+//fd = _open(_PATH_DEVNULL, O_RDWR, 0);
+fd = open(_PATH_DEVNULL, O_RDWR, 0);
+//(void)_dup2(fd, STDIN_FILENO);
+//(void)_dup2(fd, STDOUT_FILENO);
+//(void)_dup2(fd, STDERR_FILENO);
+//(void)_close(fd);
+
+(void)dup2(fd, STDIN_FILENO);
+(void)dup2(fd, STDOUT_FILENO);
+(void)dup2(fd, STDERR_FILENO);
+(void)close(fd);
 
 /* A SIGHUP may be thrown when the parent exits below. */
 sigemptyset(&sa.sa_mask);
 sa.sa_handler = SIG_IGN;
 sa.sa_flags = 0;
-osa_ok = _sigaction(SIGHUP, &sa, &osa);
+//osa_ok = _sigaction(SIGHUP, &sa, &osa);
+osa_ok = sigaction(SIGHUP, &sa, &osa);
 
 signal(SIGCHLD,SIG_IGN);
 
@@ -551,7 +562,8 @@ int i,n=0;
 struct nodedata *hs;
 char tmp[MAXNODELEN];
 
-memset(ndlist,0,sizeof(ndlist));
+//memset(ndlist,0,sizeof(ndlist));
+memset(ndlist,0,strlen(ndlist));
 
 for (hs = nodelist; hs; hs = hs->next)
 {
@@ -592,7 +604,8 @@ char *cp;
 sigemptyset(&sa.sa_mask);
 sa.sa_handler = SIG_IGN;
 sa.sa_flags = 0;
-osa_ok = _sigaction(SIGHUP, &sa, &osa);
+//osa_ok = _sigaction(SIGHUP, &sa, &osa);
+osa_ok = sigaction(SIGHUP, &sa, &osa);
 
 signal(SIGCHLD,SIG_IGN);
  
@@ -620,7 +633,7 @@ if (cp!=NULL) {
      lockpathstat=malloc(MAXNODELEN+strlen(lock_path)+strlen(KEY_EXT)+6); // +6 = slash + status .o{n,off}
 } 
 
-memset(lockpathstat,0,sizeof(lockpathstat));
+memset(lockpathstat,0,strlen(lockpathstat));
 sprintf(lockpathstat,"%s/%s.off",lock_path,node->node);
 	if (stat(lockpathstat,&st)==0) 
 		{  //lock exist.
@@ -642,7 +655,7 @@ sprintf(lockpathstat,"%s/%s.off",lock_path,node->node);
 
 //second of all - lock
 lock_file=malloc(strlen(lock_path)+strlen(node->node)+6); // +6 = slash + .lck
-memset(lock_file,0,sizeof(lock_file));
+memset(lock_file,0,strlen(lock_file));
 sprintf(lock_file,"%s/%s.lck",lock_path,node->node);
 	if (stat(lock_file,&st)!=0) { //makelock
 		fp=fopen(lock_file,"w");
@@ -666,12 +679,12 @@ sprintf(lock_file,"%s/%s.lck",lock_path,node->node);
 
 if (cp) {
 keypath=malloc(strlen(cp)+strlen(RSSH_DIR)+strlen(node->node)+strlen(KEY_EXT)+2); // +2 = slash
-memset(keypath,0,sizeof(keypath));
+memset(keypath,0,strlen(keypath));
 sprintf(keypath,"%s%s/%s%s",cp,RSSH_DIR,node->node,KEY_EXT);
 }
 else {
 keypath=malloc(strlen(RSSH_DIR)+strlen(node->node)+strlen(KEY_EXT)+2); // +2 = slash
-memset(keypath,0,sizeof(keypath));
+memset(keypath,0,strlen(keypath));
 sprintf(keypath,"%s/%s%s",RSSH_DIR,node->node,KEY_EXT);
 }
 
@@ -741,10 +754,11 @@ fputs(buff,fp);
 fclose(fp);
 
 if (cp) free(error_log);
+return 0;
 }
 
 
-updatenodecenter(char *node,int result)
+int updatenodecenter(char *node,int result)
 {
 char *cp;
 char *buff;
@@ -760,6 +774,7 @@ if ((cp = getenv("workdir")) == NULL) {
 
 system(buff);
 free(buff);
+return 0;
 }
 
 

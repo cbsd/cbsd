@@ -96,6 +96,12 @@ static unsigned ke_vec_used = 0;
 static char const protoname[] = "tcp";
 static char const servname[] = "echo";
 
+int save_basedb();
+int tolog(char *);
+int base_get(char *, char *, int);
+int make_node_list(char *, int);
+int load_basedb();
+
 
 void handler(int signo)
 {
@@ -174,6 +180,7 @@ for (newnode = nodelist; newnode; newnode = newnode -> next)
         return 0;
     }
     }
+return 0;
 }
 
 static void
@@ -479,18 +486,18 @@ main (register int const argc, register char *const argv[])
   char *mpath;
 
 (void)chdir("/");
-fd = _open(_PATH_DEVNULL, O_RDWR, 0);
-(void)_dup2(fd, STDIN_FILENO);
-(void)_dup2(fd, STDOUT_FILENO);
-(void)_dup2(fd, STDERR_FILENO);
+fd = open(_PATH_DEVNULL, O_RDWR, 0);
+(void)dup2(fd, STDIN_FILENO);
+(void)dup2(fd, STDOUT_FILENO);
+(void)dup2(fd, STDERR_FILENO);
 //if (fd > 2) 
-(void)_close(fd);
+(void)close(fd);
 
 /* A SIGHUP may be thrown when the parent exits below. */
 sigemptyset(&sa.sa_mask);
 sa.sa_handler = SIG_IGN;
 sa.sa_flags = 0;
-osa_ok = _sigaction(SIGHUP, &sa, &osa);
+osa_ok = sigaction(SIGHUP, &sa, &osa);
 
 //pid_t p1=getpid();
 //signal(SIGCHLD, handler);
@@ -603,7 +610,7 @@ int i,n=0;
 struct nodedata *hs;
 char tmp[MAXNODELEN+MAXVALUELEN+2];
 
-memset(ndlist,0,sizeof(ndlist));
+memset(ndlist,0,strlen(ndlist));
 
 for (hs = nodelist; hs; hs = hs->next)
 {
@@ -621,7 +628,7 @@ int i,n=0;
 struct nodedata *hs;
 char tmp[MAXNODELEN+MAXVALUELEN+2];
 
-memset(ndlist,0,sizeof(ndlist));
+memset(ndlist,0,strlen(ndlist));
 
 for (hs = nodelist; hs; hs = hs->next)
 {
@@ -655,6 +662,7 @@ fputs(buff,fp);
 fclose(fp);
       
 if (cp) free(error_log);
+return 0;
 }
 
 
@@ -687,6 +695,7 @@ for (hs = nodelist; hs; hs = hs->next)
 fprintf(fp,"%s %s\n",hs->node,hs->value);
 fclose(fp);
 if (cp) free(dbfile);
+return 0;
 }
 
 int load_basedb()
@@ -733,6 +742,7 @@ base_add(node,value,0);
 }
 fclose(fp);
 free(dbfile);
+return 0;
 }
 
 
