@@ -1,0 +1,154 @@
+#!/bin/sh
+#v9.0.0
+globalconf="${workdir}/cbsd.conf";
+MYOPTARG="verbose"
+MYDESC="X Configuration tools"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+# cut "Files" section for inserting own list of dirs
+# $1 - source xorg.conf
+# $2 - dst xorg.conf
+patch_fonts()
+{
+[ -f "$1" ] || return 1
+PARTCONF="$jailsysdir/$jname/conf/xorg.conf-patch"
+[ -f "${PARTCONF}" ] || {
+    echo "No such patch ${PARTCONF}"
+    read p
+    return 1
+}
+cp ${PARTCONF} $2
+echo >> $2
+cat $1 | awk 'begin {flag = 0 }; $0 ~ /^Section \"Files\"/ {flag =1 }; $0 ~ /EndSection$/ { if (flag==1) {flag=0;next;} else flag =0; }; {if (flag == 0) {print $0}} ' >> $2
+}
+
+# cut "Serverflags"" section for inserting own
+# $1 - source xorg.conf
+# $2 - dst xorg.conf
+patch_flags()
+{
+[ -f "$1" ] || return 1
+PARTCONF="$jailsysdir/$jname/conf/xorg.conf-patch2"
+[ -f "${PARTCONF}" ] || {
+    echo "No such patch ${PARTCONF}"
+    read p
+    return 1
+}
+cp ${PARTCONF} $2
+echo >> $2
+cat $1 | awk 'begin {flag = 0 }; $0 ~ /^Section \"ServerFlags\"/ {flag =1 }; $0 ~ /EndSection$/ { if (flag==1) {flag=0;next;} else flag =0; }; {if (flag == 0) {print $0}} ' >> $2
+}
+
+
+new_conf()
+{
+. ${system}
+local amount=0
+
+# Mount fstab if not
+[ $baserw -eq 1 ] && path=$data
+
+[ ! -d "${path}" ] && mkdir -p ${path}
+
+if  is_mounted "${path}"; then
+    amount=1
+fi
+
+if [ $amount -eq 0 ]; then
+    mountbase
+    mountfstab
+    mount -t devfs devfs ${path}/dev
+fi
+
+TMPLOG=`mktemp ${ftmpdir}/xconf.XXX`
+A=`chroot ${path} X -configure >${TMPLOG} 2>&1; echo $?`
+
+if [ "${A}" != "0" ]; then
+    echo "Error: `cat ${TMPLOG}`"
+    echo "Please any key"
+    read p
+    [ $amount -eq 0 ] && {
+	umount ${path}/dev
+	cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
+	unmountbase
+    }
+    return 1;
+fi
+
+if [ -f "${path}/etc/X11/xorg.conf" -a -f "${path}/root/xorg.conf.new" ]; then
+    mv ${path}/etc/X11/xorg.conf ${path}/etc/X11/xorg.conf-bak
+fi
+
+
+if [ -f "${path}/root/xorg.conf.new" ]; then
+    patch_fonts ${path}/root/xorg.conf.new ${path}/root/xorg.conf.new1
+    patch_flags ${path}/root/xorg.conf.new1 ${path}/etc/X11/xorg.conf
+fi
+
+
+#Unmount
+if [ $amount -eq 0 ]; then
+    umount ${path}/dev
+    cbsd unmountfstab fstab=${mount_fstab} jroot=${path}
+    unmountbase
+fi
+
+}
+
+
+edit_conf()
+{
+if [ -f "${data}/etc/X11/xorg.conf" ]; then
+    vi ${data}/etc/X11/xorg.conf
+else
+    echo "No such xorg.conf. Please create them"
+    read p
+fi
+}
+
+
+
+
+
+
+myconf()
+{
+DIALOG=${DIALOG=/usr/bin/dialog}
+
+tempfile=`mktemp ${ftmpdir}/xconf.XXXX`
+trap "rm -f ${tempfile}" 0 1 2 3
+cul8r=0
+
+while [ $cul8r ]; do
+    $DIALOG --clear --title "XConf" \
+	    --menu "Choose an option\n" 10 55 4 \
+	"Auto"  "Create or regenerate new xorg.conf file" \
+	"Edit"  "Edit xorg.conf" \
+	"Quit"  "Quit" 2> $tempfile
+    retval=$?
+    choice=`cat ${tempfile}`
+    rm -f ${tempfile}
+
+    case $retval in
+	0)
+	    [ $choice = "Auto" ] && new_conf
+	    [ $choice = "Edit" ] && edit_conf
+	    [ $choice = "Quit" ] && exit
+	;;
+	1)
+	    echo "Cancel pressed."
+	    exit;;
+	255)
+	    [ -z "$choice" ] || echo $choice ;
+	    echo "ESC pressed."
+	    exit;;
+    esac
+done
+
+}
+

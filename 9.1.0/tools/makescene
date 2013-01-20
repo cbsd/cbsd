@@ -29,6 +29,7 @@ unmount_all()
     umount -f ${cdir}/var/db/ports > /dev/null 2>&1
     umount -f ${cdir}/repo > /dev/null 2>&1
     umount -f ${cdir}/dev > /dev/null 2>&1
+    umount -f ${cdir}/usr/src > /dev/null 2>&1
     umount -f ${cdir}/usr/ports > /dev/null 2>&1
 }
 
@@ -41,11 +42,15 @@ cbsd jcreate jconf=${etcdir}/scenes/${myenv}.jconf
 . ${jailrcconfdir}/rc.conf_${myenv}
 
 [ "${arch}" = "native" ] && arch=`uname -m`
+[ "${ver}" = "native" ] && ver=`sysctl -n kern.osrelease|cut -d - -f 1`
 
 modconf ${jailrcconfdir}/rc.conf_${myenv} arch $arch
 
 mkdir -p ${path}
 mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
+
+[ -f "${etcdir}/scenes/${myenv}.fstab" ] && cat ${etcdir}/scenes/${myenv}.fstab >> ${mount_fstab}
+
 cbsd mountfstab jroot=${path} fstab=${mount_fstab}
 
 mount -t devfs devfs ${path}/dev
@@ -59,10 +64,11 @@ if [ -d "${SKELDIR}" ]; then
     cp -rPf ${SKELDIR}/* ${path}/
 fi
 
+rm -f ${path}/var/db/pkg/*
 buildme
-rm -rf ${path}/var/db/ports
+rm -rf ${path}/var/db/ports/*
 cp -Rp ${mroot}/repo/${repoversion}/ports ${path}/var/db
-rm -rf ${path}/var/cache/pkg
+rm -rf ${path}/var/cache/pkg/*
 umount ${path}/dev
 umount ${path}/repo
 rm -rf ${path}/repo
@@ -129,6 +135,12 @@ mount -t nullfs ${DBPORTS} ${cdir}/var/db/ports
 mount -t nullfs ${CCACHEDIR} ${cdir}${CCACHEDIR}
 [ ! -d ${cdir}/usr/ports ] && mkdir ${cdir}/usr/ports
 mount -t nullfs /usr/ports ${cdir}/usr/ports
+
+mkdir -p ${cdir}/usr/src
+SRC="${srcdir}/src_${ver}/src"
+
+[ -d "${SRC}" ] && mount -t nullfs ${SRC} ${cdir}/usr/src
+
 find /usr/ports -type d -name work -exec rm -rf {} \;
 
 ETCFILES="csh.cshrc make.conf resolv.conf"
@@ -208,6 +220,12 @@ fi
 EOF
 done
 
+cat >> ${cdir}/scene2.sh << EOF
+echo "make all pkg"
+cd /repo/${repoversion}/
+env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /root/${repoversion}
+EOF
+
 chroot ${cdir} service ldconfig restart
 chroot ${cdir} /bin/sh /scene2.sh
 }
@@ -219,6 +237,7 @@ chroot ${cdir} /bin/sh /scene2.sh
 . ${scene}
 
 [ "${arch}" = "native" ] && arch=`uname -m`
+[ "${ver}" = "native" ] && ver=`sysctl -n kern.osrelease|cut -d - -f 1`
 
 #my chroot dir
 cdir="${mroot}/${myenv}"

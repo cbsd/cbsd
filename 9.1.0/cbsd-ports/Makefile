@@ -1,5 +1,5 @@
 # New ports collection makefile for:	cbsd
-# Date created:				Jan 20, 2012
+# Date created:				Feb 31, 2013
 # Whom:					Oleg Ginzburg
 #
 # $FreeBSD: $
@@ -15,6 +15,8 @@ COMMENT=	Yet another FreeBSD Jail Management Utility
 
 SUB_FILES=	pkg-message
 WRKSRC=		${WRKDIR}/cbsd-9.1.0/9.1.0
+
+MAN7=		cbsd.7
 
 .include <bsd.port.pre.mk>
 

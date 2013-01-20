@@ -91,7 +91,8 @@ check_pkg()
 
 MYSTUFF="/usr/ports/security/libssh2 \
 /usr/ports/security/sudo \
-/usr/ports/net/rsync"
+/usr/ports/net/rsync \
+/usr/ports/databases/sqlite3"
 
 MYWEBSTUFF="/usr/ports/www/lighttpd \
 /usr/ports/databases/sqlite3 \
@@ -154,6 +155,19 @@ esac
 
 phase1()
 {
+. ${distdir}/${localcbsdconffile}
+
+/bin/echo "[Stage 5: account & permission]"
+/usr/bin/id ${cbsduser} > /dev/null 2>&1
+    
+if [ $? -eq 1 ]; then
+    /usr/sbin/pw groupadd ${cbsduser}
+    /usr/sbin/pw useradd ${cbsduser} -g ${cbsduser} -d ${workdir}
+    change_cbsdpw
+fi
+
+
+
 /bin/echo "[Stage 1: directory hier]"
 DIRHIER="${workdir} \
 ${jobdir} \
@@ -246,11 +260,15 @@ installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/rexe ${bindir}/r
 /usr/bin/cc ${distdir}/sbin/cbsd.c -o ${sbindir}/cbsd
 /usr/bin/cc ${distdir}/tools/ipfw-tables.c -o ${toolsdir}/ipfw-tables
 
-[ ! -f "${libdir}/libcbsdsqlite3.a" ] && {
-    make -C ${distdir}/bin/sqlite
-    [ -f "${distdir}/bin/sqlite/libcbsdsqlite3.a" ] && installne "-o ${cbsduser} -g ${cbsduser} -s -m 444" ${distdir}/bin/sqlite/libcbsdsqlite3.a ${libdir}/libcbsdsqlite3.a
-    make -C ${distdir}/bin/sqlite clean
-}
+#[ ! -f "/usr/local/lib/libcbsdsqlite3.so" ] && {
+#    make -C ${distdir}/bin/sqlite
+#    [ -f "${distdir}/bin/sqlite/libcbsdsqlite3.so" ] && installne "-o ${cbsduser} -g ${cbsduser} -s -m 444" ${distdir}/bin/sqlite/libcbsdsqlite3.so /usr/local/lib/libcbsdsqlite3.so
+#    make -C ${distdir}/bin/sqlite clean
+#    service ldconfig restart
+#}
+
+cc ${distdir}/tools/nodesql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/nodesql
+cc ${distdir}/tools/inventorysql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/inventorysql
 
 #### CP SCRIPTS with override
 DIRHIER="jailctl \
@@ -275,7 +293,7 @@ share/jail-skel \
 etc"
 
 cat > ${etcdir}/cbsd_sudoers <<EOF
-Defaults     env_keep += "workdir"
+Defaults     env_keep += "workdir DIALOG"
 Cmnd_Alias   CBSD_CMD = ${sudoexecdir}/*,/usr/local/cbsd/${myversion}/sudoexec/*
 ${cbsduser}   ALL=(ALL) NOPASSWD: CBSD_CMD
 EOF
@@ -328,8 +346,6 @@ installne "-o root -g wheel -m 440" ${etcdir}/cbsd_sudoers /usr/local/etc/sudoer
 [ ! -d "/usr/local/libexec/nagios" ] && mkdir -p /usr/local/libexec/nagios
 installne "-o ${cbsduser} -g ${cbsduser} -m 555"  ${distdir}/sudoexec/check_ports /usr/local/libexec/nagios/check_ports
 }
-
-
 
 phase3()
 {
@@ -389,10 +405,10 @@ if [ -f /var/cron/tabs/root ]; then
     fi
 fi
 
-IFACE=`${workdir}/tools/nics-list |xargs`
+#IFACE=`${workdir}/tools/nics-list |xargs`
 
 #/bin/echo "Updating interface list..."
-modconf ${inventory} jail_interface "${IFACE}"
+#modconf ${inventory} jail_interface "${IFACE}"
 
 MYFS="ufs"
 /sbin/zfs list ${workdir} > /dev/null 2>&1
@@ -418,6 +434,8 @@ done
 modconf 0 ${inventory} repo http://bsdstore.ru
 modconf 0 ${inventory} workdir $workdir
 # FIXME
+
+[ ! -f "${dbdir}/nodes.db" ] && touch ${dbdir}/nodes.db && ${toolsdir}/nodesql ${dbdir}/nodes.db init
 }
 
 
@@ -445,13 +463,6 @@ phase5()
 . ${inventory}
 
 /bin/echo "[Stage 5: account & permission]"
-/usr/bin/id ${cbsduser} > /dev/null 2>&1
-
-if [ $? -eq 1 ]; then
-    /usr/sbin/pw groupadd ${cbsduser}
-    /usr/sbin/pw useradd ${cbsduser} -g ${cbsduser} -d ${workdir}
-    change_cbsdpw
-fi
 
 MD5NAME=`md5 -qs ${nodename}`
 KEYFILE="${sshdir}/${MD5NAME}.id_rsa"
@@ -504,7 +515,6 @@ else
     /bin/echo "ipfw_enable=0" >> ${inventory}
 fi
 fi
-
 }
 
 
@@ -518,6 +528,7 @@ hash -r
 phase9()
 {
 /bin/echo "[Stage 8: Fresh inventory]"
+[ ! -f "${dbdir}/inv.${nodename}.db" ] && ${toolsdir}/inventorysql ${dbdir}/inv.${nodename} init
 cbsd mkinventory
 }
 
@@ -538,7 +549,7 @@ fi
 -----------------------
 EOF_HEADER
 
-if ! getyesno "Do you want prepare or upgrade hier environment for CBSD now?" ]; then
+if ! getyesno "Do you want prepare or upgrade hier environment for CBSD now?" ; then
     err 1 "exit"
 fi
 
@@ -560,7 +571,15 @@ configure_named
 modconf 0 /etc/rc.conf cbsd_enable YES
 modconf /etc/rc.conf cbsd_workdir "${workdir}"
 modconf 0 /etc/rc.conf sshd_enable "YES"
-modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
+
+if [ `/usr/bin/grep -c "sshd_flags" /etc/rc.conf` = 0 ]; then
+    if getyesno "Shall i change (via rc.conf) default ssh port from 22 to 22222 which is default for cbsd?"; then
+	modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
+    else
+	modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no"
+    fi
+fi
+
 modconf 0 /etc/rc.conf rcshutdown_timeout "900"
 modconf 0 /etc/rc.conf sendmail_enable "NO"
 
