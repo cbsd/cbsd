@@ -1,12 +1,13 @@
 #!/bin/sh
-#v9.0.0
+#v9.1.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="mode"
-MYOPTARG="node port pw"
+MYOPTARG="node port rootkeyfile pw"
 MYDESC="Manipulate with remote nodes"
-ADDHELP="mode = add , del , list\n\
+ADDHELP="mode = add , remove , list\n\
 node = remote node ip or fqdn\n\
 port = ssh port of remote node\n\
+rootkeyfile = path to id_rsa for root access\n\
 pw = password of cbsd user from remote node\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
@@ -17,82 +18,92 @@ init $*
 
 nodeadd()
 {
-[ -n "${node}" ] || err 1 "Empty node"
-[ -z "${port}" ] && port=22222
-[ -z "${pw}" ] && err 1 "Empty pw"
+    [ -n "${node}" ] || err 1 "Empty node"
+    [ -z "${port}" ] && port=22222
+    [ -z "${pw}" ] && err 1 "Empty pw"
+    [ -z "${rootkeyfile}" ] && rootkeyfile="/root/.ssh/id_rsa"
 
-if iptype $node; then
-    resolvhost ${node}
-    node=$HST
-fi
+    if iptype $node; then
+	resolvhost ${node}
+	node=$HST
+    fi
 
-NODENAME=`cbsd cbsdssh $node $port $cbsduser $pw cbsd getinfo -q nodename`
+    NODENAME=`cbsd cbsdssh $node $port $cbsduser $pw cbsd getinfo -q nodename`
 
-case $? in
-0)
-[ -z "$NODENAME" ] && err 1 "No nodename found. Check remote cbsd settings"
-echo "$node has nodename ${NODENAME}"
-;;
-1)
-err 1 "Connection problem with $node"
-;;
-2)
-err 1 "Bad password or system user"
-;;
-esac
+    case $? in
+	0)
+	    [ -z "$NODENAME" ] && err 1 "No nodename found. Check remote cbsd settings"
+	    echo "$node has nodename ${NODENAME}"
+	;;
+	1)
+	    err 1 "Connection problem with $node"
+	;;
+	2)
+	    err 1 "Bad password or system user"
+	;;
+    esac
 
-MD5NAME=`md5 -qs ${NODENAME}`
-cbsd nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > $DEBLOG 2>&1
+    MD5NAME=`md5 -qs ${NODENAME}`
+    cbsd nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > $DEBLOG 2>&1
 
-case $? in
-0)
-echo "${node} Added successfull"
-
-LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
-modconf ${rsshdir}/${NODENAME}.node SSHKEY $LOCALKEY
-modconf ${rsshdir}/${NODENAME}.node IP $node
-modconf ${rsshdir}/${NODENAME}.node PORT $port
-cbsd nodesql ${dbdir}/nodes.db insert ${NODENAME} ${node} ${port} ${LOCALKEY}
-;;
-1)
-    cat ${DEBLOG}
-    err 1 "Error: Bad password" ;;
-2)
-    cat ${DEBLOG}
-    err 1 "Error: No key found or wrong hostname. Make initenv on remote machine" ;;
-*)
-    cat ${DEBLOG}
-    err 1 "Error: Unkown error" ;;
-esac
+    case $? in
+	0)
+	    echo "${node} Added successfull"
+	    LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
+	    modconf ${rsshdir}/${NODENAME}.node SSHKEY $LOCALKEY
+	    modconf ${rsshdir}/${NODENAME}.node IP $node
+	    modconf ${rsshdir}/${NODENAME}.node PORT $port
+	    A=`cbsd nodesql --dbfile=${dbdir}/nodes.db --action=select --nodename=${NODENAME} --param=ip`
+	    if [ -z "${A}" ]; then
+		cbsd nodesql --dbfile=${dbdir}/nodes.db --action=insert --nodename=${NODENAME} --ip=${node} --port=${port} --keyfile=${LOCALKEY} --rootkeyfile=$rootkeyfile
+	    else
+		echo "${node} Already exist in database, updating..."
+		cbsd nodesql --dbfile=${dbdir}/nodes.db --action=delete --nodename=${NODENAME}
+		cbsd nodesql --dbfile=${dbdir}/nodes.db --action=insert --nodename=${NODENAME} --ip=${node} --port=${port} --keyfile=${LOCALKEY} --rootkeyfile=$rootkeyfile
+	    fi
+	;;
+	1)
+	    cat ${DEBLOG}
+	    err 1 "Error: Bad password"
+	;;
+	2)
+	    cat ${DEBLOG}
+	    err 1 "Error: No key found or wrong hostname. Make initenv on remote machine"
+	;;
+	*)
+	    cat ${DEBLOG}
+	    err 1 "Error: Unkown error"
+	;;
+    esac
 }
 
 nodedel()
 {
-[ -n "${node}" ] || err 1 "Empty node"
+    [ -n "${node}" ] || err 1 "Empty node"
+    NODECONF="${rsshdir}/${node}.node"
 
-NODECONF="${rsshdir}/${node}.node"
+    [ -f "${NODECONF}" ] || err 1 "No such node config"
+    . ${NODECONF}
 
-[ -f "${NODECONF}" ] || err 1 "No such node config"
-. ${NODECONF}
-
-[ -f ${SSHKEY} ] && rm -f ${SSHKEY}
-rm -f ${NODECONF}
-cbsd nodesql ${dbdir}/nodes.db delete ${node}
-echo "Removed"
+    [ -f ${SSHKEY} ] && rm -f ${SSHKEY}
+    rm -f ${NODECONF}
+    cbsd nodesql --dbfile=${dbdir}/nodes.db --action=delete --nodename=${node}
+    echo "Removed"
 }
 
+
 case "${mode}" in
-"add")
-    nodeadd
-;;
-"del")
-    nodedel
-;;
-"list")
+    "add")
+	nodeadd
+    ;;
+    "remove")
+	nodedel
+    ;;
+    "list")
 #    ls -1 ${rsshdir} |grep \.node$ |sed 's/\.node//g'
-    cbsd nodesql ${dbdir}/nodes.db list
-;;
-*)
-err 1 "Unknown mode"
-;;
+	cbsd nodesql --dbfile=${dbdir}/nodes.db --action=list
+    ;;
+    *)
+	err 1 "Unknown mode"
+    ;;
 esac

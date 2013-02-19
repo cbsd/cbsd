@@ -7,7 +7,6 @@ MYDESC="Make jail or packages from scenario file"
 ADDHELP="new = 0 for continue building, without cleanup\n\
 mode = prepare (build package), mkjail (make jail), all (prepare+mkjail)\n"
 
-
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
@@ -19,7 +18,6 @@ init $*
 CCSIZE="4"
 CCACHEDIR="/root/.ccache"
 mroot="/root/bases"
-
 
 unmount_all()
 {
@@ -54,8 +52,8 @@ mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
 cbsd mountfstab jroot=${path} fstab=${mount_fstab}
 
 mount -t devfs devfs ${path}/dev
-[ ! -d "$path/repo" ] && mkdir -p "$path/repo"
-mount -t nullfs ${mroot}/repo ${path}/repo
+[ ! -d "${path}/repo/dl.bsdstore.ru" ] && mkdir -p "${path}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports" "${path}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/All"
+mount -t nullfs ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion} ${path}/repo
 
 #Overwrite skel files
 SKELDIR="${etcdir}/scenes/${myenv}/skel"
@@ -67,10 +65,17 @@ fi
 rm -f ${path}/var/db/pkg/*
 buildme
 rm -rf ${path}/var/db/ports/*
-cp -Rp ${mroot}/repo/${repoversion}/ports ${path}/var/db
+cp -Rp ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports ${path}/var/db
 rm -rf ${path}/var/cache/pkg/*
-umount ${path}/dev
-umount ${path}/repo
+mkdir -p ${path}/usr/local/etc
+#link to my repo version
+cat > ${path}/usr/local/etc/pkg.conf << EOF
+PACKAGESITE: http://dl.bsdstore.ru/${arch}/${ver}/${repoversion}
+EOF
+
+umount -f ${path}/dev
+umount -f ${path}/var/db/ports
+umount -f ${path}/repo
 rm -rf ${path}/repo
 cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
 cbsd jcleanup jname=${myenv}
@@ -85,7 +90,7 @@ fi
 
 if [ -f "${etcdir}/scenes/${myenv}/${myenv}-descr" ]; then
     [ ! -d "${jailsysdir}/${myenv}" ] && mkdir ${jailsysdir}/${myenv}
-    cp ${etcdir}/scenes/${myenv}/${myenv}-descr ${jailsysdir}/${myenv}/
+    cp ${etcdir}/scenes/${myenv}/${myenv}-descr ${jailsysdir}/${myenv}/descr
 fi
 
 ### CLEANUP
@@ -120,9 +125,9 @@ mount -t devfs devfs ${cdir}/dev
 [ $? -ne 0 ] && err 1 "Unable to mount devfs - check for allow options for jail"
 
 [ ! -d "${cdir}/repo" ] && mkdir $cdir/repo
-[ -d "${mroot}/repo" ] && mount -t nullfs ${mroot}/repo ${cdir}/repo
+[ -d "${mroot}/repo/dl.bsdstore.ru" ] && mount -t nullfs ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion} ${cdir}/repo
 
-DBPORTS="${mroot}/repo/${repoversion}/ports"
+DBPORTS="${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports"
 [ ! -d "${DBPORTS}" ] && mkdir -p ${DBPORTS}
 
 mount -t nullfs ${DBPORTS} ${cdir}/var/db/ports
@@ -160,28 +165,28 @@ if [ "${new}" = "1" ]; then
     cat > ${cdir}/scene1.sh << EOF
 #!/bin/sh
 env ASSUME_ALWAYS_YES=yes pkg
-[ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
+[ ! -d "/repo" ] && mkdir -p "/repo"
 EOF
 
     for i in ${STPORT}; do
 	MYPORT="/usr/ports/${i}"
 	PORTNAME=`make -C ${MYPORT} package-name`
-	TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
+	TXZPATH="/repo/All/${PORTNAME}.txz"
 
     cat >> ${cdir}/scene1.sh << EOF
 if [ -f "${TXZPATH}" ]; then
-    cd /repo/${repoversion}
+    cd /repo/All
     env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
 else
     echo "No such $TXZPATH"
     env NO_CCACHE=yes make -C /usr/ports/${i} install
-    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
 fi
 
 EOF
     done
     cat >> ${cdir}/scene1.sh << EOF
-env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
+env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
 EOF
     chroot ${cdir} sh /scene1.sh
     chroot ${cdir} ccache -M ${CCSIZE}G
@@ -193,41 +198,71 @@ build_me()
 {
 cat >${cdir}/scene2.sh << EOF
 #!/bin/sh
-[ ! -d "/repo/${repoversion}" ] && mkdir -p "/repo/${repoversion}"
 EOF
 
 for i in ${pkg}; do
 MYPORT="/usr/ports/${i}"
 PORTNAME=`make -C ${MYPORT} package-name`
-TXZPATH="/repo/${repoversion}/${PORTNAME}.txz"
+
+#hack for determine when config-recursive is clean
+cat >>${cdir}/scene2.sh << EOF
+NOCONF=0
+MYPORT="/usr/ports/${i}"
+while [ \$NOCONF -eq 0 ]; do
+    script /tmp/test.\$\$ make config-recursive -C \${MYPORT}
+    grep "\[" /tmp/test.\$\$ > /dev/null
+    [ \$? -eq 1 ] && NOCONF=1
+done
+EOF
+done
+
+for n in ${pkg}; do
+MYPORT="/usr/ports/${n}"
+PORTNAME=`make -C ${MYPORT} package-name`
+TXZPATH="/repo/All/${PORTNAME}.txz"
+
+#get dependency from .txz if available
+cat >> ${cdir}/scene2.sh << EOF
+for i in \`make -C \${MYPORT} all-depends-list\`; do
+[ -z "\${i}" ] && continue
+DPORTNAME=\`make -C \${i} package-name\`
+echo "Search for \${DPORTNAME} in repo..."
+cd /repo/All
+[ -f "/repo/All/\${DPORTNAME}.txz" ] && env ASSUME_ALWAYS_YES=yes pkg add \${DPORTNAME}.txz
+done
+EOF
 
 cat >> ${cdir}/scene2.sh << EOF
 if  [ -f "${TXZPATH}" ]; then
     echo "Get from repository"
-    cd /repo/${repoversion}
+    cd /repo/All
     env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
 else
     echo "No such ${TXZPATH}. Building"
-    make -C /usr/ports/${i} config-recursive install
-    [ $? -ne 0 ] && {
-	echo "Got problem while install ${i}"
+    make -C /usr/ports/${n} install
+    [ \$? -ne 0 ] && {
+	echo "Got problem while install \${n}"
 	read p
     }
     echo "Make pkg for ${TXZPATH}"
-    cd /repo/${repoversion}/
-    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/${repoversion}
+    cd /repo/All
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
 fi
 EOF
 done
 
 cat >> ${cdir}/scene2.sh << EOF
 echo "make all pkg"
-cd /repo/${repoversion}/
-env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /root/${repoversion}
+cd /repo/All
+ls -la
+env ASSUME_ALWAYS_YES=yes pkg create -n -a
 EOF
 
 chroot ${cdir} service ldconfig restart
 chroot ${cdir} /bin/sh /scene2.sh
+
+cd ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}
+pkg repo ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}
 }
 
 ### MAIN

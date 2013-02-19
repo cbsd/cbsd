@@ -24,22 +24,24 @@ EXT_IFACE=`route -n get 0.0.0.0 |awk '/interface/{print $2}'`
 if [ -z "$1" ]; then
     if ! getyesno "Configure NAT for RFC1918 Network?"; then
 	modconf ${inventory} nat_enable NO
-	cbsd inventorysql ${dbdir}/inv.${nodename} update nat_enable 0
+	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=nat_enable --value=0
         return
     fi
 fi
 
+DEFAULT="ipnat"
 answ=
 while [ "$answ" != "ok" ]; do
-printf "Which one NAT framework should be use: [ipfw or ipnat]\n"
-echo "(type FW name or \"exit\" for break)"
+printf "Which one NAT framework should be use: [$DEFAULT]\n"
+echo "(type FW name, eg ipnat or \"exit\" for break)"
 read answ leftover
+[ -z "$answ" ] && answ="${DEFAULT}"
 [ "${answ}" != "exit" ] || return
 
 case "${answ}" in
 "ipnat")
 	modconf ${inventory} nat_enable ipnat
-	cbsd inventorysql ${dbdir}/inv.${nodename} update nat_enable ipnat
+	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=nat_enable --value=ipnat
         modconf /boot/loader.conf ipfw_nat_load NO
         modconf /boot/loader.conf libalias_load NO
         modconf /boot/loader.conf pf_load YES
@@ -65,19 +67,21 @@ answ="ok"
 	modconf /boot/loader.conf ipl_load NO
 	modconf /boot/loader.conf ipfilter NO
 	truncate -s0 ${etcdir}/ipfw.rules
-for NET in ${RFC1918}; do
-    NM=`echo ${NET} |tr "/" " "`
-    ${workdir}/sbin/netmask ${NM} ${natip}
-    if [ $? -ne 1 ]; then
-cat >> ${etcdir}/ipfw.rules <<EOF
-/sbin/ipfw -q add 10 nat 123 all from any to any
-#/sbin/ipfw -q add 10 nat 123 ip from ${NET} to any
-#/sbin/ipfw -q add 10 nat 123 ip from any to ${NET}
+    NM=`echo ${RFC1918} |tr " " ","`
+#    ${workdir}/sbin/netmask ${NM} ${natip}
+#    if [ $? -ne 1 ]; then
+
+    EXTIFACE=`route -n get default | awk '/interface:/{print $2}'`
+    ifconfig ${EXTIFACE} >/dev/null 2>&1
+
+    if [ $? -eq 0 ]; then
+	cat >> ${etcdir}/ipfw.rules << EOF
+/sbin/ipfw -q add 65000 nat 123 all from ${NM} to not ${NM} any via ${EXTIFACE}
+/sbin/ipfw -q nat 123 config ip ${natip}
+/sbin/ipfw -q add 65000 nat 123 ip from any to ${natip} via ${EXTIFACE}
 EOF
     fi
-done
-echo "/sbin/ipfw nat 123 config ip ${natip} reset same_ports" >> ${etcdir}/ipfw.rules
-answ="ok"
+    answ="ok"
 ;;
 esac
 done

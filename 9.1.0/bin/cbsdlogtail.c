@@ -12,7 +12,6 @@ char *facil;
 char *myname;
 char *findex=NULL;
 
-
 int usage(char *myname)
 {
     printf("Usage: %s [-f facil -d offsetdir - %s default) asciifile\n", myname,offsetdir);
@@ -22,120 +21,112 @@ int usage(char *myname)
 
 long int getoffset(char *offsetfile)
 {
-unsigned long long offset=0;
-FILE *fp,*fo;
-char tmp[B_SIZE+sizeof(long)];
-char tmp2[B_SIZE+sizeof(long)];
-int i=0,n=0,tmplen=0;
+    unsigned long long offset=0;
+    FILE *fp,*fo;
+    char tmp[B_SIZE+sizeof(long)];
+    char tmp2[B_SIZE+sizeof(long)];
+    int i=0,n=0,tmplen=0;
 
-fp = fopen(offsetfile, "r");
-if(fp) {
-memset(tmp,0,sizeof(tmp));
-fgets(tmp,B_SIZE+sizeof(long),fp);
-fclose(fp);
+    fp = fopen(offsetfile, "r");
+    if(fp) {
+	memset(tmp,0,sizeof(tmp));
+	fgets(tmp,B_SIZE+sizeof(long),fp);
+	fclose(fp);
+	tmplen=strlen(tmp);
+	if(tmplen==0) return 0;
+	for (i=0;i<tmplen;i++)
+	    if (tmp[i]==':') { 
+		tmp[i]=' '; n=i; break;
+		}
+	tmplen=0;
+	if (n>0) {
+	    memset(tmp2,0,sizeof(tmp2));
+	    sscanf(tmp,"%llu",&offset);
+	    strncpy(tmp2,tmp+n+1,strlen(tmp)-n-1); // +-1 = : symbol
+	    fo=fopen(findex,"r");
+	    if (fo==NULL) return 0;
+	    fseek(fo,offset,SEEK_SET);
+	    memset(tmp,0,sizeof(tmp));
+	    fgets(tmp,B_SIZE,fo);
+	    fclose(fo);
+	if((strlen(tmp2)!=0)&&(!strcmp(tmp,tmp2))) {offset=offset+strlen(tmp2);}
+	    else offset=0;
+	}
 
-tmplen=strlen(tmp);
-if(tmplen==0) return 0;
-
-for (i=0;i<tmplen;i++)
-if (tmp[i]==':') { tmp[i]=' '; n=i; break;}
-
-tmplen=0;
-
-if (n>0) {
-memset(tmp2,0,sizeof(tmp2));
-sscanf(tmp,"%llu",&offset);
-strncpy(tmp2,tmp+n+1,strlen(tmp)-n-1); // +-1 = : symbol
-
-fo=fopen(findex,"r");
-if (fo==NULL) return 0;
-fseek(fo,offset,SEEK_SET);
-memset(tmp,0,sizeof(tmp));
-fgets(tmp,B_SIZE,fo);
-fclose(fo);
-
-if((strlen(tmp2)!=0)&&(!strcmp(tmp,tmp2))) {offset=offset+strlen(tmp2);}
-else offset=0;
-}
-
-}
-else offset=0;
-
-return offset;
+    }
+    else offset=0;
+    return offset;
 }
 
 int putoffset(char *offsetfile, char *str)
 {
-FILE *fp;
-fp = fopen(offsetfile, "w");
-if(fp) {
-    fputs(str,fp);
-    fclose(fp);
-}
-return 0;
+    FILE *fp;
+    fp = fopen(offsetfile, "w");
+    if(fp) {
+	fputs(str,fp);
+	fclose(fp);
+    }
+    return 0;
 }
 
 
 char *show_myportion(long int offset)
 {
-FILE *fp;
-char line[B_SIZE];
-char *lst;
-unsigned long long ipos;
+    FILE *fp;
+    char line[B_SIZE];
+    char *lst;
+    unsigned long long ipos;
 
-fp=fopen(findex,"r");
-if (fp==NULL) {
-printf("No such file\n");
-return NULL;
-}
+    fp=fopen(findex,"r");
+    if (fp==NULL) {
+	printf("No such file\n");
+	return NULL;
+    }
 
-fseek(fp, offset, SEEK_SET);
+    fseek(fp, offset, SEEK_SET);
 
-while (!feof(fp)) {
-//memset(line,0,sizeof(line));
-if (fgets(line, sizeof(line), fp) != NULL) printf("%s", line);
-}
+    while (!feof(fp)) {
+	if (fgets(line, sizeof(line), fp) != NULL) printf("%s", line);
+    }
 
-ipos = ftell(fp)-strlen(line);
-fclose(fp);
+    ipos = ftell(fp)-strlen(line);
+    fclose(fp);
 
-lst=malloc(sizeof(line)+sizeof(ipos)+5);
-memset(lst,0,strlen(lst));
-sprintf(lst,"%llu:%s",ipos,line);
+    lst=malloc(sizeof(line)+sizeof(ipos)+5);
+    memset(lst,0,strlen(lst));
+    sprintf(lst,"%llu:%s",ipos,line);
 
-return lst;
+    return lst;
 }
 
 
 int get_myportion()
 {
-char *offsetfile;
-int i=0;
-long int ipos;
-char *lst;
-offsetfile = malloc(sizeof(offsetdir) + sizeof(offsetext) + sizeof(facil));
-strcpy(offsetfile,offsetdir);
-strcat(offsetfile,facil);
-strcat(offsetfile,offsetext);
-i=getoffset(offsetfile);
-lst=show_myportion(i);
-if(lst) putoffset(offsetfile,lst);
-free(offsetfile);
-return 0;
+    char *offsetfile;
+    int i=0;
+    long int ipos;
+    char *lst;
+    offsetfile = malloc(sizeof(offsetdir) + sizeof(offsetext) + sizeof(facil));
+    strcpy(offsetfile,offsetdir);
+    strcat(offsetfile,facil);
+    strcat(offsetfile,offsetext);
+    i=getoffset(offsetfile);
+    lst=show_myportion(i);
+    if(lst) putoffset(offsetfile,lst);
+    free(offsetfile);
+    return 0;
 }
 
 
 int
 main(int argc, char **argv)
 {
-int i=0,c=0;
-myname = argv[0];
+    int i=0,c=0;
+    myname = argv[0];
+    findex=argv[argc-1];
+    facil=basename(findex);
 
-findex=argv[argc-1];
-facil=basename(findex);
-
-while (1)
-{
+    while (1) {
         c = getopt(argc, argv, "d:f:");
         /* Detect the end of the options. */
         if (c == -1)
@@ -149,12 +140,11 @@ while (1)
 	  case 'f':
 	    facil=optarg;
 	      break;
-
 	  }
-}
+    }
 
-if (findex==myname) usage(myname);
+    if (findex==myname) usage(myname);
 
-get_myportion();
-return 0;
+    get_myportion();
+    return 0;
 }

@@ -10,5 +10,6 @@ fi
 LABEL=$1
 NAME=$2
 PATH=$3
+PUBLISHER="The CBSD Project. http://www.bsdstore.ru"
 
-/usr/sbin/makefs -t cd9660 $bootable -o rockridge -o label=$LABEL $NAME $PATH
+/usr/sbin/makefs -t cd9660 $bootable -o rockridge -o label=$LABEL -o publisher="${PUBLISHER}" $NAME $PATH

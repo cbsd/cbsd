@@ -1,0 +1,51 @@
+#!/bin/sh
+#v9.1.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="out"
+MYDESC="Generate choosen package list from repository"
+ADDHELP="out=path_to_file with result, instead of random\n"
+
+[ -f "${globalconf}" ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${tools}
+init $*
+
+[ -z "${out}" ] && out="${ftmpdir}/pkgbrowser.$$"
+tmp1="${ftmpdir}/pkgmytmp1.$$"
+tmp2="${ftmpdir}/pkgmytmp2.$$"
+
+DIALOG=${DIALOG=/usr/bin/dialog}
+
+truncate -s0 ${tmp1}
+trap "rm -f $tmp1 $tmp2" 0 1 2 3 4 5 9
+
+printf "Building pkg list"
+LIST=`pkg rquery "%n"`
+
+[ $? -ne 0 ] && err 1 "Repository not configured or network error"
+
+for i in ${LIST}; do
+    A=`pkg query "%ro" $i`
+    [ -z "${A}" ] &&  printf "." && echo $i >> ${tmp1}
+done
+
+printf "done\r\nSorting...\r\n"
+
+cat > $tmp2 << EOF
+--colors --backtitle "\Z1Select packages" --separate-output --title "Select packages" --checklist "Use space for mark packages \n" 0 61 0
+EOF
+
+sort -u $tmp1 | \
+    while read _p; do
+	CATEGORY=`pkg query \"%C\" $_p | xargs`
+	[ -z "$CATEGORY" ] && CATEGORY=$_p
+	echo "\"$_p\" \"$CATEGORY\" off \ " >> ${tmp2}
+    done
+
+${DIALOG} --file ${tmp2} 2>$out
+
+[ $? -ne 0 -o `wc -l ${out}|awk '{printf $1}'` = "0" ] && rm -f ${out} && err 1 "No pkg selected"
+
+echo $out

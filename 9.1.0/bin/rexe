@@ -7,7 +7,11 @@ MYDESC="Execute remote command by ssh on the node"
 ADDHELP="node - cooma-separated host list, eg node=s1,s2\n\
 nodelist - path to ascii file with node list\n\
 cmd - remote cmd\n\
-quiet=1 - execute cmd silency\n"
+quiet=1 - execute cmd silency\n\
+notty=1 - no interactivity and no tty allocation\n"
+# EXAMPLES:
+# cbsd hostlist=/tmp/linuxhosts scr=/root/bin/sh.sh
+# cbsd host="s1 s2 s3" date
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -17,9 +21,6 @@ init $*
 set -o errexit
 #set -o xtrace
 
-########################
-# INITIALIZE THIS CRAP #
-########################
 DEBUG=0
 SSH_VERBOSE=""
 QUIET=0
@@ -28,14 +29,10 @@ REMOTE_SHELL='sh'
 TEMP_BASE=${ftmpdir}
 CONCURRENT=0
 MULTIHOST=0
-#
-# EXAMPLES:
-# cbsd hostlist=/tmp/linuxhosts scr=/root/bin/sh.sh
-# cbsd host="s1 s2 s3" date
-
+NOTTY=0
 
 ssh_connect() {
-#echo $SSH_ARGS
+#echo $THESCRIPT
     echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS "${REMOTE_SHELL}" | \
 	    while read SSH_LINE ; do
 		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
@@ -60,7 +57,7 @@ get_next_host() {
 	while [ 1 ] ; do
 		echo $CHILDNUM >> "$TEMP_DIR/hostlist.lock"
 		TOP_PID=$(head -1 "$TEMP_DIR/hostlist.lock" 2>/dev/null)
-		if [ "$TOP_PID" = $CHILDNUM ] ; then
+		if [ "$TOP_PID" = "$CHILDNUM" ] ; then
 			break
 		fi
 		[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: hostlist file already locked.  Sleep..." 1>&2
@@ -80,7 +77,6 @@ get_next_host() {
 
 # re-write file removing new host
 	rm -f "$TEMP_DIR/hostlist.new"
-	echo tail -$(( $HOSTFILE_LEN - 1 )) $TEMP_DIR/hostlist > $TEMP_DIR/hostlist.new || exit 1
 	tail -$(( $HOSTFILE_LEN - 1 )) $TEMP_DIR/hostlist > $TEMP_DIR/hostlist.new || exit 1
         rm -f "$TEMP_DIR/hostlist"
 	mv "$TEMP_DIR/hostlist.new" "$TEMP_DIR/hostlist"
@@ -102,6 +98,7 @@ run_child() {
 # issue:  Cannot call get_next_host inside $() or `` because our trap won't be able to kill that.
 #     solution: avoid subshell here by directing to a file.
 	rm -f $TEMP_DIR/$CHILDNUM.next_host
+#echo "DDAA"
 	get_next_host >$TEMP_DIR/$CHILDNUM.next_host
 	HOST=`cat $TEMP_DIR/$CHILDNUM.next_host`
 	if [ -z "$HOST" ] ; then
@@ -112,7 +109,8 @@ run_child() {
 
 	rm -f "$TEMP_DIR/$CHILDNUM.active"
 	echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
-	SSH_ARGS=`cbsd nodesql ${dbdir}/nodes.db sshopt ${HOST}`
+	SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.db --action=sshopt --nodename=${HOST}`
+
 	[ -z "${SSH_ARGS}" ] && {
 	    echo "${HOST}: No such node in base"
 	    continue
@@ -120,6 +118,7 @@ run_child() {
 #	ssh_connect > $TEMP_DIR/$HOST.out
 #	cat $TEMP_DIR/$HOST.out
 	ssh_connect
+	[ $NOTTY -eq 0 ] && exit
 	done
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: CHILD #$CHILDNUM done" 1>&2
 	rm -f "$TEMP_DIR/$CHILDNUM.pid" "$TEMP_DIR/$CHILDNUM.active"
@@ -178,6 +177,7 @@ trap "exit 0" SIGHUP
 [ -n "${debug}" ] && DEBUG="${debug}" && shift
 [ -n "${node}" ] && HOSTLIST=`echo ${node}|tr ',' ' '` && shift
 [ -n "${cmd}" ] && THESCRIPT="${cmd}" && shift
+[ -n "${notty}" ] && NOTTY=${notty} && shift
 
 [ -n "${nodelist}" ] && {
     [ ! -f "${nodelist}" ] && err 1 "${nodelist} file doesn't exist"
@@ -203,12 +203,19 @@ trap "exit 0" SIGHUP
 HOSTLIST=$(echo "$HOSTLIST" | sed -e 's/#.*//' | egrep -v "^ *$" )
 [ -z "${HOSTLIST}" ] && err 1 "host list is empty"
 
-COUNT_HOSTS=$(echo "$HOSTLIST" | wc -w)
+COUNT_HOSTS=$(echo "$HOSTLIST" | wc -w|awk '{printf $1}')
 CONCURRENT=$COUNT_HOSTS
 [ "$COUNT_HOSTS" = "1" ] && MULTIHOST=0
-
 [ -z "${cmd}" -a -z "${cmdfile}" ] && THESCRIPT=$@
 
+if [ "${COUNT_HOSTS}" = "1" ]; then
+    SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.db --action=sshopt --nodename=${HOSTLIST}`
+#    SSHOP="-t -oBatchMode=yes -oPort=${PORT} -oStrictHostKeyChecking=no -oConnectTimeout=5 -F ${sshdir}/config -q -i ${SSHKEY} ${cbsduser}@${IP}"
+    ssh -l $cbsduser -t ${SSH_ARGS} -C $THESCRIPT
+    exit
+fi
+
+NOTTY=1
 create_temp
 
 # Fork $CONCURRENT children
