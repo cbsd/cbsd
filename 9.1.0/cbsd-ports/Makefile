@@ -1,9 +1,4 @@
-# New ports collection makefile for:	cbsd
-# Date created:				Feb 31, 2013
-# Whom:					Oleg Ginzburg
-#
-# $FreeBSD: $
-#
+# $FreeBSD:$
 
 PORTNAME=	cbsd
 PORTVERSION=	9.1.0
@@ -12,6 +7,11 @@ MASTER_SITES=	http://www.bsdstore.ru/downloads/
 
 MAINTAINER=	olevole@olevole.ru
 COMMENT=	Yet another FreeBSD Jail Management Utility
+
+RUN_DEPENDS=	rsync:${PORTSDIR}/net/rsync \
+		sudo:${PORTSDIR}/security/sudo \
+		sqlite3:${PORTSDIR}/databases/sqlite3
+LIB_DEPENDS=	ssh2:${PORTSDIR}/security/libssh2
 
 SUB_FILES=	pkg-message
 WRKSRC=		${WRKDIR}/cbsd-9.1.0/9.1.0

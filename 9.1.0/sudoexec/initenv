@@ -18,9 +18,7 @@ fi
 . ${distdir}/tools.subr
 . ${distdir}/initenv.subr
 
-[ "$1" != "--help" ] || {
-    err 0 "${MYDESC}"
-}
+[ "$1" = "--help" ] && err 0 "${MYDESC}"
 
 desc_question()
 {
@@ -100,6 +98,9 @@ esac
 check_pkg()
 {
 [ -d "/var/cache/pkg" ] || mkdir -p /var/cache/pkg
+
+# not nessesary when install from the ports
+return 0
 
 MYSTUFF="/usr/ports/security/libssh2 \
 /usr/ports/security/sudo \
@@ -253,19 +254,6 @@ fi
 /usr/bin/cc ${distdir}/bin/cbsdlogtail.c -o ${bindir}/cbsdlogtail
 /usr/bin/cc ${distdir}/bin/cfetch.c -o ${bindir}/cfetch -lfetch
 
-for i in `find ${distdir}/cbsdphp/etc -depth 1 -type f -exec basename {} \;`; do
-  installne "-o ${cbsduser} -g ${cbsduser} -m 644" ${distdir}/cbsdphp/etc/${i} /etc/${i}
-done
-
-if [ ! -d "/cf" ]; then
-    cp -R ${distdir}/cbsdphp/cf /
-    ln -s /cf/conf /conf
-fi
-
-if [ ! -d "/var/etc" ]; then
-    cp -R ${distdir}/cbsdphp/var_etc /var/etc
-fi
-
 installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/rexe ${bindir}/rexe
 
 /usr/bin/cc ${distdir}/bin/nodepinger.c -o ${bindir}/nodepinger
@@ -274,13 +262,6 @@ installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/rexe ${bindir}/r
 /usr/bin/cc ${distdir}/sbin/nodeinetd.c -o ${sbindir}/nodeinetd
 /usr/bin/cc ${distdir}/sbin/cbsd.c -o ${sbindir}/cbsd
 /usr/bin/cc ${distdir}/tools/ipfw-tables.c -o ${toolsdir}/ipfw-tables
-
-#[ ! -f "/usr/local/lib/libcbsdsqlite3.so" ] && {
-#    make -C ${distdir}/bin/sqlite
-#    [ -f "${distdir}/bin/sqlite/libcbsdsqlite3.so" ] && installne "-o ${cbsduser} -g ${cbsduser} -s -m 444" ${distdir}/bin/sqlite/libcbsdsqlite3.so /usr/local/lib/libcbsdsqlite3.so
-#    make -C ${distdir}/bin/sqlite clean
-#    service ldconfig restart
-#}
 
 cc ${distdir}/tools/nodesql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/nodesql
 cc ${distdir}/tools/inventorysql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/inventorysql
@@ -336,12 +317,6 @@ installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/system.subr ${workdi
 installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/jfs.subr ${workdir}/jfs.subr
 installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/build.subr ${workdir}/build.subr
 installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/settings-tui.subr ${workdir}/settings-tui.subr
-
-#make -C ${distdir}/jail
-#cp ${distdir}/jail/jail /usr/sbin/
-#cp ${distdir}/jail/jail.8.gz /usr/share/man/man8/
-#cp ${distdir}/jail/jail.conf.5.gz /usr/share/man/man5/
-#make -C ${distdir}/jail clean
 
 installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/sbsd ${bindir}/sbsd
 installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jail-arg ${sharedir}/jail-arg
@@ -451,23 +426,24 @@ modconf 0 ${inventory} workdir $workdir
 # FIXME
 
 [ ! -f "${dbdir}/nodes.db" ] && touch ${dbdir}/nodes.db && ${toolsdir}/nodesql --dbfile=${dbdir}/nodes.db --action=init
+# todo: check for sql structure and auto alter table when change
 }
 
 
 phase4()
 {
-/bin/echo "[Stage 4: startup scripts]"
+    /bin/echo "[Stage 4: startup scripts]"
 
-rm -f /usr/local/etc/rc.d/cbsd
-/bin/ln -s ${workdir}/rc.d/cbsd /usr/local/etc/rc.d/cbsd
+    rm -f /usr/local/etc/rc.d/cbsd
+    /bin/ln -s ${workdir}/rc.d/cbsd /usr/local/etc/rc.d/cbsd
 
-rm -f /usr/local/bin/cbsd
-/bin/ln -s ${workdir}/bin/cbsd /usr/local/bin/cbsd
+    rm -f /usr/local/bin/cbsd
+    /bin/ln -s ${workdir}/bin/cbsd /usr/local/bin/cbsd
 
-rm -f /usr/local/bin/sbsd
-/bin/ln -s ${workdir}/bin/sbsd /usr/local/bin/sbsd
+    rm -f /usr/local/bin/sbsd
+    /bin/ln -s ${workdir}/bin/sbsd /usr/local/bin/sbsd
 
-hash -r
+    hash -r
 }
 
 
@@ -520,31 +496,30 @@ done
 
 phase7()
 {
-/bin/echo "[Stage 7: preparing for ipfw]"
+    /bin/echo "[Stage 7: preparing for ipfw]"
 
-if [ `grep -c ipfw_enable ${inventory}` = 0 ]; then
-FW=`sysctl -qn net.inet.ip.fw.enable`
-if [ "${FW}" = "1" ]; then
-    /bin/echo "ipfw_enable=1" >> ${inventory}
-else
-    /bin/echo "ipfw_enable=0" >> ${inventory}
-fi
-fi
+    if [ `grep -c ipfw_enable ${inventory}` = 0 ]; then
+	FW=`sysctl -qn net.inet.ip.fw.enable`
+	if [ "${FW}" = "1" ]; then
+	    /bin/echo "ipfw_enable=1" >> ${inventory}
+	else
+	    /bin/echo "ipfw_enable=0" >> ${inventory}
+	fi
+    fi
 }
 
 
 phase8()
 {
-hash -r
-/bin/echo "[Stage 7: Patches]"
-[ -d "${workdir}/upgrade" ] && find ${workdir}/upgrade/ -type f -depth 1 -name patch-\* -exec cbsd {} \;
+    /bin/echo "[Stage 7: Patches]"
+    [ -d "${workdir}/upgrade" ] && find ${workdir}/upgrade/ -type f -depth 1 -name patch-\* -exec cbsd {} \;
 }
 
 phase9()
 {
-/bin/echo "[Stage 8: Fresh inventory]"
-[ ! -f "${dbdir}/inv.${nodename}.db" ] && ${toolsdir}/inventorysql --dbfile=${dbdir}/inv.${nodename} --action=init
-cbsd mkinventory
+    /bin/echo "[Stage 8: Fresh inventory]"
+    [ ! -f "${dbdir}/inv.${nodename}.db" ] && ${toolsdir}/inventorysql --dbfile=${dbdir}/inv.${nodename} --action=init
+    cbsd mkinventory
 }
 
 
@@ -558,9 +533,8 @@ fi
 
 /usr/bin/more << EOF_HEADER
 ----[${product} v.${myversion}]-------
- This is install/upgrade scripts for CBSD and all NC stuff for current platforms
-
- Warning: this highly experimental version, use at your own risk. Don't forget to backup
+ This is install/upgrade scripts for CBSD.
+ Warning: this is highly experimental version, use at your own risk. Don't forget to backup
 -----------------------
 EOF_HEADER
 
@@ -600,17 +574,12 @@ modconf 0 /etc/rc.conf sendmail_enable "NO"
 
 modconf 0 /etc/make.conf WITH_PKGNG yes
 
-#modconf 0 /etc/rc.conf lighttpd_enable "NO"
-#modconf 0 /etc/rc.conf lighttpd_conf "/usr/local/cbsd/9.1.0/etc/cbsdhttpd.conf"
-
 modconf 0 /etc/periodic.conf local_periodic "/usr/local/etc/periodic ${workdir}/etc/periodic"
 
 # + /etc/aliases
 # + /etc/root/inetd.conf
 # + /etc/syslogd.conf
 
-#[ -d /usr/local/etc/nginx/vhosts ] || mkdir -p /usr/local/etc/nginx/vhosts
-#cp ${distdir}/cbsdphp/cbsdphp.conf.php /usr/local/etc/nginx/vhosts/cbsdphp.conf
 hash -r
 exit 0
 }

@@ -1,2 +1,0 @@
-<?php $GLOBALS["users"]=array(
-); ?>
