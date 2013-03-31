@@ -1,0 +1,259 @@
+#!/bin/sh
+#v9.1.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="node nodelist cmd cmdfile netgroup quiet tty"
+MYDESC="Execute remote command by ssh on the node"
+ADDHELP="node - cooma-separated host list, eg node=s1,s2\n\
+nodelist - path to ascii file with node list\n\
+cmd - remote cmd\n\
+quiet=1 - execute cmd silency\n\
+tty=1 force tty alloc or force no tty\n"
+# EXAMPLES:
+# cbsd hostlist=/tmp/linuxhosts scr=/root/bin/sh.sh
+# cbsd host="s1 s2 s3" date
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+init $*
+
+set -o errexit
+#set -o xtrace
+
+DEBUG=0
+SSH_VERBOSE=""
+QUIET=0
+UNIQUE_HOSTS=1
+REMOTE_SHELL='sh'
+TEMP_BASE=${ftmpdir}
+CONCURRENT=0
+MULTIHOST=0
+TTY=1
+
+ssh_connect() {
+
+if [ "${TTY}" = 0 ]; then 
+    TTYOP="-T"
+else
+    TTYOP="-tt"
+fi
+
+    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
+	    while read SSH_LINE ; do
+		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
+		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
+	    done
+}
+
+##############################
+# FUNCTIONS FOR FORKED PROCS #
+##############################
+set_hostlist() {
+# Create a hostlist file.
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: BUILDING HOST LIST FILE $TEMP_DIR/hostlist" 1>&2
+	rm -f $TEMP_DIR/hostlist || exit 1
+	for HOST in $HOSTLIST ; do
+		echo $HOST >> "$TEMP_DIR/hostlist" || exit 1
+	done
+}
+
+get_next_host() {
+# lock file
+	while [ 1 ] ; do
+		echo $CHILDNUM >> "$TEMP_DIR/hostlist.lock"
+		TOP_PID=$(head -1 "$TEMP_DIR/hostlist.lock" 2>/dev/null)
+		if [ "$TOP_PID" = "$CHILDNUM" ] ; then
+			break
+		fi
+		[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: hostlist file already locked.  Sleep..." 1>&2
+		#usleep 1000
+		sleep 1
+	done
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Locked hostfile." 1>&2
+
+# get next host
+	NEXT_HOST=$(head -1 $TEMP_DIR/hostlist)
+	HOSTFILE_LEN=$(wc -l $TEMP_DIR/hostlist | awk '{print $1}')
+        if [ -z "$HOSTFILE_LEN" -o "$HOSTFILE_LEN" = 0 ] ; then
+		rm -f "$TEMP_DIR/hostlist.lock"
+		return
+	fi
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Next host: $NEXT_HOST" 1>&2
+
+# re-write file removing new host
+	rm -f "$TEMP_DIR/hostlist.new"
+	tail -$(( $HOSTFILE_LEN - 1 )) $TEMP_DIR/hostlist > $TEMP_DIR/hostlist.new || exit 1
+        rm -f "$TEMP_DIR/hostlist"
+	mv "$TEMP_DIR/hostlist.new" "$TEMP_DIR/hostlist"
+
+# unlock file
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Removing hostfile lock." 1>&2
+	rm -f "$TEMP_DIR/hostlist.lock"
+
+# return hostname
+	echo $NEXT_HOST
+}
+
+run_child() {
+	trap "exit 0" SIGHUP
+	CHILDNUM=$1
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: FORKING CHILD #$CHILDNUM of $CONCURRENT (pid $!/$$)" 1>&2
+	while [ 1 ] ; do
+
+# issue:  Cannot call get_next_host inside $() or `` because our trap won't be able to kill that.
+#     solution: avoid subshell here by directing to a file.
+	rm -f $TEMP_DIR/$CHILDNUM.next_host
+#echo "DDAA"
+	get_next_host >$TEMP_DIR/$CHILDNUM.next_host
+	HOST=`cat $TEMP_DIR/$CHILDNUM.next_host`
+	if [ -z "$HOST" ] ; then
+		rm -f "$TEMP_DIR/$CHILDNUM.pid"
+		break
+	fi
+	[ "$DEBUG" -ge 1 ] && echo "DEBUG[#$CHILDNUM]: CONNECT $HOST" 1>&2
+
+	rm -f "$TEMP_DIR/$CHILDNUM.active"
+	echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
+	SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.db --action=sshopt --nodename=${HOST}`
+
+	[ -z "${SSH_ARGS}" ] && {
+	    echo "${HOST}: No such node in base"
+	    continue
+	}
+#	ssh_connect > $TEMP_DIR/$HOST.out
+#	cat $TEMP_DIR/$HOST.out
+	ssh_connect
+	[ $TTY -eq 0 ] && exit
+	done
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: CHILD #$CHILDNUM done" 1>&2
+	rm -f "$TEMP_DIR/$CHILDNUM.pid" "$TEMP_DIR/$CHILDNUM.active"
+}
+
+
+create_temp() {
+    TEMP_DIR=$(mktemp -d $TEMP_BASE/$(basename $0).XXXXXX) || err 1 "Error mktemp"
+}
+
+destroy_temp() {
+	[ -d "$TEMP_DIR" ] && rm -rf "$TEMP_DIR" 2>/dev/null
+}
+
+########################################
+# REMEMBER TO CLEAN UP BEFORE WE PANIC #
+########################################
+shutdown() {
+	[ "$DEBUG" -ge 1 ] && echo "DEBUG: shutting down children." 1>&2
+	CPIDS=$(cat $TEMP_DIR/*.pid 2>/dev/null)
+	for CPID in $CPIDS ; do 
+		[ "$DEBUG" -ge 2 ] && echo "DEBUG: Killing pid: $CPID" 1>&2
+		kill -HUP $CPID
+	done
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: shutting down ssh-agent" 1>&2
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: removing temp dir" 1>&2
+	destroy_temp
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: done shutting down." 1>&2
+        exit 1
+}
+
+spew_hostlist() {
+	echo "HOSTS RUNNING:"  1>&2
+	cat $TEMP_DIR/*.active 2>/dev/null | sed 's/^/    /'  1>&2
+	echo "HOSTS REMAINING:"  1>&2
+	cat $TEMP_DIR/hostlist 2>/dev/null | sed 's/^/    /'  1>&2
+	return
+}
+
+
+## Main()
+
+trap shutdown SIGINT
+trap shutdown SIGTERM
+trap spew_hostlist SIGQUIT
+trap "exit 0" SIGHUP
+
+[ -n "${blocking}" ] && BLOCKING=1 && shift
+[ -n "${quiet}" ] && {
+    QUIET=1
+    DEBUG=0
+    SSH_VERBOSE="-q"
+    shift
+}
+
+[ -n "${debug}" ] && DEBUG="${debug}" && shift
+[ -n "${node}" ] && HOSTLIST=`echo ${node}|tr ',' ' '` && shift
+[ -n "${cmd}" ] && THESCRIPT="${cmd}" && shift
+[ -n "${tty}" ] && TTY=${tty} && shift
+
+[ -n "${nodelist}" ] && {
+    [ ! -f "${nodelist}" ] && err 1 "${nodelist} file doesn't exist"
+    HOSTLIST="$(cat $nodelist | sed -e 's/#.*//' | egrep -v "^ *$" )"
+    shift
+}
+
+[ -n "${netgroup}" ] && {
+    # Negtgoup
+    NETGROUP=$2
+    NETGROUP_LIST="$(getent netgroup $NETGROUP | xargs -n 1 echo | sed -n '/^(.*,$/s/[,(]//gp')"
+    [ -z "${NETGROUP_LIST}" ] && err 1 "Failed to get netgroup: $NETGROUP"
+    HOSTLIST="$NETGROUP_LIST $HOSTLIST"
+    shift
+}
+
+[ -n "${cmdfile}" ] && {
+    [ ! -e "$cmdfile" ] && err 1 "myssh: Script File '$SCRIPTFILE' does not exist!"
+    THESCRIPT="$THESCRIPT $(cat $cmdfile )"
+    shift
+}
+
+HOSTLIST=$(echo "$HOSTLIST" | sed -e 's/#.*//' | egrep -v "^ *$" )
+[ -z "${HOSTLIST}" ] && err 1 "host list is empty"
+
+COUNT_HOSTS=$(echo "$HOSTLIST" | wc -w|awk '{printf $1}')
+CONCURRENT=$COUNT_HOSTS
+[ "$COUNT_HOSTS" = "1" ] && MULTIHOST=0
+[ -z "${cmd}" -a -z "${cmdfile}" ] && THESCRIPT=$@
+
+if [ "${COUNT_HOSTS}" = "1" ]; then
+    if [ "${TTY}" = 0 ]; then
+	TTYOP="-T"
+    else
+	TTYOP="-tt"
+    fi
+
+    SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.db --action=sshopt --nodename=${HOSTLIST}`
+    ssh -l $cbsduser -t ${SSH_ARGS} ${TTOP} -C $THESCRIPT
+    exit
+fi
+
+#TTY=1
+create_temp
+
+# Fork $CONCURRENT children
+set_hostlist
+CHILDNUM=1
+    while [ $CHILDNUM -le $CONCURRENT ] ; do 
+	run_child $CHILDNUM &
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: FORKED CHILD #$CHILDNUM with pid $!" 1>&2
+	rm -f "$TEMP_DIR/$CHILDNUM.pid"
+	echo $! > "$TEMP_DIR/$CHILDNUM.pid"
+	CHILDNUM=$((CHILDNUM+1))
+    done
+wait
+# since trap causes waits to stop waiting with a return value >128
+# We need to check that we really meant to stop waiting.
+RETVAL=$?
+    while [ "$RETVAL" -gt 128 ] ; do
+	[ "$DEBUG" -ge 2 ] && echo "DEBUG: wait returned with a value of $RETVAL" 1>&2
+	DO_WAIT=0
+	    for CPID in $(cat $TEMP_DIR/*.pid 2>/dev/null) ; do
+		    if [ -d "/proc/$CPID" ] ; then 
+			DO_WAIT=1
+			[ "$DEBUG" -ge 2 ] && echo "DEBUG: $CPID is still running." 1>&2
+		    fi
+	    done
+	[ "$DO_WAIT" = 0 ] && break
+	wait
+    done
+
+destroy_temp

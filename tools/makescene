@@ -1,0 +1,298 @@
+#!/bin/sh
+#v9.1.1
+globalconf="${workdir}/cbsd.conf";
+MYARG="scene mode"
+MYOPTARG="new"
+MYDESC="Make jail or packages from scenario file"
+ADDHELP="new = 0 for continue building, without cleanup\n\
+mode = prepare (build package), mkjail (make jail), all (prepare+mkjail)\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${tools}
+. ${system}
+init $*
+
+CCSIZE="4"
+CCACHEDIR="/root/.ccache"
+mroot="/root/bases"
+
+unmount_all()
+{
+    echo "Unmount all nullfs"
+    cd /
+    umount -f ${cdir}${CCACHEDIR} > /dev/null 2>&1
+    umount -f ${cdir}/var/db/ports > /dev/null 2>&1
+    umount -f ${cdir}/repo > /dev/null 2>&1
+    umount -f ${cdir}/dev > /dev/null 2>&1
+    umount -f ${cdir}/usr/src > /dev/null 2>&1
+    umount -f ${cdir}/usr/ports > /dev/null 2>&1
+}
+
+
+mkjail()
+{
+
+/usr/local/bin/cbsd jremove ${myenv}
+cbsd jcreate jconf=${etcdir}/scenes/${myenv}.jconf
+. ${jailrcconfdir}/rc.conf_${myenv}
+
+[ "${arch}" = "native" ] && arch=`uname -m`
+[ "${ver}" = "native" ] && ver=`sysctl -n kern.osrelease|cut -d - -f 1`
+
+. ${localcbsdconf}
+modconf ${jailrcconfdir}/rc.conf_${myenv} arch $arch
+modconf ${jailrcconfdir}/rc.conf_${myenv} ver ${ver}
+modconf ${jailrcconfdir}/rc.conf_${myenv} path "${jaildir}/${jname}"
+modconf ${jailrcconfdir}/rc.conf_${myenv} mount_fstab "${jailfstabdir}/fstab.${jname}"
+modconf ${jailrcconfdir}/rc.conf_${myenv} data "${jaildatadir}/${jname}-${jaildatapref}"
+modconf ${jailrcconfdir}/rc.conf_${myenv} rcconf "${jailrcconfdir}/rc.conf_${jname}"
+
+mkdir -p ${path}
+mount_nullfs $basejaildir/base_${arch}_${ver} ${path}
+
+[ -f "${etcdir}/scenes/${myenv}.fstab" ] && cat ${etcdir}/scenes/${myenv}.fstab >> ${mount_fstab}
+
+cbsd mountfstab jroot=${path} fstab=${mount_fstab}
+
+mount -t devfs devfs ${path}/dev
+[ ! -d "${path}/repo/dl.bsdstore.ru" ] && mkdir -p "${path}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports" "${path}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/All"
+mount -t nullfs ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion} ${path}/repo
+
+#Overwrite skel files
+SKELDIR="${etcdir}/scenes/${myenv}/skel"
+
+if [ -d "${SKELDIR}" ]; then
+    cp -rPf ${SKELDIR}/* ${path}/
+fi
+
+rm -f ${path}/var/db/pkg/*
+buildme
+rm -rf ${path}/var/db/ports/*
+cp -Rp ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports ${path}/var/db
+rm -rf ${path}/var/cache/pkg/*
+mkdir -p ${path}/usr/local/etc
+#link to my repo version
+cat > ${path}/usr/local/etc/pkg.conf << EOF
+PACKAGESITE: http://dl.bsdstore.ru/${arch}/${ver}/${repoversion}
+EOF
+
+umount -f ${path}/dev
+umount -f ${path}/var/db/ports
+umount -f ${path}/repo
+rm -rf ${path}/repo
+cbsd unmountfstab jroot=${path} fstab=${mount_fstab}
+cbsd jcleanup jname=${myenv}
+unmountbase
+umount ${path}
+
+# system dir
+if [ -d "${etcdir}/scenes/${myenv}" ]; then
+    [ -d "${jailsysdir}/${myenv}" ] && rm -rf "${jailsysdir}/${myenv}"
+    cp -Rp ${etcdir}/scenes/${myenv} ${jailsysdir}/${myenv}
+fi
+
+if [ -f "${etcdir}/scenes/${myenv}/${myenv}-descr" ]; then
+    [ ! -d "${jailsysdir}/${myenv}" ] && mkdir ${jailsysdir}/${myenv}
+    cp ${etcdir}/scenes/${myenv}/${myenv}-descr ${jailsysdir}/${myenv}/descr
+fi
+
+### CLEANUP
+rm -f ${data}/root/make.sh
+rm -rf ${data}/root/All
+#rm -rf ${data}/var/cache/pkg/All
+### end of CLEANUP
+
+cbsd jpkg_info jname=${myenv} update=1
+cbsd jexport jname=${myenv}
+
+DSTDIR="${mroot}/repo/dl.bsdstore.ru/img_${arch}_${ver}_${myenv}"
+mkdir -p ${DSTDIR} > /dev/null 2>&1
+mv $exportdir/${myenv}.img ${DSTDIR}/
+echo "Stored to ${DSTDIR}"
+}
+
+prepare_base()
+{
+[ ! -d "${mroot}" ] && mkdir -p ${mroot}
+cd ${mroot}
+
+if [ "${new}" = "1" ]; then
+    echo "Populate new bases"
+    [ ! -d "${cdir}" ] || chflags -R noschg ${cdir} && rm -rf ${cdir}
+    [ -d "${mybase}" ] || err 1 "No such ${mybase}. please fetch bases"
+    cp -Rp ${mybase} ${cdir}
+fi
+
+[ ! -d "${cdir}/dev" ] && mkdir $cdir/dev
+mount -t devfs devfs ${cdir}/dev
+[ $? -ne 0 ] && err 1 "Unable to mount devfs - check for allow options for jail"
+
+[ ! -d "${cdir}/repo" ] && mkdir $cdir/repo
+[ -d "${mroot}/repo/dl.bsdstore.ru" ] && mount -t nullfs ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion} ${cdir}/repo
+
+DBPORTS="${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}/ports"
+[ ! -d "${DBPORTS}" ] && mkdir -p ${DBPORTS}
+
+mount -t nullfs ${DBPORTS} ${cdir}/var/db/ports
+
+[ $? -ne 0 ] && err 1 "Unable to mount nullfs - check for allow options for jail"
+
+[ ! -d "${cdir}${CCACHEDIR}" ] && mkdir ${cdir}${CCACHEDIR}
+[ ! -d "${CCACHEDIR}" ] && mkdir ${CCACHEDIR}
+
+mount -t nullfs ${CCACHEDIR} ${cdir}${CCACHEDIR}
+[ ! -d ${cdir}/usr/ports ] && mkdir ${cdir}/usr/ports
+mount -t nullfs /usr/ports ${cdir}/usr/ports
+
+mkdir -p ${cdir}/usr/src
+SRC="${srcdir}/src_${ver}/src"
+
+[ -d "${SRC}" ] && mount -t nullfs ${SRC} ${cdir}/usr/src
+
+find /usr/ports -type d -name work -exec rm -rf {} \;
+
+ETCFILES="csh.cshrc make.conf resolv.conf"
+
+if [ "${new}" = "1" ]; then
+    for i in $ETCFILES; do
+	    if [ -f "${etcdir}/scenes/${myenv}-${i}" ]; then
+		cp ${etcdir}/scenes/${myenv}-${i} ${cdir}/etc/${i}
+	    else
+		cp ${etcdir}/scenes/${i} ${cdir}/etc/
+	    fi
+    done
+
+    STPORT="devel/ccache devel/distcc"
+    truncate -s0 ${cdir}/scene1.sh
+
+    cat > ${cdir}/scene1.sh << EOF
+#!/bin/sh
+env ASSUME_ALWAYS_YES=yes pkg
+[ ! -d "/repo" ] && mkdir -p "/repo"
+EOF
+
+    for i in ${STPORT}; do
+	MYPORT="/usr/ports/${i}"
+	PORTNAME=`make -C ${MYPORT} package-name`
+	TXZPATH="/repo/All/${PORTNAME}.txz"
+
+    cat >> ${cdir}/scene1.sh << EOF
+if [ -f "${TXZPATH}" ]; then
+    cd /repo/All
+    env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
+else
+    echo "No such $TXZPATH"
+    env NO_CCACHE=yes make -C /usr/ports/${i} install
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
+fi
+
+EOF
+    done
+    cat >> ${cdir}/scene1.sh << EOF
+env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
+EOF
+    chroot ${cdir} sh /scene1.sh
+    chroot ${cdir} ccache -M ${CCSIZE}G
+fi
+}
+
+
+build_me()
+{
+cat >${cdir}/scene2.sh << EOF
+#!/bin/sh
+EOF
+
+for i in ${pkg}; do
+MYPORT="/usr/ports/${i}"
+PORTNAME=`make -C ${MYPORT} package-name`
+
+#hack for determine when config-recursive is clean
+cat >>${cdir}/scene2.sh << EOF
+NOCONF=0
+MYPORT="/usr/ports/${i}"
+while [ \$NOCONF -eq 0 ]; do
+    script /tmp/test.\$\$ make config-recursive -C \${MYPORT}
+    grep "\[" /tmp/test.\$\$ > /dev/null
+    [ \$? -eq 1 ] && NOCONF=1
+done
+EOF
+done
+
+for n in ${pkg}; do
+MYPORT="/usr/ports/${n}"
+PORTNAME=`make -C ${MYPORT} package-name`
+TXZPATH="/repo/All/${PORTNAME}.txz"
+
+#get dependency from .txz if available
+cat >> ${cdir}/scene2.sh << EOF
+for i in \`make -C \${MYPORT} all-depends-list\`; do
+[ -z "\${i}" ] && continue
+DPORTNAME=\`make -C \${i} package-name\`
+echo "Search for \${DPORTNAME} in repo..."
+cd /repo/All
+[ -f "/repo/All/\${DPORTNAME}.txz" ] && env ASSUME_ALWAYS_YES=yes pkg add \${DPORTNAME}.txz
+done
+EOF
+
+cat >> ${cdir}/scene2.sh << EOF
+if  [ -f "${TXZPATH}" ]; then
+    echo "Get from repository"
+    cd /repo/All
+    env ASSUME_ALWAYS_YES=yes pkg add ${TXZPATH}
+else
+    echo "No such ${TXZPATH}. Building"
+    make -C /usr/ports/${n} install
+    [ \$? -ne 0 ] && {
+	echo "Got problem while install \${n}"
+	read p
+    }
+    echo "Make pkg for ${TXZPATH}"
+    cd /repo/All
+    env ASSUME_ALWAYS_YES=yes pkg create -n -a -o /repo/All
+fi
+EOF
+done
+
+cat >> ${cdir}/scene2.sh << EOF
+echo "make all pkg"
+cd /repo/All
+ls -la
+env ASSUME_ALWAYS_YES=yes pkg create -n -a
+EOF
+
+chroot ${cdir} service ldconfig restart
+chroot ${cdir} /bin/sh /scene2.sh
+
+cd ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}
+pkg repo ${mroot}/repo/dl.bsdstore.ru/${arch}/${ver}/${repoversion}
+}
+
+### MAIN
+
+[ -z "${new}" ] && new="1"
+
+. ${scene}
+
+[ "${arch}" = "native" ] && arch=`uname -m`
+[ "${ver}" = "native" ] && ver=`sysctl -n kern.osrelease|cut -d - -f 1`
+
+#my chroot dir
+cdir="${mroot}/${myenv}"
+mybase="${basejaildir}/${basejailpref}_${arch}_${ver}"
+
+if [ "$mode" = "prepare" -o "${mode}" = "all" ]; then
+    cd /
+    unmount_all
+    prepare_base
+    build_me
+    unmount_all
+fi
+
+if [ "${mode}" = "mkjail" -o "${mode}" = "all" ]; then
+    mkjail
+fi
+

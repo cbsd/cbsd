@@ -1,0 +1,82 @@
+#!/bin/sh
+#v9.2.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="ver arch maxjobs clean name stable basename"
+MYDESC="Build kernel from sources"
+ADDHELP="ver=9_1 for 9.1 ver=. for current.\n\
+stable=1 for RELENG_X\n\
+destdir= for alternative install path in root dir\n"
+
+set -e
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+init $*
+
+. ${buildconf}
+[ -n "${clean}" ] || clean=0
+
+
+if [ -z "${name}" ]; then
+    export __MAKE_CONF=${etcdir}/make.conf
+else
+    export __MAKE_CONF=${etcdir}/make-$name.conf
+fi
+
+if [ -z "${basename}" ]; then
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
+else
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${ver}
+fi
+
+if [ -z "${basename}" ]; then
+    export SRCCONF=${etcdir}/src.conf
+else
+    export SRCCONF=${etcdir}/src-${basename}.conf
+fi
+
+#if [ -z "${basename}" ]; then
+#    SRCBASE="${basejaildir}/${basejailpref}_${arch}_${ver}"
+#else
+#    SRCBASE="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+#fi
+
+#[ -d "${SRCBASE}" ] || err 1 "No such version at ${SRCBASE}"
+[ "${arch}" = "amd64" -o "${arch}" = "i386" ] || err 1 "Only amd64 or i386 arch supported"
+
+if [ `uname -m` = "i386" -a "${arch}" = "amd64" ]; then
+    err 1 "Cannot build amd64 on i386 hosts"
+fi
+
+NUMJOBS=""
+[ $maxjobs -eq 0 ] || NUMJOBS="-j${maxjobs}"
+
+NOCLEANUP=""
+[ ${clean} -eq 1 ] || NOCLEANUP="-DNO_CLEAN"
+
+if [ -z "${name}" ]; then
+    LOCKFILE=${SRCBASE}.lock
+else
+    LOCKFILE=${SRCBASE}-${name}.lock
+fi
+
+[ -z "${name}" ] && name="GENERIC"
+
+if [ -n "${destdir}" ]; then
+    DST="${destdir}"
+else
+    if [ -z "${basename}" ]; then
+	DST="${basejaildir}/kernel_${name}_${arch}_${ver}"
+    else
+	DST="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
+    fi
+fi
+
+SRCDIR="${srcdir}/src_${ver}"
+
+[ ! -f "${etcdir}/kernel-${name}-${arch}-${ver}" ] && err 1 "No such config kernel-${name}-${arch}-${ver} in ${etcdir}"
+cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRCDIR}/src/sys/${arch}/conf/${name}.CBSD
+makelock $LOCKFILE "rm -f ${SRCDIR}/src/sys/${arch}/conf/${name}.CBSD"
+/usr/bin/make $NUMJOBS -C ${SRCDIR}/src installkernel TARGET=${arch} KERNCONF=${name}.CBSD DESTDIR=${DST} ${NOCLEANUP}

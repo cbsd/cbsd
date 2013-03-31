@@ -1,0 +1,110 @@
+# movedata $1-from $2-to
+mvdata()
+{
+ORIG=$1
+TO=$2
+
+[ -z "${ORIG}" -o -z "${TO}" ] && err 1 "mvdata: empty sources of destination"
+[ -d "${TO}" ] && err 1 "${TO} directory exist. Please remove them first"
+
+if [ "${zfsfeat}" = "0" ]; then
+    mv ${ORIG} ${TO}
+    [ -d "${ORIG}" ] && removedata ${ORIG}
+    return 0
+fi
+
+. $zfstool
+zfsmnt "${ORIG}"
+_res=$?
+case $_res in
+    0) 	echo "Switch to ZFS pool"
+	zfsmnt ${workdir}
+	zfs create -o atime=off -o mountpoint=${TO} "${ZPOOL}${TO}"
+	mv ${ORIG}/* ${TO}/
+	;;
+    [12])
+	zfs umount -f ${ORIG} > /dev/null 2>&1
+	zfs set mountpoint=${TO} ${ZPOOL}
+	zfs mount ${ZPOOL}
+	;;
+esac
+
+return 0
+[ -d "${ORIG}" ] && chflags -R noschg ${ORIG} && rm -rf ${ORIG}
+
+return 0
+}
+
+
+# clone data
+# mode = cp, rsync, rsyncforce (no warning for existance TO dir)
+# #clonedata /usr/jails/jails-data/jail1-data /mn rsync
+clonedata()
+{
+ORIG=$1
+TO=$2
+MODE=$3
+
+case $MODE in
+    "cp") GO="/bin/cp -Rp ";;
+    "rsync") GO="/usr/local/bin/rsync -avz --delete " ;;
+    "rsyncforce") GO="/usr/local/bin/rsync -avz --delete "; FORCE=1 ;;
+    *) err "Unsupported mode";;
+esac
+
+[ -z "${jname}" ] && err 1 "No jname"
+[ -d "${TO}" -a $FORCE -eq 0 ] && err 1 "${TO} directory exist. Please remove them"
+
+. ${zfstool}
+
+[ ! -d "${TO}" ] && {
+
+if [ $zfsfeat -eq 1 ]; then
+	ZPOOL=`zfs list ${jaildatadir} |tail +2 |awk '{printf $1}'`
+	zfs create -o atime=off -o mountpoint=${TO} ${ZPOOL}/${jname}
+else
+	    mkdir -p ${TO}
+fi
+}
+
+${GO} ${ORIG}/* ${TO}/
+}
+
+# remove data from disk
+# Warning: $jname param must be present
+removedata()
+{
+DATA=$1
+
+[ -d "${DATA}" ] || return 1
+
+if [ $zfsfeat -eq 1 ]; then
+    . $zfstool
+    zfsmnt ${DATA}
+    case $? in
+        1) zfs unmount -f "${DATA}"; zfs destroy -r "${ZPOOL}"; rm -rf "${DATA}" ;;
+        2) zfs destroy -r "${ZPOOL}"; rm -rf "${DATA}" ;;
+    esac
+else
+    chflags -R noschg ${DATA}
+fi
+
+rm -rf ${DATA}
+}
+
+
+
+# unmount if mount
+unmountdata()
+{
+DATA=$1
+
+[ -n "${DATA}" -a -d "${DATA}" ] || return 1
+
+. $zfstool
+zfsmnt ${DATA}
+if [ $? -eq 1 ]; then
+	zfs unmount -f $DATA
+	rmdir ${DATA}
+fi
+}

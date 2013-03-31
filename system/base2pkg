@@ -1,0 +1,103 @@
+#!/bin/sh
+#v9.2.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="target repo"
+MYOPTARG="ver arch basename stable kernelname svnrev"
+MYDESC="Split base or kernel part into pkg peaces"
+ADDHELP="ver=head for current.\n\
+stable=1 for RELENG_X\n\
+repo= destination path to output packages\n\
+kernelname= kernel config name\n\
+svnrev= ver.XXX - when svnrev=src, get svn revision from source\n\
+target= kernel, rescue, world, zoneinfo\n"
+
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+init $*
+
+# By default ver=current version
+. ${buildconf}
+. ${base2pkgconf}
+
+
+SRC="${srcdir}/src_${ver}/src"
+
+[ -z "${svnrev}" ] && svnrev="0"
+[ "${svnrev}" = "src" -a -d "${SRC}" ] && svnrev=`cd ${SRC} && svn info |awk '/^Revision: /{printf $2}'`
+
+if [ -z "${basename}" ]; then
+    DST="${basejaildir}/${basejailpref}_${arch}_${ver}"
+else
+    DST="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+fi
+
+if [ `uname -m` = "i386" -a "${arch}" = "amd64" ]; then
+    err 1 "Cannot install amd64 base on i386 hosts"
+fi
+
+[ "$target" = "kernel" -a -z "${kernelname}" ] && kernelname="GENERIC"
+[ -z "${name}" ] && name="GENERIC"
+
+
+if [ -z "${basename}" ]; then
+    kernel_conf="${sharedir}/base2pkg/freebsd-kernel-${ver}.conf ${sharedir}/base2pkg/freebsd-kernel-symbols-${ver}.conf"
+    rescue_conf="${sharedir}/base2pkg/freebsd-rescue-${ver}.conf"
+    world_conf="${sharedir}/base2pkg/freebsd-base-${ver}.conf ${sharedir}/base2pkg/freebsd-lib32-${ver}.conf ${sharedir}/base2pkg/freebsd-rescue-${ver}.conf ${sharedir}/base2pkg/freebsd-zoneinfo-${ver}.conf"
+    zoneinfo_conf="${sharedir}/base2pkg/freebsd-zoneinfo-${ver}.conf"
+    KERNDST="${basejaildir}/kernel_${name}_${arch}_${ver}"
+else
+    kernel_conf="${sharedir}/base2pkg/freebsd-kernel-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-kernel-symbols-${basename}-${ver}.conf"
+    rescue_conf="${sharedir}/base2pkg/freebsd-rescue-${basename}-${ver}.conf"
+    world_conf="${sharedir}/base2pkg/freebsd-base-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-lib32-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-rescue-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-zoneinfo-${basename}-${ver}.conf"
+    zoneinfo_conf="${sharedir}/base2pkg/freebsd-zoneinfo-${basename}-${ver}.conf"
+    KERNDST="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
+fi
+
+echo "base: $DST"
+echo "kernel: $KERNDST"
+echo "ver: $ver.$svnrev"
+echo "target: $target"
+echo "repo: $repo"
+
+[ ! -d "$repo" -o ! -d "$repo/All" ] && mkdir -p ${repo}/All && echo "${repo}/All created"
+
+#set -eux
+trap "exit 0" SIGINT
+
+case "$target" in
+kernel)
+	: ${conf:=$kernel_conf}
+
+	CDIR="/tmp/base2pkg.$$"
+	mkdir $CDIR
+	mount_nullfs ${DST} ${CDIR}
+	mount_nullfs ${KERNDST}/boot/kernel ${CDIR}/boot/kernel
+	DST=$CDIR
+	mk_kernel
+	umount ${CDIR}/boot/kernel
+	umount ${CDIR}
+	rmdir ${CDIR}
+	;;
+rescue)
+	: ${conf:=$rescue_conf}
+	mk_rescue
+	;;
+world)
+	: ${conf:=$world_conf}
+	mk_world
+	;;
+zoneinfo)
+	: ${conf:=$zoneinfo_conf}
+	mk_zoneinfo
+	;;
+*)
+	usage
+	;;
+esac
+
+cd $repo
+
+pkg repo .
+

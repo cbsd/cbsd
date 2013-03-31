@@ -1,0 +1,157 @@
+# change passwd for cbsd user via prompt
+change_cbsdpw() {
+    local oldmodes=`stty -g`
+    local pw="1"
+    local npw=""
+
+    echo "Changing local password for cbsd user."
+
+    while [ "$pw" != "${npw}" ]; do
+	printf "New Password: "
+	stty -echo
+	read pw
+	printf "\nRetype New Password: "
+	read npw
+	[ "$pw" = "${npw}" ] || echo "Mismatch; try again, EOF to quit."
+    done
+
+    stty $oldmodes
+    echo
+    echo ${npw} |/usr/sbin/pw mod user ${cbsduser} -h 0 -
+}
+
+# usage: modconf [0] /etc/rc.conf ifconfig_lo0 "127.0.0.1/8"
+# add or modify value for "^param="
+# [0] - do not modify if param already exist
+#
+modconf() {
+    local _FORCE=1
+    local _SYSFILES="/boot/loader.conf /etc/rc.conf /usr/local/etc/sudoers.d/cbsd_sudoers /etc/sysctl.conf /var/cron/tabs/root"
+
+    [ "${1}" != "0" ] || {
+	_FORCE=0
+	shift
+    }
+
+    local _FILE="${1}"
+    local _PARAM="${2}"
+    local _VAL="${3}"
+    local _ESCAPE=1
+
+    # no escape value if not spaces
+    A=`echo "${_VAL}" |grep " "`
+
+    [ $? -eq 1 ] && _ESCAPE=0
+
+    if [ -z "${_FILE}" -o -z "${_PARAM}" ]; then
+	echo "Empty value in modconf"
+	return
+    fi
+
+    [ -f "${_FILE}" ] || touch ${_FILE}
+
+    local _TMP="${_FILE}.$$"
+    cp ${_FILE} ${_TMP}
+    trap "rm -f ${_TMP}" 0
+
+    if [ `grep -c ^${_PARAM}\= ${_FILE}` = 0 ]; then
+	# just add
+	for i in ${_SYSFILES}; do
+	    if [ "${i}" = "${_FILE}" ]; then
+		echo "[Attention] CBSD change follow system file ${_FILE}:"
+		echo "${_PARAM}=${_VAL} param has been added"
+	    fi
+	done
+
+	cp ${_FILE} $_TMP
+	if [ $_ESCAPE -eq 1 ]; then
+	    echo "${_PARAM}=\"${_VAL}\"" >> ${_FILE}
+	else
+	    echo "${_PARAM}=${_VAL}" >> ${_FILE}
+	fi
+
+	sh -n ${_FILE}
+
+	if [ $? -ne 0 ]; then
+	    echo "Bad syntax, back to original"
+	    mv ${_TMP} ${_FILE}
+	    sync
+	    return
+	fi
+
+	rm -f ${_TMP}
+	sync
+	return
+    fi
+
+    # modify if not force
+    [ ${_FORCE} -eq 1 ] || {
+	rm -f ${_TMP}
+	sync
+	return
+    }
+
+    for i in ${_SYSFILES}; do
+            if [ "${i}" = "${_FILE}" ]; then
+                echo "[Attention] CBSD change follow system file ${_FILE}:"
+        	echo "${_PARAM} value has been set to ${_VAL}"
+            fi
+    done
+
+    grep -v "^${_PARAM}\=" ${_TMP} > ${_FILE}
+    echo "${_PARAM}=\"${_VAL}\"" >> ${_FILE}
+
+    sh -n ${_FILE}
+
+    if [ $? -ne 0 ]; then
+	echo "Bad syntax, back to original"
+	mv ${_TMP} ${_FILE}
+    fi
+    rm -f ${_TMP}
+    sync
+}
+
+#return 0 errcode for undefined type
+#return 1 errcode for ipv4
+#return 2 errcode for ipv6
+iptype() {
+
+    [ -z "${1}" ] && return 0
+
+    # Identify type {inet,inet6}.
+    case "${1}" in
+*\.*\.*\.*)     return 1 ;;
+*:*)            return 2 ;;
+*)              return 0 ;;
+    esac
+}
+
+
+resolvhost()
+{
+    HST=`host -4 -t a $1 | awk '/has address /{print $4"\n"}' |head -n1 |egrep '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$'`
+}
+
+
+# convert string in Xm (mbytes) or Xg (gbytes) to bytes
+# example: 
+# if conv2bytes "1g"; then
+#    echo $convval
+# fi
+# return bytes in $convval var
+# errcode 1 when error
+conv2bytes() {
+    local _testsize
+    local _value
+
+    [ -z "${1}" ] && return 1
+
+    _testsize=`echo "${1}" | sed -n 's/^\([0-9]\{1,\}[gm]\)$/\1/p'`
+    [ -z "${_testsize}" ] && return 1
+
+    convval=$((`echo $1 | sed -Ees:g:km:g -es:m:kk:g -es:k:"*2b":g -es:b:"*128w":g -es:w:"*4 ":g -e"s:(^|[^0-9])0x:\1\0X:g" -ey:x:"*":`))
+
+    [ $? -eq 0 -a ${convval} -gt 0 ] || return 1
+
+    export convval
+}

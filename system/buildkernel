@@ -1,0 +1,95 @@
+#!/bin/sh
+#v9.2.0
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="ver arch maxjobs clean name basename ccache"
+MYDESC="Build kernel from sources"
+
+set -e
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+init $*
+
+. ${buildconf}
+. ${inventory}
+. ${distccacheconf}
+
+if [ "${ccache}" = "1"  ]; then
+
+    ccache_prefix="cbsd buildworld $ver $arch $basename"
+    ccache_dir="/var/cache/ccache"
+    init_ccache_dir
+    export CCACHE_DIR=$ccache_realdir
+
+    if ! ccache_check; then
+        ccache=0
+    fi
+else 
+    ccache=0
+fi
+
+SRC="${srcdir}/src_${ver}"
+[ -d "${SRC}" ] || err 1 "No such version at ${SRC}"
+[ "${arch}" = "amd64" -o "${arch}" = "i386" ] || err 1 "Only amd64 or i386 arch supported"
+[ `uname -m` = "i386" -a "${arch}" = "amd64" ] && err 1 "Cannot build amd64 on i386 hosts"
+
+if [ -z "${name}" ]; then
+    export __MAKE_CONF=${etcdir}/make.conf
+else
+    export __MAKE_CONF=${etcdir}/make-$name.conf
+fi
+
+if [ -z "${basename}" ]; then
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
+else
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${ver}
+fi
+
+if [ -z "${basename}" ]; then
+    export SRCCONF=${etcdir}/src.conf
+else
+    export SRCCONF=${etcdir}/src-${basename}.conf
+fi
+
+if [ -z "${basename}" ]; then
+    SRCBASE="${basejaildir}/${basejailpref}_${arch}_${ver}"
+else
+    SRCBASE="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+fi
+
+NUMJOBS=""
+[ $maxjobs -eq 0 ] || NUMJOBS="-j${maxjobs}"
+
+NOCLEANUP=""
+[ ${clean} -eq 1 ] || NOCLEANUP="-DNO_CLEAN"
+
+if [ -z "${name}" ]; then
+    LOCKFILE=${SRC}.lock
+else
+    LOCKFILE=${SRC}-${name}.lock
+fi
+
+[ -z "${name}" ] && name="GENERIC"
+
+[ -f "${etcdir}/kernel-${name}-${arch}-${ver}" ] || err 1 "No such config kernel-${name}-${arch}-${ver} in ${etcdir}"
+
+## preparing chroot
+DST="${basejaildir}/tempbase.$$"
+mkdir -p ${DST}
+cd $SRCBASE && pax -p eme -X -rw . ${DST}
+
+cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRC}/src/sys/${arch}/conf/${name}.CBSD
+
+mkdir -p ${DST}${SRC}/src
+mount -t nullfs -o ro ${SRC}/src ${DST}${SRC}/src
+mkdir -p ${MAKEOBJDIRPREFIX} ${DST}${MAKEOBJDIRPREFIX}
+mkdir -p ${DST}${etcdir}
+[ -f "${__MAKE_CONF}" ] && cp ${__MAKE_CONF} ${DST}${etcdir}
+[ -f "${SRCCONF}" ] && cp ${SRCCONF} ${DST}${etcdir}
+mount -t nullfs ${MAKEOBJDIRPREFIX} ${DST}${MAKEOBJDIRPREFIX}
+mount -t devfs devfs ${DST}/dev
+
+makelock $LOCKFILE "rm -f ${SRC}/src/sys/${arch}/conf/${name}.CBSD ; umount ${DST}${MAKEOBJDIRPREFIX} ; umount ${DST}/dev ; umount ${DST}${SRC}/src ; rm -rf ${DST}"
+/usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}

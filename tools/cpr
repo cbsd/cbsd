@@ -1,0 +1,165 @@
+#!/bin/sh
+#v9.2.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="cdir repo pkglist destdir"
+MYOPTARG="ver arch basename stable new"
+MYDESC="Create pkg repository"
+ADDHELP="ver=head for current.\n\
+stable=1 for RELENG_X\n\
+repo= destination path to output packages\n"
+
+SRC="${srcdir}/src_${ver}/src"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${distccacheconf}
+. ${buildconf}
+. ${base2pkgconf}
+
+init $*
+
+umount_temp_dirs()
+{
+# when error before cdir, we do not have any mounts by scripts
+[ -z "${cdir}" -o ! -d "${cdir}" ] && return 0
+ 
+ MOUNT_LIST=`mount | awk -F" on " '{print $2}' | awk -F"(" '{print $1}'`
+ 
+ for mount_point in $MOUNT_LIST; do
+    case $mount_point in
+        $cdir/usr/ports/distfiles | \
+	$cdir/usr/ports | \
+        $cdir/usr/src | \
+        $cdir${CCACHE_DIR} | \
+        $cdir/var/db/ports | \
+        $cdir/compat/linux/proc | \
+        $cdir/proc | \
+        $cdir/dev)
+            umount -f $mount_point || mailerr 1 "Cannot unmount $mount_point directory!"
+            ;;
+    esac
+ done
+ 
+#destroy md disk when he used
+if [ "${CCACHEFS}" = "mdfs" -a -n "${MDDEV}" ]; then
+    echo -e "\033[40;35m Destroy md drive ${MDDEV}\033[0m"
+    mdconfig -d -u ${MDDEV}
+fi
+}
+
+
+mount_temp_dirs()
+{
+
+    local _mydir="dev proc usr/compat/linux/proc  usr/src usr/ports/distfiles var/db/ports"
+    local _i
+    
+    for _i in ${_mydir}; do
+	[ ! -d "${cdir}/${_i}" ] && mkdir -p ${cdir}/${_i}
+    done
+
+    mount -t devfs devfs $cdir/dev
+    kldstat -qm linprocfs || kldload linprocfs
+
+    if [ "${R_ARCH}" = "i386" -o "${R_ARCH}" = "amd64" ]; then
+	mkdir -p $cdir/compat/linux/proc
+	mount -t linprocfs linprocfs $cdir/compat/linux/proc
+    fi
+
+    mkdir -p $cdir/proc
+    mount -t procfs procfs $cdir/proc
+#version
+    mount -t nullfs ${PORTSCFG_SRC} $cdir/var/db/ports
+#
+    mkdir -p $cdir/usr/src
+    mount -o ro -t nullfs $SRC/src $cdir/usr/src
+    
+
+if [ "$MOUNT_PORTS" = "1" -a "$MOUNT_DISTFILES" = "1" ]; then
+    mount -o rw -t nullfs /usr/ports ${cdir}/usr/ports
+else
+    if [ "${MOUNT_PORTS}" = "0" -a "${MOUNT_DISTFILES}" = "1" ]; then
+	mount -t nullfs /usr/ports/distfiles $cdir/usr/ports/distfiles
+    fi
+fi
+
+}
+
+
+
+prepare_chroot()
+{
+echo -e "\033[40;35m Building packages...  \033[0m"
+ 
+chroot $cdir /bin/sh << EOF
+ env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
+              
+  #distcc must be first for CCACHE_PREFIX when ccache is used
+  NEEDEDPORTS="\
+  devel/ccache \
+  ports-mgmt/portmaster \
+  "
+
+find /usr/ports -type d -name work -exec rm -rf {} \;
+
+for i in \${NEEDEDPORTS}; do
+    if [ -f /tmp/buildcontinue ]; then
+	pkg info \$i >/dev/null 2>&1|| env ASSUME_ALWAYS_YES=yes pkg install -y \$i
+	pkg info \$i >/dev/null 2>&1|| make -C /usr/ports/\${i} install clean
+    else
+	echo "Installing \${i} "
+	make -C /usr/ports/\${i} install clean
+    fi
+done
+EOF
+}
+
+
+### MAIN
+. ${etcdir}/cpr.conf
+
+SRC="${srcdir}/src_${ver}"
+[ -d "${SRC}" ] || err 1 "No such version at ${SRC}"
+
+if [ -z "${basename}" ]; then
+    DST="${basejaildir}/${basejailpref}_${arch}_${ver}"
+else
+    DST="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+fi
+        
+if [ `uname -m` = "i386" -a "${arch}" = "amd64" ]; then
+    err 1 "Cannot install amd64 base on i386 hosts"
+fi
+
+if [ "$new" = "0" ]; then
+    new=0
+else
+    new=1
+fi
+
+[ ! -f "${pkglist}" ] && err 1 "No pkglist file"
+
+[ -d "${cdir}" -a $new -eq 1 ] && chflags -R noschg ${cdir} && rm -rf ${cdir}
+[ ! -d "${cdir}" ] && mkdir ${cdir}
+
+[ $new -eq 1 ] && cd $DST && pax -p eme -X -rw . ${cdir}
+
+[ ! -d "${PORTSCFG_SRC}" ] && mkdir -p $PORTSCFG_SRC
+
+trap "rm -f ${LOCKFILE}; umount_temp_dirs" 0 1 2 3 4 5 6 9
+mount_temp_dirs
+
+[ "${MOUNT_PORTS}" = "0" ] && chroot ${cdir} portsnap fetch extract
+
+prepare_chroot
+
+
+cp ${sharedir}/cpr_packages.sh ${cdir}/tmp/cpr_packages.sh
+cp ${pkglist} ${cdir}/tmp/ports_list.txt
+chroot $cdir sh /tmp/cpr_packages.sh
+
+[ -d "$destdir" ] && rm -rf $destdir
+mv ${cdir}/packages $destdir
+
