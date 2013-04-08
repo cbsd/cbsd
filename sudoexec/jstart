@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.1.0
+#v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname inter"
@@ -94,11 +94,11 @@ fi
 
 makeresolv()
 {
-if [ -f ${data}/etc/resolv.conf ]; then
-    cp ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
-    grep -v nameserver ${data}/etc/resolv.conf.bak > ${data}/etc/resolv.conf
-fi
-grep nameserver ${jailskeldir}/resolv.conf >> ${data}/etc/resolv.conf
+    if [ -f ${data}/etc/resolv.conf ]; then
+	cp ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
+	grep -v nameserver ${data}/etc/resolv.conf.bak > ${data}/etc/resolv.conf
+    fi
+    grep nameserver ${jailskeldir}/resolv.conf >> ${data}/etc/resolv.conf
 }
 
 
@@ -111,129 +111,127 @@ else
 fi
 
 for jname in ${JLIST}; do
-JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+    JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
 
-[ -f  ${JAILRCCONF} ] || {
-    echo "no conf rc.conf file for ${jname}"
-    continue
-}
-. ${JAILRCCONF}
+    if [ ! -f  "${JAILRCCONF}" ]; then
+	echo "no conf rc.conf file for ${jname}"
+	continue
+    fi
 
-shortnm=$jname
+    . ${JAILRCCONF}
 
-[ $baserw -eq 1 ] && path=$data
+    shortnm=$jname
 
-##### check for already running
-ST=`cbsd jstatus jname=${jname}`
-[ $? -ne 0 ] || err 1 "No such jail"
-[ "${ST}" = "0" ] ||  {
-    echo "Jail already running: ${ST}"
-    continue
-}
+    [ $baserw -eq 1 ] && path=$data
 
-[ -d ${path} ] || mkdir ${path}
+    ##### check for already running
+    ST=`cbsd jstatus jname=${jname}`
+    [ $? -ne 0 ] || err 1 "No such jail"
 
-geniplist ${ip4_addr}
+    if [ "${ST}" != "0" ]; then
+	echo "Jail already running: ${ST}"
+	continue
+    fi
 
-if [ -n "${interface}" -a "${interface}" != "0" ]; then
-### CHECK FOR IP ####
-for ips in ${IPS}; do
-A=`cbsd checkip ip=${ips} check=1`
-IPUSE=$?
-case ${IPUSE} in
-0)
-echo "ip ${ips} not in pool range"
-continue
-;;
-1)
-;;
-2)
-echo "Ip ${ips} already exists in LAN"
-continue
-;;
-default)
-echo "Unkown error with ${ips}"
-continue
-;;
-esac
-done
-####################
-fi
+    [ ! -d "${path}" ] && mkdir ${path}
 
+    geniplist ${ip4_addr}
 
-#geniplist ${ip4_addr}
-if [ -n "${interface}" -a "${interface}" != "0" ]; then
-    for pureip in ${IPS}; do
-	iface=`cbsd getnics-by-ip ip=${pureip}`
-	ipwmask ${pureip}
-	    if [ -n "$iface" ]; then
-		modconf ${JAILRCCONF} interface "${iface}"
-		break
-	    else
-		err 1 "Cant determine interfaces for ${pureip}"
-	    fi
-    done
-fi
+    if [ -n "${interface}" -a "${interface}" != "0" ]; then
+	### CHECK FOR IP ####
+	for ips in ${IPS}; do
+	    A=`cbsd checkip ip=${ips} check=1`
+	    IPUSE=$?
+	    case ${IPUSE} in
+		0)
+		    echo "ip ${ips} not in pool range"
+		    continue
+		;;
+		1) ;;
+		2)
+		    echo "Ip ${ips} already exists in LAN"
+		    continue
+		;;
+		default)
+		    echo "Unkown error with ${ips}"
+		    continue
+		;;
+	    esac
+	done
+    fi
 
+    #geniplist ${ip4_addr}
+    if [ -n "${interface}" -a "${interface}" != "0" ]; then
+	for pureip in ${IPS}; do
+	    iface=`cbsd getnics-by-ip ip=${pureip}`
+	    ipwmask ${pureip}
+		if [ -n "$iface" ]; then
+		    modconf ${JAILRCCONF} interface "${iface}"
+		    break
+		else
+		    err 1 "Cant determine interfaces for ${pureip}"
+		fi
+	done
+    fi
 
-#test for zfs mounted & mount if not
-case $zfsfeat in
-    1) . $zfstool
-	zfsmnt ${path}
-    	[ $? -eq 2 ] && zfs mount "${ZPOOL}"
-        ;;
-esac
+    #test for zfs mounted & mount if not
+    case $zfsfeat in
+	1) . $zfstool
+	    zfsmnt ${path}
+    	    [ $? -eq 2 ] && zfs mount "${ZPOOL}"
+    	;;
+    esac
 
-if [ "${ver}" != "empty" ]; then
-    [  -d "${data}/etc" -o -d "${data}/bin" ] || err 1 "No such data structure in ${data}"
-fi
+    if [ "${ver}" != "empty" ]; then
+	[  -d "${data}/etc" -o -d "${data}/bin" ] || err 1 "No such data structure in ${data}"
+    fi
 
-# cp local default resolv.conf skel
-if [ ${floatresolv} -eq 1 -a "${ver}" != "empty" ]; then
+    # cp local default resolv.conf skel
+    if [ ${floatresolv} -eq 1 -a "${ver}" != "empty" ]; then
 	makeresolv
-fi
+    fi
 
-if [ $applytpl -eq 1 -a "${ver}" != "empty" ]; then
-[  -d "${data}/usr/local/libexec/nagios/check_ports" ] || mkdir -p ${data}/usr/local/libexec/nagios
-    cp ${systemsudoexecdir}/check_ports ${data}/usr/local/libexec/nagios/check_ports
-    modconf 0 ${data}/etc/make.conf WITH_PKGNG yes
-    modconf 0 ${data}/etc/make.conf WRKDIRPREFIX /tmp
-fi
+    if [ $applytpl -eq 1 -a "${ver}" != "empty" ]; then
+	[  -d "${data}/usr/local/libexec/nagios/check_ports" ] || mkdir -p ${data}/usr/local/libexec/nagios
+	cp ${systemsudoexecdir}/check_ports ${data}/usr/local/libexec/nagios/check_ports
+	modconf 0 ${data}/etc/make.conf WITH_PKGNG yes
+	modconf 0 ${data}/etc/make.conf WRKDIRPREFIX /tmp
+    fi
 
-if [ "${ver}" != "empty" ]; then
-    mountbase
-    mountfstab
-fi
+    if [ "${ver}" != "empty" ]; then
+	mountbase
+	mountfstab
+    fi
 
-master_prestart
-prestart
+    master_prestart
+    prestart
 
-if [ "$ver" = "empty" ]; then
-    path="/"
-    exec_start="${jailsysdir}/${jname}/run.sh"
-else
-    [ ! -d "${data}/var/cache/pkg" ] && mkdir -p "${data}/var/cache/pkg"
-fi
+    if [ "$ver" = "empty" ]; then
+	path="/"
+	exec_start="${jailsysdir}/${jname}/run.sh"
+    else
+	[ ! -d "${data}/var/cache/pkg" ] && mkdir -p "${data}/var/cache/pkg"
+    fi
 
-cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf
+    cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf
 
-[ -z "${nice}" ] && nice="0"
-/usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
+    [ -z "${nice}" ] && nice="0"
+    /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
 
-#if [ -n "$devfs_ruleset" ]; then
-#    . /etc/rc.subr
-#    devfs_rulesets_from_file ${etcdir}/devfs.rules
-#    devfs -m ${path}/dev rule -s ${devfs_ruleset} applyset
-#fi
-#/usr/sbin/jail -c path=$path host.hostname=$host_hostname ip4.addr=${COMMAIPS4} ip6.addr=${COMMAIPS6} allow.socket_af allow.chflags allow.raw_sockets allow.sysvipc command=${exec_start}
+    #if [ -n "$devfs_ruleset" ]; then
+    #    . /etc/rc.subr
+    #    devfs_rulesets_from_file ${etcdir}/devfs.rules
+    #    devfs -m ${path}/dev rule -s ${devfs_ruleset} applyset
+    #fi
+    #/usr/sbin/jail -c path=$path host.hostname=$host_hostname ip4.addr=${COMMAIPS4} ip6.addr=${COMMAIPS6} allow.socket_af allow.chflags allow.raw_sockets allow.sysvipc command=${exec_start}
 
-# make id file
-UNDHOSTNAME=`echo ${hostname} |tr  "." "_"`
-FID="/var/run/jail_${UNDHOSTNAME}.id"
-echo ${ST} > ${FID}
-[ -n "${ddns_zone_list}" ] && cbsd ddns mode=add jname=${jname}
-fwcounter
-sync
-master_afterstart
-after_start
+    # make id file
+    UNDHOSTNAME=`echo ${hostname} |tr  "." "_"`
+    FID="/var/run/jail_${UNDHOSTNAME}.id"
+    echo ${ST} > ${FID}
+    [ -n "${ddns_zone_list}" ] && cbsd ddns mode=add jname=${jname}
+    fwcounter
+    sync
+    master_afterstart
+    after_start
 done

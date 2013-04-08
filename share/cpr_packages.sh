@@ -10,6 +10,12 @@ export PACKAGES=/packages
 export BATCH=yes
 export DISABLE_VULNERABILITIES=yes
 
+export PATH="/usr/lib/distcc/bin:$PATH"
+#export CCACHE_PREFIX="/usr/local/bin/distcc"
+export CCACHE_PATH="/usr/bin:/usr/local/bin"
+export PATH="/usr/local/libexec/ccache:$PATH:/usr/local/bin:/usr/local/sbin"
+
+
 LOGFILE="/tmp/packages.log"
 BUILDLOG="/tmp/build.log"
 
@@ -56,9 +62,19 @@ rm -f /tmp/test.$$
 
 for dir in $PORT_DIRS; do
     PROGRESS=$((PROGRESS - 1))
-    echo -e "\033[40;35m Build for ${dir}. ${PROGRESS} ports left. \033[0m"
+    echo -e "\033[40;35m Working on ${dir}. ${PROGRESS} ports left. \033[0m"
     # skip if ports already registered
+
+    if [ -f /tmp/buildcontinue ]; then
+	cd /tmp/packages 
+	PORTNAME=`make -C ${dir} -V PKGNAME`
+	pkg info -e ${PORTNAME} >/dev/null 2>&1 || {
+	    [ -f "./${PORTNAME}.txz" ] && env ASSUME_ALWAYS_YES=yes pkg add ./${PORTNAME}.txz && echo -e "\033[40;35m ${PORTNAME} found and added from cache. \033[0m"
+	}
+    fi
+
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
+
     yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
 done
 

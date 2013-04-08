@@ -1,12 +1,18 @@
 #!/bin/sh
 #v9.2.0
 globalconf="${workdir}/cbsd.conf";
-MYARG="cdir repo pkglist destdir"
-MYOPTARG="ver arch basename stable new"
+MYARG="cdir pkglist destdir"
+MYOPTARG="ver arch basename stable new repoversion ccache"
 MYDESC="Create pkg repository"
 ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
-repo= destination path to output packages\n"
+destdir= path to output packages or 'repo' for update repoversion\n\
+cdir= temporary chroot directory\n\
+pkglist= path to ascii file with port list for install\n\
+new= 1 - new repo (remove cdir (default)) or 0 - continue\n\
+repoversion= name of repo version (ports cfg version)\n\
+ccache=1 or 0 - enable ccache (default is 1, enabled)\n\
+distcc=0 or 1 - enable distcc (default is 0, disabled)\n"
 
 SRC="${srcdir}/src_${ver}/src"
 
@@ -14,9 +20,11 @@ SRC="${srcdir}/src_${ver}/src"
 . ${globalconf}
 . ${subr}
 . ${inventory}
+. ${system}
 . ${distccacheconf}
 . ${buildconf}
 . ${base2pkgconf}
+. ${mailconf}
 
 init $*
 
@@ -24,23 +32,8 @@ umount_temp_dirs()
 {
 # when error before cdir, we do not have any mounts by scripts
 [ -z "${cdir}" -o ! -d "${cdir}" ] && return 0
- 
- MOUNT_LIST=`mount | awk -F" on " '{print $2}' | awk -F"(" '{print $1}'`
- 
- for mount_point in $MOUNT_LIST; do
-    case $mount_point in
-        $cdir/usr/ports/distfiles | \
-	$cdir/usr/ports | \
-        $cdir/usr/src | \
-        $cdir${CCACHE_DIR} | \
-        $cdir/var/db/ports | \
-        $cdir/compat/linux/proc | \
-        $cdir/proc | \
-        $cdir/dev)
-            umount -f $mount_point || mailerr 1 "Cannot unmount $mount_point directory!"
-            ;;
-    esac
- done
+
+umount_cdirs ${cdir}
  
 #destroy md disk when he used
 if [ "${CCACHEFS}" = "mdfs" -a -n "${MDDEV}" ]; then
@@ -49,72 +42,104 @@ if [ "${CCACHEFS}" = "mdfs" -a -n "${MDDEV}" ]; then
 fi
 }
 
-
 mount_temp_dirs()
 {
+local _tmpfstab="${ftmpdir}/mount_temp_dirs.$$"
+kldstat -qm linprocfs || kldload linprocfs
 
-    local _mydir="dev proc usr/compat/linux/proc  usr/src usr/ports/distfiles var/db/ports"
-    local _i
+cat > ${_tmpfstab} << EOF
+devfs /dev devfs rw 0 0
+procfs /proc procfs rw 0 0
+$SRC/src /usr/src nullfs ro 0 0 
+linprocfs /usr/compat/linux/proc linprocfs rw 0 0
+EOF
+
+if [ -z "${repoversion}" ]; then
+	PORTSCFG_SRC="/var/db/ports"
+	MYPKGDIR="${PKGDIRROOT}/default"
+else
+	PORTSCFG_SRC="${dbdir}/ports-${repoversion}"
+	MYPKGDIR="${PKGDIRROOT}/${repoversion}"
+fi
+
+[ ! -d "${PORTSCFG_SRC}" ] && mkdir -p ${PORTSCFG_SRC}
+[ ! -d "${MYPKGDIR}" ] && mkdir -p ${MYPKGDIR}
+
+
+cat >> ${_tmpfstab} << EOF
+${PORTSCFG_SRC} /var/db/ports nullfs rw 0 0
+${MYPKGDIR} /tmp/packages nullfs rw 0 0
+EOF
     
-    for _i in ${_mydir}; do
-	[ ! -d "${cdir}/${_i}" ] && mkdir -p ${cdir}/${_i}
-    done
-
-    mount -t devfs devfs $cdir/dev
-    kldstat -qm linprocfs || kldload linprocfs
-
-    if [ "${R_ARCH}" = "i386" -o "${R_ARCH}" = "amd64" ]; then
-	mkdir -p $cdir/compat/linux/proc
-	mount -t linprocfs linprocfs $cdir/compat/linux/proc
-    fi
-
-    mkdir -p $cdir/proc
-    mount -t procfs procfs $cdir/proc
-#version
-    mount -t nullfs ${PORTSCFG_SRC} $cdir/var/db/ports
-#
-    mkdir -p $cdir/usr/src
-    mount -o ro -t nullfs $SRC/src $cdir/usr/src
-    
-
 if [ "$MOUNT_PORTS" = "1" -a "$MOUNT_DISTFILES" = "1" ]; then
-    mount -o rw -t nullfs /usr/ports ${cdir}/usr/ports
+    cat >> ${_tmpfstab} << EOF
+/usr/ports /usr/ports nullfs rw 0 0
+EOF
 else
     if [ "${MOUNT_PORTS}" = "0" -a "${MOUNT_DISTFILES}" = "1" ]; then
-	mount -t nullfs /usr/ports/distfiles $cdir/usr/ports/distfiles
+	cat >> ${_tmpfstab} << EOF
+/usr/ports/distfiles nullfs /usr/ports/distfiles rw 0 0
+EOF
     fi
 fi
 
+cbsd mountfstab jroot=$cdir fstab=${_tmpfstab}
+rm -f ${_tmpfstab}
 }
-
 
 
 prepare_chroot()
 {
 echo -e "\033[40;35m Building packages...  \033[0m"
- 
+
+NEEDEDPORTS="\
+/usr/ports/ports-mgmt/portmaster \
+"
+[ "$ccache" = "1" ] && NEEDEDPORTS="${NEEDEDPORTS} /usr/ports/devel/ccache"
+[ "$distcc" = "1" ] && NEEDEDPORTS="/usr/ports/devel/distcc ${NEEDEDPORTS}"
+export NEEDEDPORTS
+
+cp ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
+
 chroot $cdir /bin/sh << EOF
- env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
-              
-  #distcc must be first for CCACHE_PREFIX when ccache is used
-  NEEDEDPORTS="\
-  devel/ccache \
-  ports-mgmt/portmaster \
-  "
-
-find /usr/ports -type d -name work -exec rm -rf {} \;
-
+env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
+find /usr/ports -type d -name work -exec rm -rf {} \; > /dev/null 2>&1
 for i in \${NEEDEDPORTS}; do
     if [ -f /tmp/buildcontinue ]; then
-	pkg info \$i >/dev/null 2>&1|| env ASSUME_ALWAYS_YES=yes pkg install -y \$i
-	pkg info \$i >/dev/null 2>&1|| make -C /usr/ports/\${i} install clean
+	cd /tmp/packages
+	PORTNAME=\`make -C \$i -V PKGNAME\`
+        pkg info -e \$PORTNAME >/dev/null 2>&1 || {
+    	    [ -f \${PORTNAME}.txz ] && env ASSUME_ALWAYS_YES=yes pkg add ./\${PORTNAME}.txz && echo -e "\033[40;35m\${PORTNAME} found and added from cache. \033[0m"
+	}
+	pkg info -e \$PORTNAME || make -C \$i install clean
     else
-	echo "Installing \${i} "
-	make -C /usr/ports/\${i} install clean
+	echo "Installing \$i "
+	make -C \$i install clean
     fi
 done
 EOF
+cp /etc/resolv.conf ${cdir}/etc
 }
+
+
+copy_ccachedir_to_chroot()
+{
+echo "Moving cache from storage ${ccache_realdir}..."
+  set +o errexit
+  [ ! -d "${cdir}/root/.ccache" ] && mkdir -p ${cdir}/root/.ccache
+  cp -a ${ccache_realdir}/* ${cdir}/root/.ccache/
+  set -o errexit
+}
+
+copy_ccachedir_from_chroot()
+{
+    set +o errexit
+    [ -d "${ccache_realdir}" ] && rm -rf $ccache_realdir
+    echo "Moving cache to storage"
+    mv ${cdir}/root/.ccache ${ccache_realdir}
+    set -o errexit
+}
+
 
 
 ### MAIN
@@ -144,22 +169,74 @@ fi
 [ -d "${cdir}" -a $new -eq 1 ] && chflags -R noschg ${cdir} && rm -rf ${cdir}
 [ ! -d "${cdir}" ] && mkdir ${cdir}
 
-[ $new -eq 1 ] && cd $DST && pax -p eme -X -rw . ${cdir}
+[ $new -eq 1 ] && baserw=1 && populate_cdir $DST ${cdir} 
+
+[ $new -eq 0 ] && touch ${cdir}/tmp/buildcontinue
 
 [ ! -d "${PORTSCFG_SRC}" ] && mkdir -p $PORTSCFG_SRC
+
+if [ "${ccache}" = "0" ]; then
+    ccache=0
+else
+    ccache=1
+fi
+
+if [ "${distcc}" = "1" ]; then
+    distcc=1
+else
+    distcc=0
+fi
 
 trap "rm -f ${LOCKFILE}; umount_temp_dirs" 0 1 2 3 4 5 6 9
 mount_temp_dirs
 
-[ "${MOUNT_PORTS}" = "0" ] && chroot ${cdir} portsnap fetch extract
+[ "${MOUNT_PORTS}" = "0" -a $new -eq 1 ] && chroot ${cdir} portsnap fetch extract
 
 prepare_chroot
+[ $ccache -eq 1 -o $distcc -eq 1 ] && prepare_make_conf ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
 
-
+DT_START=`date +%s`
+send_notification -s "Cbsd CPT started" -b "${DT_START}"
 cp ${sharedir}/cpr_packages.sh ${cdir}/tmp/cpr_packages.sh
+DT_END=`date +%s`
+DT_DIFF=$((DT_END - DT_START))
+
 cp ${pkglist} ${cdir}/tmp/ports_list.txt
+
+if [ $ccache -eq 1 ]; then
+    ccache_prefix="cbsd cpr $ver $arch $basename"
+    ccache_dir="/var/cache/ccache"
+
+    if ! init_ccache_dir; then
+	ccache=0
+    else
+	copy_ccachedir_to_chroot
+    fi
+fi
+
+set -o errexit
 chroot $cdir sh /tmp/cpr_packages.sh
 
-[ -d "$destdir" ] && rm -rf $destdir
-mv ${cdir}/packages $destdir
+[ $ccache -eq 1 ] && copy_ccachedir_from_chroot
+# test for port_log from portmater and send broken build log to email
+set +o errexit
+ A=`ls ${cdir}/tmp/port_log* 2>/dev/null`
 
+ if [ -n "${A}" ]; then
+    if [ -n "${CBSDRCPT}" ]; then
+        cat ${cdir}/tmp/build.log |mail -s "[PKGUPDATE-$R_ARCH-$OS_BRANCH-$OS_VER] Broken build error. See next message for details" ${CBSDRCPT}
+        sleep 5 # delay for correct message order ;)
+        cat ${A} |mail -s "[PKGUPDATE-$R_ARCH-$OS_BRANCH-$OS_VER] Broken build error. Log for broken ports" ${CBSDRCPT}
+ fi
+    cat ${A}
+    err 1 "Build packages.sh error"   
+ fi
+set -o errexit
+
+if [ "${destdir}" = "repo" ]; then
+    find ${cdir}/packages/All -type f -name \*.txz -exec mv -f {} ${MYPKGDIR}/ \;
+else
+    [ -d "${destdir}" ] && rm -rf $destdir
+    find ${cdir}/packages/All -type f -name \*.txz -exec cp -n {} ${MYPKGDIR}/ \;
+    mv ${cdir}/packages ${destdir}
+fi

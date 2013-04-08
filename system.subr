@@ -1,4 +1,3 @@
-#!/bin/sh
 # if is_mounted /tmp; then ...mounted..
 # - check for dir is mountpoint
 is_mounted()
@@ -15,77 +14,130 @@ on_mounted()
 {
     [ ! -d "${1}" ] && return 1
     mount |grep " on " | while read _device on _mountpt; do
-    [ "$_device" != "$1" ] || exit 2
+	[ "$_device" != "$1" ] || exit 2
     done
 
-[ $? -eq 2 ] && return 0
+    [ $? -eq 2 ] && return 0
+
 return 1
 }
 
-
+# Mount base -b or default  to destination dir $path
+# -b base path
+# -k kernel path
+# -s source path
+# -o obj path
+# -p ports path
+# -d distfiles path
+# -c /var/db/ports dbportspath
+# -x additional mount, fstab format record, eg: "linsys /compat/linux/sys linsysfs rw 0 0"
+# -t target (override path param)
 mountbase()
 {
-#test for zfs mounted & mount if not
-case $zfsfeat in
-    1) . $zfstool
-	[ $baserw -eq 1 ] && path=$data
-	zfsmnt ${path}
-        [ $? -eq 2 ] && zfs mount "${ZPOOL}"
+local basepath kernelpath sourcepath objpath portspath distfilespath dbportspath MNTCODE
+
+xfstab="${ftmpdir}/mountbase.$$"
+MNTCODE=0
+
+    while getopts "b:k:s:o:p:d:c:x:t:" opt; do
+	case "$opt" in
+	    b) basepath="${OPTARG}" ;;
+	    k) kernelpath="${OPTARG}" ;;
+	    s) sourcepath="${OPTARG}" ;;
+	    o) objpath="${OPTARG}" ;;
+	    p) portspath="${OPTARG}" ;;
+	    d) distfilespath="${OPTARG}" ;;
+	    c) dbportspath="${OPTARG}" ;;
+	    x) echo "AS"; echo "${OPTARG}" >> "${xfstab}" ;;
+	    t) path="${OPTARG}" ;;
+        esac
+	shift $(($OPTIND - 1))
+    done
+
+    #already mounted?
+    is_mounted ${path} && return 0
+
+    #test for zfs mounted & mount if not
+    case $zfsfeat in
+	1) . $zfstool
+	    [ $baserw -eq 1 ] && path=$data
+	    zfsmnt ${path}
+	    [ $? -eq 2 ] && zfs mount "${ZPOOL}"
         ;;
-esac
+    esac
 
-if [ "${baserw}" = "0" ]; then
-    if [ -z "${arch}" ]; then
-        echo
-        echo "!WARNING: Jail conf for ${jname} doesnt have ARCH - please set this: WARNING!"
-        echo
-        arch=`uname -m`
+    if [ -z "${basepath}" ]; then
+	if [ -z "${basename}" ]; then
+    	    basepath="${basejaildir}/${basejailpref}_${arch}_${ver}"
+    	else
+    	    basepath="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+    	fi
     fi
-    if [ -z "${basename}" ]; then
-            basesrc="${basejaildir}/${basejailpref}_${arch}_${ver}"
-        else
-            basesrc="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
-        fi
-else
-    basesrc="${data}"
-fi
 
-if is_mounted ${path}; then
-#    echo "Already mounted ${path}"
-    return 0
-fi
+    # check for basepath existance
+    if [ ! -d "${basepath}" ]; then
+	    getyesno "No base in ${basepath}. Try to fetch from remote repository?"
+	    [ $? -eq 1 -o $? -eq 3 ] && err 1 "No data at ${basepath}"
+	    cbsd repo action=get sources=base arch=${arch} ver=${ver}
+    fi
 
-# check for basesrc existance
-[ -d ${basesrc} ] || {
-    getyesno "No base in ${basesrc}. Try to fetch from remote repository?"
-    [ $? -eq 1 -o $? -eq 3 ] && err 1 "No data at ${basesrc}"
-    cbsd repo action=get sources=base arch=${arch} ver=${ver}
-}
+    [ ! -d "${path}" ] && mkdir -p ${path}
 
-[ -d ${path} ] || mkdir -p ${path}
-
-if [ ${baserw} -eq 0 ]; then
-#check for fast base location (postfix -md)
-    if [ -f "${basesrc}-md/COPYRIGHT" ]; then
-        echo "Mount fast disc location for base..."
-        [ ! -d "${basesrc}-md/var/cache/pkg" ] && mkdir -p "${basesrc}-md/var/cache/pkg"
-        mount -t nullfs -oro "${basesrc}-md" ${path}
-        MNTCODE=$?
+    if [ "${baserw}" = "0" ]; then
+	#check for md-based base location (postfix -md)
+	if [ -f "${basepath}-md/bin/sh" ]; then
+    	    echo "Mount MD-based base location as base..."
+    	    mount -t nullfs -oro "${basepath}-md" ${path}
+    	    MNTCODE=$?
+	else
+    	    mount -t nullfs -oro ${basepath} ${path}
+    	    MNTCODE=$?
+	fi
     else
-        [ ! -d "${basesrc}/var/cache/pkg" ] && mkdir -p "${basesrc}/var/cache/pkg"
-        mount -t nullfs -oro ${basesrc} ${path}
-        MNTCODE=$?
+	populate_cdir ${basepath} ${path}
     fi
+
+#    [ ! -d "${path}/var/cache/pkg" ] && mkdir -p "${path}/var/cache/pkg"
+
+
+    if [ -n "${kernelpath}" ]; then
+	[ ! -d "${path}/boot/kernel" ] && mkdir -p ${path}/boot/kernel
+	mount -t nullfs -orw ${path}/boot/kernel
+    fi
+
+    if [ -n "${sourcepath}" ]; then
+	[ ! -d "${path}/usr/src" ] && mkdir -p ${path}/usr/src
+	mount -t nullfs -orw ${path}/usr/src
+    fi
+
+    if [ -n "${objpath}" ]; then
+	[ ! -d "${path}/usr/obj" ] && mkdir -p ${path}/usr/obj
+	 mount -t nullfs -orw ${path}/usr/obj
+    fi
+
+    if [ -n "${portspath}" ]; then
+	[ ! -d "${path}/usr/ports" ] && mkdir -p ${path}/usr/ports
+	mount -t nullfs -orw ${path}/usr/ports
+    fi
+
+    if [ -n "${distfilespath}" -a -z "${portspath}" ]; then
+	[ ! -d "${path}/usr/ports/distfiles" ] && mkdir -p ${path}/usr/ports/distfiles
+	mount -t nullfs -orw ${path}/usr/ports/distfiles
+    fi
+
+    # Finally mount devfs
+    #/sbin/mount -t devfs devfs ${path}/dev
+
+    #if [ -n "$devfs_ruleset" ]; then
+    #    . /etc/rc.subr
+    #    devfs_rulesets_from_file ${etcdir}/devfs.rules
+    #    devfs -m ${path}/dev rule -s ${devfsrules} applyset
+    #fi
+
+if [ -f "${xfstab}" ]; then
+    cbsd mountfstab jroot="${path}" fstab="${xfstab}"
+#rm -f "${xfstab}"
 fi
-
-# Finally mount devfs
-#/sbin/mount -t devfs devfs ${path}/dev
-
-#if [ -n "$devfs_ruleset" ]; then
-#    . /etc/rc.subr
-#    devfs_rulesets_from_file ${etcdir}/devfs.rules
-#    devfs -m ${path}/dev rule -s ${devfsrules} applyset
-#fi
 
 return $MNTCODE
 }
@@ -112,6 +164,69 @@ unmountbase()
 {
     [ $baserw -eq 0 ] && umount -f ${path}
     cbsd unmountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
+
+
     cbsd jcleanup jname=${jname} > /dev/null 2>&1
 }
 
+# Unmount all in $path or $1
+umount_cdirs()
+{
+    [ -n "${1}" ] && path="$1"
+
+    # when error before path, we do not have any mounts by scripts
+    [ -z "${path}" ] && return 0
+
+    MOUNT_LIST=`mount |sort -r| awk -F" on " '{print $2}'`
+
+    MPATH=""
+    for mount_point in $MOUNT_LIST; do
+	case $mount_point in
+    	    ${path}*)
+        	[ -n "${mount_point}" ] && MPATH="${MPATH} $path${mount_point#$path}"
+	    ;;
+	esac
+    done
+
+    [ -n "${MPATH}" ] && umount -f ${MPATH}
+}
+
+# populate $2 chroot dir by $1 base directory
+# when baserw set to 0, just create default hier
+populate_cdir()
+{
+
+[ -d "${1}" -a -d "${2}" ] || return 1
+
+[ -z "${JAILNODATE}" -a "${baserw}" = "0" ] && JAILNODATA=".cshrc.*|\
+.*/bin.*|\
+.*/media.*|\
+.*/rescue.*|\
+.*/sys.*|\
+.*/.profile.*|\
+.*/boot.*|\
+.*/lib.*|\
+.*/mnt.*|\
+.*/COPYRIGHT.*|\
+.*/libexec.*|\
+.*/proc.*|\
+.*/sbin.*|\
+.*/usr/bin.*|\
+.*/usr/games.*|\
+.*/usr/include.*|\
+.*/usr/lib.*|\
+.*/usr/lib32.*|\
+.*/usr/libdata.*|\
+.*/usr/libexec.*|\
+.*/usr/local.*|\
+.*/usr/sbin.*|\
+.*/usr/share.*|"
+
+    if [ "$baserw" = "1" ]; then
+	cd ${1} && pax -p eme -X -rw . ${2}
+    else
+        cd ${1} && find -E . ! -name . \( -type f -or -type d -or -type l \) -and -not -regex \"$JAILNODATA\" -exec pax -p eme -X -rw {} ${2} \;
+    fi
+
+    [ "${applytpl}" = "1" ] && truncate -s0 ${2}/etc/motd
+}

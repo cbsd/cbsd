@@ -22,6 +22,63 @@ init $*
 . ${base2pkgconf}
 
 
+
+umount_temp_dirs()
+{
+# when error before cdir, we do not have any mounts by scripts
+[ -z "${cdir}" -o ! -d "${cdir}" ] && return 0
+
+ MOUNT_LIST=`mount | awk -F" on " '{print $2}' | awk -F"(" '{print $1}'`
+
+ for mount_point in $MOUNT_LIST; do
+    case $mount_point in
+	$cdir/boot/kernel | \
+        $cdir/usr/ports/distfiles | \
+        $cdir/usr/ports | \
+        $cdir/usr/src | \
+        $cdir${CCACHE_DIR} | \
+        $cdir/var/db/ports | \
+        $cdir/compat/linux/proc | \
+        $cdir/proc | \
+        $cdir/dev)
+            umount -f $mount_point
+            ;;
+    esac
+ done
+
+}
+
+
+mount_temp_dirs()
+{
+
+    local _mydir="dev proc usr/compat/linux/proc  usr/src usr/ports/distfiles var/db/ports"
+    local _i
+
+    for _i in ${_mydir}; do
+        [ ! -d "${cdir}/${_i}" ] && mkdir -p ${cdir}/${_i}
+    done
+
+    mount -t devfs devfs $cdir/dev
+    kldstat -qm linprocfs || kldload linprocfs
+
+    if [ "${R_ARCH}" = "i386" -o "${R_ARCH}" = "amd64" ]; then
+        mkdir -p $cdir/compat/linux/proc
+        mount -t linprocfs linprocfs $cdir/compat/linux/proc
+    fi
+
+    mkdir -p $cdir/proc
+    mount -t procfs procfs $cdir/proc
+
+    mkdir -p $cdir/usr/src
+    mount -o ro -t nullfs $SRC/src $cdir/usr/src
+}
+
+
+
+
+
+#MAIN
 SRC="${srcdir}/src_${ver}/src"
 
 [ -z "${svnrev}" ] && svnrev="0"
@@ -46,12 +103,14 @@ if [ -z "${basename}" ]; then
     rescue_conf="${sharedir}/base2pkg/freebsd-rescue-${ver}.conf"
     world_conf="${sharedir}/base2pkg/freebsd-base-${ver}.conf ${sharedir}/base2pkg/freebsd-lib32-${ver}.conf ${sharedir}/base2pkg/freebsd-rescue-${ver}.conf ${sharedir}/base2pkg/freebsd-zoneinfo-${ver}.conf"
     zoneinfo_conf="${sharedir}/base2pkg/freebsd-zoneinfo-${ver}.conf"
+    src_conf="${sharedir}/base2pkg/freebsd-src-${ver}.conf"
     KERNDST="${basejaildir}/kernel_${name}_${arch}_${ver}"
 else
     kernel_conf="${sharedir}/base2pkg/freebsd-kernel-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-kernel-symbols-${basename}-${ver}.conf"
     rescue_conf="${sharedir}/base2pkg/freebsd-rescue-${basename}-${ver}.conf"
     world_conf="${sharedir}/base2pkg/freebsd-base-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-lib32-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-rescue-${basename}-${ver}.conf ${sharedir}/base2pkg/freebsd-zoneinfo-${basename}-${ver}.conf"
     zoneinfo_conf="${sharedir}/base2pkg/freebsd-zoneinfo-${basename}-${ver}.conf"
+    src_conf="${sharedir}/base2pkg/freebsd-src-${basename}-${ver}.conf"
     KERNDST="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
 fi
 
@@ -64,21 +123,21 @@ echo "repo: $repo"
 [ ! -d "$repo" -o ! -d "$repo/All" ] && mkdir -p ${repo}/All && echo "${repo}/All created"
 
 #set -eux
-trap "exit 0" SIGINT
+trap "umount_temp_dirs" EXIT
 
 case "$target" in
 kernel)
 	: ${conf:=$kernel_conf}
 
-	CDIR="/tmp/base2pkg.$$"
-	mkdir $CDIR
-	mount_nullfs ${DST} ${CDIR}
-	mount_nullfs ${KERNDST}/boot/kernel ${CDIR}/boot/kernel
-	DST=$CDIR
+	cdir="/tmp/base2pkg.$$"
+	mkdir $cdir
+	mount_nullfs ${DST} ${cdir}
+	mount_nullfs ${KERNDST}/boot/kernel ${cdir}/boot/kernel
+	DST=$cdir
 	mk_kernel
-	umount ${CDIR}/boot/kernel
-	umount ${CDIR}
-	rmdir ${CDIR}
+	umount ${cdir}
+	umount_temp_dirs
+	rmdir ${cdir}
 	;;
 rescue)
 	: ${conf:=$rescue_conf}
@@ -91,6 +150,18 @@ world)
 zoneinfo)
 	: ${conf:=$zoneinfo_conf}
 	mk_zoneinfo
+	;;
+src)
+	: ${conf:=$src_conf}
+	cdir="/tmp/base2pkg.$$"
+        mkdir $cdir
+        mount_nullfs ${DST} ${cdir}
+	mount_nullfs ${SRC} ${cdir}/usr/src
+        DST=$cdir
+        mk_src
+	umount_temp_dirs
+	umount ${cdir}
+	rmdir ${cdir}
 	;;
 *)
 	usage
