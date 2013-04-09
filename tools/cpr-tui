@@ -2,9 +2,9 @@
 #v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="src dst ccache distcc"
-MYDESC="put into copy of original make.conf specidic distcc records"
-ADDHELP="src - for example /etc/make.conf, dst=for example /tmp/make_distcc.conf\n"
+MYOPTARG="conf"
+MYDESC="create package repo dialog-based UI"
+ADDHELP="conf= alternarive config path instead of workdir/etc/cpr.conf\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -16,12 +16,12 @@ init $*
 
 DIALOGTMP="${ftmp}/dialog.tmp.$$"
 DIALOG=${DIALOG=/usr/bin/dialog}
-
-#trap "rm -f ${DIALOGTMP} ${LOCKFILE}; umount_temp_dirs" 0 1 2 3 4 5 6 9
+[ -z "${conf}" ] && conf="$etcdir/cpr.conf"
+BACKTITLE="--backtitle cbsd-cpr"
 
 choice_arch()
 {
- $DIALOG --backtitle "$0" --title "Select architecture."  --clear \
+ $DIALOG ${BACKTITLE} --title "Select architecture."  --clear \
          --default-item "amd64" --menu "Make your choice." 10 50 2 \
          "i386" "Processor arch." \
          "amd64" "Processor arch." 2> ${DIALOGTMP}
@@ -39,52 +39,9 @@ choice_arch()
  return $retval2
 }
 
-#-------------------------------------------------------------------------------------------------------#
-svn_checkout()
-{
- $DIALOG --backtitle "$0" --title "SVN checkout for $R_ARCH $OS_BRANCH $OS_VER" "$@" --prgbox "./svn_update.sh" 20 75
-}
-
-#-------------------------------------------------------------------------------------------------------#
-get_svn_rev()
-{
- $DIALOG --backtitle "$0" --title "Select the next step."  --clear \
-         --default-item "1" --menu "              Make your choice." 10 50 2 \
-         "1" "Use the existing svn revision." \
-         "2" "SVN checkout." 2> ${DIALOGTMP}
-
- retval30=$?
- choice30=`cat ${DIALOGTMP}`
-
- [ "${choice30}" != "2" ] && return 0
-
-  SVNREV="$SVN_REV"
-
-  $DIALOG --backtitle "$0" --title "SVN revision" --ok-label "Done" \
-	--form "Enter the number of SVN revision." \
-    	10 50 0 \
-    	"SVN revision:"  1 1      "$SVNREV" 1  14 7 7 2> ${DIALOGTMP}
-    
-    retval300=$?
-    choice300=`cat ${DIALOGTMP}`
-
-    case $retval300 in
-	0)
-	    export SVN_REV=$choice300
-	    export SRC_DEST="$RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/src"
-	    svn_checkout
-	    ;;
-	255) exit
-	    ;;
-    esac
-
- return $retval30
-}
-#-------------------------------------------------------------------------------------------------------#
-
 choice_release_ver()
 {
- $DIALOG --backtitle "$0" --title "Select OS releng version."  --clear \
+ $DIALOG ${BACKTITLE} --title "Select OS releng version."  --clear \
          --default-item "9.1.0" --menu "              Make your choice." 12 50 4 \
          "9.0.0" "RELEASE." \
          "9.1.0" "RELEASE." 2> ${DIALOGTMP}
@@ -104,184 +61,25 @@ choice_release_ver()
 return $retval312
 }
 
-#-------------------------------------------------------------------------------------------------------#
-choice_releng_ver()
-{
- $DIALOG --backtitle "$0" --title "Select OS releng version."  --clear \
-         --default-item "9.1" --menu "              Make your choice." 12 50 4 \
-         "9.0" "RELENG." \
-         "9.1" "RELENG." 2> ${DIALOGTMP}
+#MAIN
+. ${conf}
+. ${buildconf}
 
- retval32=$?
- choice32=`cat ${DIALOGTMP}`
+[ -z "${continue}" ] && continue=0
+[ -z "${repoversion}" ] && repoversion="default"
+[ -z "${basename}" ] && basename="default"
 
- case $retval32 in
-    0)
-	export OS_VER="${choice32}"
-	mkdir -p $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER
-	;;
-    1) return 1
-	;;
-    255) exit
-	;;
- esac
-
-return $retval32
-}
-#-------------------------------------------------------------------------------------------------------#
-choice_stable_ver()
-{
- $DIALOG --backtitle "$0" --title "Select OS stable version."  --clear \
-         --default-item "9" --menu "              Make your choice." 10 50 2 \
-         "8" "STABLE." \
-         "9" "STABLE." 2> ${DIALOGTMP}
-
- retval33=$?
- choice33=`cat ${DIALOGTMP}`
-
- case $retval33 in
-    0)
-	export OS_VER="${choice33}"
-	mkdir -p $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER
-	;;
-    1) return 0
-	;;
-    255) exit
-	;;
-  esac
-return $retval33
-}
-
-#-------------------------------------------------------------------------------------------------------#
-choice_branch()
-{
- $DIALOG --backtitle "$0" --title "Select OS branch."  --clear \
-         --default-item "release" --menu "Make your choice." 15 50 4 \
-         "head" "Current." \
-         "release" "Branch." \
-         "releng" "Branch." \
-         "stable" "Branch."  2> ${DIALOGTMP}
-
- retval4=$?
- choice4=`cat ${DIALOGTMP}`
-
- case $retval4 in
-    0)
-	export OS_BRANCH="${choice4}"
-	mkdir -p $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH
-	[ "$choice4" = "head" ] && choice_head_ver
-	[ "$choice4" = "release" ] && choice_release_ver
-	[ "$choice4" = "releng" ] && choice_releng_ver
-	[ "$choice4" = "stable" ] && choice_stable_ver
-	;;
-    1)  return 0
-	;;
-   255) exit
-	;;
-  esac
-return $retval4
-}
-
-#-------------------------------------------------------------------------------------------------------#
-create_archives()
-{
- echo -e "\033[40;35m Create archives...  \033[0m"
-
- tar -C $BSDINSTALL_CHROOT/usr -zcf $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/minsys_usr.tgz .  
- chflags -R noschg $BSDINSTALL_CHROOT/usr
- rm -rf $BSDINSTALL_CHROOT/usr
- tar -C $BSDINSTALL_CHROOT/var -zcf $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/minsys_var.tgz .
- chflags -R noschg $BSDINSTALL_CHROOT/var
- rm -rf $BSDINSTALL_CHROOT/var
- tar -C $BSDINSTALL_CHROOT/tmp -zcf $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/minsys_tmp.tgz .
- chflags -R noschg $BSDINSTALL_CHROOT/tmp
- rm -rf $BSDINSTALL_CHROOT/tmp
- tar -C $BSDINSTALL_CHROOT -zcf $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/minsys_root.tgz .
-
-}
-
-get_REQUIRED_BY()
-{
- echo -e "\033[40;35m Create ports list...  \033[0m"
- truncate -s0 $RELEASE_DIR/ports_list.txt
-
- # only get list who no require by any ports (pkg_cutleaves)
- for i in `pkg info -oqa`; do
-	SKIP=0
-	for n in ${SKIPPORT}; do
-	    [ `echo $i | grep ${n}|wc -l` != 0 ] && SKIP=1
-	done
-    A=`pkg query "%ro" $i`
-    [ -z "${A}" -a "${SKIP}" = "0" ] &&  printf "/usr/ports/$i\n" >> $RELEASE_DIR/ports_list.txt
- done
- echo -e "\033[40;35m `wc -l ${RELEASE_DIR}/ports_list.txt` packages found.\033[0m"
-}
-
-
-[ -f "${LOCKFILE}" ] && err 1 "Locked by another instance who has pid `cat ${LOCKFILE}`"
-# make lock. TODO: May be make lock for $arch-$ver job, for parallel execution for diffrence target?
-echo $$ > ${LOCKFILE}
-
-$DIALOG --backtitle "$0" --title "Create local repository"  --clear \
-        --default-item "2" --menu "\n\n Make your choice." 15 51 4 \
-        "1" "Create new local repository." \
-        "2" "To continue building." \
-        "3" "Cleaning chroot directory." 2> ${DIALOGTMP}
+$DIALOG ${BACKTITLE} --title "create package reposiory"  --clear \
+        --default-item "commit" --menu "\n cbsd cpr settings" 18 55 18 \
+	continue "${continue}" \
+	repoversion          "${repoversion}" \
+	ccachefs    "${CCACHEFS}" \
+        arch        "${arch}" \
+        ver         "${ver}" \
+        basename    "${basename}" \
+	notify	    "${CBSDRCPT}" \
+        shedule     "${SCHEDULE}" \
+        commit     "" 
 
 retval1=$?
 
-choice1=`cat ${DIALOGTMP}`
-
-case $retval1 in
-    0)
-	choice_arch
-        choice_branch
-	get_svn_rev
-	export ROBJ_DIR="$RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER/obj"
-	export BSDINSTALL_DISTDIR=$RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER
-	export PACKAGES_DIR=$BSDINSTALL_DISTDIR/$BEGIN_DATE
-	export BSDINSTALL_CHROOT=$BSDINSTALL_DISTDIR/chdir
-	build_release || mailerr 1 "Cannot build release"
-	umount_temp_dirs || mailerr 1 "Cannot umount_temp_dirs!"
-	if [ $choice1 = "1" ]; then
-	    send_notification "Initializing a new build environment"
-	    get_REQUIRED_BY
-	    clear_chroot_dir || mailerr 1 " ERROR! Cannot clear_chroot_dir!"
-            [ -n "${CCACHEFS}" ] && make_ccachefs
-            install_distr || mailerr 1 " ERROR! Cannot install_distr!"
-	    ports_tree_update || mailerr 1 " ERROR! Cannot ports_tree_update!"
-            prepare_build || mailerr 1 " ERROR! Cannot prepare_build!"
-            building_packages || mailerr 1 " ERROR! Cannot building_packages!"
-	    create_symlink || mailerr 1 " ERROR! Cannot create_symlink!"
-            send_notification " New build environment complete"
-	    /usr/local/bin/cbsd base2pkg target=world repo=/usr/home/web/pkgupdate.nevosoft.ru/freebsd/amd64/release/9.1.0 svnrev=src
-	    /usr/local/bin/cbsd base2pkg target=kernel repo=/usr/home/web/pkgupdate.nevosoft.ru/freebsd/amd64/release/9.1.0 svnrev=src
-	fi
-	if [ $choice1 = "2" ]; then
-	    CONTINUE=1 # for using pkg while installing ports
-	    send_notification " Initializing a continue build environment"
-            [ -n "${CCACHEFS}" ] && make_ccachefs
-	    prepare_build || mailerr 1 " ERROR! Cannot prepare_build!"
-	    building_packages || mailerr 1 " ERROR! Cannot building_packages!"
-	    create_symlink || mailerr 1 " ERROR! Cannot create_symlink!"
-	    send_notification " Continue build environment complete"
-	fi
-	if [ $choice1 = "3" ]; then
-	    clear_chroot_dir || mailerr 1 "Cannot clear_chroot_directory!"
-	fi
-
-	#pull ccache data from tmpfs to storage
-	if [ -d "${BSDINSTALL_CHROOT}/${CCACHE_DIR}" ]; then
-	    [ -d "${CCACHE_SRC}" ] && rm -rf ${CCACHE_SRC}
-    	    cp -a ${BSDINSTALL_CHROOT}${CCACHE_DIR} ${CCACHE_SRC}
-        fi
-
-	err 0 "Success"
-	;;
-    1)
-	err 0 "Cancel pressed."
-	;;
-    255)
-	err 0 "ESC pressed."
-	;;
-esac
