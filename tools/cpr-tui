@@ -14,72 +14,178 @@ ADDHELP="conf= alternarive config path instead of workdir/etc/cpr.conf\n"
 
 init $*
 
-DIALOGTMP="${ftmp}/dialog.tmp.$$"
 DIALOG=${DIALOG=/usr/bin/dialog}
 [ -z "${conf}" ] && conf="$etcdir/cpr.conf"
-BACKTITLE="--backtitle cbsd-cpr"
+BACKTITLE="--backtitle \Z1cbsd-cpr\Zn --colors"
 
 choice_arch()
 {
  $DIALOG ${BACKTITLE} --title "Select architecture."  --clear \
-         --default-item "amd64" --menu "Make your choice." 10 50 2 \
+         --default-item "${arch}" --menu "Make your choice." 10 50 2 \
          "i386" "Processor arch." \
-         "amd64" "Processor arch." 2> ${DIALOGTMP}
+         "amd64" "Processor arch." 2> ${TMPFILE}
 
  retval2=$?
- choice2=`cat ${DIALOGTMP}`
+ choice2=`cat ${TMPFILE}`
 
  case $retval2 in
-    0) export R_ARCH="${choice2}"
-	;;
-    *) return 0
+    0) arch="${choice2}"
 	;;
  esac
 
  return $retval2
 }
 
-choice_release_ver()
+create_repoversion()
 {
- $DIALOG ${BACKTITLE} --title "Select OS releng version."  --clear \
-         --default-item "9.1.0" --menu "              Make your choice." 12 50 4 \
-         "9.0.0" "RELEASE." \
-         "9.1.0" "RELEASE." 2> ${DIALOGTMP}
+$DIALOG ${BACKTITLE} --title "Create new repoversion"  --clear \
+     --inputbox "Enter one-work repoversion name (e.g: mycompany)" 10 55 2> ${TMPFILE}
 
- retval312=$?
- choice312=`cat ${DIALOGTMP}`
+ retval2=$?
+ choice2=`cat ${TMPFILE}`
 
- case $retval312 in
-    0)
-	export OS_VER="${choice312}"
-	mkdir -p $RELEASE_DIR/data/$R_ARCH/$OS_BRANCH/$OS_VER
-	;;
-    255) exit 
+ case $retval2 in
+    0) [ -z "${choice2}" ] && return 0
+    repoversion="${choice2}"
+    mkdir -p ${dbdir}/ports-${repoversion}
 	;;
  esac
 
-return $retval312
+ return $retval2
 }
+
+
+
+
+choice_ver()
+{
+local _i _options _num
+
+    _options=""
+    _num=0
+
+    for _i in $KNOWN_RELEASES; do
+	_options="${_options} ${_i} ${_i}"
+	_num=$((_num + 1))
+    done
+
+    $DIALOG ${BACKTITLE} --title "Select version."  --clear \
+        --default-item "${ver}" --menu "Make your choice." 0 30 ${_num} \
+	${_options} 2> ${TMPFILE}
+
+    retval312=$?
+    choice312=`cat ${TMPFILE}`
+
+    case $retval312 in
+	0)
+	    ver="${choice312}"
+	;;
+    esac
+
+    return $retval312
+}
+
+choice_newrepo()
+{
+    $DIALOG ${BACKTITLE} --title "New repository?"  --clear \
+        --default-item "yes" --yesno "Create new repository (yes) \
+or continue (no) the last build. \n\
+When 'yes' (new repo) selected, previous directory with \
+packages will be removed first. \
+When 'no' selected the presence of first-built packages \
+will be installed first" 10 60
+
+    retval=$?
+
+    case $retval in
+	0)
+    	    NEWREPO=1;;
+	1)
+    	    NEWREPO=0;;
+    esac
+}
+
+
+choice_repoversion()
+{
+local _i _options _num 
+
+cat > ${_menufile} << EOF
+${BACKTITLE}  --extra-button --extra-label "Browse" --help-button --help-label "Create" --item-help --ok-label "Select"\
+ --clear --default-item "${repoversion}" --radiolist "This is list of current repoversion\n\
+You can browse or edit options inside every version\n\
+or create another one\n" 20 61 5 \
+  "default" "system" on "Hint: /var/db/ports"
+EOF
+    _num=1
+
+    for _i in `find ${dbdir} -type d -name ports-\* | cut -d - -f2`; do
+cat >> ${_menufile} << EOF
+"${_i}" "${_i}" "off" "Hint: ${dbdir}/ports-${_i}"
+EOF
+            _num=$((_num + 1))
+    done
+
+$DIALOG --file ${_menufile} 2>${TMPFILE}
+
+    retval=$?
+    choice=`cat ${TMPFILE}`
+
+    case $retval in
+	0)
+    	    repoversion=${choice} ;;
+	2) 
+	    create_repoversion ;;
+	3)
+	    repoversion="${choice}" 
+	    if [ "${repoversion}" = "default" ]; then
+		/usr/local/bin/cbsd options-tui portsdir=/usr/ports optionsdir=/var/db/ports
+	    else
+		/usr/local/bin/cbsd options-tui portsdir=/usr/ports optionsdir=${dbdir}/ports-${repoversion}
+	    fi
+	;;
+    esac
+}
+
 
 #MAIN
 . ${conf}
 . ${buildconf}
 
-[ -z "${continue}" ] && continue=0
+[ -z "${NEWREPO}" ] && NEWREPO=1
 [ -z "${repoversion}" ] && repoversion="default"
 [ -z "${basename}" ] && basename="default"
 
+TMPFILE="${ftmpdir}/inputbox.$$"
+_menufile="${ftmpdir}/choicerepo.$$"
+trap "rm -f ${TMPFILE} ; rm -f ${_menufile}" EXIT
+
+while [ 1 ]; do
+
 $DIALOG ${BACKTITLE} --title "create package reposiory"  --clear \
         --default-item "commit" --menu "\n cbsd cpr settings" 18 55 18 \
-	continue "${continue}" \
-	repoversion          "${repoversion}" \
-	ccachefs    "${CCACHEFS}" \
-        arch        "${arch}" \
-        ver         "${ver}" \
-        basename    "${basename}" \
-	notify	    "${CBSDRCPT}" \
-        shedule     "${SCHEDULE}" \
-        commit     "" 
+	newrepo "${NEWREPO}" \
+	repoversion "${repoversion}" \
+	ccachefs "${CCACHEFS}" \
+        arch "${arch}" \
+        ver "${ver}" \
+        basename "${basename}" \
+	notify "${CBSDRCPT}" \
+        shedule "${SCHEDULE}" \
+        commit "" 2> ${TMPFILE}
 
-retval1=$?
+retval=$?
+case $retval in
+  0)
+   choice=`cat ${TMPFILE}`
+    [ $choice = "ver" ] && choice_ver
+    [ $choice = "arch" ] && choice_arch
+    [ $choice = "newrepo" ] && choice_newrepo
+    [ $choice = "repoversion" ] && choice_repoversion
+;;
+  *)
+    exit;;
+esac
+    [ "${DIALOG}" = "$XDIALOG" ] && exit
 
+done
