@@ -1,6 +1,6 @@
 #!/bin/sh
 #v9.2.0
-globalconf="${workdir}/cbsd.conf";
+globalconf="${workdir}/cbsd.conf"
 MYARG="cdir pkglist destdir"
 MYOPTARG="ver arch basename stable new repoversion ccache"
 MYDESC="Create pkg repository"
@@ -8,9 +8,9 @@ ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
 destdir= path to output packages or 'repo' for update repoversion\n\
 cdir= temporary chroot directory\n\
-pkglist= path to ascii file with port list for install\n\
+pkglist= path to ascii file with port list for install or 'pkg_cutleaves' for dup master set\n\
 new= 1 - new repo (remove cdir (default)) or 0 - continue\n\
-repoversion= name of repo version (ports cfg version)\n\
+repoversion= name of repo version (ports cfg version), default for system set\n\
 ccache=1 or 0 - enable ccache (default is 1, enabled)\n\
 distcc=0 or 1 - enable distcc (default is 0, disabled)\n"
 
@@ -30,78 +30,80 @@ init $*
 
 umount_temp_dirs()
 {
-# when error before cdir, we do not have any mounts by scripts
-[ -z "${cdir}" -o ! -d "${cdir}" ] && return 0
+    # when error before cdir, we do not have any mounts by scripts
+    [ -z "${cdir}" -o ! -d "${cdir}" ] && return 0
 
-umount_cdirs ${cdir}
- 
-#destroy md disk when he used
-if [ "${CCACHEFS}" = "mdfs" -a -n "${MDDEV}" ]; then
-    echo -e "\033[40;35m Destroy md drive ${MDDEV}\033[0m"
-    mdconfig -d -u ${MDDEV}
-fi
+    umount_cdirs ${cdir}
+
+    #destroy md disk when he used
+    if [ "${CCACHEFS}" = "mdfs" -a -n "${MDDEV}" ]; then
+	echo -e "\033[40;35m Destroy md drive ${MDDEV}\033[0m"
+	mdconfig -d -u ${MDDEV}
+    fi
 }
 
 mount_temp_dirs()
 {
-local _tmpfstab="${ftmpdir}/mount_temp_dirs.$$"
-kldstat -qm linprocfs || kldload linprocfs
+    local _tmpfstab="${ftmpdir}/mount_temp_dirs.$$"
+    kldstat -qm linprocfs || kldload linprocfs
 
-cat > ${_tmpfstab} << EOF
+    cat > ${_tmpfstab} << EOF
 devfs /dev devfs rw 0 0
 procfs /proc procfs rw 0 0
 $SRC/src /usr/src nullfs ro 0 0 
 linprocfs /usr/compat/linux/proc linprocfs rw 0 0
 EOF
 
-if [ -z "${repoversion}" ]; then
+    if [ -z "${repoversion}" -o "${repoversion}" = "default" ]; then
 	PORTSCFG_SRC="/var/db/ports"
 	MYPKGDIR="${PKGDIRROOT}/default"
-else
+    else
 	PORTSCFG_SRC="${dbdir}/ports-${repoversion}"
 	MYPKGDIR="${PKGDIRROOT}/${repoversion}"
-fi
+    fi
 
-[ ! -d "${PORTSCFG_SRC}" ] && mkdir -p ${PORTSCFG_SRC}
-[ ! -d "${MYPKGDIR}" ] && mkdir -p ${MYPKGDIR}
+    [ ! -d "${PORTSCFG_SRC}" ] && mkdir -p ${PORTSCFG_SRC}
+    [ ! -d "${MYPKGDIR}" ] && mkdir -p ${MYPKGDIR}
 
 
-cat >> ${_tmpfstab} << EOF
+    cat >> ${_tmpfstab} << EOF
 ${PORTSCFG_SRC} /var/db/ports nullfs rw 0 0
 ${MYPKGDIR} /tmp/packages nullfs rw 0 0
 EOF
     
-if [ "$MOUNT_PORTS" = "1" -a "$MOUNT_DISTFILES" = "1" ]; then
-    cat >> ${_tmpfstab} << EOF
+    if [ "$MOUNT_PORTS" = "1" -a "$MOUNT_DISTFILES" = "1" ]; then
+	cat >> ${_tmpfstab} << EOF
 /usr/ports /usr/ports nullfs rw 0 0
 EOF
-else
-    if [ "${MOUNT_PORTS}" = "0" -a "${MOUNT_DISTFILES}" = "1" ]; then
+    else
+	if [ "${MOUNT_PORTS}" = "0" -a "${MOUNT_DISTFILES}" = "1" ]; then
 	cat >> ${_tmpfstab} << EOF
 /usr/ports/distfiles nullfs /usr/ports/distfiles rw 0 0
 EOF
+	fi
     fi
-fi
 
-cbsd mountfstab jroot=$cdir fstab=${_tmpfstab}
-rm -f ${_tmpfstab}
+    cbsd mountfstab jroot=$cdir fstab=${_tmpfstab}
+    rm -f ${_tmpfstab}
 }
 
 
 prepare_chroot()
 {
-echo -e "\033[40;35m Building packages...  \033[0m"
+    echo -e "\033[40;35m Building packages...  \033[0m"
 
 NEEDEDPORTS="\
 /usr/ports/ports-mgmt/portmaster \
 "
-[ "$ccache" = "1" ] && NEEDEDPORTS="${NEEDEDPORTS} /usr/ports/devel/ccache"
-[ "$distcc" = "1" ] && NEEDEDPORTS="/usr/ports/devel/distcc ${NEEDEDPORTS}"
-export NEEDEDPORTS
 
-cp ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
+    [ "$ccache" = "1" ] && NEEDEDPORTS="${NEEDEDPORTS} /usr/ports/devel/ccache"
+    [ "$distcc" = "1" ] && NEEDEDPORTS="/usr/ports/devel/distcc ${NEEDEDPORTS}"
+    export NEEDEDPORTS
 
-chroot $cdir /bin/sh << EOF
+    cp ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
+    cp /etc/resolv.conf ${cdir}/etc
+
+    chroot $cdir /bin/sh << EOF
 env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
 find /usr/ports -type d -name work -exec rm -rf {} \; > /dev/null 2>&1
 for i in \${NEEDEDPORTS}; do
@@ -118,17 +120,16 @@ for i in \${NEEDEDPORTS}; do
     fi
 done
 EOF
-cp /etc/resolv.conf ${cdir}/etc
 }
 
 
 copy_ccachedir_to_chroot()
 {
-echo "Moving cache from storage ${ccache_realdir}..."
-  set +o errexit
-  [ ! -d "${cdir}/root/.ccache" ] && mkdir -p ${cdir}/root/.ccache
-  cp -a ${ccache_realdir}/* ${cdir}/root/.ccache/
-  set -o errexit
+    echo "Moving cache from storage ${ccache_realdir}..."
+    set +o errexit
+    [ ! -d "${cdir}/root/.ccache" ] && mkdir -p ${cdir}/root/.ccache
+    cp -a ${ccache_realdir}/* ${cdir}/root/.ccache/
+    set -o errexit
 }
 
 copy_ccachedir_from_chroot()
@@ -153,7 +154,7 @@ if [ -z "${basename}" ]; then
 else
     DST="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
 fi
-        
+
 if [ `uname -m` = "i386" -a "${arch}" = "amd64" ]; then
     err 1 "Cannot install amd64 base on i386 hosts"
 fi
@@ -164,8 +165,17 @@ else
     new=1
 fi
 
-[ ! -f "${pkglist}" ] && err 1 "No pkglist file"
+[ ! -f "${pkglist}" -a "${pkglist}" != "pkg_cutleaves" ] && err 1 "No pkglist file"
 
+if [ "${pkglist}" = "pkg_cutleaves" ]; then
+    _tmppkglist="${ftmpdir}/tmppkglist.txt.$$"
+    cbsd pkg_cutleaves out=${_tmppkglist}
+    pkglist=${_tmppkglist}
+else
+    _tmppkglist=""
+fi
+
+[ -d "${cdir}" ] && umount_cdirs ${cdir}
 [ -d "${cdir}" -a $new -eq 1 ] && chflags -R noschg ${cdir} && rm -rf ${cdir}
 [ ! -d "${cdir}" ] && mkdir ${cdir}
 
@@ -187,7 +197,7 @@ else
     distcc=0
 fi
 
-trap "rm -f ${LOCKFILE}; umount_temp_dirs" 0 1 2 3 4 5 6 9
+trap "rm -f ${LOCKFILE} ${_tmppkglist}; umount_temp_dirs" 0 1 2 3 4 5 6 9
 mount_temp_dirs
 
 [ "${MOUNT_PORTS}" = "0" -a $new -eq 1 ] && chroot ${cdir} portsnap fetch extract
@@ -238,5 +248,6 @@ if [ "${destdir}" = "repo" ]; then
 else
     [ -d "${destdir}" ] && rm -rf $destdir
     find ${cdir}/packages/All -type f -name \*.txz -exec cp -n {} ${MYPKGDIR}/ \;
+    mkdir -p `dirname ${destdir}`
     mv ${cdir}/packages ${destdir}
 fi

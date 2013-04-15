@@ -1,15 +1,13 @@
 #!/bin/sh
-#v9.1.0
+#v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="ver arch maxjobs clean basename stable distcc ccache"
+MYOPTARG="ver arch maxjobs clean basename stable distcc ccache notify"
 MYDESC="Buildworld from sources"
 ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
 distcc=1 - enable distcc\n\
 ccache=1 - enable ccache\n"
-
-set -e
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -19,6 +17,8 @@ init $*
 . ${buildconf}
 . ${distccacheconf}
 . ${inventory}
+. ${mailconf}
+. ${etcdir}/buildworld.conf
 
 if [ "${distcc}" = "1"  ]; then
     if ! distcc_check; then
@@ -28,8 +28,13 @@ else
     distcc=0
 fi
 
-if [ "${ccache}" = "1"  ]; then
+if [ "${notify}" = "1"  ]; then
+    notify=1
+else
+    notify=0
+fi
 
+if [ "${ccache}" = "1"  ]; then
     ccache_prefix="cbsd buildworld $ver $arch $basename"
     ccache_dir="/var/cache/ccache"
     init_ccache_dir
@@ -59,9 +64,7 @@ else
 fi
 
 export __MAKE_CONF=${ftmpdir}/make.$$.conf
-
 [ $ccache -eq 1 -o $distcc -eq 1 ] && prepare_make_conf ${origmakeconf} ${__MAKE_CONF}
-
 if [ -z "${basename}" ]; then
     export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
 else
@@ -82,6 +85,34 @@ NOCLEANUP=""
 
 DST="${srcdir}/src_${ver}/src"
 LOCKFILE=${ftmpdir}/src_${ver}.lock
-makelock ${LOCKFILE} "rm -f ${ftmpdir}/make.$$.conf"
+[ $notify -eq 1 ] && BLDLOG="${tmpdir}/build.$$.log"
+makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}"
 
-/usr/bin/make $NUMJOBS -C ${SRC}/src buildworld TARGET=${arch} ${NOCLEANUP}
+DT_START=`date +%s`
+
+if [ $notify -eq 1 ]; then
+    [ -z "$TAILSTRING" ] && TAILSTRING=50
+    script ${BLDLOG} /usr/bin/make $NUMJOBS -C ${SRC}/src buildworld TARGET=${arch} ${NOCLEANUP}
+    res=$?
+else
+    /usr/bin/make $NUMJOBS -C ${SRC}/src buildworld TARGET=${arch} ${NOCLEANUP}
+    res=$?
+fi
+
+DT_END=`date +%s`
+
+if [ $res -ne 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${DST} && svn info |awk '/^Revision: /{printf $2}'`
+    send_notification -s "[CBSD ${nodename}] buildworld $basename $ver $arch r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
+    return 1
+fi
+
+if [ $res -eq 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${DST} && svn info |awk '/^Revision: /{printf $2}'`
+cat > ${BLDLOG} << EOF
+Start time: `date -r ${DT_START}`
+End time: `date -r ${DT_END}`
+EOF
+    send_notification -s "[CBSD ${nodename}] buildworld $basename $ver $arch r${svnrev} complete." -f ${BLDLOG}
+    return 0
+fi

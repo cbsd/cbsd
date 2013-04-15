@@ -2,10 +2,8 @@
 #v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="ver arch maxjobs clean name basename ccache"
+MYOPTARG="ver arch maxjobs clean name basename ccache notify"
 MYDESC="Build kernel from sources"
-
-set -e
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -15,6 +13,8 @@ init $*
 . ${buildconf}
 . ${inventory}
 . ${distccacheconf}
+. ${mailconf}
+. ${etcdir}/buildworld.conf
 
 if [ "${ccache}" = "1"  ]; then
 
@@ -28,6 +28,12 @@ if [ "${ccache}" = "1"  ]; then
     fi
 else 
     ccache=0
+fi
+
+if [ "${notify}" = "1"  ]; then
+    notify=1
+else
+    notify=0
 fi
 
 SRC="${srcdir}/src_${ver}"
@@ -90,6 +96,34 @@ mkdir -p ${DST}${etcdir}
 [ -f "${SRCCONF}" ] && cp ${SRCCONF} ${DST}${etcdir}
 mount -t nullfs ${MAKEOBJDIRPREFIX} ${DST}${MAKEOBJDIRPREFIX}
 mount -t devfs devfs ${DST}/dev
+[ $notify -eq 1 ] && BLDLOG="${tmpdir}/build.$$.log"
+makelock $LOCKFILE "rm -f ${SRC}/src/sys/${arch}/conf/${name}.CBSD ; umount ${DST}${MAKEOBJDIRPREFIX} ; umount ${DST}/dev ; umount ${DST}${SRC}/src ; rm -rf ${DST}; rm -f ${BLDLOG}"
 
-makelock $LOCKFILE "rm -f ${SRC}/src/sys/${arch}/conf/${name}.CBSD ; umount ${DST}${MAKEOBJDIRPREFIX} ; umount ${DST}/dev ; umount ${DST}${SRC}/src ; rm -rf ${DST}"
-/usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}
+DT_START=`date +%s`
+
+if [ $notify -eq 1 ]; then
+    [ -z "$TAILSTRING" ] && TAILSTRING=50
+    script ${BLDLOG} /usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}
+    res=$?
+else
+    /usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}
+    res=$?
+fi
+
+DT_END=`date +%s`
+
+if [ $res -ne 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${SRC}/src && svn info |awk '/^Revision: /{printf $2}'`
+    send_notification -s "[CBSD ${nodename}] buildkernel ${name} $basename $ver $arch r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
+    return 1
+fi
+
+if [ $res -eq 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${SRC}/src && svn info |awk '/^Revision: /{printf $2}'`
+cat > ${BLDLOG} << EOF
+Start time: `date -r ${DT_START}`
+End time: `date -r ${DT_END}`
+EOF
+    send_notification -s "[CBSD ${nodename}] buildkernel ${name} $basename $ver $arch r${svnrev} complete." -f ${BLDLOG}
+    return 0
+fi
