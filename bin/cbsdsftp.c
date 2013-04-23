@@ -4,7 +4,6 @@
  * "sftp 192.168.0.1 port user password /remote/file /local/file"
  * -p|-i|-k"
  */
-
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 
@@ -21,14 +20,12 @@
 #include <stdio.h>
 #include <ctype.h>
 
-
 const char *keyfile1="~/.ssh/id_rsa.pub";
 const char *keyfile2="~/.ssh/id_rsa";
 const char *username="username";
 const char *password="password";
 const char *sftppath="/tmp/TEST";
 const char *localpath="/tmp/TEST";
-
 
 static void kbd_callback(const char *name, int name_len, 
              const char *instruction, int instruction_len, int num_prompts,
@@ -48,6 +45,16 @@ static void kbd_callback(const char *name, int name_len,
     (void)abstract;
 } /* kbd_callback */
 
+int usage()
+{
+    printf("secure file transfer (via ssh) program\n");
+    printf("require:\n");
+    printf("opt: 192.168.0.1 port user password /remote/file /local/file\n\n");
+    printf("return 0 if success\n");
+    printf("Example: cbsd cbsdsftp 192.168.0.1 22 cbsd password /bin/date /tmp/date\n");
+    exit(0);
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -61,11 +68,7 @@ int main(int argc, char *argv[])
     LIBSSH2_SFTP *sftp_session;
     LIBSSH2_SFTP_HANDLE *sftp_handle;
 
-#ifdef WIN32
-    WSADATA wsadata;
-
-    WSAStartup(MAKEWORD(2,0), &wsadata);
-#endif
+    if (!strcmp(argv[1],"--help")) usage();
 
     if (argc > 1) {
         hostaddr = inet_addr(argv[1]);

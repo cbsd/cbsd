@@ -1,0 +1,135 @@
+#!/bin/sh
+# v9.2.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="jname"
+MYOPTARG=""
+MYDESC="Dialog based UI for RACCR/RCTL"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+[ -f  ${JAILRCCONF} ] || err 1 "no conf rc.conf file for jail"
+. ${JAILRCCONF}
+
+
+choice_commit()
+{
+    local _myval _num _items
+    _num=0
+
+    for _items in ${CBSD_RCTL}; do
+	eval _myval=\$${_items}_val
+	if [ "$_myval" != "0" ]; then
+	    [ ${_num} -eq 0 ] && truncate -s0 ${LIMITS}
+	    echo "${_items}:deny=${_myval}" >> ${LIMITS}
+	    _num=$((_num+1))
+	fi
+    done
+
+    if [ ${_num} -eq 0 ]; then
+	rm -f ${LIMITS} 
+	err 0 "CTL cleaned"
+    else
+	err 0 "New RCTL commited"
+    fi
+}
+
+load_limits()
+{
+local _str
+
+    [ ! -f "${LIMITS}" ] && return 0
+
+    eval `tr ":=" " " < ${LIMITS} | awk -F " " '{printf("%s_val=\"%s\"\n", $1,$3); }'`
+
+}
+
+#adjust default settings
+reset_limits()
+{
+
+    for items in ${CBSD_RCTL}; do
+	eval ${items}_val="\$${items}_default"
+    done
+}
+
+mychoice()
+{
+local _mydesc _myval
+
+    eval _mydesc=\$${choice}_desc
+    eval _myval=\$${choice}_val
+
+    $DIALOG --backtitle "$0" --title "${choice}" --clear --inputbox "${_mydesc}" 10 61 "${_myval}" 2> ${TMPFILE}
+    retval=$?
+
+    case $retval in
+    0)
+        input=`cat ${TMPFILE}`
+	[ -n "${input}" ] && eval ${choice}_val=$input
+    ;;
+    esac
+}
+
+
+
+#main
+LIMITS="${jailsysdir}/${jname}/jail.limits"
+RACCT=`sysctl -qn kern.features.racct`
+[ "${RACCT}" != "1" ] && err 0 "Kernel doesn't have RACCT/RCTL support. Skip for resource limit"
+[ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
+
+DIALOG=${DIALOG=/usr/bin/dialog}
+. ${sharedir}/rctl.conf
+
+TMPFILE="${ftmpdir}/inputbox.$$"
+_menufile="${ftmpdir}/choicerepo.$$"
+trap "rm -f ${TMPFILE} ; rm -f ${_menufile}" EXIT
+
+reset_limits
+load_limits
+
+while [ 1 ]; do
+
+    cat > ${_menufile} <<EOF
+${BACKTITLE} --extra-button --extra-label "Reset" --title "resource editor for ${jname}"  --clear --default-item "commit" --menu "\n rctl settings" 0 55 0
+EOF
+
+	for items in ${CBSD_RCTL}; do
+	    eval myval=\$${items}_val
+
+	    cat >> ${_menufile} <<EOF
+${items} "$myval"
+EOF
+
+	done
+	
+	cat >> ${_menufile} <<EOF
+commit ""
+EOF
+
+    ${DIALOG} --file ${_menufile} 2>${TMPFILE}
+
+    retval=$?
+
+    case $retval in
+	0)
+	    choice=`cat ${TMPFILE}`
+	    [ "${choice}" = "commit" ] && choice_commit
+	    mychoice
+	;;
+	3)
+	    reset_limits
+	;;
+	*)
+	    exit
+	;;
+    esac
+
+    [ "${DIALOG}" = "$XDIALOG" ] && exit
+
+done

@@ -14,7 +14,8 @@ char *findex=NULL;
 
 int usage(char *myname)
 {
-    printf("Usage: %s [-f facil -d offsetdir - %s default) asciifile\n", myname,offsetdir);
+    printf("incremental tail for ascii files\n");
+    printf("Usage: cbsd %s [-f facil -d offsetdir - %s default) asciifile\n", myname,offsetdir);
     exit(0);
 }
 
@@ -122,9 +123,13 @@ int
 main(int argc, char **argv)
 {
     int i=0,c=0;
+
     myname = argv[0];
+    if (!strcmp(argv[1],"--help")) usage(myname);
     findex=argv[argc-1];
     facil=basename(findex);
+
+
 
     while (1) {
         c = getopt(argc, argv, "d:f:");

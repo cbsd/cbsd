@@ -44,6 +44,7 @@ mkdir -p ${PACKAGES}/All >>${LOGFILE} 2>&1|| err 1 "Cannot create PACKAGES/All d
 
 PROGRESS=`wc -l /tmp/ports_list.txt |awk '{printf $1"\n"'}`
 
+set +o errexit
 # config recursive while 
 for dir in $PORT_DIRS; do
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
@@ -51,15 +52,14 @@ for dir in $PORT_DIRS; do
     NOCONF=0
     while [ $NOCONF -eq 0 ]; do
 	echo -e "\033[40;35m Do config-recursive while not set for all options \033[0m"
-	script -q /tmp/test.$$ make config-recursive -C ${dir} || err 1 "Cannot make config-recursive"
-    set +o errexit
+	script -q /tmp/test.$$ make config-recursive -C ${dir} || break
 	grep "\[" /tmp/test.$$
     [ $? -eq 1 ] && NOCONF=1
-    set -o errexit
     done
 done
 rm -f /tmp/test.$$
 
+set -o errexit
 for dir in $PORT_DIRS; do
     PROGRESS=$((PROGRESS - 1))
     echo -e "\033[40;35m Working on ${dir}. ${PROGRESS} ports left. \033[0m"

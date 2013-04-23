@@ -19,10 +19,12 @@
 
 static int fetch_files(char *, char *);
 
-void usage()
+int usage()
 {
-    printf("Usage: cfetch -u url -o outfile\n");
-    exit(1);
+    printf("fetch remove file via http[s]\n");
+    printf("require: -u url -o out\n\n");
+    printf("Example: cbsd cfetch -u url -o /tmp/out\n");
+    exit(0);
 }
 
 int
@@ -30,6 +32,8 @@ main(int argc, char *argv[])
 {
 int c;
 char *url = NULL, *fout = NULL;
+
+if (!strcmp(argv[1],"--help")) usage();
 
 while (1)
 {

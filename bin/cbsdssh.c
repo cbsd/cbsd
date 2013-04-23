@@ -76,6 +76,16 @@ static int waitsocket(int socket_fd, LIBSSH2_SESSION *session)
     return rc;
 }
 
+int usage()
+{
+    printf("execute remote (via ssh) command\n");
+    printf("require:\n");
+    printf("opt: 192.168.0.1 port user password cmd\n\n");
+    printf("return 0 if success, 1 - no connection, 2 - no file\n");
+    printf("Example: cbsd cbsdssh 192.168.0.1 22 cbsd password update\n");
+    exit(0);
+}
+
 int main(int argc, char *argv[])
 {
     const char *hostname = "127.0.0.1";
@@ -96,6 +106,8 @@ int main(int argc, char *argv[])
     int type;
     char *userauthlist;
     int auth_pw = 0;
+
+    if (!strcmp(argv[1],"--help")) usage();
 
     if (argc > 1)
         /* must be ip address only */

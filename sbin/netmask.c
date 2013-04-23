@@ -73,11 +73,20 @@ unsigned long str2mask(char *str)
 	return res;
 }
 
+int usage()
+{
+    printf("return the sign of entry into the subnet ip\n");
+    printf("require: ip mask test\n");
+    exit(0);
+}
+
 int main(int argc, char **args)
 {
 	unsigned long ip;
 	unsigned long mask;
 	unsigned long test;
+
+	if (!strcmp(args[1],"--help")) usage();
 
 	if (argc != 4) {
 		return 2;
