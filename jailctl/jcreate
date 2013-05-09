@@ -2,7 +2,7 @@
 #v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="jconf"
-MYOPTARG="inter"
+MYOPTARG="inter ver arch fstab"
 MYDESC="Create jail from config file"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
 
@@ -11,9 +11,13 @@ ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
 . ${subr}
 . ${system}
 . ${inventory}
+. ${tools}
+. ${mdtools}
+
 init $*
 
 mkfstab() {
+
     if [ $baserw -eq 1 ]; then
 cat > ${mount_fstab} << EOF
 EOF
@@ -24,46 +28,48 @@ ${data}/root /root nullfs rw 0 0
 ${data}/tmp /tmp nullfs rw 0 0
 ${data}/usr/home /usr/home nullfs rw 0 0
 ${data}/usr/local /usr/local nullfs rw 0 0
+${data}/usr/compat /usr/compat nullfs rw 0 0
 ${data}/var /var nullfs rw 0 0
 /var/cache/pkg /var/cache/pkg nullfs rw 0 0
 #
 EOF
     fi
 
-    if [ $srcmount -eq 1 ]; then
-	SOURCE="$srcdir/src_${ver}"
-cat >> ${mount_fstab} << EOF
-${SOURCE}/src /usr/src nullfs rw 0 0
-EOF
+[ -n "${fstab}" -a -f "${fstab}" ] && cat ${fstab} >> ${mount_fstab}
 
-    fi
-
-    if [ $portsmount -eq 1 ]; then
-	cat >> ${mount_fstab} << EOF
-/usr/ports /usr/ports nullfs rw 0 0
-EOF
-    fi
 }
 
 
 mkrcconf() {
-    cp $jconf $rcconf
+    cp $temprcconf $rcconf
+    modconf ${rcconf} pkglist ""
 }
 
 ### MAIN
 [ -f "$jconf" ] || err 1 "no such jconf file";
+over="${ver}"
+oarch="${arch}"
 jconf=`realpath $jconf`
-. ${jconf}
+
+temprcconf="${ftmpdir}/jcreate_jconf.$$"
+
+cp ${jconf} ${temprcconf}
+
+trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+
+. ${temprcconf}
+. ${buildconf}
+
+modconf ${temprcconf} ver ${ver}
+modconf ${temprcconf} arch ${arch}
+
+. ${temprcconf}
 
 cbsd jstatus jname=${jname} > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "Jail with $jname already exist"
-[ -z "${arch}" -o "${arch}" = "native" ] && arch=`uname -m`
-[ -z "${ver}" -o "${ver}" = "native" ] && ver=`sysctl -n kern.osrelease|cut -d - -f 1`
 
 ### CURRENT
 src="${basejaildir}/${basejailpref}_${arch}_${ver}"
-
-CPEXE="/bin/cp -Rp "
 
 if [ ! -d "${src}" ]; then
     [ "${ver}" = "empty" ] || {
@@ -92,7 +98,7 @@ fi
 
 echo "Please wait: this will take a while..."
 
-[ -d "${data}" ] && {
+if [ -d "${data}" ]; then
 	case $zfsfeat in
 	    0) chflags -R noschg ${data}
 		rm -rf "${data}"
@@ -110,7 +116,7 @@ echo "Please wait: this will take a while..."
 		esac
 		;;
 	esac
-}
+fi
 
 case $zfsfeat in
 	"0") [ -d ${data} ] || mkdir -p ${data} 
@@ -122,7 +128,7 @@ case $zfsfeat in
 		err 1 "$ZPOOL/$jname already in use"
 	    fi
 
-	    zfs create -o atime=off -o mountpoint=${data} ${ZPOOL}/$jname 
+	    zfs create -o atime=off -o mountpoint=${data} ${ZPOOL}/$jname
 	    ;;
 esac
 
@@ -131,9 +137,30 @@ esac
     [ -d ${jailfstabdir}  ] || mkdir -p ${jailfstabdir}
     [ -d ${jailrcconfdir}  ] || mkdir -p ${jailrcconfdir}
 
+
+## MD backend place
+if [ "${mdsize}" != "0" ]; then
+    conv2bytes "${mdsize}" || err 1 "conv2bytes error from ${mdsize}"
+    imgbytes=$convval
+    blockcount=$(( imgbytes  / 1048576 ))
+    [ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
+    mdimage="${jailsysdir}/${jname}/image.dat"
+    touch "${mdimage}"
+    dd if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "Error: Couldn't create the image file. ${mdimage}"
+    # Attach the .img file as a memory disk.
+    mdimagedevice=`mdconfig -a -t vnode -f "${mdimage}"`
+    [ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
+    newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
+    mdconfig -d -u ${mdimagedevice}
+# mount here
+    cbsd mountmd jroot=${data} mdfile=${mdimage}
+fi
+## MD backend
+
 ### COPY FROM BASE
 if [ "${ver}" != "empty" ]; then
     if ! populate_cdir ${src} ${data}; then
+	[ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
 	err 1 "Can't populate $data from $src"
     fi
 
@@ -145,7 +172,6 @@ if [ "${ver}" != "empty" ]; then
     [ -d ${data}/usr/ports ] || mkdir ${data}/usr/ports
 
     if [ ${applytpl} -eq 1 ]; then
-
 	if [ -f ${jailskeldir}/master.passwd ]; then
 	    cp ${jailskeldir}/master.passwd ${data}/etc
 	    /usr/sbin/pwd_mkdb -d ${data}/etc ${data}/etc/master.passwd
@@ -166,9 +192,19 @@ if [ "${pkglist}" != "NO" -a "${ver}" != "empty" -a -f "${pkglist}" ]; then
     mountbase
     cbsd mountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
     mount -t devfs devfs $path/dev
-    #
+
     [ ! -d "${path}/usr/local/etc" ] && mkdir ${path}/usr/local/etc
-    cp /usr/local/etc/pkg.conf ${path}/usr/local/etc/
+
+    if [ ${applytpl} -eq 1 ]; then
+	if [ -n "${packagesite}" ]; then
+	    echo "PACKAGESITE: $packagesite" > ${path}/usr/local/etc/pkg.conf
+	elif [ -f ${etcdir}/pkg.conf ]; then
+	    cp ${etcdir}/pkg.conf ${path}/usr/local/etc/pkg.conf
+	elif [ -f /usr/local/etc/pkg.conf ]; then
+	    cp /usr/local/etc/pkg.conf ${path}/usr/local/etc/
+	fi
+    fi
+
     printf "pkg: [boostrap... "
     chroot ${path} env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
     printf "looking for new version... "
@@ -184,6 +220,8 @@ if [ "${pkglist}" != "NO" -a "${ver}" != "empty" -a -f "${pkglist}" ]; then
     unmountbase
     rm -f ${pkglist}
 fi
+
+[ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
 
 echo
 echo "Creating ${jname} complete: Enjoy!"

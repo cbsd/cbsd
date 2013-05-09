@@ -36,22 +36,24 @@ rm -f /tmp/port_log* > /dev/null 2>&1 ||true
 #[ -z "${CCACHE_SIZE}" ] && CCACHE_SIZE="4096"
 #/usr/local/bin/ccache -M ${CCACHE_SIZE}m >>${LOGFILE} 2>&1|| err 1 "Cannot set ccache size"
 
-find /usr/ports -type d -name work -exec rm -rf {} \; || true
+find /tmp/usr/ports -type d -name work -exec rm -rf {} \; || true
 
 PORT_DIRS=`cat /tmp/ports_list.txt`
 
 mkdir -p ${PACKAGES}/All >>${LOGFILE} 2>&1|| err 1 "Cannot create PACKAGES/All directory!"
 
-PROGRESS=`wc -l /tmp/ports_list.txt |awk '{printf $1"\n"'}`
+ALLPORTS=`wc -l /tmp/ports_list.txt |awk '{printf $1"\n"'}`
+PROGRESS=0
 
 set +o errexit
 # config recursive while 
 for dir in $PORT_DIRS; do
+    PROGRESS=$((PROGRESS + 1))
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
     #this is hack for determine that we have no options anymore - script dup stdout then we can grep for Dialog-Ascii-specific symbol
     NOCONF=0
     while [ $NOCONF -eq 0 ]; do
-	echo -e "\033[40;35m Do config-recursive while not set for all options \033[0m"
+	echo -e "\033[40;35m Do config-recursive while not set for all options: ${PROGRESS}/${ALLPORTS} \033[0m"
 	script -q /tmp/test.$$ make config-recursive -C ${dir} || break
 	grep "\[" /tmp/test.$$
     [ $? -eq 1 ] && NOCONF=1
@@ -59,6 +61,7 @@ for dir in $PORT_DIRS; do
 done
 rm -f /tmp/test.$$
 
+PROGRESS=${ALLPORTS}
 set -o errexit
 for dir in $PORT_DIRS; do
     PROGRESS=$((PROGRESS - 1))
@@ -78,6 +81,13 @@ for dir in $PORT_DIRS; do
     yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
 done
 
+if [ $pause -eq 1 ]; then
+    echo -e "\033[40;35m Pause before create pkg."
+    echo -e "You can enter in chroot via: chroot ${cdir}"
+    echo -e "Press any key to continue \033[0m"
+    read pause
+fi
+
 pkg2ng >>${LOGFILE} 2>&1|| err 1 "Cannot pkg2ng ports"
 
 echo -e "\033[40;35m Creating packages... \033[0m"
@@ -87,5 +97,4 @@ for i in `pkg info -oa | cut -d : -f1`; do
 done
 
 cd ${PACKAGES} || err 1 "Cannot change directory"
-####pkg repo ${PACKAGES}/ /tmp/id_rsa
 pkg repo ${PACKAGES}/ >>${LOGFILE} 2>&1|| err 1 "Cannot create packages repo archive"

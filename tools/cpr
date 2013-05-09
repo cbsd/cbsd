@@ -2,7 +2,7 @@
 #v9.2.0
 globalconf="${workdir}/cbsd.conf"
 MYARG="cdir pkglist destdir"
-MYOPTARG="ver arch basename stable new repoversion ccache"
+MYOPTARG="ver arch basename stable new repoversion ccache pause makeconf"
 MYDESC="Create pkg repository"
 ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
@@ -12,7 +12,9 @@ pkglist= path to ascii file with port list for install or 'pkg_cutleaves' for du
 new= 1 - new repo (remove cdir (default)) or 0 - continue\n\
 repoversion= name of repo version (ports cfg version), default for system set\n\
 ccache=1 or 0 - enable ccache (default is 1, enabled)\n\
-distcc=0 or 1 - enable distcc (default is 0, disabled)\n"
+distcc=0 or 1 - enable distcc (default is 0, disabled)\n\
+makeconf= path to alternative cpr_make.conf to /etc/make.conf in chroot\n\
+pause=1 - make pause (for example for chroot in env) before create pkg\n"
 
 SRC="${srcdir}/src_${ver}/src"
 
@@ -25,6 +27,7 @@ SRC="${srcdir}/src_${ver}/src"
 . ${buildconf}
 . ${base2pkgconf}
 . ${mailconf}
+. ${tools}
 
 init $*
 
@@ -100,12 +103,16 @@ NEEDEDPORTS="\
     [ "$distcc" = "1" ] && NEEDEDPORTS="/usr/ports/devel/distcc ${NEEDEDPORTS}"
     export NEEDEDPORTS
 
-    cp ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
+    cp ${makeconf} ${cdir}/etc/make.conf
+
+    # make sure we have work dir in /tmp for parallel builds
+    modconf ${cdir}/etc/make.conf WRKDIRPREFIX /tmp
+
     cp /etc/resolv.conf ${cdir}/etc
 
     chroot $cdir /bin/sh << EOF
 env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
-find /usr/ports -type d -name work -exec rm -rf {} \; > /dev/null 2>&1
+find /tmp/usr/ports -type d -name work -exec rm -rf {} \; > /dev/null 2>&1
 for i in \${NEEDEDPORTS}; do
     if [ -f /tmp/buildcontinue ]; then
 	cd /tmp/packages
@@ -165,6 +172,8 @@ else
     new=1
 fi
 
+[ -z "${makeconf}" ] && makeconf="${sharedir}/cpr_make.conf"
+
 [ ! -f "${pkglist}" -a "${pkglist}" != "pkg_cutleaves" ] && err 1 "No pkglist file"
 
 if [ "${pkglist}" = "pkg_cutleaves" ]; then
@@ -177,11 +186,17 @@ fi
 
 [ -d "${cdir}" ] && umount_cdirs ${cdir}
 [ -d "${cdir}" -a $new -eq 1 ] && chflags -R noschg ${cdir} && rm -rf ${cdir}
+[ ! -d "${cdir}" -a $new -eq 0 ] && new=1
 [ ! -d "${cdir}" ] && mkdir ${cdir}
 
 [ $new -eq 1 ] && baserw=1 && populate_cdir $DST ${cdir} 
-
 [ $new -eq 0 ] && touch ${cdir}/tmp/buildcontinue
+
+if [ "${pause}" = "1" ]; then
+    export pause=1
+else
+    export pause=0
+fi
 
 [ ! -d "${PORTSCFG_SRC}" ] && mkdir -p $PORTSCFG_SRC
 
@@ -197,19 +212,20 @@ else
     distcc=0
 fi
 
-trap "rm -f ${LOCKFILE} ${_tmppkglist}; umount_temp_dirs" 0 1 2 3 4 5 6 9
+trap "umount_temp_dirs; rm -f ${LOCKFILE} ${_tmppkglist}" HUP INT ABRT BUS TERM  EXIT
 mount_temp_dirs
 
 [ "${MOUNT_PORTS}" = "0" -a $new -eq 1 ] && chroot ${cdir} portsnap fetch extract
 
 prepare_chroot
-[ $ccache -eq 1 -o $distcc -eq 1 ] && prepare_make_conf ${sharedir}/cpr_make.conf ${cdir}/etc/make.conf
+
+if [ $ccache -eq 1 -o $distcc -eq 1 ]; then
+    prepare_make_conf ${makeconf} ${cdir}/etc/make.conf
+fi
 
 DT_START=`date +%s`
-send_notification -s "Cbsd CPT started" -b "${DT_START}"
+send_notification -s "[CBSD ${nodename}] cpr ${ver} ${arch} ${repoversion} started" -b "${DT_START}"
 cp ${sharedir}/cpr_packages.sh ${cdir}/tmp/cpr_packages.sh
-DT_END=`date +%s`
-DT_DIFF=$((DT_END - DT_START))
 
 cp ${pkglist} ${cdir}/tmp/ports_list.txt
 
@@ -226,6 +242,10 @@ fi
 
 set -o errexit
 chroot $cdir sh /tmp/cpr_packages.sh
+
+DT_END=`date +%s`
+DT_DIFF=$((DT_END - DT_START))
+
 [ $ccache -eq 1 ] && copy_ccachedir_from_chroot
 # test for port_log from portmater and send broken build log to email
 set +o errexit
@@ -233,9 +253,9 @@ set +o errexit
 
  if [ -n "${A}" ]; then
     if [ -n "${CBSDRCPT}" ]; then
-        cat ${cdir}/tmp/build.log |mail -s "[PKGUPDATE-$R_ARCH-$OS_BRANCH-$OS_VER] Broken build error. See next message for details" ${CBSDRCPT}
+	send_notification -s "[CBSD ${nodename}] cpr ${ver} ${arch} ${repoversion} failed. See message below and next message for datail" -f ${cdir}/tmp/build.log
         sleep 5 # delay for correct message order ;)
-        cat ${A} |mail -s "[PKGUPDATE-$R_ARCH-$OS_BRANCH-$OS_VER] Broken build error. Log for broken ports" ${CBSDRCPT}
+	send_notification -s "[CBSD ${nodename}] cpr ${ver} ${arch} ${repoversion} broken build log" -f ${A} 
  fi
     cat ${A}
     err 1 "Build packages.sh error"   
@@ -245,8 +265,9 @@ set -o errexit
 if [ "${destdir}" = "repo" ]; then
     find ${cdir}/packages/All -type f -name \*.txz -exec mv -f {} ${MYPKGDIR}/ \;
 else
-    [ -d "${destdir}" ] && rm -rf $destdir
+    [ -d "${destdir}" ] && find $destdir -type f -exec rm -f {} \; && find ${destdir} -type d -exec rmdir {} \;
     find ${cdir}/packages/All -type f -name \*.txz -exec cp -n {} ${MYPKGDIR}/ \;
     mkdir -p `dirname ${destdir}`
-    mv ${cdir}/packages ${destdir}
+    mv ${cdir}/packages/* ${destdir}/
+    send_notification -s "[CBSD ${nodename}] cpr ${ver} ${arch} ${repoversion} complete" -b "${DT_END}"
 fi
