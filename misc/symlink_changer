@@ -1,0 +1,148 @@
+#!/bin/sh
+# folder rotation by symlink changer
+#
+# When use with config file, follow variable must be set, sample:
+# _PATH="/usr/symlinks"
+# _RANGE="1 2 3"
+# _MASTER_LINK="master"
+# _SLAVE_LINK="slave"
+# _ACTION="next"
+# _X=1  #if action=set
+# _Y=2  #if action=set
+#
+# or by command line:
+# ./symlink_changer -p /usr/symlinks -r "1 2 3" -m master -s slave -a next
+#
+
+err() {
+    exitval=$1
+    shift
+    echo "$*" 1>&2
+    exit $exitval
+}
+
+get_symlink() {
+    local _res
+
+    [ -z $1 ] && return 1
+    _res=`readlink ${_PATH}/${1}`
+    [ $? -ne 0 ] && return 1
+    printf `basename ${_res}`
+}
+
+get_next() {
+    local _cur _test _first _count
+
+    _test="${_PATH}/${1}"
+    _cur=0
+    _count=0
+
+    for i in ${_RANGE}; do
+	[ ${_count} -eq 0 ] && _first=${i}  ## store first element
+	[ ${_cur} -eq 1 ] && printf ${i} && return 0
+	[ "${_PATH}/$i" = "${_test}" ] && _cur=1
+	_count=$(( _count + 1 ))
+    done
+
+    printf ${_first}
+}
+
+get_prev() {
+    local _cur _test _first _count _REVSLOTS
+    _test="${_PATH}/${1}"
+    _cur=0
+    _count=0
+    _REVSLOTS=`echo ${_RANGE} | tr " " "\n" |sort -r`
+
+    for i in ${_REVSLOTS}; do
+	[ ${_count} -eq 0 ] && _first=${i}  ## store first element
+	[ ${_cur} -eq 1 ] && printf ${i} && return 0
+	[ "${_PATH}/$i" = "${_test}" ] && _cur=1
+	_count=$(( _count + 1 ))
+    done
+
+    printf ${_first}
+}
+
+# create or change new layout by
+# $1 - new dir for master link
+# $2 - new dir for slave
+sym_action() {
+    local _masterdir _slavedir
+    [ -z "${1}" -o -z "${2}" ] && return 1
+
+    _masterdir="${_PATH}/${1}"
+    _slavedir="${_PATH}/${2}"
+
+    [ ! -d "${_masterdir}" ] && mkdir "${_masterdir}"
+    [ ! -d "${_slavedir}" ] && mkdir "${_slavedir}"
+
+    # ln -sf not work correctly here - create symlink in old master folder
+    cd ${_PATH}
+    rm -f "${_PATH}/${_MASTER_LINK}" && /bin/ln -s "${1}" "${_MASTER_LINK}"
+    rm -f "${_PATH}/${_SLAVE_LINK}" && /bin/ln -s "${2}" "${_SLAVE_LINK}"
+}
+
+usage() {
+    echo "$0 -c confpath -p path -r \"range\" -m masterlink_name -s slavelink_name -a action [-x dir1] [-y dir2]"
+    echo "action must be: next, prev, set"
+    echo "when action = set, x/y = is new masterdir/slavedir"
+    exit
+}
+
+
+# MAIN()
+while getopts "c:p:r:m:s:a:x:y:" opt; do
+        case "$opt" in
+        c) _conf="$OPTARG" ;;
+        p) _path="$OPTARG" ;;
+        r) _range="$OPTARG" ;;
+        m) _master_link="$OPTARG" ;;
+        s) _slave_link="$OPTARG" ;;
+        a) _action="$OPTARG" ;;
+        x) _x="$OPTARG" ;;
+        y) _y="$OPTARG" ;;
+        *) usage ;;
+        esac
+        shift $(($OPTIND - 1))
+done
+
+[ -n "${_conf}" -a -f "${_conf}" ] && . ${_conf}
+
+[ -n "${_path}" ] && _PATH=${_path}
+[ -n "${_range}" ] && _RANGE=${_range}
+[ -n "${_master_link}" ] && _MASTER_LINK=${_master_link}
+[ -n "${_slave_link}" ] && _SLAVE_LINK=${_slave_link}
+[ -n "${_action}" ] && _ACTION=${_action}
+[ -n "${_x}" ] && _X=${_x}
+[ -n "${_y}" ] && _Y=${_y}
+
+[ -z "${_ACTION}" ] && err 1 "Give me action"
+[ -z "${_PATH}" -o -z "${_MASTER_LINK}" -o -z "${_SLAVE_LINK}" -o -z "${_RANGE}" ] && err 1 "not all neccesary variable has been set"
+
+cd ${_PATH} || err 1 "Cant cwd to ${_PATH}"
+
+# init area
+_curmaster=`eval get_symlink ${_MASTER_LINK}`
+_curslave=`eval get_symlink ${_SLAVE_LINK}`
+
+case "${_ACTION}" in
+"next")
+	_master=`eval get_next ${_curmaster}`
+	_slave=`eval get_next ${_master}`
+	;;
+"prev")
+	_master=`eval get_prev ${_curmaster}`
+	_slave=${_curmaster}
+	;;
+"set")
+	_master="${_X}"
+	_slave="${_Y}"
+	;;
+*)
+	err 1 "No action set"
+	;;
+esac
+
+sym_action ${_master} ${_slave}
+

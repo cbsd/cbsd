@@ -14,7 +14,7 @@ RUN_DEPENDS=	rsync:${PORTSDIR}/net/rsync \
 LIB_DEPENDS=	ssh2:${PORTSDIR}/security/libssh2
 
 SUB_FILES=	pkg-message
-WRKSRC=		${WRKDIR}/cbsd-9.1.0/9.1.0
+WRKSRC=		${WRKDIR}/cbsd
 
 MAN7=		cbsd.7
 
