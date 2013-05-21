@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.1.0
+#v9.2.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
@@ -24,195 +24,200 @@ init $*
 
 fetchme()
 {
-cbsd cfetch -u $1 -o ${TF}
-return $?
+    cbsd cfetch -u $1 -o ${TF}
+    return $?
 }
 
 checkmd5()
 {
-DIR=$1
-GOOD=0
+    local _GOOD _OMD5 _RMD5 _i _FILE
+    DIR=$1
+    _GOOD=0
 
-for i in `find ${DIR} -type f -depth 1 -name *.md5 -print`; do
-FILE=`${ECHO} $i |sed 's/\.md5//g'`
-OMD5=`cat ${FILE}.md5`
-RMD5=`md5 -q ${FILE}`
-if [ "${RMD5}" != "${OMD5}" ]; then
-    GOOD=$((GOOD + 1))
-fi
-done
+    for _i in `find ${DIR} -type f -depth 1 -name *.md5 -print`; do
+	_FILE=`${ECHO} ${_i} |sed 's/\.md5//g'`
+	_OMD5=`cat ${_FILE}.md5`
+	_RMD5=`md5 -q ${_FILE}`
+	if [ "${_RMD5}" != "${_OMD5}" ]; then
+	    _GOOD=$((_GOOD + 1))
+	fi
+    done
 
-return $GOOD
+return ${_GOOD}
 }
 
 
 
-REPO=`cbsd getinfo -q repo`
 checkrepo()
 {
-for i in ${REPO}; do
-    [ -z $1 ] && printf "Check for repository: ${i} ..."
+local _i
 
-    if fetchme "${i}/cbsd.index" >/dev/null 2>&1; then
-	cat "$i ${TF}"
-    else
-	${ECHO} "$i Offline"
-    fi
-done
+    for _i in ${REPO}; do
+	[ -z $1 ] && printf "${MAGENTA}Check for repository${NORMAL}: ${GREEN}${_i}${NORMAL} ..."
+	if fetchme "${_i}/cbsd.index" >/dev/null 2>&1; then
+	    cat "${TF}"
+	    exit 0
+	else
+	    ${ECHO} "${_i} Offline"
+	    exit 1
+	fi
+    done
 }
 
 
 getsrc()
 {
-if [ -d "${srcdir}/${DIR}" ]; then
-    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-    cbsd removesrc ver=${ver}
-fi
 
-for MYREPO in ${REPO}; do
-    ${ECHO} "REPO: ${MYREPO}"
-    MIRROR="${MYREPO}/src_${ver}/mirror.html"
-    cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
-	MYREPO=`cat ${TF}`
-	${ECHO} "Found new mirror for ${ver}: ${MYREPO}"
+    if [ -d "${srcdir}/${DIR}" ]; then
+	[ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+	cbsd removesrc ver=${ver}
     fi
-    cbsd cfetch -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
-    [ $? -eq 0 ] || continue
-    cbsd cfetch -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
-    [ $? -eq 0 ] || continue
-done
+
+    for MYREPO in ${REPO}; do
+	${ECHO} "${MAGENTA}REPO${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
+	MIRROR="${MYREPO}/src_${ver}/mirror.html"
+	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	if [ $? -eq 0 ]; then
+	    MYREPO=`cat ${TF}`
+	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
+	fi
+	cbsd cfetch -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
+	[ $? -eq 0 ] || continue
+	cbsd cfetch -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
+	[ $? -eq 0 ] || continue
+    done
 
     [ -f "${MYDIR}/src.txz" -a -f "${MYDIR}/src.txz.md5" ] || err 1 "No sources found"
 
     if checkmd5 ${MYDIR}; then
-	${ECHO} "MD5sum correct."
+	${ECHO} "${MAGENTA}MD5sum correct.${NORMAL}"
 	    else
-	err 1 "MD5sum incorrect."
+	err 1 "${MAGENTA}MD5sum incorrect.${NORMAL}"
     fi
 
     ARCHIVE="${workdir}/tmp/src_${ver}.txz"
     [ ! -f "${ARCHIVE}" ] || rm -f ${ARCHIVE}
 
-    ${ECHO} "Extracting..."
+    ${ECHO} "${MAGENTA}Extracting...${NORMAL}"
     cd $workdir/tmp
     tar xfz ${MYDIR}/src.txz
     rm -f ${MYDIR}/src.txz
     mkdir -p ${srcdir}/src_${ver}
     mv ${workdir}/tmp/src_${ver} ${srcdir}/
-    ${ECHO} "Done..."
+    ${ECHO} "${MAGENTA}Done...${NORMAL}"
     DT=`/bin/date "+%Y%m%d"`
 }
 
 getbase()
 {
-if [ -z "${basename}" ]; then
-    BDIR="${basejailpref}_${arch}_${ver}"
-else
-    BDIR="${basejailpref}_${basename}_${arch}_${ver}"
-fi
 
-DST="${basejaildir}/${BDIR}"
-MIRROR="http://ftp.freebsd.org"
-BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${ver}-RELEASE/base.txz"
+    if [ -z "${basename}" ]; then
+	BDIR="${basejailpref}_${arch}_${ver}"
+    else
+	BDIR="${basejailpref}_${basename}_${arch}_${ver}"
+    fi
 
-if [ -d "${DST}" ]; then
-    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-    cbsd removebase ver=${ver} arch=${arch}
-fi
+    DST="${basejaildir}/${BDIR}"
+    MIRROR="http://ftp.freebsd.org"
+    BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${ver}-RELEASE/base.txz"
 
-if [ "$fbsdrepo" = "1" -a -z "${basename}" ]; then
-    ## Official fbsd repo
-    printf "Looking for official FreeBSD mirror.."
-    ARCHIVE="$MYDIR/base.txz"
-    cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
-    if [ $? -eq 0 ]; then
-	printf "\nExtracting base...\n"
-	mkdir $DST
-	cd $DST
-	tar xfz ${ARCHIVE}
-	rm -f ${ARCHIVE}
-	BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${ver}-RELEASE/lib32.txz"
-	ARCHIVE="$MYDIR/lib32.txz"
+    if [ -d "${DST}" ]; then
+	[ $UPGRADE -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}${NORMAL}"
+	cbsd removebase ver=${ver} arch=${arch}
+    fi
+
+    if [ "$fbsdrepo" = "1" -a -z "${basename}" ]; then
+	## Official fbsd repo
+	printf "${MAGENTA}Looking for official FreeBSD mirror:${NORMAL}"
+	ARCHIVE="$MYDIR/base.txz"
 	cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
-	    if [ $? -eq 0 ]; then
-		printf "\nExtracting lib32...\n"
-		cd $DST
-		tar xfz ${ARCHIVE}
-		rm -f ${ARCHIVE}
-	    else
-		printf "Lib32 not found\n"
-	    fi
-	cbsd preparebase dst=${DST}
-	${ECHO} "Done..."
-	return 0
-    fi
-
-    printf "Not found\n"
+	if [ $? -eq 0 ]; then
+	    printf "\n${MAGENTA}Extracting base...${NORMAL}\n"
+	    mkdir $DST
+	    cd $DST
+	    tar xfz ${ARCHIVE}
+	    rm -f ${ARCHIVE}
+	    BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${ver}-RELEASE/lib32.txz"
+	    ARCHIVE="$MYDIR/lib32.txz"
+	    cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+		if [ $? -eq 0 ]; then
+		    printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
+		    cd $DST
+		    tar xfz ${ARCHIVE}
+		    rm -f ${ARCHIVE}
+		else
+		    printf "${GREEN} Lib32 not found${NORMAL}\n"
+		fi
+	    cbsd preparebase dst=${DST}
+	    ${ECHO} "${MAGENTA}Done...${NORMAL}"
+	    return 0
+	fi
+    printf "${GREEN} Not found${NORMAL}\n"
     ### Official fbsd repo end ###
-fi
+    fi
 
-for MYREPO in $REPO; do
-    ${ECHO} "REPO: ${MYREPO}"
+    for MYREPO in $REPO; do
+	${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
+	if [ -z "${basename}" ]; then
+	    MIRROR="${MYREPO}/base_${arch}_${ver}/mirror.html";
+	else	
+	    MIRROR="${MYREPO}/base_${basename}_${arch}_${ver}/mirror.html";
+	fi
+
+	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+	    MYREPO=`cat ${TF}`
+	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
+	fi
+
+	if [ -z "${basename}" ]; then
+	    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz
+	    [ $? -eq 0 ] || continue
+	    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+	    [ $? -eq 0 ] || continue
+	else
+	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz
+	    [ $? -eq 0 ] || continue
+	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+	    [ $? -eq 0 ] || continue
+	fi
+    done
+
     if [ -z "${basename}" ]; then
-        MIRROR="${MYREPO}/base_${arch}_${ver}/mirror.html";
+	[ -f "${MYDIR}/base_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${arch}_${ver}.txz" ] || err 1 "No such sources"
     else
-        MIRROR="${MYREPO}/base_${basename}_${arch}_${ver}/mirror.html";
+	[ -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz" ] || err 1 "No such sources"
     fi
 
-    cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
-
-    if [ $? -eq 0 ]; then
-	MYREPO=`cat ${TF}`
-	${ECHO} "Found new mirror for ${basename}: ${MYREPO}"
+    if checkmd5 ${MYDIR}; then
+	${ECHO} "${MAGENTA}MD5 sum:${GREEN} correct${NORMAL}"
+    else
+	err 1 "${MAGENTA}MD5 sum: ${GREEN}incorrect${NORMAL}"
     fi
 
     if [ -z "${basename}" ]; then
-	cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz
-	[ $? -eq 0 ] || continue
-	cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
-	[ $? -eq 0 ] || continue
+	rm -f  ${MYDIR}/base_${arch}_${ver}.txz.md5
     else
-	cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz
-	[ $? -eq 0 ] || continue
-	cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
-	[ $? -eq 0 ] || continue
+	rm -f ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5
     fi
-done
 
-if [ -z "${basename}" ]; then
-    [ -f "${MYDIR}/base_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${arch}_${ver}.txz" ] || err 1 "No such sources"
-else
-    [ -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz" ] || err 1 "No such sources"
-fi
+    ${ECHO} "${MAGENTA}Extracting...${NORMAL}"
+    [ -d "$basejaildir" ] | mkdir -p ${basejaildir}
+    #/base_${arch}_${ver}
+    cd $basejaildir
+    #/base_${arch}_${ver}
 
-if checkmd5 ${MYDIR}; then
-${ECHO} "MD5sum correct."
+    if [ -z "${basename}" ]; then
+	tar xfz ${MYDIR}/base_${arch}_${ver}.txz
+	rm -f ${MYDIR}/base_${arch}_${ver}.txz.md5
     else
-err 1 "MD5sum incorrect."
-fi
+	tar xfz ${MYDIR}/base_${basename}_${arch}_${ver}.txz
+	rm -f ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5
+    fi
 
-if [ -z "${basename}" ]; then
-    rm -f  ${MYDIR}/base_${arch}_${ver}.txz.md5
-else
-    rm -f ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5
-fi
+    ${ECHO} "${MAGENTA}Done...${NORMAL}"
 
-${ECHO} "Extracting..."
-[ -d "$basejaildir" ] | mkdir -p ${basejaildir}
-#/base_${arch}_${ver}
-cd $basejaildir
-#/base_${arch}_${ver}
-
-if [ -z "${basename}" ]; then
-    tar xfz ${MYDIR}/base_${arch}_${ver}.txz
-    rm -f ${MYDIR}/base_${arch}_${ver}.txz.md5
-else
-    tar xfz ${MYDIR}/base_${basename}_${arch}_${ver}.txz
-    rm -f ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5
-fi
-
-${ECHO} "Done..."
 return 0
 }
 
@@ -282,46 +287,46 @@ ${ECHO} "Done..."
 
 getkernel()
 {
-[ -z "${name}" ] && name="GENERIC"
-DST="${basejaildir}/kernel_${name}_${arch}_${ver}"
+    [ -z "${name}" ] && name="GENERIC"
+    DST="${basejaildir}/kernel_${name}_${arch}_${ver}"
 
-if [ -d "${DST}" ]; then
-    [ $UPGRADE -eq 1 ] || err 1 "You already have kernel ${name} for ${ver} "
-    cbsd removekernel ver=${ver} arch=${arch} name=${name}
-fi
-
-for MYREPO in $REPO; do
-    ${ECHO} "REPO: ${MYREPO}"
-    MIRROR="${MYREPO}/kernel_${name}_${arch}_${ver}/mirror.html"
-    cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
-
-    if [ $? -eq 0 ]; then
-	MYREPO=`cat ${TF}`
-	${ECHO} "Found new mirror for ${name}: ${MYREPO}"
+    if [ -d "${DST}" ]; then
+	[ $UPGRADE -eq 1 ] || err 1 "${MAGENTA}You already have kernel ${name} for ${ver}${NORMAL}"
+	cbsd removekernel ver=${ver} arch=${arch} name=${name}
     fi
 
-    cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz
-    [ $? -eq 0 ] || continue
-    cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
-    [ $? -eq 0 ] || continue
-done
+    for MYREPO in $REPO; do
+	${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
+	MIRROR="${MYREPO}/kernel_${name}_${arch}_${ver}/mirror.html"
+	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
-[ -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" -a -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5" ] || err 1 "No such sources"
+	if [ $? -eq 0 ]; then
+	    MYREPO=`cat ${TF}`
+	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
+	fi
 
-if checkmd5 ${MYDIR}; then
-${ECHO} "MD5sum correct."
+	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz
+	[ $? -eq 0 ] || continue
+	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+	[ $? -eq 0 ] || continue
+    done
+
+    [ -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" -a -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5" ] || err 1 "${MAGENTA}No such sources${NORMAL}"
+
+    if checkmd5 ${MYDIR}; then
+	${ECHO} "${MAGENTA}MD5 sum: ${GREEN}correct${NORMAL}"
     else
-err 1 "MD5sum incorrect."
-exit
-fi
+	err 1 "${MAGENTA}MD5 sum: ${GREEN}incorrect${NORMAL}"
+	exit 1
+    fi
 
-rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
+    rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
 
-${ECHO} "Extracting..."
-cd $basejaildir
-tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
-rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
-${ECHO} "Done..."
+    ${ECHO} "${MAGENTA}Extracting...${NORMAL}"
+    cd $basejaildir
+    tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+    rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+    ${ECHO} "${MAGENTA}Done...${NORMAL}"
 }
 
 
@@ -365,6 +370,7 @@ UPGRADE=0
 QUIET=0
 TF="${ftmpdir}/test.$$"
 MYDIR="${workdir}/tmp/src.$$"
+REPO=`cbsd getinfo -q repo`
 
 [ -z "${action}" ] && err 1 "Give me action"
 

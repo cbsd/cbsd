@@ -79,6 +79,8 @@ for dir in $PORT_DIRS; do
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
 
     yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
+    # clean dir while https://github.com/freebsd/portmaster/pull/18 is not commited
+    rm -rf /tmp/usr
 done
 
 if [ $pause -eq 1 ]; then
