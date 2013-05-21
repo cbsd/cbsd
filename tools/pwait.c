@@ -94,7 +94,8 @@ main(int argc, char *argv[])
 	//tv.tv_usec = 0;
 
 	while (i > 0) {
-		n = kevent(kq, NULL, 0, e, i, &tv);
+		if (timeout==0) n = kevent(kq, NULL, 0, e, i, NULL);
+		else n = kevent(kq,NULL, 0, e, i , &tv);
 		if (n == -1)
 			err(1, "kevent");
 		i--;
