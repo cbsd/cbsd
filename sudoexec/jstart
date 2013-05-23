@@ -17,111 +17,126 @@ init $*
 
 master_afterstart()
 {
-i=0
+    local i=0
+
     while : ; do
-    eval CMD=\${master_afterstart${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} Master exec afterstart: ${GREEN}${CMD}${NORMAL}"
-    ${CMD}
-    i=$((i + 1))
-done
+	eval CMD=\${master_afterstart${i}}
+	[ -z "${CMD}" ] && break
+	${ECHO} "${MAGENTA}${jname} Master exec afterstart: ${GREEN}${CMD}${NORMAL}"
+	${CMD}
+	i=$((i + 1))
+    done
 }
 
 after_start()
 {
-i=0
+    local i=0
+
     while : ; do
-    eval CMD=\${exec_afterstart${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} exec afterstart: ${GREEN}${CMD}${NORMAL}"
-    chroot ${path} ${CMD}
-    i=$((i + 1))
-done
+	eval CMD=\${exec_afterstart${i}}
+	[ -z "${CMD}" ] && break
+	${ECHO} "${MAGENTA}${jname} exec afterstart: ${GREEN}${CMD}${NORMAL}"
+	chroot ${path} ${CMD}
+	i=$((i + 1))
+    done
 }
 
 master_prestart()
 {
-i=0
+    local i=0
+
     while : ; do
-    eval CMD=\${master_prestart${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} master exec prestart: ${GREEN}${CMD}${NORMAL}"
-    ${CMD}
-    i=$((i + 1))
-done
+	eval CMD=\${master_prestart${i}}
+	[ -z "${CMD}" ] && break
+	${ECHO} "${MAGENTA}${jname} master exec prestart: ${GREEN}${CMD}${NORMAL}"
+	${CMD}
+	i=$((i + 1))
+    done
 }
 
 
 prestart()
 {
-i=0
+    local i=0
+
     while : ; do
-    eval CMD=\${exec_prestart${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} exec prestart: ${GREEN}${CMD}${NORMAL}"
-    chroot ${path} ${CMD}
-    i=$((i + 1))
-done
+	eval CMD=\${exec_prestart${i}}
+	[ -z "${CMD}" ] && break
+	${ECHO} "${MAGENTA}${jname} exec prestart: ${GREEN}${CMD}${NORMAL}"
+	chroot ${path} ${CMD}
+	i=$((i + 1))
+    done
 }
 
 
 fwcounter()
 {
-### FW Counter
-ST=`cbsd jstatus jname=${jname}`
-[ $? -eq 1 ] || return 0
+    ST=`cbsd jstatus jname=${jname}`
+    [ $? -eq 1 ] || return 0
 
 
-if [ "${ipfw_enable}" = "1" -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
-    ${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
-    TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
-    [ -d "${TRAFDIR}" ] || mkdir -p ${TRAFDIR}
-    FWIN=$((ST * 2 + fwcount_st))
-    FWOUT=$((FWIN + 1))
-    FREE=0
-    ipfw list ${FWIN} > /dev/null 2>&1 || ipfw list ${FWOUT} > /dev/null 2>&1 || FREE=1
-    [ "${FREE}" = "0" ] && {
-	${ECHO} "${MAGENTA}ipfw counter ${FWIN} and/or ${FWOUT} busy. Skipping${NORMAL}"
-	return 1
-    }
-    ${ECHO} $FWIN > ${ftmpdir}/${jname}-fwin
-    ${ECHO} $FWOUT > ${ftmpdir}/${jname}-fwout
-    ### FWIN
+    if [ "${ipfw_enable}" = "1" -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
+	${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
+	TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
+	[ -d "${TRAFDIR}" ] || mkdir -p ${TRAFDIR}
+	FWIN=$((ST * 2 + fwcount_st))
+	FWOUT=$((FWIN + 1))
+	FREE=0
+	ipfw list ${FWIN} > /dev/null 2>&1 || ipfw list ${FWOUT} > /dev/null 2>&1 || FREE=1
+
+	if [ "${FREE}" = "0" ]; then
+	    ${ECHO} "${MAGENTA}ipfw counter ${FWIN} and/or ${FWOUT} busy. Skipping${NORMAL}"
+	    return 1
+	fi
+
+	${ECHO} $FWIN > ${ftmpdir}/${jname}-fwin
+	${ECHO} $FWOUT > ${ftmpdir}/${jname}-fwout
+	### FWIN
 	/sbin/ipfw -q add ${FWIN} count ip from any to me jail ${ST}
-    ### FWOUT
+	### FWOUT
 	/sbin/ipfw -q add ${FWOUT} count ip from me to any jail ${ST}
-fi
+    fi
 }
 
 makeresolv()
 {
+
     if [ -f ${data}/etc/resolv.conf ]; then
 	cp ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
 	grep -v nameserver ${data}/etc/resolv.conf.bak > ${data}/etc/resolv.conf
     fi
     grep nameserver ${jailskeldir}/resolv.conf >> ${data}/etc/resolv.conf
+
 }
 
 
-
 # MAIN
-if [ -n "$jname" ]; then
-    JLIST=$jname
-else
+if [ $# -gt 1 -a -z "${jname}" -a -z "${inter}" ]; then
+# recursive
     JLIST=$*
+    for jname in ${JLIST}; do
+        if [ -n "${inter}" ]; then
+    	    /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart jname=${jname} inter=$inter
+    	else
+    	    /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart jname=${jname}
+    	fi
+        cbsd pwait --pid=`cat ${ftmpdir}/jstart.${jname}.$$` --timeout=${parallel}
+    done
+
+    wait_for_jstart 
+
+    err 0 "${MAGENTA}Multiple jstart: ${GREEN}done${NORMAL}"
 fi
 
-for jname in ${JLIST}; do
+
+# MAIN
+    [ -z "$jname" ] && jname=$1
+
     JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
 
-    if [ ! -f  "${JAILRCCONF}" ]; then
-	${ECHO} "${MAGENTA}no conf rc.conf file for ${jname}${NORMAL}"
-	continue
-    fi
+    [ ! -f  "${JAILRCCONF}" ] && err 1 "${MAGENTA}no conf rc.conf file for ${jname}${NORMAL}"
 
     . ${JAILRCCONF}
-
-    shortnm=$jname
 
     [ $baserw -eq 1 ] && path=$data
 
@@ -135,10 +150,7 @@ for jname in ${JLIST}; do
     ST=`cbsd jstatus jname=${jname}`
     [ $? -ne 0 ] || err 1 "${MAGENTA}No such jail${NORMAL}"
 
-    if [ "${ST}" != "0" ]; then
-	${ECHO} "${MAGENTA}Jail already running: ${GREEN}jid ${ST}${NORMAL}"
-	continue
-    fi
+    [ "${ST}" != "0" ] && err 1 "${MAGENTA}Jail already running: ${GREEN}jid ${ST}${NORMAL}"
 
     [ ! -d "${path}" ] && mkdir ${path}
 
@@ -176,7 +188,7 @@ for jname in ${JLIST}; do
 		    modconf ${JAILRCCONF} interface "${iface}"
 		    break
 		else
-		    err 1 "Cant determine interfaces for ${pureip}"
+		    err 1 "${MAGENTA}Can't determine interfaces for:${GREEN} ${pureip}${NORMAL}"
 		fi
 	done
     fi
@@ -189,13 +201,13 @@ for jname in ${JLIST}; do
     	;;
     esac
 
-# MD area
+    # MD area
     if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	cbsd mountmd mdfile="${MDFILE}" jroot="${data}"
     fi
 
     if [ "${ver}" != "empty" ]; then
-	[  -d "${data}/etc" -o -d "${data}/bin" ] || err 1 "No such data structure in ${data}"
+	[  -d "${data}/etc" -o -d "${data}/bin" ] || err 1 "${MAGENTA}No such data structure: ${GREEN}${data}${NORMAL}"
     fi
 
     # cp local default resolv.conf skel
@@ -232,8 +244,6 @@ for jname in ${JLIST}; do
 	MOUNTOPT="${MOUNTOPT} -p ${SRCDIR}"
     fi
 
-
-
     [ "${ver}" != "empty" ] && mountbase ${MOUNTOPT}
 
     mountfstab
@@ -254,7 +264,10 @@ for jname in ${JLIST}; do
     cbsd jrctl jname=$jname mode=set
 
     [ -z "${nice}" ] && nice="0"
-    /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
+
+    ${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
+    /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
+    cbsd pwait --pid=`cat ${ftmpdir}/jstart.${jname}.$$` --timeout=${parallel}
 
     #if [ -n "$devfs_ruleset" ]; then
     #    . /etc/rc.subr
@@ -272,4 +285,4 @@ for jname in ${JLIST}; do
     sync
     master_afterstart
     after_start
-done
+

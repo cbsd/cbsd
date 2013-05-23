@@ -73,6 +73,8 @@ main(int argc, char *argv[])
 	    }
 	} //while
 
+	if (pid<=0) exit(0);
+
 	kq = kqueue();
 	if (kq == -1)
 		err(1, "kqueue");
