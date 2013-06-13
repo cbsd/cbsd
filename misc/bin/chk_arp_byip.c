@@ -59,7 +59,7 @@
 
 useconds_t pingtimeout=0;
 int pingnum=0;
-char ip[15];
+char testip[40]; //max lenght of IPv6 records
 int debug=0;
 int noarp=0;
 
@@ -198,7 +198,6 @@ int ping(struct sockaddr_in *addr)
 	icp->icmp_cksum = 0;
 	icp->icmp_id = ident; /* ID */
 
-	struct sockaddr_in r_addr;
 	struct sockaddr_in from;
 	int fromlen;
 	struct ip	*ip;
@@ -206,8 +205,8 @@ int ping(struct sockaddr_in *addr)
 	sd = socket(PF_INET, SOCK_RAW, proto->p_proto);
 	if ( sd < 0 )
 	{
-		perror("socket");
-		return;
+//		perror("socket");
+		return 1;
 	}
 	if ( setsockopt(sd, SOL_SOCKET, IP_TTL, &val, sizeof(val)) != 0)
 		perror("Set TTL option");
@@ -215,7 +214,7 @@ int ping(struct sockaddr_in *addr)
 	if ( fcntl(sd, F_SETFL, O_NONBLOCK) != 0 )
 		perror("Request nonblocking I/O");
 	for (;;)
-	{	socklen_t len=sizeof(r_addr);
+	{	socklen_t len=sizeof(addr);
 
 //		printf("Msg #%d\n", cnt++);
 		cc = ICMP_MINLEN + phdr_len + datalen;
@@ -245,7 +244,7 @@ int ping(struct sockaddr_in *addr)
 return 0;
 }
 
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
 	struct hostent *hname;
 	struct sockaddr_in addr;
@@ -256,7 +255,7 @@ main(int argc, char *argv[])
 
 	pingtimeout=PINGTIMEOUT*1000000;
 	pingnum=PINGNUM;
-	memset(ip,0,sizeof(ip));
+	memset(testip,0,sizeof(testip));
 
 	static struct option long_options[] = {
 	    { "ip", required_argument, 0 , C_IP },
@@ -274,8 +273,8 @@ main(int argc, char *argv[])
 	    if (optcode == -1) break;
 		switch (optcode) {
 		case C_IP:
-		    if (strlen(optarg)>15) { errmsg("IP is invalid, to long\n"); exit(1); }
-		    strcpy(ip,optarg);
+		    if (strlen(optarg)>=40) { errmsg("IP is invalid, to long\n"); exit(1); }
+		    strcpy(testip,optarg);
 		    break;
 		case C_PINGNUM:
 		    pingnum=atoi(optarg);
@@ -297,14 +296,14 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (strlen(ip)<5) {
+	if (strlen(testip)<5) {
 	    errmsg("--ip argument is mandatory\n");
 	    exit(1);
 	}
 
 	ident = getpid() & 0xFFFF;
 	proto = getprotobyname("ICMP");
-	hname = gethostbyname(ip);
+	hname = gethostbyname(testip);
 	bzero(&addr, sizeof(addr));
 	addr.sin_family = hname->h_addrtype;
 	addr.sin_port = 0;
