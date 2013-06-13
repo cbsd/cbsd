@@ -21,6 +21,9 @@ fi
 
 [ "$1" = "--help" ] && err 0 "${MYDESC}"
 
+DIALOG=${DIALOG=/usr/bin/dialog}
+BACKTITLE="--backtitle \Z1${0}\Zn --colors"
+
 desc_question()
 {
     IP=`/sbin/ifconfig \`route -n get 0.0.0.0 | awk '/interface/{print $2}'\` |awk '/inet /{print $2}'|head -n1`
@@ -41,13 +44,11 @@ desc_question()
 	[ -z "$answ" ] && answ="${DEFAULT}"
 	return 0
     ;;
-    "nodedescr")
-	[ -f "${nodedescr}" ] && return 0
+    "nodeloc")
 	DEFAULT="Datacenter #5"
-	echo "${DEFAULT}" > ${nodedescr}
-#	${ECHO} "${MAGENTA}Hint: Node location (information field), e.g: ${GREEN}${DEFAULT}${NORMAL}"
-#	read answ
-#	[ -z "$answ" ] && answ="${DEFAULT}"
+	${ECHO} "${MAGENTA}Hint: Node location (information field), e.g: ${GREEN}${DEFAULT}${NORMAL}"
+	read answ
+	[ -z "$answ" ] && answ="${DEFAULT}"
 	return 0
     ;;
     "jnameserver")
@@ -225,13 +226,10 @@ upgrade"
 	    done
     done
 
-    /usr/bin/cc ${distdir}/misc/bin/chk_arp_byip.c -o ${miscdir}/chk_arp_byip
-
     #### CP SCRIPTS without override
     DIRHIER="share \
 share/jail-skel \
 share/base2pkg \
-share/helpers \
 etc"
 
     cat > ${etcdir}/cbsd_sudoers <<EOF
@@ -356,13 +354,14 @@ phase3()
 
     for checkme in ${SYSINI}; do
 	if [ `/usr/bin/grep -c ${checkme} ${inventory}` = 0 ]; then
+	    ${ECHO} "${MAGENTA}Please fill: ${GREEN}${checkme}${NORMAL}"
 	    [ "${checkme}" = "zfsfeat" -a $MYFS != "zfs" ] && continue
 	    desc_question ${checkme}
 	    # todo: input validation here
 	    #    read answ
 	    [ "${checkme}" = "mdtmp" -a "$answ" = "1" ] && answ="8"
 	    [ "${checkme}" = "mdtmp" -a "$answ" = "2" ] && answ="0"
-	    [ -n "${answ}" ] && modconf ${inventory} ${checkme} ${answ}
+	    modconf ${inventory} ${checkme} ${answ}
 	fi
     done
 
@@ -475,12 +474,36 @@ phase9()
 
 
 ############ start locking section #############
-start()
+menu()
 {
     if [ "${globalconf}" = "${localcbsdconf}" ]; then
 	${ECHO} "${MAGENTA}Please use difference path for workdir. Not ${GREEN}${distdir}${NORMAL}"
 	exit
     fi
+    
+exec 3>&1
+RESULT=`$DIALOG ${BACKTITLE} \
+        --clear \
+        --title "${product} v.${myversion} initenv" "$@" \
+        --menu \
+        "This is install/upgrade scripts for CBSD.\
+	Warning: this is highly experimental version, use at your own risk. Don't forget to backup." 0 0 0 \
+        "passwd" "Change cbsd password" \
+        "nodeip" "Change node IP" \
+        "nodeloc" "Change node Location info" \
+        "jnameserver" "Change nameserver list for jail resolv.conf" \
+        "nodeippool" "Change node IP pool" \
+        "workdir" "Change default workdir" \
+        "parallel" "Parallel jstop/jstart timeout" \
+	"mdtmp" "Configure md-based tmp dir" \
+        "NAT" "Configure NATd" \
+        "REPO" "Configure REPO" \
+        "" "(add none, continue with setup)" \
+        "---" "(add none, continue with setup)" \
+        2>&1 1>&3`
+retval=$?
+exec 3>&-
+exit
 
     /usr/bin/more << EOF_HEADER
 ----[${product} v.${myversion}]-------
@@ -542,5 +565,5 @@ EOF_HEADER
 
 case "$1" in
 start)
-    start;;
+    menu;;
 esac

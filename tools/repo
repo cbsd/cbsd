@@ -8,8 +8,8 @@ MYOPTARG="mode arch ver sources name basename stable inter"
 #mode=check,update,upgrade
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
-sources can be: src, obj, base, kernel, img\n
-mode can be: check, update, upgrade, quiet\n\
+sources can be: src, obj, base, kernel, img, helpers\n
+mode can be: check, upgrade, quiet\n\
 stable=1 for RELENG_X\n\
 ver=any for mode=list for show all version (no for cur. version only\n\
 arch=any for mode=list for show all arch (no for cur. arch only\n\
@@ -20,7 +20,12 @@ inter=0 to prevent any questions and to accept answers by default\n"
 . ${subr}
 . ${inventory}
 . ${color}
+
 init $*
+origver="${ver}"
+. ${buildconf}
+# prefered for ver in arg
+[ "${ver}" != "${origver}" -a -n "${origver}" ] && ver=$origver
 
 fetchme()
 {
@@ -70,7 +75,6 @@ getsrc()
 
     if [ -d "${srcdir}/${DIR}" ]; then
 	[ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-	cbsd removesrc ver=${ver}
     fi
 
     for MYREPO in ${REPO}; do
@@ -122,8 +126,8 @@ getbase()
     BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${arch}/${arch}/${ver}-RELEASE/base.txz"
 
     if [ -d "${DST}" ]; then
-	[ $UPGRADE -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}${NORMAL}"
-	cbsd removebase ver=${ver} arch=${arch}
+	[ $UPGRADE -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}. Use mode=upgrade for upgrade${NORMAL}"
+	chflags -R noschg ${DST}
     fi
 
     if [ "$fbsdrepo" = "1" -a -z "${basename}" ]; then
@@ -172,11 +176,13 @@ getbase()
 	fi
 
 	if [ -z "${basename}" ]; then
+	    ${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz${NORMAL}"
 	    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz
 	    [ $? -eq 0 ] || continue
 	    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 	    [ $? -eq 0 ] || continue
 	else
+	    ${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz${NORMAL}"
 	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz
 	    [ $? -eq 0 ] || continue
 	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
@@ -185,9 +191,9 @@ getbase()
     done
 
     if [ -z "${basename}" ]; then
-	[ -f "${MYDIR}/base_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${arch}_${ver}.txz" ] || err 1 "No such sources"
+	[ -f "${MYDIR}/base_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${arch}_${ver}.txz" ] || err 1 "${MAGENTA}No such sources: ${GREEN}${MYDIR}/base_${arch}_${ver}.txz.md5 and/or ${MYDIR}/base_${arch}_${ver}.txz${NORMAL}"
     else
-	[ -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz" ] || err 1 "No such sources"
+	[ -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/base_${basename}_${arch}_${ver}.txz" ] || err 1 "$MAGENTA}No such sources: ${GREEN}${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5${NORMAL}"
     fi
 
     if checkmd5 ${MYDIR}; then
@@ -231,7 +237,7 @@ else
 fi
 
 for MYREPO in ${REPO}; do
-    ${ECHO} "REPO: ${MYREPO}"
+    ${ECHO} "${MAGENTA}REPO:${GREEN}${MYREPO}${NORMAL}"
     if [ -z "${basename}" ]; then
     	MIRROR="${MYREPO}/obj_${arch}_${ver}/mirror.html";
     else
@@ -305,13 +311,14 @@ getkernel()
 	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 	fi
 
+	${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz${NORMAL}"
 	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz
 	[ $? -eq 0 ] || continue
 	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 	[ $? -eq 0 ] || continue
     done
 
-    [ -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" -a -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5" ] || err 1 "${MAGENTA}No such sources${NORMAL}"
+    [ -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" -a -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5" ] || err 1 "${MAGENTA}No such sources:${GREEN}${MYDIR}/kernel_${name}_${arch}_${ver}.txz and/or ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5${NORMAL}"
 
     if checkmd5 ${MYDIR}; then
 	${ECHO} "${MAGENTA}MD5 sum: ${GREEN}correct${NORMAL}"
@@ -334,36 +341,77 @@ getimg()
 {
 DST="${importdir}/${name}.img"
 
-[ -f "${DST}" ] && {
-    getyesno "You already have ${DST}. Remove them?"
-    [ $? -eq 1 -o $? -eq 3 ] && err 0 "You already have ${DST}."
-    rm -f ${DST}
-}
+if [ -f "${DST}" ]; then
+    if ! getyesno "${MAGENTA}You already have ${DST}. Remove them?${NORMAL}"; then
+	err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
+    else
+	rm -f ${DST}
+    fi
+fi
 
 JAILRCCONF="${jailrcconfdir}/rc.conf_${name}"
-[ ! -f  ${JAILRCCONF} ] || err 1 "You already have installed jail ${name}"
+[ ! -f  ${JAILRCCONF} ] || err 1 "${MAGENTA}You already have installed jail:${GREEN}${name}${NORMAL}"
 
 for MYREPO in $REPO; do
-    ${ECHO} "REPO: ${MYREPO}"
+    ${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
     MIRROR="${MYREPO}/img_${arch}_${ver}_${name}/mirror.html"
     cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
     if [ $? -eq 0 ]; then
 	MYREPO=`cat ${TF}`
-	${ECHO} "${MAGENTA} Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
+	${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
     fi
 
-    ${ECHO} "Fetching ${name} [${MYREPO}${DIR}]..."
+    ${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}${DIR}${MAGENTA}${NORMAL}"
     cbsd cfetch -o ${DST} -u ${MYREPO}${DIR}
     [ $? -eq 0 ] || continue
 done
 
 [ -f "${DST}" ] || err 1 "No such remote file or network problem"
-${ECHO} "Done... Importing..."
-cbsd jimport jname=${name}
-cbsd jsetup-tui jname=${name} ip4_addr interface astart host_hostname
-cbsd jconfig mode=list jname=${name}
 }
+
+gethelpers()
+{
+DST="${sharedir}/helpers"
+
+    [ ! -d "${DST}" ] && mkdir -p ${DST}
+
+    MIRROR="http://boot.bsdstore.ru/helpers"
+
+    if [ -z "${name}" ]; then
+	cbsd cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
+	[ $? -ne 0 ] && err 1 "${MAGENTA}Error fetching for: ${GREEN}helper list${NORMAL}"
+	for i in `cat ${ftmpdir}/helpers.$$.list`; do
+	    ${ECHO} "${MAGENTA}Get helpers: ${GREEN}${i}${NORMAL}"
+	    if [ "${mode}" = "upgrade" ]; then
+	        cbsd repo action=get sources=helpers name=${i} mode=upgrade
+	    else
+	        cbsd repo action=get sources=helpers name=${i}
+	    fi
+	done
+	rm -f ${ftmpdir}/helpers.$$.list
+	exit
+    fi
+
+    [ ! -d "${tmpdir}/helpers" ] && mkdir -p ${tmpdir}/helpers
+    cbsd cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
+
+    if [ $? -eq 0 ]; then
+	    if [ -d "${DST}/${name}" -a "${mode}" = "upgrade" ]; then
+		rm -rf $DST/${name}
+	    elif [ -d "${DST}/${name}" ]; then
+		rm -f ${tmpdir}/helpers/helpers_${name}.$$.tgz
+		rmdir ${tmpdir}/helpers
+		err 1 "${MAGENTA}Helpers already exist: ${GREEN}${name}${MAGENTA}. Use mode=upgrade for upgrading.${NORMAL}"
+	    fi
+	    mkdir ${DST}/${name}
+	    tar xfz ${tmpdir}/helpers/helpers_${name}.$$.tgz -C ${DST}/${name}
+	    rm -f ${tmpdir}/helpers/helpers_${name}.$$.tgz
+    fi
+
+    rmdir ${tmpdir}/helpers
+}
+
 
 #### MAIN ####
 UPGRADE=0
@@ -407,7 +455,6 @@ for i in ${REPO}; do
 done
 ;;
 "get")
-. $buildconf
 [ -z "${sources}" ] && err 1 "Give me sources"
 
 case "${sources}" in
@@ -435,7 +482,6 @@ case "${sources}" in
     else
 	DIR="obj_${basename}_${arch}_${ver}";
     fi
-
     SRC="${srcdir}/src_${ver}"
     LOCKFILE=${SRC}.lock
     makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
@@ -455,7 +501,18 @@ case "${sources}" in
     LOCKFILE="${jaildir}/${name}.lock"
     makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}"
     mkdir -p ${MYDIR}
-    getimg ;;
+    getimg
+    [ "${usehelpers}" = "1" ] && gethelpers ${name} ${name}
+    ${ECHO} "${MAGENTA}Done... Importing...${NORMAL}"
+    cbsd jimport jname=${name}
+    [ "${usehelpers}" = "1" ] && cbsd jconfig jname=${name} ${name}cfg
+    cbsd jsetup-tui jname=${name} ip4_addr interface astart host_hostname
+    cbsd jconfig mode=list jname=${name}
+    ;;
+"helpers")
+    gethelpers
+    ;;
+
 esac ## END of source case
 
 esac ## END of action case
