@@ -1,30 +1,8 @@
-#!/bin/sh
-DIALOG=${DIALOG=/usr/bin/dialog}
-XDIALOG="/usr/local/bin/cbsddialog"
+#v9.2.1
+#required for . ${dialog} 
 TMPFILE="${ftmpdir}/inputbox.$$"
-BACKTITLE="--backtitle \Z1${0}\Zn --colors"
 
-let()
-{
-    local P1=${1%%=*}
-    local P2=${1##*=}
-    local MYFILE="${ftmpdir}/`basename $0`.wbdlg"
-
-    if [ -f "${MYFILE}"  ]; then
-	if [ `/usr/bin/grep -c ^${P1}= ${MYFILE}` = 1 ]; then
-	    mv ${MYFILE} ${MYFILE}.tmp
-	    grep -v ^${P1} ${MYFILE}.tmp > ${MYFILE}
-	    rm -f ${MYFILE}.tmp
-	else
-	    echo $1 >> ${MYFILE}
-	fi
-    else
-	echo $1 > ${MYFILE}
-    fi
-
-    export $1
-}
-
+#find for first jnameX where X is number++
 freejname()
 {
     local _num
@@ -37,287 +15,313 @@ freejname()
     done
 }
 
-# $pkglist
+# form for $pkglist
 get_pkglist()
 {
     pkglist="${ftmpdir}/tui.$$"
     cbsd pkgbrowser out="${pkglist}"
 
     if [  -f "${pkglist}" ]; then
-	let pkglist=${pkglist}
+	pkglist="${pkglist}"
     else
-	let pkglist="NO"
+	pkglist="NO"
     fi
 }
 
-# $jname
+# form for $jname
 get_jname()
 {
+    local _ok _message _input _retval
+
     freejname
+    _ok=0
 
-    $DIALOG --backtitle "$0" --title "jname" --clear --inputbox "jail short name (one word):" 0 0 "${freejname}" 2> ${TMPFILE}
-    retval=$?
-
-    case $retval in
-    0)
-	input=`cat ${TMPFILE}`
-	echo $input >> /tmp/bla
-	;;
-    esac
-
-    [ -n "${input}" ] && let jname=$input
-}
-
-
-
-# $fqdn
-get_jail_fqdn() {
-    if [ -z ${jname} ]; then
-	$DIALOG --backtitle "$0" --title "fqdn" --clear --inputbox "jail FQDN (one word):" -1 -1 "jail1.my.domain" 2> ${TMPFILE}
-    else
-	$DIALOG --backtitle "$0" --title "fqdn" --clear --inputbox "jail FQDN (one word):" -1 -1 "${jname}.my.domain" 2> ${TMPFILE}
-    fi
-
-    retval=$?
-
-    case $retval in
-    0)	input=`cat ${TMPFILE}`
-	;;
-    esac
-
-    rm -f ${TMPFILE}
-    export fqdn=$input
-}
-
-# $ips
-get_jail_ips() {
-    ok="0"
-    message=""
-    while [ "$ok" -ne "1" ]
-    do
-	$DIALOG --backtitle "$0" --title "ips" --clear --inputbox "$message \n Enter jail ip (from CBSD pool) \n use IP/PREFIX form: ${nodeippool} " -1 -1 "${ip4_addr}" 2> ${TMPFILE}
-	retval=$?
-
-	case $retval in
-	    0)  input=`cat ${TMPFILE}`
-		ret=`cbsd checkip ip=${input} check=1`
+    while [ ${_ok} -ne 1 ]; do
+	f_dialog_input _input "Name must begin with a letter (a-z) \nand not have special symbols (-,.=% etc.)):" "${freejname}" "${_message}"
+	_retval=$?
+	case ${_retval} in
+	    0)
+		echo $_input | grep -E "^[0-9]|[^a-zA-Z0-9]" > /dev/null 2>&1
 		case $? in
-		    0 | 2)
-			message="This IP address is used - choose another IP"
+		    1) _ok=1
 			;;
-		    1)
-			ok="1"
+		    *) _message="ERROR: Bad name. Choose other one"
 			;;
 		esac
 		;;
-	    1)	ok="1"
-		input=""
-		;;
+	    *) _ok=1
 	esac
-
-	rm -f ${TMPFILE}
     done
-    export ip4_addr=$input
+
+    [ -n "${_input}" ] && jname=$_input
 }
 
-# $interface
-get_jail_oninterface() {
-    [ -z "${interface}" -o "${interface}" = "auto" ] && {
+
+
+# form for $fqdn
+get_jail_fqdn()
+{
+    local _input _retval
+
+    if [ -z ${jname} ]; then
+	f_dialog_input _input "jail FQDN (one word):" "jail1.my.domain"
+    else
+	f_dialog_input _input "jail FQDN (one word):" "${jname}.my.domain"
+    fi
+
+    _retval=$?
+
+    case ${_retval} in
+	0)
+	    input=`cat ${TMPFILE}`
+	    [ -n "${_input}" ] && fqdn=${_input}
+	    ;;
+    esac
+}
+
+# form for $ips
+get_jail_ips()
+{
+    local _ok _input _ret _retval
+
+    _ok=0
+
+    while [ ${_ok} -ne 1 ]; do
+	f_dialog_input _input "Enter jail ip (from CBSD pool)\nUse IP/PREFIX form: ${nodeippool}" "${ip4_addr}" "IP4 or IP6 Address"
+	_retval=$?
+
+	case ${_retval} in
+	    0)
+		_ret=`cbsd checkip ip=${_input} check=1`
+		case $? in
+		    0 | 2)
+			msg_yes="ok"
+			msg_no="not ok"
+			f_dialog_noyes "Seems to this ip address conflict on several devices on the LAN\nYou can found MAC address by \"arp -an\" command.\n If you believe that it's ok, choose 'ok' or 'not ok' for another IP address" "WARNING"
+			case $? in
+			    0)
+				_ok="1"
+				;;
+			esac
+			;;
+		    1)
+			_ok="1"
+			;;
+		esac
+		;;
+	    1)	_ok="1"
+		_input=""
+		;;
+	esac
+    done
+    ip4_addr=$_input
+}
+
+# form for $interface
+get_jail_oninterface()
+{
+    local _input _retval
+
+    if [ -z "${interface}" -o "${interface}" = "auto" ]; then
 	if [ -n "${ip4_addr}" ]; then
 	    interface=`cbsd getnics-by-ip ip=${ip4_addr}`
 	else
 	    interface=`cbsd getnics-by-ip ip=0.0.0.0`
 	fi
-    }
+    fi
 
-    $DIALOG --backtitle "$0" --title "interface" --clear --inputbox "Auto create and remove IP on selected nics (0 for disable):" -1 -1 "${interface}" 2> ${TMPFILE}
-    retval=$?
+    f_dialog_input _input "Auto create and auto remove IP on selected nics\n(0 for disable, auto - for auto detect):" "${interface}"
+    _retval=$?
 
-    case $retval in
-    0) input=`cat ${TMPFILE}`
-       ;;
+    case ${_retval} in
+    0)
+	interface=$_input
+	;;
     esac
-
-    rm -f ${TMPFILE}
-    export interface=$input
 }
 
-# $vnet
-get_jail_vnet() {
-$DIALOG --backtitle "$0" --title "vnet" --clear --yesno "Jail with VIMAGE feature?" 5 40
-    case $? in
-	0) st=1
-	   ;;
-	1) st=0
-	   ;;
-	255) echo "ESC pressed."
-	   ;;
-    esac
+# form for $vnet
+get_jail_vnet()
+{
+    local _retval
 
-    export vnet=$st
+    msg_yes="yes"
+    msg_no="no"
+    f_dialog_yesno "Enable VIMAGE support for jail?" 
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    vnet=${_retval}
+	    ;;
+    esac
 }
 
-# $base
+# form for $base
 get_jail_base()
 {
-$DIALOG --backtitle "$0" --title "base" --clear --inputbox "choose jail base source:" -1 -1 "${ver}" 2> ${TMPFILE}
-retval=$?
+    local _input _retval
 
-case $retval in
-  0)
-    input=`cat ${TMPFILE}`;;
-esac
-rm -f ${TMPFILE}
+    f_dialog_input _input "choose jail base source version:" "${ver}"
 
-export ver=$input
+    _retval=$?
+
+    case ${_retval} in
+	0)
+	    ver=${_input}
+	    ;;
+    esac
 }
 
-# $baserw
+# form for $baserw
 get_jail_baserw()
 {
-$DIALOG --title "baswrw" --clear --yesno "Write access for base (no nullfs mount)?" 5 66
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
+    local _retval
 
-export baserw=$st
+    msg_yes="no"
+    msg_no="yes"
+
+    f_dialog_yesno "Jail have personal copy of base system with write access\nNo base nullfs mount ?"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    baserw=${_retval}
+	    ;;
+    esac
 }
 
-# $srcmount
+# form for $srcmount
 get_jail_srcmount()
 {
-echo "Jail with /usr/src via nullfs[y/n]: "
-$DIALOG --backtitle "$0" --title "srcmount" --clear --yesno "Jail with shared /usr/src? " 5 66
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
 
-export srcmount=$st
+    local _retval
+
+    msg_yes="no"
+    msg_no="yes"
+    f_dialog_noyes "Jail with shared(ro) /usr/src?"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    srcmount=${_retval}
+	    ;;
+    esac
 }
 
-# $objmount
+# form for $objmount
 get_jail_objmount()
 {
-st=
+    local _retval
 
-while [ x$st = x ]; do
-echo "Jail with share /usr/obj [y/n]: "
+     msg_yes="no"
+     msg_no="yes"
+     f_dialog_noyes "Jail with shared /usr/obj(ro)"
+    _retval=$?
 
-read reply leftover
-    case $reply in
-         y* | Y*)
-            st=1
-                        ;;
-                n* | n*)
-	    st=0
-                        ;;
-        esac
-done
-
-export objmount=$st
+    case ${_retval} in
+	0|1)
+	    objmount=${_retval}
+	    ;;
+    esac
 }
 
-# $portsmount
+# form for $portsmount
 get_jail_portsmount()
 {
-$DIALOG --backtitle "$0" --title "portsmount" --clear --yesno "Jail with shared /usr/ports" 5 66
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
 
-export portsmount=$st
+    local _retval
+
+     msg_yes="no"
+     msg_no="yes"
+     f_dialog_noyes "Jail with shared /usr/ports"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    portsmount=${_retval}
+	    ;;
+    esac
 }
 
 
-# $applytpl
+# form for $applytpl
 get_jail_applytpl()
 {
-$DIALOG --backtitle "$0" --title "applytpl" --clear --yesno "Apply standart CBSD template when jail create" 5 66
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
-export applytpl=$st
+local _retval
+
+     msg_yes="no"
+     msg_no="yes"
+     f_dialog_noyes "Apply cbsd templates for jail settings"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    applytpl=${_retval}
+	    ;;
+    esac
 }
 
-# $floatresolv
+# form for $floatresolv
 get_jail_floatresolv()
 {
-$DIALOG --backtitle "$0" --title "floatresolv" --clear --yesno "Float resolv (recommended)" 5 66
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
-export floatresolv=$st
+local _retval
+
+     msg_yes="no"
+     msg_no="yes"
+     f_dialog_noyes "Floating resolv.conf (recommended)"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    floatresolv="${_retval}"
+	    ;;
+    esac
 }
 
 # $arch
 get_jail_arch()
 {
-$DIALOG --backtitle "$0" --title "arch" --clear --inputbox "Enter target arch (i386 or amd64):" -1 -1 "`uname -p`" 2> ${TMPFILE}
+    local _input _retval
 
-retval=$?
+    f_dialog_input _input "Enter target arch (i386 or amd64):" "${arch}"
 
-case $retval in
-  0)
-    input=`cat ${TMPFILE}`;;
-esac
-rm -f ${TMPFILE}
+    _retval=$?
 
-export arch=$input
+    case ${_retval} in
+	0)
+	    arch="$_input"
+	    ;;
+    esac
 }
 
 get_jail_mdsize()
 {
-$DIALOG --backtitle "$0" --title "arch" --clear --inputbox "Enter size for images:" -1 -1 "2g" 2> ${TMPFILE}
+    local _input _retval
 
-retval=$?
+    f_dialog_input _input "Enter size for the images:" "2g"
+    _retval=$?
 
-case $retval in
-  0)
-    input=`cat ${TMPFILE}`;;
-esac
-rm -f ${TMPFILE}
-
-export mdsize=$input
+    case ${_retval} in
+	0)
+	    mdsize="${_input}"
+	    ;;
+    esac
 }
 
-# $astart
+# form for $astart
 get_jail_astart()
 {
-$DIALOG --backtitle "$0" --title "astart" --clear --yesno "Jail auto startup with system?" 5 60
-case $? in
-  0)
-    st=1;;
-  1)
-    st=0;;
-  255)
-    echo "ESC pressed.";;
-esac
+    local _retval
 
-export astart=$st
+    msg_yes="no"
+    msg_no="yes"
+    f_dialog_noyes "Jail auto startup with system?"
+    _retval=$?
+
+    case ${_retval} in
+	0|1)
+	    astart="${_retval}"
+	    ;;
+    esac
 }
-

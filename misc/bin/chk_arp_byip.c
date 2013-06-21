@@ -1,4 +1,4 @@
-// detect for ip collision by "arp delete -> ping -> arg get" sequence
+// detect for ip collision by "arp/ndp delete -> ping -> arg/ndp get" sequence
 //
 // This is part of the CBSD Project
 //
@@ -20,6 +20,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
+#include <netinet/icmp6.h>
 
 #include <sys/param.h>
 #include <sys/file.h>
@@ -57,11 +58,15 @@
 #define PACKETSIZE	64
 #define DEFDATALEN	56              /* default data length */
 
+#define IP6_HDRLEN 40         // IPv6 header length
+#define ICMP_HDRLEN 8         // ICMP header length for echo request, excludes data
+
+
 useconds_t pingtimeout=0;
 int pingnum=0;
 char testip[40]; //max lenght of IPv6 records
 int debug=0;
-int noarp=0;
+int ipv6=0;
 
 #define FALSE 0
 #define TRUE 1
@@ -72,7 +77,6 @@ enum {
     C_IP,
     C_PINGTIMEOUT,
     C_HELP,
-    C_NOARP,
     C_DEBUG,
 };
 
@@ -96,20 +100,30 @@ static int      flags,doing_proxy,nflag;
 static time_t   expire_time;
 static struct sockaddr_in *getaddr(char *host);
 static int search(u_long);
+int ping4(struct sockaddr_in *addr);
+int ping6(struct sockaddr *addr,size_t addrlen);
 
 int
 usage(char *myname)
 {
-    printf("Check for ip address availability. Still IPv4 only");
-    printf("require: --ip=x.y.n.m\n");
-    printf("opt: --pingnum=N, --pingtimeout=M, --noarp\n");
+    printf("Check for ip address availability");
+    printf("require: --ip=X\n");
+    printf("opt: --pingnum=N, --pingtimeout=M\n");
     printf("--pingnum = number of icmp packet send, 2 is default\n");
     printf("--pingtimeout = interval between icmp packet send in seconds, default = 0.5\n");
-    printf("--noarp = skip for ARP get, just ping\n");
     printf("Return value: 0 - IP(and/or ARP) is not exist, 1 - IP(and/or ARP) - exist\n");
-    printf("usage: %s --ip=127.0.0.1\n",myname);
+    printf("usage: %s --ip=2001:1bb0:e000:b::19\n",myname);
     exit(0);
 }
+
+//return 0 if ipv4
+//return 1 if ipv6
+int is_ipv6(char *ip)
+{
+    if ((isxdigit(ip[0]) || ip[0]==':' ) && (strchr(ip,':') != NULL)) return 1;
+    return 0;
+}
+
 
 int debugmsg(int level,const char *format, ...)
 {
@@ -123,6 +137,7 @@ int done;
 
 return 0;
 }
+
 
 int errmsg(const char *format, ...)
 {
@@ -178,70 +193,57 @@ in_cksum(u_short *addr, int len)
 
 //return 0 if not icmp reply got
 //return 1 if icmp reply caughted
-int ping(struct sockaddr_in *addr)
-{	const int val=255;
-	int i, sd, cnt=1;
-	u_char *packet;
+int ping4(struct sockaddr_in *addr)
+{
+const int val=255;
+int i, sd;
+u_char *packet;
+outpack = outpackhdr + sizeof(struct ip);
+packet = outpack;
+unsigned char buf[1024];
+struct icmp *icp;
+int cc;
+struct sockaddr_in from;
+int fromlen;
+struct ip	*ip;
 
-	outpack = outpackhdr + sizeof(struct ip);
+    icp = (struct icmp *)outpack;
+    icp->icmp_type = ICMP_ECHO;
+    icp->icmp_code = 0;
+    icp->icmp_cksum = 0;
+    icp->icmp_id = ident; /* ID */
 
-	packet = outpack;
-	unsigned char buf[1024];
+    sd = socket(PF_INET, SOCK_RAW, proto->p_proto);
 
-	struct icmp *icp;
-	struct icmp *ocp; //for listener/reply
-	int cc;
-	icp = (struct icmp *)outpack;
-	ocp = (struct icmp *)outpack; //for listener/reply
-	icp->icmp_type = ICMP_ECHO;
-	icp->icmp_code = 0;
-	icp->icmp_cksum = 0;
-	icp->icmp_id = ident; /* ID */
+    if ( sd < 0 )
+    {
+	    //socket error
+	    return 1;
+    }
 
-	struct sockaddr_in from;
-	int fromlen;
-	struct ip	*ip;
+    if (setsockopt(sd, SOL_SOCKET, IP_TTL, &val, sizeof(val)) != 0)
+	errmsg("setsockopt error\r\n");
+	
 
-	sd = socket(PF_INET, SOCK_RAW, proto->p_proto);
-	if ( sd < 0 )
-	{
-//		perror("socket");
+    if ( fcntl(sd, F_SETFL, O_NONBLOCK) != 0 ) 
+    {
+	errmsg("Request nonblocking I/O");
+	return 1;
+    }
+
+    for (i=0;i<pingnum;i++)
+    {	
+	socklen_t len=sizeof(addr);
+	cc = ICMP_MINLEN + phdr_len + datalen;
+
+	icp->icmp_cksum = in_cksum((u_short *)icp, cc);
+	if ( sendto(sd, (char *)packet, cc, 0, (struct sockaddr *)addr, sizeof(*addr)) <=0 )
 		return 1;
-	}
-	if ( setsockopt(sd, SOL_SOCKET, IP_TTL, &val, sizeof(val)) != 0)
-		perror("Set TTL option");
 
-	if ( fcntl(sd, F_SETFL, O_NONBLOCK) != 0 )
-		perror("Request nonblocking I/O");
-	for (;;)
-	{	socklen_t len=sizeof(addr);
+	usleep(pingtimeout);
+    }
 
-//		printf("Msg #%d\n", cnt++);
-		cc = ICMP_MINLEN + phdr_len + datalen;
-
-		icp->icmp_cksum = in_cksum((u_short *)icp, cc);
-		if ( sendto(sd, (char *)packet, cc, 0, (struct sockaddr *)addr, sizeof(*addr)) <=0 )
-			return 0;
-
-		fromlen = sizeof(from);
-		if ( recvfrom(sd, buf, sizeof(buf), 0, (struct sockaddr*)&from, &len) > 0 ) {
-		    //got message
-		    ip = (struct ip *)buf;
-		    fromlen = ip->ip_hl << 2;
-		    ocp = (struct icmp *)(buf + fromlen);
-		    if (ocp->icmp_type == icmp_type_rsp) {
-	//	    printf("My Id: %d, foreign id: %d, seq: %d\n",ident,ocp->icmp_id,ocp->icmp_seq);
-		    if (ocp->icmp_id != ident)
-			continue;                 /* 'Twas not our ECHO */
-		    return 1;
-		}
-		}
-		usleep(500000);
-	if (cnt>=pingnum) return 0;
-	cnt++;
-	}
-
-return 0;
+    return 0;
 }
 
 int main(int argc, char *argv[])
@@ -251,7 +253,8 @@ int main(int argc, char *argv[])
 	char *myname;
 	float t=0;
 	myname = argv[0];
-	int optcode = 0, option_index = 0, ret = 0;
+	int optcode = 0, option_index = 0, ret = 0, status;
+	struct addrinfo hints, *res;
 
 	pingtimeout=PINGTIMEOUT*1000000;
 	pingnum=PINGNUM;
@@ -262,7 +265,6 @@ int main(int argc, char *argv[])
 	    { "pingnum", required_argument, 0 , C_PINGNUM },
 	    { "pingtimeout", required_argument, 0 , C_PINGTIMEOUT },
 	    { "help", no_argument, 0, C_HELP },
-	    { "noarp", no_argument, 0, C_NOARP },
 	    { "debug", required_argument, 0, C_DEBUG },
 	    /* End of options marker */
 	    { 0, 0, 0, 0 }
@@ -287,31 +289,51 @@ int main(int argc, char *argv[])
 		    usage(myname);
 		    exit(0);
 		    break;
-		case C_NOARP:      /* usage() */
-		    noarp=1;
-		    break;
 		case C_DEBUG:      /* debuglevel 0-2 */
 		    debug=atoi(optarg);
 		    break;
 		}
 	}
 
-	if (strlen(testip)<5) {
+	if (strlen(testip)<3) {
 	    errmsg("--ip argument is mandatory\n");
 	    exit(1);
 	}
 
-	ident = getpid() & 0xFFFF;
-	proto = getprotobyname("ICMP");
-	hname = gethostbyname(testip);
-	bzero(&addr, sizeof(addr));
-	addr.sin_family = hname->h_addrtype;
-	addr.sin_port = 0;
-	addr.sin_addr.s_addr = *(long*)hname->h_addr;
-	if (noarp==0)	delete(&addr);
-	ret=ping(&addr);
-	if(noarp==1) return ret;
-	return get(&addr);
+	if (is_ipv6(testip)) ipv6=1; else
+	    ipv6=0;
+
+    switch(ipv6) {
+	case 0:
+	    ident = getpid() & 0xFFFF;
+	    proto = getprotobyname("ICMP");
+	    hname = gethostbyname(testip);
+	    bzero(&addr, sizeof(addr));
+	    addr.sin_family = hname->h_addrtype;
+	    addr.sin_port = 0;
+	    addr.sin_addr.s_addr = *(long*)hname->h_addr;
+	    delete(&addr);
+	    ping4(&addr);
+	    ret=get(&addr);
+	    break;
+	case 1:
+	    memset (&hints, 0, sizeof (struct addrinfo));
+	    hints.ai_family = AF_INET6;
+	    hints.ai_socktype = SOCK_STREAM;
+	    hints.ai_flags = hints.ai_flags | AI_CANONNAME;
+
+	    if ((status = getaddrinfo (testip, NULL, &hints, &res)) != 0) {
+		errmsg("getaddrinfo() failed: %s\n", gai_strerror (status));
+		exit(1);
+	    }
+
+	    ping6(res->ai_addr, res->ai_addrlen);
+//		ndp here
+	    freeaddrinfo(res);
+	    break;
+    }
+
+return ret;
 }
 /*
  * Delete an arp entry
@@ -578,4 +600,163 @@ search(u_long addr)
         return (found_entry);
 }
 
+
+
+int ping6(struct sockaddr *addr,size_t addrlen)
+{
+    int sd, cmsglen, datalen, hoplimit, psdhdrlen, i;
+    struct icmp6_hdr *icmphdr;
+    unsigned char *data, *outpack, *psdhdr;
+    struct sockaddr_in6 dst;
+    struct msghdr msghdr;
+    struct cmsghdr *cmsghdr1, *cmsghdr2;
+    struct in6_pktinfo *pktinfo;
+    struct iovec iov[2];
+    struct iovec riov[2];
+    void *tmp;
+
+  // Maximum ICMP payload size = 65535 - IPv6 header (40 bytes) - ICMP header (8 bytes)
+  tmp = (unsigned char *) malloc ((IP_MAXPACKET - IP6_HDRLEN - ICMP_HDRLEN) * sizeof (unsigned char));
+  if (tmp != NULL) {
+    data = tmp;
+  } else {
+    fprintf (stderr, "ERROR: Cannot allocate memory for array 'data'.\n");
+    exit (EXIT_FAILURE);
+  }
+  memset (data, 0, (IP_MAXPACKET - IP6_HDRLEN - ICMP_HDRLEN) * sizeof (unsigned char));
+
+  tmp = (unsigned char *) malloc ((IP_MAXPACKET - IP6_HDRLEN - ICMP_HDRLEN) * sizeof (unsigned char));
+  if (tmp != NULL) {
+    outpack = tmp;}
+  else {
+    fprintf (stderr, "ERROR: Cannot allocate memory for array 'outpack'.\n");
+    exit (EXIT_FAILURE);
+  }
+  memset (outpack, 0, (IP_MAXPACKET - IP6_HDRLEN - ICMP_HDRLEN) * sizeof (unsigned char));
+
+  tmp = (unsigned char *) malloc (IP_MAXPACKET * sizeof (unsigned char));
+  if (tmp != NULL) {
+    psdhdr = tmp;}
+  else {
+    fprintf (stderr, "ERROR: Cannot allocate memory for array 'psdhdr'.\n");
+    exit (EXIT_FAILURE);
+  }
+  memset (psdhdr, 0, IP_MAXPACKET * sizeof (unsigned char));
+
+  // Submit request for a socket descriptor to look up interface.
+  if ((sd = socket (AF_INET6, SOCK_RAW, IPPROTO_IPV6)) < 0) {
+    perror ("socket() failed to get socket descriptor for using ioctl() ");
+    exit (EXIT_FAILURE);
+  }
+
+  close (sd);
+
+    memcpy (&dst, addr, addrlen);
+    
+    memcpy (psdhdr + 16, dst.sin6_addr.s6_addr, 16);  // Copy to checksum pseudo-header
+
+  // Define first part of buffer outpack to be an ICMPV6 struct.
+  icmphdr = (struct icmp6_hdr *) outpack;
+  memset (icmphdr, 0, ICMP_HDRLEN);
+
+  // Populate icmphdr portion of buffer outpack.
+  icmphdr->icmp6_type = ICMP6_ECHO_REQUEST;
+  icmphdr->icmp6_code = 0;
+  icmphdr->icmp6_cksum = 0;
+  icmphdr->icmp6_id = htons (5);
+  icmphdr->icmp6_seq = htons (300);
+
+  // ICMP data
+  datalen = 4;
+  data[0] = 'T';
+  data[1] = 'e';
+  data[2] = 's';
+  data[3] = 't';
+
+  // Append ICMP data.
+  memcpy (outpack + ICMP_HDRLEN, data, datalen);
+
+  // Need a pseudo-header for checksum calculation. Define length. (RFC 2460)
+  // Length = source IP (16 bytes) + destination IP (16 bytes)
+  //        + upper layer packet length (4 bytes) + zero (3 bytes)
+  //        + next header (1 byte)
+  psdhdrlen = 16 + 16 + 4 + 3 + 1 + ICMP_HDRLEN + datalen;
+
+  // Compose the msghdr structure.
+  memset (&msghdr, 0, sizeof (msghdr));
+  msghdr.msg_name = &dst;             // pointer to socket address structure
+  msghdr.msg_namelen = sizeof (dst);  // size of socket address structure
+
+  memset (&iov, 0, sizeof (iov));
+  iov[0].iov_base = (unsigned char *) outpack;
+  iov[0].iov_len = ICMP_HDRLEN + datalen;
+  msghdr.msg_iov = iov;   // scatter/gather array
+  msghdr.msg_iovlen = 1;  // number of elements in scatter/gather array
+
+  // Initialize msghdr and control data to total length of the two messages to be sent.
+  // Allocate some memory for our cmsghdr data.
+  cmsglen = CMSG_SPACE (sizeof (int)) + CMSG_SPACE (sizeof (struct in6_pktinfo));
+  tmp = (unsigned char *) malloc (cmsglen * sizeof (unsigned char));
+  if (tmp != NULL) {
+    msghdr.msg_control = tmp;}
+  else {
+    fprintf (stderr, "ERROR: Cannot allocate memory for array 'msghdr.msg_control'.\n");
+    exit (EXIT_FAILURE);
+  }
+  memset (msghdr.msg_control, 0, cmsglen);
+  msghdr.msg_controllen = cmsglen;
+
+  // Change hop limit to 255 via cmsghdr data.
+  hoplimit = 255;
+  cmsghdr1 = CMSG_FIRSTHDR (&msghdr);
+  cmsghdr1->cmsg_level = IPPROTO_IPV6;
+  cmsghdr1->cmsg_type = IPV6_HOPLIMIT;  // We want to change hop limit
+  cmsghdr1->cmsg_len = CMSG_LEN (sizeof (int));
+  *((int *) CMSG_DATA (cmsghdr1)) = hoplimit;
+
+  // Specify source interface index for this packet via cmsghdr data.
+  cmsghdr2 = CMSG_NXTHDR (&msghdr, cmsghdr1);
+  cmsghdr2->cmsg_level = IPPROTO_IPV6;
+  cmsghdr2->cmsg_type = IPV6_PKTINFO;  // We want to specify interface here
+  cmsghdr2->cmsg_len = CMSG_LEN (sizeof (struct in6_pktinfo));
+  pktinfo = (struct in6_pktinfo *) CMSG_DATA (cmsghdr2);
+  //pktinfo->ipi6_ifindex = ifr.ifr_ifindex;
+
+  // Compute ICMPv6 checksum (RFC 2460).
+  // psdhdr[0 to 15] = source IPv6 address, set earlier.
+  // psdhdr[16 to 31] = destination IPv6 address, set earlier.
+  psdhdr[32] = 0;  // Length should not be greater than 65535 (i.e., 2 bytes)
+  psdhdr[33] = 0;  // Length should not be greater than 65535 (i.e., 2 bytes)
+  psdhdr[34] = (ICMP_HDRLEN + datalen)  / 256;  // Upper layer packet length
+  psdhdr[35] = (ICMP_HDRLEN + datalen)  % 256;  // Upper layer packet length
+  psdhdr[36] = 0;  // Must be zero
+  psdhdr[37] = 0;  // Must be zero
+  psdhdr[38] = 0;  // Must be zero
+  psdhdr[39] = IPPROTO_ICMPV6;
+  memcpy (psdhdr + 40, outpack, ICMP_HDRLEN + datalen);
+
+    for (i=0;i<pingnum;i++)
+    {
+	// Request a socket descriptor sd.
+	if ((sd = socket (AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0) {
+	    fprintf (stderr, "Failed to get socket descriptor.\n");
+	    exit (EXIT_FAILURE);
+	}
+
+    // Send packet.
+    if (sendmsg (sd, &msghdr, 0) < 0) {
+	perror ("sendmsg() failed ");
+	return 1;
+    }
+
+    usleep(pingtimeout);
+    }
+
+  close (sd);
+  free (data);
+  free (outpack);
+  free (psdhdr);
+  free (msghdr.msg_control);
+return 0;
+}
 

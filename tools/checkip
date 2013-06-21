@@ -4,10 +4,9 @@
 # return 1 - all ok
 # return 2 - ip already in use
 globalconf="${workdir}/cbsd.conf";
-# check = 0 - do not check on local interface
+# check = 0 - check for pool only 
 # check = 1 - check for local interface
-# check = 2 - do not check for pool
-# check = 3 - check the availability of IP
+# check = 2 - check the availability of IP
 MYARG="ip check"
 MYOPTARG=""
 MYDESC="Check for IP exist or in pool"
@@ -16,16 +15,18 @@ MYDESC="Check for IP exist or in pool"
 . ${globalconf}
 . ${subr}
 . ${tools}
+. ${color}
 init $*
 
-CL_RANGE=`/bin/echo ${ip} |/usr/bin/tr "/" " "`
-CL_IP=`/bin/echo ${CL_RANGE} |/usr/bin/awk {'printf $1'}`
+CL_IP=${ip%%/*}
 INNET=0
 
 check_for_pool()
 {
-    for IPPOOL in ${nodeippool}; do
-	NC_RANGE=`/bin/echo ${IPPOOL} |/usr/bin/tr "/" " "`
+local _ippool
+
+    for _ippool in ${node_ippool}; do
+	NC_RANGE=`/bin/echo ${_ippool} |/usr/bin/tr "/" " "`
 	cbsd netmask ${NC_RANGE} ${CL_IP} > /dev/null 2>&1
 	res=$?
 
@@ -37,57 +38,37 @@ check_for_pool()
 
 check_local_ip()
 {
-    #return 0 errcode for undefined type
-    #return 1 errcode for ipv4
-    #return 2 errcode for ipv6
-    iptype ${CL_IP}
-    case $? in
-	1)
-#	    ping -t1 -i1 -c1 -S ${CL_IP} ${CL_IP} > /dev/null 2>&1
-	    ${miscdir}/chk_arp_byip --ip=${CL_IP} > /dev/null 2>&1
-	    [ $? -eq 0 ] || err 2 "IP4 in use"
-		err 1 "IP4 OK"
-	    ;;
-	2)
-	    ping6 -i1 -c1 -S ${CL_IP} ${CL_IP} > /dev/null 2>&1
-	    [ $? -eq 1 ] || err 2 "IP6 in use"
-		err 1 "IP6 OK"
-	    ;;
-    esac
+    ${miscdir}/chk_arp_byip --ip=${CL_IP} > /dev/null 2>&1
+
+    return $?
 }
 
 case $check in
     0)
 	check_for_pool
-	[ ${INNET} -gt 0 ] || err 0 "Not in pool"
-	    err 1 "Ip Ok"
+	[ ${INNET} -gt 0 ] && exit 1
+	exit 0
 	;;
     1)
-	check_for_pool
 	check_local_ip
+	[ $? -eq 0 ] && exit 1
+	exit 2
 	;;
     2)
-	check_local_ip
-	;;
-    3)
 	iptype ${CL_IP}
 	case $? in
 	    1)
-		${miscdir}/chk_arp_byip --ip=${CL_IP} --noarp > /dev/null 2>&1
-		[ $? -eq 0 ] || err 2 "IP4 in use"
-		    err 1 "IP4 OK"
+		ping -i0.3 -W 300 -c2 -q ${CL_IP} > /dev/null 2>&1
+		[ $? -eq 0 ] || exit 2
+		    exit 1
 		;;
 	    2)
 		ping6 -i0.3 -W 300 -c2 -q ${CL_IP} > /dev/null 2>&1
-		[ $? -eq 2 ] || err 2 "IP6 in use"
-		    err 1 "IP6 OK"
+		[ $? -eq 2 ] || exit 2
+		    exit 1
 		;;
 	esac
 	;;
 esac
 
-#/usr/sbin/arp -d ${CL_IP} > /dev/null 2>&1
-#/sbin/ping -t2 -c1 ${CL_IP} > /dev/null 2>&1
-#arp -an |/usr/bin/grep "(${CL_IP})" |grep "incomplete" > /dev/null 2>&1
-
-err 0 "Unknown IP check error"
+exit 0

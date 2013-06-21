@@ -60,6 +60,8 @@ for dir in $PORT_DIRS; do
     done
 done
 rm -f /tmp/test.$$
+# reject any potential dialog popup from misc. broken for save options ports for build stage
+echo "BATCH=no" >> /etc/make.conf
 
 PROGRESS=${ALLPORTS}
 set -o errexit
@@ -78,7 +80,9 @@ for dir in $PORT_DIRS; do
 
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
 
-    yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
+#    yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
+    portmaster -CK --no-confirm -y -B -D -H ${dir} 2>&1|tee >>${BUILDLOG} 
+
     # clean dir while https://github.com/freebsd/portmaster/pull/18 is not commited
     rm -rf /tmp/usr
 done
