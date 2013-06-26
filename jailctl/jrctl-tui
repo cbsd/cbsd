@@ -4,13 +4,13 @@ globalconf="${workdir}/cbsd.conf";
 MYARG="jname"
 MYOPTARG=""
 MYDESC="Dialog based UI for RACCR/RCTL"
-DIALOG=${DIALOG=/usr/bin/dialog}
-BACKTITLE="--backtitle \Z1${0}\Zn --colors"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${inventory}
+. ${dialog}
+
 init $*
 
 JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
@@ -54,43 +54,37 @@ choice_commit()
 
 load_limits()
 {
-local _str
+    local _str
 
     [ -f "${LIMITS}" ] &&  eval `tr ":=" " " < ${LIMITS} | awk -F " " '{printf("%s_val=\"%s\"\n", $1,$3); }'`
     [ -f "${LIMITS}.extra" ] && eval `cat ${LIMITS}.extra`
-
 #eval `cat ${LIMITS}.extra`
 #echo $fsquota
 #read p
-
 }
 
 #adjust default settings
 reset_limits()
 {
-
     for items in ${CBSD_RCTL} ${CBSD_RCTL_EXTRA}; do
 	eval ${items}_val="\$${items}_default"
     done
-
-
 }
 
 mychoice()
 {
-local _mydesc _myval
+    local _mydesc _retval _myval
 
     eval _mydesc=\$${choice}_desc
     eval _myval=\$${choice}_val
 
-    $DIALOG ${BACKTITLE} --title "${choice}" --clear --inputbox "${_mydesc}" 10 61 "${_myval}" 2> ${TMPFILE}
-    retval=$?
+    f_dialog_input _input "${_mydesc}" "${_myval}"
+   _retval=$?
 
-    case $retval in
+    case ${_retval} in
     0)
-        input=`cat ${TMPFILE}`
-	[ -n "${input}" ] && eval ${choice}_val=$input
-    ;;
+	[ -n "${_input}" ] && eval ${choice}_val="${_input}"
+	;;
     esac
 }
 
@@ -111,42 +105,38 @@ trap "rm -f ${TMPFILE} ; rm -f ${_menufile}" EXIT
 reset_limits
 load_limits
 
-while [ 1 ]; do
+msg_extra="Reset"
 
-    cat > ${_menufile} <<EOF
---extra-button --extra-label "Reset" --title "resource editor for ${jname}"  --clear --default-item "commit" --menu "\n rctl settings" 0 55 0
-EOF
+    while [ 1 ]; do
+	menu_list=""
 
 	for items in ${CBSD_RCTL} ${CBSD_RCTL_EXTRA}; do
 	    eval myval=\$${items}_val
-
-	    cat >> ${_menufile} <<EOF
-${items} "$myval"
-EOF
+	    menu_list="${menu_list} '${items}' '${myval}'"
 	done
 
-	cat >> ${_menufile} <<EOF
-commit ""
-EOF
+	menu_list="${menu_list} 'COMMIT' ''"
+	f_dialog_menu
+	retval=$?
+	f_dialog_menutag_fetch mtag
+	choice=${mtag}
 
-    ${DIALOG} ${BACKTITLE} --file ${_menufile} 2>${TMPFILE}
-
-    retval=$?
-
-    case $retval in
-	0)
-	    choice=`cat ${TMPFILE}`
-	    [ "${choice}" = "commit" ] && choice_commit
-	    mychoice
-	;;
-	3)
-	    reset_limits
-	;;
-	*)
-	    exit
-	;;
-    esac
-
-    [ "${DIALOG}" = "$XDIALOG" ] && exit
-
-done
+	case $retval in
+	    0)
+		case "${mtag}" in
+		    "COMMIT")
+			    choice_commit
+			    ;;
+		    *)
+			    mychoice
+			    ;;
+		esac
+		;;
+	    3)
+		reset_limits
+		;;
+	    *)
+		exit
+		;;
+	esac
+    done
