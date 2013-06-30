@@ -156,6 +156,7 @@ void usage() {
     printf("require: dbfile\n");
     printf("opt: action workdir nodename ip port keyfile rootkeyfile\n");
     printf("dbfile - sqlite database file\n");
+    printf("sqlquery - execute direct sql query\n");
     printf("action can be:\n");
     printf("- init - for re-create database (drop and create empty table)\n");
     printf("- list - select all records from database\n");
@@ -175,6 +176,7 @@ int optcode = 0;
 int option_index = 0, ret = 0;
 int action=0;
 int i=0;
+char buf[SQLSTRLEN];
 
 static struct option long_options[] = {
     { "dbfile", required_argument, 0 , C_DBFILE },
@@ -188,6 +190,7 @@ static struct option long_options[] = {
     { "rootkeyfile", required_argument, 0, C_ROOTKEYFILE },
     { "nodename", required_argument, 0, C_NODENAME },
     { "param", required_argument, 0, C_PARAM },
+    { "sqlquery", required_argument, 0, C_SQLQUERY },
     /* End of options marker */
     { 0, 0, 0, 0 }
     };
@@ -239,6 +242,27 @@ static struct option long_options[] = {
             case C_PARAM:
                 param=optarg;
 		break;
+	    case C_SQLQUERY:
+                memset(buf,0,sizeof(buf));
+                strcpy(buf,optarg);
+                if (optind < argc)
+                    while (optind < argc) {
+                            strcat(buf," ");
+                            strcat(buf,argv[optind++]);
+                    }
+                sqlquery=malloc(strlen(buf)+1);
+                memcpy(sqlquery,buf,strlen(buf));
+                sqlquery[strlen(buf)]='\0';
+                debugmsg(1,"Execute direct SQL: [%s]\n",sqlquery);
+                sqlite3_open(dbfile, &db);
+                if (db == 0 ) {
+                        errmsg("Could not open database %s\n",dbfile);
+                        exit(1);
+                }
+                ret=select_valstmt(sqlquery);
+                goto closeexit;
+                break;
+
 	} //case
     } //while
 
@@ -265,13 +289,13 @@ static struct option long_options[] = {
 switch (action) {
     case (INIT):
 	    ret=sql_stmt("drop table if exists nodelist");
-	    ret=sql_stmt("create table nodelist (id integer primary key, nodename text not null unique , ip text not null, port integer, keyfile text not null, rootkeyfile text not null, status integer)"); // ON CONFLICT FAIL");
+	    ret=sql_stmt("create table nodelist (id integer primary key, nodename text not null unique , ip text not null, port integer, keyfile text not null, rootkeyfile text not null, status integer)");
 	    if(ret==0) debugmsg(1,"DB initialization successfull\n");
 		else errmsg("DB init failed\n");
 	    goto closeexit;
 	break;
     case (LIST):
-	    ret=select_stmt("select nodename from nodelist");
+	    ret=select_valstmt("select nodename from nodelist");
 	    goto closeexit;
 	break;
     case (INSERT):

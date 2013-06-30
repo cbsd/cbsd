@@ -11,6 +11,7 @@ char *keyfile = NULL;
 char *rootkeyfile = NULL;
 char *nodename = NULL;
 char *param = NULL;
+char *sqlquery = NULL;
 
 #define FALSE 0
 #define TRUE 1
@@ -54,6 +55,7 @@ enum {
     C_ROOTKEYFILE,
     C_NODENAME,
     C_PARAM,
+    C_SQLQUERY
 };
 
 int select_callbacksshopt(void *p_data, int num_fields, char **p_fields, char **p_col_names);

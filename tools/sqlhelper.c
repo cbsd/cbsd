@@ -16,11 +16,13 @@ int select_callback(void *p_data, int num_fields, char **p_fields, char **p_col_
 
     if (first_row) {
 	first_row = 0;
+    }
+
+    (*p_rn)++;
+
 	for(field=0; field < num_fields; field++) {
 	    printf("%s=\"%s\"\n", p_col_names[field],p_fields[field]);
 	}
-    }
-    (*p_rn)++;
 
     return 0;
 }
@@ -32,12 +34,15 @@ int select_valcallback(void *p_data, int num_fields, char **p_fields, char **p_c
 
     if (first_row) {
 	first_row = 0;
-	for(field=0; field < num_fields; field++) {
-	    printf("%s\n",p_fields[field]);
-	}
     }
+
     (*p_rn)++;
 
+    for(i=0; i < num_fields; i++) {
+	printf("%s", p_fields[i]);
+    }
+
+    printf("\n");
     return 0;
 }
 
