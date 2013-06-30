@@ -80,6 +80,7 @@ const struct inventory_db sqldb_info[] = {
 { "eventtimer", "text default null", 1 },
 { "nics", "text default null", 1 },
 { "parallel", "integer default 5", 1 },
+{ "stable", "integer default 0", 1 },
 { "\n", NULL, 0 } };       // this must be last
 
 void update_inventory(char *column, char *value);
