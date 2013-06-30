@@ -1,28 +1,70 @@
 #!/bin/sh
+#v9.2.1
 globalconf="${workdir}/cbsd.conf";
-GENUMARG=0
-MYNUMARG=$#
 MYDESC="Collect and store inventory information"
+MYARG="nodename"
+MYOPTARG=""
+
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${tools}
-. ${inventory}
 
 init ${1}
 
-ncpu=`/sbin/sysctl -n hw.ncpu`
-physmem=$((`/sbin/sysctl -n hw.realmem` / 1048576))
-disks=`/sbin/sysctl -n kern.disks|tr " " ","`
-ifaces=`cbsd nics-list | xargs|tr " " ","`
+collect_info()
+{
+    local _dmidecode _meminfo
 
-modconf ${inventory} jail_interface "${ifaces}"
-modconf ${inventory} ncpu "${ncpu}"
-modconf ${inventory} physmem "${physmem}"
-modconf ${inventory} disks "${disks}"
+    physmem=$((`/sbin/sysctl -n hw.realmem` / 1048576))
+    disks=`/sbin/sysctl -n kern.disks|tr " " ","`
 
-cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=jail_interface --value=${ifaces}
-cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=ncpu --value=${ncpu}
-cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=physmem --value=${physmem}
-cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=disks --value=${disks}
+    _dmidecode=`which dmidecode`
+
+    if [ -n "${_dmidecode}" ]; then
+	memtype=`${_dmidecode} -t memory|grep -A20 "Memory Device" | grep -B20 "^Handle" | egrep "Type:|Speed:" |cut -d : -f 2`
+    else
+	memtype=""
+    fi
+
+    hostname=`sysctl -n kern.hostname`
+    osrelease=`sysctl -n kern.osrelease`
+    cpumodel=`sysctl -n hw.model`
+    ncpu=`sysctl -n hw.ncpu`
+
+    cpufreq=`sysctl -n dev.cpu.0.freq`
+    kernhz=`sysctl -n kern.hz`
+    sched=`sysctl -n kern.sched.name`
+    eventtimer=`sysctl -n kern.eventtimer.choice`
+    disks=`sysctl -n kern.disks`
+
+    cbsdver=${myversion}
+
+    nics=""
+    for i in $(/sbin/ifconfig -l); do
+	case "${i%%[0-9]*}" in
+		lo|ipfw|fwe|fwip|plip|pfsync|pflog|tun|vboxnet)
+		continue
+		;;
+	esac
+	nics="${nics} ${i}"
+    done
+
+    [ -n "${nics}" ] && nics=`echo ${nics}|tr " " ","`
+}
+
+collect_info
+
+MYDATA="parallel nodename hostname nodeip nodedescr jnameserver nodeippool natip nat_enable fbsdrepo mdtmp repo workdir ipfw_enable fs zfsfeat jail_interface ncpu physmem memtype disks cpumodel cpufreq kernhz sched eventtimer nics"
+
+for i in ${MYDATA}; do
+    eval items="\$${i}"
+    if [ -n "${items}" ]; then
+	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=${i} --value=${items}
+	modconf ${inventory} ${i} "${items}"
+    fi
+done
+
+# here is place for execute importing SQL data to Ascii file
+#cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=list > ${inventory}

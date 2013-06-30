@@ -1,12 +1,9 @@
 // Part of CBSD Project
 // mailto: olevole at olevole dot ru
 // SQL string Maxlen
-#define SQLSTRLEN 4096
-sqlite3* db;
-int first_row;
+int debug=0;
 
 char *dbfile = NULL;
-int debug=0;
 char *workdir = NULL;
 char *ip = NULL;
 unsigned int port = 0;
@@ -59,9 +56,7 @@ enum {
     C_PARAM,
 };
 
-int select_callback(void *p_data, int num_fields, char **p_fields, char **p_col_names);
 int select_callbacksshopt(void *p_data, int num_fields, char **p_fields, char **p_col_names);
-int select_stmt(const char* stmt);
 int select_stmtsshopt(const char* nodename);
 int select_stmtscpopt(const char* nodename);
 int select_param(char *,char *);
@@ -69,6 +64,3 @@ int sql_stmt(const char* stmt);
 void delete_nodes(char *nodename);
 void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile);
 void usage();
-int debugmsg(int level,const char *format, ...);
-int errmsg(const char *format, ...);
-

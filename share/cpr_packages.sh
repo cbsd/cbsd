@@ -99,7 +99,7 @@ pkg2ng >>${LOGFILE} 2>&1|| err 1 "Cannot pkg2ng ports"
 echo -e "\033[40;35m Creating packages... \033[0m"
 
 #work-around for dbus-daemon run:
-killall -9 dbus-daemon ||true
+killall -9 dbus-daemon >/dev/null 2>&1||true
 
 for i in `pkg info -oa | cut -d : -f1`; do 
 	pkg create -n -g -f txz -o ${PACKAGES}/All/ $i |tee >>${LOGFILE}

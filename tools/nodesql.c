@@ -8,52 +8,9 @@
 #include <getopt.h>
 #include <stdarg.h> //for debugmsg/errmsg
 
+#include "gentools.h"
+#include "sqlhelper.h"
 #include "nodesql.h"
-
-int debugmsg(int level,const char *format, ...)
-{
-va_list arg;
-int done;
-
-    if(debug<level) return 0;
-    va_start (arg, format);
-    done = vfprintf (stdout, format, arg);
-    va_end (arg);
-
-return 0;
-}
-
-int errmsg(const char *format, ...)
-{
-   va_list arg;
-   int done;
-
-   va_start (arg, format);
-   done = vfprintf (stderr, format, arg);
-   va_end (arg);
-
-   return 0;
-}
-
-
-int select_callback(void *p_data, int num_fields, char **p_fields, char **p_col_names) {
-int field;
-int i;
-int *p_rn = (int*)p_data;
-
-    if (first_row) {
-	first_row = 0;
-    }
-
-    (*p_rn)++;
-
-    for(i=0; i < num_fields; i++) {
-	printf("%s", p_fields[i]);
-    }
-    printf("\n");
-    return 0;
-}
-
 
 int select_callbacksshopt(void *p_data, int num_fields, char **p_fields, char **p_col_names) {
 int field;
@@ -103,22 +60,6 @@ char buf[SQLSTRLEN];
     printf("%s\n",buf);
     return 0;
 }
-
-
-int select_stmt(const char* stmt) {
-    char *sqlerr;
-    int   ret;
-    int   nrecs = 0;
-    first_row = 1;
-    ret = sqlite3_exec(db, stmt, select_callback, &nrecs, &sqlerr);
-
-    if(ret!=SQLITE_OK) {
-	errmsg("Error in select statement %s [%s].\n", stmt, sqlerr);
-    }
-
-    return ret;
-}
-
 
 int select_stmtsshopt(const char* nodename) {
 char *sqlerr;
@@ -170,9 +111,6 @@ char buf[SQLSTRLEN];
 }
 
 
-
-
-
 int select_param(char *nodename, char *param) {
 char buf[SQLSTRLEN];
 int   ret;
@@ -190,19 +128,6 @@ char *errsql;
     sql_stmt(buf);
     return ret;
 }
-
-int sql_stmt(const char* stmt) {
-char *errsql;
-int   ret;
-
-    ret = sqlite3_exec(db, stmt, 0, 0, &errsql);
-
-    if(ret != SQLITE_OK) {
-	errmsg("Error in statement: %s [%s].\n", stmt, errsql);
-    }
-    return ret;
-}
-
 
 void delete_nodes(char *nodename) {
 char buf[SQLSTRLEN];

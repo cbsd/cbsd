@@ -1,0 +1,74 @@
+#!/bin/sh
+#v9.2.0
+# Migrate inventory from ASCii to SQLite introduced in 9.2.0
+
+unset workdir
+unset nodename
+
+migratevalue()
+{
+    local _param _value _uncfg _newuncfg _i _cmd
+
+    _param=$1
+
+    [ -z "${_param}" ] && return 0
+
+    _uncfg=`cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --sqlquery=select items from unconfigured`
+
+    eval _value="\$${_param}"
+
+    cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=${_param} --value=${_value}
+
+    _newuncfg=""
+
+    for _i in ${_uncfg}; do
+	[ "${_param}" = "${_i}" ] && continue
+	_newuncfg="${_newuncfg} ${_i}"
+    done
+
+    _updatecmd="cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --sqlquery=update unconfigured set items=\\\"${_newuncfg}\\\""
+    _cmd=`eval ${_updatecmd}`
+}
+
+
+# MAIN
+. /etc/rc.conf
+
+[ -z "${cbsd_workdir}" ] && exit
+[ ! -f "${cbsd_workdir}/nc.inventory" ] && exit
+
+workdir="${cbsd_workdir}"
+
+[ ! -f "${workdir}/cbsd.conf" ] && exit
+
+. "${workdir}/cbsd.conf"
+
+[ ! -f "${inventory}" ] && exit
+
+. ${inventory}
+
+[ -z "${nodename}" ] && exit
+
+[ -f "${dbdir}/inv.${nodename}.sqlite" ] && exit
+
+printf "* patch ${0}: migrate old inventory database. "
+
+# check for old database
+[ -f "${dbdir}/inv.${nodename}" ] && rm -f "${dbdir}/inv.${nodename}"
+
+#we need new version of inventorysql
+cc ${distdir}/tools/inventorysql.c ${distdir}/tools/gentools.c ${distdir}/tools/sqlhelper.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/inventorysql
+
+cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=init
+
+OLD_DATA=`cut -d "=" -f 1 ${inventory}`
+
+. ${distdir}/initenv.subr
+
+for i in ${OLD_DATA}; do
+    for n in nodename ${USERINI} ${HWINI}; do
+	[ "${i}" = "${n}" ] && migratevalue ${i}
+    done
+done
+
+echo "Done"

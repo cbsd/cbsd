@@ -95,7 +95,7 @@ echo "You can eject install media and reboot system now"
 
 select_nic()
 {
-NIC=`/usr/local/cbsd/tools/nics-list |sed 's/lo0//g' |xargs`
+NIC=`/usr/local/cbsd/misc/nics-list|xargs`
 
 [ -n "${NIC}" ] || err 1 "Network Interface not found in you system. Install impossible, back to shell"
 
@@ -192,7 +192,7 @@ end_config()
 
 check_hw()
 {
-NIC=`/usr/local/cbsd/tools/nics-list |sed 's/lo0//g' |xargs`
+NIC=`/usr/local/cbsd/misc/nics-list|xargs`
 [ -n "${NIC}" ] || err 1 "Network Interface not found in you system. Install impossible, back to shell"
 
 }

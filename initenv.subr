@@ -1,4 +1,23 @@
-SYSINI="nodename nodeip nodedescr jnameserver nodeippool natip fbsdrepo zfsfeat mdtmp parallel"
+#user settings
+USERINI="\
+hostname \
+nodeip \
+nodedescr \
+jnameserver \
+nodeippool \
+natip \
+nat_enable \
+fbsdrepo \
+mdtmp \
+repo \
+workdir \
+ipfw_enable \
+zfsfeat \
+jail_interface \
+parallel"
+
+#system settins
+HWINI="fs ncpu physmem memtype disks cpumodel cpufreq kernhz sched eventtimer nics"
 
 # install file from $2 to $3 if not equal
 # $1 addit.  arg for install
@@ -15,75 +34,72 @@ return 0
 # if arg then force configure
 configure_nat()
 {
-RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-EXT_IFACE=`route -n get 0.0.0.0 |awk '/interface/{print $2}'`
+    RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+    EXT_IFACE=`route -n get 0.0.0.0 |awk '/interface/{print $2}'`
 
-[ `grep -c ^nat_enable ${inventory}` = "1" -a -z "$1" ] && return
-
-# this question not neccessary when forcing config
-if [ -z "$1" ]; then
-    if ! getyesno "Configure NAT for RFC1918 Network?"; then
-	modconf ${inventory} nat_enable NO
-	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=nat_enable --value=0
-        return
+    # this question not neccessary when forcing config
+    if [ -z "$1" ]; then
+	if ! getyesno "Configure NAT for RFC1918 Network?"; then
+	    cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=0
+	    return
+	fi
     fi
-fi
 
-DEFAULT="pf"
-answ=
-while [ "$answ" != "ok" ]; do
-printf "Which one NAT framework should be use: [$DEFAULT]\n"
-echo "(type FW name, eg pf,ipfw or \"exit\" for break)"
-read answ leftover
-[ -z "$answ" ] && answ="${DEFAULT}"
-[ "${answ}" != "exit" ] || return
+    DEFAULT="pf"
+    answ=0
+    ok=
+    while [ "$ok" != "ok" ]; do
+	printf "Which one NAT framework should be use: [$DEFAULT]\n"
+	echo "(type FW name, eg pf,ipfw or \"exit\" for break)"
+	read ok leftover
+	[ -z "$ok" ] && ok="${DEFAULT}"
+	[ "${ok}" != "exit" ] || return
 
-case "${answ}" in
-"pf")
-	modconf ${inventory} nat_enable ${answ}
-	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename} --action=update --param=nat_enable --value=${answ}
-        modconf /boot/loader.conf pf_load YES
+	case "${ok}" in
+	    "pf")
+		modconf /boot/loader.conf pf_load YES
+		truncate -s0 ${etcdir}/pfnat.conf
 
-truncate -s0 ${etcdir}/pfnat.conf
-for NET in ${RFC1918}; do
-    NM=`echo ${NET} |tr "/" " "`
-    ${workdir}/sbin/netmask ${NM} ${natip}
-    if [ $? -ne 1 ]; then
-cat >> ${etcdir}/pfnat.conf <<EOF
+		for NET in ${RFC1918}; do
+		    NM=`echo ${NET} |tr "/" " "`
+		    ${workdir}/sbin/netmask ${NM} ${natip}
+		    if [ $? -ne 1 ]; then
+			cat >> ${etcdir}/pfnat.conf <<EOF
 nat on ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}
 EOF
-    fi
-done
-#cat >> ${etcdir}/pfnat.conf << EOF
-#pass quick all
-#EOF
-answ="ok"
-;;
-"ipfw")
-        modconf ${inventory} nat_enable ipfw
-        modconf /boot/loader.conf ipfw_nat_load YES
-        modconf /boot/loader.conf libalias_load YES
-        modconf /boot/loader.conf pf_load NO
-	modconf /boot/loader.conf ipl_load NO
-	modconf /boot/loader.conf ipfilter NO
-	truncate -s0 ${etcdir}/ipfw.conf
-    NM=`echo ${RFC1918} |tr " " ","`
-#    ${workdir}/sbin/netmask ${NM} ${natip}
-#    if [ $? -ne 1 ]; then
+		    fi
+		done
 
-    EXTIFACE=`route -n get default | awk '/interface:/{print $2}'`
-    ifconfig ${EXTIFACE} >/dev/null 2>&1
+		answ="${ok}"
+		ok="ok"
+		cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=${answ}
+		;;
+	    "ipfw")
+		modconf /boot/loader.conf ipfw_nat_load YES
+		modconf /boot/loader.conf libalias_load YES
+		modconf /boot/loader.conf pf_load NO
+		modconf /boot/loader.conf ipl_load NO
+		modconf /boot/loader.conf ipfilter NO
+		truncate -s0 ${etcdir}/ipfw.conf
+		NM=`echo ${RFC1918} |tr " " ","`
+		#    ${workdir}/sbin/netmask ${NM} ${natip}
+		#    if [ $? -ne 1 ]; then
+		EXTIFACE=`route -n get default | awk '/interface:/{print $2}'`
+		ifconfig ${EXTIFACE} >/dev/null 2>&1
 
-    if [ $? -eq 0 ]; then
-	cat >> ${etcdir}/ipfw.conf << EOF
+		if [ $? -eq 0 ]; then
+		    cat >> ${etcdir}/ipfw.conf << EOF
 /sbin/ipfw -q add 65000 nat 123 all from ${NM} to not ${NM} any via ${EXTIFACE}
 /sbin/ipfw -q nat 123 config ip ${natip}
 /sbin/ipfw -q add 65000 nat 123 ip from any to ${natip} via ${EXTIFACE}
 EOF
-    fi
-    answ="ok"
-;;
-esac
+		fi
+
+		answ="${ok}"
+		ok="ok"
+		cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=${answ}
+		;;
+	esac
 done
 }
 
@@ -157,5 +173,46 @@ if ! getyesno "Enable NAMED service for resolving?"; then
 else
     named_enable
 fi
+}
+
+
+collect_info()
+{
+    local _dmidecode _meminfo
+
+    physmem=$((`/sbin/sysctl -n hw.realmem 2>/dev/null` / 1048576))
+
+    _dmidecode=`which dmidecode`
+
+    if [ -n "${_dmidecode}" ]; then
+        memtype=`${_dmidecode} -t memory|grep -A20 "Memory Device" | grep -B20 "^Handle" | egrep "Type:|Speed:" |cut -d : -f 2 |xargs`
+    else
+        memtype=""
+    fi
+
+    hostname=`sysctl -n kern.hostname 2>/dev/null`
+    osrelease=`sysctl -n kern.osrelease 2>/dev/null`
+    cpumodel=`sysctl -n hw.model 2>/dev/null`
+    ncpu=`sysctl -n hw.ncpu 2>/dev/null`
+
+    cpufreq=`sysctl -n dev.cpu.0.freq 2>/dev/null`
+    kernhz=`sysctl -n kern.hz 2>/dev/null`
+    sched=`sysctl -n kern.sched.name 2>/dev/null`
+    eventtimer=`sysctl -n kern.eventtimer.choice 2>/dev/null`
+    disks=`sysctl -n kern.disks 2>/dev/null`
+
+    cbsdver=${myversion}
+
+    nics=""
+    for i in $(/sbin/ifconfig -l); do
+        case "${i%%[0-9]*}" in
+                lo|ipfw|fwe|fwip|plip|pfsync|pflog|tun|vboxnet)
+                continue
+                ;;
+        esac
+        nics="${nics} ${i}"
+    done
+
+    [ -n "${nics}" ] && nics=`echo ${nics}|tr " " ","`
 }
 
