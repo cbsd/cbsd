@@ -289,7 +289,7 @@ static struct option long_options[] = {
 switch (action) {
     case (INIT):
 	    ret=sql_stmt("drop table if exists nodelist");
-	    ret=sql_stmt("create table nodelist (id integer primary key, nodename text not null unique , ip text not null, port integer, keyfile text not null, rootkeyfile text not null, status integer)");
+	    ret=sql_stmt("create table nodelist (id integer primary key, nodename text not null unique , ip text not null, port integer, keyfile text not null, rootkeyfile text not null, status integer, invfile text not null)");
 	    if(ret==0) debugmsg(1,"DB initialization successfull\n");
 		else errmsg("DB init failed\n");
 	    goto closeexit;

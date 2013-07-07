@@ -5,8 +5,8 @@ nodeip \
 nodedescr \
 jnameserver \
 nodeippool \
-natip \
 nat_enable \
+natip \
 fbsdrepo \
 mdtmp \
 repo \
@@ -32,91 +32,114 @@ return 0
 }
 
 
+make_nat()
+{
+    case "${ok}" in
+	"pf")
+	    modconf /boot/loader.conf pf_load YES
+	    truncate -s0 ${etcdir}/pfnat.conf
+
+	    for _net in ${rfc1918}; do
+		_nm=`echo ${_net} |tr "/" " "`
+		${workdir}/sbin/netmask ${_nm} ${natip}
+		if [ $? -ne 1 ]; then
+		    cat >> ${etcdir}/pfnat.conf <<EOF
+nat on ${ext_iface} from ${_net} to ! ${_net} -> ${natip}
+EOF
+		fi
+	    done
+
+	    answ="${ok}"
+	    ok="ok"
+	    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nat_enable --value=${answ}
+	    return 0
+            ;;
+	"ipfw")
+	    modconf /boot/loader.conf ipfw_nat_load YES
+	    modconf /boot/loader.conf libalias_load YES
+	    modconf /boot/loader.conf pf_load NO
+	    modconf /boot/loader.conf ipl_load NO
+	    modconf /boot/loader.conf ipfilter NO
+	    truncate -s0 ${etcdir}/ipfw.conf
+	    _nm=`echo ${rfc1918} |tr " " ","`
+	    #    ${workdir}/sbin/netmask ${_nm} ${natip}
+	    #    if [ $? -ne 1 ]; then
+	    _extiface=`route -n get default | awk '/interface:/{print $2}'`
+	    ifconfig ${_extiface} >/dev/null 2>&1
+
+	    if [ $? -eq 0 ]; then
+	    cat >> ${etcdir}/ipfw.conf << EOF
+/sbin/ipfw -q add 65000 nat 123 all from ${_nm} to not ${_nm} any via ${_extiface}
+/sbin/ipfw -q nat 123 config ip ${natip}
+/sbin/ipfw -q add 65000 nat 123 ip from any to ${natip} via ${_extiface}
+EOF
+	    fi
+
+	    answ="${ok}"
+	    ok="ok"
+	    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nat_enable --value=${answ}
+	    return 0
+	    ;;
+    esac
+return 1
+}
+
+
 # if arg then force configure
 configure_nat()
 {
-    RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-    EXT_IFACE=`route -n get 0.0.0.0 |awk '/interface/{print $2}'`
+    rfc1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+    ext_iface=`route -n get 0.0.0.0 |awk '/interface/{print $2}'`
 
-    # this question not neccessary when forcing config
-    if [ -z "$1" ]; then
-	if ! getyesno "Configure NAT for RFC1918 Network?"; then
-	    cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=0
-	    return
-	fi
+    local _default
+    local _net _nm
+
+    . ${tools}
+
+    if [ "${inter}" = "0" ]; then
+	cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=natip --value=${natip} 2>/dev/null
+	ok="${nat_enable}"
+	make_nat
+	return 0
     fi
 
-    natip=`cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=get --value=natip 2>/dev/null`
+    _default=`cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=get --value=natip 2>/dev/null`
+
+    iptype ${_default} >/dev/null 2>&1
+
+    if [ $? -ne 1 ]; then
+	_default=`cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=get --value=nodeip 2>/dev/null`
+    fi
+
+   ${ECHO} "${BOLD}Set IP address as the aliasing NAT address, e.g: ${GREEN}${_default}${NORMAL}"
+   read natip
+   [ -z "${natip}" ] && natip="${_default}"
 
     if [ -z "${natip}" ]; then
-	$ECHO "${MAGENTA}Empty natip value. Fresh inventory data${NORMAL}"
+	$ECHO "${MAGENTA}Error: empty natip value${NORMAL}"
 	return 1
     fi
 
-    DEFAULT="pf"
+    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=natip --value=${natip} 2>/dev/null
+
+    _default="pf"
     answ=0
     ok=
     while [ "$ok" != "ok" ]; do
-	printf "Which one NAT framework should be use: [$DEFAULT]\n"
-	echo "(type FW name, eg pf,ipfw or \"exit\" for break)"
+	${ECHO} "${BOLD}Which one NAT framework should be use: [${GREEN}${_default}${NORMAL}${BOLD}]${NORMAL}"
+	${ECHO} "${MAGENTA}(type FW name, eg pf,ipfw or \"exit\" for break)${NORMAL}"
 	read ok leftover
-	[ -z "$ok" ] && ok="${DEFAULT}"
+	[ -z "$ok" ] && ok="${_default}"
+	make_nat && return
 	[ "${ok}" != "exit" ] || return
-
-	case "${ok}" in
-	    "pf")
-		modconf /boot/loader.conf pf_load YES
-		truncate -s0 ${etcdir}/pfnat.conf
-
-		for NET in ${RFC1918}; do
-		    NM=`echo ${NET} |tr "/" " "`
-		    ${workdir}/sbin/netmask ${NM} ${natip}
-		    if [ $? -ne 1 ]; then
-			cat >> ${etcdir}/pfnat.conf <<EOF
-nat on ${EXT_IFACE} from ${NET} to ! ${NET} -> ${natip}
-EOF
-		    fi
-		done
-
-		answ="${ok}"
-		ok="ok"
-		cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=${answ}
-		;;
-	    "ipfw")
-		modconf /boot/loader.conf ipfw_nat_load YES
-		modconf /boot/loader.conf libalias_load YES
-		modconf /boot/loader.conf pf_load NO
-		modconf /boot/loader.conf ipl_load NO
-		modconf /boot/loader.conf ipfilter NO
-		truncate -s0 ${etcdir}/ipfw.conf
-		NM=`echo ${RFC1918} |tr " " ","`
-		#    ${workdir}/sbin/netmask ${NM} ${natip}
-		#    if [ $? -ne 1 ]; then
-		EXTIFACE=`route -n get default | awk '/interface:/{print $2}'`
-		ifconfig ${EXTIFACE} >/dev/null 2>&1
-
-		if [ $? -eq 0 ]; then
-		    cat >> ${etcdir}/ipfw.conf << EOF
-/sbin/ipfw -q add 65000 nat 123 all from ${NM} to not ${NM} any via ${EXTIFACE}
-/sbin/ipfw -q nat 123 config ip ${natip}
-/sbin/ipfw -q add 65000 nat 123 ip from any to ${natip} via ${EXTIFACE}
-EOF
-		fi
-
-		answ="${ok}"
-		ok="ok"
-		cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=nat_enable --value=${answ}
-		;;
-	esac
-done
+    done
 }
 
 # if arg then force configure
 configure_named()
 {
-FILE="/var/named/etc/namedb/named.conf"
-STRING="listen-on"
-
+    FILE="/var/named/etc/namedb/named.conf"
+    STRING="listen-on"
 }
 
 rsyncd_enable()
@@ -161,7 +184,7 @@ if [ `grep -c cbsdrsyncd_enable /etc/rc.conf` = "1" ]; then
     return
 fi
 
-if ! getyesno "Configure RSYNC services for jail migration?"; then
+if ! getyesno "${MAGENTA}Configure RSYNC services for jail migration?${NORMAL}"; then
     rsyncd_disable
 else
     rsyncd_enable
@@ -176,7 +199,7 @@ if [ `grep -c named_enable /etc/rc.conf` = "1" ]; then
     return 0
 fi
 
-if ! getyesno "Enable NAMED service for resolving?"; then
+if ! getyesno "${MAGENTA}Configure NAMED service for resolving?${NORMAL}"; then
     named_disable
 else
     named_enable

@@ -14,7 +14,7 @@ export PATH="/usr/lib/distcc/bin:$PATH"
 #export CCACHE_PREFIX="/usr/local/bin/distcc"
 export CCACHE_PATH="/usr/bin:/usr/local/bin"
 export PATH="/usr/local/libexec/ccache:$PATH:/usr/local/bin:/usr/local/sbin"
-
+export LC_ALL=en_US.UTF-8
 
 LOGFILE="/tmp/packages.log"
 BUILDLOG="/tmp/build.log"
@@ -71,7 +71,7 @@ for dir in $PORT_DIRS; do
     # skip if ports already registered
 
     if [ -f /tmp/buildcontinue ]; then
-	cd /tmp/packages 
+	cd /tmp/packages
 	PORTNAME=`make -C ${dir} -V PKGNAME`
 	pkg info -e ${PORTNAME} >/dev/null 2>&1 || {
 	    [ -f "./${PORTNAME}.txz" ] && env ASSUME_ALWAYS_YES=yes pkg add ./${PORTNAME}.txz && echo -e "\033[40;35m ${PORTNAME} found and added from cache. \033[0m"
@@ -106,4 +106,5 @@ for i in `pkg info -oa | cut -d : -f1`; do
 done
 
 cd ${PACKAGES} || err 1 "Cannot change directory"
+rm -f digests.txz packagesite.txz repo.txz
 pkg repo ${PACKAGES}/ >>${LOGFILE} 2>&1|| err 1 "Cannot create packages repo archive"
