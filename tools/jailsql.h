@@ -53,34 +53,15 @@ struct inventory_db {
 //fields for sqlite scheme and upgrade procedure
 // "row name", "type of row", status (1 -actual, 0 - not)
 const struct inventory_db sqldb_info[] = {
-{ "nodename", "text default null", 1 },
-{ "hostname", "text default null", 1 },
-{ "nodeip", "text default null", 1 },
-{ "nodedescr", "text default null", 1 },
-{ "jnameserver", "text default null", 1 },
-{ "nodeippool", "text default null", 1 },
-{ "natip", "text default null", 1 },
-{ "nat_enable", "text default null", 1 },
-{ "fbsdrepo", "boolean default 1", 1 },
-{ "mdtmp", "integer default 0", 1 },
-{ "repo", "text default null", 1 },
-{ "workdir", "text default null", 1 },
-{ "ipfw_enable", "boolean default 0", 1 },
-{ "fs", "text default null", 1 },
-{ "zfsfeat", "boolean default 0", 1 },
-{ "jail_interface", "text default null", 1 },
-{ "ncpu", "integer default 0", 1 },
-{ "physmem", "integer default 0", 1 },
-{ "memtype", "text default null", 1 },
-{ "disks", "text default null", 1 },
-{ "cpumodel", "text default null", 1 },
-{ "cpufreq", "integer default 0", 1 },
-{ "kernhz", "integer default 0", 1 },
-{ "sched", "text default null", 1 },
-{ "eventtimer", "text default null", 1 },
-{ "nics", "text default null", 1 },
-{ "parallel", "integer default 5", 1 },
-{ "stable", "integer default 0", 1 },
+{ "jname", "text default null", 1 },
+{ "path", "text default null", 1 },
+{ "host_hostname", "text default null", 1 },
+{ "ip4_addr", "text default null", 1 },
+{ "mount_devfs", "boolean default 0", 1 },
+{ "mount_devfs", "boolean default 0", 1 },
+{ "mount_devfs", "boolean default 0", 1 },
+{ "mount_devfs", "boolean default 0", 1 },
+
 { "\n", NULL, 0 } };       // this must be last
 
 void update_inventory(char *column, char *value);

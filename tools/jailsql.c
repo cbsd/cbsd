@@ -14,7 +14,7 @@ void update_inventory(char *column, char *value) {
 char buf[SQLSTRLEN];
     sql_stmt("begin");
     bzero(buf,SQLSTRLEN);
-    sprintf(buf,"update local set %s = \"%s\"",column,value);
+    sprintf(buf,"update jails set %s = \"%s\"",column,value);
     debugmsg(1,"SQL: %s\n",buf);
     sql_stmt(buf);
     sql_stmt("commit");
@@ -24,7 +24,7 @@ void delete_inventory(char *column) {
 char buf[SQLSTRLEN];
 
     bzero(buf,SQLSTRLEN);
-    sprintf(buf,"delete %s from local",column);
+    sprintf(buf,"delete %s from jails",column);
     debugmsg(1,"SQL: %s\n",buf);
     sql_stmt(buf);
     sql_stmt("commit");
@@ -152,9 +152,9 @@ static struct option long_options[] = {
 
     switch (action) {
 	case (INIT):
-	    ret=sql_stmt("drop table if exists local");
+	    ret=sql_stmt("drop table if exists jails");
 	    memset(buf,0,sizeof(buf));
-	    strcpy(buf,"create table local ( ");
+	    strcpy(buf,"create table jails ( ");
 
 	    firstrow=0;
 	    //aggregate all actual data for SQL tables
@@ -173,10 +173,10 @@ static struct option long_options[] = {
 	    debugmsg(1,"SQL Exec: %s\n",buf);
 	    ret=sql_stmt(buf);
 
-	    if (ret==0) debugmsg(1,"table 'local' init successfull\n");
-		else errmsg("table 'local' init failed\n");
+	    if (ret==0) debugmsg(1,"table 'jails' init successfull\n");
+		else errmsg("table 'jails' init failed\n");
 
-	    sql_stmt("insert into local ( nodename ) values ( 'null' )");
+	    sql_stmt("insert into jails ( nodename ) values ( 'null' )");
 	
 	    // Init table of sign for first config items
 	    ret=sql_stmt("drop table if exists unconfigured");
@@ -209,7 +209,7 @@ static struct option long_options[] = {
             goto closeexit;
         break;
 	case (LIST):
-            ret=select_stmt("select * from local");
+            ret=select_stmt("select * from jails");
             goto closeexit;
 	    break;
 	case (GET):
@@ -219,7 +219,7 @@ static struct option long_options[] = {
 		goto closeexit;
 	    }
 	    memset(buf,0,sizeof(buf));
-	    sprintf(buf,"select %s from local",value);
+	    sprintf(buf,"select %s from jails",value);
             ret=select_valstmt(buf);
             goto closeexit;
         break;
