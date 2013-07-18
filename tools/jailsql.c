@@ -14,7 +14,7 @@ void update_inventory(char *column, char *value) {
 char buf[SQLSTRLEN];
     sql_stmt("begin");
     bzero(buf,SQLSTRLEN);
-    sprintf(buf,"update jails set %s = \"%s\"",column,value);
+    sprintf(buf,"update jails set %s = \"%s\" where jname=\"%s\"",column,value,jname);
     debugmsg(1,"SQL: %s\n",buf);
     sql_stmt(buf);
     sql_stmt("commit");
@@ -23,8 +23,9 @@ char buf[SQLSTRLEN];
 void delete_inventory(char *column) {
 char buf[SQLSTRLEN];
 
+    sql_stmt("begin");
     bzero(buf,SQLSTRLEN);
-    sprintf(buf,"delete %s from jails",column);
+    sprintf(buf,"delete from jails where jname=\"%s\"",column);
     debugmsg(1,"SQL: %s\n",buf);
     sql_stmt(buf);
     sql_stmt("commit");
@@ -65,6 +66,7 @@ static struct option long_options[] = {
     { "param", required_argument, 0, C_PARAM },
     { "value", required_argument, 0, C_VALUE },
     { "sqlquery", required_argument, 0, C_SQLQUERY },
+    { "jname", required_argument, 0, C_JNAME },
     /* End of options marker */
     { 0, 0, 0, 0 }
     };
@@ -127,6 +129,9 @@ static struct option long_options[] = {
 		ret=select_valstmt(sqlquery);
 		goto closeexit;
 		break;
+	    case C_JNAME:
+		jname=optarg;
+		break;
 	} //case
     } //while
 
@@ -159,13 +164,11 @@ static struct option long_options[] = {
 	    firstrow=0;
 	    //aggregate all actual data for SQL tables
 	    for (i=0 ; *sqldb_info[i].rowname != '\n'; i++) {
-		if (sqldb_info[i].actual) {
 		    if (firstrow) strcat(buf,", ");
 		    strcat(buf,sqldb_info[i].rowname);
 		    strcat(buf," ");
 		    strcat(buf,sqldb_info[i].rowtype);
 		    firstrow++;
-		}
 	    }
 
 	    debugmsg(2,"DB have %d items\n",firstrow);
@@ -176,36 +179,6 @@ static struct option long_options[] = {
 	    if (ret==0) debugmsg(1,"table 'jails' init successfull\n");
 		else errmsg("table 'jails' init failed\n");
 
-	    sql_stmt("insert into jails ( nodename ) values ( 'null' )");
-	
-	    // Init table of sign for first config items
-	    ret=sql_stmt("drop table if exists unconfigured");
-	    memset(buf,0,sizeof(buf));
-	    strcpy(buf,"create table unconfigured ( items text default null )");
-
-	    ret=sql_stmt(buf);
-	    if (ret==0) debugmsg(1,"table 'unconfigured' init successfull\n");
-		else {
-		    errmsg("table 'unconfigured' init failed\n");
-		    goto closeexit;
-		}
-
-	    memset(buf,0,sizeof(buf));
-	    strcpy(buf,"insert into unconfigured ( items ) values ( '");
-
-	    //aggregate all actual data for SQL tables
-	    for (i=0 ; *sqldb_info[i].rowname != '\n'; i++) {
-		    strcat(buf,sqldb_info[i].rowname);
-		    strcat(buf," ");
-		}
-
-	    strcat(buf,"')");
-
-	    debugmsg(1,"SQL Exec: %s\n",buf);
-	    ret=sql_stmt(buf);
-
-	    if (ret==0) debugmsg(1,"table 'unconfigured' filled successfull\n");
-		else errmsg("table 'unconfigured' init failed\n");
             goto closeexit;
         break;
 	case (LIST):
@@ -224,8 +197,8 @@ static struct option long_options[] = {
             goto closeexit;
         break;
 	case (UPDATE):
-            if (!param||!value) {
-                errmsg("required arguments: --param, --value\n");
+            if (!param||!value||!jname) {
+                errmsg("required arguments: --param, --value, --jname\n");
                 ret=1;
                 goto closeexit;
             }

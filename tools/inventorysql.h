@@ -53,7 +53,7 @@ struct inventory_db {
 //fields for sqlite scheme and upgrade procedure
 // "row name", "type of row", status (1 -actual, 0 - not)
 const struct inventory_db sqldb_info[] = {
-{ "nodename", "text default null", 1 },
+{ "nodename", "text default null unique", 1 },
 { "hostname", "text default null", 1 },
 { "nodeip", "text default null", 1 },
 { "nodedescr", "text default null", 1 },

@@ -18,547 +18,100 @@ fi
 . ${distdir}/tools.subr
 . ${distdir}/initenv.subr
 . ${distdir}/ansiicolor.subr
+. ${distdir}/dialog.subr
 
 [ "$1" = "--help" ] && err 0 "${MYDESC}"
 
 DIALOG=${DIALOG=/usr/bin/dialog}
 BACKTITLE="--backtitle \Z1${0}\Zn --colors"
 
-desc_question()
-{
-    IP=`/sbin/ifconfig \`route -n get 0.0.0.0 | awk '/interface/{print $2}'\` |awk '/inet /{print $2}'|head -n1`
-    [ -z "${IP}" ] && IP="8.8.8.8"
 
-    case "$1" in
-    "nodename")
-	DEFAULT=`hostname`
-	${ECHO} "${MAGENTA}Hint: short form for node name, e.g. hostname:${GREEN} ${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "nodeip")
-	DEFAULT="${IP}"
-	${ECHO} "${MAGENTA}Hint: Persistent (when possible) managment IP address for node interconnection. e.g: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "nodeloc")
-	DEFAULT="Datacenter #5"
-	${ECHO} "${MAGENTA}Hint: Node location (information field), e.g: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "jnameserver")
-	DEFAULT="${IP},8.8.8.8"
-	${ECHO} "${MAGENTA}Hint: Default DNS nameserver (comma separated for multiple) for jails resolv.conf, e.g.: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "nodeippool")
-	DEFAULT="10.0.0.0/16 ${IP}/29"
-	${ECHO} "${MAGENTA}Hint: Pool of IP addresses from which jail can work${NORMAL}"
-	${ECHO} "${MAGENTA}Use space as delimer for  multiple networks, e.g.: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "natip")
-	DEFAULT="${IP}"
-	${ECHO} "${MAGENTA}Hint: Set IP address as the aliasing NAT address, e.g: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "$answ" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    "fbsdrepo")
-	if getyesno "${MAGENTA}Shall i use the official FreeBSD repository for fetching base via repo?${NORMAL}"; then
-	    answ=1
-	else
-	    answ=0
-	fi
-	return 0
-    ;;
-    "zfsfeat")
-	if getyesno "${MAGENTA}You running on ZFS-based system. Shall i use ZFS features?${NORMAL}"; then
-	    answ=1
-	else
-	    answ=0
-	fi
-	return 0
-    ;;
-    "mdtmp")
-	if getyesno "${MAGENTA}Do you want to use memory disk (8 mb default) for small temporary operation? e.g: ${GREEN}1${NORMAL}"; then
-	    answ=1
-	 else
-	    answ=0
-	fi
-	return 0
-    ;;
-    "parallel")
-	DEFAULT="5"
-	${ECHO} "${MAGENTA}Do you want to stop/start jail in parallel mode? (0 - no parallel or positive value (in seconds) as timeout for next parallel sequence) e.g: ${GREEN}${DEFAULT}${NORMAL}"
-	read answ
-	[ -z "${answ}" ] && answ="${DEFAULT}"
-	return 0
-    ;;
-    esac
+# form for $ips
+get_newvalue()
+{
+    local _par _val _desc _retval
+
+    _par=$1
+
+    [ -z "${_par}" ] && return 0
+
+    eval _val="\$${_par}"
+    eval _desc="\$${_par}_desc"
+
+     f_dialog_input _input "${_par}: ${_desc}" "${_val}" ""
+     _retval=$?
+
+     case ${_retval} in
+         0)
+         [ -n "${_input}" ] && export ${_par}="${_input}"
+         ;;
+     esac
 }
 
-phase1()
-{
-    . ${distdir}/${localcbsdconffile}
-
-    ${ECHO} "${MAGENTA}[Stage 1:${GREEN} account & dir hier${MAGENTA}]${NORMAL}"
-    /usr/bin/id ${cbsduser} > /dev/null 2>&1
-    
-    if [ $? -eq 1 ]; then
-	/usr/sbin/pw groupadd ${cbsduser}
-	/usr/sbin/pw useradd ${cbsduser} -g ${cbsduser} -d ${workdir}
-	change_cbsdpw
-    fi
-
-DIRHIER="${workdir} \
-${jobdir} \
-${spooldir} \
-${taskdir} \
-${srcdir} \
-${basejaildir} \
-${jaildatadir} \
-${jaildir} \
-${jailrcconfdir} \
-${jailfstabdir} \
-${jailsysdir}
-${tmpdir} \
-${ftmpdir} \
-${templatedir} \
-${aticdir} \
-${dbdir} \
-${sharedir} \
-${jailskeldir} \
-${sudoexecdir} \
-${bindir} \
-${logdir} \
-${etcdir} \
-${jailctldir} \
-${nodectl} \
-${rcddir} \
-${sbindir} \
-${systemdir} \
-${toolsdir} \
-${miscdir} \
-${upgradedir} \
-${sshdir} \
-${rsshdir} \
-${vardir} \
-${rundir} \
-${crondir} \
-${crontabsdir} \
-${libdir} \
-${logdir} \
-${importdir} \
-${exportdir}"
-
-    for _dir in ${DIRHIER}; do
-	if [ ! -d ${_dir} ]; then
-	    /bin/mkdir -p ${_dir} && ${ECHO} "${MAGENTA}new dir created: ${GREEN}${_dir}${NORMAL}"
-	fi
-    done
-}
-
-phase2()
-{
-    ${ECHO} "${MAGENTA}[Stage 2: ${GREEN}build tools${MAGENTA}]${NORMAL}"
-
-    if [ ! -f ${etcdir}/rsyncd.conf ]; then
-	cat > ${etcdir}/rsyncd.conf << EOF
-pid file = /var/run/cbsdrsyncd.pid
-uid = root
-gid = wheel
-list = no
-port = 1873
-
-EOF
-    fi
-
-    /usr/bin/cc ${distdir}/bin/cbsdsftp.c -o ${bindir}/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
-    /usr/bin/cc ${distdir}/bin/cbsdssh.c -o ${bindir}/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
-    /usr/bin/cc ${distdir}/bin/cbsdlogtail.c -o ${bindir}/cbsdlogtail
-    /usr/bin/cc ${distdir}/bin/cfetch.c -o ${bindir}/cfetch -lfetch
-
-    installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/rexe ${bindir}/rexe
-
-    /usr/bin/cc ${distdir}/bin/nodepinger.c -o ${bindir}/nodepinger
-    /usr/bin/cc ${distdir}/sbin/netmask.c -o ${sbindir}/netmask
-    /usr/bin/cc ${distdir}/sbin/ncctld.c -o ${sbindir}/ncctld
-    /usr/bin/cc ${distdir}/sbin/nodeinetd.c -o ${sbindir}/nodeinetd
-    /usr/bin/cc ${distdir}/sbin/cbsd.c -o ${sbindir}/cbsd
-    /usr/bin/cc ${distdir}/tools/ipfw-tables.c -o ${toolsdir}/ipfw-tables
-    /usr/bin/cc ${distdir}/tools/pwait.c -o ${toolsdir}/pwait
-
-    cc ${distdir}/tools/nodesql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/nodesql
-    cc ${distdir}/tools/inventorysql.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${toolsdir}/inventorysql
-
-    cc ${distdir}/sbin/cbsdtaskd/cbsdtaskd.c -o ${sbindir}/cbsdtaskd
-    cc ${distdir}/sbin/cbsdtaskd/cbsdtask.c -o ${sbindir}/cbsdtask
-
-    #installne "-o root -g wheel -m 4111" ${distdir}/sbin/cbsdtaskd/cbsdtaskd ${sbindir}/cbsdtaskd
-    #installne "-o root -g wheel -m 111" ${distdir}/sbin/cbsdtaskd/cbsdtask ${sbindir}/cbsdtask
-    #make -C ${distdir}/sbin/cbsdtaskd clean
-
-    #### CP SCRIPTS with override
-    DIRHIER="jailctl \
-nodectl \
-rc.d \
-misc \
-system \
-tools \
-upgrade"
-
-    for D in ${DIRHIER}; do
-	LDIR="${workdir}/${D}"
-	RDIR="${distdir}/${D}"
-	[ -d "${LDIR}" ] || mkdir -p ${LDIR}
-	    for F in `/usr/bin/find ${RDIR} -depth 1 -type f -exec basename {} \;`; do
-		installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${RDIR}/${F} ${LDIR}/${F}
-	    done
-    done
-
-    #### CP SCRIPTS without override
-    DIRHIER="share \
-share/jail-skel \
-share/base2pkg \
-etc"
-
-    cat > ${etcdir}/cbsd_sudoers <<EOF
-Defaults     env_keep += "workdir DIALOG"
-Cmnd_Alias   CBSD_CMD = ${sudoexecdir}/*,/usr/local/cbsd/sudoexec/*
-${cbsduser}   ALL=(ALL) NOPASSWD: CBSD_CMD
-EOF
-
-    for D in ${DIRHIER}; do
-	LDIR="${workdir}/${D}"
-	RDIR="${distdir}/${D}"
-	[ ! -d "${LDIR}" ] && mkdir -p ${LDIR}
-	for F in `/usr/bin/find ${RDIR} -depth 1 -type f -exec basename {} \;`; do
-	    [ ! -f "${LDIR}/${F}" ] && install -o ${cbsduser} -g ${cbsduser} -m 444 ${RDIR}/${F} ${LDIR}/${F}
-	done
-    done
-
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${globalconf} ${workdir}/cbsd.conf
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/nc.subr ${workdir}/nc.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/zfs.subr ${workdir}/zfs.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/tools.subr ${workdir}/tools.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/mdtools.subr ${workdir}/mdtools.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/initenv.subr ${workdir}/initenv.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/ansiicolor.subr ${workdir}/ansiicolor.subr
-    if install -o ${cbsduser} -g ${cbsduser} -m 555 ${distdir}/bin/cbsd ${bindir}/cbsd; then
-	modconf $bindir/cbsd workdir "\${workdir:-\"${workdir}\"}"
-	/bin/echo "go \$@" >> ${bindir}/cbsd
-    fi
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/securecmd ${workdir}/securecmd
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/system.subr ${workdir}/system.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/jfs.subr ${workdir}/jfs.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/build.subr ${workdir}/build.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/settings-tui.subr ${workdir}/settings-tui.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/distccache.subr ${workdir}/distccache.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/base2pkg.subr ${workdir}/base2pkg.subr
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/mailtools.subr ${workdir}/mailtools.subr
-
-    installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/sbsd ${bindir}/sbsd
-    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jail-arg ${sharedir}/jail-arg
-
-    [ -d /usr/local/etc/sudoers.d ] || mkdir /usr/local/etc/sudoers.d
-
-    cp -Rp ${distdir}/etc/periodic ${etcdir}/
-    cp -Rpn ${distdir}/etc/scenes ${etcdir}/
-    cp -Rpn ${distdir}/etc/zonekeys ${etcdir}/
-
-    installne "-o root -g wheel -m 440" ${etcdir}/cbsd_sudoers /usr/local/etc/sudoers.d/cbsd_sudoers
-
-    [ -d ${sshdir} ] || mkdir -m 0700 ${sshdir}
-    [ -d "${sshdir}/sockets" ] || mkdir -m 0700 "${sshdir}/sockets"
-    [ -f "${sshdir}/config" ] || installne "-o ${cbsduser} -g ${cbsduser} -m 644" ${distdir}/.ssh/config ${sshdir}/config
-}
-
-phase3()
-{
-    ${ECHO} "${MAGENTA}[Stage 3: ${GREEN}local settings${MAGENTA}]${NORMAL}"
-    namenotset=1
-
-    while [ $namenotset ]; do
-	HNAME=`/bin/hostname`
-	SHNAME=`/bin/hostname -s`
-
-	if [ -z $HNAME ]; then
-	    ${ECHO} "${MAGENTA}Hostname is empty. Please set this:${NORMAL}"
-	    read p
-	    if getyesno "${MAGENTA}I will use hostname: ${GREEN}$p${NORMAL}"; then
-		hostname $p
-		HNAME=`/bin/hostname`
-		SHNAME=`/bin/hostname -s`
-	    fi
-	fi
-
-    if [ "${HNAME}" = "${SHNAME}"  ]; then
-	${ECHO} "${GREEN}${HNAME}${MAGENTA} - Wrong hostname. Full hostname must be not equal short hostname. Please set FQDN (${GREEN}${HNAME}.my.domain${MAGENTA} for example):${NORMAL}"
-	read p
-	if getyesno "${MAGENTA}I will use hostname: ${GREEN}$p${NORMAL}"; then
-	    hostname $p
-	    modconf /etc/rc.conf hostname "${p}"
-	fi
-	else break;
-    fi
-    done
-
-    #Configure cron
-    if [ -f /var/cron/tabs/root ]; then
-	if [ `/usr/bin/grep -c "periodic_minutes" /var/cron/tabs/root` = 0 ]; then
-	    echo "* * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/periodic_minutes /usr/sbin/periodic minutes > /dev/null 2>&1" >> /var/cron/tabs/root
-	fi
-    else
-	echo "* * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/periodic_minutes /usr/sbin/periodic minutes > /dev/null 2>&1" > /var/cron/tabs/root
-    fi
-
-    if [ -f /var/cron/tabs/root ]; then
-	if [ `/usr/bin/grep -c "periodic_hourly" /var/cron/tabs/root` = 0 ]; then
-	    echo "0 * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/periodic_hourly /usr/sbin/periodic hourly > /dev/null 2>&1" >> /var/cron/tabs/root
-	fi
-    else
-	echo "0 * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/periodic_hourly /usr/sbin/periodic hourly > /dev/null 2>&1" > /var/cron/tabs/root
-    fi
-
-    if [ -f /var/cron/tabs/root ]; then
-	if [ `/usr/bin/grep -c "cbsdsar" /var/cron/tabs/root` = 0 ]; then
-	    if getyesno "Do you want to activate every 5 minutes activity reporter into log (cbsdsar)?"; then
-		echo "*/5 * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/cbsdsar /usr/local/bin/cbsd cbsdsar > /dev/null 2>&1" >> /var/cron/tabs/root
-	    else
-		echo "#*/5 * * * * /usr/bin/lockf -s -t0 ${ftmpdir}/cbsdsar /usr/local/bin/cbsd cbsdsar > /dev/null 2>&1" >> /var/cron/tabs/root
-	    fi
-	fi
-    fi
-
-    MYFS="ufs"
-    /sbin/zfs list ${workdir} > /dev/null 2>&1
-    [ $? -eq 0 ] && MYFS="zfs"
-    modconf ${inventory} fs ${MYFS}
-
-    [ $MYFS != "zfs" ] && modconf ${inventory} zfsfeat 0
-
-    for checkme in ${SYSINI}; do
-	if [ `/usr/bin/grep -c ${checkme} ${inventory}` = 0 ]; then
-	    ${ECHO} "${MAGENTA}Please fill: ${GREEN}${checkme}${NORMAL}"
-	    [ "${checkme}" = "zfsfeat" -a $MYFS != "zfs" ] && continue
-	    desc_question ${checkme}
-	    # todo: input validation here
-	    #    read answ
-	    [ "${checkme}" = "mdtmp" -a "$answ" = "1" ] && answ="8"
-	    [ "${checkme}" = "mdtmp" -a "$answ" = "2" ] && answ="0"
-	    modconf ${inventory} ${checkme} ${answ}
-	fi
-    done
-
-    if [ ! -f /usr/local/etc/pkg.conf ]; then
-	${ECHO} "${MAGENTA}You have no /usr/local/etc/pkg.conf for pkg(8) usage${NORMAL}"
-	if getyesno "${MAGENTA}Would you like to use dl.bsdstore.ru for pkg repository?${NORMAL}"; then
-	    installne "-o root -g wheel -m 444" ${distdir}/etc/pkg.conf /usr/local/etc/pkg.conf
-	fi
-    fi
-
-    # FIXME
-    modconf 0 ${inventory} repo http://bsdstore.ru
-    modconf 0 ${inventory} workdir $workdir
-    # FIXME
-
-    [ ! -f "${dbdir}/nodes.sqlite" ] && touch ${dbdir}/nodes.sqlite && ${toolsdir}/nodesql --dbfile=${dbdir}/nodes.sqlite --action=init
-    # todo: check for sql structure and auto alter table when change
-}
-
-
-phase4()
-{
-    ${ECHO} "${MAGENTA}[Stage 4: ${GREEN}startup scripts${MAGENTA}]"
-
-    rm -f /usr/local/etc/rc.d/cbsd
-    /bin/ln -s ${workdir}/rc.d/cbsd /usr/local/etc/rc.d/cbsd
-
-    rm -f /usr/local/bin/cbsd
-    /bin/ln -s ${workdir}/bin/cbsd /usr/local/bin/cbsd
-
-    rm -f /usr/local/bin/sbsd
-    /bin/ln -s ${workdir}/bin/sbsd /usr/local/bin/sbsd
-
-    hash -r
-}
-
-
-
-phase5()
-{
-    . ${workdir}/${localcbsdconffile}
-    . ${inventory}
-
-    ${ECHO} "${MAGENTA}[Stage 5: ${GREEN}permission${MAGENTA}]${NORMAL}"
-
-    MD5NAME=`md5 -qs ${nodename}`
-    KEYFILE="${sshdir}/${MD5NAME}.id_rsa"
-    PUBFILE="${sshdir}/authorized_keys"
-
-    if [ ! -f ${KEYFILE} ]; then
-	[ -d ${sshdir} ] || /bin/mkdir -p ${sshdir}
-	/usr/bin/ssh-keygen -t rsa -f ${KEYFILE} -N ''
-	installne "-o ${cbsduser} -g ${cbsduser} -m 0400" ${KEYFILE}.pub ${PUBFILE}
-    fi
-
-    [ -d ${rsshdir} ] || /bin/mkdir -p ${rsshdir}
-
-    /usr/sbin/chown -R ${cbsduser}:${cbsduser} ${rsshdir} > /dev/null 2>&1
-    /usr/sbin/chown -R ${cbsduser}:${cbsduser} ${sshdir} > /dev/null 2>&1
-    /usr/sbin/chown ${cbsduser}:${cbsduser} ${tmpdir} > /dev/null 2>&1
-    /usr/sbin/chown ${cbsduser}:${cbsduser} ${etcdir} > /dev/null 2>&1
-    /usr/sbin/chown ${cbsduser}:${cbsduser} ${logdir} > /dev/null 2>&1
-#    installne "-o ${cbsduser} -g ${cbsduser} -m 644"  $etcdir/devfs.rules /etc/devfs.rules
-    chown ${cbsduser}:${cbsduser} ${jailrcconfdir} ${jailfstabdir} ${jaildatadir} ${jailsysdir} > /dev/null 2>&1
-}
-
-phase6()
-{
-    ${ECHO} "${MAGENTA}[Stage 6: ${GREEN}update skel files${MAGENTA}]${NORMAL}"
-
-    for i in $(${ECHO} $jnameserver | tr "," " "); do
-	if [ `/usr/bin/grep -c ${i} ${jailskeldir}/resolv.conf` = 0 ]; then
-	    TMPR="${ftmpdir}/resolv.$$"
-	    # system nserver must be always last
-	    ${ECHO} "nameserver ${i}" > ${TMPR}
-	    cat ${jailskeldir}/resolv.conf >> ${TMPR}
-	    mv ${TMPR} ${jailskeldir}/resolv.conf
-	fi
-    done
-}
-
-
-phase7()
-{
-    ${ECHO} "${MAGENTA}[Stage 7: ${GREEN}preparing for fw${MAGENTA}]${NORMAL}"
-
-    if [ `grep -c ipfw_enable ${inventory}` = 0 ]; then
-	FW=`sysctl -qn net.inet.ip.fw.enable`
-	if [ "${FW}" = "1" ]; then
-	    ${ECHO} "ipfw_enable=1" >> ${inventory}
-	else
-	    ${ECHO} "ipfw_enable=0" >> ${inventory}
-	fi
-    fi
-}
-
-
-phase8()
-{
-    ${ECHO} "${MAGENTA}[Stage 8: ${GREEN}Patches${MAGENTA}]${NORMAL}"
-    [ -d "${workdir}/upgrade" ] && find ${workdir}/upgrade/ -type f -depth 1 -name patch-\* -exec cbsd {} \;
-}
-
-phase9()
-{
-    ${ECHO} "${MAGENTA}[Stage 9: ${GREEN}Freshing inventory${MAGENTA}]${NORMAL}"
-    [ ! -f "${dbdir}/inv.${nodename}.db" ] && ${toolsdir}/inventorysql --dbfile=${dbdir}/inv.${nodename} --action=init
-    cbsd mkinventory
-}
 
 
 ############ start locking section #############
 menu()
 {
+    local _my_items _par _val
+
     if [ "${globalconf}" = "${localcbsdconf}" ]; then
 	${ECHO} "${MAGENTA}Please use difference path for workdir. Not ${GREEN}${distdir}${NORMAL}"
 	exit
     fi
-    
-exec 3>&1
-RESULT=`$DIALOG ${BACKTITLE} \
-        --clear \
-        --title "${product} v.${myversion} initenv" "$@" \
-        --menu \
-        "This is install/upgrade scripts for CBSD.\
-	Warning: this is highly experimental version, use at your own risk. Don't forget to backup." 0 0 0 \
-        "passwd" "Change cbsd password" \
-        "nodeip" "Change node IP" \
-        "nodeloc" "Change node Location info" \
-        "jnameserver" "Change nameserver list for jail resolv.conf" \
-        "nodeippool" "Change node IP pool" \
-        "workdir" "Change default workdir" \
-        "parallel" "Parallel jstop/jstart timeout" \
-	"mdtmp" "Configure md-based tmp dir" \
-        "NAT" "Configure NATd" \
-        "REPO" "Configure REPO" \
-        "" "(add none, continue with setup)" \
-        "---" "(add none, continue with setup)" \
-        2>&1 1>&3`
-retval=$?
-exec 3>&-
-exit
 
-    /usr/bin/more << EOF_HEADER
-----[${product} v.${myversion}]-------
- This is install/upgrade scripts for CBSD.
- Warning: this is highly experimental version, use at your own risk. Don't forget to backup
------------------------
-EOF_HEADER
+    msg_ok="Ok"
+    msg_extra="Commit"
+    msg_cancel="Cancel"
 
-    if ! getyesno "Do you want prepare or upgrade hier environment for CBSD now?" ; then
-	err 1 "exit"
-    fi
+    [ -f "${inventory}" ] && . ${inventory}
 
-    ${ECHO} "${MAGENTA}>>> Installing or upgrading${NORMAL}"
-    phase1
-    phase2
-    phase3
-    phase4
-    phase5
-    phase6
-    phase7
-    phase8
-    phase9
+    while [ 1 ]; do
 
-    configure_nat
-    configure_rsync
-    configure_named
+	_my_items=""
 
-    modconf 0 /etc/rc.conf cbsd_enable YES
-    . /etc/rc.conf
-    [ "${cbsd_workdir}" != "${workdir}" ] && modconf /etc/rc.conf cbsd_workdir "${workdir}"
-    modconf 0 /etc/rc.conf sshd_enable "YES"
+	for _par in ${USERINI}; do
+	    eval _val="\$${_par}"
+	    [ -z "${_val}" ] && eval _val="\$${_par}_default"
+	    _my_items="${_my_items} '${_par}' '${_val}'"
+	done
 
-    if [ `/usr/bin/grep -c "sshd_flags" /etc/rc.conf` = 0 ]; then
-	if getyesno "${MAGENTA}Shall i change (via rc.conf) default ssh port from 22 to 22222 which is default for cbsd?${NORMAL}"; then
-	    modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
-	else
-	    modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no"
-	fi
-    fi
+	menu_list="
+	    ${_my_items}
+	    "
 
-    modconf 0 /etc/rc.conf rcshutdown_timeout "900"
-    modconf 0 /etc/rc.conf sendmail_enable "NO"
+	f_dialog_menu
+	retval=$?
+	f_dialog_menutag_fetch mtag
 
-    modconf 0 /etc/make.conf WITH_PKGNG yes
-
-    modconf 0 /etc/periodic.conf local_periodic "/usr/local/etc/periodic ${workdir}/etc/periodic"
-
-    # + /etc/aliases
-    # + /etc/root/inetd.conf
-    # + /etc/syslogd.conf
-
-    hash -r
-    ${ECHO} "${MAGENTA}>>> Done${NORMAL}"
-    exit 0
+	case $retval in
+	    0)
+		get_newvalue ${mtag}
+		;;
+	    3)
+		for _par in ${USERINI}; do
+		    eval _val="\$${_par}"
+		    if [ -n "${_val}" ]; then
+			cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=update --param=${_par} --value=${_val}
+			modconf ${inventory} ${_par} "${_val}"
+		    fi
+		done
+		err 0 "${MAGENTA}Commited${NORMAL}"
+		;;
+	    *)
+		exit
+		;;
+	esac
+    done
 }
+
 
 ### MAIN ###
 [ $# -eq 1 ] || /usr/bin/lockf -t0 -s ${MYLOCK} $0 start
 
 case "$1" in
 start)
+    init_items_default
+    init_items_desc
     menu;;
 esac
