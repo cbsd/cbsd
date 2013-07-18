@@ -16,6 +16,8 @@ distcc=0 or 1 - enable distcc (default is 0, disabled)\n\
 makeconf= path to alternative cpr_make.conf to /etc/make.conf in chroot\n\
 pause=1 - make pause (for example for chroot in env) before create pkg\n"
 
+set -e
+
 SRC="${srcdir}/src_${ver}/src"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
@@ -48,7 +50,9 @@ umount_temp_dirs()
 mount_temp_dirs()
 {
     local _tmpfstab="${ftmpdir}/mount_temp_dirs.$$"
+    set +e
     kldstat -qm linprocfs || kldload linprocfs
+    set -e
 
     cat > ${_tmpfstab} << EOF
 devfs /dev devfs rw 0 0
@@ -106,7 +110,7 @@ NEEDEDPORTS="\
     cp ${makeconf} ${cdir}/etc/make.conf
 
     # make sure we have work dir in /tmp for parallel builds
-    modconf ${cdir}/etc/make.conf WRKDIRPREFIX /tmp
+    modconf ${cdir}/etc/make.conf WRKDIRPREFIX /tmp ||true
 
     cp /etc/resolv.conf ${cdir}/etc
 
@@ -153,9 +157,12 @@ copy_ccachedir_from_chroot()
 ### MAIN
 . ${etcdir}/cpr.conf
 
-A=`ls -C1 ${destdir}/`
-
-[ -n "${A}" ] && err 1 "Warning: ${destdir}/ is not empty. Please clean before cpr initialization: ${A}"
+if [ -d "${destdir}" ]; then
+    A=`ls -C1 ${destdir}/`
+    [ -n "${A}" ] && err 1 "Warning: ${destdir}/ is not empty. Please clean before cpr initialization: ${A}"
+else
+    mkdir -p "${destdir}"
+fi
 
 SRC="${srcdir}/src_${ver}"
 [ -d "${SRC}" ] || err 1 "No such version at ${SRC}"
@@ -188,12 +195,11 @@ else
     _tmppkglist=""
 fi
 
-[ -d "${cdir}" ] && umount_cdirs ${cdir}
+[ -d "${cdir}" ] && umount_cdirs ${cdir} || true
 [ -d "${cdir}" -a $new -eq 1 ] && chflags -R noschg ${cdir} && rm -rf ${cdir}
 [ ! -d "${cdir}" -a $new -eq 0 ] && new=1
 [ ! -d "${cdir}" ] && mkdir ${cdir}
-
-[ $new -eq 1 ] && baserw=1 && populate_cdir $DST ${cdir} 
+[ $new -eq 1 ] && baserw=1 && populate_cdir $DST ${cdir} ||true
 [ $new -eq 0 ] && touch ${cdir}/tmp/buildcontinue
 
 export cdir=${cdir}
@@ -218,7 +224,7 @@ else
     distcc=0
 fi
 
-trap "umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist}" HUP INT ABRT BUS TERM  EXIT
+trap "umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist}" HUP INT ABRT BUS TERM EXIT
 mount_temp_dirs
 
 [ "${MOUNT_PORTS}" = "0" -a $new -eq 1 ] && chroot ${cdir} portsnap fetch extract
