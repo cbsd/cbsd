@@ -12,6 +12,7 @@ char *rootkeyfile = NULL;
 char *nodename = NULL;
 char *param = NULL;
 char *sqlquery = NULL;
+char *invfile = NULL;
 
 #define FALSE 0
 #define TRUE 1
@@ -55,7 +56,8 @@ enum {
     C_ROOTKEYFILE,
     C_NODENAME,
     C_PARAM,
-    C_SQLQUERY
+    C_SQLQUERY,
+    C_INVFILE
 };
 
 int select_callbacksshopt(void *p_data, int num_fields, char **p_fields, char **p_col_names);
@@ -64,5 +66,5 @@ int select_stmtscpopt(const char* nodename);
 int select_param(char *,char *);
 int sql_stmt(const char* stmt);
 void delete_nodes(char *nodename);
-void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile);
+void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile, char *);
 void usage();

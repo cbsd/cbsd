@@ -139,12 +139,12 @@ char buf[SQLSTRLEN];
 }
 
 
-void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile) {
+void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile, char *invfile) {
 char buf[SQLSTRLEN];
 
     sql_stmt("begin");
     bzero(buf,SQLSTRLEN);
-    sprintf(buf,"insert into nodelist ( nodename, ip, port, keyfile, rootkeyfile, status ) values ('%s','%s',%d,'%s','%s',0)",nodename,ip,port,keyfile,rootkeyfile);
+    sprintf(buf,"insert into nodelist ( nodename, ip, port, keyfile, rootkeyfile, status, invfile ) values ( '%s','%s',%d,'%s','%s',0, '%s' )",nodename,ip,port,keyfile,rootkeyfile, invfile);
     debugmsg(1,"SQL: %s\n",buf);
     sql_stmt(buf);
     sql_stmt("commit");
@@ -191,6 +191,7 @@ static struct option long_options[] = {
     { "nodename", required_argument, 0, C_NODENAME },
     { "param", required_argument, 0, C_PARAM },
     { "sqlquery", required_argument, 0, C_SQLQUERY },
+    { "invfile", required_argument, 0, C_INVFILE },
     /* End of options marker */
     { 0, 0, 0, 0 }
     };
@@ -241,6 +242,9 @@ static struct option long_options[] = {
 		break;
             case C_PARAM:
                 param=optarg;
+		break;
+            case C_INVFILE:
+                invfile=optarg;
 		break;
 	    case C_SQLQUERY:
                 memset(buf,0,sizeof(buf));
@@ -299,13 +303,13 @@ switch (action) {
 	    goto closeexit;
 	break;
     case (INSERT):
-	    if (!nodename||!ip||port==0||!keyfile) {
-		errmsg("required arguments: --nodename, --ip, --port, --keyfile\n");
+	    if (!nodename||!ip||port==0||!keyfile||!invfile) {
+		errmsg("required arguments: --nodename, --ip, --port, --keyfile, --invfile\n");
 		ret=1;
 		goto closeexit;
 	    }
 	    if (rootkeyfile==NULL) rootkeyfile="/root/.ssh/id_rsa";
-	    insert_nodes(nodename,ip,port,keyfile,rootkeyfile);
+	    insert_nodes(nodename,ip,port,keyfile,rootkeyfile,invfile);
 	    goto closeexit;
 	break;
     case (DELETE):
