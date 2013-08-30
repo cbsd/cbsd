@@ -25,8 +25,11 @@ enum {
     INSERT,
     DELETE,
     SSHOPT,
-    SELECT,
+    GET,
     SCPOPT,
+    UPGRADE,
+    UPDATE,
+    MUST_BE_LAST,
 };
 
 #define _ITEM(x) [x] = #x
@@ -39,8 +42,11 @@ char *actionlist[] =
     [INSERT]="insert",
     [DELETE]="delete",
     [SSHOPT]="sshopt",
-    [SELECT]="select",
+    [GET]="get",
     [SCPOPT]="scpopt",
+    [UPGRADE]="upgrade",
+    [UPDATE]="update",
+    [MUST_BE_LAST]="NULL",
 };
 
 /* List of all nodesql */
@@ -60,10 +66,28 @@ enum {
     C_INVFILE
 };
 
+struct nodes_db {
+    char *rowname;
+    char *rowtype;
+};
+
+//fields for sqlite scheme and upgrade procedure
+// "row name", "type of row", status (1 -actual, 0 - not)
+const struct nodes_db sqldb_info[] = {
+{ "nodename", "TEXT UNIQUE PRIMARY KEY" },
+{ "ip", "TEXT" },
+{ "port", "INTEGER" },
+{ "keyfile", "TEXT" },
+{ "rootkeyfile", "TEXT" },
+{ "status", "INTEGER" },
+{ "invfile", "TEXT" },
+{ "idle", "TIMESTAMP DATE DEFAULT (datetime('now','localtime'))" },
+{ "\n", NULL } };       // this must be last
+
+
 int select_callbacksshopt(void *p_data, int num_fields, char **p_fields, char **p_col_names);
 int select_stmtsshopt(const char* nodename);
 int select_stmtscpopt(const char* nodename);
-int select_param(char *,char *);
 int sql_stmt(const char* stmt);
 void delete_nodes(char *nodename);
 void insert_nodes(char *nodename, char *ip, int port, char *keyfile, char *rootkeyfile, char *);

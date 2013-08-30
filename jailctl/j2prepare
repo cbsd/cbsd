@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.0
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG="node jname"
 MYOPTARG="verbose"
@@ -9,40 +9,48 @@ MYDESC="Prepare remote node for accepting jail via j2slave"
 . ${globalconf}
 . ${subr}
 . ${inventory}
+. ${color}
 init $*
 
-[ -n "${node}" ] || err 1 "Give me node"
-[ -n "${jname}" ] || err 1 "Give me jname"
+[ -z "${node}" ] && err 1 "${MAGENTA}Give me node${NORMAL}"
+[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
 
 SECFILE="${workdir}/etc/${jname}.secrets"
 
 A=`cbsd jstatus ${jname}`
+
 case $? in
-    0) err 1 "No such jail here" ;;
-    1) JAILDIR="${jaildatadir}/${jname}-${jaildatapref}" ;;
-    2) err 1 "slave jails unsupported" ;;
+    0) 
+	err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}" 
+	;;
+    1)
+	JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
+	;;
+    2)
+	err 1 "${MAGENTA}slave jails unsupported${NORMAL}"
+	;;
 esac
 
-printf "Preparing"
+printf "${MAGENTA}Preparing.${NORMAL}"
+
 cbsd jgensecrets jname=${jname} mode=force > $DEBLOG 2>&1
 dot "jgensecrets"
-[ -f "${SECFILE}" ] || err 1 "No such secrets"
+
+[ ! -f "${SECFILE}" ] && err 1 "${MAGENTA}No such secrets${NORMAL}"
 
 SSHOP=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=sshopt --nodename=${node}`
-SCPOP=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=scpopt --nodename=${node}`
-IP=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=select --nodename=${node} --param=ip`
+
 cbsd jset mode=force jname=${jname} masterhost="$nodeip" > $DEBLOG 2>&1
 dot "jset"
 cbsd rexe node=$node cbsd sudo cbsdchown jname=${jname} 2>&1
 dot "rexe"
 cbsd rexe node=$node cbsd sudo secretsfile jname=$jname mode=off > $DEBLOG 2>&1
 dot "rexe"
-#echo scp ${SCPOP} ${SECFILE} ${cbsduser}@${IP}:etc
-scp ${SCPOP} ${SECFILE} ${cbsduser}@${IP}:etc > $DEBLOG 2>&1
+cbsd nodescp ${SECFILE} ${node}:etc > $DEBLOG 2>&1
 dot "scp_secfile"
 cbsd imgpart jname=${jname} part=sysdata mode=pack out=${tmpdir}/${jname}-sysdata.tgz
 trap "rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
-scp ${SCPOP} ${tmpdir}/${jname}-sysdata.tgz ${cbsduser}@${IP}:jails-system > $DEBLOG 2>&1
+cbsd nodescp ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > $DEBLOG 2>&1
 dot "scp_sysdata"
 cbsd rexe node=$node cbsd sudo secretsfile jname=$jname mode=on > $DEBLOG 2>&1
 dot "rexe_2"
@@ -58,9 +66,9 @@ JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
 RJAILDIR="${jaildatadir}/${jname}-${jaildatapref}.slave"
 RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}.slave"
 
-[ -d ${JAILDIR} ] || err 1 "No jail data for ${jname}"
-[ -f ${JAILFSTAB} ] || err 1 "No jail fstab for ${jname}"
-[ -f ${JAILRCCONF} ] || err 1 "No jail fstab for ${jname}"
+[ ! -d ${JAILDIR} ] && err 1 "No jail data for ${jname}"
+[ ! -f ${JAILFSTAB} ] && err 1 "No jail fstab for ${jname}"
+[ ! -f ${JAILRCCONF} ] && err 1 "No jail fstab for ${jname}"
 
 RC=`cbsd rexe node=${node} md5 -q ${RJAILRCCONF}`
 RF=`cbsd rexe node=${node} md5 -q ${RJAILFSTAB}`
@@ -69,13 +77,10 @@ dot "md5"
 F=`md5 -q ${JAILFSTAB}`
 dot "md5"
 
-if [ "$RC" != "${R}" ]; then
-    scp ${SCPOP} ${JAILRCCONF} ${cbsduser}@${IP}:${RJAILRCCONF} > $DEBLOG 2>&1
-fi
+[ "$RC" != "${R}" ] && cbsd nodescp ${JAILRCCONF} ${node}:${RJAILRCCONF} > $DEBLOG 2>&1
 
-if [ "$FC" != "${F}" ]; then
-    scp ${SCPOP} ${JAILFSTAB} ${cbsduser}@${IP}:${RJAILFSTAB} > $DEBLOG 2>&1
-fi
+[ "$FC" != "${F}" ] && cbsd nodescp ${JAILFSTAB} ${node}:${RJAILFSTAB} > $DEBLOG 2>&1
+
 dot "scp"
 cbsd rexe node=$node cbsd sudo jrsyncconf jname=${jname} > $DEBLOG 2>&1
 dot "rexe_jrsyncconf"
@@ -89,4 +94,4 @@ dot "rexe_rm-f-sysdata"
 echo cbsd rexe node=$node cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB}
 cbsd rexe node=$node cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > $DEBLOG 2>&1
 dot "rexe_4"
-err 0 "ok"
+err 0 "${GREEN}ok${NORMAL}"

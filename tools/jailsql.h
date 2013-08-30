@@ -21,6 +21,8 @@ enum {
     DELETE,
     UPDATE,
     GET,
+    UPGRADE,
+    MUST_BE_LAST,
 };
 
 // Action list array//
@@ -31,6 +33,8 @@ char *actionlist[] =
     [DELETE]="delete",
     [UPDATE]="update",
     [GET]="get",
+    [UPGRADE]="upgrade",
+    [MUST_BE_LAST]="NULL",
 };
 
 /* List of all nodesql */
@@ -54,7 +58,8 @@ struct inventory_db {
 //fields for sqlite scheme and upgrade procedure
 // "row name", "type of row", status (1 -actual, 0 - not)
 const struct inventory_db sqldb_info[] = {
-{ "jname", "text default null unique" },
+{ "jname", "text default null unique PRIMARY KEY" },
+{ "jid", "integer default 0" },
 { "path", "text default null" },
 { "host_hostname", "text default null" },
 { "ip4_addr", "text default null" },

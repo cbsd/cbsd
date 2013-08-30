@@ -7,7 +7,6 @@ set -o errexit
 export PKG_SUFX=txz
 export PACKAGES=/packages
 
-export BATCH=yes
 export DISABLE_VULNERABILITIES=yes
 
 export PATH="/usr/lib/distcc/bin:$PATH"

@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.0
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG="jconf"
 MYOPTARG="inter ver arch fstab"
@@ -43,7 +43,7 @@ EOF
 
 mkrcconf() {
     cp $temprcconf $rcconf
-    modconf ${rcconf} pkglist ""
+    ${miscdir}/sysrc -qf ${rcconf} pkglist="" >/dev/null
 }
 
 ### MAIN
@@ -61,8 +61,8 @@ trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 . ${temprcconf}
 . ${buildconf}
 
-modconf ${temprcconf} ver ${ver}
-modconf ${temprcconf} arch ${arch}
+${miscdir}/sysrc -qf ${temprcconf} ver=${ver} > /dev/null
+${miscdir}/sysrc -qf ${temprcconf} arch=${arch} > /dev/null
 
 . ${temprcconf}
 
@@ -159,14 +159,25 @@ fi
 
 ### COPY FROM BASE
 if [ "${ver}" != "empty" ]; then
-    if ! populate_cdir ${src} ${data}; then
-	[ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
-	err 1 "Can't populate $data from $src"
+
+    if [ "$baserw" = "1" ]; then
+	if ! populate_cdir ${src} ${data}; then
+	    [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
+	    err 1 "Can't populate $data from $src"
+	fi
+    else
+	cp -rP ${src}/etc ${data}/
+	cp -rP ${src}/root ${data}/
+	mtree -deU -f ${src}/etc/mtree/BSD.root.dist -p ${data} >/dev/null
+	mtree -deU -f ${src}/etc/mtree/BSD.usr.dist -p ${data}/usr >/dev/null
+        mtree -deU -f ${src}/etc/mtree/BSD.var.dist -p ${data}/var >/dev/null
+        mtree -deU -f ${src}/etc/mtree/BIND.chroot.dist -p ${data}/var/named >/dev/null
+        mtree -deU -f ${src}/etc/mtree/BSD.sendmail.dist -p ${data} >/dev/null
     fi
 
     touch "${data}/etc/fstab"
 
-    [ -d ${data}/var ] || mkdir ${data}/var
+    [ -d ${data}/usr/home ] || mkdir ${data}/usr/home
     [ -d ${data}/usr/local ] || mkdir ${data}/usr/local
     [ -d ${data}/usr/compat ] || mkdir ${data}/usr/compat
     [ -d ${data}/usr/ports ] || mkdir ${data}/usr/ports
@@ -192,7 +203,8 @@ if [ ${applytpl} -eq 1 ]; then
 
     [ ! -d "${data}/usr/local/etc" ] && mkdir -p "${data}/usr/local/etc"
 
-    generate_pkgconf -a ${arch} -v ${ver} > ${data}/usr/local/etc/pkg.conf
+#    generate_pkgconf -a ${arch} -v ${ver} > ${data}/usr/local/etc/pkg.conf
+    [ -f "/usr/local/etc/pkg.conf" ] && cp /usr/local/etc/pkg.conf ${data}/usr/local/etc/pkg.conf
 fi
 
 if [ "${pkglist}" != "NO" -a "${ver}" != "empty" -a -f "${pkglist}" ]; then

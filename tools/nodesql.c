@@ -1,12 +1,11 @@
 // Part of CBSD Project
-// mailto: olevole at olevole dot ru
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "sqlite3.h"
 
 #include <getopt.h>
-#include <stdarg.h> //for debugmsg/errmsg
+#include <stdarg.h>
 
 #include "gentools.h"
 #include "sqlhelper.h"
@@ -110,25 +109,6 @@ char buf[SQLSTRLEN];
     return ret;
 }
 
-
-int select_param(char *nodename, char *param) {
-char buf[SQLSTRLEN];
-int   ret;
-int   nrecs = 0;
-char *errsql;
-
-    bzero(buf,SQLSTRLEN);
-    sprintf(buf,"select %s from nodelist where nodename=\"%s\"",param,nodename);
-    debugmsg(1,"SQL: %s\n",buf);
-    ret = sqlite3_exec(db, buf, select_callback, &nrecs, &errsql);
-
-    if (ret!=SQLITE_OK) {
-	errmsg(0,"Error in select statement: %s [%s]\n",buf,errsql);
-    }
-    sql_stmt(buf);
-    return ret;
-}
-
 void delete_nodes(char *nodename) {
 char buf[SQLSTRLEN];
 
@@ -159,12 +139,13 @@ void usage() {
     printf("sqlquery - execute direct sql query\n");
     printf("action can be:\n");
     printf("- init - for re-create database (drop and create empty table)\n");
+    printf("- upgrade - upgrade table scheme if necessary\n");
     printf("- list - select all records from database\n");
     printf("- insert ( nodename=XXXX ip=XXXX port=XXX keyfile=XXXX ) for insert new records\n");
     printf("- delete ( nodename=XXXX ) for remove records from registry\n");
     printf("- sshopt ( nodename=XXXX ) return ssh options for ssh connection from command line (--rootkeyfile=any for root id_rsa selected)\n");
     printf("- scpopt ( nodename=XXXX ) return ssh options for scp connection from command line (--rootkeyfile=any for root id_rsa selected\n");
-    printf("- select ( nodename=XXXX param=ip ) select ip value for nodename\n");
+    printf("- get ( nodename=XXXX param=ip ) select ip value for nodename\n");
     printf("\n");
 }
 
@@ -175,7 +156,7 @@ int win = FALSE;
 int optcode = 0;
 int option_index = 0, ret = 0;
 int action=0;
-int i=0;
+int i=0, firstrow=0;
 char buf[SQLSTRLEN];
 
 static struct option long_options[] = {
@@ -205,10 +186,14 @@ static struct option long_options[] = {
                 break;
     	    case C_ACTION:
 		i=0;
-		while (actionlist[++i]) 
+		while (actionlist[++i]!=NULL)
 		    if (!strcmp(optarg,actionlist[i])) {
 			action=i;
 			break;
+		    }
+		    if (action==0) {
+			errmsg("Bad action\r\n");
+			exit(1);
 		    }
 		break;
     	    case C_WORKDIR:
@@ -290,14 +275,51 @@ static struct option long_options[] = {
 	return 1;
     }
 
-switch (action) {
+    switch (action) {
     case (INIT):
 	    ret=sql_stmt("drop table if exists nodelist");
-	    ret=sql_stmt("create table nodelist (id integer primary key, nodename text not null unique , ip text not null, port integer, keyfile text not null, rootkeyfile text not null, status integer, invfile text not null)");
-	    if(ret==0) debugmsg(1,"DB initialization successfull\n");
-		else errmsg("DB init failed\n");
-	    goto closeexit;
-	break;
+	    memset(buf,0,sizeof(buf));
+            strcpy(buf,"create table nodelist ( ");
+
+            firstrow=0;
+            //aggregate all actual data for SQL tables
+            for (i=0 ; *sqldb_info[i].rowname != '\n'; i++) {
+                    if (firstrow) strcat(buf,", ");
+                    strcat(buf,sqldb_info[i].rowname);
+                    strcat(buf," ");
+                    strcat(buf,sqldb_info[i].rowtype);
+                    firstrow++;
+            }
+
+            debugmsg(2,"DB have %d items\n",firstrow);
+            strcat(buf,")");
+            debugmsg(1,"SQL Exec: %s\n",buf);
+            ret=sql_stmt(buf);
+
+            if (ret==0) debugmsg(1,"table 'nodelist' init successfull\n");
+                else errmsg("table 'nodelist' init failed\n");
+
+            goto closeexit;
+        break;
+    case (UPGRADE):
+            //aggregate all actual data for SQL tables
+            for (i=0 ; *sqldb_info[i].rowname != '\n'; i++) {
+		    memset(buf,0,sizeof(buf));
+		    sprintf(buf,"SELECT %s FROM nodelist LIMIT 1",sqldb_info[i].rowname);
+		    ret=sql_stmt(buf);
+		    if (ret!=0) {
+			//probably not exist, try to alter
+			memset(buf,0,sizeof(buf));
+			sprintf(buf,"ALTER TABLE nodelist ADD COLUMN %s %s",sqldb_info[i].rowname,sqldb_info[i].rowtype);
+			ret=sql_stmt(buf);
+			if (ret==0) 
+			    debugmsg(0,"nodesql table updated: %s column\n",sqldb_info[i].rowname);
+			else
+			    errmsg("update nodesql table error for %s column\n",sqldb_info[i].rowname);
+		    }
+            }
+            goto closeexit;
+        break;
     case (LIST):
 	    ret=select_valstmt("select nodename from nodelist");
 	    goto closeexit;
@@ -339,16 +361,19 @@ switch (action) {
     	    select_stmtscpopt(nodename);
 	    goto closeexit;
 	break;
-    case (SELECT):
+    case (GET):
 	    if (!nodename||!param) {
 		errmsg("required arguments: --nodename --param\n");
 		ret=1;
 		goto closeexit;
 	    }
-    	    select_param(nodename,param);
+	    memset(buf,0,sizeof(buf));
+	    sprintf(buf,"select %s from nodelist where nodename=\"%s\"",param,nodename);
+	    ret=select_valstmt(buf);
 	    goto closeexit;
 	break;
-
+    default:
+	goto closeexit;
 } //switch
 
 closeexit:

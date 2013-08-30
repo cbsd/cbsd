@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.0
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname"
@@ -17,92 +17,86 @@ init $*
 
 fwcounter()
 {
-if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
- ${ECHO} "${MAGENTA}Setup FW counter${NORMAL}"
 
-TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
+    if [ ${ipfw_enable} -eq 1 -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
+	${ECHO} "${MAGENTA}Setup FW counter${NORMAL}"
+	TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
+	
+	if [ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ]; then
+	    ${ECHO} "${MAGENTA}fwcounter: ${GREEN}No fwin-fwout map files${NORMAL}"
+	    return 1
+	fi
 
-[ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ] && {
-    ${ECHO} "${MAGENTA}fwcounter: ${GREEN}No fwin-fwout map files${NORMAL}"
-    return 1
+	FWIN=`cat ${ftmpdir}/${jname}-fwin`
+	FWOUT=`cat ${ftmpdir}/${jname}-fwout`
+
+	rm -f "${ftmpdir}/${jname}-fwin ${ftmpdir}/${jname}-fwout"
+
+	### FWIN
+	FW=`/sbin/ipfw show ${FWIN}`
+	RCODE=$?
+	[ ${RCODE} -eq 0 ] && /sbin/ipfw delete ${FWIN}
+
+	### FWOUT
+	FW=`/sbin/ipfw show ${FWOUT}`
+	RCODE=$?
+	[ ${RCODE} -eq 0 ] && /sbin/ipfw delete ${FWOUT}
+    fi
 }
-
-FWIN=`cat ${ftmpdir}/${jname}-fwin`
-FWOUT=`cat ${ftmpdir}/${jname}-fwout`
-
-rm -f "${ftmpdir}/${jname}-fwin ${ftmpdir}/${jname}-fwout"
-
-### FWIN
- FW=`/sbin/ipfw show ${FWIN}`
- RCODE=$?
- if [ ${RCODE} -eq 0 ]; then
- /sbin/ipfw delete ${FWIN}
- fi
-
-### FWOUT
- FW=`/sbin/ipfw show ${FWOUT}`
- RCODE=$?
- if [ ${RCODE} -eq 0 ]; then
- /sbin/ipfw delete ${FWOUT}
- fi
-fi
-}
-
 
 master_prestop()
 {
-i=0
-    while : ; do
-    eval CMD=\${master_prestop${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} Master exec prestop: ${GREEN}${CMD}${NORMAL}"
-    ${CMD}
-    i=$((i + 1))
-done
+    i=0
+	while : ; do
+	    eval CMD=\${master_prestop${i}}
+	    [ -z "${CMD}" ] && break
+	    ${ECHO} "${MAGENTA}${jname} Master exec prestop: ${GREEN}${CMD}${NORMAL}"
+	    ${CMD}
+	    i=$((i + 1))
+	done
 }
-
 
 prestop()
 {
-i=0
-    while : ; do
-    eval CMD=\${exec_prestop${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} exec prestop: ${GREEN}${CMD}${NORMAL}"
-    chroot ${path} ${CMD}
-    i=$((i + 1))
-done
+    i=0
+	while : ; do
+	    eval CMD=\${exec_prestop${i}}
+	    [ -z "${CMD}" ] && break
+	    ${ECHO} "${MAGENTA}${jname} exec prestop: ${GREEN}${CMD}${NORMAL}"
+	    chroot ${path} ${CMD}
+	    i=$((i + 1))
+	done
 }
 
 
 master_afterstop()
 {
-i=0
-    while : ; do
-    eval CMD=\${master_afterstop${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} Master exec afterstop: ${GREEN}${CMD}${NORMAL}"
-    ${CMD}
-    i=$((i + 1))
-done
+    i=0
+	while : ; do
+	    eval CMD=\${master_afterstop${i}}
+	    [ -z "${CMD}" ] && break
+	    ${ECHO} "${MAGENTA}${jname} Master exec afterstop: ${GREEN}${CMD}${NORMAL}"
+	    ${CMD}
+	    i=$((i + 1))
+	done
 }
 
 afterstop()
 {
-i=0
-    while : ; do
-    eval CMD=\${exec_afterstop${i}}
-    [ -z "${CMD}" ] && break
-    ${ECHO} "${MAGENTA}${jname} exec afterstop: ${GREEN}${CMD}${NORMAL}"
-    chroot ${path} ${CMD}
-    i=$((i + 1))
-done
+    i=0
+	while : ; do
+	    eval CMD=\${exec_afterstop${i}}
+	    [ -z "${CMD}" ] && break
+	    ${ECHO} "${MAGENTA}${jname} exec afterstop: ${GREEN}${CMD}${NORMAL}"
+	    chroot ${path} ${CMD}
+	    i=$((i + 1))
+	done
 }
 
 
 # MAIN
 if [ $# -gt 1 ]; then
-# recursive
+# recursive stop
     JLIST=$*
     for jname in ${JLIST}; do
 	/usr/sbin/daemon -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
@@ -112,7 +106,6 @@ if [ $# -gt 1 ]; then
     wait_for_jstop
 
     err 0 "${MAGENTA}Multiple stop: ${GREEN}done${NORMAL}"
-
 fi
 
 [ -z "${jname}" ] && jname=$1
@@ -150,10 +143,10 @@ afterstop
 /usr/sbin/jail -r ${ST} > /dev/null 2>&1
 /usr/sbin/jail -r ${ST} > /dev/null 2>&1
 
-[ "$ver" != "empty" ] && {
+if [ "$ver" != "empty" ]; then
     ${ECHO} "${MAGENTA}Updating: ${GREEN}pkg info${NORMAL}"
     cbsd pkg_info jname=${jname} out="${jailsysdir}/${jname}/pkg_info"
-}
+fi
 
 [ -n "${mdsize}" -a "${mdsize}" != "0" ] && MDFILE=`eval find_md_by_mountpath ${data}`
 
@@ -187,6 +180,4 @@ FID="/var/run/jail_${UNDhost_hostname}.id"
 
 [ -n "${mdsize}" -a "${mdsize}" != "0" -a -n "${MDFILE}" ] && cbsd unmountmd md=${MDFILE}
 [ -n "${ddns_zone_list}" ] && cbsd ddns mode=delete jname=${jname}
-cbsd jailsql --dbfile="${dbdir}/local.sqlite" --action=update --param=status --jname=${jname} --value=0
-
-
+cbsd jailsql --dbfile="${dbdir}/local.sqlite" --sqlquery=update jails set jid=0,status=0 where jname=\"${jname}\"

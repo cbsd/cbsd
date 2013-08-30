@@ -85,7 +85,7 @@ ${dsk}p3 / ufs rw 1 1
 ${dsk}p2 none swap sw 0 0
 EOF
 
-modconf /tmp/mnt/boot/loader.conf bitmap_load NO
+${miscdir}/sysrc -qf /tmp/mnt/boot/loader.conf bitmap_load=NO
 
 cd /
 umount /tmp/mnt
@@ -152,11 +152,11 @@ done
 apply_net()
 {
 if [ $DHCP -eq 0 ]; then
-	modconf /etc/rc.conf ifconfig_${mynic} "${myip} netmask ${mymask}"
-	modconf /etc/rc.conf defaultrouter ${mygw}
+	${miscdir}/sysrc -qf /etc/rc.conf ifconfig_${mynic}="${myip} netmask ${mymask}"
+	${miscdir}/sysrc -qf /etc/rc.conf defaultrouter=${mygw}
 else
-	modconf /etc/rc.conf ifconfig_${mynic} DHCP
-	modconf /etc/rc.conf defaultrouter NO
+	${miscdir}/sysrc -qf /etc/rc.conf ifconfig_${mynic}=DHCP
+	${miscdir}/sysrc -qf /etc/rc.conf defaultrouter=NO
 fi
 }
 

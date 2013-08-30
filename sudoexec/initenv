@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.1
+#v9.2.2
 export distdir=${distdir:-"/usr/local/cbsd"}
 globalconf="${distdir}/cbsd.conf";
 MYLOCK="/tmp/initenv.lock"
@@ -12,7 +12,11 @@ if [ ! -f "${globalconf}" ]; then
     exit
 fi
 
-[ "$1" = "--help" ] && err 0 "${MYDESC}"
+if [ "$1" = "--help" ]; then
+    echo "${MYDESC}"
+    exit 0
+fi
+
 [ -n "${1}" -a -f "${1}" ] && INITCFG="${1}" && shift
 
 desc_question()
@@ -109,14 +113,14 @@ desc_question()
 # check for old install and if exist - execute pre scripts from upgrade directory
 phase0()
 {
-    local myversion cbsd_enable cbsd_workdir workdir
+    local myversion cbsdd_enable cbsd_workdir workdir
 
     . ${distdir}/${localcbsdconffile}
     newver="${myversion}"
 
     . /etc/rc.conf
 
-    [ -z "${cbsd_enable}" -o -z "${cbsd_workdir}" ] && return 0
+    [ -z "${cbsdd_enable}" -o -z "${cbsd_workdir}" ] && return 0
 
     [ ! -f "${cbsd_workdir}/cbsd.conf" ] && return 0
 
@@ -133,7 +137,7 @@ phase0()
 # execute post scripts from upgrade directory
 phaseX()
 {
-    local myversion cbsd_enable cbsd_workdir workdir
+    local myversion cbsdd_enable cbsd_workdir workdir
 
 
     ${ECHO} "${MAGENTA}[Stage X:${GREEN} Upgrading${MAGENTA}]${NORMAL}"
@@ -194,12 +198,14 @@ ${crontabsdir} \
 ${libdir} \
 ${logdir} \
 ${importdir} \
-${exportdir}"
+${exportdir} \
+${maildir}"
 
     for _dir in ${DIRHIER}; do
 	if [ ! -d ${_dir} ]; then
-	    /bin/mkdir -p ${_dir} && ${ECHO} "${MAGENTA}new dir created: ${GREEN}${_dir}${NORMAL}"
+	    /bin/mkdir -p ${_dir} && chown ${ECHO} "${MAGENTA}new dir created: ${GREEN}${_dir}${NORMAL}"
 	fi
+	chown ${cbsduser}:${cbsduser} ${_dir}
     done
 }
 
@@ -220,6 +226,10 @@ port = 1873
 EOF
     fi
 
+#compat for 9.0
+    [ ! -d "/usr/share/bsdconfig" ] && cp -Rp ${distdir}/share/bsdconfig /usr/share/
+    [ ! -d "/usr/libexec/bsdconfig" ] && cp -Rp ${distdir}/misc/libexec/bsdconfig /usr/libexec
+
     /usr/bin/cc ${distdir}/bin/cbsdsftp.c -o ${bindir}/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
     /usr/bin/cc ${distdir}/bin/cbsdssh.c -o ${bindir}/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
     /usr/bin/cc ${distdir}/bin/cbsdlogtail.c -o ${bindir}/cbsdlogtail
@@ -231,7 +241,8 @@ EOF
     /usr/bin/cc ${distdir}/sbin/netmask.c -o ${sbindir}/netmask
     /usr/bin/cc ${distdir}/sbin/ncctld.c -o ${sbindir}/ncctld
     /usr/bin/cc ${distdir}/sbin/nodeinetd.c -o ${sbindir}/nodeinetd
-    /usr/bin/cc ${distdir}/sbin/cbsd.c -o ${sbindir}/cbsd
+    /usr/bin/cc ${distdir}/sbin/nodemsgd.c -o ${sbindir}/nodemsgd
+    /usr/bin/cc ${distdir}/sbin/sendnodemsg.c -o ${sbindir}/sendnodemsg
     /usr/bin/cc ${distdir}/tools/ipfw-tables.c -o ${toolsdir}/ipfw-tables
     /usr/bin/cc ${distdir}/tools/pwait.c -o ${toolsdir}/pwait
 
@@ -241,6 +252,12 @@ EOF
 
     cc ${distdir}/sbin/cbsdtaskd/cbsdtaskd.c -o ${sbindir}/cbsdtaskd
     cc ${distdir}/sbin/cbsdtaskd/cbsdtask.c -o ${sbindir}/cbsdtask
+    cc ${distdir}/sbin/cbsdd.c -o ${sbindir}/cbsdd
+
+    if [ ! -f "/usr/local/bin/cbsd" -o -h "/usr/local/bin/cbsd" ]; then
+	rm -f /usr/local/bin/cbsd
+	make -C ${distdir}/bin/cbsd clean && make -C ${distdir}/bin/cbsd && make -C ${distdir}/bin/cbsd install && make -C ${distdir}/bin/cbsd clean
+    fi
 
     #### CP SCRIPTS with override and executable
     _dirhier="jailctl \
@@ -302,10 +319,11 @@ EOF
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/initenv.subr ${workdir}/initenv.subr
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/ansiicolor.subr ${workdir}/ansiicolor.subr
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/dialog.subr ${workdir}/dialog.subr
+    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/nodes.subr ${workdir}/nodes.subr
 
-    if install -o ${cbsduser} -g ${cbsduser} -m 555 ${distdir}/bin/cbsd ${bindir}/cbsd; then
-	modconf $bindir/cbsd workdir "\${workdir:-\"${workdir}\"}"
-	/bin/echo "go \$@" >> ${bindir}/cbsd
+    if install -o ${cbsduser} -g ${cbsduser} -m 555 ${distdir}/bin/sbsd ${bindir}/sbsd; then
+	${miscdir}/sysrc -qf $bindir/sbsd workdir="\${workdir:-\"${workdir}\"}" >/dev/null
+	/bin/echo "go \$@" >> ${bindir}/sbsd
     fi
 
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/securecmd ${workdir}/securecmd
@@ -315,8 +333,6 @@ EOF
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/settings-tui.subr ${workdir}/settings-tui.subr
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/distccache.subr ${workdir}/distccache.subr
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/mailtools.subr ${workdir}/mailtools.subr
-
-    installne "-o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/bin/sbsd ${bindir}/sbsd
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jail-arg ${sharedir}/jail-arg
 
     [ -d /usr/local/etc/sudoers.d ] || mkdir /usr/local/etc/sudoers.d
@@ -358,7 +374,7 @@ phase3()
 	    read p
 	    if getyesno "${MAGENTA}I will use hostname: ${GREEN}$p${NORMAL}"; then
 		hostname $p
-		modconf /etc/rc.conf hostname "${p}"
+		${miscdir}/sysrc -vf /etc/rc.conf hostname="${p}"
 	    fi
 		else break;
 	fi
@@ -401,16 +417,8 @@ phase3()
 phase4()
 {
     ${ECHO} "${MAGENTA}[Stage 4: ${GREEN}startup scripts${MAGENTA}]"
-
-    rm -f /usr/local/etc/rc.d/cbsd
-    /bin/ln -s ${workdir}/rc.d/cbsd /usr/local/etc/rc.d/cbsd
-
-    rm -f /usr/local/bin/cbsd
-    /bin/ln -s ${workdir}/bin/cbsd /usr/local/bin/cbsd
-
-    rm -f /usr/local/bin/sbsd
-    /bin/ln -s ${workdir}/bin/sbsd /usr/local/bin/sbsd
-
+    /bin/ln -sf ${workdir}/rc.d/cbsdd /usr/local/etc/rc.d/cbsdd
+    /bin/ln -sf ${workdir}/bin/sbsd /usr/local/bin/sbsd
     hash -r
 }
 
@@ -454,12 +462,15 @@ phase6()
 
     [ ! -f "${nodenamefile}" ] && echo "${nodename}" > "${nodenamefile}"
 
-    [ ! -f "${dbdir}/nodes.sqlite" ] && touch ${dbdir}/nodes.sqlite && ${toolsdir}/nodesql --dbfile=${dbdir}/nodes.sqlite --action=init
+    [ ! -f "${dbdir}/nodes.sqlite" ] && touch ${dbdir}/nodes.sqlite && ${toolsdir}/nodesql --dbfile=${dbdir}/nodes.sqlite --action=init && chown ${cbsduser} ${dbdir}/nodes.sqlite
     # todo: check for sql structure and auto alter table when change
 
+    [ -h "${dbdir}/local.sqlite" ] && sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=upgrade 2>/dev/null
+
     if [ ! -f "${dbdir}/inv.${nodename}.sqlite" ]; then
-	cbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=init && $ECHO "${MAGENTA}Empty inventory database created: ${GREEN}${dbdir}/inv.${nodename}.sqlite${NORMAL}"
-	cbsd jailsql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=init
+	sbsd inventorysql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=init && $ECHO "${MAGENTA}Empty inventory database created: ${GREEN}${dbdir}/inv.${nodename}.sqlite${NORMAL}"
+	sbsd jailsql --dbfile=${dbdir}/inv.${nodename}.sqlite --action=init
+	chown ${cbsduser} ${dbdir}/inv.${nodename}.sqlite
     fi
     /bin/ln -sf ${dbdir}/inv.${nodename}.sqlite ${dbdir}/local.sqlite
 
@@ -470,7 +481,8 @@ phase6()
 	[ $? -eq 0 ] && _myfs="zfs"
     fi
 
-    _uncfg=`cbsd inventorysql --dbfile=${dbdir}/local.sqlite --sqlquery=select items from unconfigured`
+#echo sbsd inventorysql --dbfile=${dbdir}/local.sqlite --sqlquery=select items from unconfigured
+    _uncfg=`sbsd inventorysql --dbfile=${dbdir}/local.sqlite --sqlquery=select items from unconfigured`
 
     [ $? -ne 0 ] && err 1 "Error for unconfigured query"
 
@@ -478,7 +490,7 @@ phase6()
 	for _uninit in ${USERINI}; do
 	    if [ "${_uninit}" = "${_checkme}" ]; then
 		if [ "${_checkme}" = "zfsfeat" -a ${_myfs} != "zfs" ]; then
-		    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=zfsfeat --value=0
+		    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=zfsfeat --value=0
 		    continue
 		fi
 		desc_question ${_checkme}
@@ -487,7 +499,7 @@ phase6()
 		    [ "${_checkme}" = "mdtmp" -a "$answ" = "1" ] && answ="8"
 		    [ "${_checkme}" = "mdtmp" -a "$answ" = "2" ] && answ="0"
 		if [ -n "${answ}" ]; then
-		    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=${_uninit} --value=${answ}
+		    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=${_uninit} --value=${answ}
 		    eval "${_uninit}=\"${answ}\"" 2>/dev/null
 		fi
 		[ "${_checkme}" = "nat_enable" ] && [ "${nat_enable}" != "0" ] && configure_nat
@@ -499,30 +511,30 @@ phase6()
     for _uninit in ${HWINI}; do
 	eval answ="\$${_uninit}"
 	if [ -n "${answ}" ]; then
-	    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=${_uninit} --value=${answ}
+	    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=${_uninit} --value=${answ}
 	fi
     done
 
     # flush unconfigured marker
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --sqlquery=delete from unconfigured
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --sqlquery=delete from unconfigured
 
     # constants and static param. FIX ME
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=repo --value=http://bsdstore.ru
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=workdir --value=${workdir}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=repo --value=http://bsdstore.ru
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=workdir --value=${workdir}
 
     _ret=`sysctl -qn net.inet.ip.fw.enable`
     if [ "${_ret}" = "1" ]; then
-	cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=ipfw_enable --value=1
+	sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=ipfw_enable --value=1
     else
-	cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=ipfw_enable --value=0
+	sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=ipfw_enable --value=0
     fi
 
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=fs --value=${_myfs}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=fs --value=${_myfs}
 
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=jail_interface --value=${nics}
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nodedescr --value=${nodedescr}
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nodename --value=${nodename}
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=hostname --value=${hostname}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=jail_interface --value=${nics}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nodedescr --value=${nodedescr}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=nodename --value=${nodename}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=update --param=hostname --value=${hostname}
 
 }
 
@@ -549,7 +561,7 @@ phase7()
     /usr/sbin/chown ${cbsduser}:${cbsduser} ${etcdir} > /dev/null 2>&1
     /usr/sbin/chown ${cbsduser}:${cbsduser} ${logdir} > /dev/null 2>&1
 #    installne "-o ${cbsduser} -g ${cbsduser} -m 644"  $etcdir/devfs.rules /etc/devfs.rules
-    chown ${cbsduser}:${cbsduser} ${jailrcconfdir} ${jailfstabdir} ${jaildatadir} ${jailsysdir} > /dev/null 2>&1
+    chown ${cbsduser}:${cbsduser} ${jailrcconfdir} ${jailfstabdir} ${jaildatadir} ${jailsysdir} ${maildir} ${workdir} ${ftmpdir} > /dev/null 2>&1
 }
 
 ############ start locking section #############
@@ -581,7 +593,7 @@ start()
 -----------------------
 EOF_HEADER
 
-    if ! getyesno "Do you want prepare or upgrade hier environment for CBSD now?" ; then
+    if ! getyesno "Do you want prepare or upgrade hier environment for sbsd now?" ; then
 	exit 0
     fi
 
@@ -595,32 +607,31 @@ EOF_HEADER
 # Inventory area
     phase6
     #Finnaly export new inventory from SQLite data for ASCii
-    cbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=list > ${inventory}
+    sbsd inventorysql --dbfile=${dbdir}/local.sqlite --action=list > ${inventory}
 # end of Inventory
     phase7
 
     configure_rsync
     configure_named
 
-    modconf 0 /etc/rc.conf cbsd_enable YES
+    [ `grep ^cbsdd_enable= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf cbsdd_enable=YES
     . /etc/rc.conf
-    [ "${cbsd_workdir}" != "${workdir}" ] && modconf /etc/rc.conf cbsd_workdir "${workdir}"
-    modconf 0 /etc/rc.conf sshd_enable "YES"
+    [ "${cbsd_workdir}" != "${workdir}" ] && ${miscdir}/sysrc -vf /etc/rc.conf cbsd_workdir="${workdir}"
+    [ `grep ^sshd_enable= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf sshd_enable=YES
 
     if [ `/usr/bin/grep -c "sshd_flags" /etc/rc.conf` = 0 ]; then
 	if getyesno "${BOLD}Shall i change (via rc.conf) default ssh port from 22 to 22222 which is default for cbsd?${NORMAL}"; then
-	    modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
+	    [ `grep ^sshd_flags= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf sshd_flags="-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no -p22222"
 	else
-	    modconf 0 /etc/rc.conf sshd_flags "-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no"
+	    [ `grep ^sshd_flags= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf sshd_flags="-oPermitRootLogin=without-password -oPasswordAuthentication=yes -oUseDNS=no"
 	fi
     fi
 
-    modconf 0 /etc/rc.conf rcshutdown_timeout "900"
-    modconf 0 /etc/rc.conf sendmail_enable "NO"
+    [ `grep ^rcshutdown_timeout= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf rcshutdown_timeout="900"
+    [ `grep ^sendmail_enable= /etc/rc.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/rc.conf sendmail_enable="NO"
+    [ `grep ^WITH_PKGNG= /etc/make.conf|wc -l` = 0 ] && ${miscdir}/sysrc -vf /etc/make.conf WITH_PKGNG=yes
 
-    modconf 0 /etc/make.conf WITH_PKGNG yes
-
-    modconf 0 /etc/periodic.conf local_periodic "/usr/local/etc/periodic ${workdir}/etc/periodic"
+    [ `grep ^local_periodic= /etc/periodic.conf |wc -l` = 0  ] && ${miscdir}/sysrc -vf /etc/periodic.conf local_periodic="/usr/local/etc/periodic ${workdir}/etc/periodic"
 
     # + /etc/aliases
     # + /etc/root/inetd.conf
@@ -628,6 +639,8 @@ EOF_HEADER
 
     phaseX
 
+    [ -f "${dbdir}/nodes.sqlite" ] && sbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=upgrade 2>/dev/null
+  
     hash -r
     ${ECHO} "${MAGENTA}>>> Done${NORMAL}"
     exit 0

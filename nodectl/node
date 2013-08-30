@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.1.0
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG="mode"
 MYOPTARG="node port rootkeyfile pw"
@@ -14,13 +14,15 @@ pw = password of cbsd user from remote node\n"
 . ${globalconf}
 . ${subr}
 . ${tools}
+. ${color}
+. ${nodes}
 init $*
 
 nodeadd()
 {
-    [ -n "${node}" ] || err 1 "Empty node"
+    [ -z "${node}" ] && err 1 "${MAGENTA}Empty node${NORMAL}"
     [ -z "${port}" ] && port=22222
-    [ -z "${pw}" ] && err 1 "Empty pw"
+    [ -z "${pw}" ] && err 1 "${MAGENTA}Empty pw${NORMAL}"
     [ -z "${rootkeyfile}" ] && rootkeyfile="/root/.ssh/id_rsa"
 
     if iptype $node; then
@@ -32,14 +34,14 @@ nodeadd()
 
     case $? in
 	0)
-	    [ -z "$NODENAME" ] && err 1 "No nodename found. Check remote cbsd settings"
-	    echo "$node has nodename ${NODENAME}"
+	    [ -z "$NODENAME" ] && err 1 "${MAGENTA}No nodename found. Check remote cbsd settings${NORMAL}"
+	    ${ECHO} "${MAGENTA}${node} has nodename: ${GREEN}${NODENAME}${NORMAL}"
 	;;
 	1)
-	    err 1 "Connection problem with $node"
+	    err 1 "${MAGENTA}Connection problem: ${GREEN}${node}${NORMAL}"
 	;;
 	2)
-	    err 1 "Bad password or system user"
+	    err 1 "${MAGENTA}Bad password or system user${NORMAL}"
 	;;
     esac
 
@@ -48,47 +50,59 @@ nodeadd()
 
     case $? in
 	0)
-	    echo "${node} Added successfull"
+	    ${ECHO} "${MAGENTA}Added successfull: ${GREEN}${node}${NORMAL}"
 	    LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
-	    modconf ${rsshdir}/${NODENAME}.node SSHKEY $LOCALKEY
-	    modconf ${rsshdir}/${NODENAME}.node IP $node
-	    modconf ${rsshdir}/${NODENAME}.node PORT $port
-	    A=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=select --nodename=${NODENAME} --param=ip`
+	    ${miscdir}/sysrc -qf ${rsshdir}/${NODENAME}.node SSHKEY=$LOCALKEY > /dev/null
+	    ${miscdir}/sysrc -qf ${rsshdir}/${NODENAME}.node IP=$node > /dev/null
+	    ${miscdir}/sysrc -qf ${rsshdir}/${NODENAME}.node PORT=$port > /dev/null
+	    A=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=get --nodename=${NODENAME} --param=ip`
 	    if [ -z "${A}" ]; then
 		cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=insert --nodename=${NODENAME} --ip=${node} --port=${port} --keyfile=${LOCALKEY} --rootkeyfile=$rootkeyfile --invfile=inv.${NODENAME}.sqlite
 	    else
-		echo "${node} Already exist in database, updating..."
+		${ECHO} "${MAGENTA}Already exist in database, updating: ${GREEN}${node}${NORMAL}"
 		cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=delete --nodename=${NODENAME}
 		cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=insert --nodename=${NODENAME} --ip=${node} --port=${port} --keyfile=${LOCALKEY} --rootkeyfile=$rootkeyfile --invfile=inv.${NODENAME}.sqlite
 	    fi
+	    idle_update ${NODENAME}
+	    cbsd retrinv node=${NODENAME}
 	;;
 	1)
 	    cat ${DEBLOG}
-	    err 1 "Error: Bad password"
+	    err 1 "${MAGENTA}Error: Bad password${NORMAL}"
 	;;
 	2)
 	    cat ${DEBLOG}
-	    err 1 "Error: No key found or wrong hostname. Make initenv on remote machine"
+	    err 1 "${MAGENTA}Error: No key found or wrong hostname. Make initenv on remote machine${NORMAL}"
 	;;
 	*)
 	    cat ${DEBLOG}
-	    err 1 "Error: Unkown error"
+	    err 1 "${MAGENTA}Error: Unkown error${NORMAL}"
 	;;
     esac
 }
 
 nodedel()
 {
-    [ -n "${node}" ] || err 1 "Empty node"
+    _descext="descr role domain notes location"
+
+    [ -n "${node}" ] || err 1 "${MAGENTA}Empty node${NORMAL}"
     NODECONF="${rsshdir}/${node}.node"
 
-    [ -f "${NODECONF}" ] || err 1 "No such node config"
+    [ ! -f "${NODECONF}" ] && err 1 "${MAGENTA}No such node config: ${GREEN}${NODECONF}${NORMAL}"
     . ${NODECONF}
 
     [ -f ${SSHKEY} ] && rm -f ${SSHKEY}
     rm -f ${NODECONF}
+    [ -f "${dbdir}/${node}.sqlite" ] && rm -f "${dbdir}/${node}.sqlite"
     cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=delete --nodename=${node}
-    echo "Removed"
+
+    #descriptions die too
+    find ${dbdir}/nodedescr -type f -depth 1 -maxdepth 1 -name ${node}.\*.descr -delete
+    for i in ${_descext}; do
+	[ -f "${dbdir}/nodedescr/${node}.${i}" ] && rm -f "${dbdir}/nodedescr/${node}.${i}"
+    done
+
+    ${ECHO} "${MAGENTA}Removed${NORMAL}"
 }
 
 
@@ -103,6 +117,6 @@ case "${mode}" in
 	cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=list
     ;;
     *)
-	err 1 "Unknown mode"
+	err 1 "${MAGENTA}Unknown mode${NORMAL}"
     ;;
 esac

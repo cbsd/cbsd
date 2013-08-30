@@ -78,10 +78,14 @@ static struct option long_options[] = {
 		break;
 	    case C_ACTION:
 		i=0;
-		while (actionlist[++i])
+		while (actionlist[++i]!=NULL)
 		    if (!strcmp(optarg,actionlist[i])) {
 			action=i;
 			break;
+		    }
+		    if (action==0) {
+			errmsg("Bad action\r\n");
+			exit(1);
 		    }
 		break;
 	    case C_HELP:      /* usage() */
@@ -207,6 +211,26 @@ static struct option long_options[] = {
 		else errmsg("table 'unconfigured' init failed\n");
             goto closeexit;
         break;
+	case (UPGRADE):
+            //aggregate all actual data for SQL tables
+            for (i=0 ; *sqldb_info[i].rowname != '\n'; i++) {
+                memset(buf,0,sizeof(buf));
+                sprintf(buf,"SELECT %s FROM local LIMIT 1",sqldb_info[i].rowname);
+                ret=sql_stmt(buf);
+                if (ret!=0) {
+                    //probably not exist, try to alter
+                    memset(buf,0,sizeof(buf));
+                    sprintf(buf,"ALTER TABLE local ADD COLUMN %s %s",sqldb_info[i].rowname,sqldb_info[i].rowtype);
+                    ret=sql_stmt(buf);
+                    if (ret==0)
+                        debugmsg(0,"inventorysql table updated: %s column\n",sqldb_info[i].rowname);
+                    else
+                        errmsg("update inventory table error for %s column\n",sqldb_info[i].rowname);
+                }
+            }
+            goto closeexit;
+        break;
+
 	case (LIST):
             ret=select_stmt("select * from local");
             goto closeexit;
