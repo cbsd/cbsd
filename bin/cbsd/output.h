@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)output.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/output.h 244162 2012-12-12 22:01:10Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/output.h 215567 2010-11-20 14:14:52Z jilles $
  */
 
 #ifndef OUTPUT_INCL
@@ -66,8 +66,6 @@ void emptyoutbuf(struct output *);
 void flushall(void);
 void flushout(struct output *);
 void freestdout(void);
-int outiserror(struct output *);
-void outclearerror(struct output *);
 void outfmt(struct output *, const char *, ...) __printflike(2, 3);
 void out1fmt(const char *, ...) __printflike(1, 2);
 void out2fmt_flush(const char *, ...) __printflike(1, 2);

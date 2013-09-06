@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)cd.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/cd.c 240541 2012-09-15 21:56:30Z jilles $");
+__FBSDID("$FreeBSD: releng/9.2/bin/sh/cd.c 230624 2012-01-27 20:53:37Z jilles $");
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -79,7 +79,7 @@ static char *prevdir;		/* previous working directory */
 static char *cdcomppath;
 
 int
-cdcmd(int argc __unused, char **argv __unused)
+cdcmd(int argc, char **argv)
 {
 	const char *dest;
 	const char *path;
@@ -89,8 +89,9 @@ cdcmd(int argc __unused, char **argv __unused)
 	int rc;
 	int errno1 = ENOENT;
 
+	optreset = 1; optind = 1; opterr = 0; /* initialize getopt */
 	phys = Pflag;
-	while ((ch = nextopt("eLP")) != '\0') {
+	while ((ch = getopt(argc, argv, "eLP")) != -1) {
 		switch (ch) {
 		case 'e':
 			getcwderr = 1;
@@ -101,13 +102,18 @@ cdcmd(int argc __unused, char **argv __unused)
 		case 'P':
 			phys = 1;
 			break;
+		default:
+			error("unknown option: -%c", optopt);
+			break;
 		}
 	}
+	argc -= optind;
+	argv += optind;
 
-	if (*argptr != NULL && argptr[1] != NULL)
+	if (argc > 1)
 		error("too many arguments");
 
-	if ((dest = *argptr) == NULL && (dest = bltinlookup("HOME", 1)) == NULL)
+	if ((dest = *argv) == NULL && (dest = bltinlookup("HOME", 1)) == NULL)
 		error("HOME not set");
 	if (*dest == '\0')
 		dest = ".";
@@ -324,13 +330,14 @@ updatepwd(char *dir)
 }
 
 int
-pwdcmd(int argc __unused, char **argv __unused)
+pwdcmd(int argc, char **argv)
 {
 	char *p;
 	int ch, phys;
 
+	optreset = 1; optind = 1; opterr = 0; /* initialize getopt */
 	phys = Pflag;
-	while ((ch = nextopt("LP")) != '\0') {
+	while ((ch = getopt(argc, argv, "LP")) != -1) {
 		switch (ch) {
 		case 'L':
 			phys = 0;
@@ -338,10 +345,15 @@ pwdcmd(int argc __unused, char **argv __unused)
 		case 'P':
 			phys = 1;
 			break;
+		default:
+			error("unknown option: -%c", optopt);
+			break;
 		}
 	}
+	argc -= optind;
+	argv += optind;
 
-	if (*argptr != NULL)
+	if (argc != 0)
 		error("too many arguments");
 
 	if (!phys && getpwd()) {

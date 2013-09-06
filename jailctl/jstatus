@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 #v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
@@ -10,30 +10,55 @@ MYDESC="Return jail ID in output and jail existance as error code (0 -no jail, 1
 . ${subr}
 init $*
 
-getjid()
+sqllist()
 {
-    local _errcode
+    local _i _str IFS _key _T
 
-    . ${JAILRCCONF}
+    _str="$1"
+    IFS="|"
+    _i=2
 
-    [ $baserw -eq 1 ] && path=$data
-
-    get_jid
-    echo "${myjid}"
-    exit 1
+    for _key in ${_str}; do
+        eval _T=\$$_i
+        _i=$((_i + 1))
+        export ${_T}=${_key}
+    done
 }
 
-[ -z "$jname" ] && jname=$1
+getjid()
+{
+    local _errcode sqldelimer
+
+    myjid=0
+    export sqldelimer="|"
+
+    A=`cbsdsql local SELECT jid,baserw,data,path,status FROM jails WHERE jname=\"${jname}\" 2>/dev/null`
+
+    [ -z "${A}" ] && return 0
+
+    sqllist "$A" jid baserw data path status
+
+    [ ${baserw} -eq 1 ] && path=$data
+
+    get_jid
+
+#    [ ${myjid} -ne ${jid} ] && cbsdsql local UPDATE jails set jid=\"${myjid}\" WHERE jname=\"${jname}\"
+#    [ ${myjid} -eq 0 -a ${status} -ne 0 ] && cbsdsql local UPDATE jails set status=\"0\" WHERE jname=\"${jname}\"
+#    [ ${myjid} -ne 0 -a ${status} -eq 0 ] && cbsdsql local UPDATE jails set status=\"1\" WHERE jname=\"${jname}\"
+
+    return 1
+}
+
+[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && exit
+
 JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
 
-if [ ! -f  "${JAILRCCONF}" ]; then
-    if [ -f "${JAILRCCONF}.slave" ]; then
-	errcode=2
-    else
-	errcode=0
-    fi
-    exit $errcode
-fi
-
 getjid
+retcode=$?
+
+[ $retcode -eq 0 ] && [ -f "${JAILRCCONF}.slave" ] && retcode=2
+
+echo "${myjid}"
+return ${retcode}
 

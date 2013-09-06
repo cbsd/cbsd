@@ -30,7 +30,8 @@
  * SUCH DAMAGE.
  *
  *	@(#)init.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/init.h 245689 2013-01-20 12:44:50Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/init.h 218306 2011-02-04 22:47:55Z jilles $
  */
 
+void init(void);
 void reset(void);

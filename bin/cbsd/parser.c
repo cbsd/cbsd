@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)parser.c	8.7 (Berkeley) 5/16/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/parser.c 254843 2013-08-25 10:57:48Z jilles $");
+__FBSDID("$FreeBSD: releng/9.2/bin/sh/parser.c 245690 2013-01-20 14:22:21Z jilles $");
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -96,9 +96,9 @@ static struct heredoc *heredoclist;	/* list of here documents to read */
 static int doprompt;		/* if set, prompt the user */
 static int needprompt;		/* true if interactive and at start of line */
 static int lasttoken;		/* last token read */
-int tokpushback;		/* last token pushed back */
+MKINIT int tokpushback;		/* last token pushed back */
 static char *wordtext;		/* text of last word returned by readtoken */
-static int checkkwd;
+MKINIT int checkkwd;            /* 1 == check for kwds, 2 == also eat newlines */
 static struct nodelist *backquotelist;
 static union node *redirnode;
 static struct heredoc *heredoc;
@@ -119,7 +119,7 @@ static void parseheredoc(void);
 static int peektoken(void);
 static int readtoken(void);
 static int xxreadtoken(void);
-static int readtoken1(int, const char *, const char *, int);
+static int readtoken1(int, char const *, char *, int);
 static int noexpand(char *);
 static void synexpect(int) __dead2;
 static void synerror(const char *) __dead2;
@@ -210,7 +210,6 @@ parsecmd(int interact)
 	heredoclist = NULL;
 
 	tokpushback = 0;
-	checkkwd = 0;
 	doprompt = interact;
 	if (doprompt)
 		setprompt(1);
@@ -287,8 +286,7 @@ list(int nlflag, int erflag)
 				tokpushback++;
 			}
 			checkkwd = CHKNL | CHKKWD | CHKALIAS;
-			if (!nlflag && (erflag ? peektoken() == TEOF :
-			    tokendlist[peektoken()]))
+			if (!nlflag && !erflag && tokendlist[peektoken()])
 				return ntop;
 			break;
 		case TEOF:
@@ -573,20 +571,21 @@ TRACE(("expecting DO got %s %s\n", tokname[got], got == TWORD ? wordtext : ""));
 			synexpect(TEND);
 		checkkwd = CHKKWD | CHKALIAS;
 		break;
-	/* A simple command must have at least one redirection or word. */
+	/* Handle an empty command like other simple commands.  */
 	case TBACKGND:
 	case TSEMI:
 	case TAND:
 	case TOR:
-	case TPIPE:
-	case TENDCASE:
-	case TFALLTHRU:
-	case TEOF:
-	case TNL:
-	case TRP:
+		/*
+		 * An empty command before a ; doesn't make much sense, and
+		 * should certainly be disallowed in the case of `if ;'.
+		 */
 		if (!redir)
 			synexpect(-1);
+	case TNL:
+	case TEOF:
 	case TWORD:
+	case TRP:
 		tokpushback++;
 		n1 = simplecmd(rpp, redir);
 		return n1;
@@ -983,7 +982,7 @@ parsebackq(char *out, struct nodelist **pbqlist,
 	char *volatile str;
 	struct jmploc jmploc;
 	struct jmploc *const savehandler = handler;
-	size_t savelen;
+	int savelen;
 	int saveprompt;
 	const int bq_startlinno = plinno;
 	char *volatile ostr = NULL;
@@ -1300,8 +1299,7 @@ readcstyleesc(char *out)
 #define	PARSEARITH()	{goto parsearith; parsearith_return:;}
 
 static int
-readtoken1(int firstc, char const *initialsyntax, const char *eofmark,
-    int striptabs)
+readtoken1(int firstc, char const *initialsyntax, char *eofmark, int striptabs)
 {
 	int c = firstc;
 	char *out;
@@ -1522,7 +1520,7 @@ checkend: {
 		}
 		if (c == *eofmark) {
 			if (pfgets(line, sizeof line) != NULL) {
-				const char *p, *q;
+				char *p, *q;
 
 				p = line;
 				for (q = eofmark + 1 ; *q && *p == *q ; p++, q++);
@@ -1819,6 +1817,14 @@ parsearith: {
 } /* end of readtoken */
 
 
+
+#ifdef mkinit
+RESET {
+	tokpushback = 0;
+	checkkwd = 0;
+}
+#endif
+
 /*
  * Returns true if the text contains nothing to expand (no dollar signs
  * or backquotes).
@@ -2031,7 +2037,7 @@ getprompt(void *unused __unused)
 
 
 const char *
-expandstr(const char *ps)
+expandstr(char *ps)
 {
 	union node n;
 	struct jmploc jmploc;

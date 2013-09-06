@@ -42,7 +42,7 @@ static char sccsid[] = "@(#)mkinit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/mkinit.c 245689 2013-01-20 12:44:50Z jilles $");
+__FBSDID("$FreeBSD: releng/9.2/bin/sh/mkinit.c 223494 2011-06-24 07:29:04Z kevlo $");
 
 /*
  * This program scans all the source files for code to handle various
@@ -59,7 +59,7 @@ __FBSDID("$FreeBSD: head/bin/sh/mkinit.c 245689 2013-01-20 12:44:50Z jilles $");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "fcntl.h"
+#include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -101,7 +101,7 @@ struct block {
  */
 
 struct event {
-	const char *name;	/* name of event (e.g. RESET) */
+	const char *name;	/* name of event (e.g. INIT) */
 	const char *routine;	/* name of routine called on event */
 	const char *comment;	/* comment describing routine */
 	struct text code;	/* code for handling event */
@@ -114,6 +114,11 @@ char writer[] = "\
  */\n\
 \n";
 
+char init[] = "\
+/*\n\
+ * Initialization code.\n\
+ */\n";
+
 char reset[] = "\
 /*\n\
  * This routine is called when an error or an interrupt occurs in an\n\
@@ -122,6 +127,7 @@ char reset[] = "\
 
 
 struct event event[] = {
+	{ "INIT", "init", init, { NULL, 0, NULL, NULL } },
 	{ "RESET", "reset", reset, { NULL, 0, NULL, NULL } },
 	{ NULL, NULL, NULL, { NULL, 0, NULL, NULL } }
 };

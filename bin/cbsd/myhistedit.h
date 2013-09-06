@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)myhistedit.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/myhistedit.h 229220 2012-01-01 22:17:12Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/myhistedit.h 231790 2012-02-15 22:45:57Z jilles $
  */
 
 #include <histedit.h>

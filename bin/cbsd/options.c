@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)options.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/options.c 240247 2012-09-08 19:24:03Z jilles $");
+__FBSDID("$FreeBSD: releng/9.2/bin/sh/options.c 223060 2011-06-13 21:03:27Z jilles $");
 
 #include <signal.h>
 #include <unistd.h>
@@ -60,8 +60,9 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 240247 2012-09-08 19:24:03Z jilles $")
 #ifndef NO_HISTORY
 #include "myhistedit.h"
 #endif
-
-//#include "jls.h"
+#ifdef CBSD
+#include "exec.h"
+#endif
 
 char *arg0;			/* value of $0 */
 struct shparam shellparam;	/* current positional parameters */
@@ -110,7 +111,11 @@ procargs(int argc, char **argv)
 	arg0 = argv[0];
 	if (sflag == 0 && minusc == NULL) {
 		scriptname = *argptr++;
-		if (setinputfile(scriptname, 0)==2) jlscmd(argc,argv); 
+#ifdef CBSD
+		if (setinputfile(scriptname, 0)==2) shellexec(argv + 1, environment(), pathval(), 0);
+#else
+		setinputfile(scriptname, 0);
+#endif
 		commandname = arg0 = scriptname;
 	}
 	/* POSIX 1003.2: first arg after -c cmd is $0, remainder $1... */
@@ -403,10 +408,9 @@ setcmd(int argc, char **argv)
 void
 getoptsreset(const char *value)
 {
-	while (*value == '0')
-		value++;
-	if (strcmp(value, "1") == 0)
+	if (number(value) == 1) {
 		shellparam.reset = 1;
+	}
 }
 
 /*
@@ -533,6 +537,10 @@ out:
 }
 
 /*
+ * XXX - should get rid of.  have all builtins use getopt(3).  the
+ * library getopt must have the BSD extension static variable "optreset"
+ * otherwise it can't be used within the shell safely.
+ *
  * Standard option processing (a la getopt) for builtin routines.  The
  * only argument that is passed to nextopt is the option string; the
  * other arguments are unnecessary.  It return the character, or '\0' on

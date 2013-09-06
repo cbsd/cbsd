@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)input.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/input.h 253650 2013-07-25 15:08:41Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/input.h 231790 2012-02-15 22:45:57Z jilles $
  */
 
 /* PEOF (the end of file marker) is defined in syntax.h */
@@ -42,21 +42,24 @@
  */
 extern int plinno;
 extern int parsenleft;		/* number of characters left in input buffer */
-extern const char *parsenextc;	/* next character in input buffer */
+extern char *parsenextc;	/* next character in input buffer */
+extern int init_editline;	/* 0 == not setup, 1 == OK, -1 == failed */
 
-struct alias;
 struct parsefile;
 
-void resetinput(void);
 char *pfgets(char *, int);
 int pgetc(void);
 int preadbuffer(void);
 int preadateof(void);
 void pungetc(void);
-void pushstring(char *, int, struct alias *);
+void pushstring(char *, int, void *);
+#ifdef CBSD
 int setinputfile(const char *, int);
+#else
+void setinputfile(const char *, int);
+#endif
 void setinputfd(int, int);
-void setinputstring(const char *, int);
+void setinputstring(char *, int);
 void popfile(void);
 struct parsefile *getcurrentfile(void);
 void popfilesupto(struct parsefile *);

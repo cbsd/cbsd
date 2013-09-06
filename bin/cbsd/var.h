@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)var.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/var.h 230998 2012-02-04 23:12:14Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/var.h 249242 2013-04-07 21:25:14Z jilles $
  */
 
 /*

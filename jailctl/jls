@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 # v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
@@ -16,49 +16,65 @@ init $*
 
 [ -d "${jailrcconfdir}" ] || err 1 "No rcconf dir"
 
+conv_status()
+{
+    case "${status}" in
+	0)
+	    status="Off"
+	    ;;
+	1)
+	    status="On"
+	    ;;
+	2)
+	    status="Slave"
+	    ;;
+	*)
+	    status="Unknown"
+	    ;;
+    esac
+}
+
+
 show_local()
 {
     local _errcode
 
     if [ -z "${shownode}" ]; then
-	cbsd -c "cbsdsql local select jname,jid,ip4_addr,host_hostname,path,status from jails" | while read jname jid ip4_addr host_hostname path status; do
+	cbsdsql local SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails ORDER BY jname | while read jname jid ip4_addr host_hostname path status; do
+	    conv_status
             echo "$jname     $jid     $ip4_addr     $host_hostname     $path     $status"
         done
     else
-        cbsd -c "cbsdsql local select jname,jid,ip4_addr,host_hostname,path,status from jails" | while read jname jid ip4_addr host_hostname path status; do
+        cbsdsql local SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails ORDER BY jname | while read jname jid ip4_addr host_hostname path status; do
+	    conv_status
             echo "${nodename}    $jname    $jid    $ip4_addr    $host_hostname    $path     $status"
         done
     fi
 
-    return 0
 # Unregister area
     for J in `/bin/ls ${jailrcconfdir}`; do
 	jname=""
 	. ${jailrcconfdir}/${J}
 	[ -z "${jname}" ] && continue
 
-	eval multiips4=\"\$ip4_addr\"
-	[ $baserw -eq 1 ] && path=$data
-	get_jid
-	_errcode=$?
-
-	if [ ${_errcode} -eq 0 ]; then
-	    status="Off"
+	jid=`cbsd jstatus jname=$jname`
+	errcode=$?
+	[ $errcode -eq 1 ] && continue
+	if [ $errcode -eq 2 ]; then
+	    status="Slave"
 	else
-	    status="On"
+	    status="Unregister"
 	fi
 
-	if [ `echo ${J} |grep -c '\.slave$'` = 1 ]; then
-	    status="Sl"
-	fi
+	eval multiips4=\"\$ip4_addr\"
 
 	if [ -z "$quiet" ]; then
 	    geniplist ${multiips4}
 	    COMMAIPS=`echo ${IPS}| tr " " ","`
 	    if [ -n "$shownode" ]; then
-		/bin/echo "${nodename}   $jname  ${myjid}  ${COMMAIPS}  ${host_hostname}  ${path}  ${status}"
+		echo "${nodename}    $jname    $jid    $ip4_addr    $host_hostname    $path     $status"
 	    else
-		/bin/echo "$jname  ${myjid}  ${COMMAIPS}  ${host_hostname}  ${path}  ${status}"
+		echo "$jname     $jid     $ip4_addr     $host_hostname     $path     $status"
 	    fi
 	else
 	    /bin/echo "$jname"
@@ -77,11 +93,13 @@ for _n in $node; do
     [ "${_n}" = "${nodename}" ] && continue
     [ ! -f "${dbdir}/${_n}.sqlite" ] && echo "Node ${_n} have no sqlite db on local host" && continue
     if [ -z "$shownode" ]; then
-	cbsd -c "cbsdsql ${_n} select jname,jid,ip4_addr,host_hostname,path,status from jails" | while read jname jid ip4_addr host_hostname path status; do
+	cbsdsql ${_n} SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails | while read jname jid ip4_addr host_hostname path status; do
+	    conv_status
 	    echo "$jname     $jid     $ip4_addr     $host_hostname     $path     $status"
 	done
     else
-	cbsd -c "cbsdsql ${_n} select jname,jid,ip4_addr,host_hostname,path,status from jails" | while read jname jid ip4_addr host_hostname path status; do
+	cbsdsql ${_n} SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails | while read jname jid ip4_addr host_hostname path status; do
+	    conv_status
 	    echo "${_n}    $jname    $jid    $ip4_addr    $host_hostname    $path     $status"
 	done
     fi

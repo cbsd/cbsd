@@ -1,0 +1,88 @@
+#!/usr/local/bin/cbsd
+#v9.2.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="jname"
+MYOPTARG="mode"
+MYDESC="Collect IPFW count for jail if availeble\n"
+ADDHELP="jname = alljails for cyclic collect via all online jails\n\
+mode = nozero - skip for ipfw zero for counters\n\
+mode = remove - remove counters after collect info\n"
+
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+
+init $*
+
+getalljails()
+{
+    cbsdsql local select jname from jails where status=1 |while read jname; do
+            fwinit
+            insert
+    done
+}
+
+# prepare dir by $jname
+fwinit()
+{
+	TRAFDIR="${jailsysdir}/${jname}/traffic"
+	[ ! -d "${TRAFDIR}" ] && mkdir -p ${TRAFDIR} && chown $cbsduser:$cbsduser ${TRAFDIR}
+	CURDATE=`date "+%Y-%m"`
+	TRAFFILE="${TRAFDIR}/${CURDATE}"
+
+	if [ ! -f "${TRAFFILE}" ]; then
+	    ${toolsdir}/sqlcli ${TRAFFILE} "CREATE TABLE traffic ( dt TIMESTAMP DATE DEFAULT (datetime('now','localtime')) UNIQUE PRIMARY KEY , incoming integer, outgoing integer )"
+	    chown $cbsduser:$cbsduser ${toolsdir}
+	fi
+}
+
+checkjail()
+{
+    A=`cbsdsql local select status from jails where jname=\"$jname\"`
+    [ "${A}" = "1" ] && return 1
+    return 0
+}
+
+
+insert()
+{
+
+    [ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ] && return 0
+
+    FWIN=`cat ${ftmpdir}/${jname}-fwin 2>/dev/null`
+    FWOUT=`cat ${ftmpdir}/${jname}-fwout 2>/dev/null`
+
+    ### FWIN
+    BIN=`/sbin/ipfw show ${FWIN} | awk '/count /{print $3"\n"}'`
+    INCODE=$?
+
+    ### FWOUT
+    BOUT=`/sbin/ipfw show ${FWOUT} | awk '/count /{print $3"\n"}'`
+    OUTCODE=$?
+
+    if [ ${INCODE} -eq 0 -a ${OUTCODE} -eq 0 ]; then
+	[ "${mode}" != "nozero" -o "${mode}" != "remove" ] && /sbin/ipfw -q zero ${FWIN} ${FWOUT} 2>/dev/null
+	${toolsdir}/sqlcli ${TRAFFILE} "INSERT INTO traffic ( incoming, outgoing ) VALUES ( ${BIN}, ${BOUT} )"
+    fi
+
+    [ "${mode}" = "remove" ] && ipfw -q delete ${FWIN} ${FWOUT}
+}
+
+
+
+#MAIN
+[ ${ipfw_enable} -eq 0 -a -z "`sysctl -qn net.inet.ip.fw.enable`" ] && exit
+
+case "${jname}" in
+    "alljails")
+		getalljails
+		;;
+    *)
+		if ! checkjail; then
+		    fwinit
+		    insert
+		fi
+		;;
+esac

@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)eval.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/eval.h 253650 2013-07-25 15:08:41Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/eval.h 231085 2012-02-06 13:29:50Z dumbbell $
  */
 
 extern char *commandname;	/* currently executing command */
@@ -45,8 +45,6 @@ struct backcmd {		/* result of evalbackcmd */
 	int nleft;		/* number of chars in buffer */
 	struct job *jp;		/* job structure for command */
 };
-
-void reseteval(void);
 
 /* flags in argument to evaltree/evalstring */
 #define EV_EXIT 01		/* exit after evaluating tree */

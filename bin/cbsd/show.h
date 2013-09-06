@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)show.h	1.1 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/show.h 200956 2009-12-24 18:41:14Z jilles $
+ * $FreeBSD: releng/9.2/bin/sh/show.h 200956 2009-12-24 18:41:14Z jilles $
  */
 
 void showtree(union node *);
