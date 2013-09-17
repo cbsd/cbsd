@@ -19,13 +19,13 @@ void usage() {
     printf("%s: format: %s <dbfile> <query>\n",nm(),nm());
 }
 
-
 int
 sqlCB(void *none, int rows, char **rowV, char **rowN)
 {
 	int	 i;
 	int	*cnt = (int *)none;
 	char *delim;
+	char *sqlcolnames;
 	int printheader=0;
 	char *cp;
 
@@ -34,9 +34,8 @@ sqlCB(void *none, int rows, char **rowV, char **rowN)
     else
 	delim=cp;
 
-//	delim=lookupvar("sqldelimer");
-
 	if ( delim == NULL ) delim=DEFSQLDELIMER;
+	sqlcolnames=getenv("sqlcolnames");
 
 	if (printheader) {
 		if (!(*cnt)) {
@@ -48,12 +47,24 @@ sqlCB(void *none, int rows, char **rowV, char **rowN)
 		}
 	}
 	(*cnt)++;
+
+    if ( sqlcolnames ) {
 	for (i = 0; i < rows; i++)
-		if (i<rows-1)
-		    printf("%s%s",rowV[i],delim);
-		else
-		    printf("%s\n", rowV[i]);
+	    printf("%s=\"%s\"\n", rowN[i],rowV[i]);
 	return 0;
+    }
+
+    for (i = 0; i < rows ; i++) {
+//??
+	if (rowV[i]==NULL) continue;
+//??
+	if (i<rows-1)
+	    printf("%s%s",rowV[i],delim);
+	else
+	    printf("%s\n", rowV[i]);
+    }
+
+    return 0;
 }
 
 int

@@ -1,0 +1,153 @@
+#!/bin/sh
+#v9.2.2
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="ver arch maxjobs clean name basename ccache notify"
+MYDESC="Build kernel from sources"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+. ${buildconf}
+. ${distccacheconf}
+. ${mailconf}
+. ${etcdir}/buildworld.conf
+. ${system}
+. ${color}
+
+if [ "${ccache}" = "1"  ]; then
+
+    ccache_prefix="cbsd buildworld $ver $arch $basename"
+    ccache_dir="/var/cache/ccache"
+    init_ccache_dir
+    export CCACHE_DIR=$ccache_realdir
+
+    if ! ccache_check; then
+        ccache=0
+    fi
+else 
+    ccache=0
+fi
+
+if [ "${notify}" = "1"  ]; then
+    notify=1
+else
+    notify=0
+fi
+
+SRC="${srcdir}/src_${ver}"
+[ -d "${SRC}" ] || err 1 "${MAGENTA}No such version: ${GREEN}${SRC}${MAGENTA}"
+[ "${arch}" = "amd64" -o "${arch}" = "i386" ] || err 1 "${MAGENTA}Supported architecture only: ${GREEN}amd64 i386${NORMAL}"
+
+if [ -z "${name}" ]; then
+    export __MAKE_CONF=${etcdir}/make.conf
+else
+    export __MAKE_CONF=${etcdir}/make-$name.conf
+fi
+
+if [ -z "${basename}" ]; then
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
+else
+    export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${ver}
+fi
+
+if [ -z "${basename}" ]; then
+    export SRCCONF=${etcdir}/src.conf
+else
+    export SRCCONF=${etcdir}/src-${basename}.conf
+fi
+
+if [ -z "${basename}" ]; then
+    SRCBASE="${basejaildir}/${basejailpref}_${arch}_${ver}"
+else
+    SRCBASE="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+fi
+
+NUMJOBS=""
+[ $maxjobs -eq 0 ] || NUMJOBS="-j${maxjobs}"
+
+NOCLEANUP=""
+[ ${clean} -eq 1 ] || NOCLEANUP="-DNO_CLEAN"
+
+if [ -z "${name}" ]; then
+    LOCKFILE=${SRC}.lock
+else
+    LOCKFILE=${SRC}-${name}.lock
+fi
+
+[ -z "${name}" ] && name="GENERIC"
+
+[ -f "${etcdir}/kernel-${name}-${arch}-${ver}" ] || err 1 "${MAGENTA}No such config kernel-${name}-${arch}-${ver} in: ${GREEN}${etcdir}${NORMAL}"
+
+## preparing chroot
+DST="${basejaildir}/tempbase.$$"
+mkdir -p ${DST}
+
+export baserw=1
+populate_cdir ${SRCBASE} ${DST}
+cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRC}/src/sys/${arch}/conf/${name}.CBSD
+
+mkdir -p ${DST}${SRC}/src
+mount -t nullfs -o ro ${SRC}/src ${DST}${SRC}/src
+mkdir -p ${MAKEOBJDIRPREFIX} ${DST}${MAKEOBJDIRPREFIX}
+mkdir -p ${DST}${etcdir}
+[ -f "${__MAKE_CONF}" ] && cp ${__MAKE_CONF} ${DST}${etcdir}
+[ -f "${SRCCONF}" ] && cp ${SRCCONF} ${DST}${etcdir}
+mount -t nullfs ${MAKEOBJDIRPREFIX} ${DST}${MAKEOBJDIRPREFIX}
+mount -t devfs devfs ${DST}/dev
+
+[ $notify -eq 1 ] && BLDLOG="${tmpdir}/build.$$.log"
+makelock $LOCKFILE "rm -f ${SRC}/src/sys/${arch}/conf/${name}.CBSD && umount -f ${DST}${MAKEOBJDIRPREFIX} && umount -f ${DST}/dev && umount -f ${DST}${SRC}/src && chflags -R noschg ${DST} && rm -rf ${DST} && rm -f ${BLDLOG}"
+
+DT_START=`date +%s`
+
+case "${arch}" in
+"i386")
+#    export MACHINE="i386"
+#    export UNAME_p="i386"
+#    export UNAME_m="i386"
+    export TARGET="i386"
+    export TARGET_ARCH="i386"
+#    export MACHINE_ARCH="i386"
+#    export BUILD_ARCH="i386"
+    ;;
+"amd64")
+    export MACHINE="amd64"
+    export UNAME_p="amd64"
+    export UNAME_m="amd64"
+    export TARGET="amd64"
+    export TARGET_ARCH="amd64"
+    export MACHINE_ARCH="amd64"
+    export BUILD_ARCH="amd64"
+    ;;
+esac
+
+if [ $notify -eq 1 ]; then
+    [ -z "$TAILSTRING" ] && TAILSTRING=50
+    script ${BLDLOG} /usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}
+    res=$?
+else
+    /usr/sbin/chroot ${DST} /usr/bin/make $NUMJOBS -C ${SRC}/src buildkernel TARGET=${arch} KERNCONF=${name}.CBSD ${NOCLEANUP}
+    res=$?
+fi
+
+DT_END=`date +%s`
+
+if [ $res -ne 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${SRC}/src && svn info |awk '/^Revision: /{printf $2}'`
+    send_notification -s "[CBSD ${nodename}] buildkernel ${name} $basename $ver $arch r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
+    return 1
+fi
+
+if [ $res -eq 0 -a $notify -eq 1 ]; then
+    svnrev=`cd ${SRC}/src && svn info |awk '/^Revision: /{printf $2}'`
+cat > ${BLDLOG} << EOF
+Start time: `date -r ${DT_START}`
+End time: `date -r ${DT_END}`
+EOF
+    send_notification -s "[CBSD ${nodename}] buildkernel ${name} $basename $ver $arch r${svnrev} complete." -f ${BLDLOG}
+    return 0
+fi

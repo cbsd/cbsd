@@ -34,9 +34,11 @@ sqlCB(void *none, int rows, char **rowV, char **rowN)
 	int	 i;
 	int	*cnt = (int *)none;
 	char *delim;
+	char *sqlcolnames;
 	int printheader=0;
 
 	delim=lookupvar("sqldelimer");
+	sqlcolnames=lookupvar("sqlcolnames");
 
 	if ( delim == NULL ) delim=DEFSQLDELIMER;
 
@@ -50,12 +52,22 @@ sqlCB(void *none, int rows, char **rowV, char **rowN)
 		}
 	}
 	(*cnt)++;
-	for (i = 0; i < rows; i++)
+
+	if ( sqlcolnames ) {
+	    for (i = 0; i < rows; i++)
+		out1fmt("%s=\"%s\"\n", rowN[i],rowV[i]);
+	return 0;
+	}
+
+	for (i = 0; i < rows; i++) {
 		if (i<rows-1)
 		    out1fmt("%s%s",rowV[i],delim);
 		else
-		    out1fmt("%s\n", rowV[i]);
+			out1fmt("%s\n", rowV[i]);
+	}
 	return 0;
+
+
 }
 
 int

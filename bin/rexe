@@ -1,5 +1,5 @@
-#!/bin/sh
-#v9.2.0
+#!/usr/local/bin/cbsd
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="node nodelist cmd cmdfile netgroup quiet tty"
@@ -16,10 +16,10 @@ tty=1 force tty alloc or force no tty\n"
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
+. ${strings}
 init $*
 
 set -o errexit
-#set -o xtrace
 
 DEBUG=0
 SSH_VERBOSE=""
@@ -39,10 +39,12 @@ else
     TTYOP="-tt"
 fi
 
-    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
+#    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
+    ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
+
 	    while read SSH_LINE ; do
 		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
-		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
+#		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
 	    done
 }
 
@@ -115,12 +117,17 @@ run_child() {
 
 	rm -f "$TEMP_DIR/$CHILDNUM.active"
 	echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
-	SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=sshopt --nodename=${HOST}`
+#	cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"
+	NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"`
 
-	[ -z "${SSH_ARGS}" ] && {
+	if [ -z "${NODEDATA}" ]; then
 	    echo "${HOST}: No such node in base"
 	    continue
-	}
+	fi
+
+	sqllist "$NODEDATA" myip myport mykey
+	SSH_ARGS="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+
 #	ssh_connect > $TEMP_DIR/$HOST.out
 #	cat $TEMP_DIR/$HOST.out
 	ssh_connect
@@ -221,7 +228,15 @@ if [ "${COUNT_HOSTS}" = "1" ]; then
 	TTYOP="-tt"
     fi
 
-    SSH_ARGS=`cbsd nodesql --dbfile=${dbdir}/nodes.sqlite --action=sshopt --nodename=${HOSTLIST}`
+    NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOSTLIST}\"`
+
+    if [ -z "${NODEDATA}" ]; then
+        err 1 "${HOST}: No such node in base"
+    fi
+
+    sqllist "$NODEDATA" myip myport mykey
+    SSH_ARGS="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+
     ssh -l $cbsduser -t ${SSH_ARGS} ${TTOP} -C $THESCRIPT
     exit
 fi

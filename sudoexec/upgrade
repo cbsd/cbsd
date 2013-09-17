@@ -1,0 +1,512 @@
+#!/bin/sh
+#v9.2.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="target"
+MYOPTARG="ver basename name destdir stable"
+MYDESC="Upgrade base and/or kernel from other prepared hier"
+ADDHELP="target= kernel, world, node(world+kernel)\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+. ${buildconf}
+. ${mailconf}
+. ${color}
+. ${strings}
+
+# $1 - source dir
+# if $destdir set - install to $destdir (default is /boot/kernel)
+upgrade_kernel()
+{
+	local _basedir DSTDIR _err
+	[ -z "$1" ] && err 1 "${MAGENTA}Give me source dir${NORMAL}"
+
+	_basedir="${1}"
+
+	if [ -n "${destdir}" ]; then
+	    DSTDIR="${destdir}"
+	else
+	    DSTDIR="/boot/kernel"
+	fi
+
+	[ -d "${DSTDIR}.old" ] && rm -rf "${DSTDIR}.old"
+
+	if [ -d "${DSTDIR}" ]; then
+	    mv "${DSTDIR}" "${DSTDIR}.old"
+	    $ECHO "${MAGENTA}Old kernel rotated to: ${GREEN}${DSTDIR}.old${NORMAL}"
+	fi
+
+	${ECHO} "${MAGENTA}Upgrading kernel in ${DSTDIR}. don't interrupt the process${NORMAL}"
+	_err=0
+	cp -rP ${KERNELSOURCE}/boot/kernel ${DSTDIR} || _err=$(( _err + 1 ))
+	kldxref ${DSTDIR} || _err=$(( _err + 1 ))
+
+	[ ! -f "${DSTDIR}/kernel" ] && _err=$(( _err + 1 ))
+
+	if [ $_err -ne 0 ]; then
+	    ${ECHO} "${MAGENTA}Error while upgrading kernel. Restoring old version${NORMAL}"
+	    rm -rf ${DSTDIR}
+	    mv "${DSTDIR}.old ${DSTDIR}"
+	fi
+
+	sync
+}
+
+init_kernel()
+{
+	[ -z "${name}" ] && name="GENERIC"
+	if [ -n "${destdir}" ]; then
+	    KERNELSOURCE="${destdir}"
+	else
+	    if [ -z "${basename}" ]; then
+		KERNELSOURCE="${basejaildir}/kernel_${name}_${arch}_${ver}"
+	    else
+		KERNELSOURCE="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
+	    fi
+	fi
+	[ ! -d "${KERNELSOURCE}" ] && err 1 "${MAGENTA}You have no ${KERNELSOURCE}. Use ${GREEN}cbsd installkernel${NORMAL} or ${GREEN}repo action=get sources=kernel${MAGENTA} before upgrade${NORMAL}"
+}
+
+set_files_tofile()
+{
+	local _file _rootfile
+	for _file in `eval ${find_files}`; do
+	    echo "${_file#$rootdir}" >> ${tmpdir}/${name}.hier.$$
+	done
+}
+
+set_dirs_tofile()
+{
+	local _dir _rootdir
+
+	for _dir in `eval ${find_dirs}`; do
+		if [ "${_dir}" = "$rootdir" ]; then
+			continue
+		fi
+	echo "${_dir#$rootdir}" >> ${tmpdir}/${name}.hier.$$
+	done
+}
+
+# create separated removed,added,updated files from two hier list
+# $1 - dst dir. $2 - src dir
+create_hierdiff()
+{
+	sort ${1} > ${1}.sort.$$
+	sort ${2} > ${2}.sort.$$
+
+	comm -23 ${1}.sort.$$ ${2}.sort.$$ > ${tmpdir}/files.removed.$$
+	comm -13 ${1}.sort.$$ ${2}.sort.$$ > ${tmpdir}/files.added.$$
+	comm -12 ${1}.sort.$$ ${2}.sort.$$ > ${tmpdir}/files.updated.$$
+
+	rm -f ${1}.sort.$$ ${2}.sort.$$
+}
+
+# For all paths appearing in $1, inspect the system
+# and generate $2 describing what is currently installed
+# in ${BASEDIR}
+fetch_inspect_system()
+{
+        # No errors yet...
+        rm -f ${tmpdir}/.err.$$
+        # Tell the user why his disk is suddenly making lots of noise
+        printf "  ${GREEN}*${MAGENTA} Inspecting system [${GREEN}${BASEDIR}${MAGENTA}]... ${NORMAL}"
+
+	truncate -s0 ${tmpdir}/filelist.$$
+
+        # Generate list of files to inspect
+        cat $1 |
+            cut -f 1 -d '|' |
+            sort -u > ${tmpdir}/filelist.tmp.$$
+
+	sort -u ${tmpdir}/filelist.tmp.$$ > ${tmpdir}/filelist.$$
+
+	rm -f ${tmpdir}/filelist.tmp.$$
+
+        # Examine each file and output lines of the form
+        # /path/to/file|type|device-inum|user|group|perm|flags|value
+        # sorted by device and inode number.
+        while read F; do
+                # If the symlink/file/directory does not exist, record this.
+                if ! [ -e ${BASEDIR}/${F} ]; then
+                        echo "${F}|-||||||"
+                        continue
+                fi
+
+                if ! [ -r ${BASEDIR}/${F} ]; then
+                        echo "Cannot read file: ${BASEDIR}/${F}"        \
+                            >/dev/stderr
+                        touch ${tmpdir}/.err.$$
+                        return 1
+                fi
+
+                # Otherwise, output an index line.
+                if [ -L ${BASEDIR}/${F} ]; then
+                        echo -n "${F}|L|"
+                        stat -n -f '%d-%i|%u|%g|%Mp%Lp|%Of|' ${BASEDIR}/${F};
+                        readlink ${BASEDIR}/${F};
+                elif [ -f ${BASEDIR}/${F} ]; then
+                        echo -n "${F}|f|"
+                        stat -n -f '%d-%i|%u|%g|%Mp%Lp|%Of|' ${BASEDIR}/${F};
+                        sha256 -q ${BASEDIR}/${F};
+                elif [ -d ${BASEDIR}/${F} ]; then
+                        echo -n "${F}|d|"
+                        stat -f '%d-%i|%u|%g|%Mp%Lp|%Of|' ${BASEDIR}/${F};
+                else
+                        echo "Unknown file type: ${BASEDIR}/${F}"       \
+                            >/dev/stderr
+                        touch ${tmpdir}/.err.$$
+                        return 1
+                fi
+        done < ${tmpdir}/filelist.$$ |
+            sort -k 3,3 -t '|' > $2.tmp.$$
+        rm -f ${tmpdir}/filelist.$$
+
+        # Check if an error occurred during system inspection
+        if [ -f ${tmpdir}/.err.$$ ]; then
+                return 1
+        fi
+       # Convert to the form
+        # /path/to/file|type|user|group|perm|flags|value|hlink
+        # by resolving identical device and inode numbers into hard links.
+        cut -f 1,3 -d '|' $2.tmp.$$ |
+            sort -k 1,1 -t '|' |
+            sort -s -u -k 2,2 -t '|' |
+            join -1 2 -2 3 -t '|' - $2.tmp.$$ |
+            awk -F \| -v OFS=\|         \
+                '{
+                    if (($2 == $3) || ($4 == "-"))
+                        print $3,$4,$5,$6,$7,$8,$9,""
+                    else
+                        print $3,$4,$5,$6,$7,$8,$9,$2
+                }' |
+            sort > $2
+        rm $2.tmp.$$
+
+        # We're finished looking around
+        ${ECHO} "${MAGENTA}done.${NORMAL}"
+}
+
+# Compare INDEX-ALL and INDEX-PRESENT and print warnings about differences.
+IDS_compare ()
+{
+        # Get all the lines which mismatch in something other than file
+        # flags.  We ignore file flags because sysinstall doesn't seem to
+        # set them when it installs FreeBSD; warning about these adds a
+        # very large amount of noise.
+#        cut -f 1-5,7-8 -d '|' $1 > $1.noflags
+        sort -k 1,1 -t '|' $1 > $1.sorted
+
+        cat $2 |
+            comm -13 $1.sorted - |
+            fgrep -v '|-|||||' |
+            sort -k 1,1 -t '|' |
+            join -t '|' $1.sorted - > ${tmpdir}/INDEX-NOTMATCHING
+
+        # Ignore files which match IDSIGNOREPATHS.
+        for X in ${IDSIGNOREPATHS}; do
+                grep -E "^${X}" ${tmpdir}/INDEX-NOTMATCHING
+        done |
+            sort -u |
+            comm -13 - ${tmpdir}/INDEX-NOTMATCHING > ${tmpdir}/INDEX-NOTMATCHING.tmp
+        mv ${tmpdir}/INDEX-NOTMATCHING.tmp ${tmpdir}/INDEX-NOTMATCHING
+                  
+        # Go through the lines and print warnings.
+        while read LINE; do
+#echo "D: ${LINE}"
+#                FPATH=`echo "${LINE}" | cut -f 1 -d '|'`
+#                TYPE=`echo "${LINE}" | cut -f 2 -d '|'`
+#                OWNER=`echo "${LINE}" | cut -f 3 -d '|'`
+#                GROUP=`echo "${LINE}" | cut -f 4 -d '|'`
+#                PERM=`echo "${LINE}" | cut -f 5 -d '|'`
+#                FLAGS=`echo "${LINE}" | cut -f 6 -d '|'`
+#                HASH=`echo "${LINE}" | cut -f 7 -d '|'`
+#                LINK=`echo "${LINE}" | cut -f 8 -d '|'`
+#                P_TYPE=`echo "${LINE}" | cut -f 9 -d '|'`
+#                P_OWNER=`echo "${LINE}" | cut -f 10 -d '|'`
+#                P_GROUP=`echo "${LINE}" | cut -f 11 -d '|'`
+#                P_PERM=`echo "${LINE}" | cut -f 12 -d '|'`
+#                P_FLAGS=`echo "${LINE}" | cut -f 13 -d '|'`
+#                P_HASH=`echo "${LINE}" | cut -f 14 -d '|'`
+#                P_LINK=`echo "${LINE}" | cut -f 15 -d '|'`
+	sqllist ${LINE} FPATH TYPE OWNER GROUP PERM FLAGS HASH LINK P_TYPE P_OWNER P_GROUP P_PERM P_FLAGS P_HASH P_LINK
+
+
+                # Warn about different object types.
+                if ! [ "${TYPE}" = "${P_TYPE}" ]; then
+                        echo -n "${FPATH} is a "
+                        case "${P_TYPE}" in
+                        f)      echo -n "regular file, "
+                                ;;
+                        d)      echo -n "directory, "
+                                ;;
+                        L)      echo -n "symlink, "
+                                ;;
+                        esac
+                        echo -n "but should be a "
+                        case "${TYPE}" in
+                        f)      echo -n "regular file."
+                                ;;
+                        d)      echo -n "directory."
+                                ;;
+                        L)      echo -n "symlink."
+                                ;;
+                        esac
+                        echo
+                        echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+
+                        # Skip other tests, since they don't make sense if
+                        # we're comparing different object types.
+                        continue
+                fi
+
+                # Warn about different owners.
+                if ! [ "${OWNER}" = "${P_OWNER}" ]; then
+                        echo -n "${FPATH} is owned by user id ${P_OWNER}, "
+                        echo "but should be owned by user id ${OWNER}."
+			echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+			continue
+                fi
+
+                # Warn about different groups.
+                if ! [ "${GROUP}" = "${P_GROUP}" ]; then
+                        echo -n "${FPATH} is owned by group id ${P_GROUP}, "
+                        echo "but should be owned by group id ${GROUP}."
+			echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+			continue
+                fi
+
+                # Warn about different permissions.  We do not warn about
+                # different permissions on symlinks, since some archivers
+                # don't extract symlink permissions correctly and they are
+                # ignored anyway.
+                if ! [ "${PERM}" = "${P_PERM}" ] &&
+                    ! [ "${TYPE}" = "L" ]; then
+                        echo -n "${FPATH} has ${P_PERM} permissions, "
+                        echo "but should have ${PERM} permissions."
+			echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+			continue
+                fi
+
+                if ! [ "${FLAGS}" = "${P_FLAGS}" ] &&
+                    ! [ "${TYPE}" = "L" ]; then
+                        echo -n "${FPATH} has ${P_FLAGS} flags, "
+                        echo "but should have ${FLAGS} flags."
+			echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+			continue
+                fi
+
+                # Warn about different file hashes / symlink destinations.
+                if ! [ "${HASH}" = "${P_HASH}" ]; then
+                        if [ "${TYPE}" = "L" ]; then
+                                echo -n "${FPATH} is a symlink to ${P_HASH}, "
+                                echo "but should be a symlink to ${HASH}."
+				echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+				continue
+                        fi
+                        if [ "${TYPE}" = "f" ]; then
+                                echo -n "${FPATH} has SHA256 hash ${P_HASH}, "
+                                echo "but should have SHA256 hash ${HASH}."
+				echo "${FPATH}|${TYPE}|${OWNER}|${GROUP}|${PERM}|${FLAGS}|${HASH}|${LINK}" >> ${WORK_IDS}
+				continue
+                        fi
+                fi
+
+                # We don't warn about different hard links, since some
+                # some archivers break hard links, and as long as the
+                # underlying data is correct they really don't matter.
+        done < ${tmpdir}/INDEX-NOTMATCHING
+
+        # Clean up
+        rm $1 $1.sorted $2 ${tmpdir}/INDEX-NOTMATCHING
+
+}
+
+# Install new files
+install_from_index()
+{
+        # First pass: Do everything apart from setting file flags.  We
+        # can't set flags yet, because schg inhibits hard linking.
+        sort -k 1,1 -t '|' $1 |
+            tr '|' ' ' |
+            while read FPATH TYPE OWNER GROUP PERM FLAGS HASH LINK; do
+                case ${TYPE} in
+                d)
+                        # Create a directory
+                        install -d -o ${OWNER} -g ${GROUP} -m ${PERM} ${DSTDIR}${FPATH}
+                        ;;
+                f)
+                        if [ -z "${LINK}" ]; then
+                                # Create a file, without setting flags.
+                                install -S -o ${OWNER} -g ${GROUP} -m ${PERM} ${SRCDIR}${FPATH} ${DSTDIR}${FPATH}
+                        else
+                                # Create a hard link.
+                                ln -f ${DSTDIR}${LINK} ${DSTDIR}${FPATH}
+                        fi
+                        ;;
+                L)
+                        # Create a symlink
+			ln -sfh ${HASH} ${DSTDIR}${FPATH}
+                        ;;
+                esac
+            done
+
+        # Perform a second pass, adding file flags.
+       tr '|' ' ' < $1 |
+           while read FPATH TYPE OWNER GROUP PERM FLAGS HASH LINK; do
+               if [ ${TYPE} = "f" ] &&
+                   ! [ ${FLAGS} = "0" ]; then
+                       chflags ${FLAGS} ${DSTDIR}/${FPATH}
+               fi
+           done
+}
+
+
+### Cumulative. func
+
+stage1()
+{
+	${ECHO} "${GREEN}* ${MAGENTA}Create hier${NORMAL}"
+
+	# create hier for source dir
+	exd="^${SRCDIR}(${exclude_dirs})"
+	exf="^${SRCDIR}(${exclude_files})"
+
+	name=${SRCNAME}
+	rootdir=${SRCDIR}
+	find_files="find -E ${SRCDIR} \( -type f -or -type l \) -and -not -regex \"$exf\""
+	find_dirs="find -E ${SRCDIR} -type d -and -not -regex \"$exd\""
+
+	truncate -s0 ${tmpdir}/${SRCNAME}.hier.$$
+	set_files_tofile
+	set_dirs_tofile
+
+	if [ -f "${dbdir}/nodehier.${DSTNAME}.gz" ]; then
+	    mv ${dbdir}/nodehier.${DSTNAME}.gz ${tmpdir}
+	    gzip -d ${tmpdir}/nodehier.${DSTNAME}.gz
+	    mv ${tmpdir}/nodehier.${DSTNAME} ${tmpdir}/${DSTNAME}.hier.$$
+	else
+	    ${ECHO} "${MAGENTA}   Destination hier not found - source hier will be used instead${NORMAL}"
+	    cp ${tmpdir}/${SRCNAME}.hier.$$  ${tmpdir}/${DSTNAME}.hier.$$
+	fi
+
+	trap "rm -f ${tmpdir}/${SRCNAME}.hier.$$ ${tmpdir}/${DSTNAME}.hier.$$ ${tmpdir}/files.removed.$$ ${tmpdir}/files.added.$$ ${tmpdir}/files.updated.$$ ${tmpdir}/cmp.ids.$$ ${tmpdir}/job.ids.$$" HUP INT ABRT BUS TERM EXIT
+}
+
+stage2()
+{
+    ${ECHO} "${GREEN}* ${MAGENTA}Compare hier${NORMAL}"
+    create_hierdiff ${tmpdir}/${DSTNAME}.hier.$$ ${tmpdir}/${SRCNAME}.hier.$$
+}
+
+stage3()
+{
+    ${ECHO} "${GREEN}* ${MAGENTA}Create IDS${NORMAL}"
+    for BASEDIR in ${SRCDIR} ${DSTDIR}; do
+	name=`md5 -qs ${BASEDIR}`
+	# For all paths appearing in INDEX-OLD or INDEX-NEW, inspect the
+	# system and generate an INDEX-PRESENT file.
+	fetch_inspect_system ${tmpdir}/${name}.hier.$$ ${tmpdir}/${name}.ids.$$ || return 1
+    done
+}
+
+stage4()
+{
+    ${ECHO} "${GREEN}* ${MAGENTA}Compare IDS${NORMAL}"
+    truncate -s0 ${WORK_IDS}
+    IDS_compare ${tmpdir}/${SRCNAME}.ids.$$ ${tmpdir}/${DSTNAME}.ids.$$
+}
+
+stage5()
+{
+    while read F; do
+	fgrep "${F}|" ${tmpdir}/${SRCNAME}.hier.$$ >> ${WORK_IDS}
+##	grep "^${F}|" ${SRCNAME}.hier >> ${WORK_IDS}
+    done < ${tmpdir}/files.added.$$
+}
+
+#stage5()
+#{
+#    truncate -s0 ${WORK_IDS}
+#    while read F; do
+#	while read LINE; do
+#	    FPATH=`echo "${LINE}" | cut -f 1 -d '|'`
+#	    [ "${F}" = "${FPATH}" ] && echo ${LINE} >> ${WORK_IDS}
+#	done < ${SRCNAME}.hier
+#    done < files.added
+#}
+
+stage6()
+{
+    ${ECHO} "${GREEN}* ${MAGENTA}Installing${NORMAL}"
+    install_from_index ${WORK_IDS}
+#    install_from_index /usr/jails/tmp/job.ids.16793
+}
+
+stage7()
+{
+    ${ECHO} "${GREEN}* ${MAGENTA}Cleanup${NORMAL}"
+    #store src hier as dst hier in gzip
+    mv ${tmpdir}/${SRCNAME}.hier.$$  ${tmpdir}/${DSTNAME}.hier
+    gzip -9c ${tmpdir}/${DSTNAME}.hier > ${dbdir}/nodehier.${DSTNAME}.gz
+    rm -f ${tmpdir}/${SRCNAME}.hier.$$ ${tmpdir}/${DSTNAME}.hier.$$ ${tmpdir}/${DSTNAME}.hier ${tmpdir}/files.removed.$$ ${tmpdir}/files.added.$$ ${tmpdir}/files.updated.$$ ${tmpdir}/cmp.ids.$$ ${tmpdir}/job.ids.$$
+}
+
+init_world()
+{
+	if [ -n "${destdir}" ]; then
+	    DSTDIR="${destdir}"
+	else
+	    DSTDIR="/"
+	fi
+
+	if [ -z "${basename}" ]; then
+	    SRCDIR="${basejaildir}/${basejailpref}_${arch}_${ver}"
+	else
+	    SRCDIR="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+	fi
+	[ ! -d "${SRCDIR}" ] && err 1 "${MAGENTA}You have no ${SRCDIR}. Use ${GREEN}cbsd installworld${MAGENTA} or ${GREEN}repo action=get sources=base${MAGENTA} before upgrade${NORMAL}"
+
+	SRCNAME=`md5 -qs ${SRCDIR}`
+	DSTNAME=`md5 -qs ${DSTDIR}`
+	CMP_IDS="${tmpdir}/cmp.ids.$$"
+	WORK_IDS="${tmpdir}/job.ids.$$"
+}
+
+upgrade_world()
+{
+	${ECHO} "${MAGENTA}Upgrading world in ${DSTDIR}. don't interrupt the process${NORMAL}"
+	stage1
+	stage2
+	stage3
+	stage4
+	stage5
+	stage6
+	stage7
+}
+
+###MAIN
+[ -f "${etcdir}/upgrade.conf" ] && . ${etcdir}/upgrade.conf
+
+case "${target}" in
+    "world")
+	init_world
+	upgrade_world
+	;;
+    "kernel")
+	init_kernel
+	upgrade_kernel "${KERNELSOURCE}"
+        ;;
+    "node")
+	init_kernel
+	init_world
+	upgrade_world
+	upgrade_kernel "${KERNELSOURCE}"
+	;;
+    *)
+	${ECHO} "Unsupported target"
+	;;
+esac
+
