@@ -26,8 +26,8 @@
 #include <paths.h>
 
 #define SOCK_PATH	"/tmp/nodepinger.sock"
-#define ERROR_LOG	"/var/log/nodepinger.log"
-#define DEFAULT_PIDFILE_PATH	"/var/run/nodepinger.pid"
+#define ERROR_LOG	"/tmp/nodepinger.log"
+#define DEFAULT_PIDFILE_PATH	"/tmp/nodepinger.pid"
 
 #define MAXNODELEN 1024
 

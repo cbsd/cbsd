@@ -1,0 +1,82 @@
+#!/usr/local/bin/cbsd
+#v9.2.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="old new host_hostname"
+MYOPTARG="ip4_addr verbose"
+MYDESC="Jail cloning"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${tools}
+. ${inventory}
+. ${jfs}
+. ${color}
+init $*
+
+[ ! -f "${globalconf}" ] && err 1 "${MAGENTA}no such conf file${NORMAL}";
+. ${globalconf}
+
+myjid=`cbsdsql local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null`
+[ -z "${myjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
+[ $myjid -ne 0 ] && err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${NORMAL}"
+
+myjid=`cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null`
+[ -n "${myjid}" ] && err 1 "${MAGENTA}Jail already exist: ${GREEN}${new}${NORMAL}"
+
+DST="${jaildatadir}/${new}-${jaildatapref}"
+SRC="${jaildatadir}/${old}-${jaildatapref}"
+JAILDIR="${jaildir}/${new}"
+JAILFSTAB="${jailfstabdir}/${jailfstabpref}${new}"
+JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${new}.local"
+JAILFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}"
+JAILLOCALFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}.local"
+JAILRCCONF="${jailrcconfdir}/rc.conf_${new}"
+JAILRCCONFORIG="${jailrcconfdir}/rc.conf_${old}"
+SYSDIROLD="${jailsysdir}/${old}"
+SYSDIRNEW="${jailsysdir}/${new}"
+
+[ ! -d "${SRC}" ] && err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
+
+if [ -d "${DST}" ]; then
+    rmdir ${DST} >/dev/null 2>&1
+    [ -d "${DST}" ] && err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
+fi
+
+[ ! -d "${JAILDIR}" ] && mkdir -p ${JAILDIR}
+[ ! -d "${jailfstab}"  ] && mkdir -p $jailfstabdir
+[ ! -d "${jailrcconf}"  ] && mkdir -p $jailrcconfdir
+
+printf "${MAGENTA}Cloning.${NORMAL}"
+cbsd jmkrcconf jname=${old} > $JAILRCCONF
+cbsd jregister jname=${new}
+rm -f ${JAILRCCONF}
+
+if [ -f "${JAILFSTABORIG}" ]; then
+	/usr/bin/sed "s/\/${old}/\/${new}/g" ${JAILFSTABORIG} > ${JAILFSTAB}
+	dot "fstab"
+fi
+
+[ -f "${JAILLOCALFSTABORIG}" ] && cp ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "cp fstablocal"
+
+cbsdsql local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname}\" WHERE jname=\"${new}\"
+
+if [ -n "${ip4_addr}" ]; then
+ cbsdsql local UPDATE jails SET ip4_addr=\"${ip4_addr}\" WHERE jname=\"${new}\"
+fi
+
+jname=${new}
+if [ "${verbose}" = "1" ]; then
+    clonedata $SRC $DST rsync
+else
+    clonedata $SRC $DST rsync > /dev/null 2>&1
+fi
+
+dot "clone rsync"
+
+if [ -d "$SYSDIROLD" ]; then
+    cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
+    dot "cp sysdir"
+fi
+
+err 0 "${GREEN}ok${NORMAL}"

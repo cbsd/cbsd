@@ -22,6 +22,34 @@ on_mounted()
 return 1
 }
 
+
+# check for base dir existance
+# if not exist - ask and try to fetch from repository
+# exit when no base and repo failure
+# $basepath - alternative (prefered) path to base dir
+# or
+# $arch and $ver (opt: $basename) must be set
+get_base()
+{
+    if [ -z "${basepath}" ]; then
+        if [ -z "${basename}" ]; then
+            basepath="${basejaildir}/${basejailpref}_${arch}_${ver}"
+        else
+            basepath="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+        fi
+    fi
+
+    # check for basepath existance
+    if [ ! -d "${basepath}" ]; then
+            getyesno "No ${arch} ${ver} base. Try to fetch from remote repository?"
+            [ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${basepath}${NORMAL}"
+            cbsd repo action=get sources=base arch=${arch} ver=${ver}
+    fi
+
+    [ ! -d "${basepath}" ] && err 1 "${MAGENTA}No base data on: ${GREEN}${basepath}${NORMAL}"
+
+}
+
 # Mount base -b or default  to destination dir $path
 # -b base path
 # -k kernel path
@@ -70,22 +98,8 @@ MNTCODE=0
         ;;
     esac
 
-    if [ -z "${basepath}" ]; then
-	if [ -z "${basename}" ]; then
-    	    basepath="${basejaildir}/${basejailpref}_${arch}_${ver}"
-    	else
-    	    basepath="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
-    	fi
-    fi
+    get_base
 
-    # check for basepath existance
-    if [ ! -d "${basepath}" ]; then
-	    getyesno "No ${arch} ${ver} base. Try to fetch from remote repository?"
-	    [ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${basepath}${NORMAL}"
-	    cbsd repo action=get sources=base arch=${arch} ver=${ver}
-    fi
-
-    [ ! -d "${basepath}" ] && err 1 "${MAGENTA}No base data on: ${GREEN}${basepath}${NORMAL}"
     [ ! -d "${path}" ] && mkdir -p ${path}
 
     if [ "${baserw}" = "0" ]; then
@@ -258,4 +272,36 @@ ${_dir}/COPYRIGHT"
     fi
 
     [ "${applytpl}" = "1" ] && truncate -s0 ${_dst}/etc/motd
+}
+
+# populate or remove system files from jail data dir
+# $1 - jail data dir
+# $2 - mode: 1 - write (populate), 2 - readonly (remove)
+switch_baserw()
+{
+
+    [ ! -d "${1}" ] && return 0
+
+    get_base
+
+# populate
+    if [ "${2}" = "1" ]; then
+JAILNODATA="${_dir}/.cshrc.*|\
+${basepath}/dev.*|\
+${basepath}/sys.*|\
+${basepath}/.profile.*|\
+${basepath}/boot.*|\
+${basepath}/COPYRIGHT.*|\
+${basepath}/proc.*|\
+${basepath}/root.*|"
+
+	${ECHO} "${MAGENTA}Populate jail data: ${GREEN}${basepath}${NORMAL}"
+	cd $basepath && find -E ${basepath} \( -type f -or -type d -or -type l \) -and -not -regex \"$JAILNODATA\" -print |sed s:${basepath}:./:g |cpio -pdmu ${1}
+
+# HERE is PLACE for removing fstab records: SEE https://redmine.olevole.ru/issues/284
+    fi
+
+
+
+
 }

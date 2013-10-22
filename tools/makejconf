@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.0.0
+#v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname out"
 MYOPTARG=""
@@ -10,33 +10,34 @@ MYDESC="Make jailv2 config file"
 . ${subr}
 . ${inventory}
 . ${tools}
+
 init $*
 
 mkjhosts()
 {
-IP=$1
-JHOST=$2
+    IP=$1
+    JHOST=$2
 
-[ $applytpl -eq 0 -o "$ver" = "empty" ] && return
+    [ $applytpl -eq 0 -o "$ver" = "empty" ] && return
 
-#check for dup
-for i in `egrep "[:blank:]*${host_hostname}" ${JHOST} |awk '/^;/{print $1"\n"}'`; do
-[ "$i" = "${IP}" ] || {
-    TMPH="${ftmpdir}/hosts.$$"
-    cp ${JHOST} ${TMPH}
-    grep -v "[:blank:]*${host_hostname}" ${TMPH} > ${JHOST}
-    rm -f ${TMPH}
-    }
-done
+    #check for dup
+    for i in `egrep "[:blank:]*${host_hostname}" ${JHOST} |awk '/^;/{print $1"\n"}'`; do
+	if [ "$i" != "${IP}" ]; then
+		TMPH="${ftmpdir}/hosts.$$"
+		cp ${JHOST} ${TMPH}
+		grep -v "[:blank:]*${host_hostname}" ${TMPH} > ${JHOST}
+		rm -f ${TMPH}
+	fi
+    done
 
-[ `grep -c ^${IP} ${JHOST}` = "0" ] && echo ${IP} ${host_hostname} >> ${JHOST}
+    [ `grep -c ^${IP} ${JHOST}` = "0" ] && echo ${IP} ${host_hostname} >> ${JHOST}
 }
 
 
-JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
-[ -f  ${JAILRCCONF} ] || err 1 "no conf rc.conf file for jail"
-
+JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
+cbsd jmkrcconf jname=${jname} > ${JAILRCCONF}
 . ${JAILRCCONF}
+rm -f ${JAILRCCONF}
 
 eval multiips4=\"\$ip4_addr\"
 
@@ -46,10 +47,10 @@ cat > ${out} << EOF
 ${jname} {
 exec.start = "${exec_start}";
 exec.stop = "${exec_stop}";
-exec.poststart="${exec_poststart}";
-exec.poststop="${exec_poststop}";
-exec.prestart="${exec_prestart}";
-exec.prestop="${exec_prestop}";
+#exec.poststart="${exec_poststart}";
+#exec.poststop="${exec_poststop}";
+#exec.prestart="${exec_prestart}";
+#exec.prestop="${exec_prestop}";
 exec.clean;
 #mount.devfs;
 host.hostname = "${host_hostname}";
@@ -60,43 +61,52 @@ allow.chflags;
 allow.sysvipc;
 EOF
 
-[ -z "${interface}" -o "${interace}" = "0" ] |
 ALIAS4=""
 ALIAS6=""
 ips=`echo ${multiips4}|tr "," " "`
+
+# autodetect correct interface
+if [ -n "${interface}" ]; then
+    if [ "${interface}" = "auto" ]; then
+	if [ -n "${ip4_addr}" ]; then
+	    ip=`echo ${ip4_addr}|awk '{printf $1}'`
+	    interface=`cbsd getnics-by-ip ip=${ip}`
+	else
+	    interface=`cbsd getnics-by-ip ip=0.0.0.0`
+	fi
+    fi
+    echo "interface=\"${interface}\";" >> $out
+fi
+
 for a in ${ips}; do
-iptype $a
-_inet=$?
-[ ${_inet} -eq 0 ] && continue
+    iptype $a
+    _inet=$?
+    [ ${_inet} -eq 0 ] && continue
 
-[ -z "${interface}" -o "${interface}" = "0" ] || iface=`cbsd getnics-by-ip ip=${a}`
-ipwmask ${a}
+    ipwmask ${a}
 
-case ${_inet} in
-1)
-        if [ -z "$ALIAS4" ]; then
-            echo "ip4.addr = ${a};" >> ${out}
-            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-            ALIAS4="1"
-        else
-            [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-            echo "ip4.addr += ${a};" >> ${out}
-        fi
-
-
-;;
-2)
-        if [ -z "$ALIAS6" ]; then
-            echo "ip6.addr = ${a};" >> ${out}
-	    ALIAS6="1"
-        else
-            echo "ip6.addr += ${a};" >> ${out}
-        fi
-;;
-esac
+    case ${_inet} in
+	1)
+	    if [ -z "$ALIAS4" ]; then
+		echo "ip4.addr = ${a};" >> ${out}
+		[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+		ALIAS4="1"
+	    else
+		[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+		echo "ip4.addr += ${a};" >> ${out}
+	    fi
+	    ;;
+	2)
+	    if [ -z "$ALIAS6" ]; then
+		echo "ip6.addr = ${a};" >> ${out}
+		ALIAS6="1"
+	    else
+		echo "ip6.addr += ${a};" >> ${out}
+	    fi
+	    ;;
+    esac
 done
 
-[ -n "${interface}" -a "${interface}" != "0" ] && echo "interface=\"${interface}\";" >> $out
 if [ "$devfs" = "NO" ]; then
     echo "mount.nodevfs;" >> ${out}
 else

@@ -1,0 +1,86 @@
+#!/usr/local/bin/cbsd
+#v9.2.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="node jname"
+MYOPTARG="verbose"
+MYDESC="Prepare remote node for accepting jail via j2slave"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${color}
+. ${strings}
+init $*
+
+[ -z "${node}" ] && err 1 "${MAGENTA}Give me node${NORMAL}"
+[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
+
+SECFILE="${workdir}/etc/${jname}.secrets"
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+printf "${MAGENTA}Preparing.${NORMAL}"
+
+cbsd jgensecrets jname=${jname} mode=force > $DEBLOG 2>&1
+dot "jgensecrets"
+
+[ ! -f "${SECFILE}" ] && err 1 "${MAGENTA}No such secrets${NORMAL}"
+
+NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\"`
+
+[ -z "${NODEDATA}" ] && err 1 "${node}: No such node in base"
+sqllist "$NODEDATA" myip myport mykey
+
+SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+
+cbsd jset mode=force jname=${jname} masterhost="$nodeip" > $DEBLOG 2>&1
+dot "jset"
+cbsd rexe node=$node cbsd secretsfile jname=$jname mode=off > $DEBLOG 2>&1
+dot "rexe"
+cbsd nodescp ${SECFILE} ${node}:etc > $DEBLOG 2>&1
+dot "scp_secfile"
+cbsd imgpart jname=${jname} part=sysdata mode=pack out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
+trap "rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+cbsd nodescp ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > $DEBLOG 2>&1
+dot "scp_sysdata"
+cbsd rexe node=$node cbsd secretsfile jname=$jname mode=on > $DEBLOG 2>&1
+dot "rexe_2"
+RDIR="${jname}-data"
+cbsd rexe node=$node cbsd mkdatadir jname=${RDIR} > $DEBLOG 2>&1
+dot "rexe_3"
+
+JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
+RJAILRCCONF="jails-rcconf/rc.conf_${jname}"
+
+JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
+JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+
+RJAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
+RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}"
+
+[ ! -d ${JAILDIR} ] && err 1 "No jail data for ${jname}"
+
+if [ -f ${JAILFSTAB} ]; then
+	cbsd nodescp ${JAILFSTAB} ${node}:${RJAILFSTAB} > $DEBLOG 2>&1
+	dot "scp fstab"
+fi
+
+cbsd jmkrcconf jname=${jname} > ${JAILRCCONF}
+cbsd nodescp ${JAILRCCONF} ${node}:${RJAILRCCONF} > $DEBLOG 2>&1
+dot "scp rcconf"
+rm -f ${JAILRCCONF}
+
+cbsd rexe node=$node cbsd jrsyncconf jname=${jname} > $DEBLOG 2>&1
+dot "rexe_jrsyncconf"
+
+echo cbsd rexe node=$node cbsd imgpart jname=jails-system/${jname}-sysdata.tgz part=sysdata mode=extract out=jails-system > $DEBLOG 2>&1
+dot "rexe_img_extract_sysdata"
+
+cbsd rexe node=$node rm -f jails-system/${jname}-sysdata.tgz > $DEBLOG 2>&1
+dot "rexe_rm-f-sysdata"
+
+cbsd rexe node=$node cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > $DEBLOG 2>&1
+dot "rexe_4"
+err 0 "${GREEN}ok${NORMAL}"

@@ -12,6 +12,7 @@ ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
 . ${inventory}
 . ${system}
 . ${color}
+. ${strings}
 
 init $*
 
@@ -76,8 +77,6 @@ fwcounter()
 
     if [ "${ipfw_enable}" = "1" -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
 	${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
-	TRAFDIR="${jailsysdir}/${jname}/${jname}-traffic"
-	[ -d "${TRAFDIR}" ] || mkdir -p ${TRAFDIR}
 	FWIN=$((ST * 2 + fwcount_st))
 	FWOUT=$((FWIN + 1))
 	FREE=0
@@ -137,25 +136,21 @@ fi
 # MAIN
     [ -z "$jname" ] && jname=$1
 
-    JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+    . ${jrcconf}
+    [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+    [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+    [ $jid -ne 0 ] && err 1 "${MAGENTA}Jail already running, jid: ${GREEN}${jid}${NORMAL}"
 
-    [ ! -f  "${JAILRCCONF}" ] && err 1 "${MAGENTA}no conf rc.conf file for ${jname}${NORMAL}"
-
-    . ${JAILRCCONF}
-
-    [ $baserw -eq 1 ] && path=$data
+    if [ $baserw -eq 1 ]; then
+	path=$data
+	[ ! -f "${path}/bin/sh" ] && switch_baserw ${path} 1
+    fi
 
     #Check for md vnode backend
     if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	MDFILE="${jailsysdir}/${jname}/image.dat"
 	[ ! -f "${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
     fi
-
-    ##### check for already running
-    ST=`cbsd jstatus jname=${jname}`
-    [ $? -eq 0 ] && err 1 "${MAGENTA}No such jail${NORMAL}"
-
-    [ "${ST}" != "0" ] && err 1 "${MAGENTA}Jail already running: ${GREEN}jid ${ST}${NORMAL}"
 
     cbsd jcleanup jname=${jname}
     [ ! -d "${path}" ] && mkdir ${path}
@@ -186,18 +181,17 @@ fi
 	    iface=`cbsd getnics-by-ip ip=${pureip}`
 	    ipwmask ${pureip}
 		if [ -n "$iface" ]; then
-		    sysrc -qf ${JAILRCCONF} interface="${iface}" >/dev/null
+		    cbsd jset jname=${jname} interface="${iface}"
 		    break
 		else
 		    err 1 "${MAGENTA}Can't determine interfaces for:${GREEN} ${pureip}${NORMAL}"
 		fi
 	done
     fi
-
     #test for zfs mounted & mount if not
     case $zfsfeat in
 	1) . $zfstool
-	    zfsmnt ${path}
+	    zfsmnt ${data}
     	    [ $? -eq 2 ] && zfs mount "${ZPOOL}"
     	;;
     esac
@@ -258,7 +252,6 @@ fi
     else
 	[ ! -d "${data}/var/cache/pkg" ] && mkdir -p "${data}/var/cache/pkg"
     fi
-
     cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf
 
     #rctl area

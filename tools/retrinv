@@ -2,9 +2,11 @@
 #v9.2.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="node"
+MYOPTARG="node data jname"
 MYDESC="Fetch sqldb from remove node\n"
-ADDHELP="when node argument is empty - retrieve db from all nodes from node lists\n"
+ADDHELP="when node argument is empty - retrieve db from all nodes from node lists\n\
+data can be - jdescr,nodedescr,db,rctl,fwcnt. If not specify - retrieive all of them\n\
+jname - fetch data only for specified jail"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -20,7 +22,7 @@ retr_db()
 
     [ -z "${_rnode}" ] && return 0
 
-    cbsd nodescp ${_rnode}:var/db/local.sqlite ${dbdir}/${_rnode}.sqlite && chown ${cbsduser} "${dbdir}/${_rnode}.sqlite"
+    cbsd nodescp ${_rnode}:var/db/inv.${_rnode}.sqlite ${dbdir}/${_rnode}.sqlite && chown ${cbsduser} "${dbdir}/${_rnode}.sqlite"
     if [ $? -eq 0 ]; then
 	$ECHO "${MAGENTA}Fetching inventory done: ${GREEN}${_rnode}${NORMAL}"
     else
@@ -40,39 +42,100 @@ retr_nodedescr()
 
     for _i in ${_files}; do
 	cbsd nodescp ${_rnode}:node.${_i} ${dbdir}/nodedescr/${_rnode}.${_i} 2>/dev/null && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}" 2>/dev/null
+
     done
 }
 
 
 retr_jdescr()
 {
-    local _rnode=$1 _jails
+    local _rnode=$1 _jname
 
     [ -z "${_rnode}" ] && return 0
 
     [ ! -f "${dbdir}/${_rnode}.sqlite" ] && return 0
     [ ! -d "${dbdir}/nodedescr" ] && mkdir -p "${dbdir}/nodedescr"
 
-    _jails=`cbsd -c "cbsdsql ${_rnode} select jname from jails"`
+    if [ -z "$jname" ]; then
+        _jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+    else
+        _jname=${jname}
+    fi
 
-    for _i in ${_jails}; do
+    [ -z "${_jname}" ] && return 0
+
+
+    for _i in ${_jname}; do
 	cbsd nodescp ${_rnode}:jails-system/${_i}/descr ${dbdir}/nodedescr/${_rnode}.${_i}.descr 2>/dev/null && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}.descr" 2>/dev/null
     done
 }
 
+retr_rctl()
+{
+    local _rnode=$1 _jname
+
+    [ -z "${_rnode}" ] && return 0
+
+    [ ! -f "${dbdir}/${_rnode}.sqlite" ] && return 0
 
 
+    if [ -z "$jname" ]; then
+        _jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+    else
+        _jname=${jname}
+    fi
 
+    [ -z "${_jname}" ] && return 0
 
-
-if [ -n "${node}" ]; then
-    retr_db ${node}
-    retr_nodedescr ${node}
-    retr_jdescr ${node}
-else
-    for i in `cbsd node mode=list`; do
-	retr_db ${i}
-	retr_nodedescr ${i}
-	retr_jdescr ${i}
+    for _i in ${_jname}; do
+	[ ! -d "${dbdir}/rctl/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/rctl/${_rnode}-${_i}"
+	cbsd nodescp ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null && chown ${cbsduser} ${dbdir}/rctl/${_rnode}-${_i}/* 2>/dev/null
     done
-fi
+}
+
+retr_fwcnt()
+{
+    local _rnode=$1 _jname
+
+    [ -z "${_rnode}" ] && return 0
+
+    [ ! -f "${dbdir}/${_rnode}.sqlite" ] && return 0
+
+    if [ -z "$jname" ]; then
+	_jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+    else
+	_jname=${jname}
+    fi
+
+    [ -z "${_jname}" ] && return 0
+
+    for _i in ${_jname}; do
+	[ ! -d "${dbdir}/fwcnt/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/fwcnt/${_rnode}-${_i}"
+	cbsd nodescp ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null && chown ${cbsduser} ${dbdir}/fwcnt/${_rnode}-${_i}/* 2>/dev/null
+    done
+}
+
+[ -z "${data}" ] && data="db jdescr nodedescr rctl fwcnt"
+[ -z "${node}" ] && node=`cbsd node mode=list`
+
+for i in ${node}; do
+    for items in ${data}; do
+	case "${items}" in
+	    db)
+		retr_db ${i}
+		;;
+	    nodedescr)
+		retr_nodedescr ${i}
+		;;
+	    jdescr)
+		retr_jdescr ${i}
+		;;
+#	    rctl)
+#		retr_rctl ${i}
+#		;;
+	    fwcnt)
+		retr_fwcnt ${i}
+#		;;
+	esac
+    done
+done
