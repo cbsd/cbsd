@@ -69,30 +69,47 @@ prestart()
     done
 }
 
+# return in $FWNUM first free ipfw num
+# return 0 if not available
+get_first_available_fwcount()
+{
+
+    for i in `seq ${fwcount_st} ${fwcount_end}`; do
+	/sbin/ipfw -q show ${i} > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    FWNUM=$i
+	    return 0
+	fi
+    done
+
+    [ $i -eq ${fwcount_end} ] && FWNUM=0
+}
 
 fwcounter()
 {
-    ST=`cbsd jstatus jname=${jname}`
-    [ $? -ne 1 ] && return 0
-
+    . ${jrcconf}
+    [ ${jid} -eq 0 ] && return 0
     if [ "${ipfw_enable}" = "1" -a -n "`sysctl -qn net.inet.ip.fw.enable`" ]; then
-	${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
-	FWIN=$((ST * 2 + fwcount_st))
-	FWOUT=$((FWIN + 1))
-	FREE=0
-	ipfw list ${FWIN} > /dev/null 2>&1 || ipfw list ${FWOUT} > /dev/null 2>&1 || FREE=1
+	#FWIN
+	get_first_available_fwcount
 
-	if [ "${FREE}" = "0" ]; then
-	    ${ECHO} "${MAGENTA}ipfw counter ${FWIN} and/or ${FWOUT} busy. Skipping${NORMAL}"
-	    return 1
+	if [ $FWNUM -eq 0 ]; then
+	    ${ECHO} "${MAGENTA}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${NORMAL}"
+	    return 0
 	fi
 
-	${ECHO} $FWIN > ${ftmpdir}/${jname}-fwin
-	${ECHO} $FWOUT > ${ftmpdir}/${jname}-fwout
-	### FWIN
-	/sbin/ipfw -q add ${FWIN} count ip from any to me jail ${ST}
-	### FWOUT
-	/sbin/ipfw -q add ${FWOUT} count ip from me to any jail ${ST}
+	${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
+        /sbin/ipfw -q add ${FWNUM} count ip from any to me jail ${jid} && echo ${FWNUM} > ${ftmpdir}/${fname}-fwin
+
+	#FWOUT
+	get_first_available_fwcount
+
+	if [ $FWNUM -eq 0 ]; then
+            ${ECHO} "${MAGENTA}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${NORMAL}"
+            return 0
+        fi
+
+	/sbin/ipfw -q add ${FWNUM} count ip from me to any jail ${jid} && ${ECHO} ${FWNUM} > ${ftmpdir}/${jname}-fwout
     fi
 }
 
