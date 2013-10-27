@@ -8,10 +8,7 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cd.c echo.c error.c eval.c \
 GENSRCS= builtins.c init.c nodes.c syntax.c
 GENHDRS= builtins.h nodes.h syntax.h token.h
 SRCS= ${SHSRCS} ${GENSRCS} ${GENHDRS}
-
-# MLINKS for Shell built in commands for which there are no userland
-# utilities of the same name are handled with the associated manpage,
-# builtin.1 in share/man/man1/.
+WITHOUT_MAN=	yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 LDADD= -ledit -ltermcap -lsqlite3
