@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "sqlite3.h"
 
@@ -76,6 +77,8 @@ main(int argc, char **argv)
 	char	*query;
 	char	*tmp;
 	char	*err;
+	int	maxretry=10;
+	int	retry=0;
 
 	if (argc<3) {
 		usage();
@@ -102,16 +105,22 @@ main(int argc, char **argv)
 		tmp[-1] = 0;
 		err = 0;
 		i = 0;
-		sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
-		if (err) {
-			printf("%s: sqlite_error: %s\n", nm(), err);
+		for (retry=0;retry<maxretry;retry++) {
+		    sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
+		    if (err) {
+			sleep(1); //locked?
 			sqlite3_free(err);
-			sqlite3_free(query);
-			sqlite3_close(db);
-			return 1;
+		    }
+		    else break; //skip retry cycle
 		}
 		sqlite3_free(query);
 	}
 	sqlite3_close(db);
+
+	if (err) {
+		printf("%s: sqlite_error: %s\n", nm(), err);
+		sqlite3_free(err);
+		return 1;
+	}
 	return 0;
 }

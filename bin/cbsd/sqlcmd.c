@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <unistd.h>
 
 #include "shell.h"
 #include "main.h"
@@ -81,6 +82,8 @@ sqlitecmd(int argc, char **argv)
 	char	*err;
 	char *dbdir;
 	char *dbfile;
+	int     maxretry=10;
+	int     retry=0;
 
 	if (argc<3) { 
 	    out1fmt("%s: format: %s <dbfile> <query>\n",nm(),nm());
@@ -121,16 +124,21 @@ sqlitecmd(int argc, char **argv)
 		tmp[-1] = 0;
 		err = 0;
 		i = 0;
-		sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
-		if (err) {
-			out1fmt("%s: sqlite_error: %s\n", nm(), err);
+		for (retry=0;retry<maxretry;retry++) {
+		    sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
+		    if (err) {
+			sleep(1); //locked?
 			sqlite3_free(err);
-			sqlite3_free(query);
-			sqlite3_close(db);
-			return 1;
+		    }
+		    else break; //skip retry cycle
 		}
 		sqlite3_free(query);
 	}
 	sqlite3_close(db);
+	if (err) {
+	    out1fmt("%s: sqlite_error: %s\n", nm(), err);
+	    sqlite3_free(err);
+	    return 1;
+	}
 	return 0;
 }
