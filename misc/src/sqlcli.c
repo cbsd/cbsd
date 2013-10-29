@@ -76,7 +76,7 @@ main(int argc, char **argv)
 	int	 i;
 	char	*query;
 	char	*tmp;
-	char	*err;
+	char	*err = NULL;
 	int	maxretry=10;
 	int	retry=0;
 
@@ -107,11 +107,10 @@ main(int argc, char **argv)
 		i = 0;
 		for (retry=0;retry<maxretry;retry++) {
 		    sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
-		    if (err) {
+		    if (err)
 			sleep(1); //locked?
-			sqlite3_free(err);
-		    }
-		    else break; //skip retry cycle
+		    else
+			break; //skip retry cycle
 		}
 		sqlite3_free(query);
 	}
