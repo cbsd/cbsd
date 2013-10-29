@@ -13,7 +13,7 @@ WITHOUT_MAN=	yes
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 LDADD= -ledit -ltermcap -lsqlite3
 
-CFLAGS+=-DSHELL -DNO_HISTORY -DCBSD -I. -I${.CURDIR} -I/usr/local/include -L/usr/local/lib
+CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 # for debug:
 # DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
 WARNS?=	2
