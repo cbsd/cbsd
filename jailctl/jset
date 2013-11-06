@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v9.2.2
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname"
 
@@ -18,7 +18,84 @@ ADDHELP="mode=force for modification on the running jail\n"
 
 . ${inventory}
 . ${tools}
+. ${strings}
 init $*
+
+# jid, interface, ip4_addr and jname must be set
+modify_ipaddr()
+{
+    local _A _IPs _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs
+
+    _A=`cbsdsql local SELECT interface,ip4_addr FROM jails WHERE jname=\"${jname}\"`
+    sqllist "${_A}" _interface _ip4_addr_old
+
+    if [ "${_interface}" = "0" ]; then
+	${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently disabled because option interface is "0"${NORMAL}"
+	return 0
+    fi
+
+    #remove aliases first
+    _IPs=`echo ${_ip4_addr_old}| tr "," " "`
+
+    for _pureip in ${_IPs}; do
+	iptype ${_pureip}
+	_inet=$?
+	_iface=`cbsd getnics-by-ip ip=${_pureip}`
+	ipwmask ${_pureip}
+	if [ -n "$IWM" ]; then
+	    case ${_inet} in
+		1)
+		    _MODIF="inet"
+		    ;;
+		2)
+		    _MODIF="inet6"
+		    ;;
+	    esac
+	    /sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias
+
+        fi
+    done
+
+    _IPs=`echo ${ip4_addr}|tr "," " "`
+    _IP4=""
+    _IP6=""
+
+    for _pureip in ${_IPs}; do
+	iptype ${_pureip}
+	_inet=$?
+	_iface=`cbsd getnics-by-ip ip=${_pureip}`
+	ipwmask ${_pureip}
+	if [ -n "$IWM" ]; then
+	    case ${_inet} in
+        	1)
+		    _MODIF="inet"
+		    if [ -z "${_IP4}" ]; then
+			_IP4="${_pureip}"
+		    else
+			_IP4="${_IP4},${_pureip}"
+		    fi	
+		    ;;
+		2)
+		    _MODIF="inet6"
+		    if [ -z "${_IP6}" ]; then
+			_IP6="${_pureip}"
+		    else
+			_IP6="${_IP6},${_pureip}"
+		    fi
+		    ;;
+	    esac
+	    /sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias
+	fi
+    done
+
+    #construct ipX.addr string 
+    _nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
+
+    /usr/sbin/jail -m ${_nIPs} jid=${jid}
+    cbsdsql local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
+    ${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+}
+
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
 jid=`cbsd jstatus jname=${jname}`
@@ -32,13 +109,14 @@ for n in $@; do
         if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
             ##### check for already running
             if [ ${jid} -ne 0  ]; then
-                if [ "${argpart}" != "ip4_addr" ]; then
-                    ${ECHO} "${argpart}: ${MAGENTA}on-the-fly currentlry unimplemented${NORMAL}"
-                else
-                    eval VAL=\$$i
-                    cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
-                    ${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
-                fi
+		case "${argpart}" in
+		    "ip4_addr")
+			modify_ipaddr
+			;;
+		    *)
+			${ECHO} "${argpart}: ${MAGENTA}on-the-fly currentlry unimplemented${NORMAL}"
+			;;
+                esac
             else
                 eval VAL=\$$i
                 cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
@@ -46,7 +124,6 @@ for n in $@; do
             fi
         fi
     done
-
 done
 
 # exit code 0 is nessesary for dot()

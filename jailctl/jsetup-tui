@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.2
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
@@ -23,7 +23,9 @@ commit()
 {
     for i in ${JARG}; do
 	eval VAL=\$$i
-	[ -n "${VAL}" -a "${i}" != "jname" ] && cbsd jset mode=quiet jname=${jname} $i=\"${VAL}\"
+	eval OVAL=\$OLDVAL_${i}
+	    [ "${VAL}" = "${OVAL}" ] && continue
+	    cbsd jset mode=quiet jname=${jname} $i=\"${VAL}\"
     done
     exit
 }
@@ -33,12 +35,32 @@ mainmenu()
     COUNT=`echo $JARG|wc -w`
     COUNT=$((COUNT+3))
 
+    #first of all - push old values to OLDVAL for comparing final result in commit() func
+    for i in ${JARG}; do
+	[ "${i}" = "jname" ] && continue
+	eval VAL=\$$i
+	if [ -z "${VAL}" ]; then
+	    export OLDVAL_${i}=""
+	else
+	    export OLDVAL_${i}="${VAL}"
+	fi
+    done
+
+    # main menu loop
     while [ 1 ]; do
 	MENU_OPTIONS=
 	for i in ${JARG}; do
 	    eval VAL=\$$i
-	    [ -n "${VAL}" -a "${i}" != "jname" ] && MENU_OPTIONS="${MENU_OPTIONS} $i ${VAL}"
+	    [ ${i} = "jname" ] && continue
+	    if [ -z "${VAL}" ]; then
+		MENU_OPTIONS="${MENU_OPTIONS} $i \"\""
+	    else
+		MENU_OPTIONS="${MENU_OPTIONS} $i ${VAL}"
+	    fi
 	done
+
+
+
 	$DIALOG --clear --title "Setup for ${jname}" --menu "\nselect action for ${jname}:" -1 70 ${COUNT} \
 	    ${MENU_OPTIONS} \
 	    "COMMIT" "Save changes and quit" \
@@ -52,6 +74,7 @@ mainmenu()
 		[ $choice = "host_hostname" ] && get_jail_fqdn
 		[ $choice = "ip4_addr" ] && get_jail_ips
 		[ $choice = "ver" ] && get_jail_base
+		[ $choice = "devfs_ruleset" ] && get_devfs_ruleset
 		[ $choice = "baserw" ] && get_jail_baserw
 		[ $choice = "mount_src" ] && get_jail_mount_src
 		[ $choice = "mount_ports" ] && get_jail_mount_ports
@@ -76,9 +99,13 @@ msg_ok="Ok"
 msg_cancel="Cancel"
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-[ ${jid} -ne 0 ] && err 1 "${MAGENTA}Modification of active jail on-the-fly currenlty not implemented. Please stop them first${NORMAL}"
 
 shift #skip for jname
-JARG="$@"
+
+if [ ${jid} -ne 0 ]; then
+	JARG="ip4_addr"
+else
+	JARG="$@"
+fi
 
 mainmenu
