@@ -42,7 +42,7 @@ static char sccsid[] = "@(#)mksyntax.c	8.2 (Berkeley) 5/4/95";
 #endif /* not lint */
 #endif
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/mksyntax.c 247163 2013-02-22 20:16:16Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/mksyntax.c 246522 2013-02-07 22:42:33Z jilles $");
 
 /*
  * This program creates syntax.h and syntax.c.
@@ -189,8 +189,8 @@ main(int argc __unused, char **argv __unused)
 	add("`", "CBQUOTE");
 	add("$", "CVAR");
 	add("}", "CENDVAR");
-	/* ':/' for tilde expansion, '-' for [a\-x] pattern ranges */
-	add("!*?[=~:/-", "CCTL");
+	/* ':/' for tilde expansion, '-^]' for [a\-x] pattern ranges */
+	add("!*?[]=~:/-^", "CCTL");
 	finish();
 
 	fputs("\n/* syntax table used when in single quotes */\n", cfile);
@@ -199,8 +199,8 @@ main(int argc __unused, char **argv __unused)
 	add("\n", "CNL");
 	add("\\", "CSBACK");
 	add("'", "CENDQUOTE");
-	/* ':/' for tilde expansion, '-' for [a\-x] pattern ranges */
-	add("!*?[=~:/-", "CCTL");
+	/* ':/' for tilde expansion, '-^]' for [a\-x] pattern ranges */
+	add("!*?[]=~:/-^", "CCTL");
 	finish();
 
 	fputs("\n/* syntax table used when in arithmetic */\n", cfile);

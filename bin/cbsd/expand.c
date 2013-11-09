@@ -38,7 +38,7 @@ static char sccsid[] = "@(#)expand.c	8.5 (Berkeley) 5/15/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/expand.c 233289 2012-03-21 23:10:16Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/expand.c 248980 2013-04-01 17:18:22Z jilles $");
 
 #include <sys/types.h>
 #include <sys/time.h>
@@ -125,19 +125,6 @@ collate_range_cmp(wchar_t c1, wchar_t c2)
 	s1[0] = c1;
 	s2[0] = c2;
 	return (wcscoll(s1, s2));
-}
-
-/*
- * Expand shell variables and backquotes inside a here document.
- *	union node *arg		the document
- *	int fd;			where to write the expanded version
- */
-
-void
-expandhere(union node *arg, int fd)
-{
-	expandarg(arg, (struct arglist *)NULL, 0);
-	xwrite(fd, stackblock(), expdest - stackblock());
 }
 
 static char *
@@ -473,7 +460,7 @@ expbackq(union node *cmd, int quoted, int flag)
 	int startloc = dest - stackblock();
 	char const *syntax = quoted? DQSYNTAX : BASESYNTAX;
 	int quotes = flag & (EXP_FULL | EXP_CASE | EXP_REDIR);
-	int nnl;
+	size_t nnl;
 
 	INTOFF;
 	saveifs = ifsfirst;
@@ -1176,9 +1163,9 @@ nometa:
 static void
 expmeta(char *enddir, char *name)
 {
-	char *p;
-	char *q;
-	char *start;
+	const char *p;
+	const char *q;
+	const char *start;
 	char *endname;
 	int metaflag;
 	struct stat statb;
@@ -1187,6 +1174,7 @@ expmeta(char *enddir, char *name)
 	int atend;
 	int matchdot;
 	int esc;
+	int namlen;
 
 	metaflag = 0;
 	start = name;
@@ -1241,7 +1229,7 @@ expmeta(char *enddir, char *name)
 			addfname(expdir);
 		return;
 	}
-	endname = p;
+	endname = name + (p - name);
 	if (start != name) {
 		p = name;
 		while (p < start) {
@@ -1285,17 +1273,22 @@ expmeta(char *enddir, char *name)
 		if (dp->d_name[0] == '.' && ! matchdot)
 			continue;
 		if (patmatch(start, dp->d_name, 0)) {
-			if (enddir + dp->d_namlen + 1 > expdir_end)
+			namlen = dp->d_namlen;
+			if (enddir + namlen + 1 > expdir_end)
 				continue;
-			memcpy(enddir, dp->d_name, dp->d_namlen + 1);
+			memcpy(enddir, dp->d_name, namlen + 1);
 			if (atend)
 				addfname(expdir);
 			else {
-				if (enddir + dp->d_namlen + 2 > expdir_end)
+				if (dp->d_type != DT_UNKNOWN &&
+				    dp->d_type != DT_DIR &&
+				    dp->d_type != DT_LNK)
 					continue;
-				enddir[dp->d_namlen] = '/';
-				enddir[dp->d_namlen + 1] = '\0';
-				expmeta(enddir + dp->d_namlen + 1, endname);
+				if (enddir + namlen + 2 > expdir_end)
+					continue;
+				enddir[namlen] = '/';
+				enddir[namlen + 1] = '\0';
+				expmeta(enddir + namlen + 1, endname);
 			}
 		}
 	}
@@ -1419,7 +1412,8 @@ match_charclass(const char *p, wchar_t chr, const char **end)
 	*end = NULL;
 	p++;
 	nameend = strstr(p, ":]");
-	if (nameend == NULL || nameend - p >= sizeof(name) || nameend == p)
+	if (nameend == NULL || (size_t)(nameend - p) >= sizeof(name) ||
+	    nameend == p)
 		return 0;
 	memcpy(name, p, nameend - p);
 	name[nameend - p] = '\0';

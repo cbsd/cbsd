@@ -42,7 +42,7 @@ static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/28/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/main.c 241030 2012-09-28 13:43:42Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/main.c 255215 2013-09-04 22:10:16Z jilles $");
 
 #include <stdio.h>
 #include <signal.h>
@@ -74,10 +74,10 @@ __FBSDID("$FreeBSD: releng/9.2/bin/sh/main.c 241030 2012-09-28 13:43:42Z jilles 
 #include "show.h"
 #include "memalloc.h"
 #include "error.h"
-#include "init.h"
 #include "mystring.h"
 #include "exec.h"
 #include "cd.h"
+#include "redir.h"
 #include "builtins.h"
 
 int rootpid;
@@ -85,8 +85,9 @@ int rootshell;
 struct jmploc main_handler;
 int localeisutf8, initial_localeisutf8;
 
+static void reset(void);
 static void cmdloop(int);
-static void read_profile(char *);
+static void read_profile(const char *);
 static char *find_dot_file(char *);
 
 /*
@@ -106,15 +107,11 @@ main(int argc, char *argv[])
 #ifdef CBSD
         char *cbsdpath = NULL;
         char *workdir = NULL;
+	chdir("/var/empty");
 #endif
 	(void) setlocale(LC_ALL, "");
 	initcharset();
 	state = 0;
-
-#ifdef CBSD
-    chdir("/var/empty");
-#endif
-
 	if (setjmp(main_handler.loc)) {
 		switch (exception) {
 		case EXEXEC:
@@ -153,13 +150,13 @@ main(int argc, char *argv[])
 #endif
 	rootpid = getpid();
 	rootshell = 1;
-	init();
+	initvar();
 	setstackmark(&smark);
 	setstackmark(&smark2);
-	
+
 #ifdef CBSD
         workdir=lookupvar("workdir");
-
+        
         if ( workdir == NULL )  {
             read_profile("/etc/rc.conf");
             setvarsafe("workdir", lookupvar("cbsd_workdir"), 0);
@@ -173,16 +170,18 @@ main(int argc, char *argv[])
         setvarsafe("workdir",workdir,1);
         workdir=lookupvar("workdir"); //  ^^ after "setsave*" original is free
         cbsdpath = calloc(MAXPATHLEN, sizeof(char *));
- 
+                        
         if (cbsdpath == NULL) {
             out2fmt_flush("cbsd: out of memory for cbsdpath\n");
             exitshell(1);
         }
-        sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir);
+        sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir)
+;
         setvarsafe("PATH",cbsdpath,1);
         read_profile("${workdir}/cbsd.conf");
         ckfree(cbsdpath);
 #endif
+
 	procargs(argc, argv);
 	pwd_init(iflag);
 	if (iflag)
@@ -211,8 +210,8 @@ state3:
 	if (minusc) {
 		evalstring(minusc, sflag ? 0 : EV_EXIT);
 	}
+state4:
 	if (sflag || minusc == NULL) {
-state4:	/* XXX ??? - why isn't this before the "if" statement */
 		cmdloop(1);
 	}
 	exitshell(exitstatus);
@@ -220,6 +219,12 @@ state4:	/* XXX ??? - why isn't this before the "if" statement */
 	return 0;
 }
 
+static void
+reset(void)
+{
+	reseteval();
+	resetinput();
+}
 
 /*
  * Read and execute commands.  "Top" is nonzero for the top level command
@@ -237,7 +242,7 @@ cmdloop(int top)
 	TRACE(("cmdloop(%d) called\n", top));
 	setstackmark(&smark);
 	for (;;) {
-		if (pendingsigs)
+		if (pendingsig)
 			dotrap();
 		inter = 0;
 		if (iflag && top) {
@@ -265,7 +270,7 @@ cmdloop(int top)
 		popstackmark(&smark);
 		setstackmark(&smark);
 		if (evalskip != 0) {
-			if (evalskip == SKIPFILE)
+			if (evalskip == SKIPRETURN)
 				evalskip = 0;
 			break;
 		}
@@ -280,7 +285,7 @@ cmdloop(int top)
  */
 
 static void
-read_profile(char *name)
+read_profile(const char *name)
 {
 	int fd;
 	const char *expandedname;
@@ -289,7 +294,7 @@ read_profile(char *name)
 	if (expandedname == NULL)
 		return;
 	INTOFF;
-	if ((fd = open(expandedname, O_RDONLY)) >= 0)
+	if ((fd = open(expandedname, O_RDONLY | O_CLOEXEC)) >= 0)
 		setinputfd(fd, 1);
 	INTON;
 	if (fd < 0)

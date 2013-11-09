@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)nodes.c.pat	8.2 (Berkeley) 5/4/95
- * $FreeBSD: releng/9.2/bin/sh/nodes.c.pat 213811 2010-10-13 22:18:03Z obrien $
+ * $FreeBSD: head/bin/sh/nodes.c.pat 249235 2013-04-07 16:28:36Z jilles $
  */
 
 #include <sys/param.h>
@@ -58,7 +58,7 @@ static void calcsize(union node *);
 static void sizenodelist(struct nodelist *);
 static union node *copynode(union node *);
 static struct nodelist *copynodelist(struct nodelist *);
-static char *nodesavestr(char *);
+static char *nodesavestr(const char *);
 
 
 struct funcdef {
@@ -147,9 +147,9 @@ copynodelist(struct nodelist *lp)
 
 
 static char *
-nodesavestr(char *s)
+nodesavestr(const char *s)
 {
-	char *p = s;
+	const char *p = s;
 	char *q = funcstring;
 	char   *rtn = funcstring;
 

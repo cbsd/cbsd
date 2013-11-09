@@ -27,7 +27,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)arith.h	1.1 (Berkeley) 5/4/95
- * $FreeBSD: releng/9.2/bin/sh/arith.h 223060 2011-06-13 21:03:27Z jilles $
+ * $FreeBSD: head/bin/sh/arith.h 223060 2011-06-13 21:03:27Z jilles $
  */
 
 #include "shell.h"

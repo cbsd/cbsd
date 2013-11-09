@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)options.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: releng/9.2/bin/sh/options.h 223281 2011-06-18 23:43:28Z jilles $
+ * $FreeBSD: head/bin/sh/options.h 223281 2011-06-18 23:43:28Z jilles $
  */
 
 struct shparam {

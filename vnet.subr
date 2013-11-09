@@ -1,0 +1,143 @@
+# Network interface=related funcion, for vnet feature
+
+init_vnet()
+{
+    if ! kldstat -qm if_bridge; then
+	kldload if_bridge
+    fi
+
+    gw_enable
+}
+
+
+
+# $1 - nicname (eg: bridge)
+# if nicname=epair we search as epairXa
+# show first available nic by type
+# example:
+#  ttt=`find_first_freenic bridge`
+# return 1 when error
+find_first_freenic()
+{
+    local _i _epair _A
+
+
+    [ -z $1 ] && return 1
+
+    [ "$1" = "_epair" ] && _epair="a"
+
+    for _i in `seq 0 255`; do
+	_A=`ifconfig ${1}${_i}${_epair} 2>/dev/null 2>&1`
+	[ $? -eq 1 ] && echo "${1}${_i}" && return 0
+    done
+
+    return 1
+
+}
+
+# $1 - nicname (eg: bridge)
+# show nicX if exist
+# example:
+#   for i in `show_all_nic_by_name bridge`; do
+#      echo ${i}
+#   done
+show_all_nic_by_name()
+{
+    local _i _mynic _epair _A
+
+    [ -z $1 ] && return 1
+
+    [ "$1" = "_epair" ] && _epair="a"
+
+    for _i in `seq 0 255`; do
+	_A=`ifconfig ${1}${_i}${_epair} > /dev/null 2>&1`
+	[ $? -eq 0 ] && _mynic="${_mynic} ${1}${_i}${_epair}"
+    done
+
+    [ -n "${_mynic}" ] && echo "${_mynic}"
+    return 0
+
+}
+
+gw_enable()
+{
+    sysctl -wqn net.inet.ip.forwarding=1 > /dev/null 2>&1
+    sysctl -wqn net.inet6.ip6.forwarding=1 > /dev/null 2>&1
+}
+
+gw_disable()
+{
+    sysctl -wqn net.inet.ip.forwarding=0 > /dev/null 2>&1
+    sysctl -wqn net.inet6.ip6.forwarding=0 > /dev/null 2>&1
+}
+
+# cbsd store uplink interface in description area ;)
+# this func extract and show this
+# $1 - iface (eg: bridge0)
+# example:
+#    ttt=`get_device_uplink bridge0`
+get_device_uplink()
+{
+    [ -z "${1}" ] && return 1
+
+    /sbin/ifconfig ${1} 2>/dev/null|awk '/description:/{print $2}'
+
+}
+
+
+# function search for available bridges in system who have uplink to ${interface}
+# when not - create one
+# out bridge name when it exist
+# $1 - type (bridge or epair) , $2 - uplink interface
+# return 1 when error
+#   example:
+#    if !  ttt=`get_my_device bridge nfe0`; then
+#	echo "Error: $ttt"
+#    fi
+get_my_device()
+{
+    local _i _uplink _firstfree _ret _test _dev _desc
+    [ -z "${1}" ] && echo "set device" && return 1
+    [ -z "${2}" ] && echo "No uplink" && return 1
+    _dev=$1
+    _desc=$2
+
+    for _i in `show_all_nic_by_name ${_dev}`; do
+	_uplink=`get_device_uplink ${_i}`
+	[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
+    done
+
+    # we need for new bridge with ${_dev} uplink
+    _firstfree=`find_first_freenic ${_dev}`
+    [ -z "${_firstfree}" ] && echo "Cant find first available ${_dev}" && return 1
+
+    if [ "${_dev}" = "bridge" ]; then
+	_test=`ifconfig ${_firstfree} create addm ${_desc} up description ${_desc} 2>&1`
+	_ret=$?
+	[ ${_ret} -ne 0 ] && echo "${_test}" && return 1
+    fi
+	echo "${_firstfree}"
+}
+
+
+# create epair and switch epairXa to bridge $1 
+# out of created epair
+get_my_epair()
+{
+    local _firstfree
+
+    [ -z "${1}" ] && echo "No bridge" && return 1
+
+    _firstfree=`find_first_freenic epair`
+
+    [ $? -eq 1 ] && echo "No free available epair" && return 1
+
+    ifconfig ${_firstfree} create >/dev/null 2>/dev/null
+    ifconfig ${1} addm ${_firstfree}a
+    ifconfig ${_firstfree}a up
+    echo ${_firstfree}
+}
+
+#get_my_epair bridge0
+
+#get_my_device epair jail1

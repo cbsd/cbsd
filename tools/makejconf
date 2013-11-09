@@ -1,15 +1,18 @@
 #!/bin/sh
-#v9.2.2
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname out"
-MYOPTARG="ip6wa"
+MYOPTARG="ip6wa epair"
 MYDESC="Make jailv2 config file"
+ADDHELP="ip6wa - ip6 work-around (sleep 3 seconds) enabled\n\
+epair - this is mandatory for vnet=1 type jail. Sets for jail vnic\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${inventory}
 . ${tools}
+. ${color}
 
 init $*
 
@@ -38,6 +41,8 @@ JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
 cbsd jmkrcconf jname=${jname} > ${JAILRCCONF}
 . ${JAILRCCONF}
 rm -f ${JAILRCCONF}
+
+[ ${vnet} -eq 1 -a -z "${epair}" ] && err 1 "${MAGENTA}Error: Jail is ${GREEN}vnet${NORMAL}-feature enabled, but epair is not set.${NORMAL}"
 
 eval multiips4=\"\$ip4_addr\"
 
@@ -91,34 +96,46 @@ if [ -n "${interface}" ]; then
     echo "interface=\"${interface}\";" >> $out
 fi
 
-for a in ${ips}; do
-    iptype $a
-    _inet=$?
-    [ ${_inet} -eq 0 ] && continue
+if [ ${vnet} -eq 0 ]; then
+# when vnet we not need ipX.addr
+    for a in ${ips}; do
+	iptype $a
+	_inet=$?
+	[ ${_inet} -eq 0 ] && continue
 
-    ipwmask ${a}
+	ipwmask ${a}
 
-    case ${_inet} in
-	1)
-	    if [ -z "$ALIAS4" ]; then
-		echo "ip4.addr = ${a};" >> ${out}
-		[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-		ALIAS4="1"
-	    else
-		[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-		echo "ip4.addr += ${a};" >> ${out}
-	    fi
-	    ;;
-	2)
-	    if [ -z "$ALIAS6" ]; then
-		echo "ip6.addr = ${a};" >> ${out}
-		ALIAS6="1"
-	    else
-		echo "ip6.addr += ${a};" >> ${out}
-	    fi
-	    ;;
-    esac
-done
+	case ${_inet} in
+	    1)
+		if [ -z "$ALIAS4" ]; then
+		    echo "ip4.addr = ${a};" >> ${out}
+		    [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+		    ALIAS4="1"
+		else
+		    [ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+		    echo "ip4.addr += ${a};" >> ${out}
+		fi
+		;;
+	    2)
+		if [ -z "$ALIAS6" ]; then
+		    echo "ip6.addr = ${a};" >> ${out}
+		    ALIAS6="1"
+		else
+		    echo "ip6.addr += ${a};" >> ${out}
+		fi
+		;;
+	esac
+    done
+else
+# vnet
+cat >> ${out} <<EOF
+vnet = new;
+vnet.interface = ${epair};
+EOF
+
+fi
+
+
 
 if [ "$devfs" = "NO" ]; then
     echo "mount.nodevfs;" >> ${out}

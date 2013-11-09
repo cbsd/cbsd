@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)alias.c	8.3 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/alias.c 243402 2012-11-22 13:50:51Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/alias.c 254849 2013-08-25 11:42:53Z jilles $");
 
 #include <stdlib.h>
 #include "shell.h"
@@ -237,17 +237,19 @@ printaliases(void)
 }
 
 int
-aliascmd(int argc, char **argv)
+aliascmd(int argc __unused, char **argv __unused)
 {
 	char *n, *v;
 	int ret = 0;
 	struct alias *ap;
 
-	if (argc == 1) {
+	nextopt("");
+
+	if (*argptr == NULL) {
 		printaliases();
 		return (0);
 	}
-	while ((n = *++argv) != NULL) {
+	while ((n = *argptr++) != NULL) {
 		if ((v = strchr(n+1, '=')) == NULL) /* n+1: funny ksh stuff */
 			if ((ap = lookupalias(n, 0)) == NULL) {
 				warning("%s: not found", n);

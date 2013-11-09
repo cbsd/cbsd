@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/arith_yacc.c 223580 2011-06-26 20:12:05Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/arith_yacc.c 230530 2012-01-25 08:42:19Z charnier $");
 
 #include <limits.h>
 #include <errno.h>
@@ -84,6 +84,8 @@ static const char prec[ARITH_BINOP_MAX - ARITH_BINOP_MIN] = {
 
 #define ARITH_MAX_PREC 8
 
+int letcmd(int, char **);
+
 static __dead2 void yyerror(const char *s)
 {
 	error("arithmetic expression: %s: \"%s\"", s, arith_startbuf);
@@ -131,11 +133,11 @@ static arith_t do_binop(int op, arith_t a, arith_t b)
 			yyerror("divide error");
 		return op == ARITH_REM ? a % b : a / b;
 	case ARITH_MUL:
-		return a * b;
+		return (uintmax_t)a * (uintmax_t)b;
 	case ARITH_ADD:
-		return a + b;
+		return (uintmax_t)a + (uintmax_t)b;
 	case ARITH_SUB:
-		return a - b;
+		return (uintmax_t)a - (uintmax_t)b;
 	case ARITH_LSHIFT:
 		return a << b;
 	case ARITH_RSHIFT:
@@ -377,4 +379,3 @@ letcmd(int argc, char **argv)
 	out1fmt(ARITH_FORMAT_STR "\n", i);
 	return !i;
 }
-

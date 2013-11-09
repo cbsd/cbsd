@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)histedit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/histedit.c 231790 2012-02-15 22:45:57Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/histedit.c 240541 2012-09-15 21:56:30Z jilles $");
 
 #include <sys/param.h>
 #include <limits.h>
@@ -160,8 +160,7 @@ bad:
 
 
 void
-sethistsize(hs)
-	const char *hs;
+sethistsize(const char *hs)
 {
 	int histsize;
 	HistEvent he;
@@ -183,7 +182,7 @@ setterm(const char *term)
 }
 
 int
-histcmd(int argc, char **argv)
+histcmd(int argc, char **argv __unused)
 {
 	int ch;
 	const char *editor = NULL;
@@ -207,13 +206,10 @@ histcmd(int argc, char **argv)
 	if (argc == 1)
 		error("missing history argument");
 
-	optreset = 1; optind = 1; /* initialize getopt */
-	opterr = 0;
-	while (not_fcnumber(argv[optind]) &&
-	      (ch = getopt(argc, argv, ":e:lnrs")) != -1)
+	while (not_fcnumber(*argptr) && (ch = nextopt("e:lnrs")) != '\0')
 		switch ((char)ch) {
 		case 'e':
-			editor = optarg;
+			editor = shoptarg;
 			break;
 		case 'l':
 			lflg = 1;
@@ -227,13 +223,7 @@ histcmd(int argc, char **argv)
 		case 's':
 			sflg = 1;
 			break;
-		case ':':
-			error("option -%c expects argument", optopt);
-		case '?':
-		default:
-			error("unknown option: -%c", optopt);
 		}
-	argc -= optind, argv += optind;
 
 	savehandler = handler;
 	/*
@@ -277,31 +267,26 @@ histcmd(int argc, char **argv)
 	/*
 	 * If executing, parse [old=new] now
 	 */
-	if (lflg == 0 && argc > 0 &&
-	     ((repl = strchr(argv[0], '=')) != NULL)) {
-		pat = argv[0];
+	if (lflg == 0 && *argptr != NULL &&
+	     ((repl = strchr(*argptr, '=')) != NULL)) {
+		pat = *argptr;
 		*repl++ = '\0';
-		argc--, argv++;
+		argptr++;
 	}
 	/*
 	 * determine [first] and [last]
 	 */
-	switch (argc) {
-	case 0:
+	if (*argptr == NULL) {
 		firststr = lflg ? "-16" : "-1";
 		laststr = "-1";
-		break;
-	case 1:
-		firststr = argv[0];
-		laststr = lflg ? "-1" : argv[0];
-		break;
-	case 2:
-		firststr = argv[0];
-		laststr = argv[1];
-		break;
-	default:
+	} else if (argptr[1] == NULL) {
+		firststr = argptr[0];
+		laststr = lflg ? "-1" : argptr[0];
+	} else if (argptr[2] == NULL) {
+		firststr = argptr[0];
+		laststr = argptr[1];
+	} else
 		error("too many arguments");
-	}
 	/*
 	 * Turn into event numbers.
 	 */

@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v9.2.2
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname inter"
@@ -144,7 +144,7 @@ if [ $# -gt 1 -a -z "${jname}" -a -z "${inter}" ]; then
         cbsd pwait --pid=`cat ${ftmpdir}/jstart.${jname}.$$` --timeout=${parallel}
     done
 
-    wait_for_jstart 
+    wait_for_jstart
 
     err 0 "${MAGENTA}Multiple jstart: ${GREEN}done${NORMAL}"
 fi
@@ -179,37 +179,53 @@ fi
 
     geniplist ${ip4_addr}
 
-    if [ -n "${interface}" -a "${interface}" != "0" ]; then
-	### CHECK FOR IP ####
-	for ips in ${IPS}; do
-	    cbsd checkip ip=${ips} check=1
-	    IPUSE=$?
-	    case ${IPUSE} in
-		0)
-		    ${ECHO} "${MAGENTA}ip ${ips} not in pool range${NORMAL}"
-		    continue
-		    ;;
-		2)
-		    ${ECHO} "${MAGENTA}Ip ${ips} already exists in LAN${NORMAL}"
-		    continue
-		    ;;
-	    esac
-	done
-    fi
 
-    #geniplist ${ip4_addr}
-    if [ -n "${interface}" -a "${interface}" != "0" ]; then
-	for pureip in ${IPS}; do
-	    iface=`cbsd getnics-by-ip ip=${pureip}`
-	    ipwmask ${pureip}
-		if [ -n "$iface" ]; then
-		    cbsd jset jname=${jname} interface="${iface}"
-		    break
-		else
-		    err 1 "${MAGENTA}Can't determine interfaces for:${GREEN} ${pureip}${NORMAL}"
-		fi
-	done
-    fi
+	if [ -n "${interface}" -a "${interface}" != "0" -a ${vnet} -eq 0 ]; then
+	    ### CHECK FOR IP ####
+	    for ips in ${IPS}; do
+		cbsd checkip ip=${ips} check=1
+		IPUSE=$?
+		case ${IPUSE} in
+		    0)
+			${ECHO} "${MAGENTA}ip ${ips} not in pool range${NORMAL}"
+			continue
+			;;
+		    2)
+			${ECHO} "${MAGENTA}Ip ${ips} already exists in LAN${NORMAL}"
+			continue
+			;;
+		esac
+	    done
+	fi
+
+	#geniplist ${ip4_addr}
+	if [ -n "${interface}" -a "${interface}" != "0" ]; then
+	    for pureip in ${IPS}; do
+		iface=`cbsd getnics-by-ip ip=${pureip}`
+		ipwmask ${pureip}
+		    if [ -n "$iface" ]; then
+			interface=${iface}
+			cbsd jset jname=${jname} interface="${iface}"
+			break
+		    else
+			err 1 "${MAGENTA}Can't determine interfaces for:${GREEN} ${pureip}${NORMAL}"
+		    fi
+	    done
+	fi
+
+    if [ $vnet -eq 1 ]; then
+	# for vnet we can make another action
+	. ${vimageconf}
+	if ! mybridge=`get_my_device bridge nfe0`; then
+	    err 1 "${MAGENTA}Error: Cant get_my_device: ${mybridge}${NORMAL}"
+	fi
+	myepair=`get_my_epair ${mybridge}`
+	[ $? -eq 1 ] && err 1 "${MAGENTA}Error: Cant get_my_epair by: ${GREEN}${mybridge}${NORMAL}"
+	ifconfig ${myepair}a description ${jname} up
+#	dhclient ${myepair}b
+	trap "ifconfig ${myepair}a destroy" HUP INT ABRT BUS TERM EXIT
+    fi	# vnet -eq 1
+
     #test for zfs mounted & mount if not
     case $zfsfeat in
 	1) . $zfstool
@@ -275,7 +291,9 @@ fi
 	[ ! -d "${data}/var/cache/pkg" ] && mkdir -p "${data}/var/cache/pkg"
     fi
 
-    cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6}
+    set -e
+    cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${myepair}b
+    set +e
 
     #rctl area
     cbsd jrctl jname=$jname mode=set
@@ -285,7 +303,7 @@ fi
     ${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
 #    /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
     /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
-
+    trap "" HUP INT ABRT BUS TERM EXIT
     cbsd pwait --pid=`cat ${ftmpdir}/jstart.${jname}.$$` --timeout=${parallel}
 
     #if [ -n "$devfs_ruleset" ]; then

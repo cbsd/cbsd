@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)error.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: releng/9.2/bin/sh/error.h 220978 2011-04-23 22:28:56Z jilles $
+ * $FreeBSD: head/bin/sh/error.h 220978 2011-04-23 22:28:56Z jilles $
  */
 
 /*

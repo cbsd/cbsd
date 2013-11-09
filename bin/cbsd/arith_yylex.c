@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/arith_yylex.c 219363 2011-03-07 07:31:15Z stefanf $");
+__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 254806 2013-08-24 20:06:00Z jilles $");
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -53,7 +53,7 @@ __FBSDID("$FreeBSD: releng/9.2/bin/sh/arith_yylex.c 219363 2011-03-07 07:31:15Z 
 extern const char *arith_buf;
 
 int
-yylex()
+yylex(void)
 {
 	int value;
 	const char *buf = arith_buf;
@@ -218,9 +218,13 @@ checkeqcur:
 			value += ARITH_REM - '%';
 			goto checkeq;
 		case '+':
+			if (buf[1] == '+')
+				return ARITH_BAD;
 			value += ARITH_ADD - '+';
 			goto checkeq;
 		case '-':
+			if (buf[1] == '-')
+				return ARITH_BAD;
 			value += ARITH_SUB - '-';
 			goto checkeq;
 		case '~':
