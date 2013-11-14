@@ -30,45 +30,48 @@ nm(void)
 }
 
 int
-sqlCB(void *none, int rows, char **rowV, char **rowN)
-{
-	int	 i;
-	int	*cnt = (int *)none;
-	char *delim;
-	char *sqlcolnames;
-	int printheader=0;
+sqlCB(sqlite3_stmt *stmt)
+{   
+    int icol;
+    const char      *colname;
+    int allcol;
+    char *delim;
+    char *cp;
+    int printheader=0;
+    char *sqlcolnames = NULL;
 
-	delim=lookupvar("sqldelimer");
-	sqlcolnames=lookupvar("sqlcolnames");
+    if (stmt == NULL) return 1;
 
-	if ( delim == NULL ) delim=DEFSQLDELIMER;
+    if ((cp = getenv("sqldelimer")) == NULL)
+      delim=DEFSQLDELIMER;
+    else
+      delim=cp;
 
-	if (printheader) {
-		if (!(*cnt)) {
-		    for (i = 0; i < rows; i++)
-			if (i<rows-1)
-			    out1fmt("%s%s",rowN[i],delim);
-			else
-			    out1fmt("%s\n",rowN[i]);
-		}
-	}
-	(*cnt)++;
+    sqlcolnames=getenv("sqlcolnames");
+    allcol = sqlite3_column_count(stmt);
 
-	if ( sqlcolnames ) {
-	    for (i = 0; i < rows; i++)
-		out1fmt("%s=\"%s\"\n", rowN[i],rowV[i]);
-	return 0;
-	}
+    if ((printheader)&&(sqlcolnames==NULL)) {
+        for ( icol = 0; icol < allcol; icol++ ) {
+            colname = sqlite3_column_name(stmt, icol);
+            if ( icol != ( allcol - 1 ))
+                out1fmt("%s%s",colname,delim);
+            else
+                out1fmt("%s\n",colname);
+        }
+    }
 
-	for (i = 0; i < rows; i++) {
-		if (i<rows-1)
-		    out1fmt("%s%s",rowV[i],delim);
-		else
-			out1fmt("%s\n", rowV[i]);
-	}
-	return 0;
+    for (icol = 0; icol < allcol; icol++) {
+            if (sqlcolnames)
+                out1fmt("%s=\"%s\"\n",sqlite3_column_name(stmt,icol),sqlite3_column_text(stmt,icol));
+            else {
+                if ( icol == ( allcol - 1) )
+                    out1fmt("%s\n",sqlite3_column_text(stmt,icol));
+                else
+                    out1fmt("%s%s",sqlite3_column_text(stmt,icol),delim);
+                }
+    }
 
-
+    return 0;
 }
 
 int
@@ -79,11 +82,12 @@ sqlitecmd(int argc, char **argv)
 	int	 i;
 	char	*query;
 	char	*tmp;
-	char	*err = NULL;
 	char *dbdir;
 	char *dbfile;
 	int     maxretry=10;
 	int     retry=0;
+	int	ret;
+	sqlite3_stmt *stmt;
 
 	if (argc<3) { 
 	    out1fmt("%s: format: %s <dbfile> <query>\n",nm(),nm());
@@ -110,34 +114,43 @@ sqlitecmd(int argc, char **argv)
 	free(dbfile);
 
 	res = 0;
-	for (i = 2; i < argc; i++)
-		res += strlen(argv[i]) + 1;
-	if (res) {
-		query = (char *)sqlite3_malloc(res);
-		tmp = query;
-		for (i = 2; i < argc; i++) {
-			strcpy(tmp, argv[i]);
-			tmp += strlen(tmp);
-			*tmp = ' ';
-			tmp++;
-		}
-		tmp[-1] = 0;
-		err = 0;
-		i = 0;
-		for (retry=0;retry<maxretry;retry++) {
-		    sqlite3_exec(db, query, sqlCB, (void *)&i, &err);
-		    if (err)
-			sleep(1); //locked?
-		    else
-			break; //skip retry cycle
-		}
-		sqlite3_free(query);
-	}
-	sqlite3_close(db);
-	if (err) {
-	    out1fmt("%s: sqlite_error: %s\n", nm(), err);
-	    sqlite3_free(err);
-	    return 1;
-	}
-	return 0;
+        for (i = 2; i < argc; i++)
+                res += strlen(argv[i]) + 1;
+        if (res) {
+                query = (char *)sqlite3_malloc(res);
+                tmp = query;
+                for (i = 2; i < argc; i++) {
+                        strcpy(tmp, argv[i]);
+                        tmp += strlen(tmp);
+                        *tmp = ' ';
+                        tmp++;
+                }
+                tmp[-1] = 0;
+        }
+
+        ret = sqlite3_prepare_v2(db, query, strlen(query) + 1, &stmt, NULL);
+
+	retry = 0;
+        if (ret == SQLITE_OK)
+        {
+            while ( (ret!=SQLITE_DONE)&&(retry<maxretry))
+            {
+                ret = sqlite3_step(stmt);  
+                if (ret == SQLITE_ROW) sqlCB(stmt);
+                    else
+                if (ret == SQLITE_BUSY) {
+                    sqlite3_sleep(250);
+                    retry++;
+                }   
+            }
+        }
+
+        sqlite3_finalize(stmt);
+
+        sqlite3_free(query);
+        sqlite3_close(db);
+
+//      printf("ERR: %d(Q: %s)\n",ret,query);
+
+        return 0;
 }
