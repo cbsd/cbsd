@@ -156,7 +156,7 @@ main(int argc, char *argv[])
 
 #ifdef CBSD
         workdir=lookupvar("workdir");
-        
+
         if ( workdir == NULL )  {
             read_profile("/etc/rc.conf");
             setvarsafe("workdir", lookupvar("cbsd_workdir"), 0);
@@ -170,18 +170,23 @@ main(int argc, char *argv[])
         setvarsafe("workdir",workdir,1);
         workdir=lookupvar("workdir"); //  ^^ after "setsave*" original is free
         cbsdpath = calloc(MAXPATHLEN, sizeof(char *));
-                        
+
         if (cbsdpath == NULL) {
             out2fmt_flush("cbsd: out of memory for cbsdpath\n");
             exitshell(1);
         }
-        sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir)
-;
+        sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir);
         setvarsafe("PATH",cbsdpath,1);
         read_profile("${workdir}/cbsd.conf");
-        ckfree(cbsdpath);
-#endif
 
+        ckfree(cbsdpath);
+        if (argc>1)
+	    if (!strcmp(argv[1],"--help")) {
+		system("/usr/local/bin/cbsd help");
+		 exit(0);
+        }
+
+#endif
 	procargs(argc, argv);
 	pwd_init(iflag);
 	if (iflag)

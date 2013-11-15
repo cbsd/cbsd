@@ -29,8 +29,8 @@ enum {
 static void
 usage(void)
 {
-	printf("Wait for processes to terminate");
-	printf("require: --pid, --timeout\b");
+	printf("Wait for processes to terminate\n");
+	printf("require: --pid, --timeout\n");
 	printf("usage: pwait --pid=pid --timeout=0 (in seconds, 0 is infinity)\n");
 	exit(EX_USAGE);
 }

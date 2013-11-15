@@ -23,6 +23,8 @@
 
 #include "sqlcmd.h"
 
+char *delim;
+
 char *
 nm(void)
 {
@@ -31,21 +33,14 @@ nm(void)
 
 int
 sqlCB(sqlite3_stmt *stmt)
-{   
+{
     int icol;
     const char      *colname;
     int allcol;
-    char *delim;
-    char *cp;
     int printheader=0;
     char *sqlcolnames = NULL;
 
     if (stmt == NULL) return 1;
-
-    if ((cp = getenv("sqldelimer")) == NULL)
-      delim=DEFSQLDELIMER;
-    else
-      delim=cp;
 
     sqlcolnames=getenv("sqlcolnames");
     allcol = sqlite3_column_count(stmt);
@@ -88,6 +83,12 @@ sqlitecmd(int argc, char **argv)
 	int     retry=0;
 	int	ret;
 	sqlite3_stmt *stmt;
+	char *cp;
+
+	if ((cp = lookupvar("sqldelimer")) == NULL)
+	    delim=DEFSQLDELIMER;
+	else
+	    delim=cp;
 
 	if (argc<3) { 
 	    out1fmt("%s: format: %s <dbfile> <query>\n",nm(),nm());
