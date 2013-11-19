@@ -48,6 +48,9 @@ eval multiips4=\"\$ip4_addr\"
 
 [ $baserw -eq 1 ] && path=$data
 
+freebsdhostversion=`${miscdir}/elf_tables --ver /usr/sbin/jail`
+[ -z "${freebsdhostversion}" ] && freebsdhostversion="0"
+
 #rewrite from cbsd zero to null
 [ "${exec_start}" = "0" ] && unset exec_start
 [ "${exec_stop}" = "0" ] && unset exec_stop
@@ -64,6 +67,18 @@ eval multiips4=\"\$ip4_addr\"
 
 # rename interface only for FreeBSD jail, not for Linux jail
 [ "${vnet}" = "1" -a -n "${epair}" -a ${fbsd} -eq 1 ] && exec_start="/sbin/ifconfig ${epair} name eth0 up; ${exec_start}"
+
+# attach and detach ZFS mount inside jail
+if [ "${fbsd}" -eq 1 -a "${allow_zfs}" = "1" ]; then
+	for _zfsfstab in "${jailfstabdir}/${jailfstabpref}${jname}" "${jailfstabdir}/${jailfstabpref}${jname}.local"; do
+	    [ ! -f "${_zfsfstab}" ] && continue
+	    if grep zfs "${_zfsfstab}" > /dev/null 2>&1; then
+		exec_poststart="/usr/local/bin/cbsd attachzfs fstab=${_zfsfstab} jname=${jname}; ${exec_portstart}"
+		exec_start="/sbin/zfs mount -a; ${exec_start}"
+		exec_prestop="/usr/local/bin/cbsd detachzfs fstab=${_zfsfstab} jname=${jname}; ${exec_prestop}"
+	    fi
+	done
+fi
 
 cat > ${out} << EOF
 ${jname} {
@@ -174,7 +189,8 @@ if [ -n "${stop_timeout}" ]; then
     echo "stop.timeout = \"${exec_timeout}\";" >> ${out}
 fi
 
-if [ -n "${mount_fdescfs}" ]; then
+# this features only available on FreeBSD 10.0 BETA3+
+if [ $freebsdhostversion -gt 1000500 -a -n "${mount_fdescfs}" ]; then
     echo "mount.fdescfs = \"${mount_fdescfs}\";" >> ${out}
 fi
 
@@ -186,7 +202,8 @@ if [ -n "${allow_procfs}" ]; then
     echo "allow.mount.procfs= \"${allow_procfs}\";" >> ${out}
 fi
 
-if [ -n "${allow_tmpfs}" ]; then
+# this feature only available on FreeBSD 10.0 BETA3+
+if [ ${freebsdhostversion} -gt 1000500 -a -n "${allow_tmpfs}" ]; then
     echo "allow.mount.tmpfs= \"${allow_tmpfs}\";" >> ${out}
 fi
 

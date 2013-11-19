@@ -483,6 +483,7 @@ if ((!show_arch)&&(!show_ver)&&(!show_freebsdver)&&(!show_osname)&&(!show_wordsi
     show_wordsize=1;
 }
 
+memset(abi,0,sizeof(BUFSIZ));
 
 if (pkg_get_myabi(buf,abi, BUFSIZ) != 0) {
     warn("ABI Error");
