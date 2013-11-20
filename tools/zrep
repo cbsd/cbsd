@@ -2,9 +2,9 @@
 #v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="jname node mode fs"
+MYOPTARG="jname node mode fs attr"
 MYDESC="ZFS-snapshot-based replication for jail data"
-ADDHELP="mode=status,list,init,clear\n"
+ADDHELP="mode=attr,failover,sync,status,list,init,clear\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 
@@ -674,6 +674,17 @@ setfsconfigs(){
 	zfs set zrep:savecount=$Z_SAVE_COUNT	$srcfs
 }
 
+cbsd_remote_node_init()
+{
+	remote_workdir=`cbsdsql ${node} SELECT workdir FROM local WHERE nodename=\"${node}\"`
+        [ -z "${remote_workdir}" ] && err 1 "workdir for ${node} not found in inventory"
+        remote_jaildatadir="${remote_workdir}/jails-data"
+        remote_jaildir="${remote_jaildatadir}/${jname}"
+        remote_zroot=$(zrep_ssh ${node} zfs get -Ho value name ${remote_jaildatadir})
+        [ -z "${remote_zroot}" ] && err 1 "Can't determine remote zroot"
+
+}
+
 
 # Follow "initial set up" in workflow.txt
 # Some day, will allow init from pre-existing snaps< But not today!
@@ -685,12 +696,8 @@ zrep_init(){
 
 	srcfs=${dataset}
 
-	remote_workdir=`cbsdsql ${node} SELECT workdir FROM local WHERE nodename=\"${node}\"`
-	[ -z "${remote_workdir}" ] && err 1 "workdir for ${node} not found in inventory"
-	remote_jaildatadir="${remote_workdir}/jails-data"
-	remote_jaildir="${remote_jaildatadir}/${jname}"
-	remote_zroot=$(zrep_ssh ${node} zfs get -Ho value name ${remote_jaildatadir})
-	[ -z "${remote_zroot}" ] && err 1 "Can't determine remote zroot"
+	cbsd_remote_node_init
+
 	destfs="${remote_zroot}/${jname}"
 	#sanity checks
 	check="`zfs get -H -o value zrep:dest-fs $srcfs`"
@@ -1041,49 +1048,42 @@ zrep_synconly(){
 #   If sync more recent than given quiettime, then quietly ignore
 #   
 zrep_sync(){
-	local srcfs destfs desthost sentsnap newsnap
+	local allfs srcfs destfs desthost sentsnap newsnap
 	local quiettime=0
 
-	if [ "$1" = "-q" ] ; then
-		quiettime="$2"
-		shift
-		shift
-		[ ${quiettime} -lt 30 ] && zrep_errquit "-q must use value greater than 30"
+	if [ -n "${jname}" ]; then
+	    cbsd_init_dataset
+	    allfs=${dataset}
+	else
+	    allfs=`zrep_list_master`
+	    [ -z "${allfs}" ] && err 1 "No zrep mastered filesystems found"
 	fi
 
-	if [ "$1" = "all" ] ; then
-		set -- `zrep_list_master`
-		if [ -z "$1" ] ; then
-			# Stay quiet, so we dont spew if in cron
-			#print No zrep mastered filesystems found
-			exit
-		fi
-	fi
+#	if [ "$1" = "-q" ] ; then
+#		quiettime="$2"
+#		shift
+#		shift
+#		[ ${quiettime} -lt 30 ] && zrep_errquit "-q must use value greater than 30"
+#	fi
 
-	if [ -z "$1" ] ; then
-		echo Error: no filesystems specified for sync >/dev/fd/2
-		return 1
-	fi
+	for srcfs in ${allfs}; do
 
-	while [ "$1" != "" ] ; do
-	srcfs="$1" 
+	    [ -z "$srcfs" ] && zrep_errquit No fileystem specified for sync
 
-	[ -z "$srcfs" ] && zrep_errquit No fileystem specified for sync
-
-	desthost=`zfs get -H -o value zrep:dest-host $srcfs`
-	destfs=`zfs get -H -o value zrep:dest-fs $srcfs`
-	[ $? -ne 0 -o "$desthost" = "-" -o "$destfs" = "-" ] && zrep_errquit "Problem getting zrep properties for fs $srcfs"
+	    desthost=`zfs get -H -o value zrep:dest-host $srcfs`
+	    destfs=`zfs get -H -o value zrep:dest-fs $srcfs`
+	    [ $? -ne 0 -o "$desthost" = "-" -o "$destfs" = "-" ] && zrep_errquit "Problem getting zrep properties for fs $srcfs"
 	
-	case $srcfs in
+	    case $srcfs in
 		*@*)
 			synctosnap $srcfs $destfs $desthost
 			return
 			;;
-	esac
+	    esac
 
-	zrep_lock_fs $srcfs
+	    zrep_lock_fs $srcfs
 
-	if [ $? -ne 0 ] ; then
+	    if [ $? -ne 0 ] ; then
 		# retry for lock for a while, if (quiettime>0 )
 
 		[ ${quiettime} -eq 0 ] && zrep_errquit "Cannot lock $srcfs. Cannot continue"
@@ -1100,17 +1100,15 @@ zrep_sync(){
 			echo Quiet mode: skipping busy fs $srcfs at `date`
 			return 
 		fi
-	fi
+	    fi
 
-	_snapandsync $srcfs $desthost $destfs
+	    _snapandsync $srcfs $desthost $destfs
 
 
-	# Make this message match what zrep_expire uses..
-	echo "Expiring zrep snaps on $srcfs"
-	_expire $srcfs
-	zrep_unlock_fs $srcfs
-	shift
-
+	    # Make this message match what zrep_expire uses..
+	    echo "Expiring zrep snaps on $srcfs"
+	    _expire $srcfs
+	    zrep_unlock_fs $srcfs
 	done
 
 }
@@ -1357,19 +1355,25 @@ zrep_failover(){
 
 	if [ "$1" = "-L" ] ; then
 		local=1
-		shift
+		[ -z "${attr}" ] && err 1 "zrep_failover: empty attr"
 	fi
 
-	if [ -z "$1" ] ; then
-		usage
-		exit 1
+	if [ -n "${jname}" ]; then
+            cbsd_init_dataset
+        else
+    	    err 1 "Failover jname= argument required"
+        fi
+
+
+	zfs list ${dataset} >/dev/null || zrep_errquit invalid filesystem ${dataset}
+	check=`zfs get -H -o value -s local zrep:master ${dataset}`
+	[ "$check" != "yes" ] && zrep_errquit "${dataset} not master. Cannot fail over"
+
+	if [ ${local} -eq 0 ]; then
+	    fs="${dataset}"
+	else
+	    fs="${attr}"
 	fi
-
-	zfs list $1 >/dev/null || zrep_errquit invalid filesystem $1
-	check=`zfs get -H -o value -s local zrep:master $1`
-	[ "$check" != "yes" ] && zrep_errquit "$1 not master. Cannot fail over"
-
-	fs="$1"
 	
 	case $fs in
 		*@*)
@@ -1387,11 +1391,11 @@ zrep_failover(){
 	zfs set readonly=on $fs
 
 	if [ ${local} -eq 1 ] ; then
-		echo "failover for $1 in LOCAL mode"
+		echo "failover for ${dataset} in LOCAL mode"
 		if [ -z "$snap" ] ; then
-			snap=`getlastsnapsent $1`
-			zfs list $1 >/dev/null ||
-				zrep_errquit No last synced snap found for $1. Cannot fail over
+			snap=`getlastsnapsent ${dataset}`
+			zfs list ${dataset} >/dev/null ||
+				zrep_errquit No last synced snap found for ${dataset}. Cannot fail over
 			echo Rolling back to last sync $snap
 		else
 			echo Rolling back to specified snap $snap
@@ -1435,7 +1439,7 @@ zrep_failover(){
 
 	if [ ${local} -eq 0 ] ; then
 		echo Setting master on $remotehost:$remotefs
-		zrep_ssh $remotehost $ZREP_PATH takeover -L $remotefs
+		zrep_ssh $remotehost cbsd mode=takeover jname=${jname} attr=${remotefs}
 	fi
 	
 }
@@ -1535,8 +1539,7 @@ case "${mode}" in
 		zrep_changeconfig "$@"
 		;;
 	sync)
-		shift
-		zrep_sync "$@"
+		zrep_sync
 		;;
 	snaponly)
 		shift
@@ -1558,10 +1561,9 @@ case "${mode}" in
 		shift
 		zrep_list
 		;;
-#	failover)
-#		shift
-#		zrep_failover "$@"
-#		;;
+	failover)
+		zrep_failover
+		;;
 #	takeover)
 #		shift
 #		zrep_takeover "$@"
