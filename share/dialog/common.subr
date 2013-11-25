@@ -1,9 +1,3 @@
-############################################################ CONFIGURATION
-
-#
-# Default file descriptors to link to stdout/stderr for passthru allowing
-# redirection within a sub-shell to bypass directly to the terminal.
-#
 : ${TERMINAL_STDOUT_PASSTHRU:=3}}
 : ${TERMINAL_STDERR_PASSTHRU:=4}}
 
@@ -31,12 +25,27 @@ FAILURE=1
 #
 export UNAME_S="$(uname -s)" # Operating System (i.e. FreeBSD)
 export UNAME_P="$(uname -p)" # Processor Architecture (i.e. i386)
+export UNAME_M="$(uname -m)" # Machine platform (i.e. i386)
 export UNAME_R="$(uname -r)" # Release Level (i.e. X.Y-RELEASE)
+if [ ! "${PKG_ABI+set}" ]; then
+	export PKG_ABI="$(
+		ASSUME_ALWAYS_YES=1 pkg -vv |
+			awk '$1=="ABI:"{print $2;exit}' 2> /dev/null
+	)"
+fi
 
 #
 # Default behavior is to call f_debug_init() automatically when loaded.
 #
 : ${DEBUG_SELF_INITIALIZE=1}
+
+#
+# Default behavior of f_debug_init() is to truncate $debugFile (set to NULL to
+# disable truncating the debug file when initializing). To get child processes
+# to append to the same log file, export this variarable (with a NULL value)
+# and also export debugFile with the desired value.
+# 
+: ${DEBUG_INITIALIZE_FILE=1}
 
 #
 # Define standard optstring arguments that should be supported by all programs
@@ -77,7 +86,7 @@ GETOPTS_ALLFLAGS="${GETOPTS_ALLFLAGS}0123456789"
 
 ############################################################ FUNCTIONS
 
-# f_dprintf $fmt [ $opts ... ]
+# f_dprintf $format [$arguments ...]
 #
 # Sensible debug function. Override in ~/.bsdconfigrc if desired.
 # See /usr/share/examples/bsdconfig/bsdconfigrc for example.
@@ -115,8 +124,8 @@ f_debug_init()
 	while getopts "$GETOPTS_STDARGS$GETOPTS_EXTRA$GETOPTS_ALLFLAGS" flag \
 	> /dev/null; do
 		case "$flag" in
-		d) debug=1;;
-		D) debugFile="$OPTARG";;
+		d) debug=1 ;;
+		D) debugFile="$OPTARG" ;;
 		esac
 	done
 	shift $(( $OPTIND - 1 ))
@@ -135,18 +144,17 @@ f_debug_init()
 	[ "$debugFile" ] && export debugFile
 
 	#
-	# Truncate the debug file upon. Note that we will trim a leading plus
-	# (`+') from the value of debugFile to support persistant meaning that
-	# f_dprintf() should print both to standard output and $debugFile
-	# (minus the leading plus, of course).
+	# Truncate debug file unless requested otherwise. Note that we will
+	# trim a leading plus (`+') from the value of debugFile to support
+	# persistant meaning that f_dprintf() should print both to standard
+	# output and $debugFile (minus the leading plus, of course).
 	#
 	local _debug_file="${debugFile#+}"
-	if [ "$_debug_file" ]; then
+	if [ "$_debug_file" -a "$DEBUG_INITIALIZE_FILE" ]; then
 		if ( umask 022 && :> "$_debug_file" ); then
 			f_dprintf "Successfully initialized debugFile \`%s'" \
 			          "$_debug_file"
-			[ "${debug+set}" ] ||
-				debug=1 # turn debugging on if not set
+			f_isset debug || debug=1 # turn debugging on if not set
 		else
 			unset debugFile
 			f_dprintf "Unable to initialize debugFile \`%s'" \
@@ -155,7 +163,7 @@ f_debug_init()
 	fi
 }
 
-# f_err $fmt [ $opts ... ]
+# f_err $format [$arguments ...]
 #
 # Print a message to stderr (fd=2).
 #
@@ -164,7 +172,7 @@ f_err()
 	printf "$@" >&${TERMINAL_STDERR_PASSTHRU:-2}
 }
 
-# f_quietly $command [ $arguments ... ]
+# f_quietly $command [$arguments ...]
 #
 # Run a command quietly (quell any output to stdout or stderr)
 #
@@ -181,6 +189,35 @@ f_quietly()
 f_have()
 {
 	f_quietly type "$@"
+}
+
+# f_which $anything [$var_to_set]
+#
+# A fast built-in replacement for syntaxes such as foo=$( which bar ). In a
+# comparison of 10,000 runs of this function versus which, this function
+# completed in under 3 seconds, while `which' took almost a full minute.
+#
+# If $var_to_set is missing or NULL, output is (like which) to standard out.
+# Returns success if a match was found, failure otherwise.
+#
+f_which()
+{
+	local __name="$1" __var_to_set="$2"
+	case "$__name" in */*|'') return $FAILURE; esac
+	local __p IFS=":" __found=
+	for __p in $PATH; do
+		local __exec="$__p/$__name"
+		[ -f "$__exec" -a -x "$__exec" ] && __found=1 && break
+	done
+	if [ "$__found" ]; then
+		if [ "$__var_to_set" ]; then
+			setvar "$__var_to_set" "$__exec"
+		else
+			echo "$__exec"
+		fi
+		return $SUCCESS
+	fi
+	return $FAILURE
 }
 
 # f_getvar $var_to_get [$var_to_set]
@@ -217,7 +254,7 @@ f_isset()
 	eval [ \"\${${1%%[$IFS]*}+set}\" ]
 }
 
-# f_die [ $status [ $fmt [ $opts ... ]]]
+# f_die [$status [$format [$arguments ...]]]
 #
 # Abruptly terminate due to an error optionally displaying a message in a
 # dialog box using printf(1) syntax.
@@ -251,7 +288,7 @@ f_interrupt()
 	f_die
 }
 
-# f_show_info $fmt [ $opts ... ]
+# f_show_info $format [$arguments ...]
 #
 # Display a message in a dialog infobox using printf(1) syntax.
 #
@@ -272,7 +309,7 @@ f_show_info()
 	fi
 }
 
-# f_show_msg $fmt [ $opts ... ]
+# f_show_msg $format [$arguments ...]
 #
 # Display a message in a dialog box using printf(1) syntax.
 #
@@ -293,8 +330,32 @@ f_show_msg()
 	fi
 }
 
+# f_show_err $format [$arguments ...]
+#
+# Display a message in a dialog box with ``Error'' i18n title (overridden by
+# setting msg_error) using printf(1) syntax. If running non-interactively,
+# the process will terminate (using [above] f_die()).
+#
+f_show_err()
+{
+	[ "$nonInteractive" ] && f_die
 
-# f_yesno $fmt [ $opts ... ]
+	local msg
+	msg=$( printf "$@" )
+
+	: ${msg:=${msg_an_unknown_error_occurred:-An unknown error occurred}}
+
+	if [ "$_DIALOG_SUBR" ]; then
+		f_dialog_title "${msg_error:-Error}"
+		f_dialog_msgbox "$msg"
+		f_dialog_title_restore
+	else
+		dialog --title "${msg_error:-Error}" --msgbox "$msg" 0 0
+	fi
+	return $SUCCESS
+}
+
+# f_yesno $format [$arguments ...]
 #
 # Display a message in a dialog yes/no box using printf(1) syntax.
 #
@@ -315,7 +376,7 @@ f_yesno()
 	fi
 }
 
-# f_noyes $fmt [ $opts ... ]
+# f_noyes $format [$arguments ...]
 #
 # Display a message in a dialog yes/no box using printf(1) syntax.
 # NOTE: THis is just like the f_yesno function except "No" is default.
@@ -408,7 +469,7 @@ f_include_lang()
 	fi
 }
 
-# f_usage $file [ $key1 $value1 ... ]
+# f_usage $file [$key1 $value1 ...]
 #
 # Display USAGE file with optional pre-processor macro definitions. The first
 # argument is the template file containing the usage text to be displayed. If
@@ -503,11 +564,22 @@ f_index_file()
 	if [ "$lang" ]; then
 		awk -v keyword="$keyword" "$f_index_file_awk" \
 			$BSDCFG_LIBE${BSDCFG_LIBE:+/}*/INDEX.$lang &&
-			return
+			return $SUCCESS
 		# No match, fall-thru to non-i18n sources
 	fi
 	awk -v keyword="$keyword" "$f_index_file_awk" \
-		$BSDCFG_LIBE${BSDCFG_LIBE:+/}*/INDEX
+		$BSDCFG_LIBE${BSDCFG_LIBE:+/}*/INDEX && return $SUCCESS
+
+	# No match? Fall-thru to `local' libexec sources (add-on modules)
+
+	[ "$BSDCFG_LOCAL_LIBE" ] || return $FAILURE
+	if [ "$lang" ]; then
+		awk -v keyword="$keyword" "$f_index_file_awk" \
+			$BSDCFG_LOCAL_LIBE/*/INDEX.$lang && return $SUCCESS
+		# No match, fall-thru to non-i18n sources
+	fi
+	awk -v keyword="$keyword" "$f_index_file_awk" \
+		$BSDCFG_LOCAL_LIBE/*/INDEX
 }
 
 # f_index_menusel_keyword $indexfile $pgm
@@ -677,3 +749,100 @@ f_mounted()
 	mount | grep -Eq " on $dir \([^)]+\)$"
 }
 
+# f_eval_catch [-d] $funcname $utility $format [$arguments ...]
+#
+# Silently evaluate a command in a sub-shell and test for error. If debugging
+# is enabled a copy of the command and its output is sent to debug (either
+# stdout or file depending on environment). If an error occurs, output of the
+# command is displayed in a dialog(1) msgbox using the [above] f_show_err()
+# function (unless optional `-d' flag is the first argument, then no dialog).
+# The $funcname argument is sent to debugging while the $utility argument is
+# used in the title of the dialog box. The command that is sent to debugging
+# along with $funcname is the product of the printf(1) syntax produced by
+# $format with optional $arguments.
+#
+# Example 1:
+#
+# 	debug=1
+# 	f_eval_catch myfunc cat 'contents=$( cat "%s" )' /some/file
+# 	# Error displayed ``cat: /some/file: No such file or directory''
+#
+# 	Produces the following debug output:
+#
+# 		DEBUG: myfunc: cat "/some/file"
+# 		DEBUG: myfunc: retval=1 <output below>
+# 		cat: /some/file: No such file or directory
+#
+# Example 2:
+#
+# 	debug=1
+# 	f_eval_catch myfunc echo 'echo "%s"' "Hello, World!"
+# 	# No error displayed
+#
+# 	Produces the following debug output:
+#
+# 		DEBUG: myfunc: echo "Hello, World!"
+# 		DEBUG: myfunc: retval=0 <output below>
+# 		Hello, World!
+#
+# Example 3:
+#
+# 	debug=1
+# 	echo 123 | f_eval_catch myfunc rev rev
+# 	# No error displayed
+#
+# 	Produces the following debug output:
+#
+# 		DEBUG: myfunc: rev
+# 		DEBUG: myfunc: retval=0 <output below>
+# 		321
+#
+# Example 4:
+#
+# 	debug=1
+# 	f_eval_catch myfunc true true
+# 	# No error displayed
+#
+# 	Produces the following debug output:
+#
+# 		DEBUG: myfunc: true
+# 		DEBUG: myfunc: retval=0 <no output>
+#
+f_eval_catch()
+{
+	local no_dialog=
+	[ "$1" = "-d" ] && no_dialog=1 && shift 1
+	local funcname="$1" utility="$2"; shift 2
+	local cmd output retval
+	cmd=$( printf -- "$@" )
+	f_dprintf "%s: %s" "$funcname" "$cmd" # Log command *before* eval
+	output=$( exec 2>&1; eval "$cmd" )
+	retval=$?
+	if [ "$output" ]; then
+		f_dprintf "%s: retval=%i <output below>\n%s" "$funcname" \
+		          $retval "$output"
+	else
+		f_dprintf "%s: retval=%i <no output>" "$funcname" $retval
+	fi
+	! [ "$no_dialog" -o "$nonInteractive" -o $retval -eq $SUCCESS ] &&
+		msg_error="${msg_error:-Error}${utility:+: $utility}" \
+			f_show_err "%s" "$output"
+		# NB: f_show_err will handle NULL output appropriately
+	return $retval
+}
+
+############################################################ MAIN
+
+#
+# Trap signals so we can recover gracefully
+#
+trap 'f_interrupt' SIGINT
+trap 'f_die' SIGTERM SIGPIPE SIGXCPU SIGXFSZ \
+             SIGFPE SIGTRAP SIGABRT SIGSEGV
+trap '' SIGALRM SIGPROF SIGUSR1 SIGUSR2 SIGHUP SIGVTALRM
+
+#
+# Clone terminal stdout/stderr so we can redirect to it from within sub-shells
+#
+eval exec $TERMINAL_STDOUT_PASSTHRU\>\&1
+eval exec $TERMINAL_STDERR_PASSTHRU\>\&2
