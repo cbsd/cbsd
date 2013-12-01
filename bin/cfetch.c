@@ -30,14 +30,14 @@ int usage()
 int
 main(int argc, char *argv[])
 {
-int c;
-char *url = NULL, *fout = NULL;
+    int c;
+    char *url = NULL, *fout = NULL;
 
-if (!strcmp(argv[1],"--help")) usage();
+    if (!strcmp(argv[1],"--help")) usage();
 
-while (1)
-{
-        c = getopt(argc, argv, "u:o:");
+    while (1)
+    {
+	c = getopt(argc, argv, "u:o:");
         /* Detect the end of the options. */
         if (c == -1)
             break;
@@ -50,25 +50,25 @@ while (1)
             fout=optarg;
               break;
           }
-}
+    }
 
-if ((!url)||(!fout)) usage();
+    if ((!url)||(!fout)) usage();
 
-c=fetch_files(url,fout);
-return c;
+    c=fetch_files(url,fout);
+    return c;
 }
 
 static int
 fetch_files(char *urls, char *fout)
 {
-	FILE *fetch_out, *file_out;
-	struct url_stat ustat;
-	off_t total_bytes, current_bytes, fsize;
-	uint8_t block[4096];
-	size_t chunk;
-	int progress, last_progress;
-	int nsuccess = 0; /* Number of files successfully downloaded */
-	int lprg=0;
+    FILE *fetch_out, *file_out;
+    struct url_stat ustat;
+    off_t total_bytes, current_bytes, fsize;
+    uint8_t block[4096];
+    size_t chunk;
+    int progress, last_progress;
+    int nsuccess = 0; /* Number of files successfully downloaded */
+    int lprg=0;
 
 	progress = 0;
 	total_bytes = 0;
@@ -82,8 +82,7 @@ fetch_files(char *urls, char *fout)
 
         printf("Size: %d Mb\n",((int)total_bytes / 1024 / 1024));
 	current_bytes = 0;
-		while ((chunk = fread(block, 1, sizeof(block), fetch_out))
-		    > 0) {
+		while ((chunk = fread(block, 1, sizeof(block), fetch_out)) > 0) {
 			if (fwrite(block, 1, chunk, file_out) < chunk)
 				break;
 
@@ -95,20 +94,21 @@ fetch_files(char *urls, char *fout)
 				progress = (current_bytes*100)/total_bytes; 
 			}
 
-	if ((progress%10 == 0)&&(lprg!=progress)) { lprg=progress; printf("Progress: %d%% \n",progress); }
+		    if ((progress%10 == 0)&&(lprg!=progress)) {
+			lprg=progress; printf("Progress: %d%% \n",progress); 
+		    }
+		}
 
-			}
-
-		if (ustat.size > 0 && fsize < ustat.size) {
-			if (fetchLastErrCode == 0) {
-			fclose(fetch_out);
-			fclose(file_out);
-			return 1;
-			}
-		} else nsuccess++;
-
+	if (ustat.size > 0 && fsize < ustat.size) {
+	    if (fetchLastErrCode == 0) { //small chunk
 		fclose(fetch_out);
 		fclose(file_out);
-	return (0);
+		return 0;
+	    }
+	} else nsuccess++;
+
+	fclose(fetch_out);
+	fclose(file_out);
+    return (0);
 }
 

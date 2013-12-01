@@ -399,14 +399,14 @@ setinputfile(const char *fname, int push)
 	int fd2;
 
 	INTOFF;
-	if ((fd = open(fname, O_RDONLY | O_CLOEXEC)) < 0)
+	if ((fd = open(fname, O_RDONLY)) < 0)
 #ifdef CBSD
                 return 2;
 #else
 		error("cannot open %s: %s", fname, strerror(errno));
 #endif
 	if (fd < 10) {
-		fd2 = fcntl(fd, F_DUPFD_CLOEXEC, 10);
+		fd2 = fcntl(fd, F_DUPFD, 10);
 		close(fd);
 		if (fd2 < 0)
 			error("Out of file descriptors");
