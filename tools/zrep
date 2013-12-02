@@ -199,12 +199,12 @@ zrep_unlock_fs(){
 #   I'll need to plan that out more carefully!
 #
 zrep_errquit(){
-	echo Error: "$@" >/dev/fd/2
+	${ECHO} Error: "$@" >/dev/fd/2
 
 	if zrep_has_global_lock ; then
 		if [ "$$" != "$Z_GLOBAL_PID" ] ; then
-			echo "EXTRA-ERROR: Running in child proc."
-			echo "Not sure whether to release global lock. NOT releasing!"
+			${ECHO} "EXTRA-ERROR: Running in child proc."
+			${ECHO} "Not sure whether to release global lock. NOT releasing!"
 			exit 1
 		else
 			zrep_release_global_lock
@@ -546,8 +546,8 @@ makesnap(){
 	#sanity checks first!
 	check="`zfs get -H -o value zrep:src-host $1`"
 	if [ "$check" != "$Z_LOCAL_HOST" ] ; then
-		echo ERROR: we are not master host for $1 >/dev/fd/2
-		echo master is $check, we are $Z_LOCAL_HOST  >/dev/fd/2
+		${ECHO} "${MAGENTA}ERROR: ${Z_LOCAL_HOST} we are not master host for: ${GREEN}$1${NORMAL}" >/dev/fd/2
+		${ECHO} "${MAGENTA}master is ${GREEN}$check${MAGENTA}, we are ${GREEN}$Z_LOCAL_HOST${NORMAL}"  >/dev/fd/2
 		exit 1
 	fi
 
@@ -580,7 +580,7 @@ makesnap(){
 # export ZFS dataset as ${dataset}
 cbsd_init_dataset(){
 	. ${jrcconf}
-        [ $? -eq 1 ] && err 1 "${MAGENTA}zrep_clear: no such jail: ${GREEN}${jname}${NORMAL}"
+        [ $? -eq 1 ] && err 1 "${MAGENTA}${Z_LOCAL_HOST} zrep_clear: no such jail: ${GREEN}${jname}${NORMAL}"
                           
         . $zfstool
         ZPOOL=`zfs get -Ho value name ${jaildatadir}`
@@ -715,7 +715,7 @@ zrep_init(){
 	fi
 	
 
-	echo "Setting properties on $srcfs"
+	${ECHO} "${MAGENTA}Setting properties on:${GREEN} $srcfs${NORMAL}"
 	setfsconfigs $srcfs $desthost $destfs
 
 	#setfsconfigs may do some "smarts" to adjust value, so get it again.
@@ -725,20 +725,19 @@ zrep_init(){
 		READONLYPROP="-o readonly=on"
 	else
 		READONLYPROP=""
-		echo "Ancient local version of ZFS detected."
-		echo "Creating destination filesystem as separate step"
-		zrep_ssh $desthost zfs create $ZREP_CREATE_FLAGS -o readonly=on $destfs || zrep_errquit "Cannot create $desthost:$destfs"
+		${ECHO} "${MAGENTA}Creating destination filesystem as separate step${NORMAL}"
+		zrep_ssh $desthost zfs create $ZREP_CREATE_FLAGS -o readonly=on $destfs || zrep_errquit "${MAGENTA}Cannot create: ${GREEN}$desthost:$destfs${NORMAL}"
 	fi
 
 	snap="${srcfs}@zrep_000000"
-	echo Creating snapshot $snap
+	${ECHO} "${MAGENTA}Creating snapshot: ${GREEN}$snap${NORMAL}"
 	zfs snapshot $snap || clearquit $srcfs "Cannot create initial snapshot $snap"
 
 	# Note that we may not want to use -p for normal zrep syncs
 	# We also should not use -F for normal recv. See workflow.txt
 	# Note: we may have to reset readonly=on, if we used -p on send...
 	#
-	echo "Sending initial replication stream to $desthost:$destfs"
+	${ECHO} "${MAGENTA}Sending initial replication stream to: ${GREEN}$desthost:$destfs${NORMAL}"
 	if [ $Z_HAS_X -eq 1 ] ; then
 		# This is the nice, clean, modern codepath, to send
 		# zrep settings over automatically at first init
@@ -765,7 +764,6 @@ zrep_init(){
 	# Successful initial sync! Woo! okay record that, etc.
 	# ... after stupid old-zfs-compat junk, that is
 	if [ ${Z_HAS_X} -ne 1 ] ; then
-		echo "Debug: Because you have old zfs support, setting remote properties by hand"
 		zrep_ssh $desthost zfs set readonly=on $destfs || clearquit "Could not set readonly for $desthost:$destfs"
 		zrep_ssh $desthost zfs set zrep:src-fs=$srcfs $destfs
 		zrep_ssh $desthost zfs set zrep:src-host=$Z_LOCAL_HOST $destfs
@@ -799,7 +797,7 @@ zrep_init(){
 	
 	zfs set zrep:master=yes	$srcfs
 
-	echo Initialization copy of $srcfs to $desthost:$destfs complete
+	${ECHO} "${MAGENTA}Initialization copy of ${GREEN}$srcfs${MAGENTA} to ${GREEN}$desthost:$destfs${MAGENTA} complete${NORMAL}"
 
 }
 
@@ -974,7 +972,7 @@ _sync(){
 
 	snapname=${newsnap#*@}
 
-	echo sending $newsnap to $desthost:$destfs
+	${ECHO} "${MAGENTA}sending ${GREEN}$newsnap ${MAGENTA}to ${GREEN}$desthost:$destfs${NORMAL}"
 	local timeinsec=`zrep_gettimeinseconds`
 	local senttimeprop="zrep:sent=$timeinsec"
 
@@ -1106,7 +1104,7 @@ zrep_sync(){
 
 
 	    # Make this message match what zrep_expire uses..
-	    echo "Expiring zrep snaps on $srcfs"
+	    ${ECHO} "${MAGENTA}Expiring zrep snaps on: ${GREEN}$srcfs${NORMAL}"
 	    _expire $srcfs
 	    zrep_unlock_fs $srcfs
 	done
@@ -1284,7 +1282,7 @@ _expire(){
 		head -$currcount $tmpfile >$tmpfile.2
 		mv $tmpfile.2 $tmpfile
 		for snap in `cat $tmpfile` ; do
-			echo DEBUG: expiring $snap
+			${ECHO} "${MAGENTA}DEBUG: expiring ${GREEN}$snap${NORMAL}"
 			zfs destroy $snap
 		done
 	fi
@@ -1296,7 +1294,7 @@ _expire(){
 
 	remotehost=`zfs get -H -o value zrep:dest-host $1`
 	remotefs=`zfs get -H -o value zrep:dest-fs $1`
-	echo "Also running expire on $remotehost:$remotefs now..."
+	${ECHO} "${MAGENTA}Also running expire on ${GREEN}$remotehost:$remotefs ${MAGENTA}now...${NORMAL}"
 	sanity=`zrep_ssh $remotehost zfs get -H -o value -s local zrep:master $remotefs`
 
 	# Normally, dont quit on error. But this is super-bad.
@@ -1338,7 +1336,7 @@ zrep_expire()
 	#
 	while [ -n "$1" ] ; do
 		zrep_lock_fs $1
-		echo "Expiring zrep snaps on $1"
+		${ECHO} "${MAGENTA}Expiring zrep snaps on: ${GREEN}$1${NORMAL}"
 		 _expire $local $1 || echo "WARNING: expire failed for $1"
 		zrep_unlock_fs $1
 		shift
@@ -1353,27 +1351,21 @@ zrep_expire()
 zrep_failover(){
 	local local=0 fs snap="" remotehost remotefs check
 
-	if [ "$1" = "-L" ] ; then
-		local=1
-		[ -z "${attr}" ] && err 1 "zrep_failover: empty attr"
+	if [ -n "${attr}"  ]; then
+#		local=1
+		fs="${attr}"
+	else
+	    if [ -n "${jname}" ]; then
+        	cbsd_init_dataset
+    	    else
+    		err 1 "Failover jname= argument required"
+    	    fi
+	    fs=${dataset}
 	fi
-
-	if [ -n "${jname}" ]; then
-            cbsd_init_dataset
-        else
-    	    err 1 "Failover jname= argument required"
-        fi
-
 
 	zfs list ${dataset} >/dev/null || zrep_errquit invalid filesystem ${dataset}
 	check=`zfs get -H -o value -s local zrep:master ${dataset}`
-	[ "$check" != "yes" ] && zrep_errquit "${dataset} not master. Cannot fail over"
-
-	if [ ${local} -eq 0 ]; then
-	    fs="${dataset}"
-	else
-	    fs="${attr}"
-	fi
+	[ "$check" != "yes" ] && zrep_errquit "${Z_LOCAL_HOST} ${fs} not master. Cannot fail over"
 	
 	case $fs in
 		*@*)
@@ -1387,23 +1379,20 @@ zrep_failover(){
 	remotehost=`zfs get -H -o value zrep:dest-host $fs`
 	remotefs=`zfs get -H -o value zrep:dest-fs $fs`
 
-	echo setting readonly on local $fs, then syncing
+	$ECHO "${MAGENTA}setting readonly on local ${GREEN}$fs${MAGENTA}, then syncing${NORMAL}"
 	zfs set readonly=on $fs
 
 	if [ ${local} -eq 1 ] ; then
-		echo "failover for ${dataset} in LOCAL mode"
+		${ECHO} "${MAGENTA}failover for ${GREEN}${fs}${MAGENTA} in LOCAL mode${NORMAL}"
 		if [ -z "$snap" ] ; then
-			snap=`getlastsnapsent ${dataset}`
-			zfs list ${dataset} >/dev/null ||
-				zrep_errquit No last synced snap found for ${dataset}. Cannot fail over
-			echo Rolling back to last sync $snap
+			snap=`getlastsnapsent ${fs}`
+			zfs list ${fs} >/dev/null || zrep_errquit "${MAGENTA}No last synced snap found for ${GREEN}${fs}. ${MAGENTA}Cannot fail over${NORMAL}"
+			${ECHO} "${MAGENTA}Rolling back to last sync ${GREEN}$snap${NORMAL}"
 		else
-			echo Rolling back to specified snap $snap
+			${ECHO} "${MAGENTA}Rolling back to specified snap ${GREEN}$snap${NORMAL}"
 		fi
-		zfs rollback -Rr $snap ||zrep_errquit Rollback to $snap failed
-
+		zfs rollback -Rr $snap ||zrep_errquit "Rollback to $snap failed"
 	else
-
 		## Need to sync both sides before mode switch!
 		## If named snap, roll back.
 		## otherwise, "roll forward" by doing one last sync
@@ -1412,21 +1401,21 @@ zrep_failover(){
 			local snapname
 			snapname=${snap#*@}
 
-			echo Rolling back to local $snap
-			zfs rollback -Rr $snap || zrep_errquit Rollback to $snap failed
-			echo Rolling back $remotehost to $remotefs@$snapname
+			${ECHO} "${MAGENTA}Rolling back to local ${GREEN}$snap${NORMAL}"
+			zfs rollback -Rr $snap || zrep_errquit "${MAGENTA}Rollback to ${GREEN}$snap${MAGENTA} failed${NORMAL}"
+			${ECHO} "${MAGENTA}Rolling back ${GREEN}$remotehost${MAGENTA} to ${GREEN}$remotefs@$snapname${NORMAL}"
 			zrep_ssh $remotehost zfs rollback $remotefs@$snapname ||
-				zrep_errquit remote rollback failed
+				zrep_errquit "${MAGENTA}remote rollback failed${NORMAL}"
 
 		else
 			# makes new snapshot, and syncs 
-			_snapandsync $fs $remotehost $remotefs || zrep_errquit final sync failed. failover failed.
+			_snapandsync $fs $remotehost $remotefs || zrep_errquit "${MAGENTA}final sync failed. failover failed.${NORMAL}"
 		fi
 
 
 	fi
 
-	echo Reversing master properties for $Z_LOCAL_HOST:$fs
+	${ECHO} "${MAGENTA}Reversing master properties for: ${GREEN}$Z_LOCAL_HOST:$fs${NORMAL}"
 
 	zfs set zrep:dest-fs=$fs $fs	
 	zfs set zrep:dest-host=$Z_LOCAL_HOST $fs
@@ -1439,7 +1428,7 @@ zrep_failover(){
 
 	if [ ${local} -eq 0 ] ; then
 		echo Setting master on $remotehost:$remotefs
-		zrep_ssh $remotehost cbsd mode=takeover jname=${jname} attr=${remotefs}
+		zrep_ssh $remotehost cbsd zrep mode=takeover jname=${jname} attr=${remotefs}
 	fi
 	
 }
@@ -1448,31 +1437,29 @@ zrep_failover(){
 zrep_takeover(){
 	local fs snap remotehost remotefs check local=0
 
-	if [ "$1" = "-L" ] ; then
-		local=1
-		shift
+	if [ -n "${attr}" ]; then
+            local=1
+	    fs=${attr}
+        else
+	    if [ -n "${jname}" ]; then
+        	cbsd_init_dataset
+    	    else
+        	err 1 "Failover jname= argument required"
+    	    fi
+	    fs=${dataset}
 	fi
-	
-	if [ -z "$1" ] ; then
-		usage
-		exit 1
-	fi
-
-	fs="$1"
 
 	zfs list $fs >/dev/null || zrep_errquit invalid filesystem $fs
 
 	check=`zfs get -H -o value -s local zrep:master $fs`
-	[ "$check" = "yes" ] && zrep_errquit $fs is already master. Cannot takeover
+	[ "$check" = "yes" ] && zrep_errquit "$fs is already master. Cannot takeover"
 
 	remotehost=`zfs get -H -o value zrep:src-host $fs`
 	remotefs=`zfs get -H -o value zrep:src-fs $fs`
 
-
 	if [ ${local} -eq 0 ] ; then
-
-		echo starting failover from remote side $remotehost
-		zrep_ssh $remotehost $ZREP_PATH failover $remotefs
+		$ECHO "${MAGENTA}starting failover from remote side ${GREEN}$remotehost${NORMAL}"
+		zrep_ssh $remotehost cbsd zrep mode=failover jname=${jname} attr=${remotefs}
 		exit $?
 	fi
 
@@ -1504,7 +1491,7 @@ zrep_takeover(){
 		zfs rollback -Rr $snap || zrep_errquit Rollback to $snap failed
 	fi
 
-	echo Setting master properties for $Z_LOCAL_HOST:$fs
+	${ECHO} "${MAGENTA}Setting master properties for ${GREEN}$Z_LOCAL_HOST:$fs${NORMAL}"
 
 	zfs set zrep:src-fs=$fs $fs	
 	zfs set zrep:src-host=$Z_LOCAL_HOST $fs
@@ -1514,8 +1501,6 @@ zrep_takeover(){
 	zfs set zrep:master=yes $fs
 	
 	zrep_unlock_fs $fs
-	
-
 }
 
 ######## zrep_top continues here
@@ -1564,11 +1549,10 @@ case "${mode}" in
 	failover)
 		zrep_failover
 		;;
-#	takeover)
-#		shift
-#		zrep_takeover "$@"
-#		;;
-#		
+	takeover)
+		shift
+		zrep_takeover
+		;;
 	_refreshpull)  # Secret option DO NOT PUT IN USAGE!!
 		shift
 		_refreshpull $1
