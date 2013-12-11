@@ -117,15 +117,18 @@ main(int argc, char **argv)
 	ret = sqlite3_prepare_v2(db, query, strlen(query) + 1, &stmt, NULL);
 
 	retry = 0;
+
         if (ret == SQLITE_OK)
         {
 	    while ( (ret!=SQLITE_DONE)&&(retry<maxretry))
 	    {
 		ret = sqlite3_step(stmt);
-		if (ret == SQLITE_ROW) sqlCB(stmt);
-            	    else 
-            	if (ret == SQLITE_BUSY) {
-            	    sqlite3_sleep(250);
+		if (ret == SQLITE_ROW) {
+		    sqlCB(stmt);
+		    break;
+		}
+            	else if (ret == SQLITE_BUSY) {
+            	    sqlite3_sleep(5);
             	    retry++;
             	}
 	    }
