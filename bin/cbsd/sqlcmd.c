@@ -139,7 +139,7 @@ sqlitecmd(int argc, char **argv)
 		ret = sqlite3_step(stmt);
 		if (ret == SQLITE_ROW) {
 		    sqlCB(stmt);
-		    break;
+		    continue;
 		}
 		else if (ret == SQLITE_BUSY) {
 		    sqlite3_sleep(5);
