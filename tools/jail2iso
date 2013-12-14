@@ -1,13 +1,14 @@
 #!/bin/sh
-#v9.2.2
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname destdir media"
-MYOPTARG="name label product publisher"
+MYOPTARG="name label product publisher prunelist"
 MYDESC="Convert jail into cd9660 ISO or memstick image"
 ADDHELP="destdir= destination dir for storing jname.iso\n\
 name - for alternative kernel name (GENERIC is default)\n\
 label - label for media\n\
-media - iso or memstick\n"
+media - iso or memstick\n\
+prunelist= path to prunelist, default is ${sharedir}/jail2iso-prunelist\n"
 
 [ -f "${globalconf}" ] || err 1 "no such conf file";
 . ${globalconf}
@@ -43,11 +44,11 @@ DSTDIR="${tmpdir}/tmpmfsroot"
 
 make_mtree()
 {
-    mtree -deU -f ${BASEROOT}/etc/mtree/BSD.root.dist -p ${DSTDIR} >/dev/null
-    mtree -deU -f ${BASEROOT}/etc/mtree/BSD.usr.dist -p ${DSTDIR}/usr >/dev/null
-    mtree -deU -f ${BASEROOT}/etc/mtree/BSD.var.dist -p ${DSTDIR}/var >/dev/null
-    mtree -deU -f ${BASEROOT}/etc/mtree/BIND.chroot.dist -p ${DSTDIR}/var/named >/dev/null
-    mtree -deU -f ${BASEROOT}/etc/mtree/BSD.sendmail.dist -p ${DSTDIR} >/dev/null
+    [ -f ${BASEROOT}/etc/mtree/BSD.root.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.root.dist -p ${DSTDIR} >/dev/null
+    [ -f ${BASEROOT}/etc/mtree/BSD.usr.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.usr.dist -p ${DSTDIR}/usr >/dev/null
+    [ -f ${BASEROOT}/etc/mtree/BSD.var.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.var.dist -p ${DSTDIR}/var >/dev/null
+    [ -f ${BASEROOT}/etc/mtree/BIND.chroot.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BIND.chroot.dist -p ${DSTDIR}/var/named >/dev/null
+    [ -f ${BASEROOT}/etc/mtree/BSD.sendmail.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.sendmail.dist -p ${DSTDIR} >/dev/null
 }
 
 make_libmap()
@@ -66,80 +67,93 @@ make_libmap()
 
 copy_binlib()
 {
-cat ${FILES}| while read line; do
-    [ -z "${line}" -o `echo ${line} |grep -n ^#` ] && continue
-    D=`chroot ${BASEROOT} dirname ${line}`
-#    cp -al ${BASEROOT}${line} ${DSTDIR}${D}
-    rsync -av ${BASEROOT}${line} ${DSTDIR}${D}
-    A=`readlink ${BASEROOT}${line}`
-    [ -n "${A}" -a -f "${D}/${A}" ] && {
-        echo "SYM: $A"
-#        cp -al ${D}/${A} ${DSTDIR}${D}
-	rsync -av -${D}${A} ${DSTDIR}${D}
-        }
-done
+    cat ${FILES}| while read line; do
+	[ -z "${line}" -o `echo ${line} |grep -n ^#` ] && continue
+	D=`chroot ${BASEROOT} dirname ${line}`
+	rsync -av ${BASEROOT}${line} ${DSTDIR}${D}
+	A=`readlink ${BASEROOT}${line}`
+	if [ -n "${A}" -a -f "${D}/${A}" ]; then
+	    echo "SYM: $A"
+	    rsync -av -${D}${A} ${DSTDIR}${D}
+	fi
+    done
 
-cat ${B}| while read line; do
-    [ -z "${line}" ] && continue
-    D=`chroot ${BASEROOT} dirname ${line}`
-#    cp -al ${BASEROOT}${line} ${DSTDIR}${D}
-    rsync -avzx ${BASEROOT}${line} ${DSTDIR}${D}
-done
+    cat ${B}| while read line; do
+	[ -z "${line}" ] && continue
+	D=`chroot ${BASEROOT} dirname ${line}`
+	rsync -avzx ${BASEROOT}${line} ${DSTDIR}${D}
+    done
 }
 
 prepare_dir()
 {
-cp -rP ${path}/etc ${DSTDIR}/
+    cp -rP ${path}/etc ${DSTDIR}/
 
-case "${media}" in
-"iso")
-    ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
-    ;;
-"memstick")
-    ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
-    ;;
-esac
+    case "${media}" in
+    "iso")
+	ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
+	;;
+    "memstick")
+	ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
+	;;
+    esac
 
-cat > ${DSTDIR}/etc/fstab << EOF
+    cat > ${DSTDIR}/etc/fstab << EOF
 tmpfs /tmp tmpfs rw 0 0
 $ROOTFS
 /mnt/boot/kernel /boot/kernel nullfs ro 0 0
 /mnt/usr /usr nullfs ro 0 0
+tmpfs /usr/local tmpfs rw 0 0
 EOF
 
-#cat > ${DSTDIR}/etc/rc.conf << EOF
-#hostname="minicbsd"
-#EOF
-cp ${path}/etc/rc.conf ${DSTDIR}/etc/rc.conf
+    cp ${path}/etc/rc.conf ${DSTDIR}/etc/rc.conf
 
-if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
-    cp ${workdir}/misc/tmpfsdir ${DSTDIR}/etc/rc.d/
-fi
+    if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
+	cp ${workdir}/misc/tmpfsdir ${DSTDIR}/etc/rc.d/
+    fi
 }
+
+prunelist()
+{
+
+    [ ! -f "${prunelist}" ] && return 0 # no prune
+    [ -z "${1}" ] && return 0 # sanity
+
+    echo "Prune file by list ${prunelist}"
+
+    for FILE in `cat ${prunelist}`; do
+	if [ -n "${FILE}" ]; then
+	    rm -rf ${1}/${FILE} 2>/dev/null
+	fi
+    done
+}
+
 
 makemfsroot()
 {
-#dd if=/dev/zero of=/tmp/mfsroot count=100000 bs=1k
-dd if=/dev/zero of=/tmp/mfsroot count=40000 bs=1k
+    dd if=/dev/zero of=/tmp/mfsroot count=40000 bs=1k
 
-DEV=`mdconfig -a -t vnode -f /tmp/mfsroot`
-bsdlabel -w /dev/${DEV} auto
-newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
-mkdir -p ${DSTDIR}
-mount /dev/${DEV} ${DSTDIR}
-make_mtree
-make_libmap
-copy_binlib
-prepare_dir
-cd /
-umount -f ${DSTDIR}
-chflags -R noschg ${DSTDIR} && rm -rf ${DSTDIR}
-mdconfig -d -u ${DEV}
-gzip /tmp/mfsroot
+    DEV=`mdconfig -a -t vnode -f /tmp/mfsroot`
+    bsdlabel -w /dev/${DEV} auto
+    newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
+    mkdir -p ${DSTDIR}
+    mount /dev/${DEV} ${DSTDIR}
+    make_mtree
+    make_libmap
+    copy_binlib
+    prepare_dir
+    prunelist ${DSTDIR}
+    cd /
+    umount -f ${DSTDIR}
+    chflags -R noschg ${DSTDIR} && rm -rf ${DSTDIR}
+    mdconfig -d -u ${DEV}
+    gzip /tmp/mfsroot
 }
 
 
 # MAIN
+[ -z "${prunelist}" ] && prunelist="${sharedir}/jail2iso-prunelist"
+
 [ ! -d "${SRCKERNEL}" ] && err 1 "No such ${SRCKERNEL}"
 [ "$media" = "iso" -o "$media" = "memstick" ] || err 1 "Unknown media type. Must be iso or memstick"
 mountbase
@@ -151,17 +165,17 @@ BS=8192
 
 makemfsroot
 
-#rsync -av --exclude /rescue ${path}/ ${TMPDIR}
 cp -a ${path} ${TMPDIR}
 rm -rf ${TMPDIR}/rescue
+prunelist ${TMPDIR}
 
-#rsync -av --exclude *.symbols ${SRCKERNEL}/boot/kernel ${TMPDIR}/boot
 cp -a ${SRCKERNEL}/boot/kernel ${TMPDIR}/boot
 rm -f ${TMPDIR}/boot/kernel/*.symbols
-
+cd ${TMPDIR}/boot/kernel && gzip -9 *
 
 cat > ${TMPDIR}/boot/loader.conf << EOF
 geom_uzip_load="YES"
+i915kms_load="YES"
 tmpfs_load="YES"
 nullfs_load="YES"
 mfs_load="YES"
@@ -194,18 +208,16 @@ EOF
 echo "Welcome to ${PRODUCT}" > ${TMPDIR}/etc/motd
 
 mv /tmp/mfsroot.gz ${TMPDIR}
+
 if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
     cp ${jailsysdir}/${jname}/tmpfsdir ${TMPDIR}/etc/
 fi
 
 case "${media}" in
 "iso")
-#    /usr/local/cbsd/9.1.0/release/mkisoimages.sh ${LABEL} -o publisher="${PUBLISHER}" ${destdir}/${jname}-${ver}_${arch}.iso ${TMPDIR}
     /usr/local/cbsd/release/mkisoimages.sh ${LABEL} ${destdir}/${jname}-${ver}_${arch}.iso ${TMPDIR}
-
     ;;
 "memstick")
-#    makefs -B little -o label=${LABEL} -o publisher="${PUBLISHER}" ${destdir}/${jname}-${ver}_${arch}.img ${TMPDIR}
     makefs -B little -o label=${LABEL} ${destdir}/${jname}-${ver}_${arch}.img ${TMPDIR}
 
     [ $? -ne 0 ] && err 1 "makefs failed"
