@@ -13,7 +13,10 @@ export PATH="/usr/lib/distcc/bin:$PATH"
 #export CCACHE_PREFIX="/usr/local/bin/distcc"
 export CCACHE_PATH="/usr/bin:/usr/local/bin"
 export PATH="/usr/local/libexec/ccache:$PATH:/usr/local/bin:/usr/local/sbin"
-export LC_ALL=en_US.UTF-8
+#export LC_ALL=en_US.UTF-8
+
+# instead of less -e in portmaster defaults
+export PAGER=cat
 
 LOGFILE="/tmp/packages.log"
 BUILDLOG="/tmp/build.log"
@@ -79,8 +82,8 @@ for dir in $PORT_DIRS; do
 
     pkg info -e `make -C ${dir} -V PKGNAME` && continue
 
-#    yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG} 
-    portmaster -CK --no-confirm -y -B -D -H ${dir} 2>&1|tee >>${BUILDLOG} 
+#    yes |portmaster -CK --no-confirm -y -H ${dir} 2>&1|tee >>${BUILDLOG}
+    portmaster -CK --no-confirm --no-term-title --no-index-fetch -y -B -D -H ${dir} 2>&1|tee >>${BUILDLOG}
 
     # clean dir while https://github.com/freebsd/portmaster/pull/18 is not commited
     rm -rf /tmp/usr

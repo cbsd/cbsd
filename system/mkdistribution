@@ -2,11 +2,13 @@
 #v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="ver arch basename stable destdir"
-MYDESC="Create default FreeBSD distribution .txz files from base/kernel dir"
+MYOPTARG="ver arch basename name stable destdir distribution"
+MYDESC="Create default FreeBSD distribution in .txz files"
 ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
-destdir= for alternative install path in root dir\n"
+destdir= for alternative install path in root dir\n\
+distribution= \"base kernel ports src\"\n\
+name= name of the kernel\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -18,37 +20,85 @@ init $*
 # By default ver=current version
 . ${buildconf}
 
-if [ -z "${basename}" ]; then
-    SRC="${basejaildir}/${basejailpref}_${arch}_${ver}"
-else
-    SRC="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
-fi
+init_base()
+{
+    exclude_files=""
+
+    if [ -z "${basename}" ]; then
+	SRC_DIR="${basejaildir}/${basejailpref}_${arch}_${ver}"
+    else
+	SRC_DIR="${basejaildir}/${basejailpref}_${basename}_${arch}_${ver}"
+    fi
+
+exclude_files_lib32="/libexec/ld-elf32.so.1|\
+/usr/bin/ldd32|\
+/usr/lib32/.*|\
+/usr/libexec/ld-elf32.so.1"
+
+exclude_files_rescue="/rescue/.*"
+
+exclude_files="^${SRC_DIR}(\
+${exclude_files_lib32}|\
+${exclude_files_rescue}|\
+)"
+
+}
+
+init_kernel()
+{
+    [ -z "${name}" ] && name="GENERIC"
+
+    if [ -z "${basename}" ]; then
+	SRC_DIR="${basejaildir}/kernel_${name}_${arch}_${ver}"
+    else
+	SRC_DIR="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
+    fi
+
+}
+
+init_ports()
+{
+
+    SRC_DIR="/usr/ports"
+
+#    find ${SRC_DIR} -type d -name work -exec rm -rf {} \;
+
+}
+
+
+init_src()
+{
+
+    SRC_DIR="${srcdir}/src_${ver}/src"
+
+}
+
+
+## MAIN
 
 if [ -n "${destdir}" ]; then
-    DST="${destdir}"
+    DST_DIR="${destdir}"
 else
-    DST="${tmpdir}"
+    DST_DIR="${tmpdir}"
 fi
 
-[ -d "${SRC}" ] || err 1 "${MAGENTA}No such source: ${GREEN}${SRC}${NORMAL}"
-[ -d "${DST}" ] || /bin/mkdir -p ${DST}
+[ ! -d "${DST}" ] && /bin/mkdir -p ${DST_DIR}
 
-DISTRIBUTION="base kernel"
-
-set -x xtrace
-
-cd ${SRC}
-
-tar cJf ${DST}/base.txz .
-
-[ -z "${name}" ] && name="GENERIC"
-
-if [ -z "${basename}" ]; then
-    SRC="${basejaildir}/kernel_${name}_${arch}_${ver}"
+if [ -z "${distribution}" ]; then
+    DISTRIBUTION="base kernel"
 else
-    SRC="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
+    DISTRIBUTION="${distribution}"
 fi
 
-cd ${SRC}
-tar cJf ${DST}/kernel.txz .
+#set -x xtrace
 
+for i in ${DISTRIBUTION}; do
+    init_${i}
+    if [ ! -d "${SRC_DIR}" ]; then
+	echo "No such source dir for ${i}: ${SRC_DIR}"
+	continue
+    fi
+    echo "WIP: ${i}, source ${SRC_DIR}"
+    cd ${SRC_DIR}
+    tar -cJf ${DST_DIR}/${i}.txz .
+done
