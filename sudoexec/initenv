@@ -133,7 +133,6 @@ phase0()
     ${ECHO} "${MAGENTA}[Stage 0:${GREEN} Upgrading and migration data from ${oldver} to ${newver}${MAGENTA}]${NORMAL}"
 
     [ -d "${distdir}/upgrade" ] && find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-patch-\* -exec {} \;
-    ${distdir}/misc/config_pkgrepo /
 }
 
 # execute post scripts from upgrade directory
@@ -145,6 +144,7 @@ phaseX()
     ${ECHO} "${MAGENTA}[Stage X:${GREEN} Upgrading${MAGENTA}]${NORMAL}"
 
     [ -d "${distdir}/upgrade" ] && find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name post-patch-\* -exec {} \;
+    ${distdir}/misc/config_pkgrepo -t ${etcdir}/pkg.conf /
 }
 
 
@@ -200,7 +200,7 @@ phase2()
 
     CURVERSION=`cbsd -c version`
     if [ "${CURVERSION}" != "${myversion}" ]; then
-	rm -f /usr/local/bin/cbsd
+	[ -f "/usr/local/bin/cbsd" ] && rm -f /usr/local/bin/cbsd
 	make -C ${distdir}/bin/cbsd clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsd && make -C ${distdir}/bin/cbsd install && make -C ${distdir}/bin/cbsd clean
     fi
 
@@ -239,7 +239,7 @@ phase2()
 	etc"
 
     cat > ${etcdir}/cbsd_sudoers <<EOF
-Defaults     env_keep += "workdir DIALOG"
+Defaults     env_keep += "workdir DIALOG NOCOLOR"
 Cmnd_Alias   CBSD_CMD = ${sudoexecdir}/*,/usr/local/cbsd/sudoexec/*
 ${cbsduser}   ALL=(ALL) NOPASSWD: CBSD_CMD
 EOF
@@ -303,6 +303,7 @@ EOF
     # workaround for move jail-skel hier in cbsd 10.0.0
     [ ! -d "${jailskeldir}/etc" ] && cp -Rp ${distdir}/share/jail-skel/etc ${jailskeldir}
 
+    cp -R ${distdir}/modules ${workdir}
 }
 
 phase3()
@@ -510,9 +511,50 @@ phase7()
 
 phase8()
 {
+    local SECCMD i cmd lnk dst modulename
+    ${ECHO} "${MAGENTA}[Stage 8: ${GREEN}Modules${MAGENTA}]${NORMAL}"
+
+    [ ! -f "${etcdir}/modules.conf" ] && return 0
+
+    # Install module
+    for i in `cat ${etcdir}/modules.conf`; do
+	[ ! -f "${moduledir}/${i}/securecmd" ] && continue
+	    . ${moduledir}/${i}/securecmd
+	    for cmd in ${SECCMD}; do
+		if [ ! -h "${toolsdir}/${cmd}" ]; then
+		    ln -sf ${moduledir}/${i}/${cmd} ${toolsdir}/${cmd}
+		    ${ECHO} "${MAGENTA}Installing module ${i} cmd: ${GREEN}${cmd}${NORMAL}"
+		fi
+	    done
+    done
+
+    # Deinstall module
+    for lnk in `find ${toolsdir} -type l`; do
+	dst=`readlink ${lnk}`
+	modulename=`dirname ${dst}|sed s:${moduledir}/::g`
+	grep "^${modulename}" ${etcdir}/modules.conf >/dev/null 2>&1
+	if [ $? -eq 1 ]; then
+	    ${ECHO} "${MAGENTA}Removing module ${modulename} cmd: ${GREEN}${dst}${NORMAL}"
+	    rm -f ${lnk}
+	fi
+    done
+
+}
+
+phase9()
+{
     local OLD_FILES OLD_DIRS
     . ${distdir}/ObsoleteFiles
-    ${ECHO} "${MAGENTA}[Stage 8: ${GREEN}Cleanup${MAGENTA}]${NORMAL}"
+
+    # append for modules Obsolete cmd part
+    if [ -f "${etcdir}/modules.conf" ]; then
+	for i in `cat ${etcdir}/modules.conf`; do
+            [ ! -f "${moduledir}/${i}/ObsoleteFiles" ] && continue
+                    . ${moduledir}/${i}/ObsoleteFiles
+        done
+    fi
+
+    ${ECHO} "${MAGENTA}[Stage 9: ${GREEN}Cleanup${MAGENTA}]${NORMAL}"
     $ECHO "${MAGENTA} * Remove obsolete files..."
     for i in $OLD_FILES; do
 	[ -f "${workdir}/${i}" ] && rm -f ${workdir}/${i}
@@ -524,6 +566,8 @@ phase8()
 
 
 
+
+
 ############ start locking section #############
 start()
 {
@@ -531,9 +575,9 @@ start()
 	inter=0
 	ALWAYS_YES=1
 	. "${INITCFG}" 2>/dev/null
-    echo "OK"
     fi
 
+    ECHO="echo -e"
     export workdir=${workdir:-"/usr/jails"}
     . ${globalconf}
     . ${distdir}/nc.subr
@@ -572,6 +616,7 @@ EOF_HEADER
 # end of Inventory
     phase7
     phase8
+    phase9
 
     configure_rsync
 
@@ -596,7 +641,7 @@ EOF_HEADER
 
     [ `grep ^rcshutdown_timeout= /etc/rc.conf|wc -l` = 0 ] && sysrc -vf /etc/rc.conf rcshutdown_timeout="900"
     [ `grep ^sendmail_enable= /etc/rc.conf|wc -l` = 0 ] && sysrc -vf /etc/rc.conf sendmail_enable="NO"
-    [ `grep ^WITH_PKGNG= /etc/make.conf|wc -l` = 0 ] && sysrc -vf /etc/make.conf WITH_PKGNG=yes
+    [ `grep ^WITH_PKGNG= /etc/make.conf 2>/dev/null|wc -l` = 0 ] && sysrc -vf /etc/make.conf WITH_PKGNG=yes
 
     if [ -f /etc/periodic.conf ];then
 	[ `grep ^local_periodic= /etc/periodic.conf |wc -l` = 0  ] && sysrc -vf /etc/periodic.conf local_periodic="/usr/local/etc/periodic ${workdir}/etc/periodic"

@@ -105,8 +105,8 @@ main(int argc, char *argv[])
 	volatile int state;
 	char *shinit;
 #ifdef CBSD
-        char *cbsdpath = NULL;
-        char *workdir = NULL;
+	char *cbsdpath = NULL;
+	char *workdir = NULL;
 	chdir("/var/empty");
 #endif
 	(void) setlocale(LC_ALL, "");
@@ -155,7 +155,7 @@ main(int argc, char *argv[])
 	setstackmark(&smark2);
 
 #ifdef CBSD
-        workdir=lookupvar("workdir");
+	workdir=lookupvar("workdir");
 
         if ( workdir == NULL )  {
             read_profile("/etc/rc.conf");
@@ -178,6 +178,7 @@ main(int argc, char *argv[])
         sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir);
         setvarsafe("PATH",cbsdpath,1);
         read_profile("${workdir}/cbsd.conf");
+
 
         ckfree(cbsdpath);
         if (argc>1)

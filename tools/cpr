@@ -1,6 +1,7 @@
 #!/bin/sh
 #v10.0.0
 globalconf="${workdir}/cbsd.conf"
+CBSDMODULE="cpr"
 MYARG="cdir pkglist destdir"
 MYOPTARG="ver arch basename stable new repoversion ccache pause makeconf append"
 MYDESC="Create pkg repository"
@@ -19,6 +20,7 @@ append=1 - do not check for destdir in not empty\n"
 set -e
 
 SRC="${srcdir}/src_${ver}/src"
+TRAP=""
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -52,6 +54,9 @@ mount_temp_dirs()
     set +e
     kldstat -qm linprocfs || kldload linprocfs
     set -e
+
+    TRAP="${TRAP} rm -f ${_tmpfstab};"
+    trap "${TRAP};" HUP INT ABRT BUS TERM EXIT
 
     cat > ${_tmpfstab} << EOF
 devfs /dev devfs rw 0 0
@@ -95,7 +100,7 @@ EOF
 ${KERNDIR} /boot/kernel nullfs ro 0 0
 EOF
     fi
-    cp ${_tmpfstab} /tmp
+
     cbsd mountfstab jroot=$cdir fstab=${_tmpfstab}
     rm -f ${_tmpfstab}
 }
@@ -106,7 +111,6 @@ prepare_chroot()
     echo -e "\033[40;35m Building packages...  \033[0m"
 
 NEEDEDPORTS="\
-/usr/ports/ports-mgmt/pkg \
 /usr/ports/ports-mgmt/portmaster \
 /usr/ports/ports-mgmt/dialog4ports
 "
@@ -115,14 +119,16 @@ NEEDEDPORTS="\
     [ "$distcc" = "1" ] && NEEDEDPORTS="/usr/ports/devel/distcc ${NEEDEDPORTS}"
     export NEEDEDPORTS
 
-    cp ${makeconf} ${cdir}/etc/make.conf
+    [ -f "${makeconf}" ] && cp ${makeconf} ${cdir}/etc/make.conf
 
     # make sure we have work dir in /tmp for parallel builds
     [ `grep ^WRKDIRPREFIX= ${cdir}/etc/make.conf|wc -l` = 0 ] && echo WRKDIRPREFIX=/tmp >> ${cdir}/etc/make.conf
     cp /etc/resolv.conf ${cdir}/etc
 
     chroot $cdir /bin/sh << EOF
-env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
+service ldconfig start
+#env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
+make -C /usr/ports/ports-mgmt/pkg clean install
 # remove default pkg.conf
 [ -f "/usr/local/etc/pkg.conf" ] && rm -f /usr/local/etc/pkg.conf
 find /tmp/usr/ports -type d -name work -exec rm -rf {} \; > /dev/null 2>&1
@@ -239,7 +245,8 @@ else
     distcc=0
 fi
 
-trap "umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist}" HUP INT ABRT BUS TERM EXIT
+TRAP="${TRAP} umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist};"
+trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 mount_temp_dirs
 
 [ "${MOUNT_PORTS}" = "0" -a $new -eq 1 ] && chroot ${cdir} portsnap fetch extract
@@ -254,7 +261,7 @@ DT_START=`date +%s`
 send_notification -s "[CBSD ${nodename}] cpr ${ver} ${arch} ${repoversion} started" -b "${DT_START}"
 cp ${sharedir}/cpr_packages.sh ${cdir}/tmp/cpr_packages.sh
 
-cp ${pkglist} ${cdir}/tmp/ports_list.txt
+grep -v "^#" ${pkglist} > ${cdir}/tmp/ports_list.txt
 
 if [ $ccache -eq 1 ]; then
     ccache_prefix="cbsd cpr $ver $arch $basename"
@@ -270,7 +277,8 @@ fi
 set -o errexit
 chroot $cdir sh /tmp/cpr_packages.sh
 
-trap "umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist}" HUP INT ABRT BUS TERM  EXIT
+TRAP="${TRAP} umount_cdirs ${cdir}; rm -f ${LOCKFILE} ${_tmppkglist};"
+trap "${TRAP}" HUP INT ABRT BUS TERM  EXIT
 
 DT_END=`date +%s`
 DT_DIFF=$((DT_END - DT_START))

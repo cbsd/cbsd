@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.1
+#v10.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="out repo conf"
@@ -16,57 +16,106 @@ conf= use this pkg.conf\n"
 
 init $*
 
-[ -z "${out}" ] && out="${ftmpdir}/pkgbrowser.$$"
-tmp1="${ftmpdir}/pkgmytmp1.$$"
+
+sort_and_upgrade()
+{
+    local list i tst
+    local tmp1="${tmpdir}/pkgtmp.$$"
+
+    list=`pkg ${PKGOPT} rquery "%n-%v"`
+
+    [ $? -ne 0 ] && err 1 "${MAGENTA}Repository not configured or network error${NORMAL}"
+
+    printf "${GREEN}New version detected${NORMAL}\n${MAGENTA}Create package list.  It will take a long...${NORMAL}\n"
+
+    for i in ${list}; do
+	tst=`pkg ${PKGOPT} query "%ro" $i`
+	[ -z "${tst}" ] &&  dot "pkg ${PKGOPT} query" && echo $i >> ${tmp1}
+    done
+
+    truncate -s0 ${LISTFILE}
+    printf "${MAGENTA}\nSorting. Please wait...${NORMAL}\n"
+
+    sort -u $tmp1 | \
+	while read _p; do
+#       CATEGORY=`pkg rquery \"%C\" $_p | xargs`
+#       [ "${CATEGORY}"  = "local" ] && continue
+#       [ -z "$CATEGORY" ] &&
+#       CATEGORY=$_p
+	echo "\"$_p\" \"\" off \ " >> ${LISTFILE}
+	done
+
+    rm -f ${tmp1}
+
+}
+
+
+
+
+### MAIN ###
+[ -z "${out}" ] && out="${tmpdir}/pkgbrowser.$$"
 tmp2="${ftmpdir}/pkgmytmp2.$$"
+
+trap "rm -f ${tmp2}" HUP INT ABRT BUS TERM EXIT
 
 DIALOG=${DIALOG=/usr/bin/dialog}
 
-truncate -s0 ${tmp1} ${tmp2}
-
 PKGCONF=""
 PKGOPT=""
+PKG_MODIFIED="${tmpdir}/pkg_updated.txt"
+UPDATED="0"
 
-if [ -n "${repo}" ]; then
-    PKGCONF="${ftmpdir}/mypkg.conf.$$"
-    echo "PACKAGESITE: ${repo}" > ${PKGCONF}
-    trap "rm -f ${tmp1} ${tmp2} ${PKGCONF}" 0 1 2 3 4 5 9
-elif [ -n "${conf}" ]; then
-    [ -f "${conf}" ] && PKCONF="${conf}"
-fi
+#if [ -n "${repo}" ]; then
+#    PKGCONF="${ftmpdir}/mypkg.conf.$$"
+#    echo "PACKAGESITE: ${repo}" > ${PKGCONF}
+#    trap "rm -f ${tmp1} ${tmp2} ${PKGCONF}" 0 1 2 3 4 5 9
+#elif [ -n "${conf}" ]; then
+#    [ -f "${conf}" ] && PKCONF="${conf}"
+#fi
 
-[ -z "${PKGCONF}" -a -f "/usr/local/etc/pkg.conf" ] && PKGCONF="/usr/local/etc/pkg.conf"
+#[ -z "${PKGCONF}" -a -f "/usr/local/etc/pkg.conf" ] && PKGCONF="/usr/local/etc/pkg.conf"
 #[ -z "${PKGCONF}" ] && err 0 "${MAGENTA}No such valid configuration${NORMAL}"
 
-[ -z "${PKGCONF}" ] && PKGOPT="-C ${PKGCONF}"
+#[ -z "${PKGCONF}" ] && PKGOPT="-C ${PKGCONF}"
 
-printf "${MAGENTA}Building pkg list${NORMAL}"
-LIST=`pkg ${PKGOPT} rquery "%n-%v"`
+printf "${MAGENTA}Update local copy of repository catalogues...${NORMAL}"
+tst=`pkg update 2>&1`
+[ $? -ne 0 ] && err 1 "${MAGENTA}pkg update failed: ${NORMAL}${tst}"
 
-[ $? -ne 0 ] && err 1 "${MAGENTA}Repository not configured or network error${NORMAL}"
+allrepos=$(find /var/db/pkg/ -type f -name repo-\*.sqlite -exec md5 -qs {} \; | xargs)
+tst=$(md5 -qs "${allrepos}")
 
-for i in ${LIST}; do
-    A=`pkg ${PKGOPT} query "%ro" $i`
-    [ -z "${A}" ] &&  dot "pkg ${PKGOPT} query" && echo $i >> ${tmp1}
-done
+if [ -f "${PKG_MODIFIED}" ]; then
+    oldmd5=$(cat ${PKG_MODIFIED})
+    [ "${oldmd5}" != "${tst}" ] && UPDATED="1"
+else
+    UPDATED="1"
+fi
 
-printf "${GREEN}done${NORMAL}\r\n${MAGENTA}Sorting...${NORMAL}\r\n"
+REPOFILE="repo"
+LISTFILE="${tmpdir}/pkg_${REPOFILE}.list"
+
+if [ "${UPDATED}" -eq 1 -o ! -f "${LISTFILE}" ]; then
+    echo "${tst}" > ${PKG_MODIFIED}
+    sort_and_upgrade
+else
+    printf "${GREEN}Not changed${NORMAL}"
+fi
+
+[ ! -f "${LISTFILE}" ] && err 1 "${MAGENTA}No such sorted pkglist file${NORMAL}"
 
 cat > $tmp2 << EOF
 --colors --backtitle "\Z1Select packages" --separate-output --title "Select packages" --checklist "Use space for mark packages \n" 0 61 0
 EOF
 
-sort -u $tmp1 | \
-    while read _p; do
-#	CATEGORY=`pkg rquery \"%C\" $_p | xargs`
-#	[ "${CATEGORY}"  = "local" ] && continue
-#	[ -z "$CATEGORY" ] && 
-#	CATEGORY=$_p
-	echo "\"$_p\" \"\" off \ " >> ${tmp2}
-    done
+cat ${LISTFILE} >> ${tmp2}
 
+printf "${MAGENTA}\nDialogizing...${NORMAL}"
 ${DIALOG} --file ${tmp2} 2>$out
 
-[ $? -ne 0 -o `wc -l ${out}|awk '{printf $1}'` = "0" ] && rm -f ${out} && err 1 "${MAGENTA}No pkg selected${NORMAL}"
+if [ $? -ne 0 -o `wc -l ${out}|awk '{printf $1}'` = "0" ]; then
+    [ "${REPOFILE}" = "default" ] && rm -f ${LISTFILE}
+    rm -f ${out} && err 1 "${MAGENTA}No pkg selected${NORMAL}"
+fi
 
 echo $out
