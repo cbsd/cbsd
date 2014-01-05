@@ -1,14 +1,15 @@
 #!/usr/local/bin/cbsd
-#v10.0.0
+#v10.0.1
 globalconf="${workdir}/cbsd.conf";
 CBSDMODULE="jail"
 MYARG=""
-MYOPTARG="alljails shownode node header"
+MYOPTARG="alljails shownode display node header"
 MYDESC="List jail and status"
 ADDHELP="alljails=1 - get jaillist from remote node\n\
-shownode=1 - show node ip\n\
+shownode=1 - show nodename for jails\n\
 node= only for current node\n\
-header=0 don't print header\n"
+header=0 don't print header\n\
+display= list by comma for column. Default: jid,jname,ip4_addr,host_hostname,path,status\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -16,6 +17,15 @@ header=0 don't print header\n"
 . ${inventory}
 . ${strings}
 init $*
+
+[ -z "${display}" ] && display="jname,jid,ip4_addr,host_hostname,path,status"
+[ "${shownode}" = "1" ] && display="nodename,${display}"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |tr '[:lower:]' '[:upper:]')
 
 JLS=""
 
@@ -40,79 +50,87 @@ conv_status()
 
 show_header()
 {
+    local _header=${myheader}
 
-    if [ ${header} -ne 0 ]; then
-	if [ -n "$shownode" ]; then
-	    echo "NODEIP    JNAME    JID    IP    HOSTNAME    PATH    STATUS"
-	else
-	    echo "JNAME    JID    IP    HOSTNAME    PATH    STATUS"
-	fi
+    [ ${header} -ne 0 ] && echo ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+
+    #populate values for in output string
+    for _i in ${mydisplay}; do
+	_val=""
+	eval _val=\$$_i
+	[ "$1" = "Unregister" -a "${_i}" = "status" ] && _val="Unregister"
+	[ -z "${_val}" ] && _val="-"
+	_status="${_status} ${_val}"
+    done
+
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+    local _i
+
+    #   set sqlfile for ". rcconf" including
+    if [ -n "${1}" ]; then
+	sqlfile="$1"
+    else
+	sqlfile="local"
     fi
+
+    cbsdsql ${sqlfile} SELECT jname FROM jails| while read jname; do
+	_status=""
+	. ${jrcconf}
+	[ "${baserw}" = "1" ] && path=${data}
+	conv_status
+	populate_output_data
+	echo ${_status}
+    done
 }
 
 
 show_local()
 {
-    local _errcode
+    local _errcode _status
 
     show_header
 
-	cbsdsql local SELECT jname FROM jails| while read jname; do
-	    . ${jrcconf}
-	    [ ${baserw} -eq 1 ] && path=${data}
-	    conv_status
-	    if [ -z "${shownode}" ]; then
-		echo  "${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	    else
-		echo "${nodename} ${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	    fi
-        done
+    show_jaildata_from_sql local
 
 	# Unregister area
 	[ ! -d "${jailrcconfdir}" ] && return 0
 	ip4_addr="-"
 	host_hostname="-"
 	path="-"
-	status="Unregister"
 	jid="0"
 
 	for J in `/bin/ls ${jailrcconfdir}`; do
 	    jname=""
 	    . ${jailrcconfdir}/${J}
 	    [ -z "${jname}" ] && continue
-
-	if [ -n "$shownode" ]; then
-	    echo "${nodename} ${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	else
-	    echo "${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	fi
+	    populate_output_data "Unregister"
+	    echo ${_status}
 	done
 }
 
 
 show_remote()
 {
-
+    local _status
     show_header
 
     if [ -z "${node}" ]; then
-	node=`cbsd node mode=list header=0 allinfo=0`
+	node=$(cbsd node mode=list header=0 allinfo=0)
     fi
 
     for _n in $node; do
-	[ "${_n}" = "${nodename}" ] && continue
-	[ ! -f "${dbdir}/${_n}.sqlite" ] && echo "Node ${_n} have no sqlite db on local host" && continue
-	if [ -z "$shownode" ]; then
-	    cbsdsql ${_n} SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails | while read jname jid ip4_addr host_hostname path status; do
-		conv_status
-		echo "${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	    done
-	else
-	    cbsdsql ${_n} SELECT jname,jid,ip4_addr,host_hostname,path,status FROM jails | while read jname jid ip4_addr host_hostname path status; do
-		conv_status
-		echo "${_n} ${jname} ${jid} ${ip4_addr} ${host_hostname} ${path} ${status}"
-	    done
-	fi
+	nodename="${_n}"
+	show_jaildata_from_sql ${_n}
     done
 }
 
