@@ -1,9 +1,9 @@
 #!/bin/sh
-#v10.0.0
+#v10.0.2
 globalconf="${workdir}/cbsd.conf";
 CBSDMODULE="build"
 MYARG=""
-MYOPTARG="ver arch maxjobs clean basename stable distcc ccache notify"
+MYOPTARG="ver arch target_arch maxjobs clean basename stable distcc ccache notify"
 MYDESC="Buildworld from sources"
 ADDHELP="ver=head for current.\n\
 stable=1 for RELENG_X\n\
@@ -21,26 +21,20 @@ init $*
 . ${mailconf}
 . ${etcdir}/buildworld.conf
 . ${color}
+. ${workdir}/universe.subr
 
-if [ "${distcc}" = "1"  ]; then
-    if ! distcc_check; then
-	distcc=0
-    fi
-else
-    distcc=0
-fi
-
-if [ "${notify}" = "1"  ]; then
-    notify=1
-else
-    notify=0
-fi
+init_distcc
+init_notify
+init_target_arch
+init_srcdir
+init_supported_arch
+init_make_flags
 
 if [ "${ccache}" = "1"  ]; then
-    ccache_prefix="cbsd buildworld $ver $arch $basename"
+    ccache_prefix="cbsd buildworld ${ver} ${arch} ${target_arch} ${basename}"
     ccache_dir="/var/cache/ccache"
     init_ccache_dir
-    export CCACHE_DIR=$ccache_realdir
+    export CCACHE_DIR=${ccache_realdir}
 
     if ! ccache_check; then
 	ccache=0
@@ -49,107 +43,32 @@ else
     ccache=0
 fi
 
-SRC="${srcdir}/src_${ver}"
-[ -d "${SRC}" ] || err 1 "${MAGENTA}No such version: ${GREEN}${SRC}${NORMAL}"
-
-support_arch=0
-
-for i in $SUPPORTED_ARCH; do
-    [ "${arch}" = "${i}" ] && support_arch=1 && break
-done
-
-[ ${support_arch} -eq 0 ] && err 1 "${MAGENTA}Supported architecture only: ${GREEN}${SUPPORTED_ARCH}${NORMAL}"
-
 truncate -s0 ${ftmpdir}/make.$$.conf
-
-if [ -z "${basename}" ]; then
-    [ -f "${etcdir}/make.conf" ] && origmakeconf="${etcdir}/make.conf"
-else
-    [ -f "${etcdir}/make-$basename.conf" ] && origmakeconf="${etcdir}/make-$basename.conf"
-fi
 
 export __MAKE_CONF=${ftmpdir}/make.$$.conf
 [ $ccache -eq 1 -o $distcc -eq 1 ] && prepare_make_conf ${origmakeconf} ${__MAKE_CONF}
-if [ -z "${basename}" ]; then
-    export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
-else
-    export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${ver}
-fi
 
-if [ -z "${basename}" ]; then
-    export SRCCONF=${etcdir}/src.conf
-else
-    export SRCCONF=${etcdir}/src-${basename}.conf
-fi
-
-NUMJOBS=""
-[ $maxjobs -eq 0 ] || NUMJOBS="-j${maxjobs}"
-
-NOCLEANUP=""
-[ ${clean} -eq 1 ] || NOCLEANUP="-DNO_CLEAN"
-
-DST="${srcdir}/src_${ver}/src"
 LOCKFILE=${ftmpdir}/`md5 -qs ${MAKEOBJDIRPREFIX}`.lock
 [ $notify -eq 1 ] && BLDLOG="${tmpdir}/build.$$.log"
 makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}"
 
 DT_START=`date +%s`
 
-myarch=`uname -m`
-
-if [ "${myarch}" != "${arch}" ]; then
-    case "${arch}" in
-	"i386")
-	    export TARGET="i386"
-	    export TARGET_ARCH="i386"
-	    ;;
-	"amd64")
-	    export TARGET="amd64"
-	    export TARGET_ARCH="amd64"
-	    ;;
-	"arm")
-	    export TARGET="arm"
-	    export TARGET_ARCH="armv6"
-	    export BUILDPATH="arm-bsd-user"
-	    export EMULATOR="qemu-arm"
-	    ;;
-	"mips")
-	    export TARGET="mips"
-	    export TARGET_ARCH="mips64"
-	    export BUILDPATH="mips64-bsd-user"
-	    export EMULATOR="qemu-mips64"
-	    ;;
-    esac
-fi
-
 if [ $notify -eq 1 ]; then
     [ -z "$TAILSTRING" ] && TAILSTRING=50
-    script ${BLDLOG} /usr/bin/make $NUMJOBS -C ${SRC}/src buildworld ${NOCLEANUP}
+    script ${BLDLOG} /usr/bin/make $NUMJOBS -C ${SRC_DIR} buildworld ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
     res=$?
 else
-     /usr/bin/make $NUMJOBS -C ${SRC}/src buildworld ${NOCLEANUP}
+     /usr/bin/make $NUMJOBS -C ${SRC_DIR} buildworld ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
     res=$?
 fi
 
 DT_END=`date +%s`
 
-SVN=""
-
-if [ -f "/usr/bin/svnlite" ]; then
-    SVN="/usr/bin/svnlite"
-elif [ -f "/usr/local/bin/svn" ]; then
-    SVN="/usr/local/bin/svn"
-fi
- 
-if [ -n "${SVN}" ]; then
-    svnrev=`cd ${DST} && ${SVN} info |awk '/^Revision: /{printf $2}'`
-else
-    svnrev=`date`
-fi
-
+init_svn_and_version
 
 if [ $res -ne 0 -a $notify -eq 1 ]; then
-    send_notification -s "[CBSD ${nodename}] buildworld $basename $ver $arch r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
+    send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
     return 1
 fi
 
@@ -158,6 +77,6 @@ cat > ${BLDLOG} << EOF
 Start time: `date -r ${DT_START}`
 End time: `date -r ${DT_END}`
 EOF
-    send_notification -s "[CBSD ${nodename}] buildworld $basename $ver $arch r${svnrev} complete." -f ${BLDLOG}
+    send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} complete." -f ${BLDLOG}
     return 0
 fi

@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.0
+#v10.0.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname inter"
@@ -14,6 +14,8 @@ CBSDMODULE="jail"
 . ${system}
 . ${color}
 . ${strings}
+. ${workdir}/universe.subr
+. ${etcdir}/buildworld.conf
 
 init $*
 
@@ -130,7 +132,7 @@ makeresolv()
 }
 
 
-# MAIN
+# MAIN for multiple jails
 if [ $# -gt 1 -a -z "${jname}" -a -z "${inter}" ]; then
 # recursive
     JLIST=$*
@@ -156,6 +158,9 @@ fi
     [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
     [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
     [ $jid -ne 0 ] && err 1 "${MAGENTA}Jail already running, jid: ${GREEN}${jid}${NORMAL}"
+
+    init_target_arch
+    init_basedir
 
     #Check for md vnode backend
     if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
@@ -269,7 +274,6 @@ fi
     fi
 
     if [ "$mount_kernel" = "1" ]; then
-	#/usr/jails/basejail/kernel_GENERIC_amd64_10.0/boot
 	SRCDIR="${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel"
 	MOUNTOPT="${MOUNTOPT} -k ${SRCDIR}"
     fi
@@ -299,7 +303,7 @@ fi
     if [ $baserw -eq 1 ]; then
 	elftest=${data}/bin/sh
     else
-	elftest="${basepath}/bin/sh"
+	elftest="${BASE_DIR}/bin/sh"
     fi
     [ -f "${elftest}" ] && osname=`${miscdir}/elf_tables --osname ${elftest}`
 
@@ -307,12 +311,12 @@ fi
 
     # check for freshed version of the base via elf from /bin/sh
     if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
-	base_path
-	if [ -n ${basepath} -a -f "${basepath}/bin/sh" ]; then
-	    baseelf=`${miscdir}/elf_tables --ver ${basepath}/bin/sh 2>/dev/null`
+	
+	if [ -n ${BASE_DIR} -a -f "${BASE_DIR}/bin/sh" ]; then
+	    baseelf=`${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null`
 	    jailelf=`${miscdir}/elf_tables --ver ${elftest} 2>/dev/null`
 	    if [ ${baseelf} -gt ${jailelf} ]; then
-		${ECHO} "${BOLD}Notice: ${MAGENTA}You have a more recent version of the base in ${basepath} (${GREEN}${baseelf}${MAGENTA}/${GREEN}${jailelf}${MAGENTA}).${NORMAL}"
+		${ECHO} "${BOLD}Notice: ${MAGENTA}You have a more recent version of the base in ${BASE_DIR} (${GREEN}${baseelf}${MAGENTA}/${GREEN}${jailelf}${MAGENTA}).${NORMAL}"
 		${ECHO} "${BOLD}Notice: ${MAGENTA}Please consider upgrading base via ${GREEN}cbsd jupgrade${NORMAL}"
 	    fi
 	fi
@@ -322,10 +326,13 @@ fi
     cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${myepair}b fbsd=${is_freebsd}
     set +e
 
-    #rctl area
+    #rctl/limits area
     cbsd jrctl jname=$jname mode=set
-
+    LIMITS_EXTRA="${jailsysdir}/${jname}/jail.limits.extra"
+    [ -f "${LIMITS_EXTRA}"  ] && . ${LIMITS_EXTRA}
     [ -z "${nice}" ] && nice="0"
+    [ "${nice}" != "0" ] && ${ECHO} "${MAGENTA}jail renice: ${GREEN}${nice}${NORMAL}"
+    #
 
     ${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
     /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}

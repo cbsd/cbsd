@@ -1,11 +1,14 @@
 #!/bin/sh
-#v10.0.1
+#v10.0.2
 globalconf="${workdir}/cbsd.conf";
 MYARG="jconf"
-MYOPTARG="inter ver arch"
+MYOPTARG="inter ver arch customskel fstablocal delpkglist"
 MYDESC="Create jail from config file"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
+customskel = additional skel directory applyed above jail structrure\n\
+fstablocal = additional fstab file stored as fstab.local\n"
 CBSDMODULE="jail"
+EXTHELP="html/wf_jcreate_en.html"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -16,6 +19,8 @@ CBSDMODULE="jail"
 . ${mdtools}
 . ${jfs}
 . ${color}
+. ${etcdir}/buildworld.conf
+. ${workdir}/universe.subr
 
 init $*
 
@@ -42,6 +47,12 @@ over="${ver}"
 oarch="${arch}"
 jconf=`realpath $jconf`
 
+if [ -z "${delpkglist}" ]; then
+    delpkglist=0
+else
+    delpkglist=1
+fi
+
 temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
 cp ${jconf} ${temprcconf}
@@ -51,6 +62,10 @@ trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
 . ${temprcconf}
 . ${buildconf}
 . ${temprcconf}
+
+init_target_arch
+init_basedir
+init_kerneldir
 
 cbsd jstatus jname=${jname} > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
@@ -116,23 +131,23 @@ fi
 ### COPY FROM BASE
 if [ "${ver}" != "empty" ]; then
     if [ "$baserw" = "1" ]; then
-#basepath variable from get_base
-	if ! populate_cdir ${basepath} ${data}; then
+#BASE_DIR variable from get_base
+	if ! populate_cdir ${BASE_DIR} ${data}; then
 	    [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
-	    err 1 "Can't populate $data from $basepath"
+	    err 1 "Can't populate $data from $BASE_DIR"
 	fi
     else
-	cp -rP ${basepath}/etc ${data}/
-	cp -rP ${basepath}/root ${data}/
-	[ -f "${basepath}/etc/mtree/BSD.root.dist" ] && mtree -deU -f ${basepath}/etc/mtree/BSD.root.dist -p ${data} >/dev/null
-	[ -f "${basepath}/etc/mtree/BSD.usr.dist" ] && mtree -deU -f ${basepath}/etc/mtree/BSD.usr.dist -p ${data}/usr >/dev/null
-	[ -f "${basepath}/etc/mtree/BSD.var.dist" ] && mtree -deU -f ${basepath}/etc/mtree/BSD.var.dist -p ${data}/var >/dev/null
+	cp -rP ${BASE_DIR}/etc ${data}/
+	cp -rP ${BASE_DIR}/root ${data}/
+	[ -f "${BASE_DIR}/etc/mtree/BSD.root.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${data} >/dev/null
+	[ -f "${BASE_DIR}/etc/mtree/BSD.usr.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${data}/usr >/dev/null
+	[ -f "${BASE_DIR}/etc/mtree/BSD.var.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${data}/var >/dev/null
 	# in FreeBSD10 BIND is go away
-	if [ -f "${basepath}/etc/mtree/BIND.chroot.dist" ]; then
+	if [ -f "${BASE_DIR}/etc/mtree/BIND.chroot.dist" ]; then
 	    [ ! -d "${data}/var/named" ] && mkdir ${data}/var/named
-	    mtree -deU -f ${basepath}/etc/mtree/BIND.chroot.dist -p ${data}/var/named >/dev/null
+	    mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${data}/var/named >/dev/null
 	fi
-	[ -f "${basepath}/etc/mtree/BSD.sendmail.dist" ] && mtree -deU -f ${basepath}/etc/mtree/BSD.sendmail.dist -p ${data} >/dev/null
+	[ -f "${BASE_DIR}/etc/mtree/BSD.sendmail.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${data} >/dev/null
 	if [ -n "${emulator}" -a "${emulator}" != "0" ]; then
 	    . ${workdir}/emulator.subr
 	    init_usermode_emul
@@ -151,9 +166,12 @@ if [ "${ver}" != "empty" ]; then
 
     if [ ${applytpl} -eq 1 ]; then
 
+	touch ${data}/etc/src.conf
+
 	if [ -d "${jailskeldir}" ]; then
 	    cd ${jailskeldir} && find -E ${jailskeldir} \( -type f -or -type d -or -type l \) -print |sed s:${jailskeldir}:./:g |cpio -pdmu ${data} > /dev/null 2>&1
 	fi
+
 	
 	if [ -f ${data}/master.passwd ]; then
 	    /usr/sbin/pwd_mkdb -d ${data}/etc ${data}/etc/master.passwd
@@ -162,41 +180,52 @@ if [ "${ver}" != "empty" ]; then
 	[ ! -f ${data}/etc/localtime ] && cp /etc/localtime ${data}/etc
 
     fi
+
+    if [ -n "${customskel}" -a -d "${customskel}" ]; then
+	$ECHO "${MAGENTA}Apply custom skeldir from: ${GREEN}${customskel}${NORMAL}"
+	cd ${customskel} && find -E ${customskel} \( -type f -or -type d -or -type l \) -print |sed s:${customskel}:./:g |cpio -pdmu ${data} > /dev/null 2>&1
+    fi
+
 fi  # if ver = empty
 
 mkfstab
 cp $temprcconf $rcconf
 
-[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
+[ -n "${fstablocal}" -a -f "${fstablocal}" ] && cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
+
+#[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
 # pkg area
-if [ "${pkglist}" != "NO" -a "${ver}" != "empty" -a -f "${pkglist}" ]; then
-    ${ECHO} "${MAGENTA}Populate jail from pkglist: ${GREEN}${pkglist}${NORMAL}"
-    mountbase
-    cbsd mountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
-    mount -t devfs devfs $path/dev
-
-    [ ! -d "${path}/usr/local/etc" ] && mkdir ${path}/usr/local/etc
-
-    printf "${MAGENTA}pkg: [${GREEN}bootstrap... "
-    chroot ${path} env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
-    # remove default pkg.conf
-    #[ -f "${path}/usr/local/etc/pkg.conf" ] && rm -f ${path}/usr/local/etc/pkg.conf
-    printf "looking for new version... "
-    chroot ${path} env ASSUME_ALWAYS_YES=yes pkg update -f > /dev/null 2>&1
-    #lets upgrade pkg if new version available
-    printf "upgrading... "
-#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
-    chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
-#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
-    chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
-    PKGLIST=`cat ${pkglist} |xargs`
-    printf "install for ${PKGLIST}...${MAGENTA}]${NORMAL}\n"
-    chroot ${path} env ASSUME_ALWAYS_YES=yes pkg install ${PKGLIST}
-    cbsd unmountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
-    umount -f ${path}/dev
-    unmountbase
-    rm -f ${pkglist}
+if [ "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
+    if [ ! -f "${pkglist}" ]; then
+	${ECHO} "${MAGENTA}pkglist specified but not exist: ${GREEN}${pkglist}${NORMAL}"
+    else
+	${ECHO} "${MAGENTA}Populate jail from pkglist: ${GREEN}${pkglist}${NORMAL}"
+	mountbase
+	[ -f "${mount_fstab}" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
+	[ -f "${mount_fstab}.local" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab}.local > /dev/null 2>&1
+	mount -t devfs devfs $path/dev
+	[ ! -d "${path}/usr/local/etc" ] && mkdir ${path}/usr/local/etc
+	printf "${MAGENTA}pkg: [${GREEN}bootstrap... "
+	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
+	# remove default pkg.conf
+	#[ -f "${path}/usr/local/etc/pkg.conf" ] && rm -f ${path}/usr/local/etc/pkg.conf
+	printf "looking for new version... "
+	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg update -f > /dev/null 2>&1
+	#lets upgrade pkg if new version available
+	printf "upgrading... "
+	#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
+	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
+	#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
+	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
+	PKGLIST=`cat ${pkglist} |xargs`
+	printf "install for ${PKGLIST}...${MAGENTA}]${NORMAL}\n"
+	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg install ${PKGLIST}
+	cbsd unmountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
+	umount -f ${path}/dev
+	unmountbase
+	[ $delpkglist -eq 1 ] && rm -f ${pkglist}
+    fi
 fi
 
 [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}

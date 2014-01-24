@@ -1,14 +1,15 @@
 #!/bin/sh
-#v10.0.0
+#v10.0.2
 globalconf="${workdir}/cbsd.conf"
-MYARG="jname destdir media"
-MYOPTARG="name label product publisher prunelist"
+MYARG="jname dstdir media"
+MYOPTARG="name label product publisher prunelist imgsize"
 MYDESC="Convert jail into cd9660 ISO or memstick image"
-ADDHELP="destdir= destination dir for storing jname.iso\n\
+ADDHELP="dstdir= destination dir for storing jname.iso\n\
 name - for alternative kernel name (GENERIC is default)\n\
 label - label for media\n\
-media - iso or memstick\n\
-prunelist= path to prunelist, default is ${sharedir}/jail2iso-prunelist\n"
+media - iso,memstick or bhyve\n\
+prunelist= path to prunelist, default is ${sharedir}/jail2iso-prunelist\n\
+imgsize= reserved for X size (100m, 1g) for images (primarily for bhyve img)"
 
 [ -f "${globalconf}" ] || err 1 "no such conf file"
 . ${globalconf}
@@ -18,41 +19,48 @@ prunelist= path to prunelist, default is ${sharedir}/jail2iso-prunelist\n"
 . ${zfstool}
 . ${color}
 . ${strings}
+. ${etcdir}/buildworld.conf
+. ${workdir}/universe.subr
+
 init $*
 
 . ${buildconf}
-
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+init_target_arch
+init_srcdir
+init_supported_arch
+init_basedir
+init_kerneldir
 
 #must be upper registry? :
 LABEL="CBSD"
 PRODUCT="cbsd jail2iso"
 PUBLISHER="The CBSD Project. http://www.bsdstore.ru"
 
-[ -z "${name}" ] && name="GENERIC"
 [ -n "${label}" ] && LABEL="${label}"
 [ -n "${product}" ] && PRODUCT="${product}"
 [ -n "${publisher}" ] && PUBLISHER="${publisher}"
+[ -n "${imgsize}" ] && IMGSIZE="-s ${imgsize}"
 
-SRCKERNEL="${basejaildir}/kernel_${name}_${arch}_${ver}"
-TMPDIR="${tmpdir}/$jname-iso"
-DSTDIR="${tmpdir}/tmpmfsroot"
+TMP_DIR="${tmpdir}/$jname-iso"
+DST_DIR="${tmpdir}/tmpmfsroot"
 
 TRAP=""
 
-clear_tmpdir()
+clear_tmp_dir()
 {
-    [ -d "${TMPDIR}" -o -f "${TMPDIR}" ] && chflags -R noschg ${TMPDIR} && rm -rf ${TMPDIR}
+    [ -d "${TMP_DIR}" -o -f "${TMP_DIR}" ] && chflags -R noschg ${TMP_DIR} && rm -rf ${TMP_DIR}
 }
 
 make_mtree()
 {
-    [ -f ${BASEROOT}/etc/mtree/BSD.root.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.root.dist -p ${DSTDIR} >/dev/null
-    [ -f ${BASEROOT}/etc/mtree/BSD.usr.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.usr.dist -p ${DSTDIR}/usr >/dev/null
-    [ -f ${BASEROOT}/etc/mtree/BSD.var.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.var.dist -p ${DSTDIR}/var >/dev/null
-    [ -f ${BASEROOT}/etc/mtree/BIND.chroot.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BIND.chroot.dist -p ${DSTDIR}/var/named >/dev/null
-    [ -f ${BASEROOT}/etc/mtree/BSD.sendmail.dist ] && mtree -deU -f ${BASEROOT}/etc/mtree/BSD.sendmail.dist -p ${DSTDIR} >/dev/null
+    [ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
+    [ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
+    [ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
+    [ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
+    [ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
 }
 
 make_libmap()
@@ -69,7 +77,7 @@ make_libmap()
 		continue
 		;;
 	esac
-	ldd -f "%p\n" ${BASEROOT}${line} >> $A 2>/dev/null
+	ldd -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
     done
 
     sort -u ${A} > ${B}
@@ -84,19 +92,19 @@ copy_binlib()
 		continue
 		;;
 	esac
-	D=`chroot ${BASEROOT} dirname ${line}`
-	rsync -av ${BASEROOT}${line} ${DSTDIR}${D}
-	A=`readlink ${BASEROOT}${line}`
+	D=`chroot ${BASE_DIR} dirname ${line}`
+	rsync -av ${BASE_DIR}${line} ${DST_DIR}${D}
+	A=`readlink ${BASE_DIR}${line}`
 	if [ -n "${A}" -a -f "${D}/${A}" ]; then
 	    echo "SYM: $A"
-	    rsync -av -${D}${A} ${DSTDIR}${D}
+	    rsync -av -${D}${A} ${DST_DIR}${D}
 	fi
     done
 
     cat ${B}| while read line; do
 	[ -z "${line}" ] && continue
-	D=`chroot ${BASEROOT} dirname ${line}`
-	rsync -avzx ${BASEROOT}${line} ${DSTDIR}${D}
+	D=`chroot ${BASE_DIR} dirname ${line}`
+	rsync -avzx ${BASE_DIR}${line} ${DST_DIR}${D}
     done
 
     rm -f ${A} ${B}
@@ -108,7 +116,7 @@ prepare_dir()
 {
     local rcscript="/etc/rc.d/preparedir"
 
-    cp -rP ${path}/etc ${DSTDIR}/
+    cp -rP ${path}/etc ${DST_DIR}/
 
     case "${media}" in
     "iso")
@@ -119,14 +127,7 @@ prepare_dir()
 	;;
     esac
 
-#    cat > ${DSTDIR}/etc/fstab << EOF
-#tmpfs /tmp tmpfs rw 0 0
-#$ROOTFS
-#/mnt/boot /boot nullfs ro 0 0
-#tmpfs /boot/zfs tmpfs rw 0 0
-#EOF
-
-cat > ${DSTDIR}${rcscript} <<EOF
+cat > ${DST_DIR}${rcscript} <<EOF
 #!/bin/sh
 #
 # Copyright (c) 2014 Oleg Ginzburg <olevole@olevole.ru>
@@ -162,20 +163,20 @@ fi
 
 if [ ! -d /usr/bin ]; then
 EOF
-    echo 'MD=$(/sbin/mdconfig -o noreadonly -a -t vnode -f /mnt/usr.uzip)' >> ${DSTDIR}${rcscript}
-    echo '/sbin/mount -oro /dev/${MD}.uzip /mnt/usr' >> ${DSTDIR}${rcscript}
-    echo '/sbin/mount -oro -t nullfs /mnt/usr /usr' >> ${DSTDIR}${rcscript}
-    echo '/sbin/mount -oro -t nullfs /mnt/boot /boot' >> ${DSTDIR}${rcscript}
-    echo 'hash -r' >> ${DSTDIR}${rcscript}
-    echo 'fi' >>${DSTDIR}${rcscript}
+    echo 'MD=$(/sbin/mdconfig -o noreadonly -a -t vnode -f /mnt/usr.uzip)' >> ${DST_DIR}${rcscript}
+    echo '/sbin/mount -oro /dev/${MD}.uzip /mnt/usr' >> ${DST_DIR}${rcscript}
+    echo '/sbin/mount -oro -t nullfs /mnt/usr /usr' >> ${DST_DIR}${rcscript}
+    echo '/sbin/mount -oro -t nullfs /mnt/boot /boot' >> ${DST_DIR}${rcscript}
+    echo 'hash -r' >> ${DST_DIR}${rcscript}
+    echo 'fi' >>${DST_DIR}${rcscript}
 
-    chmod 0555 ${DSTDIR}${rcscript}
+    chmod 0555 ${DST_DIR}${rcscript}
 
-    cp ${path}/etc/rc.conf ${DSTDIR}/etc/rc.conf
+    cp ${path}/etc/rc.conf ${DST_DIR}/etc/rc.conf
 
     # Here is mfsroot location
     if [ -f "${jailsysdir}/${jname}/tmpfsdir" ]; then
-	cp ${miscdir}/tmpfsdir ${DSTDIR}/etc/rc.d/
+	cp ${miscdir}/tmpfsdir ${DST_DIR}/etc/rc.d/
     fi
 }
 
@@ -185,7 +186,7 @@ prunelist()
     [ ! -f "${prunelist}" ] && return 0 # no prune
     [ -z "${1}" ] && return 0 # sanity
 
-    echo "Prune file by list ${prunelist}"
+    ${ECHO} "${MAGENTA}Prune file by list: ${GREEN}${prunelist}${NORMAL}"
 
     for FILE in `cat ${prunelist}`; do
 	[ -z "${FILE}" ] && continue
@@ -206,61 +207,59 @@ makemfsroot()
     DEV=`mdconfig -a -t vnode -f /tmp/mfsroot`
     bsdlabel -w /dev/${DEV} auto
     newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
-    mkdir -p ${DSTDIR}
-    mount /dev/${DEV} ${DSTDIR}
+    mkdir -p ${DST_DIR}
+    mount /dev/${DEV} ${DST_DIR}
     make_mtree
     make_libmap
     copy_binlib
     prepare_dir
-    prunelist ${DSTDIR}
+    prunelist ${DST_DIR}
     cd /
     # make flags for preparedir script
-    [ -d "${DSTDIR}/usr/bin" ] && rm -rf ${DSTDIR}/usr/bin
-    umount -f ${DSTDIR} && rmdir ${DSTDIR}
+    [ -d "${DST_DIR}/usr/bin" ] && rm -rf ${DST_DIR}/usr/bin
+    umount -f ${DST_DIR} && rmdir ${DST_DIR}
     mdconfig -d -u ${DEV}
     gzip -9 /tmp/mfsroot
 }
 
 
 # MAIN
-clear_tmpdir
+clear_tmp_dir
 [ $baserw -eq 1 ] && path=$data
 
 [ -z "${prunelist}" ] && prunelist="${sharedir}/jail2iso-prunelist"
 
-[ ! -d "${SRCKERNEL}" ] && err 1 "No such ${SRCKERNEL}"
-[ "$media" = "iso" -o "$media" = "memstick" ] || err 1 "Unknown media type. Must be iso or memstick"
+[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
+[ "$media" = "iso" -o "$media" = "memstick" -o "${media}" = "bhyve" ] || err 1 "${MAGENTA}Unknown media type. Must be: ${GREEN}iso${MAGENTA},${GREEN} memstick ${MAGENTA}or${GREEN} bhyve${NORMAL}"
 mountbase -o "" -p "" -d "" -c "" -s ""
 [ "${ver}" != "empty" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
-BASEROOT="${basejaildir}/${basejailpref}_${arch}_${ver}"
-[ ! -d "${BASEROOT}" ] && err 1 "No such ${BASEROOT}"
 FILES="${sharedir}/defbase_${ver}.txt"
 [ ! -f "${FILES}" ] && err 1 "No such default base listing: ${FILES}"
 BS=8192
 
-makemfsroot
+[ "${media}" != "bhyve" ] && makemfsroot
 
-TRAP="${TRAP} clear_tmpdir;"
+TRAP="${TRAP} clear_tmp_dir;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-cp -a ${path} ${TMPDIR}
-rm -rf ${TMPDIR}/rescue
+cp -a ${path} ${TMP_DIR}
 
-prunelist ${TMPDIR}
+[ "${media}" != "bhyve" ] && rm -rf ${TMP_DIR}/rescue
+
+prunelist ${TMP_DIR}
 
 # remove archive
-find ${TMPDIR} -type f -name \*.a -delete
+find ${TMP_DIR} -type f -name \*.a -delete
 
-cp -a ${SRCKERNEL}/boot/kernel ${TMPDIR}/boot
-rm -f ${TMPDIR}/boot/kernel/*.symbols
-cd ${TMPDIR}/boot/kernel && gzip -9 ./kernel
+cp -a ${KERNEL_DIR}/boot/kernel ${TMP_DIR}/boot
+rm -f ${TMP_DIR}/boot/kernel/*.symbols
+cd ${TMP_DIR}/boot/kernel && gzip -9 ./kernel
 
 if [ -f "$jailsysdir/${jname}/loader.conf" ]; then
-    cp ${jailsysdir}/${jname}/loader.conf ${TMPDIR}/boot/loader.conf
-else
-    truncate -s0 ${TMPDIR}/boot/loader.conf
+    cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
 fi
 
-cat >> ${TMPDIR}/boot/loader.conf << EOF
+if [ "${media}" != "bhyve" ]; then
+cat >> ${TMP_DIR}/boot/loader.conf << EOF
 geom_uzip_load="YES"
 tmpfs_load="YES"
 nullfs_load="YES"
@@ -272,6 +271,11 @@ vfs.root.mountfrom="ufs:/dev/md0"
 
 net.inet.ip.fw.default_to_accept=1
 EOF
+else
+cat >> ${TMP_DIR}/boot/loader.conf <<EOF
+console="userboot"
+EOF
+fi
 
 case "${media}" in
 "iso")
@@ -280,48 +284,67 @@ case "${media}" in
 "memstick")
     ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
     ;;
+"bhyve")
+    ROOTFS="/dev/vtbd0 / ufs rw 1 1"
+    ;;
 esac
 
-cat > ${TMPDIR}/etc/fstab << EOF
+if [ "${media}" != "bhyve" ]; then
+cat > ${TMP_DIR}/etc/fstab << EOF
 tmpfs /tmp tmpfs rw 0 0
 ${ROOTFS}
 /mnt/boot /boot nullfs ro 0 0
 tmpfs /boot/zfs tmpfs rw 0 0
 EOF
+else
+cat > ${TMP_DIR}/etc/fstab <<EOF
+${ROOTFS}
+EOF
+fi
 
-echo "Welcome to ${PRODUCT}" > ${TMPDIR}/etc/motd
+echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
 
-mv /tmp/mfsroot.gz ${TMPDIR}
+if [ "${media}" != "bhyve" ]; then
+    mv /tmp/mfsroot.gz ${TMP_DIR}
+    #mkuzip
+    TRAP="${TRAP} rm -f /tmp/usr.img.$$ ;"
+    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+    makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMP_DIR}/usr
+    mkuzip -o ${TMP_DIR}/usr.uzip /tmp/usr.img.$$
+    chflags -R noschg ${TMP_DIR}/usr && rm -rf ${TMP_DIR}/usr && mkdir ${TMP_DIR}/usr
+    #
 
-#mkuzip
-TRAP="${TRAP} rm -f /tmp/usr.img.$$ ;"
-trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMPDIR}/usr
-mkuzip -o ${TMPDIR}/usr.uzip /tmp/usr.img.$$
-chflags -R noschg ${TMPDIR}/usr && rm -rf ${TMPDIR}/usr && mkdir ${TMPDIR}/usr
-#
+    # LiveCD location
+    if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
+	cp ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
+    #    cp ${miscdir}/tmpfsdir ${TMP_DIR}/etc/rc.d/
+    fi
+fi
 
-# LiveCD location
-if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
-    cp ${jailsysdir}/${jname}/tmpfsdir ${TMPDIR}/etc/
-#    cp ${miscdir}/tmpfsdir ${TMPDIR}/etc/rc.d/
+if [ "${media}" = "bhyve" ]; then
+cat > ${TMP_DIR}/etc/ttys <<EOF
+console "/usr/libexec/getty std.9600"   vt100   on secure
+EOF
 fi
 
 case "${media}" in
 "iso")
-    /usr/local/cbsd/release/mkisoimages.sh ${LABEL} ${destdir}/${jname}-${ver}_${arch}.iso ${TMPDIR}
+    /usr/local/cbsd/release/mkisoimages.sh ${LABEL} ${dstdir}/${jname}-${ver}_${arch}.iso ${TMP_DIR}
     ;;
 "memstick")
-    makefs -B little -o label=${LABEL} ${destdir}/${jname}-${ver}_${arch}.img ${TMPDIR}
+    makefs -B little -o label=${LABEL} ${dstdir}/${jname}-${ver}_${arch}.img ${TMP_DIR}
 
     [ $? -ne 0 ] && err 1 "makefs failed"
 
-    unit=`mdconfig -a -t vnode -f ${destdir}/${jname}-${ver}_${arch}.img`
+    unit=`mdconfig -a -t vnode -f ${dstdir}/${jname}-${ver}_${arch}.img`
     [ $? -ne 0 ] && err 1 "mdconfig failed"
     gpart create -s BSD ${unit}
-    gpart bootcode -b ${TMPDIR}/boot/boot ${unit}
+    gpart bootcode -b ${TMP_DIR}/boot/boot ${unit}
     gpart add -t freebsd-ufs ${unit}
     mdconfig -d -u ${unit}
+    ;;
+"bhyve")
+    makefs -o label="${LABEL}" ${IMGSIZE} ${dstdir}/${jname}-${ver}_${arch}.img ${TMP_DIR}
     ;;
 esac
 

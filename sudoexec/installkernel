@@ -1,99 +1,65 @@
 #!/bin/sh
-#v9.2.2
+#v10.0.2
 globalconf="${workdir}/cbsd.conf";
 CBSDMODULE="build"
 MYARG=""
-MYOPTARG="ver arch maxjobs clean name stable basename stable"
+MYOPTARG="ver arch target_arch maxjobs clean name stable basename stable"
 MYDESC="Build kernel from sources"
-ADDHELP="ver=9_1 for 9.1 ver=. for current.\n\
+ADDHELP="10.0 for FreeBSD 10.0-R or ver=. for current.\n\
 stable=1 for RELENG_X\n\
 destdir= for alternative install path in root dir\n"
-
-set -e
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${inventory}
-. ${etcdir}/buildworld.conf
 init $*
 
 . ${buildconf}
+. ${etcdir}/buildworld.conf
+. ${system}
 . ${color}
+. ${workdir}/universe.subr
+. ${workdir}/emulator.subr
 
-[ -n "${clean}" ] || clean=0
-
-if [ -z "${name}" ]; then
-    export __MAKE_CONF=${etcdir}/make.conf
-else
-    export __MAKE_CONF=${etcdir}/make-$name.conf
-fi
-
-if [ -z "${basename}" ]; then
-    export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${ver}
-else
-    export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${ver}
-fi
-
-if [ -z "${basename}" ]; then
-    export SRCCONF=${etcdir}/src.conf
-else
-    export SRCCONF=${etcdir}/src-${basename}.conf
-fi
-
-support_arch=0
-
-for i in $SUPPORTED_ARCH; do
-    [ "${arch}" = "${i}" ] && support_arch=1 && break
-done
-
-[ ${support_arch} -eq 0 ] && err 1 "${MAGENTA}Supported architecture only: ${GREEN}${SUPPORTED_ARCH}${NORMAL}"
-
-NOCLEANUP=""
-[ ${clean} -eq 1 ] || NOCLEANUP="-DNO_CLEAN"
-
-SRC="${srcdir}/src_${ver}"
+init_distcc
+init_notify
+init_target_arch
+init_srcdir
+init_supported_arch
+init_basedir
 
 LOCKFILE=${ftmpdir}/`md5 -qs ${MAKEOBJDIRPREFIX}`.lock
 
-[ -z "${name}" ] && name="GENERIC"
+init_kerneldir
 
-if [ -n "${destdir}" ]; then
-    DST="${destdir}"
-else
-    if [ -z "${basename}" ]; then
-	DST="${basejaildir}/kernel_${name}_${arch}_${ver}"
-    else
-	DST="${basejaildir}/kernel_${basename}_${name}_${arch}_${ver}"
-    fi
-fi
-
-myarch=`uname -m`
-
-if [ "${myarch}" != "${arch}" ]; then
-    case "${arch}" in
-	"i386")
-#	    export MACHINE="i386"
-#	    export UNAME_p="i386"
-#	    export UNAME_m="i386"
-	    export TARGET="i386"
-	    export TARGET_ARCH="i386"
-#	    export MACHINE_ARCH="i386"
-#	    export BUILD_ARCH="i386"
-	    ;;
-	"amd64")
-#	    export MACHINE="amd64"
-#	    export UNAME_p="amd64"
-#	    export UNAME_m="amd64"
-	    export TARGET="amd64"
-	    export TARGET_ARCH="amd64"
-#	    export MACHINE_ARCH="amd64"
-#	    export BUILD_ARCH="amd64"
-	    ;;
-    esac
-fi
-#echo "MAKEOBJDIRPREFIX=${MAKEOBJDIRPREFIX}"
 [ ! -f "${etcdir}/kernel-${name}-${arch}-${ver}" ] && err 1 "${MAGENTA}No such config kernel-${name}-${arch}-${ver} in: ${GREEN}${etcdir}${NORMAL}"
-cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRC}/src/sys/${arch}/conf/${name}.CBSD
-makelock $LOCKFILE "rm -f ${SRC}/src/sys/${arch}/conf/${name}.CBSD"
-/usr/bin/make -C ${SRC}/src installkernel TARGET=${arch} KERNCONF=${name}.CBSD DESTDIR=${DST} ${NOCLEANUP}
+cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
+#makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD"
+
+## preparing chroot
+TMPDST="${basejaildir}/tempbase.$$"
+mkdir -p ${TMPDST}
+
+makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD && umount -f ${TMPDST}${MAKEOBJDIRPREFIX} && umount -f ${TMPDST}/dev && umount -f ${TMPDST}/usr/src && chflags -R noschg ${TMPDST} && rm -rf ${TMPDST}"
+
+baserw=1
+populate_cdir ${BASE_DIR} ${TMPDST}
+cp ${etcdir}/kernel-${name}-${arch}-${ver} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
+
+# place for rewrite to mountbase from system.subr
+    mkdir -p ${TMPDST}/usr/src
+    mount -t nullfs -o ro ${SRC_DIR} ${TMPDST}/usr/src
+    mkdir -p ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
+    mkdir -p ${TMPDST}${etcdir}
+    [ -f "${__MAKE_CONF}" ] && cp ${__MAKE_CONF} ${TMPDST}${etcdir}
+    [ -f "${SRCCONF}" ] && cp ${SRCCONF} ${TMPDST}${etcdir}
+    mount -t nullfs ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
+    mount -t devfs devfs ${TMPDST}/dev
+#
+
+/usr/sbin/chroot ${TMPDST} /usr/bin/make -C /usr/src installkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+[ -d "${KERNEL_DIR}/boot" ] && rm -rf ${KERNEL_DIR}/boot
+[ ! -d "${KERNEL_DIR}/boot" ] && mkdir -p ${KERNEL_DIR}/boot
+mv ${TMPDST}/boot/kernel ${KERNEL_DIR}/boot/kernel
+#/usr/bin/make -C ${SRC_DIR} installkernel TARGET=${arch} KERNCONF=${name}.CBSD DESTDIR=${KERNEL_DIR} TARGET_ARCH="${target_arch}"
