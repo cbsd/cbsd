@@ -8,7 +8,7 @@ ADDHELP="mode can: list, create, destroy, destroyall, clone, rollback\n\
 snapfs can be: rsync\n\
 snapname can be: \"gettimeofday\" or any arbitrary word\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: snapname,jname,creation\n"
+display= list by comma for column. Default: snapname,jname,creation,used\n"
 CBSDMODULE="jail"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
@@ -35,17 +35,17 @@ check_jname()
 
 zfs_snapshot_list()
 {
-    local _mod _fs _p1 _jname _createtime _status _snaptime _snapname
+    local _mod _fs _p1 _jname _createtime _status _snaptime _snapname _used
     [ -n "${jname}" ] && _mod="${ZPOOL}/${jname}"
 
     show_header
 
     for _fs in $(/sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null); do
 	_status=""
-	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}")
+	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null)
 	[ -z "${_jname}" ] && continue
 	[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
-	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}")
+	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null)
 	[ -z "${_snapname}" ] && continue
 	#populate values for in output string
 	for _i in ${mydisplay}; do
@@ -57,10 +57,15 @@ zfs_snapshot_list()
 		    _status="${_status}${_jname} "
 		    ;;
 		"creation")
-		    _createtime=$(zfs get -H -o value creation "${_fs}")
+		    _createtime=$(zfs get -H -o value creation "${_fs}" 2>/dev/null)
 		    _snaptime=$( date -j -f "%a %b %d %T %Y" "${_createtime}" "+%Y-%m-%d__%H:%M" )
 		    _status="${_status}${_snaptime} "
 		    ;;
+		"used")
+		    _used=$(zfs get -H -o value used "${_fs}" 2>/dev/null)
+		    _status="${_status}${_used} "
+		    ;;
+
 	    esac
 	done
 	${ECHO} "${NORMAL}${_status}"
@@ -74,10 +79,10 @@ zfs_snapshot_destroyall()
     [ -n "${jname}" ] && _mod="${ZPOOL}/${jname}"
 
     for _fs in $(/sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null); do
-	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}")
+	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null)
 	[ -z "${_jname}" ] && continue
 	[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
-	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}")
+	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null)
 	[ -z "${_snapname}" ] && continue
 	zfs_snapshot_destroy ${_fs} && ${ECHO} "${MAGENTA}zfs snapshot for ${jname} destoyed: ${GREEN}${_snapname}${NORMAL}"
     done
@@ -95,10 +100,10 @@ zfs_snapshot_destroy_by_snapname()
 	_chkloop=$(( _chkloop + 1 ))
 	# normally we never got _chkloop greater than 1
 	[ ${_chkloop} -gt 10 ] && err 1 "${MAGENTA}Error for parsing snapname in zfs_snapshot_destroy_by_snapname${NORMAL}"
-	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}")
+	_jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null)
 	[ -z "${_jname}" ] && continue
 	[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
-	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}")
+	_snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null)
 	[ -z "${_snapname}" -o "${_snapname}" != "${snapname}" ] && continue
 	zfs_snapshot_destroy ${_fs} && ${ECHO} "${MAGENTA}zfs snapshot for ${jname} destoyed: ${GREEN}${_snapname}${NORMAL}"
 	# if cycle is not end than something wrong with parsing of snapname
@@ -204,8 +209,17 @@ rsync_snapshot_destroy()
 
 zfs_snapshot_rollback()
 {
-    [ -z "${snapname}" ] && err 1 "Empty snapname"
-    zfs rollback -r ${ZPOOL}/${jname}@${snapname}
+    local _createtime _fs _snapname _jname
+    [ -z "${snapname}" ] && err 1 "${MAGENTA}empty ${GREEN}snapname=${NORMAL}"
+    _fs="${ZPOOL}/${jname}@${snapname}"
+
+    _jname=$(zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null)
+    [ -z "${_jname}" ] && err 1 "${MAGENTA}no such snapshot ${snapname} for ${jname}${NORMAL}"
+    [ -n "${jname}" -a "${jname}" != "${_jname}" ] && err "${MAGENTA}Found snapshot ${GREEN}${snapname}${MANGETA} but its owner is ${GREEN}${_jname}${NORMAL}"
+    _snapname=$(zfs get -H -o value -s local cbsdsnap:snapname "${_fs}")
+    [ -z "${_snapname}" ] && err 1 "${MAGENTA}Snapshot found but he is not created by ${GREEN}cbsd${NORMAL} - skipp${NORMAL}"
+     _createtime=$(zfs get -H -o value creation "${_fs}")
+    zfs rollback -r ${_fs} && ${ECHO} "${MAGENTA}Restored state to ${GREEN}${snapname}${MAGENTA} snapshot created in ${GREEN}${_createtime}${NORMAL}"
 }
 
 ufs_snapshot_rollback()
@@ -230,7 +244,7 @@ if [ -z "${snapfs}" ]; then
     fi
 fi
 
-[ -z "${display}" ] && display="jname,snapname,creation"
+[ -z "${display}" ] && display="jname,snapname,creation,used"
 
 #remove commas for loop action on header
 mydisplay=$(echo ${display} |tr ',' '  ')
