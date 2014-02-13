@@ -1,22 +1,21 @@
-#10.0.2
-# functions used by various rc scripts
+#10.0.3
+# common functions used by various rc scripts
 
 # jname must be set
 # export myjid as JID
 # return 0 if jail not exist
 # return 1 if jail exist
 get_jid() {
-
     local _res
     myjid="0"
 
-	[ -z "$jname" -a -z "${path}" ] && return 0
+    [ -z "$jname" -a -z "${path}" ] && return 0
 
-	_res=$(/usr/sbin/jls -h jid name |tail +2| while read _jid _name; do
-		[ "${_name}" = "${jname}" ] && echo ${_jid}
-	done)
+    _res=$(/usr/sbin/jls -h jid name |tail +2| while read _jid _name; do
+	[ "${_name}" = "${jname}" ] && echo ${_jid}
+    done)
 
-	[ -z "${_res}" ] && return 0
+    [ -z "${_res}" ] && return 0
 
     myjid=${_res}
     return 1
@@ -31,14 +30,16 @@ err() {
         exit $exitval
 }
 
+# print $MYARG and exit
 usage() {
     err 1 "usage: $0 ${MYARG}"
 }
 
+# parser/initialization for MYARG, OPTARG
 init() {
     MYNUMTEST=`echo $MYARG $MYOPTARG|wc -w|awk {'printf $1'}`
     DEBLOG="${tmpdir}/`basename $0`-log.$$"
-    trap "rm -f ${DEBLOG}" 0 1 2
+    trap "rm -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
 
     if [ "$1" = "--help" ]; then
 	[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
@@ -87,53 +88,51 @@ init() {
 # return 3 if not interactive ($inter=0)
 getyesno()
 {
+    if [ "${inter}" = "0" ]; then
+	[ "${ALWAYS_YES}" = "1" ] && return 0
+	return 3
+    fi
 
-if [ "${inter}" = "0" ]; then
-    [ "${ALWAYS_YES}" = "1" ] && return 0
-    return 3
-fi
-
-echo -e "${1}"
-answ=
-while [ x$answ = x ]; do
-    echo -e "[${GREEN}yes(1) or no(0)${NORMAL}]"
-    read reply leftover
-        case $reply in
-                #       "yes", "true", "on", or "1"
-        Y*|y*|1)
-                return 0
-                ;;
-                #       "no", "false", "off", or "0"
-        N*|n*|0)
-                return 1
-                ;;
-        esac
-done
+    echo -e "${1}"
+    answ=
+    while [ x$answ = x ]; do
+	echo -e "[${GREEN}yes(1) or no(0)${NORMAL}]"
+	read reply leftover
+	case $reply in
+	    #       "yes", "true", "on", or "1"
+	    Y*|y*|1)
+		return 0
+            ;;
+	    #       "no", "false", "off", or "0"
+	    N*|n*|0)
+		return 1
+	    ;;
+	esac
+    done
 }
 
 # value="YES" or "NO"
 checkyesno()
 {
-        eval _value=\$${1}
-        case $_value in
+    eval _value=\$${1}
 
-                #       "yes", "true", "on", or "1"
-        [Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1)
-                return 0
-                ;;
-
-                #       "no", "false", "off", or "0"
-        [Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff]|0)
-                return 1
-                ;;
-        *)
-#                echo "\$${1} is not set properly - see ${rcvar_manpage}."
-                return 1
-                ;;
-        esac
+    case $_value in
+	#       "yes", "true", "on", or "1"
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1)
+	    return 0
+	;;
+	#       "no", "false", "off", or "0"
+	[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff]|0)
+	    return 1
+	;;
+	*)
+	#                echo "\$${1} is not set properly - see ${rcvar_manpage}."
+	    return 1
+	;;
+    esac
 }
 
-
+# cut prefix from x.x.x.x/pref into IWM variable
 ipwmask()
 {
     export IWM=`echo $1 |cut -d "/" -f 1`
@@ -175,10 +174,9 @@ geniplist()
     done
 }
 
-
+# print "." for progress activity
 dot()
 {
-
     if [ $? -ne 0 ]; then
 	${ECHO} "${MAGENTA}Error in $1${NORMAL}"
 	if [ -f ${DEBLOG} ]; then
@@ -200,27 +198,24 @@ dot()
 # $3 - safe, for force
 makelock()
 {
+    [ -f "${LOCKFILE}" -a "${3}" = "safe" ] && rm -f ${LOCKFILE}
+    [ -f "${LOCKFILE}"  ] && err 1 "Locked: ${LOCKFILE}. Try later"
+    TRAPS="rm -f ${LOCKFILE}; exit"
 
-[ -f "${LOCKFILE}" -a "${3}" = "safe" ] && rm -f ${LOCKFILE}
+    if [ -n "$2" ]; then
+	TRAPS="$2; ${TRAPS}"
+    fi
 
-[ -f "${LOCKFILE}"  ] && err 1 "Locked: ${LOCKFILE}. Try later"
-TRAPS="rm -f ${LOCKFILE}; exit"
-
-if [ -n "$2" ]; then
-    TRAPS="$2; ${TRAPS}"
-fi
-
-trap "${TRAPS}" 0 1 2 3
-[ "$3" = "safe" ] || touch $LOCKFILE
+    trap "${TRAPS}" HUP INT ABRT BUS TERM EXIT
+    [ "$3" = "safe" ] || touch $LOCKFILE
 }
-
 
 
 # search for slow jails and wait him before exit
 wait_for_jstop()
 {
-local ECHO="echo -e"
-local A PID
+    local ECHO="echo -e"
+    local A PID
 
     while [ 1 ]; do
 	A=`find ${ftmpdir} -type f -depth 1 -maxdepth 1 -name jstop\.\*\.\* |head -n1`
@@ -251,4 +246,15 @@ wait_for_jstart()
         ${ECHO} "${MAGENTA}Waiting for starting jail who have pid: ${GREEN}${PID}${NORMAL}"
         /usr/local/bin/cbsd pwait --pid=${PID} --timeout=${parallel}
     done
+}
+
+# wrapper for including config in $etcdir. $1 is name of the file
+# At the first we try to include $etcdir/defaults/$1, in second: $etcdir/$1
+readconf()
+{
+    [ -z "${1}" ] && return 1
+
+    [ -r "${etcdir}/defaults/$1" ] && . ${etcdir}/defaults/$1
+    [ -r "${etcdir}/$1" ] && . ${etcdir}/$1
+    return 0
 }

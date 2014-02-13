@@ -1,0 +1,170 @@
+#!/bin/sh
+#v10.0.3
+globalconf="${workdir}/cbsd.conf";
+MYARG="key mode"
+MYOPTARG="backupfile device file"
+MYDESC="cbsd wrapper for freebsd geli"
+ADDHELP="key= path to master key file\n\
+device= path to device\n\
+file= path to image\n\
+mode= init, attach, detach\n\
+backupfile= alternative path to backup for init for storing backup\n"
+EXTHELP="html/wf_geli_en.html"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${color}
+. ${mdtools}
+init $*
+
+readconf geli.conf
+
+create_key()
+{
+    local _res
+    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
+    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
+}
+
+# geli init. if $1 is empty ${device} variable will be used
+init_device()
+{
+    local _res _arg _tst _device
+    printf "${BOLD}"
+    _arg="-s 4096 -K ${key} -e ${ealgo}"
+
+    if [ -n "${1}" ]; then
+	_device=${1}
+    else
+	_device=${device}
+    fi
+
+    [ ! -c "${_device}" ] && err 1 "${MAGENTA}No such or unaccesible/non block special device: ${GREEN}${_device}${NORMAL}"
+
+    if [ -n "${backupfile}" ]; then
+	_arg="${_arg} -B ${backupfile}"
+	_tst=$( dirname ${backupfile} )
+	[ ! -d "${_tst}" ] && mkdir -p ${_tst}
+    fi
+
+    _res=$( /sbin/geli init ${_arg} ${_device} 2>&1)
+    printf "${NORMAL}"
+    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+    [ -n "${_res}" ] && err 0 "${MAGENTA}${_res}${NORMAL}"
+}
+
+attach_file()
+{
+    local _res _md
+    _res=$( eval find_md_by_img ${file} )
+
+    [ -n "${_res}" ] && err 1 "${MAGENTA}${file} already attached: ${GREEN}${_res}${NORMAL}"
+
+    _md=$( mdconfig -a -t vnode -f ${file} )
+
+    if [ ! -c "${_md}.eli" ]; then
+	mdconfig -d -u ${_md}
+	err 1 "${MAGENTA}${file} not initializated for GELI. Please run ${GREEN}mode=init${MAGENTA} first${NORMAL}"
+    fi
+
+}
+
+init_file()
+{
+    local _res _md
+    _res=$( eval find_md_by_img ${file} )
+
+    if [ -n "${_res}" ]; then
+	_md="${_res}"
+    else
+	_md=$( mdconfig -a -t vnode -f ${file} )
+    fi
+
+    if [ -c "${_md}.eli" ]; then
+	mdconfig -d -u ${_md}
+	err 1 "${MAGENTA}${file} already initializated for GELI${NORMAL}"
+    fi
+
+    init_device /dev/${_md}
+}
+
+
+
+detach_file()
+{
+    local _res _md
+    _res=$( eval find_md_by_img ${file} )
+
+    [ -z "${_res}" ] && err 1 "${MAGENTA}${file} not attached${NORMAL}"
+
+    _md=$( mdconfig -d -u ${_res} )
+
+#    echo "M: ${_md}"
+#    printf "${BOLD}"
+#    _res=$( /sbin/geli attach -k ${key} ${device} 2>&1)
+#    printf "${NORMAL}"
+#    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+#    [ -c "${device}.eli" ] && err 0 "${device}.eli"
+}
+
+
+attach_device()
+{
+    local _res
+    printf "${BOLD}"
+    _res=$( /sbin/geli attach -k ${key} ${device} 2>&1)
+    printf "${NORMAL}"
+    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+    [ -c "${device}.eli" ] && err 0 "${device}.eli"
+}
+
+
+detach_device()
+{
+    local _res
+    _res=$( /sbin/geli detach ${device}.eli 2>&1)
+    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+}
+
+
+# MAIN
+case "${mode}" in
+    "init")
+	[ ! -r "${key}" ] && create_key
+	if [ -n "${device}" ]; then
+	    init_device
+	elif [ -n "${file}" ]; then
+	    init_file
+	else
+	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+	fi
+;;
+    "attach")
+	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
+	if [ -n "${device}" ]; then
+	    attach_device
+	elif [ -n "${file}" ]; then
+	    attach_file
+	else
+	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+	fi
+	;;
+    "detach")
+	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
+	if [ -n "${device}" ]; then
+	    detach_device
+	elif [ -n "${file}" ]; then
+	    detach_file
+	else
+	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+	fi
+	;;
+
+    *)
+	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
+	[ ! -c "${device}" ] && err 1 "${MAGENTA}No such or unaccesible/non block special device: ${GREEN}${device}${NORMAL}"
+	;;
+esac
+
+
