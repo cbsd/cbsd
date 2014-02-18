@@ -1,24 +1,28 @@
 #!/bin/sh
 #v10.0.3
 globalconf="${workdir}/cbsd.conf";
-MYARG="key mode"
-MYOPTARG="backupfile device file"
-MYDESC="cbsd wrapper for freebsd geli"
+MYARG="mode"
+MYOPTARG="key backupfile device file"
+MYDESC="cbsd geli helper"
 ADDHELP="key= path to master key file\n\
 device= path to device\n\
 file= path to image\n\
-mode= init, attach, detach\n\
+mode= initmaster, init, attach, detach, info\n\
 backupfile= alternative path to backup for init for storing backup\n"
 EXTHELP="html/wf_geli_en.html"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
+. ${system}
 . ${color}
 . ${mdtools}
 init $*
 
 readconf geli.conf
+
+MASTER_FILE="${dbdir}/master_geli.img"
+TRAP=""
 
 create_key()
 {
@@ -49,6 +53,7 @@ init_device()
     fi
 
     _res=$( /sbin/geli init ${_arg} ${_device} 2>&1)
+
     printf "${NORMAL}"
     [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
     [ -n "${_res}" ] && err 0 "${MAGENTA}${_res}${NORMAL}"
@@ -59,18 +64,17 @@ attach_file()
     local _res _md
     _res=$( eval find_md_by_img ${file} )
 
-    [ -n "${_res}" ] && err 1 "${MAGENTA}${file} already attached: ${GREEN}${_res}${NORMAL}"
-
-    _md=$( mdconfig -a -t vnode -f ${file} )
-
-    if [ ! -c "${_md}.eli" ]; then
-	mdconfig -d -u ${_md}
-	err 1 "${MAGENTA}${file} not initializated for GELI. Please run ${GREEN}mode=init${MAGENTA} first${NORMAL}"
+    if [ -n "${_res}" ]; then
+	_md="${_res}"
+    else
+	_md=$( mdconfig -a -t vnode -f ${file} )
     fi
+
+    attach_device /dev/${_md}
 
 }
 
-init_file()
+info_file()
 {
     local _res _md
     _res=$( eval find_md_by_img ${file} )
@@ -79,15 +83,62 @@ init_file()
 	_md="${_res}"
     else
 	_md=$( mdconfig -a -t vnode -f ${file} )
+	trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
     fi
 
-    if [ -c "${_md}.eli" ]; then
-	mdconfig -d -u ${_md}
-	err 1 "${MAGENTA}${file} already initializated for GELI${NORMAL}"
-    fi
+    info_device /dev/${_md}
 
-    init_device /dev/${_md}
 }
+
+
+init_file()
+{
+    local _res _md _file _dev
+
+    if [ -n "${1}" ]; then
+	_file=$1
+    else
+	_file=${file}
+    fi
+    _res=$( eval find_md_by_img ${_file} )
+
+    if [ -n "${_res}" ]; then
+	_md="${_res}"
+    else
+	_md=$( mdconfig -a -t vnode -f ${_file} )
+	trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
+    fi
+
+    [ -c "${_md}.eli" ] && err 1 "${MAGENTA}${_file} already initializated for GELI${NORMAL}"
+
+    _dev=$( init_device /dev/${_md} )
+    [ $? -eq 0 ] && echo "${_dev}"
+}
+
+
+mdattach_file()
+{
+    local _res _md _file _dev
+
+    if [ -n "${1}" ]; then
+	_file=$1
+    else
+	_file=${file}
+    fi
+    _res=$( eval find_md_by_img ${_file} )
+
+    if [ -n "${_res}" ]; then
+	_md="${_res}"
+    else
+	_md=$( mdconfig -a -t vnode -f ${_file} )
+    fi
+
+    echo ${_md}
+    return 0
+}
+
+
+
 
 
 
@@ -98,39 +149,163 @@ detach_file()
 
     [ -z "${_res}" ] && err 1 "${MAGENTA}${file} not attached${NORMAL}"
 
-    _md=$( mdconfig -d -u ${_res} )
+    if [ -n "${_res}" ]; then
+	_md="${_res}"
+    else
+	_md=$( mdconfig -a -t vnode -f ${file} )
+    fi
 
-#    echo "M: ${_md}"
-#    printf "${BOLD}"
-#    _res=$( /sbin/geli attach -k ${key} ${device} 2>&1)
-#    printf "${NORMAL}"
-#    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
-#    [ -c "${device}.eli" ] && err 0 "${device}.eli"
+    detach_device /dev/${_md}
 }
 
 
 attach_device()
 {
-    local _res
+    local _res _device
+    if [ -n "${1}" ]; then
+	_device="${1}"
+    else
+	_device="${device}"
+    fi
+
+    if [ -c "${_device}.eli" ]; then
+	${ECHO} "${MAGENTA}geli: Already attached as:${NORMAL}"
+	err 0 "${GREEN}${_device}.eli${NORMAL}"
+    fi
     printf "${BOLD}"
-    _res=$( /sbin/geli attach -k ${key} ${device} 2>&1)
-    printf "${NORMAL}"
+    _res=$( /sbin/geli attach -k ${key} ${_device} 2>&1)
     [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+    printf "${NORMAL}"
     [ -c "${device}.eli" ] && err 0 "${device}.eli"
+    err 0 "${GREEN}${_device}.eli${NORMAL}"
+}
+
+info_device()
+{
+    local _res _device
+    if [ -n "${1}" ]; then
+	_device="${1}"
+    else
+	_device="${device}"
+    fi
+
+    [ -c "${_device}.eli" ] && err 0 "${GREEN}${_device}.eli${NORMAL}"
+    err 1 "${MAGENTA}No geli${NORMAL}"
 }
 
 
 detach_device()
 {
-    local _res
-    _res=$( /sbin/geli detach ${device}.eli 2>&1)
+    local _res _device
+    if [ -n "${1}" ]; then
+	_device="${1}"
+    else
+	_device="${device}"
+    fi
+    [ ! -c "${_device}.eli" ] && err 0 "${MAGENTA}geli: ${MAGENTA}Device not attached: ${GREEN}${_device}.eli${NORMAL}"
+    _res=$( /sbin/geli detach ${_device}.eli 2>&1)
     [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
 }
 
+check_gelidir()
+{
+    [ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
+    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
+    is_mounted ${gelidir} && return 0
+    err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not mounted. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+}
+
+
+initmaster_attach_file()
+{
+    local _res
+    [ -z "${1}" ] && return 1
+
+    ${ECHO} "${MAGENTA}Attaching geli base image. Please use master password.${NORMAL}"
+    _res=$( /sbin/geli attach ${1} 2>&1 )
+    [ ! -c "${1}.eli" ] && err 1 "${MAGENTA}Not attached: ${_res}${NORMAL}"
+}
+
+
+initmaster_file()
+{
+    local _md _res
+    [ -f "${MASTER_FILE}" ] && return 0
+    TRAP="rm -f ${MASTER_FILE};"
+    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+    truncate -s ${master_size} ${MASTER_FILE}
+    chmod 0600 ${MASTER_FILE}
+    _md=$( mdconfig -a -t vnode -f ${MASTER_FILE} )
+    TRAP="mdconfig -d -u ${_md}; ${TRAP}"
+    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+    $ECHO "${BOLD}Initialization. Please set master password for geli base image${NORMAL}"
+    _res=$( /sbin/geli init -s 4096 /dev/${_md} 2>&1 )
+
+    initmaster_attach_file /dev/${_md}
+
+    TRAP="/sbin/geli detach /dev/${_md}.eli; ${TRAP}"
+    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+    # now create filesystem on the image
+    dd if=/dev/random of=/dev/${_md}.eli bs=128k >/dev/null 2>&1 || true  ## << short write on character device exit with 1 err
+    newfs -U -m0 -n /dev/${_md}.eli >/dev/null 2>&1
+    trap "" HUP INT ABRT BUS TERM EXIT
+#    # detach
+#    /sbin/geli detach /dev/${_md}.eli
+#    mdconfig -d -u ${_md}
+    ${ECHO} "${MAGENTA}Init complete: ${GREEN}${MASTER_FILE}${NORMAL}"
+}
+
+initmaster()
+{
+    [ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
+    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
+}
+
+# $1 - mode
+mountmaster_file()
+{
+    local _mode _mounted _res _md
+    [ -z "${1}" ] && err 1 "usage: mountmaster_file mode"
+    _mode="$1"
+    [ "${_mode}" != "ro" -a "${_mode}" != "rw" ] && err 1 "${MAGENTA}Please set ${GREEN}'ro' ${MAGENTA}or ${GREEN}'rw'${NORMAL}"
+
+    _md=$( mdattach_file ${MASTER_FILE} )
+
+    if is_mounted ${gelidir}; then
+	# test for read/write
+	_res=$( mktemp -q ${gelidir}/XXXXX )
+	if [ $? -eq 0 ]; then
+	    _mounted="rw"
+	    rm -f ${_res}
+	else
+	    _mounted="ro"
+	fi
+	[ "${_mounted}" = "${_mode}" ] && err 0 "${MAGENTA}Already initialized: ${GREEN}${gelidir}${NORMAL}"
+	# we need for re-mount in new mode
+	umount ${gelidir}
+    fi
+
+    [ ! -c "/dev/${_md}.eli" ] &&  initmaster_attach_file /dev/${_md}
+
+    if [ ! -c "/dev/${_md}.eli" ]; then
+	mdconfig -d -u ${_md}
+	err 1 "${MAGENTA}No eli initialized for ${GREEN}${MASTER_FILE}${NORMAL}"
+    fi
+
+    mount -o${_mode} /dev/${_md}.eli ${gelidir}
+}
+
+
 
 # MAIN
+[ ! -d "${gelidir}" ] && mkdir -m 0600 ${gelidir}
+
 case "${mode}" in
     "init")
+	check_gelidir
+	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
 	[ ! -r "${key}" ] && create_key
 	if [ -n "${device}" ]; then
 	    init_device
@@ -139,8 +314,14 @@ case "${mode}" in
 	else
 	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
 	fi
-;;
+	;;
+    "initmaster")
+	initmaster_file
+	mountmaster_file "ro"
+	;;
     "attach")
+	check_gelidir
+	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
 	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
 	if [ -n "${device}" ]; then
 	    attach_device
@@ -151,7 +332,6 @@ case "${mode}" in
 	fi
 	;;
     "detach")
-	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
 	if [ -n "${device}" ]; then
 	    detach_device
 	elif [ -n "${file}" ]; then
@@ -160,10 +340,17 @@ case "${mode}" in
 	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
 	fi
 	;;
-
+    "info")
+	if [ -n "${device}" ]; then
+	    info_device
+	elif [ -n "${file}" ]; then
+	    info_file
+	else
+	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+	fi
+	;;
     *)
-	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
-	[ ! -c "${device}" ] && err 1 "${MAGENTA}No such or unaccesible/non block special device: ${GREEN}${device}${NORMAL}"
+	err 1 "${MAGENTA}Unknown mode${NORMAL}"
 	;;
 esac
 

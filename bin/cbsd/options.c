@@ -62,6 +62,7 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 240247 2012-09-08 19:24:03Z jilles $")
 #endif
 #ifdef CBSD
 #include "exec.h"
+#include "main.h"
 #endif
 
 char *arg0;			/* value of $0 */
@@ -112,7 +113,12 @@ procargs(int argc, char **argv)
 	if (sflag == 0 && minusc == NULL) {
 		scriptname = *argptr++;
 #ifdef CBSD
-                if (setinputfile(scriptname, 0)==2) shellexec(argv + 1, environment(), pathval(), 0);
+		if (setinputfile(scriptname, 0)==2) {
+		    if ( cbsd_enable_history == 1 ) {
+		        historycmd(argc, argv);
+		    }
+		    shellexec(argv + 1, environment(), pathval(), 0);
+		}
 #else
 		setinputfile(scriptname, 0);
 #endif

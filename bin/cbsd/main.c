@@ -85,6 +85,11 @@ int rootshell;
 struct jmploc main_handler;
 int localeisutf8, initial_localeisutf8;
 
+#ifdef CBSD
+char *cbsd_history_file = NULL;
+int cbsd_enable_history=0;
+#endif
+
 static void reset(void);
 static void cmdloop(int);
 static void read_profile(const char *);
@@ -107,7 +112,12 @@ main(int argc, char *argv[])
 #ifdef CBSD
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
+	char *cbsd_disable_history = NULL; //getenv
 	chdir("/var/empty");
+	/* Only use history when stdin is a tty. */
+	if ( isatty(0) && isatty(1) ) {
+	    cbsd_enable_history = 1;
+	}
 #endif
 	(void) setlocale(LC_ALL, "");
 	initcharset();
@@ -155,6 +165,16 @@ main(int argc, char *argv[])
 	setstackmark(&smark2);
 
 #ifdef CBSD
+	if (argc>1)
+	    if (!strcmp(argv[1],"--help")) {
+		system("/usr/local/bin/cbsd help");
+		exit(0);
+	    }
+
+	cbsd_disable_history=lookupvar("NO_CBSD_HISTORY");
+
+	if ( cbsd_disable_history != NULL ) cbsd_enable_history=0;
+
 	workdir=lookupvar("workdir");
 
         if ( workdir == NULL )  {
@@ -179,14 +199,12 @@ main(int argc, char *argv[])
         setvarsafe("PATH",cbsdpath,1);
         read_profile("${workdir}/cbsd.conf");
 
+	if (cbsd_enable_history==1) {
+	    cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
+	    sprintf(cbsd_history_file,"%s/%s",workdir,CBSD_HISTORYFILE);
+	}
 
         ckfree(cbsdpath);
-        if (argc>1)
-	    if (!strcmp(argv[1],"--help")) {
-		system("/usr/local/bin/cbsd help");
-		 exit(0);
-        }
-
 #endif
 	procargs(argc, argv);
 	pwd_init(iflag);

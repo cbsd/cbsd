@@ -4,8 +4,8 @@
 PROG=	cbsd
 BINDIR=	/usr/local/bin
 INSTALLFLAGS= -S
-SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cd.c echo.c error.c eval.c \
-	exec.c expand.c \
+SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cd.c echo.c error.c \
+	eval.c exec.c expand.c \
 	histedit.c input.c jobs.c kill.c mail.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c \
 	test.c trap.c var.c
