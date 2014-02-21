@@ -24,11 +24,79 @@ readconf geli.conf
 MASTER_FILE="${dbdir}/master_geli.img"
 TRAP=""
 
+change_passphrase()
+{
+    local _passfile _dev _pw="1" _npw
+    local oldmodes=`stty -g`
+
+    [ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}change_passphrase need for arguments${NORMAL}"
+    _dev="${1}"
+    _passfile="${2}"
+
+    ${ECHO} "${MAGENTA}Enter passphrase for ${gelidev}: ${NORMAL}"
+
+    while [ "${_pw}" != "${_npw}" ]; do
+	printf "${BOLD}New Password: ${NORMAL}"
+	stty -echo
+	read _pw
+	printf "\n${BOLD}Retype New Password: ${NORMAL}"
+	read _npw
+	[ "${_pw}" = "${_npw}" ] || ${ECHO} "${MAGENTA}Mismatch; try again, EOF to quit.${NORMAL}"
+    done
+
+    echo "${_pw}" > ${_passfile}
+    stty $oldmodes
+    /sbin/geli init -J ${_passfile} ${_dev}
+}
+
+# $1 - path to dev/file
+# printf md5-based key path
+get_key()
+{
+ local _res
+ [ -z "${1}" ] && err 1 "${MAGENTA}get_key need for arguments${NORMAL}"
+ _res=$(echo $1| sed s:^${workdir}/::g)
+ _md5=$(md5 -qs "${_res}")
+ printf "${gelidir}/${_md5}"
+}
+
+
 create_key()
 {
-    local _res
-    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
-    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
+    local _res _dev _keypath TRAP="true;"
+
+    _dev="${1}"
+    [ -z "${1}" ] && err 1 "${MAGENTA}create_key need for arguments${NORMAL}"
+    [ ! -f "${1}" -a ! -c "${1}" ] && err 1 "${MAGENTA}No such device or file:${GREEN} ${1}${NORMAL}"
+
+    # if resource is file, mdconfiging them and work with it as device
+    if [ -f "${1}" ]; then
+	_res=$( eval find_md_by_img ${1} )
+	if [ -n "${_res}" ]; then
+	    _md="${_res}"
+	else
+	    _md=$( mdconfig -a -t vnode -f ${file} )
+	    TRAP="${TRAP} mdconfig -d -u ${_md};"
+	    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	fi
+	_dev="/dev/${_md}"
+	#remove workdir part in path if exist
+	_keypath=$(get_key "${1}")
+    else
+	_keypath=$(get_key "${_dev}")
+    fi
+
+    if [ ! -f "${_keypath}" ]; then
+    #    err 1 "${MAGENTA}You already have passfile for this file: ${GREEN}${_keypath}${NORMAL}"
+	trap "${TRAP} mountmaster_file \"ro\";" HUP INT ABRT BUS TERM EXIT
+	mountmaster_file "rw"
+    #    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
+    #    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
+	gelidev="${_dev}"
+	change_passphrase ${_dev} ${_keypath}
+    fi
+
+    trap "" HUP INT ABRT BUS TERM EXIT
 }
 
 # geli init. if $1 is empty ${device} variable will be used
@@ -61,7 +129,7 @@ init_device()
 
 attach_file()
 {
-    local _res _md
+    local _res _md _keyfile
     _res=$( eval find_md_by_img ${file} )
 
     if [ -n "${_res}" ]; then
@@ -70,7 +138,8 @@ attach_file()
 	_md=$( mdconfig -a -t vnode -f ${file} )
     fi
 
-    attach_device /dev/${_md}
+    _keyfile=$( get_key "${file}" )
+    attach_device "/dev/${_md}" "${_keyfile}"
 
 }
 
@@ -102,6 +171,8 @@ init_file()
     fi
     _res=$( eval find_md_by_img ${_file} )
 
+    mountmaster_file "rw"
+
     if [ -n "${_res}" ]; then
 	_md="${_res}"
     else
@@ -109,7 +180,10 @@ init_file()
 	trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
     fi
 
-    [ -c "${_md}.eli" ] && err 1 "${MAGENTA}${_file} already initializated for GELI${NORMAL}"
+    if [ -c "${_md}.eli" ]; then
+	echo "${_md}.eli"
+	return 0
+    fi
 
     _dev=$( init_device /dev/${_md} )
     [ $? -eq 0 ] && echo "${_dev}"
@@ -158,22 +232,22 @@ detach_file()
     detach_device /dev/${_md}
 }
 
-
+# $1 - path to dev
+# $2 - path to key
 attach_device()
 {
-    local _res _device
-    if [ -n "${1}" ]; then
-	_device="${1}"
-    else
-	_device="${device}"
-    fi
+    local _res _device _keyfile
+
+    [ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}attach_device need for arg1 arg2${NORMAL}"
+
+    _device="${1}"
+    _keyfile="${2}"
 
     if [ -c "${_device}.eli" ]; then
-	${ECHO} "${MAGENTA}geli: Already attached as:${NORMAL}"
 	err 0 "${GREEN}${_device}.eli${NORMAL}"
     fi
     printf "${BOLD}"
-    _res=$( /sbin/geli attach -k ${key} ${_device} 2>&1)
+    _res=$( /sbin/geli attach -j ${_keyfile} ${_device} 2>&1)
     [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
     printf "${NORMAL}"
     [ -c "${device}.eli" ] && err 0 "${device}.eli"
@@ -210,8 +284,8 @@ detach_device()
 check_gelidir()
 {
     [ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
-    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
-    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
+#    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} >/dev/null 2>&1 && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
+#    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
     is_mounted ${gelidir} && return 0
     err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not mounted. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
 }
@@ -282,7 +356,7 @@ mountmaster_file()
 	else
 	    _mounted="ro"
 	fi
-	[ "${_mounted}" = "${_mode}" ] && err 0 "${MAGENTA}Already initialized: ${GREEN}${gelidir}${NORMAL}"
+	[ "${_mounted}" = "${_mode}" ] && return 0
 	# we need for re-mount in new mode
 	umount ${gelidir}
     fi
@@ -305,12 +379,15 @@ mountmaster_file()
 case "${mode}" in
     "init")
 	check_gelidir
-	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
-	[ ! -r "${key}" ] && create_key
+#	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
 	if [ -n "${device}" ]; then
-	    init_device
+	    create_key ${device}
+	    attach_file ${device}
+#	    init_device
 	elif [ -n "${file}" ]; then
-	    init_file
+	    create_key ${file}
+	    attach_file ${file}
+#	    init_file
 	else
 	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
 	fi
