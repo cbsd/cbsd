@@ -2,14 +2,14 @@
 #v10.0.4
 globalconf="${workdir}/cbsd.conf"
 MYARG="jname dstdir media"
-MYOPTARG="name label product publisher prunelist imgsize"
+MYOPTARG="name label product publisher prunelist freesize"
 MYDESC="Convert jail into cd9660 ISO or memstick image"
 ADDHELP="dstdir= destination dir for storing jname.iso\n\
 name - for alternative kernel name (GENERIC is default)\n\
 label - label for media\n\
 media - iso,memstick or bhyve\n\
 prunelist= path to prunelist, default is ${sharedir}/jail2iso-prunelist\n\
-imgsize= reserved for X size (100m, 1g) for images (primarily for bhyve img)\n"
+freesize= reserved (expand) for X image size (100m, 1g) of free space (primarily for bhyve img)\n"
 EXTHELP="html/wf_jail2iso_en.html"
 
 [ -f "${globalconf}" ] || err 1 "no such conf file"
@@ -29,6 +29,8 @@ init $*
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
+[ "${media}" = "bhyve" -a -z "${freesize}" ] && err 1 "${MAGENTA}For media=bhyve please set freesize= value. For example: ${GREEN}freesize=1g${NORMAL}"
+
 init_target_arch
 init_srcdir
 init_supported_arch
@@ -43,7 +45,6 @@ PUBLISHER="The CBSD Project. http://www.bsdstore.ru"
 [ -n "${label}" ] && LABEL="${label}"
 [ -n "${product}" ] && PRODUCT="${product}"
 [ -n "${publisher}" ] && PUBLISHER="${publisher}"
-[ -n "${imgsize}" ] && IMGSIZE="-s ${imgsize}"
 
 TMP_DIR="${tmpdir}/$jname-iso"
 DST_DIR="${tmpdir}/tmpmfsroot"
@@ -345,7 +346,31 @@ case "${media}" in
     mdconfig -d -u ${unit}
     ;;
 "bhyve")
-    makefs -o label="${LABEL}" ${IMGSIZE} ${dstdir}/${jname}-${ver}_${arch}.img ${TMP_DIR}
+    makefs -o label="${LABEL}" ${dstdir}/${jname}-${ver}_${arch}.img ${TMP_DIR}
+    if [ $? -eq 0 -a -n "${freesize}" ]; then
+	${ECHO} "${MAGENTA}Expand image size up to: ${GREEN}${freesize}${NORMAL}"
+	truncate -s +${freesize} ${dstdir}/${jname}-${ver}_${arch}.img
+	md=$(mdconfig -a -t vnode -f ${dstdir}/${jname}-${ver}_${arch}.img)
+	growfs -y /dev/${md}
+	if [ $? -eq 0 ]; then
+	    mynic=$( cbsd getnics-by-ip ip=0.0.0.0 2>/dev/null )
+	    [ -z "${mynic}" ] && mynic="em0"
+	    $ECHO "${MAGENTA}Completed. Image ready for bhyve, example:${NORMAL}"
+	    cat << EOF
+ % kldload vmm
+ % kldload if_tap
+ % sysctl -w net.link.tap.up_on_open=1
+ % ifconfig tap0 create
+ % ifconfig bridge0 create
+EOF
+	    ${ECHO} " % ifconfig bridge0 addm ${mynic} addm tap0    ${GREEN}<< -- where ${mynic} is uplink${NORMAL}"
+	cat << EOF
+ % ifconfig bridge0 up
+ % sh /usr/share/examples/bhyve/vmrun.sh -d ${dstdir}/${jname}-${ver}_${arch}.img ${jname}
+EOF
+	fi
+	mdconfig -d -u ${md}
+    fi
     ;;
 esac
 

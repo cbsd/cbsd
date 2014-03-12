@@ -1,5 +1,5 @@
 #!/bin/sh
-#v10.0.2
+#v10.0.4
 export distdir=${distdir:-"/usr/local/cbsd"}
 globalconf="${distdir}/cbsd.conf";
 MYLOCK="/tmp/initenv.lock"
@@ -34,7 +34,7 @@ desc_question()
 
     case "$1" in
 	"nodename")
-	    ${ECHO} "${BOLD}${1}: ${_DESC}, e.g. like hostname: ${GREEN}${_DEFAULT}${NORMAL}"
+	    ${ECHO} "${BOLD}${1}: ${_DESC}: ${GREEN}${_DEFAULT}${NORMAL}"
 	    read answ
 	    [ -z "$answ" ] && answ="${_DEFAULT}"
 	    return 0
@@ -168,11 +168,9 @@ phase1()
 
     # check for correct homedir
     cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
-    if [ "${cbsd_home}" != "${workdir}" ]; then
-	echo "Homedir of cbsd user (${cbsd_home}) should match with workdir value ($workdir)."
-	echo "Please change home dir of cbsd to $workdir and try again"
-	exit 1
-    fi
+
+    [ "${cbsd_home}" != "${workdir}" ] && /usr/sbin/pw usermod ${cbsduser} -d ${workdir}
+
     [ ! -d "${workdir}" ] && mkdir -m 755 ${workdir}
     $ECHO "${MAGENTA} * Check hier and permission..."
     mtree -deU -f ${distdir}/etc/cbsd.mtree -p ${workdir}
@@ -202,9 +200,10 @@ phase2()
 
     cc ${distdir}/sbin/cbsdd.c -o ${sbindir}/cbsdd
 
-    CURVERSION=`cbsd -c version`
-    if [ "${CURVERSION}" != "${myversion}" ]; then
-	[ -f "/usr/local/bin/cbsd" ] && rm -f /usr/local/bin/cbsd
+    if [ -f "/usr/local/bin/cbsd" ]; then
+	CURVERSION=$(/usr/local/bin/cbsd -c version)
+	[ "${CURVERSION}" != "${myversion}" ] && make -C ${distdir}/bin/cbsd clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsd && make -C ${distdir}/bin/cbsd install && make -C ${distdir}/bin/cbsd clean
+    else
 	make -C ${distdir}/bin/cbsd clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsd && make -C ${distdir}/bin/cbsd install && make -C ${distdir}/bin/cbsd clean
     fi
 
@@ -285,6 +284,7 @@ EOF
     #here is file with overwriting
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jail-arg ${sharedir}/jail-arg
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/rctl.conf ${sharedir}/rctl.conf
+    installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jrctl-arg ${sharedir}/jrctl-arg
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/local-fwcounters.schema ${sharedir}/local-fwcounters.schema
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/local-gw.schema ${sharedir}/local-gw.schema
     installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/local-jails.schema ${sharedir}/local-jails.schema
@@ -309,7 +309,7 @@ EOF
     [ -f "${sshdir}/config" ] || installne "-o ${cbsduser} -g ${cbsduser} -m 644" ${distdir}/.ssh/config ${sshdir}/config
 
     # workaround for move jail-skel hier in cbsd 10.0.0
-    [ ! -d "${jailskeldir}/etc" ] && cp -Rp ${distdir}/share/jail-skel/etc ${jailskeldir}
+    [ ! -d "${sharedir}/jail-skel/etc" ] && mkdir -p ${sharedir}/jail-skel && cp -a ${distdir}/share/jail-skel/* ${sharedir}/jail-skel/
 
     cp -R ${distdir}/modules ${workdir}
 }
@@ -351,15 +351,15 @@ phase3()
 
 phase4()
 {
-    ${ECHO} "${MAGENTA}[Stage 4: ${GREEN}update skel files${MAGENTA}]${NORMAL}"
+    ${ECHO} "${MAGENTA}[Stage 4: ${GREEN}update default skel resolv.conf${MAGENTA}]${NORMAL}"
 
     for i in $(${ECHO} $jnameserver | tr "," " "); do
-	if [ `/usr/bin/grep -c ${i} ${jailskeldir}/etc/resolv.conf` = 0 ]; then
+	if [ `/usr/bin/grep -c ${i} ${sharedir}/jail-skel/etc/resolv.conf` = 0 ]; then
 	    TMPR="${ftmpdir}/resolv.$$"
 	    # system nserver must be always last
 	    ${ECHO} "nameserver ${i}" > ${TMPR}
-	    cat ${jailskeldir}/etc/resolv.conf >> ${TMPR}
-	    mv ${TMPR} ${jailskeldir}/etc/resolv.conf
+	    cat ${sharedir}/jail-skel/etc/resolv.conf >> ${TMPR}
+	    mv ${TMPR} ${sharedir}/jail-skel/etc/resolv.conf
 	fi
     done
 }
@@ -416,6 +416,10 @@ phase5()
 
     for _checkme in ${_uncfg}; do
 	for _uninit in ${USERINI}; do
+	    # skip for nodename which is already set
+	    [ "${_uninit}" = "nodename" ] && continue
+	    # temporary skip for mdtmp
+	    [ "${_uninit}" = "mdtmp" ] && continue
 	    if [ "${_uninit}" = "${_checkme}" ]; then
 		if [ "${_checkme}" = "zfsfeat" -a ${_myfs} != "zfs" ]; then
 		    ${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET zfsfeat=\"0\"
@@ -461,21 +465,7 @@ phase6()
     . ${workdir}/${localcbsdconffile}
     ${ECHO} "${MAGENTA}[Stage 6: ${GREEN}authentication keys${MAGENTA}]${NORMAL}"
 
-    MD5NAME=`md5 -qs ${nodename}`
-    KEYFILE="${sshdir}/${MD5NAME}.id_rsa"
-    PUBFILE="${sshdir}/authorized_keys"
-
-    if [ ! -f ${KEYFILE} ]; then
-        /usr/bin/ssh-keygen -t rsa -f ${KEYFILE} -N ''
-        mv ${KEYFILE}.pub ${PUBFILE}
-	chmod 0444 ${PUBFILE}
-	chmod 0400 ${KEYFILE}
-	chown ${cbsduser}:${cbsduser} ${KEYFILE} ${PUBFILE}
-    else
-	chmod 0444 ${PUBFILE}
-	chmod 0400 ${KEYFILE}
-	chown ${cbsduser}:${cbsduser} ${KEYFILE} ${PUBFILE}
-    fi
+    install_sshkey
 }
 
 phase7()

@@ -9,15 +9,17 @@
 #include <ctype.h>
 
 
-int prthumanval(int64_t bytes)
+int prthumanval(uint64_t bytes)
 {
     char buf[6];
     int flags;
 
 //    flags = HN_NOSPACE | HN_DECIMAL | HN_DIVISOR_1000;
-    flags = HN_NOSPACE | HN_DECIMAL ;
+//    flags = HN_NOSPACE | HN_DECIMAL ;
+    flags = HN_NOSPACE;
 
-    humanize_number(buf, sizeof(buf) - (bytes < 0 ? 0 : 1), bytes, "", HN_AUTOSCALE, flags);
+
+    humanize_number(buf, sizeof(buf) - 1, bytes, "", HN_AUTOSCALE, flags);
 
     (void)printf("%s", buf);
     return 0;

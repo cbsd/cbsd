@@ -1,5 +1,5 @@
 #!/bin/sh
-#v9.2.2
+#v10.0.4
 export workdir=${workdir:-"/usr/jails"}
 export distdir=${distdir:-"/usr/local/cbsd"}
 globalconf="${distdir}/cbsd.conf";
@@ -48,6 +48,32 @@ get_newvalue()
      esac
 }
 
+commit()
+{
+    local _i VAL
+
+    for _i in ${USERINI}; do
+	eval VAL=\$$_i
+	eval OVAL=\$OLDVAL_${_i}
+	[ "${VAL}" = "${OVAL}" ] && continue
+
+	case "${_i}" in
+	    "nodename")
+		nodename=${VAL}
+		old_nodename=${OVAL}
+		change_nodename
+		;;
+	    *)
+		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_i}=\"${VAL}\"
+		sysrc -qf ${inventory} ${_i}="${VAL}"
+		;;
+	esac
+    done
+
+    err 0 "${MAGENTA}Commited${NORMAL}"
+}
+
+
 
 
 ############ start locking section #############
@@ -66,11 +92,19 @@ menu()
 
     [ -f "${inventory}" ] && . ${inventory}
 
+    init_items_value
+
+    real_zfsfeat="${zfsfeat}"
+
     while [ 1 ]; do
 
 	_my_items=""
 
 	for _par in ${USERINI}; do
+	    [ "${_par}" = "hostname" ] && continue
+	    [ "${_par}" = "mdtmp" ] && continue
+	    [ "${_par}" = "workdir" ] && continue
+	    [ "${real_zfsfeat}" = "0" -a "${_par}" = "zfsfeat" ] && continue
 	    eval _val="\$${_par}"
 	    [ -z "${_val}" ] && eval _val="\$${_par}_default"
 	    _my_items="${_my_items} '${_par}' '${_val}'"
@@ -86,17 +120,10 @@ menu()
 
 	case $retval in
 	    0)
-		get_newvalue ${mtag}
+		get_${mtag}
 		;;
 	    3)
-		for _par in ${USERINI}; do
-		    eval _val="\$${_par}"
-		    if [ -n "${_val}" ]; then
-			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_par}=\"${_val}\"
-			sysrc -qf ${inventory} ${_par}="${_val}"
-		    fi
-		done
-		err 0 "${MAGENTA}Commited${NORMAL}"
+		commit
 		;;
 	    *)
 		exit
@@ -105,6 +132,21 @@ menu()
     done
 }
 
+
+init_items_value()
+{
+    #first of all - push old values to OLDVAL for comparing final result in commit() func
+    local _i VAL
+
+    for _i in ${USERINI}; do
+	eval VAL=\$$_i
+	if [ -z "${VAL}" ]; then
+	    export OLDVAL_${_i}=""
+	else
+	    export OLDVAL_${_i}="${VAL}"
+	fi
+    done
+}
 
 ### MAIN ###
 [ $# -eq 1 ] || /usr/bin/lockf -t0 -s ${MYLOCK} $0 start

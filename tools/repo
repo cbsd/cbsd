@@ -1,5 +1,5 @@
 #!/bin/sh
-#v10.0.3
+#v10.0.4
 globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
@@ -151,19 +151,22 @@ getbase()
 	    tar xfz ${ARCHIVE}
 	    set +e
 	    rm -f ${ARCHIVE}
-	    BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
-	    ARCHIVE="$MYDIR/lib32.txz"
-	    cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
-		if [ $? -eq 0 ]; then
-		    printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
-		    cd $BASE_DIR
-		    set -e
-		    tar xfz ${ARCHIVE}
-		    set +e
-		    rm -f ${ARCHIVE}
-		else
-		    printf "${GREEN} Lib32 not found${NORMAL}\n"
-		fi
+	    # fetch lib32 only for amd64
+	    if [ "${arch}" = "amd64" ]; then
+		BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
+		ARCHIVE="$MYDIR/lib32.txz"
+		cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+		    if [ $? -eq 0 ]; then
+			printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
+			cd $BASE_DIR
+			set -e
+			tar xfz ${ARCHIVE}
+			set +e
+			rm -f ${ARCHIVE}
+		    else
+			printf "${GREEN} Lib32 not found${NORMAL}\n"
+		    fi
+	    fi
 	    cbsd preparebase dst=${BASE_DIR}
 	    ${ECHO} "${MAGENTA}Done...${NORMAL}"
 	    return 0
@@ -268,66 +271,67 @@ return 0
 
 getobj()
 {
-if [ -z "${basename}" ]; then
-    DST="${srcdir}/obj_${arch}_${ver}"
-else
-    DST="${srcdir}/obj_${basename}_${arch}_${ver}"
-fi
-
-for MYREPO in ${REPO}; do
-    ${ECHO} "${MAGENTA}REPO:${GREEN}${MYREPO}${NORMAL}"
     if [ -z "${basename}" ]; then
-    	MIRROR="${MYREPO}/obj_${arch}_${ver}/mirror.html";
+	DST="${srcdir}/obj_${arch}_${ver}"
     else
-        MIRROR="${MYREPO}/obj_${basename}_${arch}_${ver}/mirror.html";
+	DST="${srcdir}/obj_${basename}_${arch}_${ver}"
     fi
 
-    if [ -d "${DST}" ]; then
-	[ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-	cbsd removeobj ver=${ver} arch=${arch}
-    fi
-    cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+    for MYREPO in ${REPO}; do
+	${ECHO} "${MAGENTA}REPO:${GREEN}${MYREPO}${NORMAL}"
+	if [ -z "${basename}" ]; then
+    	    MIRROR="${MYREPO}/obj_${arch}_${ver}/mirror.html";
+	else
+	    MIRROR="${MYREPO}/obj_${basename}_${arch}_${ver}/mirror.html";
+	fi
 
-    if [ $? -eq 0 ]; then
-	MYREPO=`cat ${TF}`
-	${ECHO} "Found new mirror for ${basename}: ${MYREPO}"
-    fi
+	if [ -d "${DST}" ]; then
+	    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+	    cbsd removeobj ver=${ver} arch=${arch}
+	fi
+
+	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+
+	if [ $? -eq 0 ]; then
+	    MYREPO=`cat ${TF}`
+	    ${ECHO} "Found new mirror for ${basename}: ${MYREPO}"
+	fi
+
+	if [ -z "${basename}" ]; then
+	    cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
+	    [ $? -eq 0 ] || continue
+	    cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+	    [ $? -eq 0 ] || continue
+	else
+	    cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
+	    [ $? -eq 0 ] || continue
+	    cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5 >/dev/null 2>&1
+	    [ $? -eq 0 ] || continue
+	fi
+    done
 
     if [ -z "${basename}" ]; then
-	cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
-	[ $? -eq 0 ] || continue
-	cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5 >/dev/null 2>&1
-	[ $? -eq 0 ] || continue
+	[ -f "${MYDIR}/obj_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${arch}_${ver}.txz" ] || err 1 "No sources found"
     else
-	cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
-	[ $? -eq 0 ] || continue
-	cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5 >/dev/null 2>&1
-	[ $? -eq 0 ] || continue
+	[ -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz" ] || err 1 "No sources found"
     fi
-done
 
-if [ -z "${basename}" ]; then
-    [ -f "${MYDIR}/obj_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${arch}_${ver}.txz" ] || err 1 "No sources found"
-else
-    [ -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz" ] || err 1 "No sources found"
-fi
-
-if checkmd5 ${MYDIR}; then
-${ECHO} "MD5sum correct."
+    if checkmd5 ${MYDIR}; then
+	${ECHO} "MD5sum correct."
     else
-err 1 "MD5sum incorrect."
-exit
-fi
+	err 1 "MD5sum incorrect."
+    exit
+    fi
 
-rm -f ${MYDIR}/obj_${arch}_${ver}.txz.md5
+    rm -f ${MYDIR}/obj_${arch}_${ver}.txz.md5
 
-${ECHO} "Extracting..."
-cd $srcdir
-set -e
-tar xfz ${MYDIR}/obj_${arch}_${ver}.txz
-set +e
-rm -f ${MYDIR}/obj_${arch}_${ver}.txz
-${ECHO} "Done..."
+    ${ECHO} "Extracting..."
+    cd $srcdir
+    set -e
+    tar xfz ${MYDIR}/obj_${arch}_${ver}.txz
+    set +e
+    rm -f ${MYDIR}/obj_${arch}_${ver}.txz
+    ${ECHO} "Done..."
 }
 
 
@@ -395,10 +399,11 @@ getimg()
     FHIER="${arch}/${target_arch}/${ver}/${name}"
 
     if [ -f "${DST}" ]; then
-	if ! getyesno "${MAGENTA}You already have ${DST}. Remove them?${NORMAL}"; then
-	    err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
-	else
+	getyesno "${MAGENTA}You already have ${DST}. Remove them?${NORMAL}"
+	if [ $? -eq 0 -o $? -eq 3 ]; then
 	    rm -f ${DST}
+	else
+	    err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
 	fi
     fi
 
@@ -485,8 +490,6 @@ esac
 
 init_target_arch
 init_supported_arch
-init_basedir
-init_kerneldir
 
 case "${action}" in
 "ping")
@@ -519,6 +522,8 @@ done
     [ -z "${sources}" ] && err 1 "Give me sources"
     case "${sources}" in
     "src")
+	init_basedir
+	init_kerneldir
 	DIR="src_${ver}"; 
 	DST="${srcdir}/src_${ver}"
 	LOCKFILE=${DST}.lock
@@ -529,6 +534,8 @@ done
     "base")
 #	LOCKFILE=${SRC}.lock
 #	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+	init_basedir
+	init_kerneldir
 	trap "rm -f ${TF}; rm -rf ${MYDIR}"
 	mkdir -p ${MYDIR}
 	getbase
@@ -539,6 +546,8 @@ done
 	else
 	    DIR="obj_${basename}_${arch}_${ver}";
 	fi
+	init_basedir
+	init_kerneldir
 	SRC="${srcdir}/src_${ver}"
 	LOCKFILE=${SRC}.lock
 	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
@@ -549,6 +558,8 @@ done
 #	[ -z "${name}" ] && name="GENERIC"
 #	LOCKFILE=${SRC}.lock
 #	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+	init_basedir
+	init_kerneldir
 	trap "rm -f ${TF}; rm -rf ${MYDIR}"
 	mkdir -p ${MYDIR}
 	getkernel
@@ -562,6 +573,11 @@ done
 	[ "${usehelpers}" = "1" ] && gethelpers ${name} ${name}
 	${ECHO} "${MAGENTA}Done... Importing...${NORMAL}"
 	cbsd jimport jname=${name}
+	if [ -f "${importdir}/${name}.img" ]; then
+	    ${ECHO} "${MAGENTA}Import complete${NORMAL}"
+	    getyesno "${BOLD}Do you want to remove source image ${importdir}/${name}.img ?${NORMAL}"
+	    [ $? -eq 0 -o $? -eq 3 ] && rm -f ${importdir}/${name}.img
+	fi
 	[ "${usehelpers}" = "1" ] && cbsd jconfig jname=${name} ${name}cfg
 	cbsd jsetup-tui jname=${name} ip4_addr interface astart host_hostname
 	cbsd jconfig mode=list jname=${name}

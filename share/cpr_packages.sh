@@ -63,7 +63,7 @@ for dir in $PORT_DIRS; do
 done
 rm -f /tmp/test.$$
 # reject any potential dialog popup from misc. broken for save options ports for build stage
-echo "BATCH=no" >> /etc/make.conf
+echo "BATCH=yes" >> /etc/make.conf
 
 PROGRESS=${ALLPORTS}
 set -o errexit

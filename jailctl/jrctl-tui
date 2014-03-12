@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.2
+#v10.0.4
 globalconf="${workdir}/cbsd.conf";
 CBSDMODULE="jail"
 MYARG="jname"
@@ -25,25 +25,31 @@ choice_commit()
     local _myval _num _items _res
     _num=0
 
-    _res=$( cbsdsql local SELECT jname FROM rctl WHERE jname=\"${jname}\" )
+    #set human=0 fpr rctl_humanize func
+    human=1
 
+    # check for old values, if not exist then insert, not update
+    _res=$( cbsdsql local SELECT jname FROM rctl WHERE jname=\"${jname}\" )
     [ -z "${_res}" ] && cbsdsql local "INSERT INTO rctl ( jname ) VALUES ( \"${jname}\" )"
 
     if [ "${racct}" = "1" ]; then
+
+	truncate -s0 ${LIMITS}
+	jrctl jname=$jname mode=unset
+
 	for _items in ${RCTL}; do
 	    eval _myval=\$${_items}
-	    if [ "$_myval" != "0" ]; then
-		[ ${_num} -eq 0 ] && truncate -s0 ${LIMITS}
-		# convert to bytes if necessary
-		if rctl_humanize ${_items}; then
-		    if conv2bytes ${_myval}; then
-			_myval="${convval}"
-		    fi
+	    # convert to bytes if necessary
+	    if rctl_humanize ${_items}; then
+	        if conv2bytes ${_myval}; then
+		    _myval="${convval}"
 		fi
+	    fi
 
-		cbsdsql local UPDATE rctl SET ${_items}=\"${_myval}\" WHERE jname=\"${jname}\"
+	    cbsdsql local UPDATE rctl SET ${_items}=\"${_myval}\" WHERE jname=\"${jname}\"
+
+	    if [ "${_myval}" != "0" ]; then
 		echo "${_items}:deny=${_myval}" >> ${LIMITS}
-
 		_num=$((_num+1))
 	    fi
 	done
@@ -66,8 +72,10 @@ choice_commit()
     if [ ${_num} -eq 0 ]; then
 	[ -f "${LIMITS}" ] && rm -f "${LIMITS}"
 	_res=$( cbsdsql local DELETE from rctl WHERE jname=\"${jname}\" )
+	cbsd jrctl jname=$jname mode=unset
 	err 0 "${MAGENTA}Limits cleaned for: ${GREEN}${jname}${NORMAL}"
     else
+	cbsd jrctl jname=$jname mode=set
 	err 0 "${MAGENTA}New limits commited for: ${GREEN}${jname}${NORMAL}"
     fi
 }
@@ -139,7 +147,6 @@ msg_extra="Reset"
 
 while [ 1 ]; do
 	menu_list=""
-
 
 	for items in ${MYLIMITS}; do
 	    eval myval=\$${items}
