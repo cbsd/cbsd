@@ -2,13 +2,13 @@
 #v10.0.4
 globalconf="${workdir}/cbsd.conf";
 MYARG="jconf"
-MYOPTARG="inter ver arch customskel fstablocal delpkglist"
+MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist"
 MYDESC="Create jail from config file"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
 customskel = additional skel directory applyed above jail structrure\n\
 fstablocal = additional fstab file stored as fstab.local\n"
 CBSDMODULE="jail"
-EXTHELP="html/wf_jcreate_en.html"
+EXTHELP="wf_jcreate.html"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
@@ -22,6 +22,7 @@ EXTHELP="html/wf_jcreate_en.html"
 readconf buildworld.conf
 readconf jail.conf
 . ${workdir}/universe.subr
+. ${workdir}/freebsd_world.subr
 
 init $*
 
@@ -58,7 +59,11 @@ temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
 cp ${jconf} ${temprcconf}
 
-trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+if [ ${removejconf} = "1" ]; then
+    trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+else
+    trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+fi
 
 . ${temprcconf}
 . ${buildconf}
@@ -129,114 +134,11 @@ if [ "${mdsize}" != "0" ]; then
 fi
 ## MD backend
 
-### COPY FROM BASE
-if [ "${ver}" != "empty" ]; then
-    if [ "$baserw" = "1" ]; then
-#BASE_DIR variable from get_base
-	if ! populate_cdir ${BASE_DIR} ${data}; then
-	    [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
-	    err 1 "Can't populate $data from $BASE_DIR"
-	fi
-    else
-	cp -rP ${BASE_DIR}/etc ${data}/
-	cp -rP ${BASE_DIR}/root ${data}/
-	[ -f "${BASE_DIR}/etc/mtree/BSD.root.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${data} >/dev/null
-	[ -f "${BASE_DIR}/etc/mtree/BSD.usr.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${data}/usr >/dev/null
-	[ -f "${BASE_DIR}/etc/mtree/BSD.var.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${data}/var >/dev/null
-	# in FreeBSD10 BIND is go away
-	if [ -f "${BASE_DIR}/etc/mtree/BIND.chroot.dist" ]; then
-	    [ ! -d "${data}/var/named" ] && mkdir ${data}/var/named
-	    mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${data}/var/named >/dev/null
-	fi
-	[ -f "${BASE_DIR}/etc/mtree/BSD.sendmail.dist" ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${data} >/dev/null
-	if [ -n "${emulator}" -a "${emulator}" != "0" ]; then
-	    . ${workdir}/emulator.subr
-	    init_usermode_emul
-	    [ ! -d "${data}/usr/local/bin" ] && mkdir -p ${data}/usr/local/bin
-	    cp ${emultest} ${data}/usr/local/bin
-	fi
-    fi
-
-    touch "${data}/etc/fstab"
-
-    [ ! -d ${data}/usr/home ] && mkdir ${data}/usr/home
-    [ ! -d ${data}/usr/local ] && mkdir ${data}/usr/local
-    [ ! -d ${data}/usr/compat ] && mkdir ${data}/usr/compat
-    [ ! -d ${data}/usr/ports ] && mkdir ${data}/usr/ports
-    [ ! -d ${data}/usr/local/etc ] && mkdir -p ${data}/usr/local/etc
-
-    if [ ${applytpl} -eq 1 ]; then
-
-	touch ${data}/etc/src.conf
-
-	if [ -d "${jailskeldir}" ]; then
-	    ${ECHO} "${MAGENTA}Applying skel dir template from: ${GREEN}${jailskeldir}${NORMAL}"
-	    cd ${jailskeldir} && find -E ${jailskeldir} \( -type f -or -type d -or -type l \) -print |sed s:${jailskeldir}:./:g |cpio -pdmu ${data} > /dev/null 2>&1
-	else
-	    ${ECHO} "${MAGENTA}Skel dir template not found: ${GREEN}${jailskeldir}${NORMAL}"
-	fi
-
-	
-	if [ -f ${data}/master.passwd ]; then
-	    /usr/sbin/pwd_mkdb -d ${data}/etc ${data}/etc/master.passwd
-	fi
-
-	[ ! -f ${data}/etc/localtime ] && cp /etc/localtime ${data}/etc
-
-    fi
-
-    if [ -n "${customskel}" ]; then
-	if [ -d "${customskel}" ]; then
-	    $ECHO "${MAGENTA}Applying custom skel dir template from: ${GREEN}${customskel}${NORMAL}"
-	    cd ${customskel} && find -E ${customskel} \( -type f -or -type d -or -type l \) -print |sed s:${customskel}:./:g |cpio -pdmu ${data} > /dev/null 2>&1
-	else
-	    ${ECHO} "${MAGENTA}customskel dir specified but not found: ${GREEN}${customskel}${NORMAL}"
-	fi
-    fi
-
-fi  # if ver = empty
-
+populate_freebsd_world
 mkfstab
 cp $temprcconf $rcconf
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
-
-
-#[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
-# pkg area
-if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
-    if [ ! -f "${pkglist}" ]; then
-	${ECHO} "${MAGENTA}pkglist specified but not exist: ${GREEN}${pkglist}${NORMAL}"
-    else
-	${ECHO} "${MAGENTA}Populate jail from pkglist: ${GREEN}${pkglist}${NORMAL}"
-	mountbase
-	[ -f "${mount_fstab}" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
-	[ -f "${mount_fstab}.local" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab}.local jname="${jname}" > /dev/null 2>&1
-	mount -t devfs devfs $path/dev
-	[ ! -d "${path}/usr/local/etc" ] && mkdir ${path}/usr/local/etc
-	printf "${MAGENTA}pkg: [${GREEN}bootstrap... "
-	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg > /dev/null 2>&1
-	# remove default pkg.conf
-	#[ -f "${path}/usr/local/etc/pkg.conf" ] && rm -f ${path}/usr/local/etc/pkg.conf
-	printf "looking for new version... "
-	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg update -f > /dev/null 2>&1
-	#lets upgrade pkg if new version available
-	printf "upgrading... "
-	#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
-	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
-	#need for pkg upgrade twice for reinstalling pkg with "needed shared library changed"
-	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg upgrade -f > /dev/null 2>&1
-	PKGLIST=`cat ${pkglist} |xargs`
-	printf "install for ${PKGLIST}...${MAGENTA}]${NORMAL}\n"
-	chroot ${path} env ASSUME_ALWAYS_YES=yes pkg install ${PKGLIST}
-	cbsd unmountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
-	umount -f ${path}/dev
-	unmountbase
-	[ $delpkglist -eq 1 ] && rm -f ${pkglist}
-    fi
-fi
-
-[ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
 
 # Finnaly export to SQLite
 cbsd jregister jname=${jname} mode=new
@@ -245,6 +147,20 @@ if [ $? -eq 0 ]; then
     ${ECHO}
     ${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
     rm -f $rcconf
+
+    #[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
+    # pkg area
+    if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
+	if [ ! -f "${pkglist}" ]; then
+	    ${ECHO} "${MAGENTA}pkglist specified but not exist: ${GREEN}${pkglist}${NORMAL}"
+	else
+	    /usr/local/bin/cbsd pkg mode=bootstrap jname=${jname}
+	    /usr/local/bin/cbsd pkg mode=install pkglist="${pkglist}" jname=${jname}
+	    [ $delpkglist -eq 1 ] && rm -f ${pkglist}
+	fi
+    fi
+    [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
+    exit 0
 else
     ${ECHO}
     ${ECHO} "${MAGENTA}Creating ${jname} failed: ${GREEN}cbsd jregister${NORMAL}"
@@ -253,4 +169,5 @@ else
     #cleanup
     [ -f "${mount_fstab}" ] && rm -f ${mount_fstab}
     removedata ${data}
+    exit 1
 fi

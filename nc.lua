@@ -25,4 +25,10 @@ function init()
 	if EXTHELP then print ( "External help: " .. cbsddocsrc .. "/" .. EXTHELP ) end
 	os.exit(0)
     end
+
+
+    dofile(localcbsdconf)
+
+
+
 end

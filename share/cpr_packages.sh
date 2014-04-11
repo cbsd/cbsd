@@ -72,6 +72,11 @@ for dir in $PORT_DIRS; do
     echo -e "\033[40;35m Working on ${dir}. ${PROGRESS} ports left. \033[0m"
     # skip if ports already registered
 
+    if [ ! -d "${dir}" ]; then
+	echo -e "\033[40;35m Warning: skip port, no such directory: \033[0;32m${dir} \033[0m"
+	continue
+    fi
+
     if [ -f /tmp/buildcontinue ]; then
 	cd /tmp/packages
 	PORTNAME=`make -C ${dir} -V PKGNAME`

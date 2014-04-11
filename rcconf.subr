@@ -1,4 +1,4 @@
-#v10.0.0
+#v10.0.4
 # this is a temporary wrapper for version 9.2.2 is intended to make the transition to sqlite3 version if rc.conf more painless
 # required:
 # strings.subr
@@ -8,7 +8,7 @@
 # ( $sqlfile - specify sqlfile in dbdir for searching data. If empty - local file is prefered )
 init_rcconf()
 {
-    local _A _ALLCOL jname _sqlfile _datafile="local"
+    local _JCOL _BCOL _A _ALLJCOL _ALLBCOL jname _sqlfile _datafile="local"
 
     [ -n "${2}" ] && _datafile="${2}"
     _sqlfile="${dbdir}/${_datafile}.sqlite"
@@ -16,26 +16,48 @@ init_rcconf()
     [ ! -f "${_sqlfile}" ] && return 0
 
     . ${sharedir}/local-jails.schema
+    _JCOL="${MYCOL}"
 
     #clean sqlite3 schema variables
-    for i in ${MYCOL}; do
+    for i in ${_JCOL}; do
         unset ${i}
     done
 
-    jid=0
-
-    _ALLCOL=`echo ${MYCOL}|tr " " ","`
+    _ALLJCOL=$(echo ${_JCOL}|tr " " ",")
 
     # empty string on remote node if cbsd version is mistmatch ( diff. jail schema )
-    _A=`2>/dev/null env sqldelimer="|" ${miscdir}/sqlcli ${_sqlfile} "SELECT ${_ALLCOL} FROM jails WHERE jname=\"$1\""`
+    _A=`2>/dev/null env sqldelimer="|" ${miscdir}/sqlcli ${_sqlfile} "SELECT ${_ALLJCOL} FROM jails WHERE jname=\"$1\""`
 
     [ -z "${_A}" ] && return 1
 
-    sqllist "${_A}" ${MYCOL}
+    sqllist "${_A}" ${_JCOL}
+
+    if [ "${emulator}" = "bhyve" ]; then
+	. ${sharedir}/bhyve.conf
+	_BCOL="${MYCOL}"
+#	for i in ${_BCOL}; do
+#	    unset ${i}
+#	done
+	jid=-1
+	_ALLBCOL=$(echo ${_BCOL}|tr " " ",")
+	_A=`2>/dev/null env sqldelimer="|" ${miscdir}/sqlcli ${_sqlfile} "SELECT ${_ALLBCOL} FROM bhyve WHERE jname=\"$1\""`
+	sqllist "${_A}" ${_BCOL}
+    else
+	jid=0
+    fi
 
     # sanity check that jid and status are similar to the real state, for localhost  only
-    if [ "${_datafile}" = "local" ]; then
+    if [ "${_datafile}" = "local" -a "${emulator}" ]; then
 	get_jid
+	if [ "${emulator}" = "bhyve" ]; then
+	    if [ -e "/dev/vmm/${jname}" ]; then
+		myjid="-1"
+		status="1"
+            else
+                status="0"
+            fi
+	fi
+
 	# check state when sqlite information is wrong and update it
 	[ ${myjid} -ne $jid ] && jid=${myjid} && ${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE jails SET jid=\"${myjid}\" WHERE jname=\"${1}\""
 	[ ${myjid} -ne 0 -a ${status} -eq 0 ] && status=1 && ${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE jails SET status=\"1\" WHERE jname=\"${1}\""

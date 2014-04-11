@@ -1,5 +1,5 @@
 product="cbsd"
-myversion="10.0.3"
+myversion="10.0.4"
 
 if not workdir then
     print ( "no workdir" )
@@ -79,7 +79,7 @@ rsync_flags="arlHpEAXogt8 --delete"
 greeting="node"
 jailmapdb= dbdir .. "/jmap.txt"
 -- external source for online doc
-cbsddocsrc="http://www.bsdstore.ru/" .. myversion
+cbsddocsrc="http://www.bsdstore.ru/en" .. myversion .. "/"
 
 f=io.open(nodenamefile,"r")
 if f~=nil then 

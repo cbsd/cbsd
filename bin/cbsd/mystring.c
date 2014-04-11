@@ -108,3 +108,13 @@ is_number(const char *p)
 	} while (*++p != '\0');
 	return 1;
 }
+
+int
+is_numbercmd(int argc, char **argv)
+{
+	if (argv[1])
+	    return is_number(argv[1]);
+	else
+	    return 1;
+}
+
