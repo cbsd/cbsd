@@ -1,10 +1,12 @@
-#!/bin/sh
-#v10.0.4
+#!/usr/local/bin/cbsd
+#v10.0.5
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname remote inter"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
+ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n"
+EXTHELP="wf_jlogin.html"
 
 # Login by jid not supported yet
 
@@ -14,23 +16,67 @@ CBSDMODULE="jail"
 . ${strings}
 init $*
 
-[ -z "$jname" ] && jname=$1
-[ -z "$jname" ] && err 1 "Please specify jname"
-[ -z "${remote}" ] && remote=0
+select_jail_by_list()
+{
+    local _res _id i=0
+
+    local sqldelimer=" "
+    eval $( env NOCOLOR=1 jls alljails=1 shownode=1 display=jname,status header=0 |grep On$ |while read nodename jname status; do
+	echo "local nodename${i}=\"${nodename}\"
+	echo "local jname${i}=\"${jname}\"
+	i=$(( i + 1 ))
+    done )
+
+    for i in $(seq 0 255); do
+	eval _mynode="\$nodename${i}"
+	[ -z "${_mynode}" ] && break
+	[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${NORMAL}"
+	eval _myjname="\$jname${i}"
+	[ -z "${_myjname}" ] && break;
+	[ $i -eq 0 ] && ${ECHO} "${MAGENTA}List of online jails:${NORMAL}"
+	${ECHO} "${BOLD}${i} .. ${GREEN}${_myjname} ${NORMAL}on ${GREEN}${_mynode}${NORMAL}"
+    done
+
+    echo
+    printf "${BOLD}Enter id to login:${NORMAL} "
+    read _id
+    if ! is_number ${_id}; then
+	eval jname="\$jname${_id}"
+    else
+	err 1 "${MAGENTA}Not number{NORMAL}"
+    fi
+
+    remote=2 # for autoremote
+}
+
 
 try_remote()
 {
-    [ -f "${jailmapdb}" -a "${remote}" != "1" ] || err 1 "No such rc.conf for jail found"
+    [ "${remote}" = "1" ] && err 1 "${MAGENTA}No such jail${NORMAL}"
+    [ ! -f "${jailmapdb}" ] && err 1 "${MAGENTA}No such jail${NORMAL}"
 
     . ${jailmapdb} 2>/dev/null
     eval VAL=\$$jname
     [ -z "${VAL}" ] && err 1 "No such jail for login"
     RHST=`echo $VAL|awk '{printf $1"\n"}'`
-    getyesno "Found jail on remote node: ${RHST}. Try to login?"
-    [ $? -eq 1 -o $? -eq 3 ] && err 1 "No such jail for login"
+
+    # we don't need for interactive when come with remote=2 from select_jail_by_list
+    if [ "${remote}" != "2" ]; then
+	getyesno "Found jail on remote node: ${RHST}. Try to login?"
+	[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such jail for login"
+    fi
+
     cbsd rexe node=${RHST} cbsd jlogin jname=$jname remote=1
     err 0 ""
 }
+
+[ -z "$jname" ] && jname=$1
+[ -z "$jname" ] && select_jail_by_list
+[ -z "$jname" ] && err 1 "${MAGENTA}Please specify jname as argument${NORMAL}"
+[ -z "${remote}" ] && remote=0
+
+validate_jname ${jname}
+[ $? -ne 1 ] && err 1 "${MAGENTA}Bad jname${NORMAL}"
 
 . ${jrcconf}
 [ $? -eq 1 ] && try_remote
