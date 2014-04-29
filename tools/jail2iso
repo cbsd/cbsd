@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 #v10.0.4
 globalconf="${workdir}/cbsd.conf"
 MYARG="jname dstdir media"
@@ -28,7 +28,9 @@ EXTHELP="wf_jail2iso.html"
 . ${color}
 . ${strings}
 readconf buildworld.conf
+. ${tools}
 . ${workdir}/universe.subr
+. ${workdir}/bhyve.subr
 
 init $*
 
@@ -151,9 +153,9 @@ maxretry=10
 retry=0
 
 if [ ! -d /mnt/bin ]; then
-    printf "Waiting ${maxretry}s for mount root..."
+    printf "Waiting \${maxretry}s for mount root..."
     while [ \$MOUNTOK -ne 1 ]; do
-	${MOUNTROOT} 2>/dev/null
+	${MOUNTROOT}
 	if [ \$? -ne 0 ]; then
 	    printf " \${retry} "
 	    sleep 1
@@ -173,7 +175,7 @@ fi
 
 if [ ! -d /usr/bin ]; then
 EOF
-    echo 'MD=$(/sbin/mdconfig -o noreadonly -a -t vnode -f /mnt/usr.uzip)' >> ${DST_DIR}${rcscript}
+    echo 'MD=$(/sbin/mdconfig -o readonly -a -t vnode -f /mnt/usr.uzip)' >> ${DST_DIR}${rcscript}
     echo '/sbin/mount -oro /dev/${MD}.uzip /mnt/usr' >> ${DST_DIR}${rcscript}
     echo '/sbin/mount -oro -t nullfs /mnt/usr /usr' >> ${DST_DIR}${rcscript}
     echo '/sbin/mount -oro -t nullfs /mnt/boot /boot' >> ${DST_DIR}${rcscript}
@@ -265,9 +267,11 @@ makemfsroot()
     newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
     mkdir -p ${DST_DIR}
     mount /dev/${DEV} ${DST_DIR}
+
     make_mtree
     make_libmap
     copy_binlib
+
     prepare_dir
     [ "${prunelist}" != "0" ] && prunelist ${DST_DIR}
     cd /
@@ -309,14 +313,15 @@ clear_tmp_dir
 if [ ! -d "${KERNEL_DIR}" ]; then
     getyesno "No kernel ${KERNEL_DIR}. Try to fetch from remote repository?"
     [ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${KERNEL_DIR}${NORMAL}"
-    cbsd repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
+    repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
 fi
 
 [ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
 [ "$media" = "iso" -o "$media" = "memstick" -o "${media}" = "bhyve" ] || err 1 "${MAGENTA}Unknown media type. Must be: ${GREEN}iso${MAGENTA},${GREEN} memstick ${MAGENTA}or${GREEN} bhyve${NORMAL}"
 mountbase -o "" -p "" -d "" -c "" -s ""
-[ "${ver}" != "empty" ] && cbsd mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
+[ "${ver}" != "empty" ] && mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
 FILES="${sharedir}/defbase_${ver}.txt"
+
 [ ! -f "${FILES}" ] && err 1 "No such default base listing: ${FILES}"
 BS=8192
 
@@ -324,22 +329,25 @@ BS=8192
 
 TRAP="${TRAP} clear_tmp_dir;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-cp -a ${path} ${TMP_DIR}
+mkdir -p ${TMP_DIR}
+#cd ${path} && pax -p eme -X -rw . ${TMP_DIR}
+cd ${path} && pax -p eme -rw . ${TMP_DIR}
 
 [ "${media}" != "bhyve" ] && rm -rf ${TMP_DIR}/rescue
 
 [ "${prunelist}" != "0" ] && prunelist ${TMP_DIR}
 
 # remove archive
-find ${TMP_DIR} -type f -name \*.a -delete
+[ "${media}" != "bhyve" ] && find ${TMP_DIR} -type f -name \*.a -delete
 
 cp -a ${KERNEL_DIR}/boot/kernel ${TMP_DIR}/boot
-rm -f ${TMP_DIR}/boot/kernel/*.symbols
-cd ${TMP_DIR}/boot/kernel && gzip -9 ./kernel
 
-if [ -f "$jailsysdir/${jname}/loader.conf" ]; then
-    cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
+if [ "${media}" != "bhyve" ]; then
+    rm -f ${TMP_DIR}/boot/kernel/*.symbols
+    cd ${TMP_DIR}/boot/kernel && gzip -9 ./kernel
 fi
+
+[ -f "${jailsysdir}/${jname}/loader.conf" ] && cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
 
 if [ "${media}" != "bhyve" ]; then
 cat >> ${TMP_DIR}/boot/loader.conf << EOF
@@ -434,22 +442,60 @@ case "${media}" in
 	    gpart bootcode -b ${TMP_DIR}/boot/boot ${unit}
 	    gpart add -t freebsd-ufs ${unit}
 	    mdconfig -d -u ${unit}
+	    ${ECHO} "${MAGENTA}Now you can burn image to USB memstick via\n ${GREEN}dd if=${dstdir}/${dstname} of=/dev/da${RED}XXX${GREEN} bs=\"10240\" conv=\"sync\"${NORMAL}"
 	    ;;
 	"bhyve")
 	    [ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
-	    makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
-	    if [ $? -eq 0 -a -n "${freesize}" ]; then
-		${ECHO} "${MAGENTA}Expand image size up to: ${GREEN}${freesize}${NORMAL}"
-		truncate -s +${freesize} ${dstdir}/${dstname}
-		md=$(mdconfig -a -t vnode -f ${dstdir}/${dstname})
-		growfs -y /dev/${md}
-		if [ $? -eq 0 ]; then
-		    mynic=$( cbsd getnics-by-ip ip=0.0.0.0 2>/dev/null )
-		    [ -z "${mynic}" ] && mynic="em0"
-		    [ ${quiet} -eq 0 ] && show_bhyve_message
+	    # bad behaviour of makefs: http://www.freebsd.org/cgi/query-pr.cgi?pr=188762
+	    #	    makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
+
+	    base_size=$( /usr/bin/du -sk ${TMP_DIR} | awk '{printf $1"k"}' )
+
+	    if is_number ${freesize}; then
+		if conv2bytes ${freesize}; then
+		    freesize="${convval}"
 		fi
-		mdconfig -d -u ${md}
 	    fi
+
+	    if is_number ${base_size}; then
+		if conv2bytes ${base_size}; then
+		    base_size="${convval}"
+		fi
+	    fi
+
+	    # we need calculate 8% minfree from base_size
+	    # minfree=$(( base_size * 8 / 100 ))
+	    minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+	    minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+
+	    all_size=$(( base_size + freesize + minfree1 + minfree2 ))
+
+	    if ! bhyve_create_dsk ${dstdir}/${dstname} ${all_size}; then
+		err 1 "Error: Couldn't create the image file. ${mdimage}"
+	    fi
+
+#	    if [ $? -eq 0 -a -n "${freesize}" ]; then
+#		${ECHO} "${MAGENTA}Expand image size up to: ${GREEN}${freesize}${NORMAL}"
+#		truncate -s +${freesize} ${dstdir}/${dstname}
+		md=$(mdconfig -a -t vnode -f ${dstdir}/${dstname})
+#		growfs -y /dev/${md}
+#		fdisk -BI /dev/${md}
+#		bsdlabel -wB /dev/${md}
+		newfs -U -n -L "${LABEL}" /dev/${md}
+
+		tdir=$( mktemp -d )
+
+		/sbin/mount /dev/${md} ${tdir}
+#		cd ${TMP_DIR} && pax -p eme -X -rw . ${tdir}
+		cd ${TMP_DIR} && pax -p eme -rw . ${tdir}
+
+		umount ${tdir} && rmdir ${tdir}
+
+		mynic=$( getnics-by-ip ip=0.0.0.0 2>/dev/null )
+		[ -z "${mynic}" ] && mynic="em0"
+		[ ${quiet} -eq 0 ] && show_bhyve_message
+		mdconfig -d -u ${md}
+#	    fi
 	    ;;
 esac
 

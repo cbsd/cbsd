@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v10.0.4
 MYARG=""
-MYOPTARG="alljails shownode display node header"
+MYOPTARG="alljails shownode display node header mode jname"
 MYDESC="Operate with bhyve disk images and databse"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve.html"
@@ -9,12 +9,14 @@ ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_slot\n"
+display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_slot\n\
+mode=rescan - rescan vhd and sync info in sql base\n"
 
 . ${subr}
 . ${inventory}
 . ${system}
 . ${color}
+. ${strings}
 
 init $*
 
@@ -45,10 +47,13 @@ show_jaildata_from_sql()
         sqlfile="local"
     fi
 
-#    cbsdsql ${sqlfile} SELECT jname FROM bhyvedsk
+    if [ -z "${jname}" ]; then
+	alljails=$( cbsdsql ${sqlfile} SELECT jname FROM bhyvedsk| sort -u )
+    else
+	alljails="${jname}"
+    fi
 
-    alljails=$( cbsdsql ${sqlfile} SELECT jname FROM bhyvedsk| sort -u )
-	for jname in ${alljails}; do
+    for jname in ${alljails}; do
 	_sql="SELECT ${display} FROM bhyvedsk WHERE jname=\"${jname}\""
 	cbsdsql ${sqlfile} ${_sql}
     done
@@ -95,7 +100,29 @@ show_dsk()
 
 }
 
+
+rescan_dsk()
+{
+    local _dsk _res
+    [ -z "${jname}" ] && err 1 "${MAGENTA}Please specify ${GREEN}jname=${NORMAL}"
+    . ${jrcconf}
+    [ $? -eq 1 ] && err 1 "${MAGENTA}no such jail: ${GREEN}${jname}${NORMAL}"
+    for _dsk in $( find ${data} -depth 1 -maxdepth 1 -name *.vhd -exec basename {} \; ); do
+	_res=$( cbsdsql local "SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${_dsk}\"" 2>/dev/null );
+	if [ -z "${_res}" ]; then
+	    ${ECHO} "${MAGENTA}Found new disk: ${GREEN}${_dsk}${MAGENTA} for ${GREEN}${jname}${NORMAL}"
+	    cbsdsql local "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"virtio-blk\",\"${_dsk}\","0" )"
+	fi
+    done
+}
+
+
 #### MAIN
+if [ "${mode}" = "rescan" ]; then
+    rescan_dsk
+    exit 0
+fi
+
 [ -z "${header}" ] && header=1
 sqldelimer=" "
 show_dsk|column -t

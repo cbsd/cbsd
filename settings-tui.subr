@@ -3,11 +3,13 @@
 TMPFILE="${ftmpdir}/inputbox.$$"
 
 GET_JNAME_MSG="Enter jname. Name must begin with a letter (a-z) \nand not have any special symbols (-,.=% etc.)):"
-GET_FQDN_MSG="Enter jail FQDN (one word):"
+GET_HOST_HOSTNAME_MSG="Enter jail FQDN (one word):"
 GET_IPS_MSG="Enter jail ips (from CBSD pool ${nodeippool})\nUse IP/PREFIX form. Comma-separated for aliases\n\
 Use 0 for empty ip (for example useful on vnet features) or DHCP (only for vnet feature)\n"
 GET_ONINTERFACE_MSG="Auto create and auto remove IP on selected nics\n(0 for disable, auto - for auto detect):"
 GET_BASE_MSG="choose jail base source version:"
+GET_PATH_MSG="Enter mount point for jail:"
+GET_DATA_MSG="Enter data directory for jail:"
 GET_DEVFS_RULESET_MSG="sets devfs_ruleset for jail devfs:"
 GET_ARCH_MSG="Enter target arch (i386 or amd64):"
 GET_BASERW_MSG="Jail have personal copy of base system with write access\nNo base nullfs mount ?"
@@ -37,10 +39,10 @@ GET_CPUS_MSG="Number of CPUs (eg: 1, max: 16)"
 GET_RAM_MSG="RAM size (eg: 512M)"
 GET_TYPE_MSG="Type of VMs (eg: freebsd, openbsd, linux, netbsd, dflybsd)"
 GET_PROFILE_MSG="Profile of VMs (eg: centos-vmlinuz-2.6.32-431.el6.x86_64)"
+GET_JAILPROFILE_MSG="Profile for jcreate"
 GET_HOSTBRIDGE_MSG="Hostbridge for VMs (eg: hostbridge or amd_hostbridge)"
 GET_BOOT_MSG="First boot device (eg: cd or hdd)"
 GET_ISOPATH_MSG="Path to ISO image in srcdir/iso (eg: release.iso. 0 - for default img_iso)"
-
 GET_GW4_MSG="Enter default gateway inside VMs or jail"
 
 # show [] * for empty $1 values
@@ -62,10 +64,16 @@ curval()
 #find for first jnameX where X is number++
 freejname()
 {
-    local _num
+    local _num _newjname
+
+    if [ -n "${default_jailname}" ]; then
+	_newjname="${default_jailname}"
+    else
+	_newjname="jail"
+    fi
 
     for _num in `jot 100`; do
-	freejname="jail${_num}"
+	freejname="${_newjname}${_num}"
 	cbsd jstatus jname=${freejname} > /dev/null 2>/dev/null
 	[ $? -eq 0 ] && return 0
     done
@@ -111,7 +119,7 @@ get_jname()
 		validate_jname $_input
 		case $? in
 		    1)
-		    /usr/local/bin/cbsd jstatus jname=${_input}
+		    /usr/local/bin/cbsd jstatus jname=${_input} >/dev/null 2>&1
 		    if [ $? -ne 0 ]; then
 			_message="ERROR: Jail ${_input} already exist"
 		    else
@@ -126,27 +134,37 @@ get_jname()
 	esac
     done
 
-    [ -n "${_input}" ] && jname=$_input
+    [ -n "${_input}" ] && jname="${_input}"
+    # reload some dynamic variables depended from jname
+    [ -z "${jname}" ] && return 0
+    merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
+
 }
 
 
 
-# form for $fqdn
-get_jail_fqdn()
+# form for $host_hostname
+get_jail_host_hostname()
 {
-    local _input _retval
+    local _input _retval _defdomain
+
+    if [ -n "${default_domain}" ]; then
+	_defdomain="${default_domain}"
+    else
+	_defdomain="my.domain"
+    fi
 
     if [ -z ${jname} ]; then
-	f_dialog_input _input "${GET_FQDN_MSG}" "jail1.my.domain"
+	f_dialog_input _input "${GET_HOST_HOSTNAME_MSG}" "jail1.${_defdomain}"
     else
-	f_dialog_input _input "${GET_FQDN_MSG}" "${jname}.my.domain"
+	f_dialog_input _input "${GET_HOST_HOSTNAME_MSG}" "${jname}.${_defdomain}"
     fi
 
     _retval=$?
 
     case ${_retval} in
 	0)
-	    [ -n "${_input}" ] && fqdn=${_input} && host_hostname="${_input}"
+	    [ -n "${_input}" ] && host_hostname="${_input}"
 	    ;;
     esac
 }
@@ -206,6 +224,39 @@ get_jail_base()
 	    ;;
     esac
 }
+
+# form for $path
+get_jail_path()
+{
+    local _input _retval
+
+    f_dialog_input _input "${GET_PATH_MSG}" "${path}"
+
+    _retval=$?
+
+    case ${_retval} in
+	0)
+	    path=${_input}
+	    ;;
+    esac
+}
+
+# form for $data
+get_jail_data()
+{
+    local _input _retval
+
+    f_dialog_input _input "${GET_DATA_MSG}" "${data}"
+
+    _retval=$?
+
+    case ${_retval} in
+	0)
+	    data=${_input}
+	    ;;
+    esac
+}
+
 
 # form for $devfs_ruleset
 get_devfs_ruleset()
@@ -766,8 +817,6 @@ get_jail_isopath()
 }
 
 
-
-
 # form for $type
 get_jail_type()
 {
@@ -779,27 +828,95 @@ get_jail_type()
 
     case ${_retval} in
         0)
+	    [ "${vm_os_type}" != "${_input}" ] && unset vm_os_profile
             vm_os_type=${_input}
             ;;
     esac
+
 }
 
 # form for $vm_os_profile
-get_jail_profile()
+# if $1 not empty just load profile without dialogizing
+get_vm_profile()
 {
-    local _input _retval _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles=""
+    local _input _retval _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num
 
-    _res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec basename {} \;| sort -u )
+    _res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec realpath {} \;| sort -u )
+
+    _all=0
 
     for i in ${_res}; do
 	unset ${bhyve_profile}
-	readconf ${i}
-	[ -n "${bhyve_profile}" ] && _myprofiles="${_myprofiles} ${bhyve_profile} : on "
+	eval $( grep ^bhyve_profile= ${i} )
+	[ -z "${bhyve_profile}" ] && continue
+	_myprofiles="${_myprofiles} ${bhyve_profile} : on "
+	# store filename
+	local profile${_all}="${bhyve_profile}"
+	local file${_all}="${i}"
+	_all=$(( _all + 1 ))
     done
 
     [ -z "${_myprofiles}" ] && unset vm_os_profile && return 0
 
-    vm_os_profile=$( eval $DIALOG \
+    if [ -z "${1}"]; then
+	vm_os_profile=$( eval $DIALOG \
+	--colors \
+	--title \"\$DIALOG_TITLE\"         \
+	--backtitle \"\$DIALOG_BACKTITLE\" \
+	--hline \"\$__hline\"              \
+	--ok-label \"\$msg_ok\"            \
+	--cancel-label \"\$msg_cancel\"    \
+	--default-item \"\$__defaultitem\" \
+	--radiolist \"\$__prompt\"         \
+	0 0 0         \
+	${_myprofiles}                      \
+	2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	) || return $?
+	# Return if user either pressed ESC or chose Cancel/No
+	f_dialog_data_sanitize vm_os_profile
+    else
+	vm_os_profile="${1}"
+    fi
+
+    _num=0
+
+    _myfile=$( while [ ${_num} -ne ${_all} ]; do
+	eval _myfile="\$file${_num}"
+	eval _prof="\$profile${_num}"
+	[ "${vm_os_profile}" = "${_prof}" ] && echo "${_myfile}" && exit
+	_num=$(( _num + 1 ))
+    done )
+
+    [ -z "${_myfile}" ] && return 0
+
+    if [ -f "${_myfile}" ]; then
+	. ${_myfile}
+	global_profile_file="${_myfile}"
+    fi
+}
+
+# form for $profile
+# if $1 not empty, just load $1 profile without dialogizing
+get_jail_profile()
+{
+    local _input _retval _search_profile="jail-freebsd-" jail_profile _res _myprofiles="" _myfile
+
+    # default must be first due to last dir with user settings must overwrite
+    _res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec realpath {} \;| sort -u )
+
+    for i in ${_res}; do
+	unset ${jail_profile}
+	eval $( grep ^jail_profile= ${i} )
+	[ -z "${jail_profile}" ] && continue
+	_myprofiles="${_myprofiles} ${jail_profile} : on "
+	#store filename
+	local file_${jail_profile}="${i}"
+    done
+
+    [ -z "${_myprofiles}" ] && unset jail_profile && return 0
+
+    if [ -z "${1}" ]; then
+	profile=$( eval $DIALOG \
 	--colors \
 	--title \"\$DIALOG_TITLE\"         \
 	--backtitle \"\$DIALOG_BACKTITLE\" \
@@ -814,7 +931,18 @@ get_jail_profile()
 	) || return $?
 	# Return if user either pressed ESC or chose Cancel/No
 
-    f_dialog_data_sanitize vm_os_profile
+	f_dialog_data_sanitize profile
+    else
+	profile="${1}"
+    fi
+
+    eval _myfile="\$file_$profile"
+    if [ -f "${_myfile}" ]; then
+	. ${_myfile}
+	global_profile_file="${_myfile}"
+	# reload some dynamic variables depended from jname
+	merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
+    fi
 }
 
 # form for $gw4
@@ -834,7 +962,6 @@ get_jail_gw4()
 }
 
 
-
 # form for $nodename
 get_nodename()
 {
@@ -850,3 +977,123 @@ get_nodename()
 	    ;;
     esac
 }
+
+# generate temp .jconf
+gen_jconf()
+{
+    local TMPFILE="${ftmpdir}/${jname}.$$.jconf"
+    local fstab="${jailfstabdir}/${jailfstabpref}${jname}"
+    local rcconf="${jailrcconfdir}/rc.conf_${jname}"
+
+    # original jail area
+    cat > ${TMPFILE} << EOF
+# DO NOT EDIT THIS FILE. PLEASE USE INSTEAD:
+# cbsd jconfig jname=${jname}
+jname="${jname}";
+path="${path}";
+host_hostname="${host_hostname}";
+ip4_addr="${ip4_addr}";
+mount_devfs="${mount_devfs}";
+allow_mount="${allow_mount}";
+allow_devfs="${allow_devfs}";
+allow_nullfs="${allow_nullfs}";
+mount_fstab="${fstab}";
+arch="${arch}";
+mkhostsfile="${mkhostsfile}";
+devfs_ruleset="${devfs_ruleset}";
+ver="${ver}";
+basename="${basename}";
+baserw="${baserw}";
+mount_src="${mount_src}";
+mount_obj="${mount_obj}";
+mount_kernel="${mount_kernel}";
+mount_ports="${mount_ports}";
+astart="${astart}";
+data="${data}";
+vnet="${vnet}";
+applytpl="${applytpl}";
+mdsize="${mdsize}";
+rcconf="${jailrcconfdir}/rc.conf_${jname}";
+floatresolv="${floatresolv}";
+
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+
+exec_poststart="${exec_poststart}";
+exec_poststop="${exec_portstop}";
+exec_prestart="${exec_prestart}";
+exec_prestop="${exec_prestop}";
+
+exec_master_poststart="${exec_master_poststart}";
+exec_master_poststop="${exec_master_poststop}";
+exec_master_prestart="${exec_master_prestart}";
+exec_master_prestop="${exec_master_prestop}";
+EOF
+
+#bhyve area
+if [ "${emulator}" = "bhyve" ]; then
+	cat >> ${TMPFILE} << EOF
+emulator="bhyve";
+freesize="${freesize}";
+vm_cpus="${vm_cpus}";
+vm_ram="${vm_ram}";
+vm_os_type="${vm_os_type}";
+dist_site="";
+iso_site="";
+iso_img="";
+
+vm_hostbridge="${vm_hostbridge}";
+bhyve_flags="${bhyve_flags}";
+virtio_type="${virtio_type}";
+gw4="${gw4}";
+vm_os_profile="${vm_os_profile}";
+EOF
+fi
+    [ -n "${pkglist}" ] && echo "pkglist=\"${pkglist}\";" >> ${TMPFILE}
+
+    if [ "${emulator}" = "bhyve" ]; then
+	getyesno "${MAGENTA}Do you want to create vm immediately?${NORMAL}"
+	[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
+	/usr/local/bin/cbsd bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+	[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+    else
+	getyesno "${MAGENTA}Do you want to create jail immediately?${NORMAL}"
+	[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
+	/usr/local/bin/cbsd jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+	[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+    fi
+
+    return 0
+}
+
+
+merge_apply_profiles()
+{
+
+    [ -z "${1}" ] && return 0
+
+    local _orig="$1"; shift
+    local _custom="$1"; shift
+    local _i
+
+    [ ! -f "${_orig}" ] && return 0
+    [ ! -f "${_custom}" -o "${_custom}" = "${_orig}" ] && unset _custom
+
+    grep '\$' ${_orig} |grep -v "^#" |cut -d "=" -f 1 |sort > /tmp/1.sorted.$$
+    [ -n "${_custom}" ] && grep '\$' ${_custom} |grep -v "^#" |cut -d "=" -f 1 |sort > /tmp/2.sorted.$$
+
+    cut -d "=" -f 1 /tmp/1.sorted.$$ > /tmp/1.cuted.$$
+    [ -n "${_custom}" ] && cut -d "=" -f 1 /tmp/2.sorted.$$ > /tmp/2.cuted.$$
+
+    truncate -s0 /tmp/run.sh.$$
+    # dummy file if $2 is empty
+    [ -z "${_custom}" ] && touch /tmp/2.cuted.$$
+
+    for i in $( cat /tmp/1.cuted.$$ /tmp/2.cuted.$$|sort -u ); do
+        grep "^${i}" ${_custom} ${_orig} |head -n1|cut -d : -f 2 >> /tmp/run.sh.$$
+    done
+
+    . /tmp/run.sh.$$
+    rm -f /tmp/1.sorted.$$ /tmp/2.sorted.$$ /tmp/1.cuted.$$ /tmp/2.cuted.$$ /tmp/run.sh.$$
+}
+
