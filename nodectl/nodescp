@@ -1,9 +1,18 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v10.0.5
 CBSDMODULE="node"
 MYARG=""
-MYOPTARG=""
+MYOPTARG="verbose"
 MYDESC="get put file to remove nodes"
+ADDHELP="[verbose=1] node1:remotefile1 localfile1 [ localfile2 node2@:remotefile2 ]\n\
+verbose=1 for debug information\n"
+EXTHELP="wf_nodescp.html"
+
+# ToDo:
+# Instead of this need one nodescp daemon/services with one lock and which will work on AMQP queue
+# where executing
+#     % cbsd nodescp XXX YYY
+# just add job to queue
 
 . ${subr}
 . ${tools}
@@ -16,7 +25,7 @@ getnode()
 {
     local _t
 
-    _t=`echo ${1} |grep ":"`
+    _t=$(echo ${1} |grep ":")
 
     [ $? -ne 0 ] && return 1
 
@@ -25,8 +34,20 @@ getnode()
 
 }
 
-[ $# -ne 2 ] && err 1 "${MAGENTA}$0 host1:remotefile1 localfile1 [ localfile2 host2@:remotefile2 ]${NORMAL}"
+### MAIN ###
+if [ -n "${verbose}" ]; then
+    shift
+else
+    verbose=0
+fi
 
+if [ "${verbose}" = "0" ]; then
+    quiet="-q"
+else
+    quiet=""
+fi
+
+[ $# -ne 2 ] && err 1 "${MAGENTA}$0 host1:remotefile1 localfile1 [ localfile2 host2@:remotefile2 ]${NORMAL}"
 node=""
 rfile=""
 rarg=0
@@ -44,43 +65,70 @@ fi
 
 [ -z "${node}" -o -z "${rfile}" ] && err 1 "${MAGENTA}remove path via node:path records not determine${NORMAL}"
 
-NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\"`
+NODEDATA=$(cbsdsql nodes select ip,port,keyfile,rootkeyfile from nodelist where nodename=\"${node}\")
 
-if [ -z "${NODEDATA}" ]; then
-        echo "${HOST}: No such node in base"
-        continue
-fi
+[ -z "${NODEDATA}" ] && err 1 "${MAGENTA}No such node in base: ${GREEN}${node}${NORMAL}"
 
-sqllist "$NODEDATA" myip myport mykey
-SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p -q -oPort=${myport} -i ${mykey} ${myip}"
-SCPOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p -q -oPort=${myport} -i ${mykey}"
+sqllist "$NODEDATA" myip myport keyfile rootkey
+
+# optional flags for disable needed
+#if [ -r "${rootkey}" ]; then
+#    [ $verbose -eq 1 ] && ${ECHO} "${MAGENTA}Root key specified and exist, preferred: ${GREEN}${rootkey}${NORMAL}"
+#    key="${rootkey}"
+#    sshkey_opt="-i ${rootkey}"
+#    cbsduser="root"
+#else
+    key="${keyfile}"
+    sshkey_opt="-i ${keyfile}"
+#fi
+
+[ ! -r "${key}" ] && sshkey_opt=""
+
+SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p ${quiet} -oPort=${myport} ${sshkey_opt} ${myip}"
+SCPOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p ${quiet} -oPort=${myport} ${sshkey_opt}"
 
 [ -z "$SCPOP" -o -z "${myip}" ] && err 1 "${MAGENTA}No such node ${GREEN}${node}${MAGENTA} in database or have no ip/scpopt${NORMAL}"
 
-
-RSYNC=`which rsync`
+RSYNC=$(which rsync)
 
 if [ $rarg -eq 1 ]; then
-    DIR=`dirname ${2}`
+    DIR=$(dirname ${2})
     [ ! -d "${DIR}" ] && mkdir -p ${DIR}
 
     if [ -n "${RSYNC}" ]; then
 	#we have rsync for that
+	[ ${verbose} -eq 1 ] && set -o xtrace
 	/usr/bin/lockf -s -t0 ${ftmpdir}/sftp_${myip}.lock ${RSYNC} -azlH -e "ssh ${SCPOP}" ${cbsduser}@${myip}:${rfile} ${2}
+	err=$?
+	[ ${verbose} -eq 1 ] && set +o xtrace
     else
 	#no rsync, just scp
+	[ ${verbose} -eq 1 ] && set -o xtrace
 	/usr/bin/lockf -s -t0 ${ftmpdir}/sftp_${myip}.lock scp ${SCPOP} -r ${cbsduser}@${myip}:${rfile} ${2}
+	err=$?
+	[ ${verbose} -eq 1 ] && set +o xtrace
     fi
 else
-    DIR=`dirname ${rfile}`
+    DIR=$(dirname ${rfile})
+    [ ${verbose} -eq 1 ] && set -o xtrace
     /usr/bin/lockf -s -t0 ${ftmpdir}/sftp_${myip}.lock ssh $SSHOP -l ${cbsduser} <<EOF
 [ ! -d "${DIR}" ] && mkdir -p "${DIR}"
 EOF
+    err=$?
+    [ ${verbose} -eq 1 ] && set +o xtrace
     if [ -n "${RSYNC}" ]; then
 	#we have rsync for that
+	[ ${verbose} -eq 1 ] && set -o xtrace
 	/usr/bin/lockf -s -t0 ${ftmpdir}/sftp_${myip}.lock ${RSYNC} -azlH -e "ssh ${SCPOP}" ${1} ${cbsduser}@${myip}:${rfile}
+	err=$?
+	[ ${verbose} -eq 1 ] && set +o xtrace
     else
 	#no rsync, just scp
+	[ ${verbose} -eq 1 ] && set -o xtrace
 	/usr/bin/lockf -s -t0 ${ftmpdir}/sftp_${myip}.lock scp ${SCPOP} -r ${1} ${cbsduser}@${myip}:${rfile}
+	err=$?
+	[ ${verbose} -eq 1 ] && set +o xtrace
     fi
 fi
+
+exit $err

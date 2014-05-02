@@ -1,2 +1,57 @@
 #!/bin/sh
-cbsd sudo /usr/local/cbsd/sudoexec/jcoldmigrate $*
+#v10.0.4
+globalconf="${workdir}/cbsd.conf";
+MYARG="node jname"
+MYOPTARG="start"
+MYDESC="Cold migrate (with save status) jail to remote node, set local jail as slave"
+ADDHELP="start=1 for forcing jail start on the remote node\n"
+CBSDMODULE="jail"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${color}
+. ${strings}
+init $*
+
+[ -z "${node}" ] && err 1 "${MAGENTA}Give me node${NORMAL}"
+[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}bhyve mode unsupported yet${NORMAL}"
+
+printf "${MAGENTA}Coldmigrate.${NORMAL}"
+cbsd j2prepare node=${node} jname=${jname} > $DEBLOG 2>&1
+dot "j2prepare_1"
+cbsd j2slave node=${node} jname=${jname} > $DEBLOG 2>&1
+dot "j2slave: cbsdrsync daemon not running?"
+
+if [ ${jid} -gt 0 ]; then
+    ## all error on this stage is dangerous
+    set -e
+    trap "cbsd jstart jname=${jname} > /dev/null 2>&1 && ${ECHO} \"${MAGENTA}Unsuccess. Restoring jail state${NORMAL}\" && echo \"Log message:\" && cat ${DEBLOG}" 0
+    printf "${MAGENTA}[Stoping jail: ${GREEN}${jname}${MAGENTA}]${NORMAL}"
+    cbsd jstop jname=${jname} > $DEBLOG 2>&1
+    dot "jstop"
+    cbsd j2slave node=${node} jname=${jname} > $DEBLOG 2>&1
+    dot "error in j2slave: probably cbsdrsync daemon not running?"
+fi
+
+cbsd rexe node=${node} cbsd jregister jname=${jname} > $DEBLOG 2>&1
+dot "cbsd rexe jregister"
+
+[ -n "${start}" ] && jid=1
+
+if [ ${jid} -gt 0 ]; then
+    cbsd rexe node=${node} cbsd jstart jname=$jname inter=0 > $DEBLOG 2>&1
+    dot "rexe jstart"
+fi
+
+set +e
+trap "" 0
+
+cbsd jswmode jname=${jname} mode=slave > $DEBLOG 2>&1
+dot "jswmode to slave"
+
+err 0 "${GREEN}ok${NORMAL}"

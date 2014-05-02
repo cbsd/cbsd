@@ -2,7 +2,7 @@
 #v10.0.5
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="jname remote inter"
+MYOPTARG="jname remote inter src_session"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
 ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n"
@@ -15,6 +15,8 @@ EXTHELP="wf_jlogin.html"
 . ${subr}
 . ${strings}
 init $*
+
+readconf jlogin.conf
 
 select_jail_by_list()
 {
@@ -37,9 +39,12 @@ select_jail_by_list()
 	${ECHO} "${BOLD}${i} .. ${GREEN}${_myjname} ${NORMAL}on ${GREEN}${_mynode}${NORMAL}"
     done
 
+    [ $i -eq 0 ] && err 1 "${MAGENTA}No jails found${NORMAL}"
     echo
     printf "${BOLD}Enter id to login:${NORMAL} "
+    set -e
     read _id
+    set +e
     if ! is_number ${_id}; then
 	eval jname="\$jname${_id}"
     else
@@ -66,8 +71,26 @@ try_remote()
 	[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such jail for login"
     fi
 
-    cbsd rexe node=${RHST} cbsd jlogin jname=$jname remote=1
+    rexe node=${RHST} cbsd jlogin src_session=${nodename} jname=$jname remote=1
     err 0 ""
+}
+
+init_tmux()
+{
+    if [ "${tmux_login}" != "1" -o -z "${src_session}" ]; then
+	tmux_login=0
+	return 0
+    fi
+
+    tmuxcmd=$( which tmux )
+
+    if [ -z "${tmuxcmd}" ]; then
+	tmux_login=0
+	return 0
+    fi
+
+    src_session="`whoami`-nodename"
+    session_name="${src_session}-${jname}"
 }
 
 [ -z "$jname" ] && jname=$1
@@ -110,4 +133,17 @@ else
     LOGIN_STR="login -f root"
 fi
 
-/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} /usr/sbin/jexec ${jid} ${LOGIN_STR}
+jexec="/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} /usr/sbin/jexec ${jid} ${LOGIN_STR}"
+
+init_tmux
+
+if [ $tmux_login -eq 1 ]; then
+    ${tmuxcmd} list-sessions | /usr/bin/grep -qwF "${session_name}:"
+    if [ $? -eq 1 ]; then
+	${tmuxcmd} new -s "${session_name}" "eval ${jexec}"
+    else
+	${tmuxcmd} attach-session -t "${session_name}"
+    fi
+else
+    eval ${jexec}
+fi

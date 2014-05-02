@@ -1,3 +1,159 @@
 #!/bin/sh
-#v9.2.2
-cbsd sudo /usr/local/cbsd/sudoexec/initenv-tui $*
+#v10.0.4
+export workdir=${workdir:-"/usr/jails"}
+export distdir=${distdir:-"/usr/local/cbsd"}
+globalconf="${distdir}/cbsd.conf";
+MYLOCK="/tmp/initenv.lock"
+MYDESC="Node re-initialization"
+MYARG=""
+MYOPTARG=""
+
+if [ ! -f ${globalconf} ]; then
+    ${ECHO} "${MAGENTA}no such conf file${NORMAL}";
+    exit
+fi
+
+. ${globalconf}
+. ${distdir}/nc.subr
+. ${distdir}/tools.subr
+. ${distdir}/initenv.subr
+. ${distdir}/ansiicolor.subr
+. ${distdir}/dialog.subr
+
+[ "$1" = "--help" ] && err 0 "${MYDESC}"
+
+DIALOG=${DIALOG=/usr/bin/dialog}
+BACKTITLE="--backtitle \Z1${0}\Zn --colors"
+
+
+# form for $ips
+get_newvalue()
+{
+    local _par _val _desc _retval
+
+    _par=$1
+
+    [ -z "${_par}" ] && return 0
+
+    eval _val="\$${_par}"
+    eval _desc="\$${_par}_desc"
+
+     f_dialog_input _input "${_par}: ${_desc}" "${_val}" ""
+     _retval=$?
+
+     case ${_retval} in
+         0)
+         [ -n "${_input}" ] && export ${_par}="${_input}"
+         ;;
+     esac
+}
+
+commit()
+{
+    local _i VAL
+
+    for _i in ${USERINI}; do
+	eval VAL=\$$_i
+	eval OVAL=\$OLDVAL_${_i}
+	[ "${VAL}" = "${OVAL}" ] && continue
+
+	case "${_i}" in
+	    "nodename")
+		nodename=${VAL}
+		old_nodename=${OVAL}
+		change_nodename
+		;;
+	    *)
+		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_i}=\"${VAL}\"
+		sysrc -qf ${inventory} ${_i}="${VAL}"
+		;;
+	esac
+    done
+
+    err 0 "${MAGENTA}Commited${NORMAL}"
+}
+
+
+
+
+############ start locking section #############
+menu()
+{
+    local _my_items _par _val
+
+    if [ "${globalconf}" = "${localcbsdconf}" ]; then
+	${ECHO} "${MAGENTA}Please use difference path for workdir. Not ${GREEN}${distdir}${NORMAL}"
+	exit
+    fi
+
+    msg_ok="Ok"
+    msg_extra="Commit"
+    msg_cancel="Cancel"
+
+    [ -f "${inventory}" ] && . ${inventory}
+
+    init_items_value
+
+    real_zfsfeat="${zfsfeat}"
+
+    while [ 1 ]; do
+
+	_my_items=""
+
+	for _par in ${USERINI}; do
+	    [ "${_par}" = "hostname" ] && continue
+	    [ "${_par}" = "mdtmp" ] && continue
+	    [ "${_par}" = "workdir" ] && continue
+	    [ "${real_zfsfeat}" = "0" -a "${_par}" = "zfsfeat" ] && continue
+	    eval _val="\$${_par}"
+	    [ -z "${_val}" ] && eval _val="\$${_par}_default"
+	    _my_items="${_my_items} '${_par}' '${_val}'"
+	done
+
+	menu_list="
+	    ${_my_items}
+	    "
+
+	f_dialog_menu
+	retval=$?
+	f_dialog_menutag_fetch mtag
+
+	case $retval in
+	    0)
+		get_${mtag}
+		;;
+	    3)
+		commit
+		;;
+	    *)
+		exit
+		;;
+	esac
+    done
+}
+
+
+init_items_value()
+{
+    #first of all - push old values to OLDVAL for comparing final result in commit() func
+    local _i VAL
+
+    for _i in ${USERINI}; do
+	eval VAL=\$$_i
+	if [ -z "${VAL}" ]; then
+	    export OLDVAL_${_i}=""
+	else
+	    export OLDVAL_${_i}="${VAL}"
+	fi
+    done
+}
+
+### MAIN ###
+[ $# -eq 1 ] || /usr/bin/lockf -t0 -s ${MYLOCK} $0 start
+
+case "$1" in
+start)
+    init_items_default
+    init_items_desc
+    menu;;
+esac

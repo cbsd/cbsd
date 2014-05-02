@@ -1,2 +1,74 @@
 #!/bin/sh
-cbsd sudo /usr/local/cbsd/sudoexec/installkernel $*
+#v10.0.3
+globalconf="${workdir}/cbsd.conf";
+CBSDMODULE="build"
+MYARG=""
+MYOPTARG="ver arch target_arch maxjobs clean name stable basename stable"
+MYDESC="Build kernel from sources"
+ADDHELP="10.0 for FreeBSD 10.0-R or ver=. for current.\n\
+stable=1 for RELENG_X\n\
+destdir= for alternative install path in root dir\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+init $*
+
+. ${buildconf}
+readconf buildworld.conf
+. ${system}
+. ${color}
+. ${workdir}/universe.subr
+. ${workdir}/emulator.subr
+
+init_distcc
+init_notify
+init_target_arch
+init_srcdir
+init_supported_arch
+init_basedir
+
+LOCKFILE=${ftmpdir}/`md5 -qs ${MAKEOBJDIRPREFIX}`.lock
+
+init_kerneldir
+
+kernel_conf="kernel-${name}-${arch}-${ver}"
+
+if [ -f "${etcdir}/${kernel_conf}" ]; then
+    kernel_conf_path="${etcdir}/${kernel_conf}"
+else
+    kernel_conf_path="${etcdir}/defaults/${kernel_conf}"
+fi
+
+[ ! -f "${kernel_conf_path}" ] && err 1 "${MAGENTA}No such config kernel-${name}-${arch}-${ver} in: ${GREEN}${etcdir}${NORMAL}"
+
+cp ${kernel_conf_path} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
+#makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD"
+
+## preparing chroot
+TMPDST="${basejaildir}/tempbase.$$"
+mkdir -p ${TMPDST}
+
+makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD && umount -f ${TMPDST}${MAKEOBJDIRPREFIX} && umount -f ${TMPDST}/dev && umount -f ${TMPDST}/usr/src && chflags -R noschg ${TMPDST} && rm -rf ${TMPDST}"
+
+baserw=1
+populate_cdir ${BASE_DIR} ${TMPDST}
+cp ${kernel_conf_path} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
+
+# place for rewrite to mountbase from system.subr
+    mkdir -p ${TMPDST}/usr/src
+    mount -t nullfs -o ro ${SRC_DIR} ${TMPDST}/usr/src
+    mkdir -p ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
+    mkdir -p ${TMPDST}${etcdir}
+    [ -f "${__MAKE_CONF}" ] && cp ${__MAKE_CONF} ${TMPDST}${etcdir}
+    [ -f "${SRCCONF}" ] && cp ${SRCCONF} ${TMPDST}${etcdir}
+    mount -t nullfs ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
+    mount -t devfs devfs ${TMPDST}/dev
+#
+
+/usr/sbin/chroot ${TMPDST} /usr/bin/make -C /usr/src installkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+[ -d "${KERNEL_DIR}/boot" ] && rm -rf ${KERNEL_DIR}/boot
+[ ! -d "${KERNEL_DIR}/boot" ] && mkdir -p ${KERNEL_DIR}/boot
+mv ${TMPDST}/boot/kernel ${KERNEL_DIR}/boot/kernel
+#/usr/bin/make -C ${SRC_DIR} installkernel TARGET=${arch} KERNCONF=${name}.CBSD DESTDIR=${KERNEL_DIR} TARGET_ARCH="${target_arch}"
