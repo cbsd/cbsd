@@ -141,10 +141,10 @@ sqlitecmd(int argc, char **argv)
 		    sqlCB(stmt);
 		    continue;
 		}
-		else if (ret == SQLITE_BUSY) {
+//		else if (ret == SQLITE_BUSY) {
 		    sqlite3_sleep(5);
 		    retry++;
-		}
+//		}
 	    }
 	}
 

@@ -98,7 +98,6 @@ main(int argc, char **argv)
                 return 1;
         }
 
-
 	res = 0;
         for (i = 2; i < argc; i++)
                 res += strlen(argv[i]) + 1;
@@ -127,10 +126,10 @@ main(int argc, char **argv)
 		    sqlCB(stmt);
 		    continue;
 		}
-            	else if (ret == SQLITE_BUSY) {
-            	    sqlite3_sleep(5);
-            	    retry++;
-            	}
+//		    else if (ret == SQLITE_BUSY) {
+		    sqlite3_sleep(5);
+		    retry++;
+//		    }
 	    }
 	}
 
