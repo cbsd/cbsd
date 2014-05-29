@@ -16,6 +16,7 @@ EXTHELP="wf_node.html"
 . ${subr}
 . ${tools}
 . ${color}
+. ${inventory}
 . ${nodes}
 
 init $*
@@ -49,11 +50,12 @@ nodeadd()
 
     if iptype $node; then
 	resolvhost ${node}
+	[ -z "${HST}" ] && err 1 "${MAGENTA}Can't resolv IP for ${node} hostname. Use IP address.${NORMAL}"
 	node=$HST
     fi
 
-    ${ECHO} "${MAGENTA}Connecting...${NORMAL}"
-    NODENAME=`cbsd cbsdssh $node $port $cbsduser $pw cbsd getinfo -q nodename`
+    ${ECHO} "${MAGENTA}Connecting to ${node}...${NORMAL}"
+    NODENAME=$( cbsd cbsdssh $node $port $cbsduser $pw cbsd getinfo -q nodename )
 
     case $? in
 	0)
@@ -89,7 +91,7 @@ nodeadd()
 		cbsdsql nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( \"${NODENAME}\", \"${node}\", \"${port}\", \"${LOCALKEY}\", \"${rootkeyfile}\", \"inv.${NODENAME}.sqlite\" )"
 	    fi
 	    idle_update ${NODENAME}
-	    cbsd retrinv node=${NODENAME}
+	    cbsd retrinv node=${NODENAME} tryoffline=1
 	;;
 	1)
 	    cat ${DEBLOG}
@@ -132,21 +134,42 @@ nodedel()
     err 0 "${MAGENTA}Removed${NORMAL}"
 }
 
+conv_idle()
+{
+    local _res
+
+    if [ ${sqlreplica} -eq 1 ]; then
+	_res=$( check_locktime ${ftmpdir}/shmux_${_ip}.lock )
+	[ $? -eq 0 ] && _nodestatus="Connected" && _idle=${_res} && return 0
+    fi
+
+    _nodestatus="Disconnected"
+    idle_time=$( /bin/date -j -f "%Y-%m-%d %H:%M:%S" "${_idle}" "+%s" )
+    _res=$(( ( curtime - idle_time ) / 60 ))
+    _idle="${_res}"
+}
+
 
 nodelist()
 {
-
     if [ ${allinfo} -eq 0 ]; then
 	cbsdsql nodes SELECT nodename FROM nodelist
     else
-	sqldelimer=" "
-	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}NODENAME IP PORT KEYFILE ROOTKEYFILE${NORMAL}"
-	cbsdsql nodes SELECT nodename,ip,port,keyfile,rootkeyfile FROM nodelist |while read _line; do
-	    printf "${NORMAL}${_line}\n"
+	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}NODENAME IP PORT KEYFILE STATUS IDLE${NORMAL}"
+	local sqldelimer="|"
+	local IFS="|"
+	cbsdsql nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist |while read _nodename _ip _port _keyfile _idle; do
+	    conv_idle
+	    printf "${NORMAL}${_nodename} ${_ip} ${_port} ${_keyfile} ${_nodestatus} ${_idle}\n"
 	done
     fi
-
+    unset sqldelimer
+    local IFS
 }
+
+
+# MAIN
+curtime=$( /bin/date +%s )
 
 [ -z "${allinfo}" ] && allinfo=1
 [ -z "${header}" ] && header=1

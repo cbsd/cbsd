@@ -1,5 +1,5 @@
 // Part of CBSD Project
-// mailto: olevole at olevole dot ru
+// mailto:olevole at olevole dot ru
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,27 +9,30 @@
 
 #include "gentools.h"
 
-int debugmsg(int level,const char *format, ...)
+int 
+debugmsg(int level, const char *format,...)
 {
-    va_list arg;
-    int done;
+	va_list		arg;
+	int		done;
 
-	if(debug<level) return 0;
-	va_start (arg, format);
-	done = vfprintf (stdout, format, arg);
-	va_end (arg);
+	if (debug < level)
+		return 0;
+	va_start(arg, format);
+	done = vfprintf(stdout, format, arg);
+	va_end(arg);
 
-    return 0;
+	return 0;
 }
 
-int errmsg(const char *format, ...)
+int 
+errmsg(const char *format,...)
 {
-    va_list arg;
-    int done;
+	va_list		arg;
+	int		done;
 
-	va_start (arg, format);
-	done = vfprintf (stderr, format, arg);
-	va_end (arg);
+	va_start(arg, format);
+	done = vfprintf(stderr, format, arg);
+	va_end(arg);
 
-   return 0;
+	return 0;
 }

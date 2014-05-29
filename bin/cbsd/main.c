@@ -208,8 +208,10 @@ main(int argc, char *argv[])
 #endif
 	procargs(argc, argv);
 	pwd_init(iflag);
+#ifndef CBSD
 	if (iflag)
 		chkmail(1);
+#endif
 	if (argv[0] && argv[0][0] == '-') {
 		state = 1;
 		read_profile("/etc/profile");
@@ -272,7 +274,9 @@ cmdloop(int top)
 		if (iflag && top) {
 			inter++;
 			showjobs(1, SHOWJOBS_DEFAULT);
+#ifndef CBSD
 			chkmail(0);
+#endif
 			flushout(&output);
 		}
 		n = parsecmd(inter);

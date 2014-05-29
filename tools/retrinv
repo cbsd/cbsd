@@ -1,19 +1,22 @@
-#!/bin/sh
-#v10.0.5
+#!/usr/local/bin/cbsd
+#v10.0.6
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="node data jname"
+MYOPTARG="node data jname tryoffline"
 MYDESC="Fetch sqldb from remove node"
 ADDHELP="when node argument is empty - retrieve db from all nodes from node lists\n\
 data can be - jdescr,nodedescr,db,rctl,fwcnt. If not specify - retrieive all of them\n\
-jname - fetch data only for specified jail"
+jname - fetch data only for specified jail\n\
+tryoffline=1 - try to fetch inventory when node is offline\n"
 
 [ -f ${globalconf} ] || err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${tools}
 . ${inventory}
+. ${nodes}
 . ${color}
+. ${strings}
 init $*
 
 retr_db()
@@ -22,9 +25,10 @@ retr_db()
 
     [ -z "${_rnode}" ] && return 0
 
-    cbsd nodescp ${_rnode}:var/db/inv.${_rnode}.sqlite ${dbdir}/${_rnode}.sqlite && chown ${cbsduser} "${dbdir}/${_rnode}.sqlite"
+    nodescp ${checkforonline} ${_rnode}:var/db/inv.${_rnode}.sqlite ${dbdir}/${_rnode}.sqlite && chmod 0600 "${dbdir}/${_rnode}.sqlite" && chown ${cbsduser} "${dbdir}/${_rnode}.sqlite"
     if [ $? -eq 0 ]; then
 	$ECHO "${MAGENTA}Fetching inventory done: ${GREEN}${_rnode}${NORMAL}"
+	idle_update ${_rnode}
     else
 	$ECHO "${MAGENTA}Fetching inventory failed: ${GREEN}${_rnode}${NORMAL}"
     fi
@@ -36,13 +40,12 @@ retr_nodedescr()
 
     [ -z "${_rnode}" ] && return 0
 
-    [ ! -d "${dbdir}/nodedescr" ] && mkdir -m 0700 -p "${dbdir}/nodedescr" && chown ${cbsduser} "${dbdir}/nodedescr"
+    [ ! -d "${dbdir}/nodedescr" ] && mkdir -m 0700 -p "${dbdir}/nodedescr" && chmod 0600 "${dbdir}/nodedescr" && ${cbsduser} "${dbdir}/nodedescr"
 
     _files="descr role domain notes location"
 
     for _i in ${_files}; do
-	cbsd nodescp ${_rnode}:node.${_i} ${dbdir}/nodedescr/${_rnode}.${_i} 2>/dev/null && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}" 2>/dev/null
-
+	nodescp ${checkforonline} ${_rnode}:node.${_i} ${dbdir}/nodedescr/${_rnode}.${_i} 2>/dev/null && chmod 0600 "${dbdir}/nodedescr/${_rnode}.${_i}" && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}" 2>/dev/null
     done
 }
 
@@ -57,7 +60,7 @@ retr_jdescr()
     [ ! -d "${dbdir}/nodedescr" ] && mkdir -p "${dbdir}/nodedescr"
 
     if [ -z "$jname" ]; then
-        _jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+        _jname=$( cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2" )
     else
         _jname=${jname}
     fi
@@ -66,7 +69,7 @@ retr_jdescr()
 
 
     for _i in ${_jname}; do
-	cbsd nodescp ${_rnode}:jails-system/${_i}/descr ${dbdir}/nodedescr/${_rnode}.${_i}.descr 2>/dev/null && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}.descr" 2>/dev/null
+	nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/descr ${dbdir}/nodedescr/${_rnode}.${_i}.descr 2>/dev/null && chmod 0600 "${dbdir}/nodedescr/${_rnode}.${_i}.descr" && chown ${cbsduser} "${dbdir}/nodedescr/${_rnode}.${_i}.descr" 2>/dev/null
     done
 }
 
@@ -80,7 +83,7 @@ retr_rctl()
 
 
     if [ -z "$jname" ]; then
-        _jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+        _jname=$( cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2" )
     else
         _jname=${jname}
     fi
@@ -89,7 +92,7 @@ retr_rctl()
 
     for _i in ${_jname}; do
 	[ ! -d "${dbdir}/rctl/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/rctl/${_rnode}-${_i}"
-	cbsd nodescp ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null && chown ${cbsduser} ${dbdir}/rctl/${_rnode}-${_i}/* 2>/dev/null
+	nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null && chmod 0600 ${dbdir}/rctl/${_rnode}-${_i}/* && chown ${cbsduser} ${dbdir}/rctl/${_rnode}-${_i}/* 2>/dev/null
     done
 }
 
@@ -102,7 +105,7 @@ retr_fwcnt()
     [ ! -f "${dbdir}/${_rnode}.sqlite" ] && return 0
 
     if [ -z "$jname" ]; then
-	_jname=`cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2"`
+	_jname=$( cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2" )
     else
 	_jname=${jname}
     fi
@@ -111,12 +114,43 @@ retr_fwcnt()
 
     for _i in ${_jname}; do
 	[ ! -d "${dbdir}/fwcnt/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/fwcnt/${_rnode}-${_i}"
-	cbsd nodescp ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null && chown ${cbsduser} ${dbdir}/fwcnt/${_rnode}-${_i}/* 2>/dev/null
+	nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null && chmod 0600 ${dbdir}/fwcnt/${_rnode}-${_i}/* && chown ${cbsduser} ${dbdir}/fwcnt/${_rnode}-${_i}/* 2>/dev/null
     done
 }
 
+
+# MAIN #
 [ -z "${data}" ] && data="db jdescr nodedescr rctl fwcnt"
-[ -z "${node}" ] && node=`cbsd node mode=list header=0 allinfo=0`
+if [ -z "${tryoffline}" ]; then
+    tryoffline=0
+    checkforonline="tryoffline=0"
+else
+    checkforonline="tryoffline=${tryoffline}"
+fi
+
+
+if [ -z "${node}" ]; then
+    sqldelimer=" "
+    node=$( cbsdsql nodes select nodename from nodelist 2>/dev/null )
+    unset sqldelimer
+fi
+
+# check node online and repopulate array of online nodes if needed
+if [ ${sqlreplica} -eq 1 -a ${tryoffline} -eq 0 ]; then
+    testnode="${node}"
+    node=""
+    for i in ${testnode}; do
+	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${i}\" )
+        sqllist "$NODEDATA" myip myport mykey
+
+	if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
+	    ${ECHO} "${MAGENTA}Node is offline: ${GREEN}${i}${NORMAL}"
+	    continue
+	fi
+	node="${node} ${i}"
+    done
+fi
+
 
 for i in ${node}; do
     for items in ${data}; do

@@ -1,22 +1,87 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
-# Detect first available IP from pool
+#v10.0.5
+# Detect first available IP from ippool
+# This is dummy version, just increase last octet ;-). Need for rewrite into C, learn cidr/mask func etc..
 MYARG=""
-MYOPTARG=""
+MYOPTARG="ip4pool"
 MYDESC="Detect first available IP from pool"
+ADDHELP="ip4pool = alternative pool\n"
 
 . ${subr}
 . ${inventory}
+. ${tools}
 
 init $*
 
-mycidr=$( echo ${nodeippool} |awk {' printf $1 '} )
-
-if [ $( echo ${mycidr} |grep "/" ) ]; then
-    mynet=${mycidr%%/*}
-    mymask=${mycidr##*/}
+if [ -z "${ip4pool}" ]; then
+    tmpnet=$( echo ${nodeippool} |awk {' printf $1 '} )
 else
-    mynet="${mycidr}"
+    tmpnet=$( echo ${ip4pool} |awk {' printf $1 '} )
 fi
 
-[ -n "${mymask}" ] && echo "${mynet}/${mymask}"
+if [ $( echo ${tmpnet} |grep "/" ) ]; then
+    mynet=${tmpnet%%/*}
+    mycidr=${tmpnet##*/}
+else
+    mynet="${tmpnet}"
+fi
+
+[ -z "${mycidr}" ] && mycidr="24"
+
+mymask=$( cdr2mask ${mycidr} )
+
+IFS="."
+first_ip=$( first_ips_w_mask $mynet $mymask )
+unset IFS
+
+cnet=$( echo ${first_ip}| cut -d "." -f 1,2,3 )
+st=$( echo ${first_ip}| cut -d "." -f 4 )
+
+existing_ipjail=$( cbsdsql local SELECT ip4_addr FROM jails WHERE ip4_addr!="0" )
+existing_ipjail=$( echo ${existing_ipjail}|tr "," " " )
+
+skip_ip="${nodeip}"
+
+for i in ${existing_ipjail}; do
+    ipwmask ${i}
+    [ -z "${IWM}" ] && continue
+    iptype ${IWM}
+    [ $? -eq 1 ] && skip_ip="${skip_ip} ${IWM}"
+done
+
+for i in $( seq ${st} 254 ); do
+    skip=0
+    tmpip="${cnet}.${i}"
+    iptype ${tmpip} >/dev/null 2>&1
+    [ $? -ne 1 ] && continue
+
+    for n in ${skip_ip}; do
+	[ "${n}" = "${tmpip}" ] && skip=1
+    done
+
+    [ ${skip} -eq 1 ] && continue
+
+    ${miscdir}/chk_arp_byip --pingnum=1 --pingtimeout=0.001 --ip=${tmpip}
+    case $? in
+	0)
+		break
+		;;
+	*)
+		continue
+		;;
+    esac
+done
+
+[ $i -eq 254 ] && unset tmpip
+
+if [ -n "${tmpip}" ]; then
+    if [ -n "${mycidr}" ]; then
+	echo "${tmpip}/${mycidr}"
+	exit 0
+    else
+	echo ${tmpip}
+    fi
+else
+    return 1
+fi
+

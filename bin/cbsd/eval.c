@@ -72,7 +72,11 @@ __FBSDID("$FreeBSD: head/bin/sh/eval.c 255215 2013-09-04 22:10:16Z jilles $");
 #ifndef NO_HISTORY
 #include "myhistedit.h"
 #endif
-
+#ifdef CBSD
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <pthread.h>
+#endif
 
 int evalskip;			/* set if we are skipping commands */
 int skipcount;			/* number of levels to skip */
@@ -89,6 +93,9 @@ int oexitstatus;		/* saved exit status */
 
 static void evalloop(union node *, int);
 static void evalfor(union node *, int);
+//#ifdef CBSD
+//static void evalthrfor(union node *, int);
+//#endif
 static union node *evalcase(union node *);
 static void evalsubshell(union node *, int);
 static void evalredir(union node *, int);
@@ -255,6 +262,11 @@ evaltree(union node *n, int flags)
 		case NFOR:
 			evalfor(n, flags & ~EV_EXIT);
 			break;
+//#ifdef CBSD
+//		case NTHRFOR:
+//			evalthrfor(n, flags & ~EV_EXIT);
+//			break;
+//#endif
 		case NCASE:
 			next = evalcase(n);
 			break;
@@ -279,7 +291,6 @@ evaltree(union node *n, int flags)
 				goto out;
 			exitstatus = !exitstatus;
 			break;
-
 		case NPIPE:
 			evalpipe(n);
 			do_etest = !(flags & EV_TESTED);
@@ -305,6 +316,24 @@ out:
 		exitshell(exitstatus);
 	if (flags & EV_EXIT)
 		exraise(EXEXIT);
+}
+
+
+
+void
+threvaltree(union node *n, int flags)
+{
+	int do_etest;
+	union node *next;
+	do_etest = 0;
+
+	do {
+	    next = NULL;
+	    evalcommand(n, flags, (struct backcmd *)NULL);
+	    do_etest = !(flags & EV_TESTED);
+	    n = next;
+	} while (n != NULL);
+
 }
 
 
@@ -1372,3 +1401,74 @@ timescmd(int argc __unused, char **argv __unused)
 	    shusecs, shsmins, shssecs, chumins, chusecs, chsmins, chssecs);
 	return 0;
 }
+
+/*
+#ifdef CBSD
+void *doWork(void *param) {
+	int flags = 0; //todo: transfer in param struct
+	union node *n = param;
+	printf(".");
+	threvaltree(n->nthrfor.body, flags);
+	pthread_exit(NULL);
+}
+
+static void
+evalthrfor(union node *n, int flags)
+{
+        struct arglist arglist;
+        union node *argp;
+        struct strlist *sp;
+        int status;
+	int maxthr;
+	int thread;
+	int numWork;
+
+	arglist.lastp = &arglist.list;
+	for (argp = n->nthrfor.args ; argp ; argp = argp->narg.next) {
+		oexitstatus = exitstatus;
+		expandarg(argp, &arglist, EXP_FULL | EXP_TILDE);
+	}
+
+	*arglist.lastp = NULL;
+
+	maxthr=0;
+	for (sp = arglist.list ; sp ; sp = sp->next) {
+	    maxthr++;
+	}
+
+	maxthr--;
+	numWork=maxthr;
+	pthread_t threads[maxthr];
+
+	loopnest++;
+	status = 0;
+
+	thread=0;
+	for ( sp = arglist.list ; sp ; sp = sp->next) {
+//		printf("Spawn %i from %i\n",thread,maxthr);
+		setvar(n->nfor.var, sp->text, 0);
+		if (pthread_create(&threads[thread], NULL, doWork, n)) {
+		    printf("Error creating thread %i of %i\n", thread, maxthr);
+		    continue;
+		    //return 1;
+		}
+		thread++;
+	}
+
+	thread=0;
+	for ( sp = arglist.list ; sp ; sp = sp->next ) {
+	    if (pthread_join(threads[thread], NULL)) {
+		printf("Error waiting for thread %i of %i\n", thread, maxthr);
+		continue;
+		//return 2;
+	    }
+	    thread++;
+	}
+
+
+	pthread_exit(NULL);
+        loopnest--;
+        exitstatus = status;
+}
+#endif
+*/

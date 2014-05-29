@@ -339,6 +339,7 @@ setvareq(char *s, int flags)
 		vp->flags |= flags;
 		vp->text = s;
 
+#ifndef CBSD
 		/*
 		 * We could roll this to a function, to handle it as
 		 * a regular variable function callback, but why bother?
@@ -350,6 +351,7 @@ setvareq(char *s, int flags)
 		if ((vp == &vmpath || (vp == &vmail && ! mpathset())) &&
 		    iflag == 1)
 			chkmail(1);
+#endif
 		if ((vp->flags & VEXPORT) && localevar(s)) {
 			change_env(s, 1);
 			(void) setlocale(LC_ALL, "");

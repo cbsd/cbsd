@@ -72,9 +72,9 @@ freejname()
 	_newjname="jail"
     fi
 
-    for _num in `jot 100`; do
+    for _num in $( jot 100 ); do
 	freejname="${_newjname}${_num}"
-	cbsd jstatus jname=${freejname} > /dev/null 2>/dev/null
+	jstatus jname=${freejname} > /dev/null 2>/dev/null
 	[ $? -eq 0 ] && return 0
     done
 }
@@ -83,8 +83,7 @@ freejname()
 get_pkglist()
 {
     pkglist="${ftmpdir}/tui.$$"
-#    cbsd pkgbrowser repo="http://dl.bsdstore.ru/freebsd/amd64/${ver}/xorg" out="${pkglist}"
-    cbsd pkgbrowser out="${pkglist}"
+    pkgbrowser out="${pkglist}"
 
     [ ! -f "${pkglist}" ] && pkglist="NO"
 }
@@ -110,14 +109,15 @@ get_jname()
 		validate_jname $_input
 		case $? in
 		    1)
-		    /usr/local/bin/cbsd jstatus jname=${_input} >/dev/null 2>&1
-		    if [ $? -ne 0 ]; then
-			_message="ERROR: Jail ${_input} already exist"
-		    else
-			_ok=1
-		    fi
+			jstatus jname=${_input} >/dev/null 2>&1
+			if [ $? -ne 0 ]; then
+			    _message="ERROR: Jail ${_input} already exist"
+			else
+			    _ok=1
+			fi
 			;;
-		    *) _message="ERROR: Bad name. Choose other one"
+		    *)
+			_message="ERROR: Bad name. Choose other one"
 			;;
 		esac
 		;;
@@ -129,7 +129,6 @@ get_jname()
     # reload some dynamic variables depended from jname
     [ -z "${jname}" ] && return 0
     merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
-
 }
 
 
@@ -160,21 +159,112 @@ get_jail_host_hostname()
     esac
 }
 
-# form for $ips
 get_jail_ips()
 {
-    local _ok _input _retval
+    local _ok=0 _input _retval _i _j _existing_ipjail _existing_ip _myip
+    local msg_yes msg_no IFS _jname _ips
 
-#    [ -z "${ip4_addr}" ] && ip4_addr=$( cbsd dhcpd 2>/dev/null )
+    while [ ${_ok} -ne 1 ]; do
+	[ -z "${ip4_addr}" ] && ip4_addr=$( dhcpd 2>/dev/null )
+	f_dialog_input _input "${GET_IPS_MSG}" "${ip4_addr}" "IP4 or IP6 Address"
+	_retval=$?
 
-    f_dialog_input _input "${GET_IPS_MSG}" "${ip4_addr}" "IP4 or IP6 Address"
-    _retval=$?
+	[ ${_retval} -ne 0 ] && return 0
 
-    case ${_retval} in
-	0)
-	    [ -n "${_input}" ] && ip4_addr="${_input}"
-	    ;;
-    esac
+	#check ip in two phases:
+	# 1) via sqlite database for other's jails ips
+	# 2) for ip in LAN
+
+	if [ -z "${_input}" -a "${_input}" = "0" ]; then
+	    ip4_addr="${_input}"
+	    return 0
+	fi
+
+	msg_yes="ok"
+	msg_no="not ok"
+
+	_existing_ipjail=""
+	_existing_ip=""
+	_myip=""
+
+	IFS=","
+	for _i in ${_input}; do
+	    ipwmask ${_i}
+	    [ -z "${IWM}" -o "${_i}" = "0" ] && continue
+	    iptype ${IWM}
+	    [ $? -eq 1 ] && _myip="${_myip} ${IWM}"
+	done
+
+	# check for other jail
+	IFS="|"
+	_i=0
+	eval $( cbsdsql local SELECT jname,ip4_addr FROM jails WHERE ip4_addr!="0" 2>/dev/null |while read _jname _ips; do
+	    echo jname${_i}=\"$_jname\"
+	    echo ips${_i}=\"${_ips}\"
+	    _i=$(( _i + 1 ))
+	done )
+	unset IFS
+
+	for _i in $(seq 0 255); do
+	    eval _jname="\$jname$_i"
+	    [ -z "${_jname}" ] && break
+	    eval _existing_ipjail="\$ips$_i"
+	    [ -z "${_existing_ipjail}" ] && break
+
+	    _existing_ipjail=$( echo ${_existing_ipjail}|tr "," " " )
+
+	    for _i in ${_existing_ipjail}; do
+		    ipwmask ${_i}
+		    [ -z "${IWM}" ] && continue
+		    iptype ${IWM}
+		    [ $? -eq 1 ] && _existing_ip="${_existing_ip} ${IWM}"
+	    done
+
+	    _ok=1
+
+	    for _i in ${_existing_ip}; do
+		for _j in ${_myip}; do
+		    [ "${_i}" = "${_j}" ] && _ok=0 && break
+		done
+		[ ${_ok} -eq 0 ] && break
+	    done
+
+	    if [ ${_ok} -eq 0 ]; then
+		f_dialog_noyes "${_i} already assigned to jail: ${_jname}.\nIf you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
+		if [ $? -eq 1 ]; then
+		    _ok=0
+		    break
+		fi
+		_ok=2
+		break
+	    fi
+	done # check for local jail end
+
+	[ ${_ok} -eq 0 ] && continue # if not ok from previous stage - repeat
+	[ ${_ok} -eq 2 ] && _ok=1 && continue
+
+	_ok=1
+
+	# check for ip existance in LAN
+	for _i in ${_myip}; do
+	    IFS=" "
+	    f_dialog_info "Probing for ${_i} availability. Please wait..."
+	    unset IFS
+	    checkip ip=${_i} check=1 2>/dev/null
+	    if [ $? -eq 2 ]; then
+		_ok=0
+	    fi
+	done
+
+
+	if [ ${_ok} -eq 0 ]; then
+	    f_dialog_noyes "It seems like ${_i} address already used on several devices on the LAN\nYou can found MAC address by \"arp -an\" command.\n If you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
+	    [ $? -eq 0 ] && _ok=1
+	fi
+    done
+
+    ip4_addr="${_input}"
+    return 0
 }
 
 # form for $interface
@@ -184,9 +274,9 @@ get_jail_oninterface()
 
     if [ -z "${interface}" -o "${interface}" = "auto" ]; then
 	if [ -n "${ip4_addr}" ]; then
-	    interface=`cbsd getnics-by-ip ip=${ip4_addr}`
+	    interface=$( getnics-by-ip ip=${ip4_addr} )
 	else
-	    interface=`cbsd getnics-by-ip ip=0.0.0.0`
+	    interface=$( getnics-by-ip ip=0.0.0.0 )
 	fi
     fi
 
@@ -1045,12 +1135,12 @@ fi
     if [ "${emulator}" = "bhyve" ]; then
 	getyesno "${MAGENTA}Do you want to create vm immediately?${NORMAL}"
 	[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
-	/usr/local/bin/cbsd bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+	bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 	[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
     else
 	getyesno "${MAGENTA}Do you want to create jail immediately?${NORMAL}"
 	[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
-	/usr/local/bin/cbsd jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+	jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 	[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
     fi
 

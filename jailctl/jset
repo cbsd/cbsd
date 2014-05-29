@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v10.0.6
 MYARG="jname"
 CBSDMODULE="jail"
 
@@ -21,9 +21,9 @@ init $*
 # jid, interface, ip4_addr and jname must be set
 modify_ipaddr()
 {
-    local _A _IPs _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs
+    local _A _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs IFS _dhcp
 
-    _A=`cbsdsql local SELECT interface,ip4_addr FROM jails WHERE jname=\"${jname}\"`
+    _A=$( cbsdsql local SELECT interface,ip4_addr FROM jails WHERE jname=\"${jname}\" )
     sqllist "${_A}" _interface _ip4_addr_old
 
     if [ "${_interface}" = "0" ]; then
@@ -31,13 +31,12 @@ modify_ipaddr()
 	return 0
     fi
 
-    #remove aliases first
-    _IPs=`echo ${_ip4_addr_old}| tr "," " "`
+    IFS=","
 
-    for _pureip in ${_IPs}; do
+    for _pureip in ${_ip4_addr_old}; do
 	iptype ${_pureip}
 	_inet=$?
-	_iface=`cbsd getnics-by-ip ip=${_pureip}`
+	_iface=$( getnics-by-ip ip=${_pureip} )
 	ipwmask ${_pureip}
 	if [ -n "$IWM" ]; then
 	    case ${_inet} in
@@ -49,18 +48,20 @@ modify_ipaddr()
 		    ;;
 	    esac
 	    /sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias
-
         fi
     done
 
-    _IPs=`echo ${ip4_addr}|tr "," " "`
     _IP4=""
     _IP6=""
 
-    for _pureip in ${_IPs}; do
+    for _pureip in ${ip4_addr}; do
+	if [ "${_pureip}" = "DHCP" ]; then
+	    _dhcp=$( dhcpd )
+	    _pureip="${_dhcp}"
+	fi
 	iptype ${_pureip}
 	_inet=$?
-	_iface=`cbsd getnics-by-ip ip=${_pureip}`
+	_iface=$( getnics-by-ip ip=${_pureip} )
 	ipwmask ${_pureip}
 	if [ -n "$IWM" ]; then
 	    case ${_inet} in
@@ -85,19 +86,23 @@ modify_ipaddr()
 	fi
     done
 
+    IFS=" "
+
+    [ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr |sed s:DHCP:${_dhcp}:g )
+
     #construct ipX.addr string 
     _nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
 
     /usr/sbin/jail -m ${_nIPs} jid=${jid}
     cbsdsql local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+    ${ECHO} "${argpart}: ${MAGENTA}${ip4_addr}${NORMAL}"
 }
 
 # jid, interface, ip4_addr and jname must be set
 modify_cpuset()
 {
     cbsdsql local UPDATE jails SET ${i}=\"${cpuset}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+    ${ECHO} "${argpart}: ${MAGENTA}${cpuset}${NORMAL}"
     cpuset -c -l ${cpuset} -j ${jid}
 }
 
@@ -105,11 +110,11 @@ update_jails()
 {
     eval VAL=\$$i
     cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+    ${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
 }
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
-jid=`cbsd jstatus jname=${jname}`
+jid=$( jstatus jname=${jname} )
 [ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
 for n in $@; do

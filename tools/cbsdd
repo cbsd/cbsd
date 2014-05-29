@@ -1,0 +1,77 @@
+#!/usr/local/bin/cbsd
+MYARG=""
+MYOPTARG=""
+MYDESC="Daemon for executing nexttask"
+CBSDMODULE="taskd"
+EXTHELP="wf_taskd.html"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${inventory}
+
+init $*
+
+shmux()
+{
+	local _mylock SSH_ARGS _locallockfile _locallock _remotelockfile _remotelock
+
+	_locallockfile="${ftmpdir}/shmux_${_ip}.lock"
+	_locallock="/usr/bin/lockf -s -t0 ${_locallockfile}"
+	_remotelockfile="ftmp/from_${nodename}.lock"
+	_remotelock="/usr/bin/lockf -s -t0 ${_remotelockfile}"
+
+	[ -f "${_locallockfile}" ] && return 0
+
+	SSH_ARGS="-oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
+#	/usr/sbin/daemon -u ${cbsduser} -f ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_fwatch --file=${_remotelockfile}"
+	/usr/sbin/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_fwatch --file=${_remotelockfile}"
+
+}
+
+readconf task.conf
+
+[ ! -f "${dbdir}/cbsdtaskd.sqlite" ] && err 1 "No such ${dbdir}/cbsdtaskd.sqlite"
+[ -z "${max_simul_jobs}" ] && max_simul_jobs="10"
+[ -z "${loop_timeout}" ] && loop_timeout="60"
+
+# first of all, checks for orphaned tasks in status 1 (running) and back to status 0,
+# due to next iteration take this job again
+
+#store pid
+echo $$ > /var/run/cbsdd.pid
+trap "/bin/rm -f /var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
+
+cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
+
+while [ 1 ]; do
+
+    # make sshmux control master
+    if [ ${sqlreplica} -eq 1 ]; then
+	sqldelimer=" "
+	cbsdsql nodes select ip,port,keyfile from nodelist | while read _ip _port _keyfile; do
+	    [ -n "${_ip}" ] && shmux
+	done
+	unset sqldelimer
+    fi
+
+    cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
+    _err=0
+    queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(*) FROM taskd WHERE status="0"' 2>/dev/null )
+    [ -z "${queue}" ] && queue=0
+
+    [ ${queue} -eq 0 ] && echo "ZzZZzzzzZZ..." && continue
+
+    if [ ${queue} -gt ${max_simul_jobs} ]; then
+	max=${max_simul_jobs}
+    else
+	max=${queue}
+    fi
+
+    for i in $( seq 1 ${max} ); do
+	echo "runtask ${i}/${max} ($max_simul_jobs max)"
+	/usr/sbin/daemon -f nexttask
+	# wait for pid of daemon here!!!
+	sleep 1
+    done
+done

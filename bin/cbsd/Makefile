@@ -4,10 +4,9 @@
 PROG=	cbsd
 BINDIR=	/usr/local/bin
 INSTALLFLAGS= -S
-SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cd.c echo.c error.c \
-	eval.c exec.c expand.c \
-	histedit.c input.c jobs.c kill.c mail.c main.c memalloc.c miscbltin.c \
-	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c \
+SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c cbsd_pwait.c cd.c echo.c \
+	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c main.c memalloc.c miscbltin.c \
+	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
 	test.c trap.c var.c
 GENSRCS= builtins.c nodes.c syntax.c
 GENHDRS= builtins.h nodes.h syntax.h token.h
@@ -19,11 +18,11 @@ SRCS= ${SHSRCS} ${GENSRCS} ${GENHDRS}
 WITHOUT_MAN=	yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-LDADD= -ledit -ltermcap -lsqlite3
+LDADD= -ledit -ltermcap -lsqlite3 -pthread
 
 CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 # for debug:
-# DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
+#DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
 WARNS?=	2
 WFORMAT=0
 
@@ -51,15 +50,15 @@ mknodes: mknodes.o
 mksyntax: mksyntax.o
 
 .ORDER: nodes.c nodes.h
-nodes.c nodes.h: mknodes nodetypes nodes.c.pat
-	./mknodes ${.CURDIR}/nodetypes ${.CURDIR}/nodes.c.pat
+nodes.c nodes.h: mknodes nodetypes-cbsd nodes.c.pat
+	./mknodes ${.CURDIR}/nodetypes-cbsd ${.CURDIR}/nodes.c.pat
 
 .ORDER: syntax.c syntax.h
 syntax.c syntax.h: mksyntax
 	./mksyntax
 
-token.h: mktokens
-	sh ${.CURDIR}/mktokens
+token.h: mktokens-cbsd
+	sh ${.CURDIR}/mktokens-cbsd
 
 regress:
 	cd ${.CURDIR}/../../tools/regression/bin/sh && ${MAKE} SH=${.OBJDIR}/sh

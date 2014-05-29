@@ -1,10 +1,10 @@
-#!/bin/sh
-#v10.0.4
+#!/usr/local/bin/cbsd
+#v10.0.5
 globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="mode arch targer_arch ver sources name basename stable inter"
+MYOPTARG="mode arch targer_arch ver sources name basename stable inter newjname"
 #mode=check,update,upgrade
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
@@ -13,10 +13,9 @@ mode can be: check, upgrade, quiet\n\
 stable=1 for RELENG_X\n\
 ver=any for mode=list for show all version (no for cur. version only\n\
 arch=any for mode=list for show all arch (no for cur. arch only\n\
-inter=0 to prevent any questions and to accept answers by default\n"
+inter=0 to prevent any questions and to accept answers by default\n\
+newjname= for sources=img. Alternative jname for save\n"
 
-[ -f ${globalconf} ] || err 1 "no such conf file";
-. ${globalconf}
 . ${subr}
 . ${inventory}
 . ${color}
@@ -33,7 +32,7 @@ readconf buildworld.conf
 
 fetchme()
 {
-    cbsd cfetch -u $1 -o ${TF}
+    cfetch -u $1 -o ${TF}
     return $?
 }
 
@@ -43,10 +42,10 @@ checkmd5()
     DIR=$1
     _GOOD=0
 
-    for _i in `find ${DIR} -type f -depth 1 -name *.md5 -print`; do
-	_FILE=`${ECHO} ${_i} |sed 's/\.md5//g'`
-	_OMD5=`cat ${_FILE}.md5`
-	_RMD5=`md5 -q ${_FILE}`
+    for _i in $( find ${DIR} -type f -depth 1 -name *.md5 -print); do
+	_FILE=$( ${ECHO} ${_i} |sed 's/\.md5//g' )
+	_OMD5=$( cat ${_FILE}.md5 )
+	_RMD5=$( md5 -q ${_FILE} )
 	if [ "${_RMD5}" != "${_OMD5}" ]; then
 	    _GOOD=$((_GOOD + 1))
 	fi
@@ -78,21 +77,19 @@ getsrc()
 {
     init_srcdir
 
-    if [ -d "${srcdir}/${DIR}" ]; then
-	[ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-    fi
+    [ -d "${srcdir}/${DIR}" -a $UPGRADE -ne 1 ] && err 1 "You already have ${ver}"
 
     for MYREPO in ${REPO}; do
 	${ECHO} "${MAGENTA}REPO${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
 	MIRROR="${MYREPO}/src_${ver}/mirror.html"
-	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 	if [ $? -eq 0 ]; then
-	    MYREPO=`cat ${TF}`
+	    MYREPO=$( cat ${TF} )
 	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
 	fi
-	cbsd cfetch -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
+	cfetch -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
 	[ $? -eq 0 ] || ${ECHO} "${MAGENTA}Not found: ${GREEN}${MYREPO}/${DIR}/src.txz${NORMAL}" && icontinue
-	cbsd cfetch -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
+	cfetch -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
 	[ $? -eq 0 ] || ${ECHO} "${MAGENTA}Not found: ${GREEN}${MYREPO}/${DIR}/src.txz.md5${NORMAL}" && continue
     done
 
@@ -116,7 +113,7 @@ getsrc()
     mkdir -p ${srcdir}/src_${ver}
     mv ${workdir}/tmp/src_${ver} ${srcdir}/
     ${ECHO} "${MAGENTA}Done...${NORMAL}"
-    DT=`/bin/date "+%Y%m%d"`
+    DT=$( /bin/date "+%Y%m%d" )
 }
 
 getbase()
@@ -142,7 +139,7 @@ getbase()
 	## Official fbsd repo
 	printf "${MAGENTA}Looking for official FreeBSD mirror:${NORMAL}"
 	ARCHIVE="$MYDIR/base.txz"
-	cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+	cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
 	if [ $? -eq 0 ]; then
 	    printf "\n${MAGENTA}Extracting base...${NORMAL}\n"
 	    [ ! -d "${BASE_DIR}" ] && mkdir -p $BASE_DIR
@@ -155,7 +152,7 @@ getbase()
 	    if [ "${arch}" = "amd64" ]; then
 		BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
 		ARCHIVE="$MYDIR/lib32.txz"
-		cbsd cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+		cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
 		    if [ $? -eq 0 ]; then
 			printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
 			cd $BASE_DIR
@@ -167,7 +164,7 @@ getbase()
 			printf "${GREEN} Lib32 not found${NORMAL}\n"
 		    fi
 	    fi
-	    cbsd preparebase dst=${BASE_DIR}
+	    preparebase dst=${BASE_DIR}
 	    ${ECHO} "${MAGENTA}Done...${NORMAL}"
 	    return 0
 	fi
@@ -181,16 +178,16 @@ getbase()
     for MYREPO in $REPO; do
 	${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
 	MIRROR="${MYREPO}/releases/${FHIER}/mirror.html";
-	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
-	    MYREPO=`cat ${TF}`
+	    MYREPO=$( cat ${TF} )
 	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 	fi
 
 	if [ -z "${basename}" ]; then
 	    ${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
-	    cbsd cfetch -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base.txz
+	    cfetch -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base.txz
 
 	    if [ $? -ne 0 ]; then
 		${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
@@ -199,7 +196,7 @@ getbase()
 		_src_found=1
 	    fi
 
-#	    cbsd cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+#	    cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 
 #	    if [ $? -ne 0 ]; then
 #		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
@@ -209,7 +206,7 @@ getbase()
 #	    fi
 	else
 	    ${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
-	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base_${basename}.txz
+	    cfetch -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base_${basename}.txz
 
 	    if [ $? -ne 0 ]; then
 		${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
@@ -218,7 +215,7 @@ getbase()
 		_src_found=1
 	    fi
 
-#	    cbsd cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+#	    cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 
 #	    if [ $? -ne 0 ]; then
 #		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
@@ -287,25 +284,25 @@ getobj()
 
 	if [ -d "${DST}" ]; then
 	    [ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
-	    cbsd removeobj ver=${ver} arch=${arch}
+	    removeobj ver=${ver} arch=${arch}
 	fi
 
-	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
-	    MYREPO=`cat ${TF}`
+	    MYREPO=$( cat ${TF} )
 	    ${ECHO} "Found new mirror for ${basename}: ${MYREPO}"
 	fi
 
 	if [ -z "${basename}" ]; then
-	    cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
+	    cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
 	    [ $? -eq 0 ] || continue
-	    cbsd cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+	    cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 	    [ $? -eq 0 ] || continue
 	else
-	    cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
+	    cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
 	    [ $? -eq 0 ] || continue
-	    cbsd cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5 >/dev/null 2>&1
+	    cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5 >/dev/null 2>&1
 	    [ $? -eq 0 ] || continue
 	fi
     done
@@ -351,23 +348,23 @@ getkernel()
 
     if [ -d "${KERNEL_DIR}" ]; then
 	[ $UPGRADE -ne 1 ] && err 1 "${MAGENTA}You already have kernel ${name} for ${ver}${NORMAL}"
-	cbsd removekernel ver=${ver} arch=${arch} name=${name}
+	removekernel ver=${ver} arch=${arch} name=${name}
     fi
 
     for MYREPO in $REPO; do
 	${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
 	MIRROR="${MYREPO}/releases/${FHIER}/mirror.html"
-	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
-	    MYREPO=`cat ${TF}`
+	    MYREPO=$( cat ${TF} )
 	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 	fi
 
 	${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz${NORMAL}"
-	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
+	cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
 	[ $? -eq 0 ] || continue
-#	cbsd cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+#	cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
 #	[ $? -eq 0 ] || continue
     done
 
@@ -395,7 +392,11 @@ getkernel()
 
 getimg()
 {
-    local DST="${importdir}/${name}.img"
+    local FHIER DST
+
+    [ -z "${newjname}" ] && newjname="${name}"
+
+    DST="${importdir}/${newjname}.img"
     FHIER="${arch}/${target_arch}/${ver}/${name}"
 
     if [ -f "${DST}" ]; then
@@ -407,21 +408,21 @@ getimg()
 	fi
     fi
 
-    cbsd jstatus jname=${name} > /dev/null 2>&1
-    [ $? -ne 0 ] && err 1 "${MAGENTA}You already have installed jail:${GREEN}${name}${NORMAL}"
+    jstatus jname=${newjname} > /dev/null 2>&1
+    [ $? -ne 0 ] && err 1 "${MAGENTA}You already have ${GREEN}${newjname}${MAGENTA} jail. Remove it or use ${GREEN}newjname=${NORMAL}"
 
     for MYREPO in $REPO; do
 	${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
 	MIRROR="${MYREPO}/img/${FHIER}/mirror.html"
-	cbsd cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
 	if [ $? -eq 0 ]; then
-	    MYREPO=`cat ${TF}`
+	    MYREPO=$( cat ${TF} )
 	    ${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
 	fi
 
 	${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
-	cbsd cfetch -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
+	cfetch -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
 
 	[ $? -eq 0 ] || continue
     done
@@ -431,21 +432,21 @@ getimg()
 
 gethelpers()
 {
-DST="${sharedir}/helpers"
+    DST="${sharedir}/helpers"
 
     [ ! -d "${DST}" ] && mkdir -p ${DST}
 
     MIRROR="http://boot.bsdstore.ru/helpers"
 
     if [ -z "${name}" ]; then
-	cbsd cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
+	cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
 	[ $? -ne 0 ] && err 1 "${MAGENTA}Error fetching for: ${GREEN}helper list${NORMAL}"
-	for i in `cat ${ftmpdir}/helpers.$$.list`; do
+	for i in $( cat ${ftmpdir}/helpers.$$.list ); do
 	    ${ECHO} "${MAGENTA}Get helpers: ${GREEN}${i}${NORMAL}"
 	    if [ "${mode}" = "upgrade" ]; then
-	        cbsd repo action=get sources=helpers name=${i} mode=upgrade
+	        repo action=get sources=helpers name=${i} mode=upgrade
 	    else
-	        cbsd repo action=get sources=helpers name=${i}
+	        repo action=get sources=helpers name=${i}
 	    fi
 	done
 	rm -f ${ftmpdir}/helpers.$$.list
@@ -453,7 +454,7 @@ DST="${sharedir}/helpers"
     fi
 
     [ ! -d "${tmpdir}/helpers" ] && mkdir -p ${tmpdir}/helpers
-    cbsd cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
+    cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
 
     if [ $? -eq 0 ]; then
 	    if [ -d "${DST}/${name}" -a "${mode}" = "upgrade" ]; then
@@ -479,7 +480,8 @@ UPGRADE=0
 QUIET=0
 TF="${ftmpdir}/test.$$"
 MYDIR="${workdir}/tmp/src.$$"
-REPO=`cbsd getinfo -q repo`
+REPO=$( getinfo -q repo )
+[ -z "${inter}" ] && inter=1
 
 [ -z "${action}" ] && err 1 "Give me action"
 
@@ -506,12 +508,12 @@ for i in ${REPO}; do
 	if [ "${ver}" = "any" ]; then
 	    ver="[[:alnum:]]"
 	else 
-	    [ -z "${ver}" ] && ver=`/sbin/sysctl -n kern.osrelease|cut -d "-" -f1`
+	    [ -z "${ver}" ] && ver=$( /sbin/sysctl -n kern.osrelease|cut -d "-" -f1 )
 	fi
 	if [ "${arch}" = "any" ]; then
 	    arch="[[:alnum:]]"
 	else
-	    [ -z "${arch}" ] && arch=`/sbin/sysctl -n hw.machine_arch`
+	    [ -z "${arch}" ] && arch=$( /sbin/sysctl -n hw.machine_arch )
 	fi
 	    grep -E ${arch}_${ver} ${TF} |cut -d " " -f2-100
     #rm -f ${TF}
@@ -571,16 +573,22 @@ done
 	mkdir -p ${MYDIR}
 	getimg
 	[ "${usehelpers}" = "1" ] && gethelpers ${name} ${name}
+
 	${ECHO} "${MAGENTA}Done... Importing...${NORMAL}"
-	cbsd jimport jname=${name}
+	if [ -n "${newjname}" ]; then
+	    name="${newjname}"
+	    jimport jname=${name} newjname="${name}"
+	else
+	    jimport jname=${name}
+	fi
+
 	if [ -f "${importdir}/${name}.img" ]; then
 	    ${ECHO} "${MAGENTA}Import complete${NORMAL}"
 	    getyesno "${BOLD}Do you want to remove source image ${importdir}/${name}.img ?${NORMAL}"
 	    [ $? -eq 0 -o $? -eq 3 ] && rm -f ${importdir}/${name}.img
 	fi
-	[ "${usehelpers}" = "1" ] && cbsd jconfig jname=${name} ${name}cfg
-	cbsd jsetup-tui jname=${name} ip4_addr interface astart host_hostname
-	cbsd jconfig mode=list jname=${name}
+	[ "${usehelpers}" = "1" ] && jconfig jname=${name} ${name}cfg
+	[ ${inter} -ne 0 ] && jsetup-tui jname=${name} repo ip4_addr interface astart host_hostname
 	;;
     "helpers")
 	gethelpers

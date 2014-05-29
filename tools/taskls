@@ -1,0 +1,115 @@
+#!/usr/local/bin/cbsd
+#v10.0.6
+MYARG=""
+MYOPTARG=""
+MYDESC="List of task queue and status"
+CBSDMODULE="taskd"
+EXTHELP="wf_taskd.html"
+
+. ${subr}
+. ${inventory}
+. ${system}
+. ${color}
+. ${strings}
+
+init $*
+
+[ -z "${display}" ] && display="id,status,owner,cmd,logfile,errcode"
+#[ "${shownode}" = "1" ] && display="nodename,${display}"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |tr ',' '|')
+
+# upper for header
+myheader=$(echo ${mydisplay} |tr '[:lower:]' '[:upper:]')
+
+conv_status()
+{
+    case "${status}" in
+	0)
+	    status="Pending"
+	    ;;
+	1)
+	    status="In Progress"
+	    ;;
+	2)
+	    status="Complete"
+	    ;;
+	*)
+	    status="Unknown"
+	    ;;
+    esac
+}
+
+
+show_header()
+{
+    local _header="${BOLD}${myheader}${NORMAL}"
+    [ ${header} -ne 0 ] && $ECHO ${_header}
+}
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+    local _i IFS
+
+    #   set sqlfile for ". rcconf" including
+    if [ -n "${1}" ]; then
+        sqlfile="$1"
+    else
+        sqlfile="cbsdtaskd"
+    fi
+
+    IFS="|"
+
+    cbsdsql ${sqlfile} SELECT id,status,owner,cmd,logfile,errcode FROM taskd| while read id status owner cmd logfile errcode; do
+	conv_status
+	echo -e "${NORMAL}$id|$status|$owner|$cmd|$logfile|$errcode${NORMAL}"
+    done
+    IFS=" "
+}
+
+show_remote()
+{
+
+    show_header
+
+    [ -z "${node}" ] && node=$(cbsd node mode=list header=0 allinfo=0)
+
+    for _n in $node; do
+	nodename="${_n}"
+	show_jaildata_from_sql "inv.${_n}"
+    done
+}
+
+show_local()
+{
+    local _errcode _status
+
+    show_header
+
+    show_jaildata_from_sql cbsdtaskd
+}
+
+show_tasks()
+{
+
+    if [ -n "${node}" ]; then
+	show_remote
+	exit
+    fi
+
+    if [ -n "${alljails}" ]; then
+	show_local
+	header=0
+	show_remote
+    else
+	show_local
+    fi
+
+}
+
+## MAIN
+[ -z "${header}" ] && header=1
+#sqldelimer=" "
+show_tasks|/usr/bin/column -s "|" -t

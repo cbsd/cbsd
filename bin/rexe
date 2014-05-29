@@ -1,12 +1,13 @@
 #!/usr/local/bin/cbsd
-#v9.2.2
+#v10.0.6
 MYARG=""
-MYOPTARG="node nodelist cmdfile netgroup quiet tty"
+MYOPTARG="node nodelist cmdfile netgroup quiet tty tryoffline"
 MYDESC="Execute remote command by ssh on the node"
 ADDHELP="node - comma-separated host list, eg node=s1,s2\n\
 nodelist - path to ascii file with node list\n\
 quiet=1 - execute cmd silency\n\
 tty=1 force tty alloc or force no tty\n\
+tryoffline=1 - try to fetch inventory when node is offline\n\
 EXAMPLES:\n\
 cbsd rexe node=s1.my.domain ls -la /tmp \n\
 cbsd rexe hostlist=/tmp/linuxhosts scr=/root/bin/sh.sh \n\
@@ -14,6 +15,8 @@ cbsd rexe host=\"s1 s2 s3\" date \n"
 
 . ${subr}
 . ${strings}
+. ${inventory}
+. ${nodes}
 
 init $*
 
@@ -29,21 +32,25 @@ CONCURRENT=0
 MULTIHOST=0
 TTY=1
 
+
 ssh_connect() {
+    local ret
 
-if [ "${TTY}" = 0 ]; then 
-    TTYOP="-T"
-else
-    TTYOP="-tt"
-fi
+    if [ "${TTY}" = 0 ]; then
+	TTYOP="-T"
+    else
+	TTYOP="-tt"
+    fi
 
-#    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
-#    ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
-ssh -oControlPath=${sshdir}/sockets/%r@%h:%p $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
+    #    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
+    #    ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
+    ssh -oControlPath=${sshdir}/sockets/%r@%h:%p $SSH_ARGS ${TTYOP} "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"| \
 	    while read SSH_LINE ; do
 		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
 #		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
 	    done
+    ret=$?
+    return ${ret}
 }
 
 ##############################
@@ -104,7 +111,6 @@ run_child() {
 # issue:  Cannot call get_next_host inside $() or `` because our trap won't be able to kill that.
 #     solution: avoid subshell here by directing to a file.
 	rm -f $TEMP_DIR/$CHILDNUM.next_host
-#echo "DDAA"
 	get_next_host >$TEMP_DIR/$CHILDNUM.next_host
 	HOST=`cat $TEMP_DIR/$CHILDNUM.next_host`
 	if [ -z "$HOST" ] ; then
@@ -116,7 +122,7 @@ run_child() {
 	rm -f "$TEMP_DIR/$CHILDNUM.active"
 	echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
 #	cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"
-	NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"`
+	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\" )
 
 	if [ -z "${NODEDATA}" ]; then
 	    echo "${HOST}: No such node in base"
@@ -126,9 +132,18 @@ run_child() {
 	sqllist "$NODEDATA" myip myport mykey
 	SSH_ARGS="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
 
+	if [ ${tryoffline} -ne 1 ]; then
+	    if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
+		echo "Node is offline: ${HOST}"
+		continue
+	    fi
+	fi
+
 #	ssh_connect > $TEMP_DIR/$HOST.out
 #	cat $TEMP_DIR/$HOST.out
 	ssh_connect
+	ret=$?
+	[ $ret -eq 0 ] && update_idle ${HOSTLIST}
 	[ $TTY -eq 0 ] && exit
 	done
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: CHILD #$CHILDNUM done" 1>&2
@@ -171,45 +186,53 @@ spew_hostlist() {
 
 
 ## Main()
-
 trap shutdown SIGINT
 trap shutdown SIGTERM
 trap spew_hostlist SIGQUIT
 trap "exit 0" SIGHUP
 
 [ -n "${blocking}" ] && BLOCKING=1 && shift
-[ -n "${quiet}" ] && {
+
+if [ -n "${quiet}" ]; then
     QUIET=1
     DEBUG=0
     SSH_VERBOSE="-q"
     shift
-}
+fi
 
 [ -n "${debug}" ] && DEBUG="${debug}" && shift
 [ -n "${node}" ] && HOSTLIST=`echo ${node}|tr ',' ' '` && shift
 [ -n "${cmd}" ] && THESCRIPT="${cmd}" && shift
 [ -n "${tty}" ] && TTY=${tty} && shift
 
-[ -n "${nodelist}" ] && {
+if [ -z "${tryoffline}" ]; then
+    tryoffline=0
+    checkforonline="tryoffline=0"
+else
+    checkforonline="tryoffline=${tryoffline}"
+    shift
+fi
+
+if [ -n "${nodelist}" ]; then
     [ ! -f "${nodelist}" ] && err 1 "${nodelist} file doesn't exist"
     HOSTLIST="$(cat $nodelist | sed -e 's/#.*//' | egrep -v "^ *$" )"
     shift
-}
+fi
 
-[ -n "${netgroup}" ] && {
+if [ -n "${netgroup}" ]; then
     # Negtgoup
     NETGROUP=$2
     NETGROUP_LIST="$(getent netgroup $NETGROUP | xargs -n 1 echo | sed -n '/^(.*,$/s/[,(]//gp')"
     [ -z "${NETGROUP_LIST}" ] && err 1 "Failed to get netgroup: $NETGROUP"
     HOSTLIST="$NETGROUP_LIST $HOSTLIST"
     shift
-}
+fi
 
-[ -n "${cmdfile}" ] && {
+if [ -n "${cmdfile}" ]; then
     [ ! -e "$cmdfile" ] && err 1 "myssh: Script File '$SCRIPTFILE' does not exist!"
     THESCRIPT="$THESCRIPT $(cat $cmdfile )"
     shift
-}
+fi
 
 HOSTLIST=$(echo "$HOSTLIST" | sed -e 's/#.*//' | egrep -v "^ *$" )
 [ -z "${HOSTLIST}" ] && err 1 "host list is empty"
@@ -226,18 +249,27 @@ if [ "${COUNT_HOSTS}" = "1" ]; then
 	TTYOP="-tt"
     fi
 
-    NODEDATA=`cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOSTLIST}\"`
+    NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOSTLIST}\" )
 
     if [ -z "${NODEDATA}" ]; then
         err 1 "${HOST}: No such node in base"
     fi
 
     sqllist "$NODEDATA" myip myport mykey
+
+    if [ ${tryoffline} -ne 1 ]; then
+	if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
+	    err 1 "Node is offline: ${HOSTLIST}"
+	fi
+    fi
+
     SSH_ARGS="-l ${cbsduser} -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
     SSHMUX="${sshdir}/sockets/${cbsduser}@${myip}:${myport}"
 #    [ ! -S "${SSHMUX}" ] && err 1 "No such socket ${SSHMUX}. Please run nodepinger service"
-    ssh -oControlPath=${sshdir}/sockets/%r@%h:%p -t ${SSH_ARGS} ${TTOP} -C ${THESCRIPT}
-    exit
+    ssh -oControlPath=${sshdir}/sockets/%r@%h:%p -t ${SSH_ARGS} ${TTOP} -C "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"
+    ret=$?
+    [ $ret -eq 0 ] && update_idle ${HOSTLIST}
+    exit $ret
 fi
 
 #TTY=1

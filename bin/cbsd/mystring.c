@@ -46,7 +46,10 @@ __FBSDID("$FreeBSD: head/bin/sh/mystring.c 229219 2012-01-01 22:15:38Z jilles $"
  *	number(s)		Convert a string of digits to an integer.
  *	is_number(s)		Return true if s is a string of digits.
  */
-
+#ifdef CBSD
+#include <stdio.h>
+#include "output.h"
+#endif
 #include <stdlib.h>
 #include "shell.h"
 #include "syntax.h"
@@ -109,6 +112,7 @@ is_number(const char *p)
 	return 1;
 }
 
+#ifdef CBSD
 int
 is_numbercmd(int argc, char **argv)
 {
@@ -118,3 +122,13 @@ is_numbercmd(int argc, char **argv)
 	    return 1;
 }
 
+int
+strlencmd(int argc, char **argv)
+{
+	if (argv[1])
+	    out1fmt("%u",(unsigned int)strlen(argv[1]));
+	else
+	    out1fmt("0");
+	return 0;
+}
+#endif

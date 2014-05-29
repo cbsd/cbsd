@@ -481,6 +481,53 @@ command(void)
 		consumetoken(t);
 		checkkwd = CHKKWD | CHKALIAS;
 		break;
+/*
+#ifdef CBSD
+	case TTHRFOR:
+		if (readtoken() != TWORD || quoteflag || ! goodname(wordtext))
+			synerror("Bad for loop variable");
+		n1 = (union node *)stalloc(sizeof (struct nfor));
+		n1->type = NTHRFOR;
+		n1->nfor.var = wordtext;
+		while (readtoken() == TNL)
+			;
+		if (lasttoken == TWORD && ! quoteflag && equal(wordtext, "in")) {
+			app = &ap;
+			while (readtoken() == TWORD) {
+				n2 = makename();
+				*app = n2;
+				app = &n2->narg.next;
+			}
+			*app = NULL;
+			n1->nfor.args = ap;
+			if (lasttoken != TNL && lasttoken != TSEMI)
+				synexpect(-1);
+		} else {
+			static char argvars[5] = {
+				CTLVAR, VSNORMAL|VSQUOTE, '@', '=', '\0'
+			};
+			n2 = (union node *)stalloc(sizeof (struct narg));
+			n2->type = NARG;
+			n2->narg.text = argvars;
+			n2->narg.backquote = NULL;
+			n2->narg.next = NULL;
+			n1->nfor.args = n2;
+			if (lasttoken != TNL && lasttoken != TSEMI)
+				tokpushback++;
+		}
+		checkkwd = CHKNL | CHKKWD | CHKALIAS;
+		if ((t = readtoken()) == TDO)
+			t = TDONE;
+		else if (t == TBEGIN)
+			t = TEND;
+		else
+			synexpect(-1);
+		n1->nfor.body = list(0);
+		consumetoken(t);
+		checkkwd = CHKKWD | CHKALIAS;
+		break;
+#endif
+*/
 	case TCASE:
 		n1 = (union node *)stalloc(sizeof (struct ncase));
 		n1->type = NCASE;

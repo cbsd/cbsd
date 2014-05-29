@@ -1311,6 +1311,13 @@ until:
 		cmdputs(n->nfor.var);
 		cmdputs(" in ...");
 		break;
+//#ifdef CBSD
+//	case NTHRFOR:
+//		cmdputs("thrfor ");
+//		cmdputs(n->nfor.var);
+//		cmdputs(" in ...");
+//		break;
+//#endif
 	case NCASE:
 		cmdputs("case ");
 		cmdputs(n->ncase.expr->narg.text);

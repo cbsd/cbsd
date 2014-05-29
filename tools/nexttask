@@ -1,0 +1,83 @@
+#!/usr/local/bin/cbsd
+#v10.0.6
+MYARG=""
+MYOPTARG=""
+MYDESC="Execute first new task from taskd table, waits for complete and update errcode"
+CBSDMODULE="taskd"
+EXTHELP="wf_taskd.html"
+
+. ${subr}
+. ${system}
+. ${strings}
+
+init $*
+
+
+mail_notify()
+{
+    local _msg=$( mktemp /tmp/mymsg.$$ )
+    local _result
+
+    trap "rm -f ${_msg}" HUP KILL INT ABRT BUS TERM EXIT
+
+    [ -z "${lastoutput_num}" ] && lastoutput_num=0
+
+    cat > ${_msg} <<EOF
+cmd: ${cmd}
+runtime: ${runtime} minutes
+errcode: ${_err}
+EOF
+
+if [ ${lastoutput_num} -gt 0 -a -f "${logfile}" ]; then
+    cat >> ${_msg} <<EOF
+
+last ${lastoutput_num} lines of task log (${logfile}):
+
+$( tail -n${lastoutput_num} ${logfile} )
+EOF
+fi
+
+if [ ${_err} -eq 0 ]; then
+    _result="completed"
+else
+    _result="failed"
+fi
+
+mail -s "CBSD $nodename: task $id is ${_result}" ${CBSDRCPT} <<EOF
+$( cat ${_msg} )
+EOF
+
+    rm -f ${_msg}
+    trap "" HUP KILL INT ABRT BUS TERM EXIT
+}
+
+
+## # MAIN
+A=$( cbsdsql cbsdtaskd SELECT id,user,cmd,logfile,logtype,notify FROM taskd WHERE status='0' LIMIT 1 )
+
+# code 2 - no jobs anymore
+[ -z "${A}" ] && exit 2
+
+IFS="|"
+sqllist "${A}" id user cmd logfile logtype notify
+IFS=" "
+
+#echo "Running: $id|$user|$cmd|$logfile|$logtype"
+
+[ "${logtype}" = "auto" ] && logfile="/tmp/taskd.${id}.log"
+
+_st_time=$( date "+%Y%m%d%H%M%S" )
+cbsdsql cbsdtaskd "UPDATE taskd SET status=\"1\",st_time=\"${_st_time}\",logfile=\"${logfile}\" WHERE id=\"${id}\""
+
+spawntask ${id} ${logfile} ${cmd}
+_err=$?
+_end_time=$( date "+%Y%m%d%H%M%S" )
+cbsdsql cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${_err}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
+
+runtime=$(( ( _end_time - _st_time ) / 60 ))
+
+readconf task.conf
+
+[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
+
+exit 0

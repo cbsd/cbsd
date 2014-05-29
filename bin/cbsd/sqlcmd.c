@@ -157,3 +157,28 @@ sqlitecmd(int argc, char **argv)
 
         return 0;
 }
+
+
+
+int
+update_idlecmd(int argc, char **argv)
+{
+	char *str = NULL;
+	char sql[]="UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename=''";
+
+	if (argc!=2) {
+	    out1fmt("%d, usage: update_idle <nodename>\n", argc);
+	    return 0;
+	}
+
+	str = calloc(strlen(sql)+strlen(argv[1])+1, sizeof(char *));
+
+	sprintf(str,"UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename='%s'",argv[1]);
+
+	char *a[] = { NULL, "nodes", str };
+	sqlitecmd(3, a);
+
+	free(str);
+
+	return 0;
+}
