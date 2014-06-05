@@ -12,7 +12,6 @@ EXTHELP="wf_taskd.html"
 
 init $*
 
-
 mail_notify()
 {
     local _msg=$( mktemp /tmp/mymsg.$$ )
@@ -52,17 +51,35 @@ EOF
 }
 
 
-## # MAIN
-A=$( cbsdsql cbsdtaskd SELECT id,user,cmd,logfile,logtype,notify FROM taskd WHERE status='0' LIMIT 1 )
+### MAIN ###
+A=$( cbsdsql cbsdtaskd SELECT id,user,cmd,logfile,logtype,notify,after FROM taskd WHERE status='0' LIMIT 1 )
 
 # code 2 - no jobs anymore
 [ -z "${A}" ] && exit 2
 
 IFS="|"
-sqllist "${A}" id user cmd logfile logtype notify
+sqllist "${A}" id user cmd logfile logtype notify after
 IFS=" "
 
-#echo "Running: $id|$user|$cmd|$logfile|$logtype"
+if [ ${after} -ne 0 ]; then
+    dep_status=$( cbsdsql cbsdtaskd SELECT status,errcode FROM taskd WHERE id=\"${after}\" )
+    IFS="|"
+    sqllist "${dep_status}" depstatus deperrcode
+    IFS=" "
+    [ ${depstatus} -eq 0 -o ${depstatus} -eq 1 ] && exit 0
+    # only status=2 remain here, but check it anyway
+    [ ${depstatus} -ne 2 ] && exit 0
+    if [ ${deperrcode} -ne 0 ]; then
+	# dependend job in incompleted, so mask current job is incompleted too
+	_end_time=$( date "+%Y%m%d%H%M%S" )
+	_st_time=${_end_time}
+	cbsdsql cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${deperrcode}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
+	runtime=$(( ( _end_time - _st_time ) / 60 ))
+	readconf task.conf
+	[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
+	exit 0
+    fi
+fi
 
 [ "${logtype}" = "auto" ] && logfile="/tmp/taskd.${id}.log"
 

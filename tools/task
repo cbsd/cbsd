@@ -1,12 +1,13 @@
 #!/usr/local/bin/cbsd
 #v10.0.6
 MYARG="mode"
-MYOPTARG="logfile notify autoflush node"
+MYOPTARG="logfile notify autoflush node owner after"
 MYDESC="Task queue management"
 CBSDMODULE="taskd"
 ADDHELP="mode=new <cmd>, mode=cancel <jobid>, mode=cancelall, mode=flushall\n\
 notify=0 for prevent notification of result to email\n\
-autoflush=0,1,2 (0 - all jobs stored in base, 1 - autoflush completed cmd, 2 - autoflush for all cm)\n"
+autoflush=0,1,2 (0 - all jobs stored in base, 1 - autoflush completed cmd, 2 - autoflush for all cm)\n\
+after=X - shedule a new task to run only after job with id X will be successfully completed\n"
 
 EXTHELP="wf_taskd.html"
 
@@ -21,21 +22,23 @@ init $*
 
 try_remote()
 {
+    local _ip
+    . ${nodes}
 
-#if check_locktime /usr/jails/ftmp/shmux_199.48.133.74.lock; then
-#    echo "OK"
-#fi
+    _ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${node}\" 2>/dev/null )
+    [ -z "${_ip}" ] && err 1 "${MAGENTA}No such ip for node: ${GREEN}${node}${NORMAL}"
 
-echo "NODE: ${node}"
-echo "TASK STR: $@"
-owner="${nodename}"
-echo "OWNER: ${owner}"
+    if ! check_locktime ${ftmpdir}/shmux_${_ip}.lock > /dev/null 2>&1; then
+	err 1 "${MAGENTA}Node is offline: ${GREEN}${node}${NORMAL}"
+    fi
+	rexe node=${node} cbsd task mode=new owner=${nodename} $@
+	echo "NODE: ${node}"
+	echo "TASK STR: $@"
+	owner="${nodename}"
+	echo "OWNER: ${owner}"
 
-
-exit 0
+    exit 0
 }
-
-
 
 
 ## MAIN
@@ -43,11 +46,15 @@ exit 0
 [ -n "${notify}" ] && shift
 [ -n "${autoflush}" ] && shift
 [ -n "${node}" ] && shift
+[ -n "${owner}" ] && shift
+[ -n "${after}" ] && shift
 
 shift ## mode=xxx
 
 ## place for default of all variables for remote node?
 [ -z "${notify}" ] && notify=1
+[ -z "${after}" ] && after=0
+[ -z "${owner}" ] && owner=$( whoami )
 [ -n "${node}" ] && try_remote $@
 
 
@@ -55,10 +62,11 @@ case "${mode}" in
     "new")
 	[ -z "$1" ] && err 1 "${MAGENTA}Command required${NORMAL}"
 	if [ -n "${logfile}" ]; then
-	    _err=$( cbsdsql cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush ) VALUES ( \"$@\", 0, \"$logfile\", 0, \"$notify\", \"$autoflush\" )" )
+	    _err=$( cbsdsql cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush,owner,after ) VALUES ( \"$@\", 0, \"$logfile\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\" )" )
 	else
-	    _err=$( cbsdsql cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush ) VALUES ( \"$@\", 0, \"$notify\", \"$autoflush\" )" )
+	    _err=$( cbsdsql cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush,owner,after ) VALUES ( \"$@\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\" )" )
 	fi
+
 	[ $? -ne 0 ] && err 1 "${MAGENTA}Error: ${_err}${NORMAL}"
 	tid=$( cbsdsql cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"$@\" AND status=0 ORDER BY id DESC LIMIT 1" )
 	[ -z "${tid}" ] && err 1 "${MAGENTA}Error: ${_err}${NORMAL}"
