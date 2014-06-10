@@ -1,6 +1,5 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 #v10.0.6
-globalconf="${workdir}/cbsd.conf";
 MYARG="jconf"
 MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist"
 MYDESC="Create jail from config file"
@@ -10,8 +9,6 @@ fstablocal = additional fstab file stored as fstab.local\n"
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate.html"
 
-[ -f ${globalconf} ] || err 1 "no such conf file";
-. ${globalconf}
 . ${subr}
 . ${system}
 . ${inventory}
@@ -73,7 +70,7 @@ init_target_arch
 init_basedir
 init_kerneldir
 
-cbsd jstatus jname=${jname} > /dev/null 2>&1
+jstatus jname=${jname} > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
 
 get_base
@@ -110,12 +107,12 @@ if [ "${mdsize}" != "0" ]; then
     touch "${mdimage}"
     dd if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "Error: Couldn't create the image file. ${mdimage}"
     # Attach the .img file as a memory disk.
-    mdimagedevice=`mdconfig -a -t vnode -f "${mdimage}"`
+    mdimagedevice=$( mdconfig -a -t vnode -f "${mdimage}" )
     [ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
     newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
     mdconfig -d -u ${mdimagedevice}
 # mount here
-    cbsd mountmd jroot=${data} mdfile=${mdimage}
+    mountmd jroot=${data} mdfile=${mdimage}
 fi
 ## MD backend
 
@@ -123,7 +120,7 @@ populate_freebsd_world
 mkfstab
 
 if [ "${ip4_addr}" = "DHCP" ]; then
-    ip4_addr=$( cbsd dhcpd )
+    ip4_addr=$( dhcpd )
     sysrc -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
 fi
 
@@ -135,7 +132,7 @@ cp $temprcconf $rcconf
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
 # Finnaly export to SQLite
-cbsd jregister jname=${jname} mode=new
+jregister jname=${jname} mode=new status=3
 
 if [ $? -eq 0 ]; then
     ${ECHO}
@@ -147,15 +144,17 @@ if [ $? -eq 0 ]; then
     if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
 	if [ ! -f "${pkglist}" ]; then
 #	    ${ECHO} "${MAGENTA}pkglist specified but not exist: ${GREEN}${pkglist}${NORMAL}"
-	    /usr/local/bin/cbsd pkg mode=bootstrap jname=${jname}
-	    /usr/local/bin/cbsd pkg mode=install name="${pkglist}" jname=${jname}
+	    pkg mode=bootstrap jname=${jname}
+	    pkg mode=install name="${pkglist}" jname=${jname}
 	else
-	    /usr/local/bin/cbsd pkg mode=bootstrap jname=${jname}
-	    /usr/local/bin/cbsd pkg mode=install pkglist="${pkglist}" jname=${jname}
+	    pkg mode=bootstrap jname=${jname}
+	    pkg mode=install pkglist="${pkglist}" jname=${jname}
 	    [ $delpkglist -eq 1 ] && rm -f ${pkglist}
 	fi
     fi
-    [ "${mdsize}" != "0" ] && cbsd unmountmd jroot=${data}
+    [ "${mdsize}" != "0" ] && unmountmd jroot=${data}
+    # set status to Off
+    cbsdsql local UPDATE jails SET status=0 WHERE jname=\"${jname}\"
     exit 0
 else
     ${ECHO}

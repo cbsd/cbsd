@@ -1,5 +1,5 @@
 #!/bin/sh
-#v10.0.0
+#v10.0.6
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="out repo conf"
@@ -22,21 +22,22 @@ sort_and_upgrade()
     local list i tst
     local tmp1="${tmpdir}/pkgtmp.$$"
 
-    list=`/usr/sbin/pkg ${PKGOPT} rquery "%n-%v"`
+    list=$( /usr/sbin/pkg ${PKGOPT} rquery "%n-%v" )
 
     [ $? -ne 0 ] && err 1 "${MAGENTA}Repository not configured or network error${NORMAL}"
 
     printf "${GREEN}New version detected${NORMAL}\n${MAGENTA}Create package list.\n Don't interrupt processing. It will take a long...${NORMAL}\n"
 
+    truncate -s0 ${tmp1} ${LISTFILE}
+
     for i in ${list}; do
-	tst=`/usr/sbin/pkg ${PKGOPT} query "%ro" $i 2>/dev/null`
+	tst=$( /usr/sbin/pkg ${PKGOPT} query "%ro" $i 2>/dev/null )
 	[ -z "${tst}" ] &&  dot "/usr/sbin/pkg ${PKGOPT} query" && echo $i >> ${tmp1}
     done
 
-    truncate -s0 ${LISTFILE}
     printf "${MAGENTA}\nSorting. Please wait...${NORMAL}\n"
 
-    sort -u $tmp1 | \
+    cat ${tmp1} |/usr/bin/sort -u | \
 	while read _p; do
 #       CATEGORY=`pkg rquery \"%C\" $_p | xargs`
 #       [ "${CATEGORY}"  = "local" ] && continue
@@ -45,7 +46,8 @@ sort_and_upgrade()
 	echo "\"$_p\" \"\" off \ " >> ${LISTFILE}
 	done
 
-    rm -f ${tmp1}
+	/usr/bin/xz ${LISTFILE}
+	rm -f ${tmp1}
 
 }
 
@@ -79,7 +81,7 @@ UPDATED="0"
 #[ -z "${PKGCONF}" ] && PKGOPT="-C ${PKGCONF}"
 
 printf "${MAGENTA}Update local copy of repository catalogues...${NORMAL}"
-tst=`/usr/sbin/pkg update 2>&1`
+tst=$( /usr/sbin/pkg update 2>&1 )
 [ $? -ne 0 ] && err 1 "${MAGENTA}pkg update failed: ${NORMAL}${tst}"
 
 allrepos=$(find /var/db/pkg/ -type f -name repo-\*.sqlite -exec md5 -qs {} \; | xargs)
@@ -95,26 +97,26 @@ fi
 REPOFILE="repo"
 LISTFILE="${tmpdir}/pkg_${REPOFILE}.list"
 
-if [ "${UPDATED}" -eq 1 -o ! -f "${LISTFILE}" ]; then
+if [ "${UPDATED}" -eq 1 -o ! -f "${LISTFILE}.xz" ]; then
     echo "${tst}" > ${PKG_MODIFIED}
     sort_and_upgrade
 else
     printf "${GREEN}Not changed${NORMAL}"
 fi
 
-[ ! -f "${LISTFILE}" ] && err 1 "${MAGENTA}No such sorted pkglist file${NORMAL}"
+[ ! -f "${LISTFILE}.xz" ] && err 1 "${MAGENTA}No such sorted pkglist file${NORMAL}"
 
 cat > $tmp2 << EOF
 --colors --backtitle "\Z1Select packages" --separate-output --title "Select packages" --checklist "Use space for mark packages \n" 0 61 0
 EOF
 
-cat ${LISTFILE} >> ${tmp2}
+/usr/bin/xzcat ${LISTFILE}.xz >> ${tmp2}
 
 printf "${MAGENTA}\nDialogizing...${NORMAL}"
 ${DIALOG} --file ${tmp2} 2>$out
 
-if [ $? -ne 0 -o `wc -l ${out}|awk '{printf $1}'` = "0" ]; then
-    [ "${REPOFILE}" = "default" ] && rm -f ${LISTFILE}
+if [ $? -ne 0 -o $( wc -l ${out}|awk '{printf $1}' ) = "0" ]; then
+    [ "${REPOFILE}" = "default" ] && rm -f ${LISTFILE}.xz
     rm -f ${out} && err 1 "${MAGENTA}No pkg selected${NORMAL}"
 fi
 
