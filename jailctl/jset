@@ -21,97 +21,278 @@ init $*
 # jid, interface, ip4_addr and jname must be set
 modify_ipaddr()
 {
-    local _A _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs IFS _dhcp
+	local _A _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs IFS _dhcp
 
-    _A=$( cbsdsql local SELECT interface,ip4_addr FROM jails WHERE jname=\"${jname}\" )
-    sqllist "${_A}" _interface _ip4_addr_old
+	_A=$( cbsdsql local SELECT interface,ip4_addr FROM jails WHERE jname=\"${jname}\" )
+	sqllist "${_A}" _interface _ip4_addr_old
 
-    if [ "${_interface}" = "0" ]; then
-	${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently disabled because option interface is "0"${NORMAL}"
-	return 0
-    fi
-
-    IFS=","
-
-    for _pureip in ${_ip4_addr_old}; do
-	iptype ${_pureip}
-	_inet=$?
-	_iface=$( getnics-by-ip ip=${_pureip} )
-	ipwmask ${_pureip}
-	if [ -n "$IWM" ]; then
-	    case ${_inet} in
-		1)
-		    _MODIF="inet"
-		    ;;
-		2)
-		    _MODIF="inet6"
-		    ;;
-	    esac
-	    /sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias
-        fi
-    done
-
-    _IP4=""
-    _IP6=""
-
-    for _pureip in ${ip4_addr}; do
-	if [ "${_pureip}" = "DHCP" ]; then
-	    _dhcp=$( dhcpd )
-	    _pureip="${_dhcp}"
+	if [ "${_interface}" = "0" ]; then
+		${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently disabled because option interface is "0"${NORMAL}"
+		return 0
 	fi
-	iptype ${_pureip}
-	_inet=$?
-	_iface=$( getnics-by-ip ip=${_pureip} )
-	ipwmask ${_pureip}
-	if [ -n "$IWM" ]; then
-	    case ${_inet} in
-        	1)
-		    _MODIF="inet"
-		    if [ -z "${_IP4}" ]; then
-			_IP4="${_pureip}"
-		    else
-			_IP4="${_IP4},${_pureip}"
-		    fi	
-		    ;;
-		2)
-		    _MODIF="inet6"
-		    if [ -z "${_IP6}" ]; then
-			_IP6="${_pureip}"
-		    else
-			_IP6="${_IP6},${_pureip}"
-		    fi
-		    ;;
-	    esac
-	    /sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias
-	fi
-    done
 
-    IFS=" "
+	IFS=","
 
-    [ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr |sed s:DHCP:${_dhcp}:g )
+	for _pureip in ${_ip4_addr_old}; do
+		iptype ${_pureip}
+		_inet=$?
+		_iface=$( getnics-by-ip ip=${_pureip} )
+		ipwmask ${_pureip}
+		if [ -n "$IWM" ]; then
+			case ${_inet} in
+				1)
+					_MODIF="inet"
+					;;
+				2)
+					_MODIF="inet6"
+					;;
+			esac
+			/sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias
+		fi
+	done
 
-    #construct ipX.addr string 
-    _nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
+	_IP4=""
+	_IP6=""
 
-    /usr/sbin/jail -m ${_nIPs} jid=${jid}
-    cbsdsql local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}${ip4_addr}${NORMAL}"
+	for _pureip in ${ip4_addr}; do
+		if [ "${_pureip}" = "DHCP" ]; then
+			_dhcp=$( dhcpd )
+			_pureip="${_dhcp}"
+		fi
+		iptype ${_pureip}
+		_inet=$?
+		_iface=$( getnics-by-ip ip=${_pureip} )
+		ipwmask ${_pureip}
+		if [ -n "$IWM" ]; then
+			case ${_inet} in
+				1)
+					_MODIF="inet"
+					if [ -z "${_IP4}" ]; then
+						_IP4="${_pureip}"
+					else
+						_IP4="${_IP4},${_pureip}"
+					fi
+					;;
+				2)
+					_MODIF="inet6"
+					if [ -z "${_IP6}" ]; then
+						_IP6="${_pureip}"
+					else
+						_IP6="${_IP6},${_pureip}"
+					fi
+					;;
+			esac
+			/sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias
+		fi
+	done
+
+	IFS=" "
+
+	[ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr |sed s:DHCP:${_dhcp}:g )
+
+	#construct ipX.addr string 
+	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
+
+	/usr/sbin/jail -m ${_nIPs} jid=${jid}
+	cbsdsql local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
+	${ECHO} "${argpart}: ${MAGENTA}${ip4_addr}${NORMAL}"
 }
+
+
+# jid must be set
+modify_allow_mount()
+{
+	cbsdsql local "UPDATE jails SET ${i}=\"${allow_mount}\" WHERE jname=\"${jname}\""
+	/usr/sbin/jail -m allow.mount=${allow_mount} jid=${jid}
+	${ECHO} "${argpart}: ${MAGENTA}${allow_mount}${NORMAL}"
+}
+
+# jid must be set
+modify_allow_nullfs()
+{
+	local allow_mount
+
+	cbsdsql local "UPDATE jails SET ${i}=\"${allow_nullfs}\" WHERE jname=\"${jname}\""
+	/usr/sbin/jail -m allow.mount.nullfs=${allow_nullfs} jid=${jid}
+
+	${ECHO} "${argpart}: ${MAGENTA}${allow_nullfs}${NORMAL}"
+	[ ${allow_nullfs} -eq 0 ] && return 0
+
+	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
+	allow_mount=$( cbsdsql local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
+	if [ "${allow_mount}" = "0" ]; then
+		cbsdsql local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
+		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${ECHO} "allow_mount: ${MAGENTA}1${NORMAL}"
+	fi
+}
+
+
+# jid must be set
+modify_allow_procfs()
+{
+	local allow_mount
+
+	cbsdsql local "UPDATE jails SET ${i}=\"${allow_procfs}\" WHERE jname=\"${jname}\""
+	/usr/sbin/jail -m allow.mount.procfs=${allow_procfs} jid=${jid}
+
+	${ECHO} "${argpart}: ${MAGENTA}${allow_procfs}${NORMAL}"
+	[ ${allow_procfs} -eq 0 ] && return 0
+
+	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
+	allow_mount=$( cbsdsql local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
+	if [ "${allow_mount}" = "0" ]; then
+		cbsdsql local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
+		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${ECHO} "allow_mount: ${MAGENTA}1${NORMAL}"
+	fi
+}
+
+
+# jid must be set
+modify_allow_tmpfs()
+{
+	cbsdsql local "UPDATE jails SET ${i}=\"${allow_tmpfs}\" WHERE jname=\"${jname}\""
+	/usr/sbin/jail -m allow.mount.tmpfs=${allow_tmpfs} jid=${jid}
+
+	${ECHO} "${argpart}: ${MAGENTA}${allow_tmpfs}${NORMAL}"
+	[ ${allow_tmpfs} -eq 0 ] && return 0
+
+	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
+	allow_mount=$( cbsdsql local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
+	if [ "${allow_mount}" = "0" ]; then
+		cbsdsql local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
+		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${ECHO} "allow_mount: ${MAGENTA}1${NORMAL}"
+	fi
+}
+
 
 # jid, interface, ip4_addr and jname must be set
 modify_cpuset()
 {
-    cbsdsql local UPDATE jails SET ${i}=\"${cpuset}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}${cpuset}${NORMAL}"
-    cpuset -c -l ${cpuset} -j ${jid}
+	cbsdsql local UPDATE jails SET ${i}=\"${cpuset}\" WHERE jname=\"${jname}\"
+	${ECHO} "${argpart}: ${MAGENTA}${cpuset}${NORMAL}"
+	cpuset -c -l ${cpuset} -j ${jid}
 }
+
+# mount_src
+modify_mount_src()
+{
+	local _ver _dst _mount_src
+
+	#push new variable in tmp stack
+	_mount_src="${mount_src}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_src="${_mount_src}"
+
+	cbsdsql local "UPDATE jails SET ${i}=\"${mount_src}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${MAGENTA}${mount_src}${NORMAL}"
+
+	. ${workdir}/universe.subr
+
+	init_srcdir
+	[ ! -d "${SRC_DIR}" ] && ${ECHO} "${MAGENTA}No such src dir: ${GREEN}${SRC_DIR}${NORMAL}"
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+	_dst="${path}/usr/src"
+
+	case "${mount_src}" in
+		0)
+			is_mounted ${_dst} && umount -f ${_dst}
+			;;
+		1)
+			is_mounted ${_dst} && err 1 "${MAGENTA}Already mounted: ${GREEN}${_dst}${NORMAL}"
+			[ ! -d "${_dst}" ] && mkdir -p ${_dst}
+			/sbin/mount_nullfs -oro ${SRC_DIR} ${_dst}
+			;;
+	esac
+}
+
+
+# mount_ports
+modify_mount_ports()
+{
+	local _ver _dst _mount_ports
+
+	#push new variable in tmp stack
+	_mount_ports="${mount_ports}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_ports="${_mount_ports}"
+
+	cbsdsql local "UPDATE jails SET ${i}=\"${mount_ports}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${MAGENTA}${mount_ports}${NORMAL}"
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+	_dst="${path}/usr/ports"
+
+	case "${mount_ports}" in
+		0)
+			is_mounted ${_dst} && umount -f ${_dst}
+			;;
+		1)
+			is_mounted ${_dst} && err 1 "${MAGENTA}Already mounted: ${GREEN}${_dst}${NORMAL}"
+			[ ! -d "${_dst}" ] && mkdir -p ${_dst}
+			/sbin/mount_nullfs -oro /usr/ports ${_dst}
+			;;
+	esac
+}
+
+
+# mount_kernel
+modify_mount_kernel()
+{
+	local _ver _dst _mount_kernel
+
+	#push new variable in tmp stack
+	_mount_kernel="${mount_kernel}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_kernel="${_mount_kernel}"
+
+	cbsdsql local "UPDATE jails SET ${i}=\"${mount_kernel}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${MAGENTA}${mount_kernel}${NORMAL}"
+
+	. ${workdir}/universe.subr
+	init_kerneldir
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+	_dst="${path}/boot/kernel"
+
+	case "${mount_kernel}" in
+		0)
+			is_mounted ${_dst} && umount -f ${_dst}
+			;;
+		1)
+			is_mounted ${_dst} && err 1 "${MAGENTA}Already mounted: ${GREEN}${_dst}${NORMAL}"
+			[ ! -d "${_dst}" ] && mkdir -p ${_dst}
+			/sbin/mount_nullfs -oro ${KERNEL_DIR} ${_dst}
+			;;
+	esac
+}
+
 
 update_jails()
 {
-    eval VAL=\$$i
-    cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
-    ${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
+	eval VAL=\$$i
+	cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+	${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
 }
+
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
 jid=$( jstatus jname=${jname} )
@@ -119,31 +300,52 @@ jid=$( jstatus jname=${jname} )
 
 for n in $@; do
 
-    argpart=${n%%=*}
+	argpart=${n%%=*}
 
-    for i in ${JARG}; do
-        if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
-            ##### check for already running
-            if [ ${jid} -ne 0  ]; then
-		case "${argpart}" in
-		    "ip4_addr")
-			modify_ipaddr
-			;;
-		    "cpuset")
-			modify_cpuset
-			;;
-		    astart|applytpl|floatresolv|exec_consolelog)
-			update_jails
-			;;
-		    *)
-			${ECHO} "${argpart}: ${MAGENTA}on-the-fly currentlry unimplemented${NORMAL}"
-			;;
-                esac
-            else
-		update_jails
-            fi
-        fi
-    done
+	for i in ${JARG}; do
+		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
+			##### check for already running
+			if [ ${jid} -ne 0  ]; then
+				case "${argpart}" in
+					"ip4_addr")
+						modify_ipaddr
+						;;
+					"cpuset")
+						modify_cpuset
+						;;
+					astart|applytpl|floatresolv|exec_consolelog)
+						update_jails
+						;;
+					mount_src)
+						modify_mount_src
+						;;
+					mount_ports)
+						modify_mount_ports
+						;;
+					mount_kernel)
+						modify_mount_kernel
+						;;
+					allow_mount)
+						modify_allow_mount
+						;;
+					allow_nullfs)
+						modify_allow_nullfs
+						;;
+					allow_tmpfs)
+						modify_allow_tmpfs
+						;;
+					allow_procfs)
+						modify_allow_procfs
+						;;
+					*)
+						${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently unimplemented${NORMAL}"
+						;;
+				esac
+			else
+				update_jails
+			fi
+		fi
+	done
 done
 
 # exit code 0 is nessesary for dot()
