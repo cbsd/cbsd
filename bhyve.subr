@@ -9,33 +9,31 @@
 # init tmuxcmd
 init_bhyve()
 {
-    local _required_kmods="vmm if_tap if_bridge" _i _res
+	local _required_kmods="vmm if_tap if_bridge" _i _res
 
-#    /usr/bin/grep -qw POPCNT /var/run/dmesg.boot || err 1 "${MAGENTA}Your CPU does not appear to support ${GREEN}EPT${NORMAL}"
-    res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
-    [ $? -ne 0 ] && err 1 "${MAGENTA}Your CPU does not appear to support ${GREEN}EPT${NORMAL}"
+	res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
+	[ $? -ne 0 ] && err 1 "${MAGENTA}Your CPU does not appear to support ${GREEN}EPT${NORMAL}"
 
-    for _i in ${_required_kmods}; do
-        if ! kldstat -qm ${_i} >/dev/null 2>&1; then
-            ${ECHO} "${MAGENTA}No kldloaded module: ${GREEN}${_i}${NORMAL}"
-            err 1 "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
-        fi
-    done
+	for _i in ${_required_kmods}; do
+		if ! /sbin/kldstat -qm ${_i} >/dev/null 2>&1; then
+			${ECHO} "${MAGENTA}No kldloaded module: ${GREEN}${_i}${NORMAL}"
+			err 1 "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
+		fi
+	done
 
-    tmuxcmd=$(which tmux)
-    [ -z "${tmuxcmd}" ] && err 1 "${MAGENTA}Current version required for ${GREEN}tmux${MAGENTA}\nPlease ${GREEN}pkg install tmux ${MAGENTA} or ${GREEN}make -C /usr/ports/sysutils/tmux install${MAGENTA} it.${NORMAL}"
+	tmuxcmd=$(which tmux)
+	[ -z "${tmuxcmd}" ] && err 1 "${MAGENTA}Current version required for ${GREEN}tmux${MAGENTA}\nPlease ${GREEN}pkg install tmux ${MAGENTA} or ${GREEN}make -C /usr/ports/sysutils/tmux install${MAGENTA} it.${NORMAL}"
 
 }
-
 
 
 # autoincement for $bhyve_pci_index variable which symbolizes pci id bus
 next_pci_id()
 {
-    [ -z "${bhyve_pci_index}" ] && bhyve_pci_index="0"
-    bhyve_pci_index=$(( bhyve_pci_index + 1 ))
-    [ ${bhyve_pci_index} -gt 31 ] && ${ECHO} "${MAGENTA}No free available bhyve_pci_index, 31 is max${NORMAL}" && return 1
-    return 0
+	[ -z "${bhyve_pci_index}" ] && bhyve_pci_index="0"
+	bhyve_pci_index=$(( bhyve_pci_index + 1 ))
+	[ ${bhyve_pci_index} -gt 31 ] && ${ECHO} "${MAGENTA}No free available bhyve_pci_index, 31 is max${NORMAL}" && return 1
+	return 0
 }
 
 # export arguments for bhyve about dsk vms in $dsk_args variable
@@ -49,68 +47,66 @@ next_pci_id()
 # fi
 compile_dsk_args()
 {
-    local dsk_id=0
-    local sqldelimer=" "
+	local dsk_id=0
+	local sqldelimer=" "
 
-    eval $( cbsdsql local SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
-	if ! next_pci_id; then
-	    # no free pci bus
-	    exit 0
-	fi
+	eval $( cbsdsql local SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
+		if ! next_pci_id; then
+			# no free pci bus
+			exit 0
+		fi
 
-	if [ ${dsk_slot} -eq 0 ]; then
-		pcislot=${bhyve_pci_index}
-	else
-		pcislot=${dsk_slot}
-	fi
-	echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${data}/${dsk_path}\" ;"
-	dsk_id=$(( dsk_id + 1 ))
-    done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+		if [ ${dsk_slot} -eq 0 ]; then
+			pcislot=${bhyve_pci_index}
+		else
+			pcislot=${dsk_slot}
+		fi
+		echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${data}/${dsk_path}\" ;"
+		dsk_id=$(( dsk_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
 
-    dsk_args=""
-    for i in $(seq 0 31); do
-	eval T="\$dsk$i"
-	[ -z "${T}" ] && break
-	# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
-	if ! next_pci_id; then
-	    # no free pci bus
-	fi
-	dsk_args="${dsk_args} ${T}"
-    done
+	dsk_args=""
+	for i in $(seq 0 31); do
+		eval T="\$dsk$i"
+		[ -z "${T}" ] && break
+		# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
+		if ! next_pci_id; then
+			# no free pci bus
+		fi
+		dsk_args="${dsk_args} ${T}"
+	done
 
-    [ -z "${dsk_args}" ] && return 1
-    return 0
+	[ -z "${dsk_args}" ] && return 1
+	return 0
 }
 
 
 # export arguments for bhyve hostbridge_args
 compile_hostbridge_args()
 {
-    # This is usually configured at slot 0
-    hostbridge_args="-s 0:0,${vm_hostbridge}"
+	# This is usually configured at slot 0
+	hostbridge_args="-s 0:0,${vm_hostbridge}"
 }
 
 # export arguments for bhyve lpc_args
 compile_lpc_args()
 {
+	if ! next_pci_id; then
+		return 1
+	fi
 
-    if ! next_pci_id; then
-	return 1
-    fi
-
-    lpc_args="-s ${bhyve_pci_index}:0,lpc"
+	lpc_args="-s ${bhyve_pci_index}:0,lpc"
 }
 
 
 # export arguments for bhyve nic_args
 compile_nic_args()
 {
+	if ! next_pci_id; then
+		return 1
+	fi
 
-    if ! next_pci_id; then
-	return 1
-    fi
-
-    nic_args="-s ${bhyve_pci_index}:0,virtio-net,${mytap}"
+	nic_args="-s ${bhyve_pci_index}:0,virtio-net,${mytap}"
 }
 
 
@@ -118,14 +114,13 @@ compile_nic_args()
 # $iso_img must be present
 compile_cd_args()
 {
+	if ! next_pci_id; then
+		return 1
+	fi
 
-    if ! next_pci_id; then
-	return 1
-    fi
+	[ -z "${iso_img}" -o ! -f "${iso_img}" ] && return 1
 
-    [ -z "${iso_img}" -o ! -f "${iso_img}" ] && return 1
-
-    cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+	cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
 }
 
 # create new disk image for bhyve VMs

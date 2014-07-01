@@ -1,49 +1,48 @@
 # movedata $1-from $2-to
 mvdata()
 {
-local _src _dst
+	local _src _dst
+	[ -z "$1" -o -z "$2" ] && err 1 "mvdata: empty arguments"
 
-    [ -z "$1" -o -z "$2" ] && err 1 "mvdata: empty arguments"
+	_src=$1
+	_dst=$2
 
-    _src=$1
-    _dst=$2
+	[ -d "${_dst}" ] && err 1 "${_dst} directory exist. Please remove them first"
 
-    [ -d "${_dst}" ] && err 1 "${_dst} directory exist. Please remove them first"
+	if [ "${zfsfeat}" = "0" ]; then
+		mv ${_src} ${_dst}
+		return 0
+	fi
 
-    if [ "${zfsfeat}" = "0" ]; then
-	mv ${_src} ${_dst}
+	. $zfstool
+
+	zfsmnt "${_src}"
+	_res=$?
+
+	case $_res in
+		0)
+			echo "Switch to ZFS pool"
+			zfsmnt ${workdir}
+			/sbin/zfs create -o atime=off -o mountpoint=${_dst} "${ZPOOL}${_dst}"
+			/sbin/zfs mount "${ZPOOL}${_dst}"
+			mkdir ${_dst}
+	#		cd ${_src} && pax -p eme -X -rw . ${_dst} && chflags -R noschg ${_src} && rm -rf ${_src}
+			cd ${_src} && pax -p eme -rw . ${_dst} && chflags -R noschg ${_src} && rm -rf ${_src}
+		;;
+		1)
+			/sbin/zfs umount -f ${_src} > /dev/null 2>&1
+			/sbin/zfs set mountpoint=${_dst} ${ZPOOL}
+			/sbin/zfss mount ${ZPOOL}
+			rmdir ${_src}
+		;;
+		2)
+			/sbin/zfs set mountpoint=${_dst} ${ZPOOL}
+			/sbin/zfs mount ${ZPOOL}
+			rmdir ${_src}
+		;;
+	esac
+
 	return 0
-    fi
-
-    . $zfstool
-
-    zfsmnt "${_src}"
-    _res=$?
-
-    case $_res in
-	0)
-		echo "Switch to ZFS pool"
-		zfsmnt ${workdir}
-		zfs create -o atime=off -o mountpoint=${_dst} "${ZPOOL}${_dst}"
-		zfs mount "${ZPOOL}${_dst}"
-		mkdir ${_dst}
-#		cd ${_src} && pax -p eme -X -rw . ${_dst} && chflags -R noschg ${_src} && rm -rf ${_src}
-		cd ${_src} && pax -p eme -rw . ${_dst} && chflags -R noschg ${_src} && rm -rf ${_src}
-		;;
-	1)
-		zfs umount -f ${_src} > /dev/null 2>&1
-		zfs set mountpoint=${_dst} ${ZPOOL}
-		zfs mount ${ZPOOL}
-		rmdir ${_src}
-		;;
-	2)
-		zfs set mountpoint=${_dst} ${ZPOOL}
-		zfs mount ${ZPOOL}
-		rmdir ${_src}
-		;;
-    esac
-
-return 0
 }
 
 
@@ -52,82 +51,81 @@ return 0
 # #clonedata /usr/jails/jails-data/jail1-data /mn rsync
 clonedata()
 {
-local _src _dst _mode _go _force _zpool
+	local _src _dst _mode _go _force _zpool
 
-    [ -z "$1" -o -z "$2" -o -z "$3"  ] && err 1 "clonedata: empty arguments"
-    [ -z "${jname}" ] && err 1 "No jname"
+	[ -z "$1" -o -z "$2" -o -z "$3"  ] && err 1 "clonedata: empty arguments"
+	[ -z "${jname}" ] && err 1 "No jname"
 
-    _src=$1
-    _dst=$2
-    _mode=$3
-    _force=0
+	_src=$1
+	_dst=$2
+	_mode=$3
+	_force=0
 
-    case "${_mode}" in
-	"cp") _go="/bin/cp -Rp " ;;
-	"rsync") _go="/usr/local/bin/rsync -avz --delete " ;;
-	"rsyncforce") _go="/usr/local/bin/rsync -avz --delete "; _force=1 ;;
-	*) err 1 "Unsupported mode" ;;
-    esac
+	case "${_mode}" in
+		"cp") _go="/bin/cp -Rp " ;;
+		"rsync") _go="/usr/local/bin/rsync -avz --delete " ;;
+		"rsyncforce") _go="/usr/local/bin/rsync -avz --delete "; _force=1 ;;
+		*) err 1 "Unsupported mode" ;;
+	esac
 
-    [ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${_dst} directory exist. Please remove them"
+	[ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${_dst} directory exist. Please remove them"
 
-    . ${zfstool}
+	. ${zfstool}
 
-    if [ ! -d "${_dst}" ]; then
-	if [ $zfsfeat -eq 1 ]; then
-	    _zpool=`zfs list ${jaildatadir} |tail +2 |awk '{printf $1}'`
-	    zfs create -o atime=off -o mountpoint=${_dst} ${_zpool}/${jname}
-	    zfs mount ${_zpool}/${jname}
-	else
-	    mkdir -p ${_dst}
+	if [ ! -d "${_dst}" ]; then
+		if [ $zfsfeat -eq 1 ]; then
+			_zpool=$( /sbin/zfs list ${jaildatadir} |tail +2 |awk '{printf $1}' )
+			/sbin/zfs create -o atime=off -o mountpoint=${_dst} ${_zpool}/${jname}
+			/sbin/zfs mount ${_zpool}/${jname}
+		else
+			mkdir -p ${_dst}
+		fi
 	fi
-    fi
 
-    ${_go} ${_src}/* ${_dst}/
+	${_go} ${_src}/* ${_dst}/
 }
 
 # remove data from disk
 # $jname must be set
 removedata()
 {
-    local _data
+	local _data
 
-    [ -z "$1"  ] && err 1 "removedata: empty arguments"
-    [ -z "${jname}"  ] && err 1 "removedata: jname variable must be set"
+	[ -z "$1"  ] && err 1 "removedata: empty arguments"
+	[ -z "${jname}"  ] && err 1 "removedata: jname variable must be set"
 
-    _data=$1
+	_data=$1
 
-    [ ! -d "${_data}" ] && return 0
+	[ ! -d "${_data}" ] && return 0
 
-    if [ $zfsfeat -eq 1 ]; then
-	. $zfstool
-	unmountdata ${_data}
-	zfs destroy -r "${ZPOOL}"
-	[ -d "${_data}" ] && rmdir ${_data}
-	return 0
-    else
-	chflags -R noschg ${_data}
-	rm -rf ${_data}
-    fi
+	if [ $zfsfeat -eq 1 ]; then
+		. $zfstool
+		unmountdata ${_data}
+		/sbin/zfs destroy -r "${ZPOOL}"
+		[ -d "${_data}" ] && rmdir ${_data}
+		return 0
+	else
+		chflags -R noschg ${_data}
+		rm -rf ${_data}
+	fi
 }
-
 
 
 # unmount if mount
 unmountdata()
 {
-    local _data
+	local _data
 
-    [ -z "$1" ] && err 1 "unmountdata: no arguments"
-    _data=$1
+	[ -z "$1" ] && err 1 "unmountdata: no arguments"
+	_data=$1
 
-    [ ! -d "${_data}" ] && return 1
+	[ ! -d "${_data}" ] && return 1
 
-    . $zfstool
-    zfsmnt ${_data}
+	. $zfstool
+	zfsmnt ${_data}
 
-    if [ $? -eq 1 ]; then
-	zfs unmount -f ${_data}
-	rmdir ${_data}
-    fi
+	if [ $? -eq 1 ]; then
+		/sbin/zfs unmount -f ${_data}
+		rmdir ${_data}
+	fi
 }

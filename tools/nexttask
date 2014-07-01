@@ -14,40 +14,90 @@ init $*
 
 mail_notify()
 {
-    local _msg=$( mktemp /tmp/mymsg.$$ )
-    local _result
+	local _msg=$( mktemp /tmp/mymsg.$$ )
+	local _result
 
-    trap "rm -f ${_msg}" HUP KILL INT ABRT BUS TERM EXIT
+	trap "rm -f ${_msg}" HUP KILL INT ABRT BUS TERM EXIT
 
-    [ -z "${lastoutput_num}" ] && lastoutput_num=0
+	[ -z "${lastoutput_num}" ] && lastoutput_num=0
 
-    cat > ${_msg} <<EOF
+	cat > ${_msg} <<EOF
 cmd: ${cmd}
 runtime: ${runtime} minutes
 errcode: ${_err}
 EOF
 
-if [ ${lastoutput_num} -gt 0 -a -f "${logfile}" ]; then
-    cat >> ${_msg} <<EOF
+	if [ ${lastoutput_num} -gt 0 -a -f "${logfile}" ]; then
+		cat >> ${_msg} <<EOF
 
 last ${lastoutput_num} lines of task log (${logfile}):
 
 $( tail -n${lastoutput_num} ${logfile} )
 EOF
-fi
+	fi
 
-if [ ${_err} -eq 0 ]; then
-    _result="completed"
-else
-    _result="failed"
-fi
+	if [ ${_err} -eq 0 ]; then
+		_result="completed"
+	else
+		_result="failed"
+	fi
 
-mail -s "CBSD $nodename: task $id is ${_result}" ${CBSDRCPT} <<EOF
+	mail -s "CBSD $nodename: task $id is ${_result}" ${CBSDRCPT} <<EOF
 $( cat ${_msg} )
 EOF
 
-    rm -f ${_msg}
-    trap "" HUP KILL INT ABRT BUS TERM EXIT
+	rm -f ${_msg}
+	trap "" HUP KILL INT ABRT BUS TERM EXIT
+}
+
+
+trynext_with_exclude()
+{
+	[ -z "${EXCLUDE}" ] && return 1
+
+	A=$( cbsdsql cbsdtaskd SELECT id,user,cmd,logfile,logtype,notify,owner,after,autoflush FROM taskd WHERE status='0' ${EXCLUDE} LIMIT 1 )
+
+	# code 2 - no jobs anymore
+	[ -z "${A}" ] && exit 2
+
+	unset id user cmd logfile logtype notify owner after autoflush
+
+	IFS="|"
+	sqllist "${A}" id user cmd logfile logtype notify owner after autoflush
+	IFS=" "
+}
+
+
+# return 0 on success
+# return 2 when we have next job as dependency, and re-run searching for next job with excluding depended-job-id in this session
+check_for_depend()
+{
+	if [ ${after} -ne 0 ]; then
+		dep_status=$( cbsdsql cbsdtaskd SELECT status,errcode FROM taskd WHERE id=\"${after}\" )
+		IFS="|"
+		sqllist "${dep_status}" depstatus deperrcode
+		IFS=" "
+
+		if [ ${depstatus} -eq 0 -o ${depstatus} -eq 1 ]; then
+			EXCLUDE="${EXCLUDE} AND id!=\"${id}\""
+			return 2
+		fi
+
+		# only status=2 remain here, but check it anyway
+		[ ${depstatus} -ne 2 ] && exit 2
+
+		if [ ${deperrcode} -ne 0 ]; then
+			# dependend job in incompleted, so mask current job is incompleted too
+			_end_time=$( date "+%Y%m%d%H%M%S" )
+			_st_time=${_end_time}
+			cbsdsql cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${deperrcode}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
+			runtime=$(( ( _end_time - _st_time ) / 60 ))
+			readconf task.conf
+			[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
+			exit 0
+		fi
+	fi
+	return 0
 }
 
 
@@ -57,28 +107,22 @@ A=$( cbsdsql cbsdtaskd SELECT id,user,cmd,logfile,logtype,notify,owner,after,aut
 # code 2 - no jobs anymore
 [ -z "${A}" ] && exit 2
 
+unset id user cmd logfile logtype notify owner after autoflush EXCLUDE
+
 IFS="|"
 sqllist "${A}" id user cmd logfile logtype notify owner after autoflush
 IFS=" "
 
-if [ ${after} -ne 0 ]; then
-    dep_status=$( cbsdsql cbsdtaskd SELECT status,errcode FROM taskd WHERE id=\"${after}\" )
-    IFS="|"
-    sqllist "${dep_status}" depstatus deperrcode
-    IFS=" "
-    [ ${depstatus} -eq 0 -o ${depstatus} -eq 1 ] && exit 0
-    # only status=2 remain here, but check it anyway
-    [ ${depstatus} -ne 2 ] && exit 0
-    if [ ${deperrcode} -ne 0 ]; then
-	# dependend job in incompleted, so mask current job is incompleted too
-	_end_time=$( date "+%Y%m%d%H%M%S" )
-	_st_time=${_end_time}
-	cbsdsql cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${deperrcode}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
-	runtime=$(( ( _end_time - _st_time ) / 60 ))
-	readconf task.conf
-	[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
-	exit 0
-    fi
+# check_for_depend return not 0 if next job is waiting for other job,
+# so move to next before the end (errcode=0)
+check_for_depend
+
+if [ $? -eq 2 ]; then
+	while [ 1 ]; do
+		trynext_with_exclude
+		check_for_depend
+		[ $? -eq 0 ] && break
+	done
 fi
 
 [ "${logtype}" = "auto" ] && logfile="/tmp/taskd.${id}.log"

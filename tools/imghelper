@@ -1,0 +1,130 @@
+#!/usr/local/bin/cbsd
+#v10.0.6
+MYARG="formfile"
+MYOPTARG=""
+MYDESC="Ncurses-based jail image boostrap helper"
+EXTHELP="wf_imghelper.html"
+
+. ${subr}
+. ${inventory}
+. ${settingstui}
+. ${tools}
+. ${color}
+. ${dialog}
+
+if [ "${1}" != "--help" -a "${1}" != "--args" ]; then
+	formfile="${1}"
+	[ ! -f "${1}" ] && err 1 "${MAGENTA}No such form file: ${GREEN}${formfile}${NORMAL}"
+	shift
+	param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |xargs )
+	MYOPTARG="${MYOPTARG} ${param}"
+fi
+
+init $*
+
+# if allfilled; then
+#    echo "ALL FILLED"
+# fi
+allfilled()
+{
+	local i _T
+
+	for i in ${param}; do
+		eval _T=\${${i}}
+		[ -z "${_T}" ] && return 1
+	done
+	return 0
+}
+
+
+#### [ MAIN AREA ] ####
+returncode=0
+#PRODUCT="Product"
+
+tmp2="${tmpdir}/helper.$$"
+trap "rm -f ${tmp2}" HUP KILL INT ABRT BUS TERM EXIT
+
+param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |xargs )
+
+# check for H_environment
+for i in ${param}; do
+	eval a="\$H_${i}"
+	[ -n "${a}" ] &&  eval "${i}=${a}"
+done
+
+if allfilled; then
+	echo "Found environment variables. No interactive install"
+	install_img
+fi
+
+numitems=$( echo ${param}|wc -w |awk '{printf $1}' )
+
+cat > ${tmp2} << EOF
+--ok-label "Install" --title "${PRODUCT} jail install" --form "${PRODUCT} jail bootstrap helper" 0 0 ${numitems}
+EOF
+
+IFS="|"
+i=1
+# search for the maximum length of the longest description
+strlen=0
+strlen=$( cbsdsql ${formfile} SELECT desc FROM forms |while read i; do
+	newstrlen=$( strlen "${i}" )
+	[ ${newstrlen} -gt ${strlen} ] && strlen=${newstrlen} && echo ${newstrlen}
+done | /usr/bin/tail -n1 )
+
+strlen=$(( strlen + 3 ))
+i=1
+
+A=$( cbsdsql ${formfile} SELECT param,desc,defaults,attr FROM forms ORDER by idx| while read param desc defaults attr; do
+	maxlen=0
+	eval ${attr}
+	[ $maxlen -eq 0 ] && maxlen=20
+	eval _T=\${${param}}
+	[ -n "${_T}" ] && defaults="${_T}"
+	unset ${_T}
+	echo "\"$desc:\" ${i} 1 \"${defaults}\" ${i} ${strlen} ${maxlen} ${maxlen}" >> ${tmp2}
+	i=$(( i + 1 ))
+done )
+
+unset IFS
+returncode=0
+
+param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |xargs )
+
+while test $returncode != 1 && test $returncode != 250; do
+	exec 3>&1
+	value=$( ${DIALOG} --backtitle "$DIALOG_BACKTITLE" --colors --file ${tmp2} 2>&1 1>&3 )
+	returncode=$?
+	exec 3>&-
+
+	case ${returncode} in
+	0)
+		x=0
+		for i in ${param}; do
+			unset ${i}
+			eval _T=\${${i}}
+			x=$(( x + 1 ))
+			y=0
+			for a in ${value}; do
+				y=$(( y + 1 ))
+				[ ${x} -eq ${y} ] && eval "${i}=${a}"
+			done
+		done
+
+		if ! allfilled; then
+			f_dialog_msgbox "Please fill all inputs"
+			returncode=5
+		fi
+
+		# back to loop if not all inputs filled
+		[ ${returncode} -eq 5 ] && continue
+
+		install_img
+
+		exit 0
+		;;
+	*)
+		exit 0
+		;;
+	esac
+done

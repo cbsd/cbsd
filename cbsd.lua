@@ -2,8 +2,8 @@ product="cbsd"
 myversion="10.0.6b"
 
 if not workdir then
-    print ( "no workdir" )
-    os.exit(0)
+	print ( "no workdir" )
+	os.exit(1)
 end
 
 distdir="/usr/local/cbsd"
