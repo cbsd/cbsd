@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v10.0.6
 MYARG=""
 MYOPTARG="jname inter"
 MYDESC="Start jail"
@@ -31,8 +31,17 @@ exec_poststart()
 	eval CMD=\${exec_poststart}
 	[ -z "${CMD}" -o "${CMD}" = "0" ] && return 0
 	${ECHO} "${MAGENTA}${jname} exec exec_poststart: ${GREEN}${CMD}${NORMAL}"
-	chroot ${path} ${CMD}
+	jexec jname=${jname} ${CMD}
 }
+
+exec_cbsdjail_first_boot()
+{
+	if [ -f ${path}/etc/rc.cbsdjail_first_boot ]; then
+		jexec jname=${jname} /bin/sh /etc/rc.cbsdjail_first_boot
+		rm -f ${path}/etc/rc.cbsdjail_first_boot
+	fi
+}
+
 
 exec_master_prestart()
 {
@@ -48,7 +57,7 @@ exec_prestart()
 	eval CMD=\${exec_prestart}
 	[ -z "${CMD}" -o "${CMD}" = "0" ] && return 0
 	${ECHO} "${MAGENTA}${jname} exec exec_prestart: ${GREEN}${CMD}${NORMAL}"
-	chroot ${path} ${CMD}
+	jexec jname=${jname} ${CMD}
 }
 
 # return in $FWNUM first free ipfw num
@@ -142,54 +151,53 @@ fi
 
 
 # MAIN
-    [ -z "$jname" ] && jname=$1
-    # store vnet settings from inventory
-    sys_vnet="${vnet}"
-    . ${jrcconf}
-    [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-    [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
-    [ ${status} -eq 3 ] && err 1 "${MAGENTA}Jail in maintenance mode${NORMAL}"
-    [ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
-    [ ${vnet} -eq 1 -a ${sys_vnet} -eq 0 ] && err 1 "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} have vnet=1 flags but your kernel is not support VIMAGE${NORMAL}"
+[ -z "$jname" ] && jname=$1
+# store vnet settings from inventory
+sys_vnet="${vnet}"
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+[ ${status} -eq 3 ] && err 1 "${MAGENTA}Jail in maintenance mode${NORMAL}"
+[ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
+[ ${vnet} -eq 1 -a ${sys_vnet} -eq 0 ] && err 1 "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} have vnet=1 flags but your kernel is not support VIMAGE${NORMAL}"
 
+[ "${emulator}" = "bhyve" -a -z "${mdsize}" ] && err 1 "${MAGENTA}Bhyve required for file image${NORMAL}"
 
-    [ "${emulator}" = "bhyve" -a -z "${mdsize}" ] && err 1 "${MAGENTA}Bhyve required for file image${NORMAL}"
+#Check for md vnode backend
+if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
+	MDFILE="${jailsysdir}/${jname}/image.dat"
+	[ ! -f "${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
+fi
 
-    #Check for md vnode backend
-    if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
-        MDFILE="${jailsysdir}/${jname}/image.dat"
-        [ ! -f "${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
-    fi
+[ "${emulator}" = "bhyve" ] && start_bhyve
 
-    [ "${emulator}" = "bhyve" ] && start_bhyve
+init_target_arch
+init_basedir
 
-    init_target_arch
-    init_basedir
+jcleanup jname=${jname}
+[ ! -d "${path}" ] && mkdir ${path}
 
-    cbsd jcleanup jname=${jname}
-    [ ! -d "${path}" ] && mkdir ${path}
+geniplist ${ip4_addr}
 
-    geniplist ${ip4_addr}
-
-	if [ -n "${interface}" -a "${interface}" != "0" -a ${vnet} -eq 0 ]; then
-	    ### CHECK FOR IP ####
-	    for ips in ${IPS}; do
+if [ -n "${interface}" -a "${interface}" != "0" -a ${vnet} -eq 0 ]; then
+	### CHECK FOR IP ####
+	for ips in ${IPS}; do
 		cbsd checkip ip=${ips} check=1
 		IPUSE=$?
 		case ${IPUSE} in
-		    0)
-			${ECHO} "${MAGENTA}ip ${ips} not in pool range${NORMAL}"
-			continue
+			0)
+				${ECHO} "${MAGENTA}ip ${ips} not in pool range${NORMAL}"
+				continue
 			;;
-		    2)
-			${ECHO} "${MAGENTA}Ip ${ips} already exists in LAN${NORMAL}"
-			continue
+			2)
+				${ECHO} "${MAGENTA}Ip ${ips} already exists in LAN${NORMAL}"
+				continue
 			;;
 		esac
-	    done
-	fi
+	done
+fi
 
-    if [ $vnet -eq 1 ]; then
+if [ $vnet -eq 1 ]; then
 	# for vnet we can make another action
 	. ${vimageconf}
 	# when ip=0 and interface=auto we must use default interface for upstream
@@ -203,97 +211,97 @@ fi
 	ifconfig ${myepair}a description ${jname} up
 #	dhclient ${myepair}b
 	trap "ifconfig ${myepair}a destroy" HUP INT ABRT BUS TERM EXIT
-    fi	# vnet -eq 1
+fi	# vnet -eq 1
 
-    #test for zfs mounted & mount if not
-    case $zfsfeat in
+#test for zfs mounted & mount if not
+case $zfsfeat in
 	1)
 		. $zfstool
 		zfsmnt ${data}
 		[ $? -eq 2 ] && zfs mount "${ZPOOL}"
 	;;
-    esac
+esac
 
-    if [ $baserw -eq 1 ]; then
+if [ $baserw -eq 1 ]; then
 	path=$data
 	[ ! -f "${path}/bin/sh" ] && switch_baserw ${path} 1
 	[ -f ${mount_fstab} ] && rm -f ${mount_fstab}
-    fi
+fi
 
-    if [ $baserw -eq 0 -a ! -f "${mount_fstab}" ]; then
+if [ $baserw -eq 0 -a ! -f "${mount_fstab}" ]; then
 	switch_baserw ${path} 2
-    fi
+fi
 
-    # MD area
-    if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
+# MD area
+if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	cbsd mountmd mdfile="${MDFILE}" jroot="${data}"
-    fi
+fi
 
-    if [ "${ver}" != "empty" ]; then
+if [ "${ver}" != "empty" ]; then
 	[  -d "${data}/etc" -o -d "${data}/bin" ] || err 1 "${MAGENTA}No such data structure: ${GREEN}${data}${NORMAL}"
-    fi
+fi
 
-    # cp local default resolv.conf skel
-    if [ ${floatresolv} -eq 1 -a "${ver}" != "empty" ]; then
+# cp local default resolv.conf skel
+if [ ${floatresolv} -eq 1 -a "${ver}" != "empty" ]; then
 	makeresolv
-    fi
+fi
 
-    if [ $applytpl -eq 1 -a "${ver}" != "empty" ]; then
+if [ $applytpl -eq 1 -a "${ver}" != "empty" ]; then
 	[ $( grep PKGNG ${data}/etc/make.conf 2>/dev/null|wc -l ) = 0 ] && echo "OPTIONS_SET+= PKGNG" >> ${data}/etc/make.conf
 	[ $( grep ^WRKDIRPREFIX= ${data}/etc/make.conf 2>/dev/null|wc -l ) = 0 ] && echo WRKDIRPREFIX=/tmp >> ${data}/etc/make.conf
 	sysrc -qf ${data}/etc/rc.conf hostname="${host_hostname}" >/dev/null
-    fi
+fi
 
-    MOUNTOPT=""
+MOUNTOPT=""
 
-    if [ "$mount_src" = "1" ]; then
+if [ "$mount_src" = "1" ]; then
 	SRCDIR="${srcdir}/src_${ver}/src"
 	MOUNTOPT="${MOUNTOPT} -s ${SRCDIR}"
-    fi
+fi
 
-    if [ "$mount_obj" = "1" ]; then
+if [ "$mount_obj" = "1" ]; then
 	SRCDIR="${srcdir}/obj_${arch}_${ver}/obj"
 	MOUNTOPT="${MOUNTOPT} -o ${SRCDIR}"
-    fi
+fi
 
-    if [ "$mount_kernel" = "1" ]; then
+if [ "$mount_kernel" = "1" ]; then
 	SRCDIR="${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel"
 	MOUNTOPT="${MOUNTOPT} -k ${SRCDIR}"
-    fi
+fi
 
-    if [ "$mount_ports" = "1" ]; then
+if [ "$mount_ports" = "1" ]; then
 	SRCDIR="/usr/ports"
 	MOUNTOPT="${MOUNTOPT} -p ${SRCDIR}"
-    fi
+fi
 
-    [ "${ver}" != "empty" ] && mountbase -v ${ver} -a ${arch} ${MOUNTOPT}
+[ "${ver}" != "empty" ] && mountbase -v ${ver} -a ${arch} ${MOUNTOPT}
 
-    mountfstab
+mountfstab
 
-    exec_master_prestart
-    exec_prestart
+exec_master_prestart
+exec_prestart
 
-    if [ "$ver" = "empty" ]; then
+if [ "$ver" = "empty" ]; then
 	path="/"
 	exec_start="${jailsysdir}/${jname}/run.sh"
-    else
+else
 	[ ! -d "${data}/var/cache/pkg" ] && mkdir -p "${data}/var/cache/pkg"
-    fi
+fi
 
-    #determine that jail is FreeBSD. Useful for vnet operation in makejconf and
-    is_freebsd=0
+#determine that jail is FreeBSD. Useful for vnet operation in makejconf and
+is_freebsd=0
 
-    if [ $baserw -eq 1 ]; then
+if [ $baserw -eq 1 ]; then
 	elftest=${data}/bin/sh
-    else
+else
 	elftest="${BASE_DIR}/bin/sh"
-    fi
-    [ -f "${elftest}" ] && osname=$( ${miscdir}/elf_tables --osname ${elftest} )
+fi
+[ -f "${elftest}" ] && osname=$( ${miscdir}/elf_tables --osname ${elftest} )
 
-    [ "${osname}" = "freebsd" ] && is_freebsd=1
+[ "${osname}" = "freebsd" ] && is_freebsd=1
 
     # check for freshed version of the base via elf from /bin/sh
-    if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
+if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
 	if [ -n ${BASE_DIR} -a -f "${BASE_DIR}/bin/sh" ]; then
 		baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
 		jailelf=$( ${miscdir}/elf_tables --ver ${elftest} 2>/dev/null )
@@ -302,42 +310,42 @@ fi
 			${ECHO} "${BOLD}Notice: ${MAGENTA}Please consider upgrading base via ${GREEN}cbsd jupgrade${NORMAL}"
 		fi
 	fi
-    fi
+fi
 
-    set -e
-    cbsd makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${myepair}b fbsd=${is_freebsd}
-    set +e
+set -e
+makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${myepair}b fbsd=${is_freebsd}
+set +e
 
-    #rctl/limits area
-    cbsd jrctl jname=$jname mode=set
-    . ${workdir}/rctl.subr
-    [ -z "${nice}" ] && nice="0"
-    [ "${nice}" != "0" ] && ${ECHO} "${MAGENTA}jail renice: ${GREEN}${nice}${NORMAL}"
-    #
+#rctl/limits area
+jrctl jname=$jname mode=set
+. ${workdir}/rctl.subr
+[ -z "${nice}" ] && nice="0"
+[ "${nice}" != "0" ] && ${ECHO} "${MAGENTA}jail renice: ${GREEN}${nice}${NORMAL}"
+#
 
-    ${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
-    /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
-    trap "" HUP INT ABRT BUS TERM EXIT
-    [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
+${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
+/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
+trap "" HUP INT ABRT BUS TERM EXIT
+[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
 
-    # make id file
-    UNDHOSTNAME=$( echo ${hostname} |tr  "." "_" )
-    FID="/var/run/jail_${UNDHOSTNAME}.id"
-    echo ${ST} > ${FID}
-    [ -n "${ddns_zone_list}" ] && cbsd ddns mode=add jname=${jname}
-    sync
-    exec_master_poststart
-    exec_poststart
+# make id file
+UNDHOSTNAME=$( echo ${hostname} |tr  "." "_" )
+FID="/var/run/jail_${UNDHOSTNAME}.id"
+echo ${ST} > ${FID}
+[ -n "${ddns_zone_list}" ] && cbsd ddns mode=add jname=${jname}
+sync
+exec_cbsdjail_first_boot
+exec_master_poststart
+exec_poststart
 
-    get_jid
-    if [ $myjid -gt 0 ]; then
+get_jid
+if [ $myjid -gt 0 ]; then
 	status="1"
-    else
+else
 	status="0"
-    fi
-    cbsdsql local UPDATE jails SET jid=$myjid,status=$status where jname=\"${jname}\"
-    rm -f ${ftmpdir}/${jname}.conf
-    fwcounter
-    [ ${myjid} -gt 0 -a ${cpuset} != "0" ] && cpuset -c -l ${cpuset} -j ${myjid}
-    exit 0
-
+fi
+cbsdsql local UPDATE jails SET jid=$myjid,status=$status where jname=\"${jname}\"
+rm -f ${ftmpdir}/${jname}.conf
+fwcounter
+[ ${myjid} -gt 0 -a ${cpuset} != "0" ] && cpuset -c -l ${cpuset} -j ${myjid}
+exit 0

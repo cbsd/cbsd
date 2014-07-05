@@ -1,5 +1,5 @@
 #!/bin/sh
-#v10.0.0
+#v10.0.6
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname"
 MYOPTARG="fstab zfs"
@@ -20,52 +20,63 @@ init $*
 
 zfs_check_and_attach()
 {
-    local _err
-    zfsfs ${1}
+	local _err _mp=${2}
 
-    _err=$?
+	zfsfs ${1}
+	
+	_err=$?
 
-    [ "${_err}" -ne 2 ] && return ${_err}
+	[ "${_err}" -ne 2 ] && return ${_err}
 
-    # no we ready for attaching $zfs to $jname
-    zfs set jailed=on ${1}
-    zfs jail ${jname} ${1}
+	# no we ready for attaching $zfs to $jname
+	/sbin/zfs set jailed=on ${1}
+	/sbin/zfs jail ${jname} ${1}
 
-    return 2
+	[ -z "${_mp}" ] && return 2
+
+	_err=$( zfs get -Ho value mounted ${1} )
+
+	if [ "${_err}" = "no" ]; then
+		cat >> ${data}/etc/rc.cbsdjail_first_boot <<EOF
+/sbin/zfs set mountpoint=${_mp} ${1}
+EOF
+	fi
+
+	return 2
 }
 
 
 mount_via_fstab()
 {
-    cat ${fstab} | while read _device _mountpt _fs _mode _a _b; do
-	case ":${_device}" in
-	    :#* | :)
-        	continue
-                ;;
-        esac
+	cat ${fstab} | while read _device _mountpt _fs _mode _a _b; do
+		case ":${_device}" in
+			:#* | :)
+				continue
+			;;
+		esac
 
-	[ "${_fs}" != "zfs" -o -z "${_device}" ] && continue
-	zfs_check_and_attach ${_device}
-	case $? in
-	    0)
-    		${ECHO} "${MAGENTA}attachzfs: ${_device} is not valid ZFS filesystem${NORMAL}"
-		return 0
-    		;;
-	    1)
-    		${ECHO} "${MAGENTA}attachzfs: ${_device} already mounted. Skip${NORMAL}"
-		return 2
-    		;;
-	    2)
-    		;;
-	    *)
-    		${ECHO} "${MAGENTA}attachzfs: Unknown error while test for zfsfs ${zfs}. Skip${NORMAL}"
-		return 0
-    		;;
-	esac
-    done
+		[ "${_fs}" != "zfs" -o -z "${_device}" ] && continue
+		zfs_check_and_attach ${_device} ${_mountpt}
+		case $? in
+			0)
+				${ECHO} "${MAGENTA}attachzfs: ${_device} is not valid ZFS filesystem${NORMAL}"
+				return 0
+			;;
+			1)
+				${ECHO} "${MAGENTA}attachzfs: ${_device} already mounted. Skip${NORMAL}"
+				return 2
+			;;
+			2)
+			;;
+			*)
+				${ECHO} "${MAGENTA}attachzfs: Unknown error while test for zfsfs ${zfs}. Skip${NORMAL}"
+				return 0
+			;;
+		esac
+	done
 
-    # exit now
-    exit
+	# exit now
+	exit 0
 }
 
 . ${jrcconf}
@@ -77,15 +88,15 @@ mount_via_fstab()
 
 zfs_check_and_attach ${zfs}
 case $? in
-    0)	
-	err 1 "${MAGENTA}attachzfs: $zfs is not valid ZFS filesystem${NORMAL}"
+	0)
+		err 1 "${MAGENTA}attachzfs: $zfs is not valid ZFS filesystem${NORMAL}"
 	;;
-    1)	
-	err 1 "${MAGENTA}attachzfs: $zfs already mounted. Skip${NORMAL}"
+	1)
+		err 1 "${MAGENTA}attachzfs: $zfs already mounted. Skip${NORMAL}"
 	;;
-    2)	
+	2)
 	;;
-    *)	
-	err 1 "${MAGENTA}attachzfs: Unknown error while test for zfsfs ${zfs}. Skip${NORMAL}"
+	*)
+		err 1 "${MAGENTA}attachzfs: Unknown error while test for zfsfs ${zfs}. Skip${NORMAL}"
 	;;
 esac
