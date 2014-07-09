@@ -25,7 +25,7 @@ readconf bhyve-default-default.conf
 init $*
 
 ### MAIN
-[ -f "$jconf" ] || err 1 "${MAGENTA}no such jconf file${NORMAL}";
+[ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
 over="${ver}"
 oarch="${arch}"
 jconf=$( realpath $jconf )
@@ -41,9 +41,9 @@ temprcconf="${ftmpdir}/jcreate_jconf.$$"
 cp ${jconf} ${temprcconf}
 
 if [ ${removejconf} = "1" ]; then
-    trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
 else
-    trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 fi
 
 . ${temprcconf}
@@ -51,6 +51,12 @@ fi
 . ${temprcconf}
 
 [ -z "${jname}" ] && err 1 "${MAGENTA}No such jname variable${NORMAL}"
+
+# profile
+readconf bhyve-${vm_os_type}-${vm_os_profile}.conf
+[ -z "${bhyve_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+# re-read jail params and apply personal after profile
+. ${temprcconf}
 
 init_target_arch
 init_basedir
@@ -66,13 +72,16 @@ if [ -n "${interface}" -a "${inteface}" != "0" ]; then
 	### CHECK FOR IP ( 1 - check for interfaces) ####
 	checkip ip=${ips} check=1 > /dev/null 2>&1
 	case $? in
-	    0) err 1 "${MAGENTA}Ip not in pool range${NORMAL}"
-		;;
-	    1)	;;
-	    2) ${ECHO} "${MAGENTA}Warning:${GREEN} Ip already exists in LAN${NORMAL}"
-		;;
-	    *) err 1 "Unknown code from checkip"
-	;;
+		0)
+			err 1 "${MAGENTA}Ip not in pool range${NORMAL}"
+			;;
+		1)	;;
+		2)
+			${ECHO} "${MAGENTA}Warning:${GREEN} Ip already exists in LAN${NORMAL}"
+			;;
+		*)
+			err 1 "Unknown code from checkip"
+			;;
 	esac
 fi
 
@@ -81,17 +90,19 @@ ${ECHO} "${MAGENTA}Please wait: ${GREEN}this will take a while...${NORMAL}"
 [ -d "${data}" ] && removedata ${data}
 
 case $zfsfeat in
-	"0") [ -d ${data} ] || mkdir -p ${data}
-	    ;;
-	"1") . $zfstool
-	    ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+	"0")
+		[ -d ${data} ] || mkdir -p ${data}
+		;;
+	"1")
+		. $zfstool
+		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 
-	    if zfsroot $jname; then
-		err 1 "$ZPOOL/$jname already in use"
-	    fi
+		if zfsroot $jname; then
+			err 1 "$ZPOOL/$jname already in use"
+		fi
 
-	    /sbin/zfs create -o atime=off -o mountpoint=${data} ${ZPOOL}/$jname
-	    ;;
+		/sbin/zfs create -o atime=off -o mountpoint=${data} ${ZPOOL}/$jname
+		;;
 esac
 
 [ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
@@ -99,7 +110,10 @@ esac
 [ ! -d ${jailfstabdir}  ] && mkdir -p ${jailfstabdir}
 [ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
 
-[ "${vm_os_type}" = "freebsd" ] && populate_freebsd_world
+if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
+	${ECHO} "${MAGENTA}Stage1: ${GREEN}jail hier...${NORMAL}"
+	populate_freebsd_world
+fi
 cp $temprcconf $rcconf
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
@@ -118,22 +132,23 @@ if [ $? -eq 0 ]; then
 	defdsk="dsk1.vhd"
 
 	if [ "${from_jail}" ]; then
-			jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img freesize=${freesize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0
-			jremove ${jname}
-			sysrc -qf ${jconf} ver="empty" > /dev/null
-			jcreate jconf=${jconf}
+		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
+		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img freesize=${freesize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0
+		jremove ${jname}
+		sysrc -qf ${jconf} ver="empty" > /dev/null
+		jcreate jconf=${jconf}
 
-			#test for zfs mounted & mount if not
-			case $zfsfeat in
-				1)
-					. $zfstool
-					zfsmnt ${data}
-					[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+		#test for zfs mounted & mount if not
+		case $zfsfeat in
+			1)
+				. $zfstool
+				zfsmnt ${data}
+				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
 				;;
-			esac
+		esac
 
-			sysrc -qf ${jconf} ver="${ver}" > /dev/null
-			mv /tmp/${jname}.$$.img ${data}/${defdsk}
+		sysrc -qf ${jconf} ver="${ver}" > /dev/null
+		mv /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
 		if ! bhyve_create_dsk ${data}/${defdsk} ${freesize}; then
 			err 1 "Error: Couldn't create the image file. ${mdimage}"
