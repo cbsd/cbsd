@@ -1,4 +1,4 @@
-#v10.0.5
+#v10.0.6
 #required for . ${dialog} 
 TMPFILE="${ftmpdir}/inputbox.$$"
 
@@ -40,7 +40,6 @@ GET_MDSIZE_MSG="Enter size for the images"
 GET_FREESIZE_MSG="reserved (expand to) X size of image free space (100m, 1g)"
 GET_CPUS_MSG="Number of CPUs (eg: 1, max: 16)"
 GET_RAM_MSG="RAM size (eg: 512M)"
-GET_TYPE_MSG="Type of VMs (eg: freebsd, openbsd, linux, netbsd, dflybsd)"
 GET_PROFILE_MSG="Profile of VMs (eg: centos-vmlinuz-2.6.32-431.el6.x86_64)"
 GET_JAILPROFILE_MSG="Profile for jcreate"
 GET_HOSTBRIDGE_MSG="Hostbridge for VMs (eg: hostbridge or amd_hostbridge)"
@@ -85,24 +84,23 @@ freejname()
 # form for $pkglist
 get_pkglist()
 {
-	    pkglist="${ftmpdir}/tui.$$"
-	    pkgbrowser out="${pkglist}"
-
-	    [ ! -f "${pkglist}" ] && pkglist="NO"
+	pkglist="${ftmpdir}/tui.$$"
+	pkgbrowser out="${pkglist}"
+	[ ! -f "${pkglist}" ] && pkglist="NO"
 }
 
 # form for $jname
 # if $1 = "nosearch" than skip for searching/testing of available jname
 get_jname()
 {
-	    local _ok _message _input _retval
+	local _ok _message _input _retval
 
-	    if [ "$1" = "nosearch" ]; then
+	if [ "$1" = "nosearch" ]; then
 			freejname=${jname}
-	    else
+	else
 		freejname
-	    fi
-	    _ok=0
+	fi
+	_ok=0
 
 	while [ ${_ok} -ne 1 ]; do
 		f_dialog_input _input "${GET_JNAME_MSG}" "${freejname}" "${_message}"
@@ -965,26 +963,37 @@ get_jail_isopath()
 # form for $type
 get_jail_type()
 {
-	local _input _retval
+	local _input _retval menu_list
 
-	f_dialog_input _input "${GET_TYPE_MSG}" "${vm_os_type}"
+	menu_list="
+	'freebsd' 'FreeBSD-based guests'
+	'linux' 'Linux-based guests'
+	'openbsd' 'OpenBSD-based guests'
+	'netbsd' 'NetBSD-based guests'
+	'dflybsd' 'DragonFlyBSD-based guests'"
 
-	_retval=$?
+	msg_ok="Ok"
+	msg_cancel="Cancel"
 
-	case ${_retval} in
+	f_dialog_menu
+	retval=$?
+
+	f_dialog_menutag_fetch mtag
+	case $retval in
 		0)
-			[ "${vm_os_type}" != "${_input}" ] && unset vm_os_profile
-			vm_os_type=${_input}
+			vm_os_type="${mtag}"
+			;;
+		*)
 			;;
 	esac
-
 }
 
 # form for $vm_os_profile
 # if $1 not empty just load profile without dialogizing
 get_vm_profile()
 {
-	local _input _retval _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num
+	local _input _retval _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num _myfile
+	local menu_list=""
 
 	_res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec realpath {} \;| sort -u )
 
@@ -994,50 +1003,46 @@ get_vm_profile()
 		unset ${bhyve_profile}
 		eval $( grep ^bhyve_profile= ${i} )
 		[ -z "${bhyve_profile}" ] && continue
-		_myprofiles="${_myprofiles} ${bhyve_profile} : on "
+		_mypath=$( echo $i | sed s:^${workdir}/::g )
+		menu_list="${menu_list} '${bhyve_profile}' '${_mypath}'"
+#		_myprofiles="${_myprofiles} ${bhyve_profile} : on "
 		# store filename
 		local profile${_all}="${bhyve_profile}"
 		local file${_all}="${i}"
 		_all=$(( _all + 1 ))
 	done
 
-	[ -z "${_myprofiles}" ] && unset vm_os_profile && return 0
+#	[ -z "${_myprofiles}" ] && unset vm_os_profile && return 0
+	[ -z "${menu_list}" ] && unset vm_os_profile && return 0
 
-	if [ -z "${1}"]; then
-		vm_os_profile=$( eval $DIALOG \
-		--colors \
-		--title \"\$DIALOG_TITLE\"         \
-		--backtitle \"\$DIALOG_BACKTITLE\" \
-		--hline \"\$__hline\"              \
-		--ok-label \"\$msg_ok\"            \
-		--cancel-label \"\$msg_cancel\"    \
-		--default-item \"\$__defaultitem\" \
-		--radiolist \"\$__prompt\"         \
-		0 0 0         \
-		${_myprofiles}                      \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-		) || return $?
-		# Return if user either pressed ESC or chose Cancel/No
-		f_dialog_data_sanitize vm_os_profile
-	else
-		vm_os_profile="${1}"
-	fi
+	msg_ok="Ok"
+	msg_cancel="Cancel"
 
-	_num=0
+	f_dialog_menu
 
-	_myfile=$( while [ ${_num} -ne ${_all} ]; do
-		eval _myfile="\$file${_num}"
-		eval _prof="\$profile${_num}"
-		[ "${vm_os_profile}" = "${_prof}" ] && echo "${_myfile}" && exit
-		_num=$(( _num + 1 ))
-	done )
+	retval=$?
 
-	[ -z "${_myfile}" ] && return 0
+	case $retval in
+		0)
+			f_dialog_menutag_fetch vm_os_profile
+			_num=0
+			_myfile=$( while [ ${_num} -ne ${_all} ]; do
+				eval _myfile="\$file${_num}"
+				eval _prof="\$profile${_num}"
+				[ "${vm_os_profile}" = "${_prof}" ] && echo "${_myfile}" && exit
+				_num=$(( _num + 1 ))
+			done )
 
-	if [ -f "${_myfile}" ]; then
-		. ${_myfile}
-		global_profile_file="${_myfile}"
-	fi
+			[ -z "${_myfile}" ] && return 0
+
+			if [ -f "${_myfile}" ]; then
+				. ${_myfile}
+				global_profile_file="${_myfile}"
+			fi
+			;;
+		*)
+			;;
+	esac
 }
 
 # form for $profile
