@@ -3,7 +3,7 @@
 
 PROG=	cbsd
 BINDIR?=	/usr/local/bin
-INSTALLFLAGS= -S -m 500
+INSTALLFLAGS= -S
 SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c cbsd_pwait.c cd.c echo.c \
 	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
