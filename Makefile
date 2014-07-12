@@ -26,6 +26,7 @@ cbsd:
 	${CC} sbin/netmask.c -o sbin/netmask
 	${CC} misc/src/sqlcli.c -static -lsqlite3 -L/usr/local/lib -I/usr/local/include -o misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail
+	${CC} misc/src/chk_arp_byip.c -o misc/chk_arp_byip
 	${CC} misc/src/elf_tables.c -lelf -o misc/elf_tables
 	${CC} misc/src/conv2human.c -lelf -o misc/conv2human -lutil
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch
