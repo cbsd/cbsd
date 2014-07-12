@@ -10,6 +10,7 @@ clean:
 	/bin/rm -f bin/cbsdsftp
 	/bin/rm -f bin/cbsdssh
 	/bin/rm -f bin/cfetch
+	/bin/rm -f bin/cbsd
 	/bin/rm -f sbin/netmask
 	/bin/rm -f misc/sqlcli
 	/bin/rm -f misc/cbsdlogtail

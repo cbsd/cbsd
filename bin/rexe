@@ -34,30 +34,30 @@ TTY=1
 
 
 ssh_connect() {
-    local ret
+	local ret
 
-    if [ "${TTY}" = 0 ]; then
-	TTYOP="-T"
-    else
-	TTYOP="-tt"
-    fi
+	if [ "${TTY}" = 0 ]; then
+		TTYOP="-T"
+	else
+		TTYOP="-tt"
+	fi
 
-    #    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
-    #    ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
-    ssh -oControlPath=${sshdir}/sockets/%r@%h:%p $SSH_ARGS ${TTYOP} "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"| \
-	    while read SSH_LINE ; do
-		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
-#		[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
-	    done
-    ret=$?
-    return ${ret}
+	#    echo "$THESCRIPT" | ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${REMOTE_SHELL}" | \
+	#    ssh -l ${cbsduser} $SSH_ARGS ${TTYOP} "${THESCRIPT}"| \
+	ssh -oControlPath=${sshdir}/sockets/%r@%h:%p $SSH_ARGS ${TTYOP} "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"| \
+		while read SSH_LINE ; do
+			[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "0" ] && echo "$SSH_LINE"
+#			[ "$QUIET" -lt 1 -a "$SSH_LINE" != "" -a "$MULTIHOST" = "1" ] && echo "$SSH_LINE" | sed -e "s/^/$HOST: /"
+		done
+	ret=$?
+	return ${ret}
 }
 
 ##############################
 # FUNCTIONS FOR FORKED PROCS #
 ##############################
 set_hostlist() {
-# Create a hostlist file.
+	# Create a hostlist file.
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: BUILDING HOST LIST FILE $TEMP_DIR/hostlist" 1>&2
 	rm -f $TEMP_DIR/hostlist || exit 1
 	for HOST in $HOSTLIST ; do
@@ -66,7 +66,7 @@ set_hostlist() {
 }
 
 get_next_host() {
-# lock file
+	# lock file
 	while [ 1 ] ; do
 		echo $CHILDNUM >> "$TEMP_DIR/hostlist.lock"
 		TOP_PID=$(head -1 "$TEMP_DIR/hostlist.lock" 2>/dev/null)
@@ -79,26 +79,26 @@ get_next_host() {
 	done
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Locked hostfile." 1>&2
 
-# get next host
+	# get next host
 	NEXT_HOST=$(head -1 $TEMP_DIR/hostlist)
 	HOSTFILE_LEN=$(wc -l $TEMP_DIR/hostlist | awk '{print $1}')
-        if [ -z "$HOSTFILE_LEN" -o "$HOSTFILE_LEN" = 0 ] ; then
+	if [ -z "$HOSTFILE_LEN" -o "$HOSTFILE_LEN" = 0 ] ; then
 		rm -f "$TEMP_DIR/hostlist.lock"
 		return
 	fi
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Next host: $NEXT_HOST" 1>&2
 
-# re-write file removing new host
+	# re-write file removing new host
 	rm -f "$TEMP_DIR/hostlist.new"
 	tail -$(( $HOSTFILE_LEN - 1 )) $TEMP_DIR/hostlist > $TEMP_DIR/hostlist.new || exit 1
-        rm -f "$TEMP_DIR/hostlist"
+	rm -f "$TEMP_DIR/hostlist"
 	mv "$TEMP_DIR/hostlist.new" "$TEMP_DIR/hostlist"
 
-# unlock file
+	# unlock file
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG[#$CHILDNUM]: Removing hostfile lock." 1>&2
 	rm -f "$TEMP_DIR/hostlist.lock"
 
-# return hostname
+	# return hostname
 	echo $NEXT_HOST
 }
 
@@ -106,45 +106,44 @@ run_child() {
 	trap "exit 0" SIGHUP
 	CHILDNUM=$1
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: FORKING CHILD #$CHILDNUM of $CONCURRENT (pid $!/$$)" 1>&2
+
 	while [ 1 ] ; do
+		# issue:  Cannot call get_next_host inside $() or `` because our trap won't be able to kill that.
+		#     solution: avoid subshell here by directing to a file.
+		rm -f $TEMP_DIR/$CHILDNUM.next_host
+		get_next_host >$TEMP_DIR/$CHILDNUM.next_host
+		HOST=`cat $TEMP_DIR/$CHILDNUM.next_host`
+		if [ -z "$HOST" ] ; then
+			rm -f "$TEMP_DIR/$CHILDNUM.pid"
+			break
+		fi
+		[ "$DEBUG" -ge 1 ] && echo "DEBUG[#$CHILDNUM]: CONNECT $HOST" 1>&2
+		rm -f "$TEMP_DIR/$CHILDNUM.active"
+		echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
+		#	cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"
+		NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\" )
 
-# issue:  Cannot call get_next_host inside $() or `` because our trap won't be able to kill that.
-#     solution: avoid subshell here by directing to a file.
-	rm -f $TEMP_DIR/$CHILDNUM.next_host
-	get_next_host >$TEMP_DIR/$CHILDNUM.next_host
-	HOST=`cat $TEMP_DIR/$CHILDNUM.next_host`
-	if [ -z "$HOST" ] ; then
-		rm -f "$TEMP_DIR/$CHILDNUM.pid"
-		break
-	fi
-	[ "$DEBUG" -ge 1 ] && echo "DEBUG[#$CHILDNUM]: CONNECT $HOST" 1>&2
+		if [ -z "${NODEDATA}" ]; then
+			echo "${HOST}: No such node in base"
+			continue
+		fi
 
-	rm -f "$TEMP_DIR/$CHILDNUM.active"
-	echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
-#	cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"
-	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\" )
+		sqllist "$NODEDATA" myip myport mykey
+		SSH_ARGS="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
 
-	if [ -z "${NODEDATA}" ]; then
-	    echo "${HOST}: No such node in base"
-	    continue
-	fi
+		if [ ${tryoffline} -ne 1 ]; then
+			if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
+				echo "Node is offline: ${HOST}"
+				continue
+			fi
+		fi
 
-	sqllist "$NODEDATA" myip myport mykey
-	SSH_ARGS="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
-
-	if [ ${tryoffline} -ne 1 ]; then
-	    if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
-		echo "Node is offline: ${HOST}"
-		continue
-	    fi
-	fi
-
-#	ssh_connect > $TEMP_DIR/$HOST.out
-#	cat $TEMP_DIR/$HOST.out
-	ssh_connect
-	ret=$?
-	[ $ret -eq 0 ] && update_idle ${HOSTLIST}
-	[ $TTY -eq 0 ] && exit
+		#	ssh_connect > $TEMP_DIR/$HOST.out
+		#	cat $TEMP_DIR/$HOST.out
+		ssh_connect
+		ret=$?
+		[ $ret -eq 0 ] && update_idle ${HOSTLIST}
+		[ $TTY -eq 0 ] && exit
 	done
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: CHILD #$CHILDNUM done" 1>&2
 	rm -f "$TEMP_DIR/$CHILDNUM.pid" "$TEMP_DIR/$CHILDNUM.active"
@@ -152,7 +151,7 @@ run_child() {
 
 
 create_temp() {
-    TEMP_DIR=$(mktemp -d $TEMP_BASE/$(basename $0).XXXXXX) || err 1 "Error mktemp"
+	TEMP_DIR=$(mktemp -d $TEMP_BASE/$(basename $0).XXXXXX) || err 1 "Error mktemp"
 }
 
 destroy_temp() {
@@ -194,10 +193,10 @@ trap "exit 0" SIGHUP
 [ -n "${blocking}" ] && BLOCKING=1 && shift
 
 if [ -n "${quiet}" ]; then
-    QUIET=1
-    DEBUG=0
-    SSH_VERBOSE="-q"
-    shift
+	QUIET=1
+	DEBUG=0
+	SSH_VERBOSE="-q"
+	shift
 fi
 
 [ -n "${debug}" ] && DEBUG="${debug}" && shift
@@ -206,32 +205,32 @@ fi
 [ -n "${tty}" ] && TTY=${tty} && shift
 
 if [ -z "${tryoffline}" ]; then
-    tryoffline=0
-    checkforonline="tryoffline=0"
+	tryoffline=0
+	checkforonline="tryoffline=0"
 else
-    checkforonline="tryoffline=${tryoffline}"
-    shift
+	checkforonline="tryoffline=${tryoffline}"
+	shift
 fi
 
 if [ -n "${nodelist}" ]; then
-    [ ! -f "${nodelist}" ] && err 1 "${nodelist} file doesn't exist"
-    HOSTLIST="$(cat $nodelist | sed -e 's/#.*//' | egrep -v "^ *$" )"
-    shift
+	[ ! -f "${nodelist}" ] && err 1 "${nodelist} file doesn't exist"
+	HOSTLIST="$(cat $nodelist | sed -e 's/#.*//' | egrep -v "^ *$" )"
+	shift
 fi
 
 if [ -n "${netgroup}" ]; then
-    # Negtgoup
-    NETGROUP=$2
-    NETGROUP_LIST="$(getent netgroup $NETGROUP | xargs -n 1 echo | sed -n '/^(.*,$/s/[,(]//gp')"
-    [ -z "${NETGROUP_LIST}" ] && err 1 "Failed to get netgroup: $NETGROUP"
-    HOSTLIST="$NETGROUP_LIST $HOSTLIST"
-    shift
+	# Negtgoup
+	NETGROUP=$2
+	NETGROUP_LIST="$(getent netgroup $NETGROUP | xargs -n 1 echo | sed -n '/^(.*,$/s/[,(]//gp')"
+	[ -z "${NETGROUP_LIST}" ] && err 1 "Failed to get netgroup: $NETGROUP"
+	HOSTLIST="$NETGROUP_LIST $HOSTLIST"
+	shift
 fi
 
 if [ -n "${cmdfile}" ]; then
-    [ ! -e "$cmdfile" ] && err 1 "myssh: Script File '$SCRIPTFILE' does not exist!"
-    THESCRIPT="$THESCRIPT $(cat $cmdfile )"
-    shift
+	[ ! -e "$cmdfile" ] && err 1 "myssh: Script File '$SCRIPTFILE' does not exist!"
+	THESCRIPT="$THESCRIPT $(cat $cmdfile )"
+	shift
 fi
 
 HOSTLIST=$(echo "$HOSTLIST" | sed -e 's/#.*//' | egrep -v "^ *$" )
@@ -243,33 +242,33 @@ CONCURRENT=$COUNT_HOSTS
 [ -z "${cmd}" -a -z "${cmdfile}" ] && THESCRIPT=$@
 
 if [ "${COUNT_HOSTS}" = "1" ]; then
-    if [ "${TTY}" = 0 ]; then
-	TTYOP="-T"
-    else
-	TTYOP="-tt"
-    fi
-
-    NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOSTLIST}\" )
-
-    if [ -z "${NODEDATA}" ]; then
-        err 1 "${HOST}: No such node in base"
-    fi
-
-    sqllist "$NODEDATA" myip myport mykey
-
-    if [ ${tryoffline} -ne 1 ]; then
-	if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
-	    err 1 "Node is offline: ${HOSTLIST}"
+	if [ "${TTY}" = 0 ]; then
+		TTYOP="-T"
+	else
+		TTYOP="-tt"
 	fi
-    fi
 
-    SSH_ARGS="-l ${cbsduser} -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
-    SSHMUX="${sshdir}/sockets/${cbsduser}@${myip}:${myport}"
-#    [ ! -S "${SSHMUX}" ] && err 1 "No such socket ${SSHMUX}. Please run nodepinger service"
-    ssh -oControlPath=${sshdir}/sockets/%r@%h:%p -t ${SSH_ARGS} ${TTOP} -C "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"
-    ret=$?
-    [ $ret -eq 0 ] && update_idle ${HOSTLIST}
-    exit $ret
+	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${HOSTLIST}\" )
+
+	if [ -z "${NODEDATA}" ]; then
+		err 1 "${HOST}: No such node in base"
+	fi
+
+	sqllist "$NODEDATA" myip myport mykey
+
+	if [ ${tryoffline} -ne 1 ]; then
+		if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
+			err 1 "Node is offline: ${HOSTLIST}"
+		fi
+	fi
+
+	SSH_ARGS="-l ${cbsduser} -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+	SSHMUX="${sshdir}/sockets/${cbsduser}@${myip}:${myport}"
+	#    [ ! -S "${SSHMUX}" ] && err 1 "No such socket ${SSHMUX}. Please run nodepinger service"
+	ssh -oControlPath=${sshdir}/sockets/%r@%h:%p -t ${SSH_ARGS} ${TTOP} -C "/usr/local/bin/cbsd -c \"update_idle ${nodename}\"; ${THESCRIPT}"
+	ret=$?
+	[ $ret -eq 0 ] && update_idle ${HOSTLIST}
+	exit $ret
 fi
 
 #TTY=1
@@ -278,18 +277,18 @@ create_temp
 # Fork $CONCURRENT children
 set_hostlist
 CHILDNUM=1
-    while [ $CHILDNUM -le $CONCURRENT ] ; do 
+while [ $CHILDNUM -le $CONCURRENT ] ; do 
 	run_child $CHILDNUM &
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: FORKED CHILD #$CHILDNUM with pid $!" 1>&2
 	rm -f "$TEMP_DIR/$CHILDNUM.pid"
 	echo $! > "$TEMP_DIR/$CHILDNUM.pid"
 	CHILDNUM=$((CHILDNUM+1))
-    done
+done
 wait
 # since trap causes waits to stop waiting with a return value >128
 # We need to check that we really meant to stop waiting.
 RETVAL=$?
-    while [ "$RETVAL" -gt 128 ] ; do
+while [ "$RETVAL" -gt 128 ] ; do
 	[ "$DEBUG" -ge 2 ] && echo "DEBUG: wait returned with a value of $RETVAL" 1>&2
 	DO_WAIT=0
 	    for CPID in $(cat $TEMP_DIR/*.pid 2>/dev/null) ; do
@@ -300,6 +299,6 @@ RETVAL=$?
 	    done
 	[ "$DO_WAIT" = 0 ] && break
 	wait
-    done
+done
 
 destroy_temp
