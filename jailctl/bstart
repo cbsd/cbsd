@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.6
+#v10.0.7
 MYARG=""
 MYOPTARG="jname inter debug"
 MYDESC="Start jail"
@@ -42,6 +42,7 @@ init_iso()
 	if [ ! -f "${_myfile}" -a ! -f "${_mydir}/${iso_img_dist}" -a "${fetch}" = "1" ]; then
 		[ -z "${iso_site}" ] && ${ECHO} "${MAGENTA}No such iso: ${GREEN}${_myfile}${MAGENTA} and ${GREEN}iso_site${MAGENTA} variable not found" && return 1
 		if getyesno "${MAGENTA}No such iso: ${GREEN}${_myfile}${MAGENTA} in ${GREEN}${_mydir}${NORMAL}\n${BOLD}Shall i download it from: ${NORMAL}${iso_site}?"; then
+			${ECHO} "${MAGENTA}Download to: ${GREEN}${_mydir}/${iso_img_dist}${NORMAL}"
 			fetch -a -o ${_mydir}/${iso_img_dist} ${iso_site}${iso_img_dist}
 		fi
 	fi
@@ -58,6 +59,53 @@ init_iso()
 
 	iso_img="${_myfile}"
 	return 0
+}
+
+create_from_jail()
+{
+	# from jail2iso mode
+	bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+	echo "DEBUG: $bhyveload_cmd"
+	${tmuxcmd} -d -2 new -s "cbsd-${jname}" "eval $bhyveload_cmd"
+	# installer_opt="-s 31:0,virtio-blk,${BOOTDISK}"
+}
+
+boot_from_grub()
+{
+	_devicemap="${jailsysdir}/${jname}/device.map"
+	# profile
+	readconf bhyve-${vm_os_type}-${vm_os_profile}.conf
+	[ -z "${bhyve_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+	# re-read jail params and apply personal after profile
+	. ${jrcconf}
+	_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs)
+
+	if [ "${_err}" = "data" -o "${_err}" = "empty" -a "${vm_boot}" = "hdd" ]; then
+		if getyesno "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}\n${BOLD}May be want to boot from CD?${NORMAL}"; then
+			vm_boot="cd";
+		fi
+	fi
+
+	[ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
+	if [ "${vm_boot}" = "cd" ]; then
+		init_iso
+		if [ $? -eq 1 ]; then
+			printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
+			for i in $( jot 5 ); do
+				printf "."
+				sleep 1
+			done
+			echo
+		fi
+	fi
+
+	${ECHO} "${MAGENTA}Creating ${GREEN}device.map ${MAGENTA}in ${GREEN}${_devicemap}${NORMAL}"
+	truncate -s0 ${_devicemap}
+	echo "(hd0) ${data}/${MDFILE}" >> "${_devicemap}"
+	echo "(cd0) ${iso_img}" >> "${_devicemap}"
+	cat "${_devicemap}"
+	[ -z "${grub_boot_cmd}" ] && err 1 "${MAGENTA}No such grub_boot_cmd variable. Check ${GREEN}vm_os_profile${MAGENTA} of config for ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf${MAGENTA} in ${etcdir}${NORMAL}"
+	[ -z "${grub_iso_cmd}" -a "${vm_boot}" = "cd" ] && err 1 "${MAGENTA}No such grub_iso_cmd variable. Check ${GREEN}vm_os_profile${MANGETA} of config for ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf ${MAGENTA}in ${etcdir}${NORMAL}"
 }
 
 
@@ -80,42 +128,40 @@ start_bhyve()
 	case "${vm_os_type}" in
 		"freebsd")
 			if [ "${from_jail}" = "1" ]; then
-				# from jail2iso mode
-				bhyveload_cmd="/usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
-				echo "DEBUG: $bhyveload_cmd"
-				${tmuxcmd} new -s "cbsd-${jname}" "eval $bhyveload_cmd"
-#				installer_opt="-s 31:0,virtio-blk,${BOOTDISK}"
+				create_from_jail
 			else
-				# default mode
-				_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs)
-				if [ "${_err}" = "data" -o "${_err}" = "empty" -a "${vm_boot}" = "hdd" ]; then
-					if getyesno "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}\n${BOLD}May be want to boot from CD?${NORMAL}"; then
-						vm_boot="cd";
-					fi
-				fi
-				[ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
-				if [ "${vm_boot}" = "cd" ]; then
-					init_iso
-					if [ $? -eq 1 ]; then
-						printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
-						for i in $( jot 5 ); do
-							printf "."
-							sleep 1
-						done
-						echo
-					fi
-				fi
-
-				if [ "${vm_boot}" = "cd" ]; then
-					bhyveload_cmd="/usr/sbin/bhyveload -d ${iso_img} -m ${vm_ram} ${jname}"
+				if [ "${boot_from_grub}" = "1" ]; then
+					boot_from_grub
 				else
-					bhyveload_cmd="/usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
-				fi
+					# default mode
+					_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs)
+					if [ "${_err}" = "data" -o "${_err}" = "empty" -a "${vm_boot}" = "hdd" ]; then
+						if getyesno "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}\n${BOLD}May be want to boot from CD?${NORMAL}"; then
+							vm_boot="cd";
+						fi
+					fi
+					[ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
+					if [ "${vm_boot}" = "cd" ]; then
+						init_iso
+						if [ $? -eq 1 ]; then
+							printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
+							for i in $( jot 5 ); do
+								printf "."
+								sleep 1
+							done
+							echo
+						fi
+					fi
 
-				echo "DEBUG: $bhyveload_cmd"
-				${tmuxcmd} new -s "cbsd-${jname}" "eval $bhyveload_cmd"
-#				installer_opt="-s 31:0,virtio-blk,${BOOTDISK}"
-				echo "DEBUG: ${bhyveload_cmd}"
+					if [ "${vm_boot}" = "cd" ]; then
+						bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -d ${iso_img} -m ${vm_ram} ${jname}"
+					else
+						bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+					fi
+
+#					echo "DEBUG: $bhyveload_cmd"
+#					${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
+				fi
 			fi
 			;;
 		"linux")
@@ -169,7 +215,7 @@ start_bhyve()
 			    done
 			    echo
 			fi
-			_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs)
+			_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs )
 
 			if [ "${_err}" = "data" -a "${vm_boot}" = "hdd" ]; then
 			    if getyesno "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}\n${BOLD}May be want to boot from CD?${NORMAL}"; then
@@ -189,39 +235,30 @@ start_bhyve()
 			err 1 "${MAGENTA}Unknown vm profile: ${GREEN}${vm_os_type}${NORMAL}"
 	esac
 
-			if [ "${vm_os_type}" != "freebsd" ]; then
-			    ${ECHO} "${MAGENTA}Booting from: ${GREEN}${vm_boot}${NORMAL}"
-			    # Bhyveload
-			    case "${vm_boot}" in
-				"cd")
-				    echo "DEBUG: $grub_iso_cmd"
-#				    if [ "${inter}" = "0" ]; then
-#					eval "/usr/sbin/daemon -p ${ftmpdir}/bhyveload.${jname}.$$ ${tmuxcmd} new -s \"cbsd-${jname}\" \"eval $grub_iso_cmd\""
-#				    else
-					echo "DEBUG: $grub_iso_cmd"
-					eval "$grub_iso_cmd"
-#				    fi
-				;;
-				"hdd")
-				    echo "Boot from HDD"
-#				    if [ "${inter}" = "0" ]; then
-#				    echo "INTER"
-#				    sleep 2
-#					eval "/usr/sbin/daemon -p ${ftmpdir}/bhyveload.${jname}.$$ ${tmuxcmd} new -s \"cbsd-${jname}\" \"eval $grub_boot_cmd\""
-#				    else
-					echo "DEBUG: ${grub_boot_cmd}"
-					eval "$grub_boot_cmd"
-#				    fi
-				;;
-				*)
-				    echo "Booting from HDD"
-#				    if [ "${inter}" = "0" ]; then
-#					eval "eval /usr/sbin/daemon -p ${ftmpdir}/bhyveload.${jname}.$$ ${tmuxcmd} new -s \"cbsd-${jname}\" \"eval $grub_boot_cmd\""
-#				    else
-					eval "$grub_boot_cmd"
-#				    fi
-				;;
+			if [ "${boot_from_grub}" = "1" ]; then
+				${ECHO} "${MAGENTA}Booting from: ${GREEN}${vm_boot}${NORMAL}"
+				# Bhyveload
+				case "${vm_boot}" in
+					"cd")
+						echo "DEBUG: $grub_iso_cmd"
+						echo "DEBUG: $grub_iso_cmd"
+						eval "$grub_iso_cmd"
+					;;
+					"hdd")
+						echo "Boot from HDD"
+						echo "DEBUG: ${grub_boot_cmd}"
+						eval "$grub_boot_cmd"
+						sleep 15
+					;;
+					*)
+						echo "Booting from HDD"
+						eval "$grub_boot_cmd"
+						sleep 15
+					;;
 			    esac
+			else
+				echo "DEBUG: $bhyveload_cmd"
+				${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
 			fi
 
 	# for vnet we can make another action
@@ -229,7 +266,7 @@ start_bhyve()
 	# when ip=0 and interface=auto we must use default interface for upstream
 	[ "${interface}" = "0" -o "${interface}" = "auto" ] && interface=$(getnics-by-ip ip=0.0.0.0)
 
-	if ! mybridge=`get_my_device bridge ${interface}`; then
+	if ! mybridge=$( get_my_device bridge ${interface} ); then
 	    err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
 	fi
 
@@ -275,17 +312,19 @@ start_bhyve()
 	fi
 
 	# Poehali!
-#	if [ "${inter}" = "0" ]; then
-#	    # let save .pid
-#	    sleep 3
-#	    [ -f "${ftmpdir}/bhyveload.${jname}.$$" ] && cbsd_pwait --pid=$( cat ${ftmpdir}/bhyveload.${jname}.$$ ) --timeout=${parallel}
-#	fi
+	passthr=""
+#	passthr="-s 1:0,hcd-uhci"
+#	passthr="-s 3:0,ehci"
+#	passthr="-s 3:0,ehci,1"
 
-	${tmuxcmd} -u new -d -s "cbsd-${jname}" "( \
-	eval /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
+	while [ -f "/tmp/bhyveload.${jname}.lock" ]; do
+		echo "Waiting for bhyveload load..."
+		sleep 3
+	done
+
+	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "( \
+	eval /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
 	cbsd bstop ${jname}; /sbin/ifconfig ${mytap} destroy )"
-
-#	echo /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname};
 
 	err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
 }
@@ -293,18 +332,17 @@ start_bhyve()
 
 
 # MAIN for multiple jails
-if [ $# -gt 1 -a -z "${jname}" -a -z "${inter}" ]; then
+if [ $# -gt 1 -a -z "${jname}" ]; then
+	# multiple astart always non interactive
+	export inter=0
 	# recursive
 	JLIST=$*
 	for jname in ${JLIST}; do
-		if [ -n "${inter}" ]; then
-			/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart jname=${jname} inter=$inter
-		else
-			/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart jname=${jname}
-		fi
+		[ "${jname}" = "inter=0" ] && continue
+		/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname}
 		#lets save .pid file
 		sleep 1
-		[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=`cat ${ftmpdir}/jstart.${jname}.$$` --timeout=${parallel}
+		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( cat ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
 	done
 
 	wait_for_jstart ${parallel}
