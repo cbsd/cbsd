@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v10.0.7
 CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="mode jname alljails shownode display node header human"
@@ -26,169 +26,164 @@ init $*
 [ "${shownode}" = "1" ] && display="nodename,${display}"
 
 #remove commas for loop action on header
-mydisplay=$(echo ${display} |tr ',' '  ')
+mydisplay=$( echo ${display} |tr ',' '  ' )
 
 # upper for header
-myheader=$(echo ${mydisplay} |tr '[:lower:]' '[:upper:]')
-
+myheader=$( echo ${mydisplay} |tr '[:lower:]' '[:upper:]' )
 JLS=""
 
 show_header()
 {
-    local _header="${BOLD}${myheader}${NORMAL}"
-
-    [ ${header} -ne 0 ] && $ECHO ${_header}
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && $ECHO ${_header}
 }
 
 # if $1 = "Unregister" then overwrite status to "Unregister"
 populate_output_data()
 {
-    #populate values for in output string
-    for _i in ${mydisplay}; do
-	_val=""
-	eval _val=\$$_i
-	[ -z "${_val}" ] && _val="-"
-	if rctl_humanize ${_i}; then
-	    if conv2human ${_val}; then
-		_val="${convval}"
-	    fi
-	fi
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+		if rctl_humanize ${_i}; then
+			if conv2human ${_val}; then
+				_val="${convval}"
+			fi
+		fi
 
-	if [ -z "${_status}" ]; then
-	    _status="${NORMAL}${_val}"
-	else
-	    _status="${_status} ${_val}"
-	fi
-    done
+		if [ -z "${_status}" ]; then
+			_status="${NORMAL}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
 
 }
 
 # $1 - which file from. Eg: local
 show_jaildata_from_sql()
 {
-    local _i _sqlq
+	local _i _sqlq
 
-    #   set sqlfile for ". rcconf" including
-    if [ -n "${1}" ]; then
-	sqlfile="$1"
-    else
-	sqlfile="local"
-    fi
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
 
-    if [ -n "${jname}" ]; then
-	_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\""
-    else
-	_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails"
-    fi
+	if [ -n "${jname}" ]; then
+		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator != \"bhyve\""
+	else
+		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator != \"bhyve\""
+	fi
 
-    ${_sqlq}| while read jname; do
-	_status=""
-	. ${workdir}/rctl.subr
-	populate_output_data
-	$ECHO "${_status}${NORMAL}"
-    done
+	${_sqlq}| while read jname; do
+		_status=""
+		. ${workdir}/rctl.subr
+		populate_output_data
+		$ECHO "${_status}${NORMAL}"
+	done
 }
 
 
 show_local()
 {
-    local _errcode _status
-    show_header
-    show_jaildata_from_sql local
+	local _errcode _status
+	show_header
+	show_jaildata_from_sql local
 }
 
 
 show_remote()
 {
+	show_header
 
-    show_header
+	if [ -z "${node}" ]; then
+		node=$(cbsd node mode=list header=0 allinfo=0)
+	fi
 
-    if [ -z "${node}" ]; then
-	node=$(cbsd node mode=list header=0 allinfo=0)
-    fi
-
-    for _n in $node; do
-	nodename="${_n}"
-	show_jaildata_from_sql ${_n}
-    done
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql ${_n}
+	done
 }
 
 show_jails()
 {
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
 
-    if [ -n "${node}" ]; then
-	show_remote
-	exit
-    fi
-
-    if [ -n "${alljails}" ]; then
-	show_local
-	header=0
-	show_remote
-    else
-	show_local
-    fi
+	if [ -n "${alljails}" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
 
 }
 
-jail_rctl() {
-    local _action _str _p _out
-    local LIMITS="${jailsysdir}/${jname}/jail.limits"
+jail_rctl()
+{
+	local _action _str _p _out
+	local LIMITS="${jailsysdir}/${jname}/jail.limits"
 
-    case "${mode}" in
-	"set")
-	    _action="rctl -a "
-	    ;;
-	"unset")
-	    [ -z "${jname}" ] && err 1 "${MAGENTA}jname= must be set${NORMAL}"
-	    /usr/bin/rctl -r jail:${jname}
-	    #_action="rctl -r "
-	    return 0
-	    ;;
-	"show")
-	    rctl -hu jail:${jname}
-	    return 0
-	    ;;
-	"get")
-	    # Here must be
-	    # rctl -l jail:$jname::=/
-	    # or
-	    # rctl -u jail:$jname::=/
-	    # but it still unusable or crashed
-	    [ -f "${LIMITS}" ] && cat ${LIMITS}
-	    return 0
-	    ;;
-	*)
-	    show_jails|/usr/bin/column -t
-	    ;;
-    esac
+	case "${mode}" in
+		"set")
+			_action="/usr/bin/rctl -a "
+			;;
+		"unset")
+			[ -z "${jname}" ] && err 1 "${MAGENTA}jname= must be set${NORMAL}"
+			/usr/bin/rctl -r jail:${jname}
+			#_action="rctl -r "
+			return 0
+			;;
+		"show")
+			/usr/bin/rctl -hu jail:${jname}
+			return 0
+			;;
+		"get")
+			# Here must be
+			# rctl -l jail:$jname::=/
+			# or
+			# rctl -u jail:$jname::=/
+			# but it still unusable or crashed
+			[ -f "${LIMITS}" ] && cat ${LIMITS}
+			return 0
+			;;
+		*)
+			show_jails|/usr/bin/column -t
+			;;
+	esac
 
-    if [ -f "${LIMITS}"  ]; then
-	printf "${MAGENTA}${mode} resource limit: [ ${GREEN}"
-	cat ${LIMITS} |while read _p; do
-	    case ":${_p}" in
-		:#* | :)
-		    continue
-		;;
-	    esac
-	    _str="${_action} jail:${jname}:$_p"
-	    _out=`eval $_str`
-	    [ $? -eq 0 ] && printf "${_p} "
-	done
-	printf "${MAGENTA}]${NORMAL}\n"
-    fi
+	if [ -f "${LIMITS}"  ]; then
+		printf "${MAGENTA}${mode} resource limit: [ ${GREEN}"
+		cat ${LIMITS} |while read _p; do
+			case ":${_p}" in
+				:#* | :)
+					continue
+				;;
+			esac
+			_str="${_action} jail:${jname}:$_p"
+			_out=$( eval $_str )
+			[ $? -eq 0 ] && printf "${_p} "
+		done
+			printf "${MAGENTA}]${NORMAL}\n"
+	fi
 }
 
 #### MAIN
 if [ -n "${jname}" ]; then
-    . ${jrcconf}
-    [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 fi
 
 [ -z "${header}" ] && header=1
 [ -z "${human}" ] && human=1
 
 sqldelimer=" "
-
 jail_rctl
-
