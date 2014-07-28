@@ -1,6 +1,6 @@
 --- /dev/null	2014-07-28 14:54:41.000000000 +0400
 +++ sched_fbfs.c	2014-07-28 14:54:00.000000000 +0400
-@@ -0,0 +1,1317 @@
+@@ -0,0 +1,1316 @@
 +/*-
 + * Copyright (c) 1982, 1986, 1990, 1991, 1993
 + *	The Regents of the University of California.  All rights reserved.
@@ -995,7 +995,6 @@
 +                        pri = RQB_FFS(rqb->rqb_bits[i]) + (i << RQB_L2BPW);
 +                        CTR3(KTR_RUNQ, "runq_choose_bfs: bits=%#x i=%d pri=%d",
 +                            rqb->rqb_bits[i], i, pri);
-+			pri = RQB_FFS(rqb->rqb_bits[i]) + (i << RQB_L2BPW);
 +			if ((pri == RQ_TIMESHARE) || (pri == RQ_IDLE)) {
 +				td = edf_choose(&rq->rq_queues[pri]);
 +				return (td);
