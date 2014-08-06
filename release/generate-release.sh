@@ -86,7 +86,7 @@ cp -Rp /usr/local/cbsd ${DSTDIR}/usr/local
 
 cp /usr/local/bin/rsync ${DSTDIR}/usr/local/bin/
 
-/usr/local/cbsd/release/mkisoimages.sh ${LABEL} /usr/cbsd.iso ${DSTDIR}
+/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n /usr/cbsd.iso -d ${DSTDIR}
 
 mv ${DSTDIR}/root/.cshrc-orig ${DSTDIR}/root/.cshrc
 mv ${DSTDIR}/etc/ttys-orig ${DSTDIR}/etc/ttys

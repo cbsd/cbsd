@@ -33,6 +33,7 @@ readconf buildworld.conf
 . ${workdir}/universe.subr
 . ${workdir}/bhyve.subr
 
+readconf jail2iso.conf
 init $*
 
 . ${buildconf}
@@ -50,99 +51,93 @@ init_supported_arch
 init_basedir
 init_kerneldir
 
-#must be upper registry? :
-LABEL="CBSD"
-PRODUCT="cbsd jail2iso"
-PUBLISHER="The CBSD Project. http://www.bsdstore.ru"
-
 [ -n "${label}" ] && LABEL="${label}"
 [ -n "${product}" ] && PRODUCT="${product}"
 [ -n "${publisher}" ] && PUBLISHER="${publisher}"
 
 TMP_DIR="${tmpdir}/$jname-iso"
 DST_DIR="${tmpdir}/tmpmfsroot"
-
 TRAP=""
 
 clear_tmp_dir()
 {
-    [ -d "${TMP_DIR}" -o -f "${TMP_DIR}" ] && chflags -R noschg ${TMP_DIR} && rm -rf ${TMP_DIR}
+	[ -d "${TMP_DIR}" -o -f "${TMP_DIR}" ] && chflags -R noschg ${TMP_DIR} && rm -rf ${TMP_DIR}
 }
 
 make_mtree()
 {
-    [ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
-    [ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
-    [ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
-    [ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
-    [ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
 }
 
 make_libmap()
 {
-    A=`mktemp /tmp/libtxt.XXX`
-    B=`mktemp /tmp/libtxtsort.XXX`
-    TRAP="${TRAP} rm -f ${A} ${B};"
-    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	A=$( mktemp /tmp/libtxt.XXX )
+	B=$( mktemp /tmp/libtxtsort.XXX )
+	TRAP="${TRAP} rm -f ${A} ${B};"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
-    cat ${FILES} |while read line; do
-	[ -z "${line}" ] && continue
-	case ":${line}" in
-	    :#*)
-		continue
-		;;
-	esac
-	ldd -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
-    done
+	cat ${FILES} |while read line; do
+		[ -z "${line}" ] && continue
+		case ":${line}" in
+			:#*)
+				continue
+				;;
+		esac
+		ldd -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
+	done
 
-    sort -u ${A} > ${B}
+	sort -u ${A} > ${B}
 }
 
 copy_binlib()
 {
-    cat ${FILES}| while read line; do
-	[ -z "${line}" ] && continue
-	case ":${line}" in
-	    :#*)
-		continue
-		;;
-	esac
-	D=`chroot ${BASE_DIR} dirname ${line}`
-	rsync -av ${BASE_DIR}${line} ${DST_DIR}${D}
-	A=`readlink ${BASE_DIR}${line}`
-	if [ -n "${A}" -a -f "${D}/${A}" ]; then
-	    echo "SYM: $A"
-	    rsync -av -${D}${A} ${DST_DIR}${D}
-	fi
-    done
+	cat ${FILES}| while read line; do
+		[ -z "${line}" ] && continue
+		case ":${line}" in
+			:#*)
+				continue
+				;;
+		esac
+		D=$( chroot ${BASE_DIR} dirname ${line} )
+		rsync -av ${BASE_DIR}${line} ${DST_DIR}${D}
+		A=$( readlink ${BASE_DIR}${line} )
+		if [ -n "${A}" -a -f "${D}/${A}" ]; then
+			echo "SYM: $A"
+			rsync -av -${D}${A} ${DST_DIR}${D}
+		fi
+	done
 
-    cat ${B}| while read line; do
-	[ -z "${line}" ] && continue
-	D=`chroot ${BASE_DIR} dirname ${line}`
-	rsync -avzx ${BASE_DIR}${line} ${DST_DIR}${D}
-    done
+	cat ${B}| while read line; do
+		[ -z "${line}" ] && continue
+		D=$( chroot ${BASE_DIR} dirname ${line} )
+		rsync -avzx ${BASE_DIR}${line} ${DST_DIR}${D}
+	done
 
-    rm -f ${A} ${B}
+	rm -f ${A} ${B}
 }
 
 
 # Prepare MFSRoot part
 prepare_dir()
 {
-    local rcscript="/etc/rc.d/preparedir"
+	local rcscript="/etc/rc.d/preparedir"
 
-    cp -rP ${path}/etc ${DST_DIR}/
+	cp -rP ${path}/etc ${DST_DIR}/
 
-    case "${media}" in
-    "iso")
-	MOUNTROOT="/sbin/mount -oro -t cd9660 /dev/iso9660/${LABEL} /mnt"
-	;;
-    "memstick")
-	MOUNTROOT="/sbin/mount -oro /dev/ufs/${LABEL} /mnt"
-	;;
-    esac
+	case "${media}" in
+	"iso")
+		MOUNTROOT="/sbin/mount -oro -t cd9660 /dev/iso9660/${LABEL} /mnt"
+		;;
+	"memstick")
+		MOUNTROOT="/sbin/mount -oro /dev/ufs/${LABEL} /mnt"
+		;;
+	esac
 
-cat > ${DST_DIR}${rcscript} <<EOF
+	cat > ${DST_DIR}${rcscript} <<EOF
 #!/bin/sh
 #
 # Copyright (c) 2014 Oleg Ginzburg <olevole@olevole.ru>
@@ -156,140 +151,134 @@ maxretry=10
 retry=0
 
 if [ ! -d /mnt/bin ]; then
-    printf "Waiting \${maxretry}s for mount root..."
-    while [ \$MOUNTOK -ne 1 ]; do
-	${MOUNTROOT}
-	if [ \$? -ne 0 ]; then
-	    printf " \${retry} "
-	    sleep 1
-	    retry=\$((retry+1))
-	else
-	    echo
-	    MOUNTOK=1
-	fi
-	
-	if [ \$retry -ge \${maxretry} ]; then
-	    echo
-	    echo "Unsuccess. Drop to single mode"
-	    exit
-	fi
-    done
+	printf "Waiting \${maxretry}s for mount root..."
+	while [ \$MOUNTOK -ne 1 ]; do
+		${MOUNTROOT}
+		if [ \$? -ne 0 ]; then
+			printf " \${retry} "
+			sleep 1
+			retry=\$((retry+1))
+		else
+			echo
+			MOUNTOK=1
+		fi
+		if [ \$retry -ge \${maxretry} ]; then
+			echo
+			echo "Unsuccess. Drop to single mode"
+			exit 0
+		fi
+	done
 fi
 
 if [ ! -d /usr/bin ]; then
 EOF
-    echo 'MD=$(/sbin/mdconfig -o readonly -a -t vnode -f /mnt/usr.uzip)' >> ${DST_DIR}${rcscript}
-    echo '/sbin/mount -oro /dev/${MD}.uzip /mnt/usr' >> ${DST_DIR}${rcscript}
-    echo '/sbin/mount -oro -t nullfs /mnt/usr /usr' >> ${DST_DIR}${rcscript}
-    echo '/sbin/mount -oro -t nullfs /mnt/boot /boot' >> ${DST_DIR}${rcscript}
-    echo 'hash -r' >> ${DST_DIR}${rcscript}
-    echo 'fi' >>${DST_DIR}${rcscript}
+	echo 'MD=$(/sbin/mdconfig -o readonly -a -t vnode -f /mnt/usr.uzip)' >> ${DST_DIR}${rcscript}
+	echo '/sbin/mount -oro /dev/${MD}.uzip /mnt/usr' >> ${DST_DIR}${rcscript}
+	echo '/sbin/mount -oro -t nullfs /mnt/usr /usr' >> ${DST_DIR}${rcscript}
+	echo '/sbin/mount -oro -t nullfs /mnt/boot /boot' >> ${DST_DIR}${rcscript}
+	echo 'hash -r' >> ${DST_DIR}${rcscript}
+	echo 'fi' >>${DST_DIR}${rcscript}
 
-    chmod 0555 ${DST_DIR}${rcscript}
+	chmod 0555 ${DST_DIR}${rcscript}
 
-    cp ${path}/etc/rc.conf ${DST_DIR}/etc/rc.conf
+	cp ${path}/etc/rc.conf ${DST_DIR}/etc/rc.conf
 
-    # Here is mfsroot location
-    if [ -f "${jailsysdir}/${jname}/tmpfsdir" ]; then
-	cp ${miscdir}/tmpfsdir ${DST_DIR}/etc/rc.d/
-    fi
+	# Here is mfsroot location
+	if [ -f "${jailsysdir}/${jname}/tmpfsdir" ]; then
+		cp ${miscdir}/tmpfsdir ${DST_DIR}/etc/rc.d/
+	fi
 }
 
 prunelist()
 {
+	[ ! -f "${prunelist}" ] && return 0 # no prune
+	[ -z "${1}" ] && return 0 # sanity
 
-    [ ! -f "${prunelist}" ] && return 0 # no prune
-    [ -z "${1}" ] && return 0 # sanity
+	${ECHO} "${MAGENTA}Prune file by list: ${GREEN}${prunelist}${NORMAL}"
 
-    ${ECHO} "${MAGENTA}Prune file by list: ${GREEN}${prunelist}${NORMAL}"
-
-    for FILE in `cat ${prunelist}`; do
-	[ -z "${FILE}" ] && continue
-	case ":${FILE}" in
-	    :#* | :)
-		continue
-		;;
-	esac
-	rm -rf ${1}/${FILE} 2>/dev/null
-    done
+	for FILE in $( cat ${prunelist} ); do
+		[ -z "${FILE}" ] && continue
+		case ":${FILE}" in
+			:#* | :)
+				continue
+				;;
+		esac
+		rm -rf ${1}/${FILE} 2>/dev/null
+	done
 }
 
 # $1 - rootdir
 epilogue_img()
 {
-    local _rootfs="${1}"
-    [ -z "${_rootfs}" -a ! -d "${_rootfs}" ] && return 0
-    [ -z "${nic}" ] && nic="vtnet0"
+	local _rootfs="${1}"
+	[ -z "${_rootfs}" -a ! -d "${_rootfs}" ] && return 0
+	[ -z "${nic}" ] && nic="vtnet0"
 
-    sysrc -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
+	sysrc -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
 
-    if [ -n "${host_hostname}" ]; then
-	sysrc -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
-#	chroot ${_rootfs} /bin/sh << EOF
-#hostname ${host_hostname}
-#make -C /etc/mail
-#EOF
-    fi
+	if [ -n "${host_hostname}" ]; then
+		sysrc -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
+	fi
 
-    if [ -n "${ip4_addr}" ]; then
-	case "${ip4_addr}" in
-		[Dd][Hh][Cc][Pp])
-			sysrc -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
-			;;
-		*)
-			sysrc -qf ${_rootfs}/etc/rc.conf ipv4_addrs_${nic}="${ip4_addr}" >/dev/null
-		#	[ -n "${host_hostname}" ] && echo "${ip4_addr} ${host_hostname" >> ${_rootfs}/etc/hosts
-	esac
-    fi
+	if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
+		case "${ip4_addr}" in
+			[Dd][Hh][Cc][Pp])
+				sysrc -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
+				;;
+			*)
+				sysrc -qf ${_rootfs}/etc/rc.conf ipv4_addrs_${nic}="${ip4_addr}" >/dev/null
+				#	[ -n "${host_hostname}" ] && echo "${ip4_addr} ${host_hostname" >> ${_rootfs}/etc/hosts
+		esac
+	fi
 
-    if [ -n "${gw4}" ]; then
-	sysrc -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
-    fi
+	if [ -n "${gw4}" ]; then
+		sysrc -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
+	fi
 
-    if [ -n "${nameserver}" ]; then
-	IFS=","
-	for i in ${nameserver}; do
-		echo "nameserver ${i}" >> ${_rootfs}/etc/resolv.conf
-	done
-	IFS=" "
-    fi
+	if [ -n "${nameserver}" ]; then
+		IFS=","
+		for i in ${nameserver}; do
+			echo "nameserver ${i}" >> ${_rootfs}/etc/resolv.conf
+		done
+		IFS=" "
+	fi
 
-    if [ -n "${timezone}" ]; then
-	[ -f "/usr/share/zoneinfo/${timezone}" ] && cp /usr/share/zoneinfo/${timezone} ${_rootfs}/etc/localtime
-    fi
+	if [ -n "${timezone}" ]; then
+		[ -f "/usr/share/zoneinfo/${timezone}" ] && cp /usr/share/zoneinfo/${timezone} ${_rootfs}/etc/localtime
+	fi
 }
 
 
 
 makemfsroot()
 {
-    dd if=/dev/zero of=/tmp/mfsroot count=40000 bs=1k
+	dd if=/dev/zero of=/tmp/mfsroot count=40000 bs=1k
 
-    DEV=`mdconfig -a -t vnode -f /tmp/mfsroot`
-    bsdlabel -w /dev/${DEV} auto
-    newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
-    mkdir -p ${DST_DIR}
-    mount /dev/${DEV} ${DST_DIR}
+	DEV=$( mdconfig -a -t vnode -f /tmp/mfsroot )
+	bsdlabel -w /dev/${DEV} auto
+	newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
+	mkdir -p ${DST_DIR}
+	mount /dev/${DEV} ${DST_DIR}
 
-    make_mtree
-    make_libmap
-    copy_binlib
+	make_mtree
+	make_libmap
+	copy_binlib
 
-    prepare_dir
-    [ "${prunelist}" != "0" ] && prunelist ${DST_DIR}
-    cd /
-    # make flags for preparedir script
-    [ -d "${DST_DIR}/usr/bin" ] && rm -rf ${DST_DIR}/usr/bin
-    umount -f ${DST_DIR} && rmdir ${DST_DIR}
-    mdconfig -d -u ${DEV}
-    gzip -9 /tmp/mfsroot
+	prepare_dir
+	[ "${prunelist}" != "0" ] && prunelist ${DST_DIR}
+	cd /
+	# make flags for preparedir script
+	[ -d "${DST_DIR}/usr/bin" ] && rm -rf ${DST_DIR}/usr/bin
+	umount -f ${DST_DIR} && rmdir ${DST_DIR}
+	mdconfig -d -u ${DEV}
+	gzip -9 /tmp/mfsroot
 }
 
 
 show_bhyve_message()
 {
-    $ECHO "${MAGENTA}Completed. Image ready for bhyve, example:${NORMAL}"
-    cat << EOF
+	$ECHO "${MAGENTA}Completed. Image ready for bhyve, example:${NORMAL}"
+	cat << EOF
  % kldload vmm
  % kldload if_tap
  % sysctl -w net.link.tap.up_on_open=1
@@ -314,9 +303,9 @@ clear_tmp_dir
 
 # move to kernel init?
 if [ ! -d "${KERNEL_DIR}" ]; then
-    getyesno "No kernel ${KERNEL_DIR}. Try to fetch from remote repository?"
-    [ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${KERNEL_DIR}${NORMAL}"
-    repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
+	getyesno "No kernel ${KERNEL_DIR}. Try to fetch from remote repository?"
+	[ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${KERNEL_DIR}${NORMAL}"
+	repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
 fi
 
 [ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
@@ -346,8 +335,8 @@ cd ${path} && pax -p eme -rw . ${TMP_DIR}
 cp -a ${KERNEL_DIR}/boot/kernel ${TMP_DIR}/boot
 
 if [ "${media}" != "bhyve" ]; then
-    rm -f ${TMP_DIR}/boot/kernel/*.symbols
-    cd ${TMP_DIR}/boot/kernel && gzip -9 ./kernel
+	rm -f ${TMP_DIR}/boot/kernel/*.symbols
+	cd ${TMP_DIR}/boot/kernel && gzip -9 ./kernel
 fi
 
 [ -f "${jailsysdir}/${jname}/loader.conf" ] && cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
@@ -376,16 +365,16 @@ EOF
 fi
 
 case "${media}" in
-"iso")
-    ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
-    ;;
-"memstick")
-    ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
-    ;;
-"bhyve")
-#    ROOTFS="/dev/vtbd0 / ufs rw 1 1"
-    ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
-    ;;
+	"iso")
+		ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
+		;;
+	"memstick")
+		ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
+		;;
+	"bhyve")
+		#    ROOTFS="/dev/vtbd0 / ufs rw 1 1"
+		ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
+		;;
 esac
 
 if [ "${media}" != "bhyve" ]; then
@@ -404,20 +393,20 @@ fi
 echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
 
 if [ "${media}" != "bhyve" ]; then
-    mv /tmp/mfsroot.gz ${TMP_DIR}
-    #mkuzip
-    TRAP="${TRAP} rm -f /tmp/usr.img.$$ ;"
-    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-    makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMP_DIR}/usr
-    mkuzip -o ${TMP_DIR}/usr.uzip /tmp/usr.img.$$
-    chflags -R noschg ${TMP_DIR}/usr && rm -rf ${TMP_DIR}/usr && mkdir ${TMP_DIR}/usr
-    #
+	mv /tmp/mfsroot.gz ${TMP_DIR}
+	#mkuzip
+	TRAP="${TRAP} rm -f /tmp/usr.img.$$ ;"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMP_DIR}/usr
+	mkuzip -o ${TMP_DIR}/usr.uzip /tmp/usr.img.$$
+	chflags -R noschg ${TMP_DIR}/usr && rm -rf ${TMP_DIR}/usr && mkdir ${TMP_DIR}/usr
+	#
 
-    # LiveCD location
-    if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
-	cp ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
-    #    cp ${miscdir}/tmpfsdir ${TMP_DIR}/etc/rc.d/
-    fi
+	# LiveCD location
+	if [ -f "$jailsysdir/${jname}/tmpfsdir" ]; then
+		cp ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
+		# cp ${miscdir}/tmpfsdir ${TMP_DIR}/etc/rc.d/
+	fi
 fi
 
 if [ "${media}" = "bhyve" ]; then
@@ -429,53 +418,60 @@ fi
 # post action inside image
 epilogue_img ${TMP_DIR}
 
-
 case "${media}" in
 	"iso")
-	    [ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.iso"
-	    /usr/local/cbsd/release/mkisoimages.sh ${LABEL} ${dstdir}/${dstname} ${TMP_DIR}
-	    ;;
+		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.iso"
+		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}
+		;;
 	"memstick")
-	    [ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
-	    makefs -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname} ${TMP_DIR}
-	    [ $? -ne 0 ] && err 1 "makefs failed"
-	    unit=`mdconfig -a -t vnode -f ${dstdir}/${dstname}`
-	    [ $? -ne 0 ] && err 1 "mdconfig failed"
-	    gpart create -s BSD ${unit}
-	    gpart bootcode -b ${TMP_DIR}/boot/boot ${unit}
-	    gpart add -t freebsd-ufs ${unit}
-	    mdconfig -d -u ${unit}
-	    ${ECHO} "${MAGENTA}Now you can burn image to USB memstick via\n ${GREEN}dd if=${dstdir}/${dstname} of=/dev/da${RED}XXX${GREEN} bs=\"10240\" conv=\"sync\"${NORMAL}"
-	    ;;
+		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
+		makefs -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname} ${TMP_DIR}
+		[ $? -ne 0 ] && err 1 "makefs failed"
+		unit=$( mdconfig -a -t vnode -f ${dstdir}/${dstname} )
+		[ $? -ne 0 ] && err 1 "mdconfig failed"
+
+		gpart create -s gpt ${unit}
+		gpart add -t freebsd-boot -l gpboot -b 40 -s 512K ${unit}
+		gpart bootcode -b ${TMP_DIR}/boot/pmbr -p ${TMP_DIR}/boot/gptboot -i 1 ${unit}
+
+		if [ "${efi}" = "1" -a -f "/boot/boot1.efifat" ]; then
+			gpart add -t efi -s 800K ${unit}
+			dd if=/boot/boot1.efifat of=/dev/${unit}p2
+		fi
+
+		gpart add -t freebsd-ufs ${unit}
+		mdconfig -d -u ${unit}
+		${ECHO} "${MAGENTA}Now you can burn image to USB memstick via\n ${GREEN}dd if=${dstdir}/${dstname} of=/dev/da${RED}X${GREEN} bs=\"10240\" conv=\"sync\"${NORMAL}"
+		;;
 	"bhyve")
-	    [ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
-	    # bad behaviour of makefs: http://www.freebsd.org/cgi/query-pr.cgi?pr=188762
-	    #	    makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
+		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
+		# bad behaviour of makefs: http://www.freebsd.org/cgi/query-pr.cgi?pr=188762
+		#	makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
 
-	    base_size=$( /usr/bin/du -sk ${TMP_DIR} | awk '{printf $1"k"}' )
+		base_size=$( /usr/bin/du -sk ${TMP_DIR} | awk '{printf $1"k"}' )
 
-	    if is_number ${freesize}; then
-		if conv2bytes ${freesize}; then
-		    freesize="${convval}"
+		if is_number ${freesize}; then
+			if conv2bytes ${freesize}; then
+				freesize="${convval}"
+			fi
 		fi
-	    fi
 
-	    if is_number ${base_size}; then
-		if conv2bytes ${base_size}; then
-		    base_size="${convval}"
+		if is_number ${base_size}; then
+			if conv2bytes ${base_size}; then
+				base_size="${convval}"
+			fi
 		fi
-	    fi
 
-	    # we need calculate 8% minfree from base_size
-	    # minfree=$(( base_size * 8 / 100 ))
-	    minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
-	    minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+		# we need calculate 8% minfree from base_size
+		# minfree=$(( base_size * 8 / 100 ))
+		minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+		minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
 
-	    all_size=$(( base_size + freesize + minfree1 + minfree2 ))
+		all_size=$(( base_size + freesize + minfree1 + minfree2 ))
 
-	    if ! bhyve_create_dsk ${dstdir}/${dstname} ${all_size}; then
-		err 1 "Error: Couldn't create the image file. ${mdimage}"
-	    fi
+		if ! bhyve_create_dsk ${dstdir}/${dstname} ${all_size}; then
+			err 1 "Error: Couldn't create the image file. ${mdimage}"
+		fi
 
 #	    if [ $? -eq 0 -a -n "${freesize}" ]; then
 #		${ECHO} "${MAGENTA}Expand image size up to: ${GREEN}${freesize}${NORMAL}"
