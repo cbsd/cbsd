@@ -26,7 +26,6 @@ EXTHELP="wf_jail2iso.html"
 . ${inventory}
 . ${system}
 . ${zfstool}
-. ${color}
 . ${strings}
 readconf buildworld.conf
 . ${tools}
@@ -55,8 +54,9 @@ init_kerneldir
 [ -n "${product}" ] && PRODUCT="${product}"
 [ -n "${publisher}" ] && PUBLISHER="${publisher}"
 
-TMP_DIR="${tmpdir}/$jname-iso"
-DST_DIR="${tmpdir}/tmpmfsroot"
+TMP_DIR="${tmpdir}/$jname-iso.$$"
+DST_DIR="${tmpdir}/tmpmfsroot.$$"
+
 TRAP=""
 
 clear_tmp_dir()
@@ -252,9 +252,10 @@ epilogue_img()
 
 makemfsroot()
 {
-	dd if=/dev/zero of=/tmp/mfsroot count=40000 bs=1k
+	local mfsrootfile="${tmpdir}/mfsroot.$$"
+	dd if=/dev/zero of=${mfsrootfile} count=40000 bs=1k
 
-	DEV=$( mdconfig -a -t vnode -f /tmp/mfsroot )
+	DEV=$( mdconfig -a -t vnode -f ${mfsrootfile} )
 	bsdlabel -w /dev/${DEV} auto
 	newfs -n -i ${BS} -m 0 -o space /dev/${DEV}
 	mkdir -p ${DST_DIR}
@@ -271,7 +272,7 @@ makemfsroot()
 	[ -d "${DST_DIR}/usr/bin" ] && rm -rf ${DST_DIR}/usr/bin
 	umount -f ${DST_DIR} && rmdir ${DST_DIR}
 	mdconfig -d -u ${DEV}
-	gzip -9 /tmp/mfsroot
+	gzip -9 ${mfsrootfile}
 }
 
 
@@ -290,6 +291,48 @@ EOF
  % ifconfig bridge0 up
  % sh /usr/share/examples/bhyve/vmrun.sh -d ${dstdir}/${dstname} ${jname}
 EOF
+}
+
+# $1 - source dir
+# $2 - dst file image
+create_img_for_dir()
+{
+	local base_size minfree1 minfree2
+
+	[ -z "${freesize}" ] && freesize=0
+	[ -z "${imgfreesize}" ] && imgfreesize=0
+
+	base_size=$( /usr/bin/du -sk ${1} | awk '{printf $1"k"}' )
+
+	if is_number ${freesize}; then
+		if conv2bytes ${freesize}; then
+			freesize="${convval}"
+		fi
+	fi
+
+	if is_number ${imgfreesize}; then
+		if conv2bytes ${imgfreesize}; then
+			imgfreesize="${convval}"
+		fi
+	fi
+
+	if is_number ${base_size}; then
+		if conv2bytes ${base_size}; then
+			base_size="${convval}"
+		fi
+	fi
+
+	# we need calculate 8% minfree from base_size
+	# minfree=$(( base_size * 8 / 100 ))
+	minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+	minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
+
+	all_size=$(( base_size + freesize + minfree1 + minfree2 + imgfreesize ))
+	fs_size=$(( base_size + freesize + minfree1 + minfree2 ))
+
+	if ! bhyve_create_dsk ${2} ${all_size}; then
+		err 1 "Error: Couldn't create the image file. ${mdimage}"
+	fi
 }
 
 
@@ -322,7 +365,6 @@ BS=8192
 TRAP="${TRAP} clear_tmp_dir;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 mkdir -p ${TMP_DIR}
-#cd ${path} && pax -p eme -X -rw . ${TMP_DIR}
 cd ${path} && pax -p eme -rw . ${TMP_DIR}
 
 [ "${media}" != "bhyve" ] && rm -rf ${TMP_DIR}/rescue
@@ -393,7 +435,7 @@ fi
 echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
 
 if [ "${media}" != "bhyve" ]; then
-	mv /tmp/mfsroot.gz ${TMP_DIR}
+	mv ${mfsrootfile}.gz ${TMP_DIR}
 	#mkuzip
 	TRAP="${TRAP} rm -f /tmp/usr.img.$$ ;"
 	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
@@ -425,22 +467,29 @@ case "${media}" in
 		;;
 	"memstick")
 		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
-		makefs -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname} ${TMP_DIR}
+		makefs -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
 		[ $? -ne 0 ] && err 1 "makefs failed"
-		unit=$( mdconfig -a -t vnode -f ${dstdir}/${dstname} )
-		[ $? -ne 0 ] && err 1 "mdconfig failed"
 
-		gpart create -s gpt ${unit}
-		gpart add -t freebsd-boot -l gpboot -b 40 -s 512K ${unit}
-		gpart bootcode -b ${TMP_DIR}/boot/pmbr -p ${TMP_DIR}/boot/gptboot -i 1 ${unit}
+		baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
 
-		if [ "${efi}" = "1" -a -f "/boot/boot1.efifat" ]; then
-			gpart add -t efi -s 800K ${unit}
-			dd if=/boot/boot1.efifat of=/dev/${unit}p2
+		# use mkimg on 10.1+ and gpart+mbr for 10.0-
+		if [ ${baseelf} -lt 1000730 ]; then
+			##
+			unit=$( mdconfig -a -t vnode -f ${dstdir}/${dstname} )
+			[ $? -ne 0 ] && err 1 "mdconfig failed"
+			gpart create -s BSD ${unit}
+			gpart bootcode -b ${TMP_DIR}/boot/boot ${unit}
+			gpart add -t freebsd-ufs ${unit}
+			mdconfig -d -u ${unit}
+		else
+			if [ ${efi} -eq 1 ]; then
+				mkimg -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			else
+				mkimg -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			fi
+			rm -f ${dstdir}/${dstname}.part
 		fi
 
-		gpart add -t freebsd-ufs ${unit}
-		mdconfig -d -u ${unit}
 		${ECHO} "${MAGENTA}Now you can burn image to USB memstick via\n ${GREEN}dd if=${dstdir}/${dstname} of=/dev/da${RED}X${GREEN} bs=\"10240\" conv=\"sync\"${NORMAL}"
 		;;
 	"bhyve")
@@ -448,44 +497,14 @@ case "${media}" in
 		# bad behaviour of makefs: http://www.freebsd.org/cgi/query-pr.cgi?pr=188762
 		#	makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
 
-		base_size=$( /usr/bin/du -sk ${TMP_DIR} | awk '{printf $1"k"}' )
+		create_img_for_dir ${TMP_DIR} ${dstdir}/${dstname}
 
-		if is_number ${freesize}; then
-			if conv2bytes ${freesize}; then
-				freesize="${convval}"
-			fi
-		fi
-
-		if is_number ${base_size}; then
-			if conv2bytes ${base_size}; then
-				base_size="${convval}"
-			fi
-		fi
-
-		# we need calculate 8% minfree from base_size
-		# minfree=$(( base_size * 8 / 100 ))
-		minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
-		minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
-
-		all_size=$(( base_size + freesize + minfree1 + minfree2 ))
-
-		if ! bhyve_create_dsk ${dstdir}/${dstname} ${all_size}; then
-			err 1 "Error: Couldn't create the image file. ${mdimage}"
-		fi
-
-#	    if [ $? -eq 0 -a -n "${freesize}" ]; then
-#		${ECHO} "${MAGENTA}Expand image size up to: ${GREEN}${freesize}${NORMAL}"
-#		truncate -s +${freesize} ${dstdir}/${dstname}
 		md=$(mdconfig -a -t vnode -f ${dstdir}/${dstname})
-#		growfs -y /dev/${md}
-#		fdisk -BI /dev/${md}
-#		bsdlabel -wB /dev/${md}
 		newfs -U -n -L "${LABEL}" /dev/${md}
 
 		tdir=$( mktemp -d )
 
 		/sbin/mount /dev/${md} ${tdir}
-#		cd ${TMP_DIR} && pax -p eme -X -rw . ${tdir}
 		cd ${TMP_DIR} && pax -p eme -rw . ${tdir}
 
 		umount ${tdir} && rmdir ${tdir}
@@ -494,7 +513,6 @@ case "${media}" in
 		[ -z "${mynic}" ] && mynic="em0"
 		[ ${quiet} -eq 0 ] && show_bhyve_message
 		mdconfig -d -u ${md}
-#	    fi
 	    ;;
 esac
 
