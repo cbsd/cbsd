@@ -62,38 +62,37 @@ trap "/bin/rm -f /var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 
 while [ 1 ]; do
+	# internal tasks:
+	update_jaillock
 
-    # internal tasks:
-    update_jaillock
+	unset ip port keyfile _ip _port _keyfile
 
-    unset ip port keyfile _ip _port _keyfile
+	# make sshmux control master
+	if [ ${sqlreplica} -eq 1 ]; then
+		sqldelimer=" "
+		cbsdsql nodes select ip,port,keyfile from nodelist | while read _ip _port _keyfile; do
+			[ -n "${_ip}" ] && shmux
+		done
+		unset sqldelimer
+	fi
 
-    # make sshmux control master
-    if [ ${sqlreplica} -eq 1 ]; then
-	sqldelimer=" "
-	cbsdsql nodes select ip,port,keyfile from nodelist | while read _ip _port _keyfile; do
-	    [ -n "${_ip}" ] && shmux
+	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
+	_err=0
+	queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(*) FROM taskd WHERE status="0"' 2>/dev/null )
+	[ -z "${queue}" ] && queue=0
+
+	[ ${queue} -eq 0 ] && continue
+
+	if [ ${queue} -gt ${max_simul_jobs} ]; then
+		max=${max_simul_jobs}
+	else
+		max=${queue}
+	fi
+
+	for i in $( seq 1 ${max} ); do
+		echo "cbsd runtask ${i}/${max} ($max_simul_jobs max)"
+		/usr/sbin/daemon -f nexttask
+		# wait for pid of daemon here!!!
+		sleep 1
 	done
-	unset sqldelimer
-    fi
-
-    cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
-    _err=0
-    queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(*) FROM taskd WHERE status="0"' 2>/dev/null )
-    [ -z "${queue}" ] && queue=0
-
-    [ ${queue} -eq 0 ] && continue
-
-    if [ ${queue} -gt ${max_simul_jobs} ]; then
-	max=${max_simul_jobs}
-    else
-	max=${queue}
-    fi
-
-    for i in $( seq 1 ${max} ); do
-	echo "cbsd runtask ${i}/${max} ($max_simul_jobs max)"
-	/usr/sbin/daemon -f nexttask
-	# wait for pid of daemon here!!!
-	sleep 1
-    done
 done
