@@ -234,39 +234,13 @@ start_bhyve()
 			err 1 "${MAGENTA}Unknown vm profile: ${GREEN}${vm_os_type}${NORMAL}"
 	esac
 
-			if [ "${boot_from_grub}" = "1" ]; then
-				${ECHO} "${MAGENTA}Booting from: ${GREEN}${vm_boot}${NORMAL}"
-				# Bhyveload
-				case "${vm_boot}" in
-					"cd")
-						echo "DEBUG: $grub_iso_cmd"
-						echo "DEBUG: $grub_iso_cmd"
-						eval "$grub_iso_cmd"
-					;;
-					"hdd")
-						echo "Boot from HDD"
-						echo "DEBUG: ${grub_boot_cmd}"
-						eval "$grub_boot_cmd"
-						sleep 15
-					;;
-					*)
-						echo "Booting from HDD"
-						eval "$grub_boot_cmd"
-						sleep 15
-					;;
-			    esac
-			else
-				echo "DEBUG: $bhyveload_cmd"
-				${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
-			fi
-
 	# for vnet we can make another action
 	. ${vimageconf}
 	# when ip=0 and interface=auto we must use default interface for upstream
 	[ "${interface}" = "0" -o "${interface}" = "auto" ] && interface=$(getnics-by-ip ip=0.0.0.0)
 
 	if ! mybridge=$( get_my_device bridge ${interface} ); then
-	    err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
+		err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
 	fi
 
 	mytap=$( get_my_tap ${mybridge} )
@@ -322,16 +296,55 @@ start_bhyve()
 #	passthr="-s 3:0,ehci"
 #	passthr="-s 3:0,ehci,1"
 
-	while [ -f "/tmp/bhyveload.${jname}.lock" ]; do
-		echo "Waiting for bhyveload load..."
-		sleep 3
-	done
 
-	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "( \
-	eval /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
-	cbsd bstop ${jname}; /sbin/ifconfig ${mytap} destroy )"
+	# reboot loop
+	reboot_loop=1
 
-	err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
+	while [ ${reboot_loop} -eq 1 ]; do
+		if [ "${boot_from_grub}" = "1" ]; then
+			${ECHO} "${MAGENTA}Booting from: ${GREEN}${vm_boot}${NORMAL}"
+			# Bhyveload
+			case "${vm_boot}" in
+				"cd")
+					echo "DEBUG: $grub_iso_cmd"
+					echo "DEBUG: $grub_iso_cmd"
+					eval "$grub_iso_cmd"
+				;;
+				"hdd")
+					echo "Boot from HDD"
+					echo "DEBUG: ${grub_boot_cmd}"
+					eval "$grub_boot_cmd"
+					sleep 15
+				;;
+				*)
+					echo "Booting from HDD"
+					eval "$grub_boot_cmd"
+					sleep 15
+				;;
+			esac
+		else
+			echo "DEBUG: $bhyveload_cmd"
+			${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
+		fi
+
+		while [ -f "/tmp/bhyveload.${jname}.lock" ]; do
+			echo "Waiting for bhyveload load..."
+			sleep 3
+		done
+
+		${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "( \
+		eval /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
+		bhyvectl --get-vmcs-exit-reason --vm ${jname} >> /tmp/reason.txt  ; \
+		bhyvectl --get-vmcs-exit-ctls --vm ${jname} >> /tmp/reason.txt ; \
+		bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt ; \
+		bhyvectl --get-vmcs-exit-interruption-info --vm ${jname} >> /tmp/reason.txt ; \
+		bhyvectl --get-vmcs-exit-interruption-error --vm ${jname} >> /tmp/reason.txt ; \
+		cbsd bstop ${jname}; /sbin/ifconfig ${mytap} destroy )"
+
+		err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
+		reboot_loop=0
+	done # while reboot_loop
+
 }
 
 
