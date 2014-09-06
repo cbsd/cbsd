@@ -15,10 +15,11 @@ init $*
 
 getalljails()
 {
-    cbsdsql local select jname from jails where status=1 |while read jname; do
-            fwinit
-            insert
-    done
+	# select only active jail and not VMs
+	cbsdsql local "SELECT jname FROM jails WHERE emulator != 'bhyve' AND status=1" |while read jname; do
+		fwinit
+		insert
+	done
 }
 
 # prepare dir by $jname
@@ -26,63 +27,65 @@ fwinit()
 {
 	TRAFDIR="${jailsysdir}/${jname}/traffic"
 	[ ! -d "${TRAFDIR}" ] && mkdir -p ${TRAFDIR} && chown $cbsduser:$cbsduser ${TRAFDIR}
-	CURDATE=`date "+%Y-%m"`
+	CURDATE=$( date "+%Y-%m" )
 	TRAFFILE="${TRAFDIR}/${CURDATE}.sqlite"
 
 	if [ ! -f "${TRAFFILE}" ]; then
-	    /usr/local/bin/cbsd ${miscdir}/updatesql ${TRAFFILE} ${distdir}/share/local-fwcounters.schema
-	    chown $cbsduser:$cbsduser ${TRAFFILE}
+		/usr/local/bin/cbsd ${miscdir}/updatesql ${TRAFFILE} ${distdir}/share/local-fwcounters.schema
+		chown $cbsduser:$cbsduser ${TRAFFILE}
 	fi
 }
 
 checkjail()
 {
-    A=`cbsdsql local select status from jails where jname=\"$jname\"`
-    [ "${A}" = "1" ] && return 1
-    return 0
+	A=$( cbsdsql local select status from jails where jname=\"$jname\" )
+	[ "${A}" = "1" ] && return 1
+	return 0
 }
 
 
 insert()
 {
+	[ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ] && return 0
 
-    [ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ] && return 0
+	FWIN=$( cat ${ftmpdir}/${jname}-fwin 2>/dev/null )
+	FWOUT=$( cat ${ftmpdir}/${jname}-fwout 2>/dev/null )
 
-    FWIN=`cat ${ftmpdir}/${jname}-fwin 2>/dev/null`
-    FWOUT=`cat ${ftmpdir}/${jname}-fwout 2>/dev/null`
+	### FWIN
+	BIN=$( /sbin/ipfw show ${FWIN} 2>/dev/null | awk '/count /{print $3"\n"}' 2>/dev/null )
+	INCODE=$?
 
-    ### FWIN
-    BIN=`/sbin/ipfw show ${FWIN} | awk '/count /{print $3"\n"}'`
-    INCODE=$?
+	### FWOUT
+	BOUT=$( /sbin/ipfw show ${FWOUT} 2>/dev/null | awk '/count /{print $3"\n"}' 2>/dev/null )
+	OUTCODE=$?
 
-    ### FWOUT
-    BOUT=`/sbin/ipfw show ${FWOUT} | awk '/count /{print $3"\n"}'`
-    OUTCODE=$?
+	if [ ${INCODE} -eq 0 -a ${OUTCODE} -eq 0 ]; then
+		# do not insert when counters is zero
+		if [ ${BIN} -ne 0 -a ${BOUT} -ne 0 ]; then
+			[ "${mode}" != "nozero" ] && /sbin/ipfw -q zero ${FWIN} ${FWOUT} 2>/dev/null
+			[ -f "${TRAFFILE}" ] && ${miscdir}/sqlcli ${TRAFFILE} "INSERT INTO traffic ( incoming, outgoing ) VALUES ( \"${BIN}\" , \"${BOUT}\" )"
+		fi
+	fi
 
-    if [ ${INCODE} -eq 0 -a ${OUTCODE} -eq 0 ]; then
-	[ "${mode}" != "nozero" ] && /sbin/ipfw -q zero ${FWIN} ${FWOUT} 2>/dev/null
-	[ -f "${TRAFFILE}" ] && ${miscdir}/sqlcli ${TRAFFILE} "INSERT INTO traffic ( incoming, outgoing ) VALUES ( ${BIN}, ${BOUT} )"
-    fi
-
-    if [ "${mode}" = "remove" ]; then
-	ipfw -q delete ${FWIN} ${FWOUT}
-	rm -f "${ftmpdir}/${jname}-fwout" "${ftmpdir}/${jname}-fwin"
-    fi
+	if [ "${mode}" = "remove" ]; then
+		/sbin/ipfw -q delete ${FWIN} ${FWOUT}
+		rm -f "${ftmpdir}/${jname}-fwout" "${ftmpdir}/${jname}-fwin"
+	fi
 }
 
 
 
 #MAIN
-[ ${ipfw_enable} -eq 0 -a -z "`sysctl -qn net.inet.ip.fw.enable`" ] && exit
+[ ${ipfw_enable} -eq 0 -a -z "$( sysctl -qn net.inet.ip.fw.enable )" ] && exit 0
 
 case "${jname}" in
-    "alljails")
+	"alljails")
 		getalljails
 		;;
-    *)
+	*)
 		if ! checkjail; then
-		    fwinit
-		    insert
+			fwinit
+			insert
 		fi
 		;;
 esac

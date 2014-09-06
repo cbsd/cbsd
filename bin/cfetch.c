@@ -17,9 +17,9 @@
 #include <fetch.h>
 #include <unistd.h>
 
-	static int	fetch_files(char *, char *);
+static int	fetch_files(char *, char *);
 
-	int		usage      ()
+int usage()
 {
 	printf("fetch remove file via http[s]\n");
 	printf("require: -u url -o out\n\n");
