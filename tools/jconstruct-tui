@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.5
+#v10.1.0
 MYARG=""
 MYOPTARG="mode"
 MYDESC="Ncurses based jail creation wizard"
@@ -30,7 +30,6 @@ gen_newjail_conf()
 		fi
 	done
 
-	vnet=${vimage}
 	gen_jconf
 	ERR=$?
 
@@ -38,6 +37,82 @@ gen_newjail_conf()
 	err 0 ${A}
 }
 
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for construct jail create config file"
+	local defaultitem= # Calculated below
+	local hline=
+
+	local menu_list="
+		'EXIT'		'EXIT'				'Exit jconstruct-tui'
+		'profile'	'$(curval profile)'		'Select jail profile for jcreate'
+		'pkglist'	'$(curval pkgnum)'		'mark pkg for install from repo'
+		'jname'		'$(curval jname)'		'A short jail name'
+		'host_hostname'	'$(curval host_hostname)'	'Full (FQDN) jail hostname'
+		'ip4_addr'	'$(curval ip4_addr)'		'Assing IP address'
+		'ver'		'$(curval ver)'			'choose code base version'
+		'baserw'	'$(curval baserw)'		'Jail base is not read-only'
+		'mount_ports'	'$(curval mount_ports)'		'Mount for /usr/ports'
+		'astart'	'$(curval astart)'		'Autostart with system'
+		'interface'	'$(curval interface)'		'Interface selection and aliasing mode'
+		'applytpl'	'$(curval applytpl)'		'Apply cbsd templates'
+		'floatresolv'	'$(curval floatresolv)'		'Auto correct for jail resolv.conf'
+		'arch'		'$(curval arch)'		'target arch'
+	" # END-QUOTE
+
+	#dynamic menu
+	[ "${vnet}" = 1 ] && menu_list="${menu_list} 'vnet'	'$(curval vnet)'	'Enable virtual stack for jail?'"
+
+	if [ "${mode}" = "full" ]; then
+		menu_list="${menu_list} 'path'		'$(curval path)'	'Path to jail mountpoint'"
+		# menu_list="${menu_list} 'mount_fstab'	'$(curval mount_fsab)'	'fstab file for local mount'"
+		menu_list="${menu_list} 'basename'	'$(curval basename)'	'alternative base name'"
+		menu_list="${menu_list} 'data'		'$(cutval data)'	'alternative path to data directory'"
+	fi
+	menu_list="${menu_list} 'GO'	'PROCEED!'	'PROCEED!'"
+
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--help-button                           \
+		--help-label \"\$msg_help\"             \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
 
 #### [ MAIN AREA ] ####
 [ ! -f ${localcbsdconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
@@ -50,76 +125,20 @@ zero_profile="jail-freebsd-default.conf"
 
 readconf ${zero_profile}
 # re-read profile for init global_profile_file variable
-get_jail_profile ${default_profile}
+get_construct_profile ${default_profile}
 [ -z "${profile}" -a -n "${jail_profile}" ] && profile="${jail_profile}"
 
-msg_ok="Ok"
-msg_cancel="Cancel"
-
-boo=0
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
 
 while [ 1 ]; do
 	pkgnum=0
 	[ -n "${pkglist}" -a "${pkglist}" != "NO" ] && pkgnum=$( wc -l ${pkglist}|awk '{printf $1}' )
 
-	menu_list="
-	'jail_profile' 'Select profile for jcreate $(curval profile)'
-	'pkglist' 'mark pkg for install from repo $(curval pkgnum)'
-	'jname' 'A short jail name $(curval jname)'
-	'host_hostname'  'Full (FQDN) jail hostname $(curval host_hostname)'
-	'ip4_addr' 'Assing IP address $(curval ip4_addr)'
-	'ver' 'choose code base version $(curval ver)'
-	'baserw'  'Jail base is not read-only $(curval baserw)'
-	'mount_ports' 'Mount for /usr/ports $(curval mount_ports)'
-	'astart'  'Autostart with system $(curval astart)'
-	'interface' 'Interface selection and aliasing mode $(curval interface)'
-	'applytpl'  'Apply cbsd templates $(curval applytpl)'
-	'floatresolv' 'Auto correct for jail resolv.conf $(curval floatresolv)'
-	'arch' 'target arch $(curval arch)'"
-
-	#dynamic menu
-	[ "${vnet}" = 1 ] && menu_list="${menu_list} 'vnet' 'Enable virtual stack for jail? $(curval vimage)'"
-
-	#'mdsize' 'image for md or bhyve $(curval mdsize)'
-	if [ "${mode}" = "full" ]; then
-		menu_list="${menu_list} 'path' 'Path to jail mountpoint $(curval path)'"
-#		menu_list="${menu_list} 'mount_fstab' 'fstab file for local mount $(curval mount_fstab)'"
-		menu_list="${menu_list} 'basename' 'alternative base name $(curval basename)'"
-		menu_list="${menu_list} 'data' 'alternative path to data directory $(curval data)'"
-	fi
-
-	menu_list="${menu_list} 'GO' 'PROCEED!'"
-
-	f_dialog_menu
-	retval=$?
-
+	dialog_menu_main || f_die
 	f_dialog_menutag_fetch mtag
-	case $retval in
-		0)
-			[ $mtag = "jail_profile" ] && get_jail_profile
-			[ $mtag = "pkglist" ] && get_pkglist
-			[ $mtag = "jname" ] && get_jname
-			[ $mtag = "host_hostname" ] && get_jail_host_hostname
-			[ $mtag = "ip4_addr" ] && get_jail_ips
-			[ $mtag = "ver" ] && get_jail_base
-			[ $mtag = "baserw" ] && get_jail_baserw
-			[ $mtag = "mount_src" ] && get_jail_mount_src
-			[ $mtag = "mount_ports" ] && get_jail_mount_ports
-			[ $mtag = "astart" ] && get_jail_astart
-			[ $mtag = "interface" ] && get_jail_oninterface
-			[ $mtag = "vnet" ] && get_jail_vnet
-			[ $mtag = "applytpl" ] && get_jail_applytpl
-			[ $mtag = "floatresolv" ] && get_jail_floatresolv
-			[ $mtag = "arch" ] && get_jail_arch
-			[ $mtag = "mdsize" ] && get_jail_mdsize
-			[ $mtag = "path" ] && get_jail_path
-			[ $mtag = "data" ] && get_jail_data
-			[ $mtag = "GO" ] && gen_newjail_conf
-			;;
-		*)
-			exit 0
-			;;
-	esac
-
-	boo=$(( boo + 1 ))
+	[ "${mtag}" = "EXIT" ] && exit 0
+	[ "${mtag}" = "GO" ] && gen_newjail_conf
+	get_construct_${mtag}
 done

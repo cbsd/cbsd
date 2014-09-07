@@ -1,19 +1,15 @@
-#!/bin/sh
-#v10.0.5
-globalconf="${workdir}/cbsd.conf";
+#!/usr/local/bin/cbsd
+#v10.1.0
 MYARG=""
-MYOPTARG=""
+MYOPTARG="mode"
 MYDESC="Ncurses based jail creation wizard"
-EXTHELP="wf_jcreate.html"
+EXTHELP="wf_bcreate.html"
+ADDHELP="mode=full for all atributes\n"
 
-[ -f ${globalconf} ] || err 1 "no such conf file";
-. ${globalconf}
 . ${subr}
 . ${inventory}
 . ${settingstui}
-
-[ "$1" = "--help" ] && err 0 "${MYDESC}"
-
+. ${tools}
 . ${dialog}
 . ${workdir}/bhyve.subr
 
@@ -59,11 +55,85 @@ gen_newjail_conf()
 	err 0 ${A}
 }
 
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for construct jail create config file"
+	local defaultitem= # Calculated below
+	local hline=
+
+	local menu_list="
+	'EXIT'		'EXIT'			'Exit bconstruct-tui'
+	'vm_os_type'	'$(curval vm_os_type)'	'Guest OS type'
+	'vm_os_profile'	'$(curval vm_os_profile)'	'Guest OS profile'
+	'freesize'	'$(curval freesize)'	'reserved (expand) X size for free space'
+	'jname'		'$(curval jname)'	'A short jail name'
+	'host_hostname'	'$(curval host_hostname)'	'Full (FQDN) jail hostname'
+	'vm_ram'	'$(curval vm_ram)'	'RAM'
+	'vm_cpus'	'$(curval vm_cpus)'	'CPUs number'
+	'vm_hostbridge'	'$(curval vm_hostbridge)'	'VMs hostbridge'
+	'astart'	'$(curval astart)'	'Autostart with system'
+	'interface'	'$(curval interface)'	'Interface selection and aliasing mode'
+	" # END-QUOTE
+
+	#dynamic menu
+	if [ "${from_jail}" = "1" -a "${bhyve_profile}" != "FreeBSD-bsdinstall-jail" ]; then
+		menu_list="${menu_list} 'pkglist'	'$(curval pkgname)'	'mark pkg for install from repo'
+					'ip4_addr'	'$(curval ip4_addr)'	'Assing IP address'
+					'gw4'		'$(curval gw4)'	'Default router for bhyve or vimage'
+					'ver'		'$(curval ver)'	'choose code base version'
+					'applytpl'	'$(curval applytpl)'	'Apply cbsd templates'
+					'floatresolv'	'$(curval floatresolv)'	'Auto correct for jail resolv.conf'
+					'arch'		'$(curval arch)'	'target arch'
+		" # END-QUOTE
+	fi
+
+	menu_list="${menu_list} 'GO'	'PROCEED!'	'PROCEED!'"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--help-button                           \
+		--help-label \"\$msg_help\"             \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
 
 #### [ MAIN AREA ] ####
-[ ! -f ${globalconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
-. ${globalconf}
-
 [ ! -f ${localcbsdconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
 . ${localcbsdconf}
 . ${inventory}
@@ -77,70 +147,25 @@ default_profile="bhyve-default-default.conf"
 emulator="bhyve"
 init_bhyve
 readconf ${default_profile}
+
 # re-read profile for init global_profile_file variable
-get_jail_profile ${default_profile}
+get_construct_profile ${default_profile}
 [ -z "${profile}" -a -n "${jail_profile}" ] && profile="${jail_profile}"
 
 baserw=1
-ip4_addr="0"
+ip4_addr="DHCP"
 
-msg_ok="Ok"
-msg_cancel="Cancel"
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
 
 while [ 1 ]; do
 	pkgnum=0
 	[ -n "${pkglist}" -a "${pkglist}" != "NO" ] && pkgnum=$( wc -l ${pkglist}|awk '{printf $1}' )
 
-	menu_list="
-	'vm_os_type' 'Guest OS type $(curval vm_os_type)'
-	'vm_os_profile' 'Guest OS profile $(curval vm_os_profile)'
-	'freesize' 'reserved (expand) X size for free space $(curval freesize)'
-	'jname' 'A short jail name $(curval jname)'
-	'host_hostname'  'Full (FQDN) jail hostname $(curval host_hostname)'
-	'vm_ram' 'RAM $(curval vm_ram)'
-	'vm_cpus' 'CPUs number $(curval vm_cpus)'
-	'vm_hostbridge' 'VMs hostbridge $(curval vm_hostbridge)'
-	'astart'  'Autostart with system $(curval astart)'
-	'interface' 'Interface selection and aliasing mode $(curval interface)'
-	"
-
-	#dynamic menu
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'pkglist' 'mark pkg for install from repo $(curval pkgnum)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'ip4_addr' 'Assing IP address $(curval ip4_addr)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'gw4' 'Default router for bhyve or vimage $(curval gw4)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'ver' 'choose code base version $(curval ver)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'applytpl'  'Apply cbsd templates $(curval applytpl)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'floatresolv' 'Auto correct for jail resolv.conf $(curval floatresolv)'"
-	[ "${vm_os_type}" = "freebsd" ] && menu_list="${menu_list} 'arch' 'target arch $(curval arch)'"
-
-	menu_list="${menu_list} 'GO' 'PROCEED!'"
-
-	f_dialog_menu
-	retval=$?
+	dialog_menu_main || f_die
 	f_dialog_menutag_fetch mtag
-	case $retval in
-		0)
-			[ $mtag = "pkglist" ] && get_pkglist
-			[ $mtag = "jname" ] && get_jname
-			[ $mtag = "host_hostname" ] && get_jail_host_hostname
-			[ $mtag = "ip4_addr" ] && get_jail_ips
-			[ $mtag = "ver" ] && get_jail_base
-			[ $mtag = "astart" ] && get_jail_astart
-			[ $mtag = "interface" ] && get_jail_oninterface
-			[ $mtag = "applytpl" ] && get_jail_applytpl
-			[ $mtag = "floatresolv" ] && get_jail_floatresolv
-			[ $mtag = "arch" ] && get_jail_arch
-			[ $mtag = "freesize" ] && get_jail_freesize
-			[ $mtag = "gw4" ] && get_jail_gw4
-			[ $mtag = "vm_ram" ] && get_jail_ram
-			[ $mtag = "vm_cpus" ] && get_jail_cpus
-			[ $mtag = "vm_hostbridge" ] && get_jail_hostbridge
-			[ $mtag = "vm_os_type" ] && get_jail_type
-			[ $mtag = "vm_os_profile" ] && get_vm_profile
-			[ $mtag = "GO" ] && gen_newjail_conf
-			;;
-		*)
-			exit 0
-			;;
-	esac
+	[ "${mtag}" = "EXIT" ] && exit 0
+	[ "${mtag}" = "GO" ] && gen_newjail_conf
+	get_construct_${mtag}
 done

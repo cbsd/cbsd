@@ -7,7 +7,7 @@ GET_HOST_HOSTNAME_MSG="Enter jail FQDN (one word):"
 GET_IPS_MSG="Enter jail ips (from CBSD pool ${nodeippool})\nUse IP/PREFIX form. Comma-separated for aliases\n\
 Use 0 for empty ip (for example useful on vnet features) or DHCP (only for vnet feature)\n"
 GET_ONINTERFACE_MSG="Auto create and auto remove IP on selected nics\n(0 for disable, auto - for auto detect):"
-GET_BASE_MSG="choose jail base source version:"
+GET_VER_MSG="choose jail base source version:"
 GET_PATH_MSG="Enter mount point for jail:"
 GET_DATA_MSG="Enter data directory for jail:"
 GET_DEVFS_RULESET_MSG="sets devfs_ruleset for jail devfs:"
@@ -19,7 +19,7 @@ GET_OBJMOUNT_MSG="Jail with shared /usr/obj (ro)?"
 GET_PORTSMOUNT_MSG="Jail with shared /usr/ports (ro)?"
 GET_APPLYTPL_MSG="Apply cbsd templates for jail settings?"
 GET_FLOATRESOLV_MSG="Floating resolv.conf (recommended)?"
-GET_ASTART_MSG="Jail auto startup with system?"
+GET_ASTART_MSG="Automatically start jail on system boot?"
 GET_VNET_MSG="Enable VIMAGE/VNet Feature?"
 GET_EXEC_TIMEOUT_MSG="The maximum amount of time to wait for a command to complete"
 GET_EXEC_FIB_MSG="The FIB (routing table) to set when running commands inside the prison"
@@ -31,6 +31,8 @@ GET_ALLOW_MOUNT_ZFS_MSG="privileged users inside the jail will be able to mount 
 GET_ALLOW_KMEM_MSG="Allow kmem and io devices for jail. Warning: this is insecure options. \n Use it only for private purposes/X-jails"
 GET_ALLOW_MOUNT_MSG="Allow privileged users inside the jail mount and unmount file system"
 GET_ALLOW_MOUNT_NULLFS_MSG="Allow privileged users inside the jail mount and unmount nullfs file system"
+GET_ALLOW_MOUNT_DEVFS_MSG="Allow privileged users inside the jail mount and unmount devfs file system"
+GET_MOUNT_DEVFS_MSG="Mount devfs filesystem in the jail"
 GET_ALLOW_MOUNT_TMPFS_MSG="Allow privileged users inside the jail mount and unmount tmpfs file system"
 GET_ALLOW_MOUNT_PROCFS_MSG="Allow privileged users inside the jail mount and unmount procfs file system"
 GET_MOUNT_FDESCFS_MSG="Mount a fdescfs(5) filesystem on the chrooted /dev/fd directory"
@@ -56,12 +58,13 @@ curval()
 
 	eval T="\$$1"
 	if [ -n "${T}" ]; then
-		printf "[${T}]"
+		printf "${T}"
 	else
-		printf "[] *"
+		printf " "
 	fi
 	return 0
 }
+
 
 #find for first jnameX where X is number++
 freejname()
@@ -82,7 +85,7 @@ freejname()
 }
 
 # form for $pkglist
-get_pkglist()
+get_construct_pkglist()
 {
 	pkglist="${ftmpdir}/tui.$$"
 	pkgbrowser out="${pkglist}"
@@ -91,7 +94,7 @@ get_pkglist()
 
 # form for $jname
 # if $1 = "nosearch" than skip for searching/testing of available jname
-get_jname()
+get_construct_jname()
 {
 	local _ok _message _input _retval
 
@@ -107,26 +110,21 @@ get_jname()
 	_ok=0
 
 	while [ ${_ok} -ne 1 ]; do
-		f_dialog_input _input "${GET_JNAME_MSG}" "${freejname}" "${_message}"
-		_retval=$?
-		case ${_retval} in
-			0)
-				validate_jname $_input
-				case $? in
-				1)
-					jstatus jname=${_input} >/dev/null 2>&1
-					if [ $? -ne 0 ]; then
-						_message="ERROR: Jail ${_input} already exist"
-					else
-						_ok=1
-					fi
-					;;
-				*)
-					_message="ERROR: Bad name. Choose other one"
-					;;
-				esac
+		f_dialog_input _input "${GET_JNAME_MSG}" "${freejname}" \
+			"${_message}" || return $?
+
+		validate_jname ${_input}
+		case $? in
+			1)
+				jstatus jname="${_input}" >/dev/null 2>&1
+				if [ $? -ne 0 ]; then
+					_message="ERROR: Jail ${_input} already exist"
+				else
+					_ok=1
+				fi
 				;;
-			*) _ok=1
+			*)
+				_message="ERROR: Bad name. Choose other one"
 				;;
 		esac
 	done
@@ -138,9 +136,9 @@ get_jname()
 }
 
 # form for $host_hostname
-get_jail_host_hostname()
+get_construct_host_hostname()
 {
-	local _input _retval _defdomain
+	local _input _defdomain
 
 	if [ -n "${host_hostname}" ]; then
 		_defdomain="${host_hostname}"
@@ -156,17 +154,13 @@ get_jail_host_hostname()
 		fi
 	fi
 
-	f_dialog_input _input "${GET_HOST_HOSTNAME_MSG}" "${_defdomain}"
-	_retval=$?
+	f_dialog_input _input "${GET_HOST_HOSTNAME_MSG}" "${_defdomain}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			[ -n "${_input}" ] && host_hostname="${_input}"
-			;;
-	esac
+	[ -n "${_input}" ] && host_hostname="${_input}"
 }
 
-get_jail_ips()
+get_construct_ip4_addr()
 {
 	local _ok=0 _input _retval _i _j _existing_ipjail _existing_ip _myip
 	local msg_yes msg_no IFS _jname _ips
@@ -277,109 +271,100 @@ get_jail_ips()
 }
 
 # form for $interface
-get_jail_oninterface()
+get_construct_interface()
 {
-	local _input _retval _def_iface
+	local _input _def_iface
 
 	[ -z "${interface}" ] && interface="auto"
 
 	if [ -n "${ip4_addr}" ]; then
-			_def_iface=$( getnics-by-ip ip=${ip4_addr} )
+		_def_iface=$( getnics-by-ip ip=${ip4_addr} )
 	else
-			_def_iface=$( getnics-by-ip ip=0.0.0.0 )
+		_def_iface=$( getnics-by-ip ip=0.0.0.0 )
 	fi
 
-	f_dialog_input _input "${GET_ONINTERFACE_MSG}\n'auto' mean ${_def_iface} for this host" "${interface}"
-	_retval=$?
+	f_dialog_input _input "${GET_ONINTERFACE_MSG}\n'auto' mean ${_def_iface} for this host" "${interface}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			interface=$_input
-			# todo: check for interface exist
-		;;
-	esac
+	interface="${_input}"
+	# todo: check for interface exist
 }
 
-# form for $base
-get_jail_base()
+# form for $ver
+get_construct_ver()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_BASE_MSG}" "${ver}"
+	f_dialog_input _input "${GET_VER_MSG}" "${ver}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			ver=${_input}
-			;;
-	esac
+	ver="${_input}"
 }
 
 # form for $path
-get_jail_path()
+get_construct_path()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_PATH_MSG}" "${path}"
+	f_dialog_input _input "${GET_PATH_MSG}" "${path}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			path=${_input}
-			;;
-	esac
+	path="${_input}"
 }
 
 # form for $data
-get_jail_data()
+get_construct_data()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_DATA_MSG}" "${data}"
+	f_dialog_input _input "${GET_DATA_MSG}" "${data}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			data=${_input}
-			;;
-	esac
+	data="${_input}"
 }
 
 
 # form for $devfs_ruleset
-get_devfs_ruleset()
+get_construct_devfs_ruleset()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_DEVFS_RULESET_MSG}" "${devfs_ruleset}"
+	f_dialog_input _input "${GET_DEVFS_RULESET_MSG}" "${devfs_ruleset}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			devfs_ruleset=${_input}
-			;;
-	esac
+	devfs_ruleset="${_input}"
 }
 
-# form for $baserw
-get_jail_baserw()
+# $1 - 1,0 - default values
+get_construct_yesno()
 {
-	local _retval
-
+	local _default=1
 	msg_yes="no"
 	msg_no="yes"
 
-	if [ ${baserw} -eq 0 ]; then
-		f_dialog_yesno "${GET_BASERW_MSG}"
+	[ -n "${1}" ] && _default="${1}"
+
+	if [ ${_default} -eq 0 ]; then
+		f_dialog_yesno "${msg}" "${hline}"
 	else
-		f_dialog_noyes "${GET_BASERW_MSG}"
+		f_dialog_noyes "${msg}" "${hline}"
 	fi
 
+	return $?
+}
+
+# form for $baserw
+get_construct_baserw()
+{
+	local _retval
+	hline=
+
+	f_dialog_title "baserw?"
+	f_sprintf msg "${GET_BASERW_MSG}" "${baserw}"
+
+	get_construct_yesno ${baserw}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -389,18 +374,17 @@ get_jail_baserw()
 }
 
 # form for $mount_src
-get_jail_mount_src()
+get_construct_mount_src()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "mount source?"
+	f_sprintf msg "${GET_SRCMOUNT_MSG}" "${mount_src}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${mount_src} -eq 0 ]; then
-		f_dialog_yesno "${GET_SRCMOUNT_MSG}"
-	else
-		f_dialog_noyes "${GET_SRCMOUNT_MSG}"
-	fi
+	get_construct_yesno ${mount_src}
+	_retval=$?
+	f_dialog_title_restore
 
 	_retval=$?
 
@@ -412,20 +396,17 @@ get_jail_mount_src()
 }
 
 # form for $mount_kernel
-get_jail_mount_kernel()
+get_construct_mount_kernel()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "mount kernel dir?"
+	f_sprintf msg "${GET_KERNELMOUNT_MSG}" "${mount_kernel}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${mount_kernel} -eq 0 ]; then
-		f_dialog_yesno "${GET_KERNELMOUNT_MSG}"
-	else
-		f_dialog_noyes "${GET_KERNELMOUNT_MSG}"
-	fi
-
+	get_construct_yesno ${mount_kernel}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -435,20 +416,17 @@ get_jail_mount_kernel()
 }
 
 # form for $mount_obj
-get_jail_mount_obj()
+get_construct_mount_obj()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "mount object dir?"
+	f_sprintf msg "${GET_OBJMOUNT_MSG}" "${mount_obj}"
 
-	 msg_yes="no"
-	 msg_no="yes"
-
-	if [ ${mount_obj} -eq 0 ]; then
-		f_dialog_yesno "${GET_OBJMOUNT_MSG}"
-	else
-		f_dialog_noyes "${GET_OBJMOUNT_MSG}"
-	fi
-
+	get_construct_yesno ${mount_obj}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -458,20 +436,17 @@ get_jail_mount_obj()
 }
 
 # form for $mount_ports
-get_jail_mount_ports()
+get_construct_mount_ports()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "mount ports dir?"
+	f_sprintf msg "${GET_PORTSMOUNT_MSG}" "${mount_ports}"
 
-	 msg_yes="no"
-	 msg_no="yes"
-
-	if [ ${mount_ports} -eq 0 ]; then
-		f_dialog_yesno "${GET_PORTSMOUNT_MSG}"
-	else
-		f_dialog_noyes "${GET_PORTSMOUNT_MSG}"
-	fi
-
+	get_construct_yesno ${mount_ports}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -481,20 +456,17 @@ get_jail_mount_ports()
 }
 
 # form for $applytpl
-get_jail_applytpl()
+get_construct_applytpl()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "apply CBSD template?"
+	f_sprintf msg "${GET_APPLYTPL_MSG}" "${applytpl}"
 
-	 msg_yes="no"
-	 msg_no="yes"
-
-	if [ ${applytpl} -eq 0 ]; then
-		f_dialog_yesno "${GET_APPLYTPL_MSG}"
-	else
-		f_dialog_noyes "${GET_APPLYTPL_MSG}"
-	fi
-
+	get_construct_yesno ${applytpl}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -504,20 +476,17 @@ get_jail_applytpl()
 }
 
 # form for $floatresolv
-get_jail_floatresolv()
+get_construct_floatresolv()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "Float resolv.conf?"
+	f_sprintf msg "${GET_FLOATRESOLV_MSG}" "${floatresolv}"
 
-	 msg_yes="no"
-	 msg_no="yes"
-
-	if [ ${floatresolv} -eq 0 ]; then
-		f_dialog_yesno "${GET_FLOATRESOLV_MSG}"
-	else
-		f_dialog_noyes "${GET_FLOATRESOLV_MSG}"
-	fi
-
+	get_construct_yesno ${floatresolv}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -527,64 +496,48 @@ get_jail_floatresolv()
 }
 
 # $arch
-get_jail_arch()
+get_construct_arch()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_ARCH_MSG}" "${arch}"
+	f_dialog_input _input "${GET_ARCH_MSG}" "${arch}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			arch="$_input"
-			;;
-	esac
+	arch="$_input"
 }
 
-get_jail_mdsize()
+get_construct_mdsize()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_MDSIZE_MSG}" "${mdsize}"
-	_retval=$?
+	f_dialog_input _input "${GET_MDSIZE_MSG}" "${mdsize}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			mdsize="${_input}"
-			;;
-	esac
+	mdsize="${_input}"
 }
 
-get_jail_freesize()
+get_construct_freesize()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_FREESIZE_MSG}:" "${freesize}"
-	_retval=$?
+	f_dialog_input _input "${GET_FREESIZE_MSG}:" "${freesize}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			freesize="${_input}"
-			;;
-	esac
+	freesize="${_input}"
 }
 
 # form for $astart
-get_jail_astart()
+get_construct_astart()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "astart?"
+	f_sprintf msg "${GET_ASTART_MSG}" "${astart}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${astart} -eq 0 ]; then
-		f_dialog_yesno "${GET_ASTART_MSG}"
-	else
-		f_dialog_noyes "${GET_ASTART_MSG}"
-	fi
-
+	get_construct_yesno ${astart}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -594,38 +547,37 @@ get_jail_astart()
 }
 
 # form for $vnet
-get_jail_vnet()
+get_construct_vnet()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "vnet?"
+	f_sprintf msg "${GET_VNET_MSG}" "${vnet}"
 
-	msg_yes="no"
-	msg_no="yes"
-	f_dialog_yesno "${GET_VNET_MSG}"
+	get_construct_yesno ${vnet}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
-			vnet="${_retval}"
-			vimage=${vnet}
+			vnet=${_retval}
 			;;
 	esac
 }
 
 # form for $mount_fdescfs
-get_jail_mount_fdescfs()
+get_construct_mount_fdescfs()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "mount_fdescfs?"
+	f_sprintf msg "${GET_MOUNT_FDESCFS_MSG}" "${mount_fdescfs}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${mount_fdescfs} -eq 0 ]; then
-		f_dialog_yesno "${GET_MOUNT_FDESCFS_MSG}"
-	else
-		f_dialog_noyes "${GET_MOUNT_FDESCFS_MSG}"
-	fi
-
+	get_construct_yesno ${mount_fdescfs}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -635,20 +587,17 @@ get_jail_mount_fdescfs()
 }
 
 # form for $allow_dying
-get_jail_allow_dying()
+get_construct_allow_dying()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_dying?"
+	f_sprintf msg "${GET_ALLOW_DYING_MSG}" "${allow_dying}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_dying} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_DYING_MSG}"
-	else
-		f_dialog_noyes "${GET_ALLOW_DYING_MSG}"
-	fi
-
+	get_construct_yesno ${allow_dying}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -658,20 +607,17 @@ get_jail_allow_dying()
 }
 
 # form for $allow_zfs
-get_jail_allow_zfs()
+get_construct_allow_zfs()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_zfs?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_ZFS_MSG}" "${allow_zfs}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_zfs} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_MOUNT_ZFS_MSG}"
-	else
-		f_dialog_noyes "${GET_ALLOW_MOUNT_ZFS_MSG}"
-	fi
-
+	get_construct_yesno ${allow_zfs}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -681,20 +627,17 @@ get_jail_allow_zfs()
 }
 
 # form for $allow_mount
-get_jail_allow_mount()
+get_construct_allow_mount()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_mount?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_MSG}" "${allow_mount}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_mount} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_MOUNT_MSG}"
-	else
-		f_dialog_noyes "${GET_ALLOW_MOUNT_MSG}"
-	fi
-
+	get_construct_yesno ${allow_mount}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -704,20 +647,17 @@ get_jail_allow_mount()
 }
 
 # form for $allow_nullfs
-get_jail_allow_nullfs()
+get_construct_allow_nullfs()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_nullfs?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_NULLFS_MSG}" "${allow_nullfs}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_nullfs} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_MOUNT_NULLFS_MSG}"
-	    else
-		f_dialog_noyes "${GET_ALLOW_MOUNT_NULLFS_MSG}"
-	fi
-
+	get_construct_yesno ${allow_nullfs}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -726,21 +666,61 @@ get_jail_allow_nullfs()
 	esac
 }
 
-# form for $allow_tmpfs
-get_jail_allow_tmpfs()
+
+# form for $allow_devfs
+get_construct_allow_devfs()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_devfs?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_DEVFS_MSG}" "${allow_devfs}"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_tmpfs} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_MOUNT_TMPFS_MSG}"
-	else
-		f_dialog_noyes "${GET_ALLOW_MOUNT_TMPFS_MSG}"
-	fi
-
+	get_construct_yesno ${allow_devfs}
 	_retval=$?
+	f_dialog_title_restore
+
+	case ${_retval} in
+		0|1)
+			allow_devfs="${_retval}"
+			;;
+	esac
+}
+
+
+# form for $mount_devfs
+get_construct_mount_devfs()
+{
+	local _retval
+	hline=
+	
+	f_dialog_title "mount_devfs?"
+	f_sprintf msg "${GET_MOUNT_DEVFS_MSG}" "${mount_devfs}"
+
+	get_construct_yesno ${mount_devfs}
+	_retval=$?
+	f_dialog_title_restore
+
+	case ${_retval} in
+		0|1)
+			mount_devfs="${_retval}"
+			;;
+	esac
+}
+
+
+# form for $allow_tmpfs
+get_construct_allow_tmpfs()
+{
+	local _retval
+	hline=
+	
+	f_dialog_title "allow_tmp?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_TMPFS_MSG}" "$allow_tmpfs"
+
+	get_construct_yesno ${allow_tmpfs}
+	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -750,20 +730,17 @@ get_jail_allow_tmpfs()
 }
 
 # form for $allow_procfs
-get_jail_allow_procfs()
+get_construct_allow_procfs()
 {
 	local _retval
+	hline=
+	
+	f_dialog_title "allow_procfs?"
+	f_sprintf msg "${GET_ALLOW_MOUNT_PROCFS_MSG}" "$allow_procfs"
 
-	msg_yes="no"
-	msg_no="yes"
-
-	if [ ${allow_procfs} -eq 0 ]; then
-		f_dialog_yesno "${GET_ALLOW_MOUNT_PROCFS_MSG}"
-	else
-		f_dialog_noyes "${GET_ALLOW_MOUNT_PROCFS_MSG}"
-	fi
-
+	get_construct_yesno ${allow_procfs}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -773,20 +750,23 @@ get_jail_allow_procfs()
 }
 
 # form for $allow_kmem
-get_jail_allow_kmem()
+get_construct_allow_kmem()
 {
 	local _retval _ret
+	hline=
 
 	_ret=$( /sbin/sysctl -qn security.jail.dev_io_access )
 	if [ -z "${_ret}" ]; then
-		f_dialog_msgbox "Your kernel is not supported for dev/dri access"
+		f_dialog_msgbox "Your kernel is not supported dev/dri access from jail"
 		return 0
 	fi
 
-	msg_yes="no"
-	msg_no="yes"
-	f_dialog_yesno "${GET_ALLOW_KMEM_MSG}"
+	f_dialog_title "allow_kmem?"
+	f_sprintf msg "${GET_ALLOW_KMEM_MSG}" "$allow_kmem"
+
+	get_construct_yesno ${allow_kmem}
 	_retval=$?
+	f_dialog_title_restore
 
 	case ${_retval} in
 		0|1)
@@ -798,191 +778,173 @@ get_jail_allow_kmem()
 # form for $exec_timeout
 get_jail_exec_timeout()
 {
-	local _retval _input
+	local _input
 
-	f_dialog_input _input "${GET_EXEC_TIMEOUT_MSG}"
-	_retval=$?
+	f_dialog_input _input "${GET_EXEC_TIMEOUT_MSG}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			exec_timeout="${_input}"
-			;;
-	esac
+	exec_timeout="${_input}"
 }
 
 # form for $exec_fib
 get_jail_exec_fib()
 {
-	local _retval _input
+	local _input
 
-	f_dialog_input _input "${GET_EXEC_FIB_MSG}"
-	_retval=$?
+	f_dialog_input _input "${GET_EXEC_FIB_MSG}" \
+			"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			exec_fib="${_input}"
-			;;
-	esac
+	exec_fib="${_input}"
 }
 
 # form for $exec_consolelog
-get_jail_consolelog()
+get_construct_exec_consolelog()
 {
-	local _retval _input
+	local _input
 
-	f_dialog_input _input "${GET_CONSOLELOG_MSG}" "${exec_consolelog}"
-	_retval=$?
+	f_dialog_input _input "${GET_CONSOLELOG_MSG}" "${exec_consolelog}" \
+		"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			exec_consolelog="${_input}"
-			;;
-	esac
+	exec_consolelog="${_input}"
 }
 
 # form for $stop_timeout
 get_jail_stop_timeout()
 {
-	local _retval _input
+	local _input
 
-	f_dialog_input _input "${GET_STOP_TIMEOUT_MSG}"
-	_retval=$?
+	f_dialog_input _input "${GET_STOP_TIMEOUT_MSG}" \
+		"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			stop_timeout="${_input}"
-			;;
-	esac
+	stop_timeout="${_input}"
 }
 
 # form for $depend
 get_jail_depend()
 {
-	local _retval _input
+	local _input
 
-	f_dialog_input _input "${GET_DEPEND_MSG}"
-	_retval=$?
+	f_dialog_input _input "${GET_DEPEND_MSG}" \
+		"${_message}" || return $?
 
-	case ${_retval} in
-		0)
-			depend="${_input}"
-			;;
-	esac
+	depend="${_input}"
 }
 
 # form for $cpuset
-get_jail_cpuset()
+get_construct_cpuset()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_CPUSET_MSG}" "${cpuset}"
+	f_dialog_input _input "${GET_CPUSET_MSG}" "${cpuset}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			cpuset=${_input}
-		;;
-	esac
+	cpuset="${_input}"
 }
 
 # form for $cpus
-get_jail_cpus()
+get_construct_cpus()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_CPUS_MSG}" "${vm_cpus}"
+	f_dialog_input _input "${GET_CPUS_MSG}" "${vm_cpus}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			vm_cpus=${_input}
-		;;
-	esac
+	vm_cpus="${_input}"
 }
 
 # form for $ram
-get_jail_ram()
+get_construct_ram()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_RAM_MSG}" "${vm_ram}"
-
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			vm_ram=${_input}
-			;;
-	esac
+	f_dialog_input _input "${GET_RAM_MSG}" "${vm_ram}" \
+			"${_message}" || return $?
+	
+	vm_ram="${_input}"
 }
 
 # form for $vm_hostbridge
-get_jail_hostbridge()
+get_construct_hostbridge()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_HOSTBRIDGE_MSG}" "${vm_hostbridge}"
+	f_dialog_input _input "${GET_HOSTBRIDGE_MSG}" "${vm_hostbridge}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			vm_hostbridge=${_input}
-			;;
-	esac
+	vm_hostbridge="${_input}"
 }
 
 # form for $vm_boot
-get_jail_boot()
+get_construct_boot()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_BOOT_MSG}" "${vm_boot}"
+	f_dialog_input _input "${GET_BOOT_MSG}" "${vm_boot}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			vm_boot=${_input}
-			;;
-	esac
+	vm_boot="${_input}"
 }
 
 # form for $vm_iso_path
-get_jail_isopath()
+get_construct_isopath()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_ISOPATH_MSG}" "${vm_iso_path}"
+	f_dialog_input _input "${GET_ISOPATH_MSG}" "${vm_iso_path}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			vm_iso_path=${_input}
-		;;
-	esac
+	vm_iso_path="${_input}"
 }
 
 # form for $type
-get_jail_type()
+get_construct_vm_os_type()
 {
-	local _input _retval menu_list
+	local _input
 
-	menu_list="
-	'freebsd' 'FreeBSD-based guests'
-	'linux' 'Linux-based guests'
-	'openbsd' 'OpenBSD-based guests'
-	'netbsd' 'NetBSD-based guests'
-	'dflybsd' 'DragonFlyBSD-based guests'"
+	local menu_list="
+		'freebsd'	'FreeBSD-kernel based distros'		'FreeBSD, FreeNAS, pfSense, zfsGuru, kFreeBSD, ArchBSD and so on..'
+		'linux'		'Linux-kernel based distros'		'Debian, Ubuntu, RHEL, Oracle and about 1024+ names ;-) also'
+		'openbsd'	'OpenBSD-kernel based distros'		'OpenBSD-based guests'
+		'netbsd'	'NetBSD-kernel based distros'		'NetBSD-based guests'
+		'dflybsd'	'DragonFlyBSD-kernel based distros'	'DragonFlyBSD-based guests'
+		" # END-QUOTE
 
-	msg_ok="Ok"
-	msg_cancel="Cancel"
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
 
-	f_dialog_menu
-	retval=$?
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--help-button                           \
+		--help-label \"\$msg_help\"             \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
 
 	f_dialog_menutag_fetch mtag
 	case $retval in
@@ -992,45 +954,84 @@ get_jail_type()
 		*)
 			;;
 	esac
+
+	return ${retval}
 }
 
 # form for $vm_os_profile
 # if $1 not empty just load profile without dialogizing
-get_vm_profile()
+get_construct_vm_os_profile()
 {
-	local _input _retval _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num _myfile
-	local menu_list=""
+	local _input _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num _myfile
+	local menu_list=
 
 	_res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec realpath {} \;| sort -u )
 
 	_all=0
 
 	for i in ${_res}; do
-		unset ${bhyve_profile}
+		unset bhyve_profile
 		eval $( grep ^bhyve_profile= ${i} )
+
 		[ -z "${bhyve_profile}" ] && continue
+
+		unset long_description
+		eval $( grep ^long_description= ${i} )
+
+		[ -z "${long_description}" ] && long_description="${bhyve_profile}"
+
 		_mypath=$( echo $i | sed s:^${workdir}/::g )
-		menu_list="${menu_list} '${bhyve_profile}' '${_mypath}'"
-#		_myprofiles="${_myprofiles} ${bhyve_profile} : on "
+		menu_list="${menu_list} '${bhyve_profile}' '${_mypath}' '${long_description}'"
 		# store filename
 		local profile${_all}="${bhyve_profile}"
 		local file${_all}="${i}"
 		_all=$(( _all + 1 ))
 	done
 
-#	[ -z "${_myprofiles}" ] && unset vm_os_profile && return 0
 	[ -z "${menu_list}" ] && unset vm_os_profile && return 0
 
-	msg_ok="Ok"
-	msg_cancel="Cancel"
 
-	f_dialog_menu
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
 
-	retval=$?
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
 
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--help-button                           \
+		--help-label \"\$msg_help\"             \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	f_dialog_menutag_fetch mtag
 	case $retval in
 		0)
-			f_dialog_menutag_fetch vm_os_profile
+			vm_os_profile="${mtag}"
 			_num=0
 			_myfile=$( while [ ${_num} -ne ${_all} ]; do
 				eval _myfile="\$file${_num}"
@@ -1049,11 +1050,13 @@ get_vm_profile()
 		*)
 			;;
 	esac
+
+	return ${retval}
 }
 
 # form for $profile
 # if $1 not empty, just load $1 profile without dialogizing
-get_jail_profile()
+get_construct_profile()
 {
 	local _input _retval _search_profile="jail-freebsd-" jail_profile _res _myprofiles="" _myfile
 
@@ -1061,7 +1064,7 @@ get_jail_profile()
 	_res=$( find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec realpath {} \;| sort -u )
 
 	for i in ${_res}; do
-		unset ${jail_profile}
+		unset jail_profile
 		eval $( grep ^jail_profile= ${i} )
 		[ -z "${jail_profile}" ] && continue
 		_mypath=$( echo $i | sed s:^${workdir}/::g )
@@ -1102,36 +1105,26 @@ get_jail_profile()
 }
 
 # form for $gw4
-get_jail_gw4()
+get_construct_gw4()
 {
-	local _input _retval
+	local _input
 
-	f_dialog_input _input "${GET_GW4_MSG}" "${gw4}"
-
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			gw4=${_input}
-			;;
-	esac
+	f_dialog_input _input "${GET_GW4_MSG}" "${gw4}" \
+			"${_message}" || return $?
+	
+	gw4="${_input}"
 }
 
 
 # form for $nodename
-get_nodename()
+get_construct_nodename()
 {
 	local _input _retval
 
-	f_dialog_input _input "${GET_NODENAME_MSG}" "${nodename}"
+	f_dialog_input _input "${GET_NODENAME_MSG}" "${nodename}" \
+			"${_message}" || return $?
 
-	_retval=$?
-
-	case ${_retval} in
-		0)
-			nodename=${_input}
-			;;
-	esac
+	nodename="${_input}"
 }
 
 # generate temp .jconf
