@@ -495,16 +495,6 @@ get_construct_floatresolv()
 	esac
 }
 
-# $arch
-get_construct_arch()
-{
-	local _input
-
-	f_dialog_input _input "${GET_ARCH_MSG}" "${arch}" \
-			"${_message}" || return $?
-
-	arch="$_input"
-}
 
 get_construct_mdsize()
 {
@@ -896,7 +886,139 @@ get_construct_isopath()
 	vm_iso_path="${_input}"
 }
 
-# form for $type
+# form for $arch
+get_construct_arch()
+{
+	local _input _res
+
+	local qemu_mips64=$( which qemu-mips64 2>/dev/null )
+	local qemu_arm=$( which qemu-arm 2>/dev/null )
+
+	local amd64_menu=
+	local i386_menu=
+	local amd64_desc=
+	local i386_desc=
+
+	local qemu_mips64_desc=
+	local qemu_arm_desc=
+	local qemu_mips64_enable=
+	local qemu_arm_enable=
+	local qemu_mips64_menu="Mips64"
+	local qemu_arm_menu="Arm"
+
+	# test for qemu_mips64
+	if [ -n "${qemu_mips64}" ]; then
+		_res=$( 2>&1 /usr/bin/ldd ${qemu_mips64} |grep -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_mips64_enable=1
+			qemu_mips64_desc="MIPS64 via ${qemu_mips64}"
+		else
+			qemu_mips64_enable=0
+			qemu_mips64_desc="${qemu_mips64} is not static. Please rebuild with STATIC"
+		fi
+	else
+		qemu_mips64_enable=0
+		qemu_mips64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops"
+	fi
+
+	# test for qemu_arm
+	if [ -n "${qemu_arm}" ]; then
+		_res=$( 2>&1 /usr/bin/ldd ${qemu_arm} |grep -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_arm_enable=1
+			qemu_arm_desc="ARM via ${qemu_arm}"
+		else
+			qemu_arm_enable=0
+			qemu_arm_desc="${qemu_arm} is not static. Please rebuild with STATIC"
+		fi
+	else
+		qemu_arm_enable=0
+		qemu_arm_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops"
+	fi
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	case "${hostarch}" in
+		"amd64")
+			amd64_menu="*"
+			amd64_desc="This is native architecture for this node"
+			;;
+		"i386")
+			i386_menu="*"
+			i386_desc="This is native architecture for this node"
+			;;
+	esac
+
+	local menu_list="
+		'amd64'	'x86-64 ${amd64_menu}'		'64 bit architecture. ${amd64_desc}'
+		'i386'	'x86 ${i386_menu}'		'32 bit architecture. ${i386_desc}'
+	" # END-QUOTE
+
+	if [ ${qemu_arm_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'armv6'	'${qemu_arm_menu}'	'${qemu_arm_desc}'"
+	else
+		menu_list="${menu_list} ''	'armv6 unsupported'	'${qemu_arm_desc}'"
+	fi
+
+	if [ ${qemu_mips64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'mips'	'${qemu_mips64_menu}'	'${qemu_mips64_desc}'"
+	else
+		menu_list="${menu_list} ''	'mips unsupported'	'${qemu_mips64_desc}'"
+	fi
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--help-button                           \
+		--help-label \"\$msg_help\"             \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	f_dialog_menutag_fetch mtag
+	case $retval in
+		0)
+			if [ -n "${mtag}" ]; then
+				arch="${mtag}"
+			else
+				arch="${hostarch}"
+			fi
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+# form for $arch
 get_construct_vm_os_type()
 {
 	local _input
@@ -957,6 +1079,11 @@ get_construct_vm_os_type()
 
 	return ${retval}
 }
+
+
+
+
+
 
 # form for $vm_os_profile
 # if $1 not empty just load profile without dialogizing

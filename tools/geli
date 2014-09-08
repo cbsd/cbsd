@@ -25,189 +25,190 @@ TRAP=""
 
 change_passphrase()
 {
-    local _passfile _dev _pw="1" _npw
-    local oldmodes=`stty -g`
+	local _passfile _dev _pw="1" _npw
+	local oldmodes=$( stty -g )
 
-    [ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}change_passphrase need for arguments${NORMAL}"
-    _dev="${1}"
-    _passfile="${2}"
+	[ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}change_passphrase need for arguments${NORMAL}"
+	_dev="${1}"
+	_passfile="${2}"
 
-    ${ECHO} "${MAGENTA}Enter passphrase for ${gelidev}: ${NORMAL}"
+	${ECHO} "${MAGENTA}Enter passphrase for ${gelidev}: ${NORMAL}"
 
-    while [ "${_pw}" != "${_npw}" ]; do
-	printf "${BOLD}New Password: ${NORMAL}"
-	stty -echo
-	read _pw
-	printf "\n${BOLD}Retype New Password: ${NORMAL}"
-	read _npw
-	[ "${_pw}" = "${_npw}" ] || ${ECHO} "${MAGENTA}Mismatch; try again, EOF to quit.${NORMAL}"
-    done
+	while [ "${_pw}" != "${_npw}" ]; do
+		printf "${BOLD}New Password: ${NORMAL}"
+		stty -echo
+		read _pw
+		printf "\n${BOLD}Retype New Password: ${NORMAL}"
+		read _npw
+		[ "${_pw}" = "${_npw}" ] || ${ECHO} "${MAGENTA}Mismatch; try again, EOF to quit.${NORMAL}"
+	done
 
-    echo "${_pw}" > ${_passfile}
-    stty $oldmodes
-    /sbin/geli init -J ${_passfile} ${_dev}
+	echo "${_pw}" > ${_passfile}
+	stty $oldmodes
+	/sbin/geli init -J ${_passfile} ${_dev}
 }
 
 # $1 - path to dev/file
 # printf md5-based key path
 get_key()
 {
- local _res
- [ -z "${1}" ] && err 1 "${MAGENTA}get_key need for arguments${NORMAL}"
- _res=$(echo $1| sed s:^${workdir}/::g)
- _md5=$(md5 -qs "${_res}")
- printf "${gelidir}/${_md5}"
+	local _res _md5
+	[ -z "${1}" ] && err 1 "${MAGENTA}get_key need for arguments${NORMAL}"
+	_res=$(echo $1| sed s:^${workdir}/::g)
+	_md5=$(md5 -qs "${_res}")
+	printf "${gelidir}/${_md5}"
 }
 
 
 create_key()
 {
-    local _res _dev _keypath TRAP="true;"
+	local _res _dev _keypath TRAP="true;"
 
-    _dev="${1}"
-    [ -z "${1}" ] && err 1 "${MAGENTA}create_key need for arguments${NORMAL}"
-    [ ! -f "${1}" -a ! -c "${1}" ] && err 1 "${MAGENTA}No such device or file:${GREEN} ${1}${NORMAL}"
+	_dev="${1}"
+	[ -z "${1}" ] && err 1 "${MAGENTA}create_key need for arguments${NORMAL}"
+	[ ! -f "${1}" -a ! -c "${1}" ] && err 1 "${MAGENTA}No such device or file:${GREEN} ${1}${NORMAL}"
 
-    # if resource is file, mdconfiging them and work with it as device
-    if [ -f "${1}" ]; then
-	_res=$( eval find_md_by_img ${1} )
-	if [ -n "${_res}" ]; then
-	    _md="${_res}"
+	# if resource is file, mdconfiging them and work with it as device
+	if [ -f "${1}" ]; then
+		_res=$( eval find_md_by_img ${1} )
+		if [ -n "${_res}" ]; then
+			_md="${_res}"
+		else
+			_md=$( mdconfig -a -t vnode -f ${file} )
+			TRAP="${TRAP} mdconfig -d -u ${_md};"
+			trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		fi
+		_dev="/dev/${_md}"
+		#remove workdir part in path if exist
+		_keypath=$(get_key "${1}")
 	else
-	    _md=$( mdconfig -a -t vnode -f ${file} )
-	    TRAP="${TRAP} mdconfig -d -u ${_md};"
-	    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		_keypath=$(get_key "${_dev}")
 	fi
-	_dev="/dev/${_md}"
-	#remove workdir part in path if exist
-	_keypath=$(get_key "${1}")
-    else
-	_keypath=$(get_key "${_dev}")
-    fi
 
-    if [ ! -f "${_keypath}" ]; then
-    #    err 1 "${MAGENTA}You already have passfile for this file: ${GREEN}${_keypath}${NORMAL}"
-	trap "${TRAP} mountmaster_file \"ro\";" HUP INT ABRT BUS TERM EXIT
-	mountmaster_file "rw"
-    #    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
-    #    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
-	gelidev="${_dev}"
-	change_passphrase ${_dev} ${_keypath}
-    fi
+	if [ ! -f "${_keypath}" ]; then
+		#    err 1 "${MAGENTA}You already have passfile for this file: ${GREEN}${_keypath}${NORMAL}"
+		trap "${TRAP} mountmaster_file \"ro\";" HUP INT ABRT BUS TERM EXIT
+		mountmaster_file "rw"
+		#    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
+		#    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
+		gelidev="${_dev}"
+		change_passphrase ${_dev} ${_keypath}
+	fi
 
-    trap "" HUP INT ABRT BUS TERM EXIT
+	trap "" HUP INT ABRT BUS TERM EXIT
 }
 
 # geli init. if $1 is empty ${device} variable will be used
 init_device()
 {
-    local _res _arg _tst _device
-    printf "${BOLD}"
-    _arg="-s 4096 -K ${key} -e ${ealgo}"
+	local _res _arg _tst _device
+	printf "${BOLD}"
+	_arg="-s 4096 -K ${key} -e ${ealgo}"
 
-    if [ -n "${1}" ]; then
-	_device=${1}
-    else
-	_device=${device}
-    fi
+	if [ -n "${1}" ]; then
+		_device=${1}
+	else
+		_device=${device}
+	fi
 
-    [ ! -c "${_device}" ] && err 1 "${MAGENTA}No such or unaccesible/non block special device: ${GREEN}${_device}${NORMAL}"
+	[ ! -c "${_device}" ] && err 1 "${MAGENTA}No such or unaccesible/non block special device: ${GREEN}${_device}${NORMAL}"
 
-    if [ -n "${backupfile}" ]; then
-	_arg="${_arg} -B ${backupfile}"
-	_tst=$( dirname ${backupfile} )
-	[ ! -d "${_tst}" ] && mkdir -p ${_tst}
-    fi
+	if [ -n "${backupfile}" ]; then
+		_arg="${_arg} -B ${backupfile}"
+		_tst=$( dirname ${backupfile} )
+		[ ! -d "${_tst}" ] && mkdir -p ${_tst}
+	fi
 
-    _res=$( /sbin/geli init ${_arg} ${_device} 2>&1)
+	_res=$( /sbin/geli init ${_arg} ${_device} 2>&1)
 
-    printf "${NORMAL}"
-    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
-    [ -n "${_res}" ] && err 0 "${MAGENTA}${_res}${NORMAL}"
+	printf "${NORMAL}"
+	[ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+	[ -n "${_res}" ] && err 0 "${MAGENTA}${_res}${NORMAL}"
 }
 
 attach_file()
 {
-    local _res _md _keyfile
-    _res=$( eval find_md_by_img ${file} )
+	local _res _md _keyfile
+	_res=$( eval find_md_by_img ${file} )
 
-    if [ -n "${_res}" ]; then
-	_md="${_res}"
-    else
-	_md=$( mdconfig -a -t vnode -f ${file} )
-    fi
+	if [ -n "${_res}" ]; then
+		_md="${_res}"
+	else
+		_md=$( mdconfig -a -t vnode -f ${file} )
+	fi
 
-    _keyfile=$( get_key "${file}" )
-    attach_device "/dev/${_md}" "${_keyfile}"
+	_keyfile=$( get_key "${file}" )
+	attach_device "/dev/${_md}" "${_keyfile}"
 
 }
 
 info_file()
 {
-    local _res _md
-    _res=$( eval find_md_by_img ${file} )
+	local _res _md
+	_res=$( eval find_md_by_img ${file} )
 
-    if [ -n "${_res}" ]; then
-	_md="${_res}"
-    else
-	_md=$( mdconfig -a -t vnode -f ${file} )
-	trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
-    fi
+	if [ -n "${_res}" ]; then
+		_md="${_res}"
+	else
+		_md=$( mdconfig -a -t vnode -f ${file} )
+		trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
+	fi
 
-    info_device /dev/${_md}
+	info_device /dev/${_md}
 
 }
 
 
 init_file()
 {
-    local _res _md _file _dev
+	local _res _md _file _dev
 
-    if [ -n "${1}" ]; then
-	_file=$1
-    else
-	_file=${file}
-    fi
-    _res=$( eval find_md_by_img ${_file} )
+	if [ -n "${1}" ]; then
+		_file=$1
+	else
+		_file=${file}
+	fi
 
-    mountmaster_file "rw"
+	_res=$( eval find_md_by_img ${_file} )
 
-    if [ -n "${_res}" ]; then
-	_md="${_res}"
-    else
-	_md=$( mdconfig -a -t vnode -f ${_file} )
-	trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
-    fi
+	mountmaster_file "rw"
 
-    if [ -c "${_md}.eli" ]; then
-	echo "${_md}.eli"
-	return 0
-    fi
+	if [ -n "${_res}" ]; then
+		_md="${_res}"
+	else
+		_md=$( mdconfig -a -t vnode -f ${_file} )
+		trap "mdconfig -d -u ${_md}" HUP INT ABRT BUS TERM EXIT
+	fi
 
-    _dev=$( init_device /dev/${_md} )
-    [ $? -eq 0 ] && echo "${_dev}"
+	if [ -c "${_md}.eli" ]; then
+		echo "${_md}.eli"
+		return 0
+	fi
+
+	_dev=$( init_device /dev/${_md} )
+	[ $? -eq 0 ] && echo "${_dev}"
 }
 
 
 mdattach_file()
 {
-    local _res _md _file _dev
+	local _res _md _file _dev
 
-    if [ -n "${1}" ]; then
-	_file=$1
-    else
-	_file=${file}
-    fi
-    _res=$( eval find_md_by_img ${_file} )
+	if [ -n "${1}" ]; then
+		_file=$1
+	else
+		_file=${file}
+	fi
+	_res=$( eval find_md_by_img ${_file} )
 
-    if [ -n "${_res}" ]; then
-	_md="${_res}"
-    else
-	_md=$( mdconfig -a -t vnode -f ${_file} )
-    fi
+	if [ -n "${_res}" ]; then
+		_md="${_res}"
+	else
+		_md=$( mdconfig -a -t vnode -f ${_file} )
+	fi
 
-    echo ${_md}
-    return 0
+	echo ${_md}
+	return 0
 }
 
 
@@ -217,157 +218,160 @@ mdattach_file()
 
 detach_file()
 {
-    local _res _md
-    _res=$( eval find_md_by_img ${file} )
+	local _res _md
+	_res=$( eval find_md_by_img ${file} )
 
-    [ -z "${_res}" ] && err 1 "${MAGENTA}${file} not attached${NORMAL}"
+	[ -z "${_res}" ] && err 1 "${MAGENTA}${file} not attached${NORMAL}"
 
-    if [ -n "${_res}" ]; then
-	_md="${_res}"
-    else
-	_md=$( mdconfig -a -t vnode -f ${file} )
-    fi
+	if [ -n "${_res}" ]; then
+		_md="${_res}"
+	else
+		_md=$( mdconfig -a -t vnode -f ${file} )
+	fi
 
-    detach_device /dev/${_md}
+	detach_device /dev/${_md}
 }
 
 # $1 - path to dev
 # $2 - path to key
 attach_device()
 {
-    local _res _device _keyfile
+	local _res _device _keyfile
 
-    [ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}attach_device need for arg1 arg2${NORMAL}"
+	[ -z "${1}" -o -z "${2}" ] && err 1 "${MAGENTA}attach_device need for arg1 arg2${NORMAL}"
 
-    _device="${1}"
-    _keyfile="${2}"
+	_device="${1}"
+	_keyfile="${2}"
 
-    if [ -c "${_device}.eli" ]; then
+	if [ -c "${_device}.eli" ]; then
+		err 0 "${GREEN}${_device}.eli${NORMAL}"
+	fi
+	printf "${BOLD}"
+	_res=$( /sbin/geli attach -j ${_keyfile} ${_device} 2>&1)
+	[ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+	printf "${NORMAL}"
+	[ -c "${device}.eli" ] && err 0 "${device}.eli"
 	err 0 "${GREEN}${_device}.eli${NORMAL}"
-    fi
-    printf "${BOLD}"
-    _res=$( /sbin/geli attach -j ${_keyfile} ${_device} 2>&1)
-    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
-    printf "${NORMAL}"
-    [ -c "${device}.eli" ] && err 0 "${device}.eli"
-    err 0 "${GREEN}${_device}.eli${NORMAL}"
 }
 
 info_device()
 {
-    local _res _device
-    if [ -n "${1}" ]; then
-	_device="${1}"
-    else
-	_device="${device}"
-    fi
+	local _res _device
 
-    [ -c "${_device}.eli" ] && err 0 "${GREEN}${_device}.eli${NORMAL}"
-    err 1 "${MAGENTA}No geli${NORMAL}"
+	if [ -n "${1}" ]; then
+		_device="${1}"
+	else
+		_device="${device}"
+	fi
+
+	[ -c "${_device}.eli" ] && err 0 "${GREEN}${_device}.eli${NORMAL}"
+	err 1 "${MAGENTA}No geli${NORMAL}"
 }
 
 
 detach_device()
 {
-    local _res _device
-    if [ -n "${1}" ]; then
-	_device="${1}"
-    else
-	_device="${device}"
-    fi
-    [ ! -c "${_device}.eli" ] && err 0 "${MAGENTA}geli: ${MAGENTA}Device not attached: ${GREEN}${_device}.eli${NORMAL}"
-    _res=$( /sbin/geli detach ${_device}.eli 2>&1)
-    [ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
+	local _res _device
+
+	if [ -n "${1}" ]; then
+		_device="${1}"
+	else
+		_device="${device}"
+	fi
+	[ ! -c "${_device}.eli" ] && err 0 "${MAGENTA}geli: ${MAGENTA}Device not attached: ${GREEN}${_device}.eli${NORMAL}"
+	_res=$( /sbin/geli detach ${_device}.eli 2>&1)
+	[ $? -ne 0 ] && err 1 "${MAGENTA}error: ${NORMAL}${_res}"
 }
 
 check_gelidir()
 {
-    [ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+	[ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
 #    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} >/dev/null 2>&1 && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
 #    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
-    is_mounted ${gelidir} && return 0
-    err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not mounted. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+	is_mounted ${gelidir} && return 0
+	err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not mounted. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
 }
 
 
 initmaster_attach_file()
 {
-    local _res
-    [ -z "${1}" ] && return 1
+	local _res
+	[ -z "${1}" ] && return 1
 
-    ${ECHO} "${MAGENTA}Attaching geli base image. Please use master password.${NORMAL}"
-    _res=$( /sbin/geli attach ${1} 2>&1 )
-    [ ! -c "${1}.eli" ] && err 1 "${MAGENTA}Not attached: ${_res}${NORMAL}"
+	${ECHO} "${MAGENTA}Attaching geli base image. Please use master password.${NORMAL}"
+	_res=$( /sbin/geli attach ${1} 2>&1 )
+	[ ! -c "${1}.eli" ] && err 1 "${MAGENTA}Not attached: ${_res}${NORMAL}"
 }
 
 
 initmaster_file()
 {
-    local _md _res
-    [ -f "${MASTER_FILE}" ] && return 0
-    TRAP="rm -f ${MASTER_FILE};"
-    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-    truncate -s ${master_size} ${MASTER_FILE}
-    chmod 0600 ${MASTER_FILE}
-    _md=$( mdconfig -a -t vnode -f ${MASTER_FILE} )
-    TRAP="mdconfig -d -u ${_md}; ${TRAP}"
-    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-    $ECHO "${BOLD}Initialization. Please set master password for geli base image${NORMAL}"
-    _res=$( /sbin/geli init -s 4096 /dev/${_md} 2>&1 )
+	local _md _res
 
-    initmaster_attach_file /dev/${_md}
+	[ -f "${MASTER_FILE}" ] && return 0
+	TRAP="rm -f ${MASTER_FILE};"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	truncate -s ${master_size} ${MASTER_FILE}
+	chmod 0600 ${MASTER_FILE}
+	_md=$( mdconfig -a -t vnode -f ${MASTER_FILE} )
+	TRAP="mdconfig -d -u ${_md}; ${TRAP}"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	$ECHO "${BOLD}Initialization. Please set master password for geli base image${NORMAL}"
+	_res=$( /sbin/geli init -s 4096 /dev/${_md} 2>&1 )
 
-    TRAP="/sbin/geli detach /dev/${_md}.eli; ${TRAP}"
-    trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-    # now create filesystem on the image
-    dd if=/dev/random of=/dev/${_md}.eli bs=128k >/dev/null 2>&1 || true  ## << short write on character device exit with 1 err
-    newfs -U -m0 -n /dev/${_md}.eli >/dev/null 2>&1
-    trap "" HUP INT ABRT BUS TERM EXIT
-#    # detach
-#    /sbin/geli detach /dev/${_md}.eli
-#    mdconfig -d -u ${_md}
-    ${ECHO} "${MAGENTA}Init complete: ${GREEN}${MASTER_FILE}${NORMAL}"
+	initmaster_attach_file /dev/${_md}
+
+	TRAP="/sbin/geli detach /dev/${_md}.eli; ${TRAP}"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	# now create filesystem on the image
+	dd if=/dev/random of=/dev/${_md}.eli bs=128k >/dev/null 2>&1 || true  ## << short write on character device exit with 1 err
+	/sbin/newfs -U -m0 -n /dev/${_md}.eli >/dev/null 2>&1
+	trap "" HUP INT ABRT BUS TERM EXIT
+	#    # detach
+	#    /sbin/geli detach /dev/${_md}.eli
+	#    mdconfig -d -u ${_md}
+	${ECHO} "${MAGENTA}Init complete: ${GREEN}${MASTER_FILE}${NORMAL}"
 }
 
 initmaster()
 {
-    [ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
-    [ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
-    [ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
+	[ ! -d "${gelidir}" -o ! -r "${MASTER_FILE}" ] && err 1 "${MAGENTA}Geli dir ${GREEN}${gelidir}${MAGENTA} is not initialized. Please use: ${GREEN}cbsd geli mode=initmaster${MAGENTA} as first step${NORMAL}"
+	[ "$( stat -f %Op ${gelidir} )" != "40600" ] && chmod 0600 ${gelidir} && ${ECHO} "${MAGENTA}Fixed permission for ${gelidir}${NORMAL}"
+	[ "$( stat -f %Op ${MASTER_FILE} )" != "100600" ] && chmod 0600 ${MASTER_FILE} && ${ECHO} "${MAGENTA}Fixed permission for ${MASTER_FILE}${NORMAL}"
 }
 
 # $1 - mode
 mountmaster_file()
 {
-    local _mode _mounted _res _md
-    [ -z "${1}" ] && err 1 "usage: mountmaster_file mode"
-    _mode="$1"
-    [ "${_mode}" != "ro" -a "${_mode}" != "rw" ] && err 1 "${MAGENTA}Please set ${GREEN}'ro' ${MAGENTA}or ${GREEN}'rw'${NORMAL}"
+	local _mode _mounted _res _md
+	[ -z "${1}" ] && err 1 "usage: mountmaster_file mode"
+	_mode="$1"
+	[ "${_mode}" != "ro" -a "${_mode}" != "rw" ] && err 1 "${MAGENTA}Please set ${GREEN}'ro' ${MAGENTA}or ${GREEN}'rw'${NORMAL}"
 
-    _md=$( mdattach_file ${MASTER_FILE} )
+	_md=$( mdattach_file ${MASTER_FILE} )
 
-    if is_mounted ${gelidir}; then
-	# test for read/write
-	_res=$( mktemp -q ${gelidir}/XXXXX )
-	if [ $? -eq 0 ]; then
-	    _mounted="rw"
-	    rm -f ${_res}
-	else
-	    _mounted="ro"
+	if is_mounted ${gelidir}; then
+		# test for read/write
+		_res=$( mktemp -q ${gelidir}/XXXXX )
+		if [ $? -eq 0 ]; then
+			_mounted="rw"
+			/bin/rm -f ${_res}
+		else
+			_mounted="ro"
+		fi
+		[ "${_mounted}" = "${_mode}" ] && return 0
+		# we need for re-mount in new mode
+		umount ${gelidir}
 	fi
-	[ "${_mounted}" = "${_mode}" ] && return 0
-	# we need for re-mount in new mode
-	umount ${gelidir}
-    fi
 
-    [ ! -c "/dev/${_md}.eli" ] &&  initmaster_attach_file /dev/${_md}
+	[ ! -c "/dev/${_md}.eli" ] &&  initmaster_attach_file /dev/${_md}
 
-    if [ ! -c "/dev/${_md}.eli" ]; then
-	mdconfig -d -u ${_md}
-	err 1 "${MAGENTA}No eli initialized for ${GREEN}${MASTER_FILE}${NORMAL}"
-    fi
+	if [ ! -c "/dev/${_md}.eli" ]; then
+		/sbin/mdconfig -d -u ${_md}
+		err 1 "${MAGENTA}No eli initialized for ${GREEN}${MASTER_FILE}${NORMAL}"
+	fi
 
-    mount -o${_mode} /dev/${_md}.eli ${gelidir}
+	mount -o${_mode} /dev/${_md}.eli ${gelidir}
 }
 
 
@@ -376,58 +380,57 @@ mountmaster_file()
 [ ! -d "${gelidir}" ] && mkdir -m 0600 ${gelidir}
 
 case "${mode}" in
-    "init")
-	check_gelidir
-#	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
-	if [ -n "${device}" ]; then
-	    create_key ${device}
-	    attach_file ${device}
-#	    init_device
-	elif [ -n "${file}" ]; then
-	    create_key ${file}
-	    attach_file ${file}
-#	    init_file
-	else
-	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
-	fi
-	;;
-    "initmaster")
-	initmaster_file
-	mountmaster_file "ro"
-	;;
-    "attach")
-	check_gelidir
-	[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
-	[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
-	if [ -n "${device}" ]; then
-	    attach_device
-	elif [ -n "${file}" ]; then
-	    attach_file
-	else
-	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
-	fi
-	;;
-    "detach")
-	if [ -n "${device}" ]; then
-	    detach_device
-	elif [ -n "${file}" ]; then
-	    detach_file
-	else
-	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
-	fi
-	;;
-    "info")
-	if [ -n "${device}" ]; then
-	    info_device
-	elif [ -n "${file}" ]; then
-	    info_file
-	else
-	    err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
-	fi
-	;;
-    *)
-	err 1 "${MAGENTA}Unknown mode${NORMAL}"
-	;;
+	"init")
+		check_gelidir
+		# [ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
+		if [ -n "${device}" ]; then
+			create_key ${device}
+			attach_file ${device}
+			# init_device
+		elif [ -n "${file}" ]; then
+			create_key ${file}
+			attach_file ${file}
+		# init_file
+		else
+			err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+		fi
+		;;
+	"initmaster")
+		initmaster_file
+		mountmaster_file "ro"
+		;;
+	"attach")
+		check_gelidir
+		[ -z "${key}" ] && err 1 "${MAGENTA}Please specify ${GREEN}key=${NORMAL}"
+		[ ! -r "${key}" ] && err 1 "${MAGENTA}No such key or file is unreadable: ${GREEN}${key}${NORMAL}"
+		if [ -n "${device}" ]; then
+			attach_device
+		elif [ -n "${file}" ]; then
+			attach_file
+		else
+			err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+		fi
+		;;
+	"detach")
+		if [ -n "${device}" ]; then
+			detach_device
+		elif [ -n "${file}" ]; then
+			detach_file
+		else
+			err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+		fi
+		;;
+	"info")
+		if [ -n "${device}" ]; then
+			info_device
+		elif [ -n "${file}" ]; then
+			info_file
+		else
+			err 1 "${MAGENTA}Please specify ${GREEN}file= ${MAGENTA}or ${GREEN}device=${NORMAL}"
+		fi
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode${NORMAL}"
+		;;
 esac
-
 
