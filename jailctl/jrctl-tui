@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v10.1.0
 CBSDMODULE="jail"
 MYARG="jname"
 MYOPTARG=""
@@ -13,10 +13,12 @@ MYDESC="Dialog based UI for RACCR/RCTL"
 . ${sharedir}/rctl.conf
 . ${workdir}/jrctl.subr
 
+[ -z "${1}" ] && select_jail_by_list -s "List of local jails:" -r 0
 init $*
 
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
 
 choice_commit()
 {
@@ -107,21 +109,94 @@ mychoice()
 {
 	local _mydesc _retval _myval
 
-	eval _mydesc=\$${choice}_desc
-	eval _myval=\$${choice}
+	f_dialog_title " ${mtag} "
+
+	eval _mydesc=\$${mtag}_desc  # mtag from menu
+	eval _myval=\$${mtag}
 
 	f_dialog_input _input "${_mydesc}" "${_myval}"
-      _retval=$?
+	 _retval=$?
 
 	case ${_retval} in
 	0)
-		[ -n "${_input}" ] && eval ${choice}="${_input}"
+		[ -n "${_input}" ] && eval ${mtag}="${_input}"
 		;;
 	esac
 }
 
+dialog_menu_main()
+{
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select and edit limit"
+	local hline=
+
+	local title=" RCTL editor for ${jname} "
+	local _items
+	local _mydesc
+
+	local menu_list="
+		'EXIT'  'EXIT'  'Exit jconstruct-tui'
+	" # END-QUOTE
+
+	for _items in ${MYLIMITS}; do
+		eval VAL=\$${_items}
+		eval _mydesc=\$${_items}_desc
+		if [ -z "${VAL}" ]; then
+			menu_list="${menu_list} '${_items}'	' '	'${_mydesc}'"
+		else
+			menu_list="${menu_list} '${_items}'	'${VAL}'	'${_mydesc}'"
+		fi
+	done
+
+	menu_list="${menu_list} 'COMMIT'        'Save changes and quit' 'Save!'"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		--extra-button				\
+		--extra-label \"Reset\"			\
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+# MAIN
+
 
 #main
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
 LIMITS="${jailsysdir}/${jname}/jail.limits"
 [ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
 
@@ -138,38 +213,20 @@ fi
 reset_limits
 load_limits
 
-msg_extra="Reset"
-
 while [ 1 ]; do
-	menu_list=""
-
-	for items in ${MYLIMITS}; do
-		eval myval=\$${items}
-		menu_list="${menu_list} '${items}' '${myval}'"
-	done
-
-	menu_list="${menu_list} 'COMMIT' ''"
-	f_dialog_menu
-	retval=$?
-	f_dialog_menutag_fetch mtag
-	choice=${mtag}
-
-	case $retval in
-		0)
-			case "${mtag}" in
-				"COMMIT")
-					choice_commit
-					;;
-				*)
-					mychoice
-					;;
-			esac
+	dialog_menu_main
+	ret=$?
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			[ "${mtag}" = "EXIT" ] && exit 0
+			[ "${mtag}" = "COMMIT" ] && choice_commit
+			mychoice
 			;;
-		3)
+		${DIALOG_EXTRA})
 			reset_limits
 			;;
 		*)
-			exit 0
-			;;
+			f_die
 	esac
 done
