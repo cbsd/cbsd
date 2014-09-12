@@ -32,6 +32,7 @@ cbsd:
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch
 	${CC} misc/src/popcnttest.c -o misc/popcnttest -msse4.2
 	/usr/bin/make -C bin/cbsdsh
+	/usr/bin/make -C share/bsdconfig/cbsd
 
 install:
 	mkdir -p ${DESTDIR}${PREFIX}/cbsd
@@ -39,3 +40,4 @@ install:
 	cp -Rpv .ssh ${DESTDIR}${PREFIX}/cbsd/
 	install man/cbsd.8 ${DESTDIR}${PREFIX}/man/man8/cbsd.8
 	/usr/bin/env BINDIR=${PREFIX}/bin /usr/bin/make -C bin/cbsdsh install
+	/usr/bin/make -C share/bsdconfig/cbsd install
