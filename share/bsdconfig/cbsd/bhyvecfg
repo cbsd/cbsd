@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 ############################################################ INCLUDES
 
 BSDCFG_SHARE="/usr/share/bsdconfig"
@@ -13,6 +13,11 @@ f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages.subr
 ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
 [ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
 
+. ${subr}
+. ${inventory}
+. ${strings}
+. ${tools}
+
 ############################################################ FUNCTIONS
 
 # dialog_menu_main
@@ -25,39 +30,58 @@ dialog_menu_main()
 	local btitle="$DIALOG_BACKTITLE"
 	local prompt=""
 	local menu_list="
-		'A $msg_add_new_bhyve_machine' ''
+		'A $msg_add_new_bhyve_machine'	''	'cbsd jconstruct-tui'
 	" # END-QUOTE
 	local defaultitem=
 	local hline="$hline_arrows_tab_enter"
 
-	local f_dialog_title=" Configure Virtual Machine "
+	local f_dialog_title=" Configure VM Machine "
+
+	jlist=$( cbsdsql local SELECT jname FROM jails WHERE emulator = \"bhyve\" |xargs )
+
+	eval $( for jname in ${jlist}; do
+		. ${jrcconf}
+		conv_status
+#		echo "${jname}_desc=\"hostname: ${host_hostname} ; ip4_addr: ${ip4_addr} ; path: ${path}\""
+		echo "${jname}_status=\"${status}\""
+	done )
 
 	local profile n=1
-	for profile in $( /usr/local/bin/cbsd bls display=jname header=0 ); do
-		menu_list="$menu_list '$n $profile' ''"
+
+	for jname in ${jlist}; do
+		eval desc=\$${jname}_desc
+		eval status=\$${jname}_status
+		menu_list="$menu_list '$n ${jname}'	'($status)'	'${desc}'"
 		n=$(( $n + 1 ))
 	done
 
-	local height width rows
-	eval f_dialog_menu_size height width rows \
-		\"\$title\" \"\$btitle\" \"\$prompt\" \"\$hline\" $menu_list
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
 
 	# Obtain default-item from previously stored selection
 	f_dialog_default_fetch defaultitem
 
 	local menu_choice
 	menu_choice=$( eval $DIALOG \
-		--title \"\$title\"              \
-		--backtitle \"\$btitle\"         \
-		--hline \"\$hline\"              \
-		--ok-label \"\$msg_select\"      \
-		--cancel-label \"\$msg_cancel\"  \
-		--default-item \"\$defaultitem\" \
-		--menu \"\$prompt\"              \
-		$height $width $rows             \
-		$menu_list                       \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 	)
+
 	local retval=$?
 	f_dialog_data_sanitize menu_choice
 	f_dialog_menutag_store "$menu_choice"
@@ -105,8 +129,12 @@ while :; do
 	case "$mtag" in
 		?" $msg_exit") break ;;
 		?" $msg_add_new_bhyve_machine")
-				/usr/local/bin/cbsd bconstruct-tui
-				;;
+			/usr/local/bin/cbsd bconstruct-tui
+			;;
+		*)
+			jname=$( echo ${mtag} |cut -d " " -f 2 )
+			/usr/local/bin/cbsd bcontrol-tui jname=${jname}
+			;;
 	esac
 done
 

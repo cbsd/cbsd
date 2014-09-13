@@ -291,7 +291,6 @@ start_bhyve()
 
 	# init cd_args
 	if ! compile_cd_args; then
-		${ECHO} "${MAGENTA}No such cd for VMs: ${GREEN}${jname}${NORMAL}"
 		unset cd_args
 	fi
 
@@ -302,79 +301,36 @@ start_bhyve()
 #	passthr="-s 3:0,ehci,1"
 
 
-	# reboot loop
-	reboot_loop=1
+cat > ${jailsysdir}/${jname}/bhyve.conf <<EOF
+boot_from_grub="${boot_from_grub}"
+vm_boot="${vm_boot}"
+grub_iso_cmd="${grub_iso_cmd}"
+grub_boot_cmd="${grub_boot_cmd}"
+bhyveload_cmd="${bhyveload_cmd}"
+tmuxcmd="${tmuxcmd}"
+jname="${jname}"
 
-	while [ ${reboot_loop} -eq 1 ]; do
-		if [ "${boot_from_grub}" = "1" ]; then
-			${ECHO} "${MAGENTA}Booting from: ${GREEN}${vm_boot}${NORMAL}"
-			# Bhyveload
-			case "${vm_boot}" in
-				"cd")
-					echo "DEBUG: $grub_iso_cmd"
-					echo "DEBUG: $grub_iso_cmd"
-					eval "$grub_iso_cmd"
-				;;
-				"hdd")
-					echo "Boot from HDD"
-					echo "DEBUG: ${grub_boot_cmd}"
-					eval "$grub_boot_cmd"
-					sleep 15
-				;;
-				*)
-					echo "Booting from HDD"
-					eval "$grub_boot_cmd"
-				;;
-			esac
-		else
-			echo "DEBUG: $bhyveload_cmd"
-			echo "${tmuxcmd} -2 new -d -s \"cbsd-${jname}\" \"eval $bhyveload_cmd\""
-			${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
-		fi
+bhyve_flags="${bhyve_flags}"
+vm_cpus="${vm_cpus}"
+vm_ram="${vm_ram}"
+hostbridge_args="${hostbridge_args}"
+passthr="${passthr}"
+lpc_args="${lpc_args}"
+virtiornd_args="${virtiornd_args}"
+nic_args="${nic_args}"
+dsk_args="${dsk_args}"
+cd_args="${cd_args}"
+mytap="${mytap}"
+EOF
 
-		sleep 1
-
-		wait_tick=0
-		wait_msg="Waiting for bhyve load.."
-
-		while [ -f "/tmp/bhyveload.${jname}.lock" ]; do
-			${ECHO} "${MAGENTA}${wait_msg}${NORMAL}"
-			sleep 3
-			wait_tick=$(( wait_tick + 1 ))
-			[ ${wait_tick} -eq 5 ] && wait_msg="${MAGENTA}Waiting for bhyve load.. You can check it via ${GREEN}cbsd blogin ${jname}${NORMAL}"
-			if [ ${wait_tick} -gt 30 ]; then
-				${ECHO} "${MAGENTA}Boot time limit exceeded. Killing${NORMAL}"
-				bstop ${jname}
-				exit 1
-			fi
-		done
-
-echo "eval /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
-bhyvectl --get-vmcs-exit-reason --vm ${jname} >> /tmp/reason.txt  ; \
-bhyvectl --get-vmcs-exit-ctls --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-interruption-info --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-interruption-error --vm ${jname} >> /tmp/reason.txt ; \
-cbsd bstop ${jname}; /sbin/ifconfig ${mytap} destroy )"
-
-		${tmuxcmd} -2 -u new -d -s "cbsdb-${jname}" "( \
-eval /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname}; \
-bhyvectl --get-vmcs-exit-reason --vm ${jname} >> /tmp/reason.txt  ; \
-bhyvectl --get-vmcs-exit-ctls --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-interruption-info --vm ${jname} >> /tmp/reason.txt ; \
-bhyvectl --get-vmcs-exit-interruption-error --vm ${jname} >> /tmp/reason.txt ; \
-cbsd bstop ${jname}; /sbin/ifconfig ${mytap} destroy )"
-
-		err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
-		reboot_loop=0
-	done # while reboot_loop
-
+	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh ${jailsysdir}/${jname}/bhyve.conf"
+	err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
 }
 
 
-
 # MAIN for multiple jails
+TRAP=""
+
 if [ $# -gt 1 -a -z "${jname}" ]; then
 	# multiple astart always non interactive
 	export inter=0
@@ -382,14 +338,16 @@ if [ $# -gt 1 -a -z "${jname}" ]; then
 	JLIST=$*
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
+		TRAP="${TRAP} rm -f ${ftmpdir}/jstart.${jname}.$$;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( cat ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
+		trap "" HUP INT ABRT BUS TERM EXIT
 	done
 
 	wait_for_jstart ${parallel}
-
 	err 0 "${MAGENTA}Multiple jstart: ${GREEN}done${NORMAL}"
 fi
 
