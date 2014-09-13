@@ -1,4 +1,4 @@
-#v10.0.4
+#v10.1.0
 # generic function for bhyve
 # required:
 # strings.subr
@@ -23,7 +23,6 @@ init_bhyve()
 
 	tmuxcmd=$(which tmux)
 	[ -z "${tmuxcmd}" ] && err 1 "${MAGENTA}Current version required for ${GREEN}tmux${MAGENTA}\nPlease ${GREEN}pkg install tmux ${MAGENTA} or ${GREEN}make -C /usr/ports/sysutils/tmux install${MAGENTA} it.${NORMAL}"
-
 }
 
 
@@ -81,6 +80,51 @@ compile_dsk_args()
 }
 
 
+# export arguments for bhyve about nic vms in $nic_args variable
+# $jname must be set's
+# sample:
+# jname="debian"
+# if compile_nic_args; then
+# 	echo $nic_args
+# else
+#	echo "No nic"
+# fi
+compile_nic_args()
+{
+	local _id=0 i
+	local sqldelimer=" "
+
+	eval $( cbsdsql local SELECT nic_order,nic_driver,nic_slot,nic_type,nic_parent FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_order nic_driver nic_slot nic_type nic_parent; do
+		if ! next_pci_id; then
+			# no free pci bus
+			exit 0
+		fi
+
+		if [ ${nic_slot} -eq 0 ]; then
+			pcislot=${bhyve_pci_index}
+		else
+			pcislot=${nic_slot}
+		fi
+		echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap}\" ;"
+		_id=$(( _id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create nic map${NORMAL}"
+
+	nic_args=""
+	for i in $(seq 0 31); do
+		eval T="\$nic$i"
+		[ -z "${T}" ] && break
+		# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
+		if ! next_pci_id; then
+			# no free pci bus
+		fi
+		nic_args="${nic_args} ${T}"
+	done
+
+	[ -z "${nic_args}" ] && return 1
+	return 0
+}
+
+
 # export arguments for bhyve hostbridge_args
 compile_hostbridge_args()
 {
@@ -113,16 +157,6 @@ compile_virtiornd_args()
 	fi
 
 	virtiornd_args="-s ${bhyve_pci_index}:0,virtio-rnd"
-}
-
-# export arguments for bhyve nic_args
-compile_nic_args()
-{
-	if ! next_pci_id; then
-		return 1
-	fi
-
-	nic_args="-s ${bhyve_pci_index}:0,virtio-net,${mytap}"
 }
 
 # export arguments for bhyve cd_args
