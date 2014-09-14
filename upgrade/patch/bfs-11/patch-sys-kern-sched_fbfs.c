@@ -1,6 +1,6 @@
---- /dev/null	2014-07-28 14:54:41.000000000 +0400
-+++ sched_fbfs.c	2014-07-28 14:54:00.000000000 +0400
-@@ -0,0 +1,1316 @@
+--- /dev/null	2014-09-14 13:37:06.000000000 +0400
++++ sched_fbfs.c	2014-09-14 13:31:13.000000000 +0400
+@@ -0,0 +1,1343 @@
 +/*-
 + * Copyright (c) 1982, 1986, 1990, 1991, 1993
 + *	The Regents of the University of California.  All rights reserved.
@@ -103,15 +103,15 @@
 +static struct cpu_group * cpu_top;
 +static struct cpu_group * cpu_topology[MAXCPU];
 +
-+struct pcpuidlestat {
-+        u_int idlecalls;
-+        u_int oldidlecalls;
-+};
-+static DPCPU_DEFINE(struct pcpuidlestat, idlestat);
++//struct pcpuidlestat {
++//        u_int idlecalls;
++//        u_int oldidlecalls;
++//};
++//static DPCPU_DEFINE(struct pcpuidlestat, idlestat);
 +
 +/* flags kept in td_flags */
-+#define TDF_DIDRUN	TDF_SCHED0	/* thread actually ran. */
-+#define TDF_BOUND	TDF_SCHED1	/* Bound to one CPU. */
++#define TDF_DIDRUN	TDF_SCHED0	/* Thread actually ran. */
++#define TDF_BOUND	TDF_SCHED1	/* Thread can not migrate. */
 +#define TDF_SLICEEND    TDF_SCHED2      /* Thread time slice is over. */
 +
 +/* flags kept in ts_flags */
@@ -124,7 +124,7 @@
 +    CPU_ISSET((cpu), &(td)->td_cpuset->cs_mask)
 +
 +static struct td_sched td_sched0;
-+struct mtx sched_lock;
++static struct mtx sched_lock;
 +
 +static int	sched_tdcnt;	/* Total runnable threads in the system. */
 +
@@ -190,7 +190,22 @@
 +}
 +
 +/*
-+ * Recompute process used and tick, every hz/PCT_WINDOW ticks.
++ * If `ccpu' is not equal to `exp(-1/20)' and you still want to use the
++ * faster/more-accurate formula, you'll have to estimate CCPU_SHIFT below
++ * and possibly adjust FSHIFT in "param.h" so that (FSHIFT >= CCPU_SHIFT).
++ *
++ * To estimate CCPU_SHIFT for exp(-1/20), the following formula was used:
++ *      1 - exp(-1/20) ~= 0.0487 ~= 0.0488 == 1 (fixed pt, *11* bits).
++ *
++ * If you don't want to bother with the faster/more-accurate formula, you
++ * can set CCPU_SHIFT to (FSHIFT + 1) which will use a slower/less-accurate
++ * (more general) method of calculating the %age of CPU used by a process.
++ */
++//#define CCPU_SHIFT      11
++
++/*
++ * //Recompute process used and tick, every hz/PCT_WINDOW ticks.
++ * Recompute process used and tick, every hz ticks.
 + */
 +/* ARGSUSED */
 +static void
@@ -214,9 +229,12 @@
 +				thread_unlock(td);
 +                                continue;
 +			}
-+			if (ts->ts_used < (hz / PCT_WINDOW)) {
-+				ts->ts_used += 1;
++			if (ts->ts_used < hz) {
++////				ts->ts_used += hz/PCT_WINDOW;
 +				ts->ts_incrtick = ticks;
++				ts->ts_used = imax(hz/PCT_WINDOW - ts->ts_incrtick + ts->ts_cswtick, 0);
++//				if (ts->ts_used < 0)
++//					ts->ts_used = 0;
 +			}
 +			thread_unlock(td);
 +                }
@@ -234,7 +252,8 @@
 +
 +        for (;;) {
 +                schedcpu();
-+                pause("-", hz/PCT_WINDOW);
++//                pause("-", hz/PCT_WINDOW);
++                pause("-", hz);
 +        }
 +}
 +
@@ -325,7 +344,8 @@
 +{
 +	realstathz = stathz ? stathz : hz;
 +	sched_slice = realstathz / 10;  /* ~100ms */
-+	hogticks = imax(1, (2 * hz * sched_slice + realstathz / 2) / realstathz);
++	hogticks = imax(1, (2 * hz * sched_slice + realstathz / 2) /
++	    realstathz);
 +}
 +
 +/* External interfaces start here */
@@ -366,7 +386,6 @@
 +void
 +sched_clock(struct thread *td)
 +{
-+	struct pcpuidlestat *stat;
 +	struct td_sched *ts;
 +
 +	THREAD_LOCK_ASSERT(td, MA_OWNED);
@@ -388,10 +407,6 @@
 +		
 +	CTR1(KTR_SCHED, "queue number: %d", td->td_rqindex);
 +	CTR1(KTR_SCHED, "thread: 0x%x", td);
-+
-+        stat = DPCPU_PTR(idlestat);
-+        stat->oldidlecalls = stat->idlecalls;
-+        stat->idlecalls = 0;
 +}
 +
 +/*
@@ -438,7 +453,6 @@
 +	ts->ts_flags |= (td->td_sched->ts_flags & TSF_AFFINITY);
 +	ts->ts_vdeadline = td->td_sched->ts_vdeadline;
 +	ts->ts_slice = td->td_sched->ts_slice;
-+//	ts->ts_slice = 1;
 +	ts->ts_used = td->td_sched->ts_used;
 +}
 +
@@ -550,6 +564,7 @@
 +void
 +sched_user_prio(struct thread *td, u_char prio)
 +{
++
 +	THREAD_LOCK_ASSERT(td, MA_OWNED);
 +	td->td_base_user_pri = prio;
 +	if (td->td_flags & TDF_NEEDRESCHED && td->td_user_pri <= prio)
@@ -560,16 +575,10 @@
 +void
 +sched_lend_user_prio(struct thread *td, u_char prio)
 +{
-+//	u_char oldprio;
 +
 +	THREAD_LOCK_ASSERT(td, MA_OWNED);
-+//	if (td->td_priority > td->td_user_pri)
-+//	    sched_prio(td, td->td_user_pri);
-+	    td->td_user_pri = prio;
-+//	else if (td->td_priority != td->td_user_pri)
-+		td->td_flags |= TDF_NEEDRESCHED;
-+//	oldprio = td->td_user_pri;
-+//	td->td_user_pri = prio;
++	td->td_user_pri = prio;
++	td->td_flags |= TDF_NEEDRESCHED;
 +}
 +
 +void
@@ -590,7 +599,7 @@
 +	struct mtx *tmtx = NULL;
 +	struct td_sched *ts;
 +	int time_passed;
-+//	int preempted;
++	int preempted;
 +
 +	THREAD_LOCK_ASSERT(td, MA_OWNED);
 +
@@ -617,8 +626,8 @@
 +	}
 +
 +	td->td_lastcpu = td->td_oncpu;
-+//	preempted = !(td->td_flags & TDF_SLICEEND);
-+//	td->td_flags &= ~TDF_NEEDRESCHED;
++	preempted = !((td->td_flags & TDF_SLICEEND) ||
++	    (flags & SWT_RELINQUISH));
 +	td->td_flags &= ~(TDF_NEEDRESCHED | TDF_SLICEEND);
 +	td->td_owepreempt = 0;
 +	td->td_oncpu = NOCPU;
@@ -637,8 +646,9 @@
 +	} else {
 +		if (TD_IS_RUNNING(td)) {
 +			/* Put us back on the run queue. */
-+			sched_add(td, (flags & SW_PREEMPT) ?
-+//			sched_add(td, preempted ?
++//			sched_add(td, (flags & SW_PREEMPT) ?
++//			sched_add(td, (flags & SW_PREEMPT & SWT_RELINQUISH) ?
++			sched_add(td, preempted ?
 +			    SRQ_OURSELF|SRQ_YIELDING|SRQ_PREEMPTED :
 +			    SRQ_OURSELF|SRQ_YIELDING);
 +		}
@@ -822,7 +832,6 @@
 +	td->td_flags &= ~TDF_CANSWAP;
 +	td->td_slptick = 0;
 +	ts->ts_slice = sched_slice;
-+//	ts->ts_slice = 0;
 +	sched_add(td, SRQ_BORING);
 +}
 +
@@ -1153,7 +1162,6 @@
 +	default:
 +		time_passed = ticks - ts->ts_cswtick;
 +		nticks = imax(ts->ts_used - time_passed, 0);
-+		break;
 +	}
 +	nticks /= PCT_WINDOW;
 +
@@ -1164,6 +1172,40 @@
 +
 +	return (pct);
 +}
++
++//#ifdef RACCT
++/*
++ * Calculates the contribution to the thread cpu usage for the latest
++ * (unfinished) second.
++ */
++//fixpt_t
++//sched_pctcpu_delta(struct thread *td)
++//{
++//	struct td_sched *ts;
++//	fixpt_t delta;
++//	int realstathz;
++
++//	THREAD_LOCK_ASSERT(td, MA_OWNED);
++//	ts = td->td_sched;
++//	delta = 0;
++//	realstathz = stathz ? stathz : hz;
++//	if (ts->ts_cswtick != 0) {
++//#if	(FSHIFT >= CCPU_SHIFT)
++//	    delta = (realstathz == 100)
++//		? ((fixpt_t) ts->ts_cswtick) <<
++//		(FSHIFT - CCPU_SHIFT) :
++//		100 * (((fixpt_t) ts->ts_cswtick)
++//		<< (FSHIFT - CCPU_SHIFT)) / realstathz;
++//#else
++//	    delta = ((FSCALE - ccpu) *
++//		(ts->ts_cswtick *
++//		FSCALE / realstathz)) >> FSHIFT;
++//#endif
++//	}
++
++//	return (delta);
++//}
++//#endif
 +
 +void
 +sched_tick(int cnt)
@@ -1177,32 +1219,17 @@
 +sched_idletd(void *dummy)
 +{
 +
-+//	for (;;) {
-+//		mtx_assert(&Giant, MA_NOTOWNED);
++	THREAD_NO_SLEEPING();
++	for (;;) {
++		mtx_assert(&Giant, MA_NOTOWNED);
 +
-+//		while (sched_runnable() == 0)
-+//			cpu_idle(0);
++		while (sched_runnable() == 0)
++			cpu_idle(0);
 +
-+//		mtx_lock_spin(&sched_lock);
-+//		mi_switch(SW_VOL | SWT_IDLE, NULL);
-+//		mtx_unlock_spin(&sched_lock);
-+//	}
-+        struct pcpuidlestat *stat;
-+
-+        THREAD_NO_SLEEPING();
-+        stat = DPCPU_PTR(idlestat);
-+        for (;;) {
-+                mtx_assert(&Giant, MA_NOTOWNED);
-+
-+                while (sched_runnable() == 0) {
-+                        cpu_idle(stat->idlecalls + stat->oldidlecalls > 64);
-+                        stat->idlecalls++;
-+                }
-+
-+                mtx_lock_spin(&sched_lock);
-+                mi_switch(SW_VOL | SWT_IDLE, NULL);
-+                mtx_unlock_spin(&sched_lock);
-+        }
++		mtx_lock_spin(&sched_lock);
++		mi_switch(SW_VOL | SWT_IDLE, NULL);
++		mtx_unlock_spin(&sched_lock);
++	}
 +}
 +
 +/*
@@ -1272,7 +1299,7 @@
 +	struct td_sched *ts;
 +	int cpu;
 +
-+	THREAD_LOCK_ASSERT(td, MA_OWNED);	
++	THREAD_LOCK_ASSERT(td, MA_OWNED);       
 +
 +	/*
 +	 * Set the TSF_AFFINITY flag if there is at least one CPU this
@@ -1281,10 +1308,10 @@
 +	ts = td->td_sched;
 +	ts->ts_flags &= ~TSF_AFFINITY;
 +	CPU_FOREACH(cpu) {
-+		if (!THREAD_CAN_SCHED(td, cpu)) {
-+			ts->ts_flags |= TSF_AFFINITY;
-+			break;
-+		}
++    		if (!THREAD_CAN_SCHED(td, cpu)) {
++            		ts->ts_flags |= TSF_AFFINITY;
++            		break;
++    		}
 +	}
 +
 +	/*
@@ -1312,8 +1339,8 @@
 +         * target thread is not running locally send an ipi to force
 +         * the issue.
 +         */
-+        td->td_flags |= TDF_NEEDRESCHED;
-+        if (td != curthread)
-+                ipi_cpu(cpu, IPI_AST);
++	td->td_flags |= TDF_NEEDRESCHED;
++	if (td != curthread)
++    		ipi_cpu(cpu, IPI_AST);
 +#endif
 +}
