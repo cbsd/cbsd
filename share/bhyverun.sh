@@ -10,28 +10,36 @@ detach=
 
 while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
-	if [ "${boot_from_grub}" = "1" ]; then
-		echo "Booting from: ${vm_boot}"
-		# Bhyveload
-		case "${vm_boot}" in
-			"cd")
-				echo "Boot from CD"
-				echo "DEBUG: $grub_iso_cmd"
-				eval "$grub_iso_cmd"
-				;;
-			"hdd")
-				echo "Boot from HDD"
-				echo "DEBUG: ${grub_boot_cmd}"
-				eval "$grub_boot_cmd"
-				;;
-			*)
-				echo "Booting from HDD"
-				eval "$grub_boot_cmd"
-				;;
-		esac
+	/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1
+
+	if [ ${cd_boot_once} -eq 0 ]; then
+		if [ "${boot_from_grub}" = "1" ]; then
+			echo "Booting from: ${vm_boot}"
+			# Bhyveload
+			case "${vm_boot}" in
+				"cd")
+					echo "Boot from CD"
+					echo "DEBUG: $grub_iso_cmd"
+					eval "$grub_iso_cmd"
+					;;
+				"hdd")
+					echo "Boot from HDD"
+					echo "DEBUG: ${grub_boot_cmd}"
+					eval "$grub_boot_cmd"
+					;;
+				*)
+					echo "Booting from HDD"
+					eval "$grub_boot_cmd"
+					;;
+			esac
+		else
+			echo "DEBUG: $bhyveload_cmd"
+			eval "$bhyveload_cmd"
+		fi
 	else
-		echo "DEBUG: $bhyveload_cmd"
-		eval "$bhyveload_cmd"
+		echo "Boot from CD"
+		echo "DEBUG: ${grub_iso_cmd}"
+		eval "${grub_iso_cmd}"
 	fi
 
 	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname};"
@@ -43,6 +51,10 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 #	/usr/sbin/bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-interruption-info --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-interruption-error --vm ${jname} >> /tmp/reason.txt
+	if [ ${cd_boot_once} -eq 1 ]; then
+		cd_boot_once=0
+		vm_boot="hdd"
+	fi
 done
 
 rm -f /tmp/bhyvestop.${jname}.lock
