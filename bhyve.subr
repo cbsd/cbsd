@@ -17,7 +17,7 @@ init_bhyve()
 	for _i in ${_required_kmods}; do
 		if ! /sbin/kldstat -qm ${_i} >/dev/null 2>&1; then
 			${ECHO} "${MAGENTA}No kldloaded module: ${GREEN}${_i}${NORMAL}"
-			${ECHO} "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm nmdm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
+			${ECHO} "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
 			[ -n "${DIALOG}" ] && read p
 			exit 0
 		fi
@@ -81,6 +81,16 @@ compile_dsk_args()
 	return 0
 }
 
+# print 5c:f9:dd:76:d5:c4 from 5cf9dd76d5c4
+normalize_nic_hwaddr()
+{
+	local _hwaddr
+	[ -z "${1}" ] && return 0
+	
+	_hwaddr=$( echo "${1}" |tr -d ":"| sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	printf ${_hwaddr}
+}
+
 
 # export arguments for bhyve about nic vms in $nic_args variable
 # $jname must be set's
@@ -96,7 +106,7 @@ compile_nic_args()
 	local _id=0 i
 	local sqldelimer=" "
 
-	eval $( cbsdsql local SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent; do
+	eval $( cbsdsql local SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
 		if ! next_pci_id; then
 			# no free pci bus
 			exit 0
@@ -107,11 +117,19 @@ compile_nic_args()
 		else
 			pcislot=${nic_slot}
 		fi
-		echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap}\" ;"
+
+		if [ "${nic_hwaddr}" != "0" ]; then
+			unset mymac
+			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+			echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap},mac=${mymac}\" ;"
+		else
+			echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap}\" ;"
+		fi
 		_id=$(( _id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create nic map${NORMAL}"
 
 	nic_args=""
+
 	for i in $(seq 0 31); do
 		eval T="\$nic$i"
 		[ -z "${T}" ] && break
