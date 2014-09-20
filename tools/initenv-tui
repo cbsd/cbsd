@@ -1,27 +1,21 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 #v10.1.0
-export workdir=${workdir:-"/usr/jails"}
-export distdir=${distdir:-"/usr/local/cbsd"}
-globalconf="${distdir}/cbsd.conf";
-MYLOCK="/tmp/initenv-tui.lock"
-MYDESC="Node re-initialization"
 MYARG=""
 MYOPTARG=""
+ADDHELP=""
+MYLOCK="/tmp/initenv-tui.lock"
+MYDESC="Node re-initialization"
+EXTHELP="wf_initenv.html"
 
-if [ ! -f ${globalconf} ]; then
-	${ECHO} "${MAGENTA}no such conf file${NORMAL}";
-	exit 1
-fi
+. ${subr}
+. ${inventory}
+. ${settingstui}
+. ${tools}
+. ${strings}
+. ${initenv}
+. ${dialog}
 
-. ${globalconf}
-. ${distdir}/nc.subr
-. ${distdir}/tools.subr
-. ${distdir}/initenv.subr
-. ${distdir}/ansiicolor.subr
-. ${distdir}/dialog.subr
-. ${distdir}/strings.subr
-
-[ "$1" = "--help" ] && err 0 "${MYDESC}"
+init $*
 
 # form for $ips
 get_newvalue()
@@ -59,6 +53,15 @@ commit()
 				nodename=${VAL}
 				old_nodename=${OVAL}
 				change_nodename
+				;;
+			"nat_enable")
+				ok="${VAL}"
+				${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_i}=\"${VAL}\"
+				sysrc -qf ${inventory} ${_i}="${VAL}"
+				oldinter="${inter}"
+				inter=0
+				configure_nat
+				inter="${oldinter}"
 				;;
 			*)
 				${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_i}=\"${VAL}\"
@@ -130,6 +133,7 @@ dialog_menu_main()
 		--item-help                             \
 		--ok-label \"\$msg_ok\"                 \
 		--cancel-label \"Exit\"                 \
+		${cbsd_help}				\
 		${USE_XDIALOG:+--help \"\"}             \
 		--default-item \"\$defaultitem\"        \
 		--menu \"\$prompt\"                     \
@@ -164,13 +168,16 @@ init_items_value()
 }
 
 ### MAIN ###
-[ $# -eq 1 ] || /usr/bin/lockf -t0 -s ${MYLOCK} $0 start
+[ -f "${MYLOCK}" ] && err 1 "Locked: ${MYLOCK}"
 
-[ "$1" != "start" ] && exit 0
+touch ${MYLOCK}
+trap "rm -f ${MYLOCK}" HUP INT ABRT BUS TERM EXIT
 
 init_items_default
 init_items_desc
+
 [ -f "${inventory}" ] && . ${inventory}
+
 init_items_value
 real_zfsfeat="${zfsfeat}"
 
@@ -184,8 +191,17 @@ while [ 1 ]; do
 			[ "${mtag}" = "COMMIT" ] && commit
 			get_initenv_${mtag}
 			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
 		*)
+			rm -f "${MYLOCK}"
+			trap "" HUP INT ABRT BUS TERM EXIT
 			f_die
 		;;
 	esac
 done
+
+rm -f "${MYLOCK}"
+trap "" HUP INT ABRT BUS TERM EXIT

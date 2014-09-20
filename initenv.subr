@@ -1,4 +1,4 @@
-#10.0.6
+#10.1.0
 #
 
 init_items_desc()
@@ -65,17 +65,36 @@ make_nat()
 {
 	case "${ok}" in
 		"pf")
-		if [ $( grep ^pf_load= /boot/loader.conf|wc -l ) = 0 ]; then
-			getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && sysrc -vf /boot/loader.conf pf_load=YES
-		fi
-		truncate -s0 ${etcdir}/pfnat.conf
+			if [ $( grep ^pf_load= /boot/loader.conf|wc -l ) = 0 ]; then
+				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && sysrc -vf /boot/loader.conf pf_load=YES
+			fi
+			truncate -s0 ${etcdir}/pfnat.conf
+
+			for _net in ${rfc1918}; do
+				_nm=$( echo ${_net} |tr "/" " " )
+				${workdir}/sbin/netmask ${_nm} ${natip}
+				if [ $? -ne 1 ]; then
+					cat >> ${etcdir}/pfnat.conf <<EOF
+nat on ${ext_iface} from ${_net} to ! ${_net} -> ${natip}
+EOF
+				fi
+			done
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			return 0
+		;;
+		"ipfilter")
+		truncate -s0 ${etcdir}/ipfilter.conf
 
 		for _net in ${rfc1918}; do
 			_nm=$( echo ${_net} |tr "/" " " )
 			${workdir}/sbin/netmask ${_nm} ${natip}
 			if [ $? -ne 1 ]; then
-				cat >> ${etcdir}/pfnat.conf <<EOF
-nat on ${ext_iface} from ${_net} to ! ${_net} -> ${natip}
+				cat >> ${etcdir}/ipfilter.conf <<EOF
+map ${ext_iface} ${_net} -> ${natip}/32 proxy port ftp ftp/tcp
+map ${ext_iface} ${_net} -> ${natip}/32 portmap tcp/udp 10000:20000
+map ${ext_iface} ${_net} -> ${natip}/32
 EOF
 			fi
 		done
@@ -85,17 +104,26 @@ EOF
 		return 0
 		;;
 	"ipfw")
-		if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?"; then
-			sysrc -vf /boot/loader.conf net.inet.ip.fw.default_to_accept=1
-			sysrc -vf /boot/loader.conf ipfw_nat_load=YES
-			sysrc -vf /boot/loader.conf libalias_load=YES
+		local check_mod="net.inet.ip.fw.default_to_accept ipfw_nat_load libalias_load"
+		local fix_mod=0
+		for i in ${check_mod}; do
+			grep -q ^${i} /boot/loader.conf || fix_mod=$(( fix_mod + 1 ))
+		done
+		
+		if [ ${fix_mod} -ne 0 ]; then
+			# we need pass inter=0 here for initenv-tui: need for allow accept when we first init ipfw from initenv-tui
+			if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
+				sysrc -vf /boot/loader.conf net.inet.ip.fw.default_to_accept=1
+				sysrc -vf /boot/loader.conf ipfw_nat_load=YES
+				sysrc -vf /boot/loader.conf libalias_load=YES
+			fi
 		fi
 		truncate -s0 ${etcdir}/ipfw.conf
 		_nm=$( echo ${rfc1918} |tr " " "," )
 		# ${workdir}/sbin/netmask ${_nm} ${natip}
 		# if [ $? -ne 1 ]; then
 		_extiface=$( route -n get default | awk '/interface:/{print $2}' )
-		ifconfig ${_extiface} >/dev/null 2>&1
+		/sbin/ifconfig ${_extiface} >/dev/null 2>&1
 		if [ $? -eq 0 ]; then
 			cat >> ${etcdir}/ipfw.conf << EOF
 /sbin/ipfw -q add ${fwcount_end} nat 123 all from ${_nm} to not ${_nm} any via ${_extiface}
@@ -152,11 +180,12 @@ configure_nat()
 	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET natip=\"${natip}\"
 
 	_default="pf"
+
 	answ=0
 	ok=
 	while [ "$ok" != "ok" ]; do
 		${ECHO} "${BOLD}Which NAT framework do you want to use: [${GREEN}${_default}${NORMAL}${BOLD}]${NORMAL}"
-		${ECHO} "${MAGENTA}(type FW name, eg pf,ipfw or \"exit\" for break)${NORMAL}"
+		${ECHO} "${MAGENTA}(type FW name, eg pf,ipfw,ipfilter or \"exit\" for break)${NORMAL}"
 		read ok leftover
 		[ -z "$ok" ] && ok="${_default}"
 		make_nat && return
@@ -291,11 +320,56 @@ get_initenv_nat_enable()
 {
 	local _input _retval
 
-	f_dialog_title " nat_enable "
-	f_dialog_input _input "${nat_enable_desc}" "${nat_enable}" \
-		"${_message}" || return $?
+	local title=" NAT framework "
+	local prompt="${nat_enable_desc}"
+	hline=
 
-	[ -n "${_input}" ] && nat_enable="${_input}"
+	local menu_list="${menu_list} 'pf'		'pf'	'Use PF-based NAT'"
+
+	menu_list="${menu_list} 'ipfw'		'ipfw'	'Use IPFW-based NAT'"
+	menu_list="${menu_list} 'ipfilter'	'ipfilter'	'Use ipnat from Ipfilter'"
+
+	local defaultitem="${nat_enable}"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	f_dialog_menutag_fetch mtag
+	case $retval in
+		0)
+			nat_enable="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
 }
 
 # form for $natip

@@ -9,7 +9,7 @@ FILESDIR=	${LIBEXECDIR}/bsdconfig/cbsd
 FILES=		INDEX USAGE
 
 SCRIPTSDIR=	${FILESDIR}
-SCRIPTS=	bhyvecfg cbsd jailcfg
+SCRIPTS=	bhyvecfg bhyvedsk cbsd jailcfg
 
 beforeinstall:
 	mkdir -p ${DESTDIR}${FILESDIR}

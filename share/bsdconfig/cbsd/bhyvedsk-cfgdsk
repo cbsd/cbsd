@@ -1,0 +1,188 @@
+#!/usr/local/bin/cbsd
+############################################################ INCLUDES
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="cbsd"
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyvedsk.subr
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+. ${subr}
+. ${inventory}
+. ${strings}
+. ${tools}
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local title=" Image Properties ${jname}:${dsk_path} "
+	hline=
+
+	local prompt="${_desc}"
+	local sqldelimer=" "
+
+	eval $( cbsdsql local SELECT dsk_controller,dsk_slot,dsk_type FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type; do
+		echo "export dsk_controller=\"${dsk_controller}\""
+		echo "export dsk_slot=\"${dsk_slot}\""
+		echo "export dsk_type=\"${dsk_type}\""
+	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+
+	# get $dsk_size
+	populate_dsk_size
+
+	local menu_list="
+		'size'		'${dsk_size}'		'Current disk image size. Resize currently is not supported'
+		'controller'	'${dsk_controller}'	'Select controller type'
+		'slot'		'${dsk_slot}'		'Bus slot. 0 - auto'
+		'dsk_type'	'${dsk_type}'		'Disk type ( vhd, vmdk, vdi, qcow )'
+		'-'		'-'			''
+		'remove'	'remove'		'Detach and remove image'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname dsk"
+MYOPTARG=""
+MYDESC="Edit properties for vitual image of VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+[ -f "${globalconf}" ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${strings}
+. ${tools}
+. ${inventory}
+init $*
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/bhyvedsk.subr
+. ${workdir}/bhyve.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_bhyvedsk "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+
+# Select from SQL by dsk_path. Also this variable used in populate_dsk_size func
+dsk_path="${dsk}.vhd"
+
+. ${workdir}/bhyve.subr
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|slot|dsk_type|size)
+					continue
+					;;
+				"controller")
+					get_dsk_controller
+					;;
+				"remove")
+					if getyesno "Detach and remove ${dsk_path} from ${jname} VM?"; then
+						bhyve_remove_dsk "${dsk_path}"
+						f_die
+					fi
+					;;
+				*)
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

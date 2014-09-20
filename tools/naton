@@ -1,41 +1,51 @@
-#!/bin/sh
-#v9.2.0
-globalconf="${workdir}/cbsd.conf";
+#!/usr/local/bin/cbsd
+#v10.1.0
 MYARG=""
 MYOPTARG="nat"
 MYDESC="Enable NAT service for RFC1918 Networks"
 ADDHELP="nat= name of framework. default in inventory config\n"
 
-[ -f ${globalconf} ] || err 1 "no such conf file";
-. ${globalconf}
 . ${subr}
 . ${inventory}
+. ${system}
+
 init $*
 
 [ -n "${nat}" ] && nat_enable="${nat}"
 
+check_nat_ip()
+{
+	natoff nat=all
+	/sbin/ping -c1 -S ${natip} 127.0.0.1 > /dev/null 2>&1 || err 1 "${MAGENTA}Cant assign nat address: ${GREEN}${natip}${MAGENTA}. Probably wrong ip. Nat cfg skipped${NORMAL}"
+}
+
+
 # forwarding for NAT mode
-if [ `sysctl -nq net.inet6.ip6.forwarding 2>/dev/null` != "1" -o `sysctl -nq net.inet.ip.forwarding 2>/dev/null` != "1" ]; then
-    echo "Enable ip forwarding for NAT service"
-    /sbin/sysctl -q net.inet6.ip6.forwarding=1
-    /sbin/sysctl -q net.inet.ip.forwarding=1
+if [ $( sysctl -nq net.inet6.ip6.forwarding 2>/dev/null ) != "1" -o $( sysctl -nq net.inet.ip.forwarding 2>/dev/null ) != "1" ]; then
+	echo "${MAGENTA}Enable ip forwarding for NAT service${NORMAL}"
+	/sbin/sysctl -q net.inet6.ip6.forwarding=1
+	/sbin/sysctl -q net.inet.ip.forwarding=1
 fi
 
 case "${nat_enable}" in
-"pf")
-    [ ! -f "${etcdir}/pfnat.conf" ] && err 1 "No pfnat.conf. run cbsd natcfg first"
-    kldstat -qm pf || kldload pf
-    ping -c1 -S ${natip} 127.0.0.1 > /dev/null 2>&1 || err 1 "Cant assign nat address ${natip}. Probably wrong ip. Nat cfg skipped"
-    cbsd natoff nat=all
-    pfctl -f ${etcdir}/pfnat.conf
-    pfctl -e
-;;
-"ipfw")
-    [ ! -f "${etcdir}/ipfw.conf" ] && err 1 "No ipfw.rules. run cbsd natcfg first"
-    kldstat -qm alias || kldload libalias
-    kldstat -qm ipfw_nat || kldload ipfw_nat
-    cbsd natoff nat=all
-    ping -c1 -S ${natip} 127.0.0.1 > /dev/null 2>&1 || err 1 "Cant assign nat address ${natip}. Probably wrong ip. Nat cfg skipped"
-    sh ${etcdir}/ipfw.conf
-;;
+	"pf")
+		[ ! -f "${etcdir}/pfnat.conf" ] && err 1 "${MAGENTA}No pfnat.conf. run ${GREEN}cbsd natcfg${MAGENTA} first${NORMAL}"
+		/sbin/kldstat -qm pf || /sbin/kldload pf
+		check_nat_ip
+		/sbin/pfctl -f ${etcdir}/pfnat.conf
+		/sbin/pfctl -e
+	;;
+	"ipfw")
+		[ ! -f "${etcdir}/ipfw.conf" ] && err 1 "${MAGENTA}No ipfw.conf. run ${GREEN}cbsd natcfg${MAGENTA} first${NORMAL}"
+		/sbin/kldstat -qm alias || /sbin/kldload libalias
+		/sbin/kldstat -qm ipfw_nat || /sbin/kldload ipfw_nat
+		check_nat_ip
+		/bin/sh ${etcdir}/ipfw.conf
+	;;
+	"ipfilter")
+		[ ! -f "${etcdir}/ipfilter.conf" ] && err 1 "No ipfilter.conf. run cbsd natcfg first"
+		/sbin/kldstat -qm ipfilter || /sbin/kldload ipfilter
+		/sbin/ping -c1 -S ${natip} 127.0.0.1 > /dev/null 2>&1 || err 1 "Cant assign nat address ${natip}. Probably wrong ip. Nat cfg skipped"
+		/sbin/ipnat -CF -f ${etcdir}/ipfilter.conf
+	;;
 esac

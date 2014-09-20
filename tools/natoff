@@ -1,45 +1,53 @@
 #!/bin/sh
-#v9.2.0
+#v10.1.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="nat"
 MYDESC="Disable NAT service for RFC1918 Networks"
 ADDHELP="nat = all, or nameofnat for disable specified framework\n"
 
-[ -f ${globalconf} ] || err 1 "no such conf file";
+[ ! -f ${globalconf} ] && err 1 "no such conf file";
 . ${globalconf}
 . ${subr}
 . ${inventory}
 init $*
 
 RFC1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-EXT_IFACE=`cbsd getnics-by-ip ip=0.0.0.0`
+EXT_IFACE=$( /usr/local/bin/cbsd getnics-by-ip ip=0.0.0.0 )
 
 [ -z "${natip}" ] && err 1 "cbsd: empty natip"
 [ -n "${nat}" ] && nat_enable=$nat
 
 disable_pfnat() {
-    pfctl -F nat
+	/sbin/pfctl -F nat > /dev/null 2>&1
+}
+
+disable_ipfilter() {
+	/sbin/ipnat -CF > /dev/null 2>&1
 }
 
 disable_ipfwnat() {
-    /sbin/ipfw -q show ${fwcount_end} > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
-	/sbin/ipfw delete ${fwcount_end}
-	/sbin/ipfw delete nat 123 2>/dev/null
-    fi
+	/sbin/ipfw -q show ${fwcount_end} > /dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		/sbin/ipfw delete ${fwcount_end}
+		/sbin/ipfw delete nat 123 2>/dev/null
+	fi
 }
 
 case "${nat_enable}" in
-    "pf")
-	disable_pfnat
+	"pf")
+		disable_pfnat
+		;;
+	"ipfw")
+		[ -z "`/sbin/sysctl -qn net.inet.ip.fw.enable 2>/dev/null`" ] && return 0
+		disable_ipfwnat
 	;;
-    "ipfw")
-	[ -z "`/sbin/sysctl -qn net.inet.ip.fw.enable 2>/dev/null`" ] && return 0
-	disable_ipfwnat
+	"ipfilter")
+		disable_ipfilter
 	;;
-    "all")
-	disable_pfnat
-	disable_ipfwnat
+	"all")
+		disable_pfnat
+		disable_ipfwnat
+		disable_ipfilter
 	;;
 esac
