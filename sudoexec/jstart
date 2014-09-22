@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.6
+#v10.1.6
 MYARG=""
 MYOPTARG="jname inter"
 MYDESC="Start jail"
@@ -18,6 +18,47 @@ readconf jail-freebsd-default.conf
 
 [ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
 init $*
+
+# users custom stop script
+# $1 - is source dir
+external_exec_script()
+{
+	local _res
+	local _dir="${1}"
+
+	[ -z "${_dir}" ] && return 1
+
+	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
+	[ -z "$( /bin/ls ${jailsysdir}/${jname}/${_dir}/ )" ] && return 0
+	[ -d "${data}/tmp/${_dir}" ] && rm -rf "${data}/tmp/${_dir}"
+	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
+
+	/usr/bin/find "${data}/tmp/${_dir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+		${ECHO} "${MAGENTA}Execute script: ${GREEN}${_file}${NORMAL}"
+		jexec jname="${jname}" /tmp/${_dir}/${_file}
+	done
+	rm -rf "${data}/tmp/${_dir}"
+}
+
+# users custom stop for executing in master host
+# $1 - is source dir name ( master_poststart.d master_prestart.d )
+external_exec_master_script()
+{
+	local _res
+	local _dir="${1}"
+
+	[ -z "${_dir}" ] && return 1
+
+	local _srcdir="${jailsysdir}/${jname}/${_dir}"
+
+	[ ! -d "${_srcdir}" ] && return 0
+	[ -z "$( /bin/ls ${_srcdir}/ )" ] && return 0
+
+	/usr/bin/find "${_srcdir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
+		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
+		${_srcdir}/${_file}
+	done
+}
 
 exec_master_poststart()
 {
@@ -117,6 +158,17 @@ makeresolv()
 	fi
 
 	cat ${jailskeldir}/etc/resolv.conf >> ${data}/etc/resolv.conf
+}
+
+# check that the emulator is able to execute commands
+emulator_exec_check()
+{
+	local _res
+
+	[ -z "${emulator}" -o "${emulator}" = "bhyve" ] && return 0
+
+	_res=$( /usr/local/bin/${emulator} ${path}/bin/sh echo 2>&1 )
+	[ $? -ne 0 ] && printf "${_res}"
 }
 
 
@@ -316,6 +368,7 @@ fi
 mountfstab
 
 exec_master_prestart
+external_exec_master_script "master_prestart.d"
 exec_prestart
 
 if [ "$ver" = "empty" ]; then
@@ -364,6 +417,15 @@ ${ECHO} "${MAGENTA}Starting jail: ${GREEN}${jname}, parallel timeout=${parallel}
 TRAP="${TRAP} rm -f ${ftmpdir}/jstart.${jname}.$$;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
+# check that the emulator is able to execute commands
+res=$( emulator_exec_check )
+
+if [ -n "${res}" ]; then
+	$ECHO "${MAGENTA}Emulator error: ${GREEN}${res}${NORMAL}"
+	jcleanup jname="${jname}"
+	exit 0
+fi
+
 /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
 
 trap "" HUP INT ABRT BUS TERM EXIT
@@ -376,7 +438,11 @@ echo ${ST} > ${FID}
 [ -n "${ddns_zone_list}" ] && cbsd ddns mode=add jname=${jname}
 sync
 exec_cbsdjail_first_boot
+
+external_exec_script "start.d"
+
 exec_master_poststart
+external_exec_master_script "master_poststart.d"
 exec_poststart
 
 get_jid

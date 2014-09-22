@@ -39,7 +39,7 @@ GET_MOUNT_FDESCFS_MSG="Mount a fdescfs(5) filesystem on the chrooted /dev/fd dir
 GET_CPUSET_MSG="Associate group of CPUs to jail\n( 0 for all cores ($(( ncpu - 1 )) for this nodes)\nValid value: 1 or 0,2 or 0-4 (see cpuset(1))"
 GET_NODENAME_MSG="Change nodename. Warning: this operation will recreate the ssh keys in $workdir/.ssh dir"
 GET_MDSIZE_MSG="Enter size for the images"
-GET_FREESIZE_MSG="reserved (expand to) X size of image free space (100m, 1g)"
+GET_IMGSIZE_MSG="reserved (expand to) X size of image free space (100m, 1g)"
 GET_CPUS_MSG="Number of CPUs (eg: 1, max: 16)"
 GET_RAM_MSG="RAM size (eg: 512M)"
 GET_PROFILE_MSG="Profile of VMs (eg: centos-vmlinuz-2.6.32-431.el6.x86_64)"
@@ -614,16 +614,16 @@ get_construct_mdsize()
 	mdsize="${_input}"
 }
 
-get_construct_freesize()
+get_construct_imgsize()
 {
 	local _input
 
-	f_dialog_title " freesize "
+	f_dialog_title " imgsize "
 
-	f_dialog_input _input "${GET_FREESIZE_MSG}:" "${freesize}" \
+	f_dialog_input _input "${GET_IMGSIZE_MSG}:" "${imgsize}" \
 			"${_message}" || return $?
 
-	freesize="${_input}"
+	imgsize="${_input}"
 }
 
 # form for $astart
@@ -1009,8 +1009,8 @@ get_construct_arch()
 	local qemu_arm_desc=
 	local qemu_mips64_enable=
 	local qemu_arm_enable=
-	local qemu_mips64_menu="Mips64"
-	local qemu_arm_menu="Arm"
+	local qemu_mips64_menu="MIPS64"
+	local qemu_arm_menu="ARMv6"
 
 	# test for qemu_mips64
 	if [ -n "${qemu_mips64}" ]; then
@@ -1061,13 +1061,13 @@ get_construct_arch()
 	" # END-QUOTE
 
 	if [ ${qemu_arm_enable} -eq 1 ]; then
-		menu_list="${menu_list} 'armv6'	'${qemu_arm_menu}'	'${qemu_arm_desc}'"
+		menu_list="${menu_list} 'arm'	'${qemu_arm_menu}'	'${qemu_arm_desc}'"
 	else
 		menu_list="${menu_list} ''	'armv6 unsupported'	'${qemu_arm_desc}'"
 	fi
 
 	if [ ${qemu_mips64_enable} -eq 1 ]; then
-		menu_list="${menu_list} 'mips64'	'${qemu_mips64_menu}'	'${qemu_mips64_desc}'"
+		menu_list="${menu_list} 'mips'	'${qemu_mips64_menu}'	'${qemu_mips64_desc}'"
 	else
 		menu_list="${menu_list} ''	'mips unsupported'	'${qemu_mips64_desc}'"
 	fi
@@ -1476,6 +1476,39 @@ get_construct_nodename()
 	nodename="${_input}"
 }
 
+
+make_bhyve_part()
+{
+cat >> ${TMPFILE} << EOF
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+emulator="bhyve";
+imgsize="${imgsize}";
+vm_cpus="${vm_cpus}";
+vm_ram="${vm_ram}";
+vm_os_type="${vm_os_type}";
+dist_site="";
+iso_site="";
+iso_img="";
+
+vm_hostbridge="${vm_hostbridge}";
+bhyve_flags="${bhyve_flags}";
+virtio_type="${virtio_type}";
+gw4="${gw4}";
+vm_os_profile="${vm_os_profile}";
+EOF
+}
+
+
+make_emulator_part()
+{
+cat >> ${TMPFILE} << EOF
+exec_start="/usr/local/bin/${emulator} ${exec_start};"
+exec_stop="/usr/local/bin/${emulator} ${exec_stop};"
+EOF
+}
+
+
 # generate temp .jconf
 gen_jconf()
 {
@@ -1514,9 +1547,6 @@ mdsize="${mdsize}";
 rcconf="${jailrcconfdir}/rc.conf_${jname}";
 floatresolv="${floatresolv}";
 
-exec_start="${exec_start}"
-exec_stop="${exec_stop}"
-
 exec_poststart="${exec_poststart}";
 exec_poststop="${exec_portstop}";
 exec_prestart="${exec_prestart}";
@@ -1536,37 +1566,35 @@ EOF
 jailskeldir="${jailskeldir}"
 EOF
 
-	#bhyve area
-	if [ "${emulator}" = "bhyve" ]; then
-		cat >> ${TMPFILE} << EOF
-emulator="bhyve";
-freesize="${freesize}";
-vm_cpus="${vm_cpus}";
-vm_ram="${vm_ram}";
-vm_os_type="${vm_os_type}";
-dist_site="";
-iso_site="";
-iso_img="";
-
-vm_hostbridge="${vm_hostbridge}";
-bhyve_flags="${bhyve_flags}";
-virtio_type="${virtio_type}";
-gw4="${gw4}";
-vm_os_profile="${vm_os_profile}";
-EOF
-fi
 	[ -n "${pkglist}" ] && echo "pkglist=\"${pkglist}\";" >> ${TMPFILE}
 
-	if [ "${emulator}" = "bhyve" ]; then
-		getyesno "Do you want to create vm immediately?"
-		[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
-		bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-		[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-	else
+	# need custom exec_start for qemu-based jail
+	if [ -z "${emulator}" ]; then
+		cat >> ${TMPFILE} << EOF
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+EOF
 		getyesno "Do you want to create jail immediately?"
 		[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
 		jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 		[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+	else
+		case "${emulator}" in
+			"bhyve")
+			make_bhyve_part
+			getyesno "Do you want to create vm immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
+			bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+			;;
+		*)
+			make_emulator_part
+			getyesno "Do you want to create jail immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
+			jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+			;;
+		esac
 	fi
 
 	return 0

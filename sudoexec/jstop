@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.3
+#v10.1.0
 MYARG=""
 MYOPTARG="jname"
 MYDESC="Stop jail"
@@ -15,6 +15,47 @@ EXTHELP="wf_jstop_jstart.html"
 
 [ -z "${1}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
 init $*
+
+# users custom stop script
+# $1 - is source dir (stop.d start.d)
+external_exec_script()
+{
+	local _res
+	local _dir="${1}"
+
+	[ -z "${_dir}" ] && return 1
+
+	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
+	[ -z "$( /bin/ls ${jailsysdir}/${jname}/${_dir}/ )" ] && return 0
+	[ -d "${data}/tmp/${_dir}" ] && rm -rf "${data}/tmp/${_dir}"
+	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
+
+	/usr/bin/find "${data}/tmp/${_dir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+		${ECHO} "${MAGENTA}Execute script: ${GREEN}${_file}${NORMAL}"
+		jexec jname="${jname}" /tmp/${_dir}/${_file}
+	done
+	rm -rf "${data}/tmp/${_dir}"
+}
+
+# users custom stop for executing in master host
+# $1 - is source dir name ( master_poststop.d master_prestop.d )
+external_exec_master_script()
+{
+	local _res
+	local _dir="${1}"
+
+	[ -z "${_dir}" ] && return 1
+
+	local _srcdir="${jailsysdir}/${jname}/${_dir}"
+
+	[ ! -d "${_srcdir}" ] && return 0
+	[ -z "$( /bin/ls ${_srcdir}/ )" ] && return 0
+
+	/usr/bin/find "${_srcdir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
+		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
+		${_srcdir}/${_file}
+	done
+}
 
 exec_master_prestop()
 {
@@ -114,6 +155,7 @@ eval multiips4=\"\$ip\"
 
 fwcounters jname=${jname} mode=remove
 
+external_exec_master_script "master_prestop.d"
 exec_master_prestop
 exec_prestop
 
@@ -121,9 +163,12 @@ exec_prestop
 ${ECHO} "${MAGENTA}Stoping jail: ${GREEN}${jname}, parallel timeout=${parallel}${NORMAL}"
 jrctl jname=${jname} mode=unset >/dev/null 2>&1
 sleep 2
+
+external_exec_script "stop.d"
 /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -r ${jname}
 
 exec_master_poststop
+external_exec_master_script "master_poststop.d"
 exec_poststop
 
 [ ${vnet} -eq 1 -a -n "${myepair}" ] && ifconfig ${myepair} destroy
