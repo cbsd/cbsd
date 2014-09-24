@@ -1,15 +1,14 @@
 #!/usr/local/bin/cbsd
-#v10.0.5
+#v10.1.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="mode arch targer_arch ver sources name basename stable inter newjname"
-#mode=check,update,upgrade
+MYOPTARG="mode quiet arch targer_arch ver sources name basename stable inter newjname"
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
 sources can be: src, obj, base, kernel, img, helpers\n
-mode can be: check, upgrade, quiet\n\
+mode can be: check, upgrade\n\
 stable=1 for RELENG_X\n\
 ver=any for mode=list for show all version (no for cur. version only\n\
 arch=any for mode=list for show all arch (no for cur. arch only\n\
@@ -18,9 +17,12 @@ newjname= for sources=img. Alternative jname for save\n"
 
 . ${subr}
 . ${inventory}
+. ${system}
 . ${strings}
+. ${tools}
 
 init $*
+
 origver="${ver}"
 . ${buildconf}
 # prefered for ver in arg
@@ -57,18 +59,18 @@ checkmd5()
 
 checkrepo()
 {
-    local _i
+	local _i
 
-    for _i in ${REPO}; do
-	[ -z $1 ] && printf "${MAGENTA}Check for repository${NORMAL}: ${GREEN}${_i}${NORMAL} ..."
-	if fetchme "${_i}/cbsd.index" >/dev/null 2>&1; then
-	    cat "${TF}"
-	    exit 0
-	else
-	    ${ECHO} "${_i} Offline"
-	    exit 1
-	fi
-    done
+	for _i in ${repo}; do
+		[ -z $1 ] && printf "${MAGENTA}Check for repository${NORMAL}: ${GREEN}${_i}${NORMAL} ..."
+		if fetchme "${_i}/cbsd.index" >/dev/null 2>&1; then
+			cat "${TF}"
+			exit 0
+		else
+			${ECHO} "${_i} Offline"
+			exit 1
+		fi
+	done
 }
 
 
@@ -76,9 +78,9 @@ getsrc()
 {
 	init_srcdir
 
-	[ -d "${srcdir}/${DIR}" -a $UPGRADE -ne 1 ] && err 1 "You already have ${ver}"
+	[ -d "${srcdir}/${DIR}" -a $upgrade -ne 1 ] && err 1 "You already have ${ver}"
 
-	for MYREPO in ${REPO}; do
+	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
 		MIRROR="${MYREPO}/src_${ver}/mirror.html"
 		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
@@ -130,7 +132,7 @@ getbase()
 	BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/base.txz"
 
 	if [ -d "${BASE_DIR}" ]; then
-		[ $UPGRADE -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}. Use mode=upgrade for upgrade${NORMAL}"
+		[ $upgrade -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}. Use mode=upgrade for upgrade${NORMAL}"
 		chflags -R noschg ${BASE_DIR}
 	fi
 
@@ -174,7 +176,7 @@ getbase()
 #    _srcmd5_found=0
 	_src_found=0
 
-	for MYREPO in $REPO; do
+	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
 		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html";
 		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
@@ -273,7 +275,7 @@ getobj()
 		DST="${srcdir}/obj_${basename}_${arch}_${ver}"
 	fi
 
-	for MYREPO in ${REPO}; do
+	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO:${GREEN}${MYREPO}${NORMAL}"
 		if [ -z "${basename}" ]; then
 			MIRROR="${MYREPO}/obj_${arch}_${ver}/mirror.html";
@@ -282,7 +284,7 @@ getobj()
 		fi
 
 		if [ -d "${DST}" ]; then
-			[ $UPGRADE -eq 1 ] || err 1 "You already have ${ver}"
+			[ $upgrade -eq 1 ] || err 1 "You already have ${ver}"
 			removeobj ver=${ver} arch=${arch}
 		fi
 
@@ -340,257 +342,256 @@ getkernel()
 		KERNNAME="-GENERIC"
 	fi
 
-    FHIER="${arch}/${target_arch}/${ver}"
+	FHIER="${arch}/${target_arch}/${ver}"
 
-    if [ -d "${KERNEL_DIR}" ]; then
-	[ $UPGRADE -ne 1 ] && err 1 "${MAGENTA}You already have kernel ${name} for ${ver}${NORMAL}"
-	removekernel ver=${ver} arch=${arch} name=${name}
-    fi
-
-    for MYREPO in $REPO; do
-	${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
-	MIRROR="${MYREPO}/releases/${FHIER}/mirror.html"
-	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
-
-	if [ $? -eq 0 ]; then
-	    MYREPO=$( cat ${TF} )
-	    ${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
+	if [ -d "${KERNEL_DIR}" ]; then
+		[ $upgrade -ne 1 ] && err 1 "${MAGENTA}You already have kernel ${name} for ${ver}${NORMAL}"
+		removekernel ver=${ver} arch=${arch} name=${name}
 	fi
 
-	${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz${NORMAL}"
-	cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
-	[ $? -eq 0 ] || continue
-#	cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
-#	[ $? -eq 0 ] || continue
-    done
+	for MYREPO in ${repo}; do
+		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
+		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html"
+		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
-    [ ! -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" ] && err 1 "${MAGENTA}No such sources:${GREEN}${MYDIR}/kernel_${name}_${arch}_${ver}.txz${NORMAL}"
+		if [ $? -eq 0 ]; then
+			MYREPO=$( cat ${TF} )
+			${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
+		fi
 
-#    if checkmd5 ${MYDIR}; then
-#	${ECHO} "${MAGENTA}MD5 sum: ${GREEN}correct${NORMAL}"
-#    else
-#	err 1 "${MAGENTA}MD5 sum: ${GREEN}incorrect${NORMAL}"
-#	exit 1
-#    fi
+		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz${NORMAL}"
+		cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
+		[ $? -eq 0 ] || continue
+		# cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+		# [ $? -eq 0 ] || continue
+	done
 
-#    rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
+	[ ! -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" ] && err 1 "${MAGENTA}No such sources:${GREEN}${MYDIR}/kernel_${name}_${arch}_${ver}.txz${NORMAL}"
 
-    ${ECHO} "${MAGENTA}Extracting...${NORMAL}"
-    [ ! -d "${KERNEL_DIR}" ] && mkdir -p ${KERNEL_DIR}
-    cd $KERNEL_DIR
-    set -e
-    tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
-    set +e
-    rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
-    ${ECHO} "${MAGENTA}Done...${NORMAL}"
+	# if checkmd5 ${MYDIR}; then
+	# ${ECHO} "${MAGENTA}MD5 sum: ${GREEN}correct${NORMAL}"
+	# else
+	# err 1 "${MAGENTA}MD5 sum: ${GREEN}incorrect${NORMAL}"
+	# exit 1
+	# fi
+
+	# rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
+
+	${ECHO} "${MAGENTA}Extracting...${NORMAL}"
+	[ ! -d "${KERNEL_DIR}" ] && mkdir -p ${KERNEL_DIR}
+	cd $KERNEL_DIR
+	set -e
+	tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+	set +e
+	rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+	${ECHO} "${MAGENTA}Done...${NORMAL}"
 }
 
 
 getimg()
 {
-    local FHIER DST
+	local FHIER DST
 
-    [ -z "${newjname}" ] && newjname="${name}"
+	[ -z "${newjname}" ] && newjname="${name}"
 
-    DST="${importdir}/${newjname}.img"
-    FHIER="${arch}/${target_arch}/${ver}/${name}"
+	DST="${importdir}/${newjname}.img"
+	FHIER="${arch}/${target_arch}/${ver}/${name}"
 
-    if [ -f "${DST}" ]; then
-	getyesno "You already have ${DST}. Remove them?"
-	if [ $? -eq 0 -o $? -eq 3 ]; then
-	    rm -f ${DST}
-	else
-	    err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
-	fi
-    fi
-
-    jstatus jname=${newjname} > /dev/null 2>&1
-    [ $? -ne 0 ] && err 1 "${MAGENTA}You already have ${GREEN}${newjname}${MAGENTA} jail. Remove it or use ${GREEN}newjname=${NORMAL}"
-
-    for MYREPO in $REPO; do
-	${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
-	MIRROR="${MYREPO}/img/${FHIER}/mirror.html"
-	cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
-
-	if [ $? -eq 0 ]; then
-	    MYREPO=$( cat ${TF} )
-	    ${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
+	if [ -f "${DST}" ]; then
+		getyesno "You already have ${DST}. Remove them?"
+		if [ $? -eq 0 -o $? -eq 3 ]; then
+			rm -f ${DST}
+		else
+			err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
+		fi
 	fi
 
-	${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
-	cfetch -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
+	jstatus jname=${newjname} > /dev/null 2>&1
+	[ $? -ne 0 ] && err 1 "${MAGENTA}You already have ${GREEN}${newjname}${MAGENTA} jail. Remove it or use ${GREEN}newjname=${NORMAL}"
 
-	[ $? -eq 0 ] || continue
-    done
+	for MYREPO in ${repo}; do
+		${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
+		MIRROR="${MYREPO}/img/${FHIER}/mirror.html"
+		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
 
-    [ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
+		if [ $? -eq 0 ]; then
+			MYREPO=$( cat ${TF} )
+			${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
+		fi
+
+		${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
+		cfetch -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
+
+		[ $? -eq 0 ] || continue
+	done
+
+	[ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
 }
 
 gethelpers()
 {
-    DST="${sharedir}/helpers"
+	DST="${sharedir}/helpers"
 
-    [ ! -d "${DST}" ] && mkdir -p ${DST}
+	[ ! -d "${DST}" ] && mkdir -p ${DST}
 
-    MIRROR="http://boot.bsdstore.ru/helpers"
+	MIRROR="http://boot.bsdstore.ru/helpers"
 
-    if [ -z "${name}" ]; then
-	cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
-	[ $? -ne 0 ] && err 1 "${MAGENTA}Error fetching for: ${GREEN}helper list${NORMAL}"
-	for i in $( cat ${ftmpdir}/helpers.$$.list ); do
-	    ${ECHO} "${MAGENTA}Get helpers: ${GREEN}${i}${NORMAL}"
-	    if [ "${mode}" = "upgrade" ]; then
-	        repo action=get sources=helpers name=${i} mode=upgrade
-	    else
-	        repo action=get sources=helpers name=${i}
-	    fi
-	done
-	rm -f ${ftmpdir}/helpers.$$.list
+	if [ -z "${name}" ]; then
+		cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
+		[ $? -ne 0 ] && err 1 "${MAGENTA}Error fetching for: ${GREEN}helper list${NORMAL}"
+		for i in $( cat ${ftmpdir}/helpers.$$.list ); do
+			${ECHO} "${MAGENTA}Get helpers: ${GREEN}${i}${NORMAL}"
+			if [ "${mode}" = "upgrade" ]; then
+				repo action=get sources=helpers name=${i} mode=upgrade
+			else
+				repo action=get sources=helpers name=${i}
+			fi
+		done
+		rm -f ${ftmpdir}/helpers.$$.list
 	exit
-    fi
+	fi
 
-    [ ! -d "${tmpdir}/helpers" ] && mkdir -p ${tmpdir}/helpers
-    cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
+	[ ! -d "${tmpdir}/helpers" ] && mkdir -p ${tmpdir}/helpers
+	cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
 
-    if [ $? -eq 0 ]; then
-	    if [ -d "${DST}/${name}" -a "${mode}" = "upgrade" ]; then
-		rm -rf $DST/${name}
-	    elif [ -d "${DST}/${name}" ]; then
+	if [ $? -eq 0 ]; then
+		if [ -d "${DST}/${name}" -a "${mode}" = "upgrade" ]; then
+			rm -rf $DST/${name}
+		elif [ -d "${DST}/${name}" ]; then
+			rm -f ${tmpdir}/helpers/helpers_${name}.$$.tgz
+			rmdir ${tmpdir}/helpers
+			err 1 "${MAGENTA}Helpers already exist: ${GREEN}${name}${MAGENTA}. Use mode=upgrade for upgrading.${NORMAL}"
+		fi
+		mkdir ${DST}/${name}
+		set -e
+		tar xfz ${tmpdir}/helpers/helpers_${name}.$$.tgz -C ${DST}/${name}
+		set +e
 		rm -f ${tmpdir}/helpers/helpers_${name}.$$.tgz
-		rmdir ${tmpdir}/helpers
-		err 1 "${MAGENTA}Helpers already exist: ${GREEN}${name}${MAGENTA}. Use mode=upgrade for upgrading.${NORMAL}"
-	    fi
-	    mkdir ${DST}/${name}
-	    set -e
-	    tar xfz ${tmpdir}/helpers/helpers_${name}.$$.tgz -C ${DST}/${name}
-	    set +e
-	    rm -f ${tmpdir}/helpers/helpers_${name}.$$.tgz
-    fi
+	fi
 
-    rmdir ${tmpdir}/helpers
+	rmdir ${tmpdir}/helpers
 }
 
 
 #### MAIN ####
-UPGRADE=0
-QUIET=0
+[ -z "${quiet}" ] && quiet=0
+[ -z "${upgrade}" ] && upgrade=0
 TF="${ftmpdir}/test.$$"
 MYDIR="${workdir}/tmp/src.$$"
-REPO=$( getinfo -q repo )
 [ -z "${inter}" ] && inter=1
 
 [ -z "${action}" ] && err 1 "Give me action"
 
 case "${mode}" in
-    "upgrade") UPGRADE=1;;
-    "quiet") QUIET=1;;
+	"upgrade")
+		upgrade=1
+		;;
 esac
 
 init_target_arch
 init_supported_arch
 
 case "${action}" in
-"ping")
-    if [ $QUIET -eq 1 ]; then
-	checkrepo quiet
-    else
-	checkrepo
-    fi
-;;
-"list")
-for i in ${REPO}; do
-    if fetchme "${i}/${sources}ls" >/dev/null 2>&1; then
-	${ECHO} "Available sources for $i:"
-	if [ "${ver}" = "any" ]; then
-	    ver="[[:alnum:]]"
-	else 
-	    [ -z "${ver}" ] && ver=$( /sbin/sysctl -n kern.osrelease|cut -d "-" -f1 )
-	fi
-	if [ "${arch}" = "any" ]; then
-	    arch="[[:alnum:]]"
-	else
-	    [ -z "${arch}" ] && arch=$( /sbin/sysctl -n hw.machine_arch )
-	fi
-	    grep -E ${arch}_${ver} ${TF} |cut -d " " -f2-100
-    #rm -f ${TF}
-    fi
-done
-;;
-"get")
-    [ -z "${sources}" ] && err 1 "Give me sources"
-    case "${sources}" in
-    "src")
-	init_basedir
-	init_kerneldir
-	DIR="src_${ver}"; 
-	DST="${srcdir}/src_${ver}"
-	LOCKFILE=${DST}.lock
-	makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}" safe
-	mkdir -p ${MYDIR}
-	getsrc
-	;;
-    "base")
-#	LOCKFILE=${SRC}.lock
-#	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
-	init_basedir
-	init_kerneldir
-	trap "rm -f ${TF}; rm -rf ${MYDIR}"
-	mkdir -p ${MYDIR}
-	getbase
-	;;
-    "obj")
-	if [ -z "${basename}" ]; then
-	    DIR="obj_${arch}_${ver}";
-	else
-	    DIR="obj_${basename}_${arch}_${ver}";
-	fi
-	init_basedir
-	init_kerneldir
-	SRC="${srcdir}/src_${ver}"
-	LOCKFILE=${SRC}.lock
-	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
-	mkdir -p ${MYDIR}
-	getobj
-	;;
-    "kernel")
-#	[ -z "${name}" ] && name="GENERIC"
-#	LOCKFILE=${SRC}.lock
-#	makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
-	init_basedir
-	init_kerneldir
-	trap "rm -f ${TF}; rm -rf ${MYDIR}"
-	mkdir -p ${MYDIR}
-	getkernel
-	;;
-    "img")
-	[ -z "${name}" ] && err 1 "Give me name"
-	LOCKFILE="${jaildir}/${name}.lock"
-	makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}"
-	mkdir -p ${MYDIR}
-	getimg
-	[ "${usehelpers}" = "1" ] && gethelpers ${name} ${name}
-
-	${ECHO} "${MAGENTA}Done... Importing...${NORMAL}"
-	if [ -n "${newjname}" ]; then
-	    name="${newjname}"
-	    jimport jname=${name} newjname="${name}"
-	else
-	    jimport jname=${name}
-	fi
-
-	if [ -f "${importdir}/${name}.img" ]; then
-	    ${ECHO} "${MAGENTA}Import complete${NORMAL}"
-	    getyesno "Do you want to remove source image ${importdir}/${name}.img ?"
-	    [ $? -eq 0 -o $? -eq 3 ] && rm -f ${importdir}/${name}.img
-	fi
-	[ "${usehelpers}" = "1" ] && jconfig jname=${name} ${name}cfg
-	[ ${inter} -ne 0 ] && jsetup-tui jname=${name} repo ip4_addr interface astart host_hostname
-	;;
-    "helpers")
-	gethelpers
-	;;
-    *)
-	err 1 "${MAGENTA}Unknown sources: ${GREEN}${sources}${NORMAL}"
-	;;
-    esac ## END of source case
+	"ping")
+		if [ $quiet -eq 1 ]; then
+			checkrepo quiet
+		else
+			checkrepo
+		fi
+		;;
+	"list")
+		for i in ${repo}; do
+			if fetchme "${i}/${sources}ls" >/dev/null 2>&1; then
+				[ ${quiet} -ne 1 ] && ${ECHO} "${MAGENTA}Available sources on ${GREEN}$i:${NORMAL}"
+				if [ "${ver}" = "any" ]; then
+					ver="[[:alnum:]]"
+				else
+					[ -z "${ver}" ] && ver=$( /sbin/sysctl -n kern.osrelease|cut -d "-" -f1 )
+				fi
+				if [ "${arch}" = "any" ]; then
+					arch="[[:alnum:]]"
+				else
+					[ -z "${arch}" ] && arch=$( /sbin/sysctl -n hw.machine_arch )
+				fi
+				grep -E ${arch}_${ver} ${TF} |cut -d " " -f2-100
+				#rm -f ${TF}
+			fi
+		done
+		;;
+	"get")
+		[ -z "${sources}" ] && err 1 "Give me sources"
+		case "${sources}" in
+			"src")
+				init_basedir
+				init_kerneldir
+				DIR="src_${ver}"
+				DST="${srcdir}/src_${ver}"
+				LOCKFILE=${DST}.lock
+				makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}" safe
+				mkdir -p ${MYDIR}
+				getsrc
+				;;
+			"base")
+				# LOCKFILE=${SRC}.lock
+				# makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+				init_basedir
+				init_kerneldir
+				trap "rm -f ${TF}; rm -rf ${MYDIR}"
+				mkdir -p ${MYDIR}
+				getbase
+				;;
+			"obj")
+				if [ -z "${basename}" ]; then
+					DIR="obj_${arch}_${ver}";
+				else
+					DIR="obj_${basename}_${arch}_${ver}";
+				fi
+				init_basedir
+				init_kerneldir
+				SRC="${srcdir}/src_${ver}"
+				LOCKFILE=${SRC}.lock
+				makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+				mkdir -p ${MYDIR}
+				getobj
+				;;
+			"kernel")
+				# [ -z "${name}" ] && name="GENERIC"
+				# LOCKFILE=${SRC}.lock
+				# makelock $LOCKFILE "rm -f ${TF}; rm -rf ${MYDIR}" safe
+				init_basedir
+				init_kerneldir
+				trap "rm -f ${TF}; rm -rf ${MYDIR}"
+				mkdir -p ${MYDIR}
+				getkernel
+				;;
+			"img")
+				[ -z "${name}" ] && err 1 "Give me name"
+				LOCKFILE="${jaildir}/${name}.lock"
+				makelock ${LOCKFILE} "rm -f ${TF}; rm -rf ${MYDIR}"
+				mkdir -p ${MYDIR}
+				getimg
+				[ "${usehelpers}" = "1" ] && gethelpers ${name} ${name}
+				${ECHO} "${MAGENTA}Done... Importing...${NORMAL}"
+				if [ -n "${newjname}" ]; then
+					name="${newjname}"
+					jimport jname=${name} newjname="${name}"
+				else
+					jimport jname=${name}
+				fi
+				if [ -f "${importdir}/${name}.img" ]; then
+					${ECHO} "${MAGENTA}Import complete${NORMAL}"
+					getyesno "Do you want to remove source image ${importdir}/${name}.img ?"
+					[ $? -eq 0 -o $? -eq 3 ] && rm -f ${importdir}/${name}.img
+				fi
+				[ "${usehelpers}" = "1" ] && jconfig jname=${name} ${name}cfg
+				[ ${inter} -ne 0 ] && jsetup-tui jname=${name} repo ip4_addr interface astart host_hostname
+				;;
+			"helpers")
+				gethelpers
+				;;
+			*)
+				err 1 "${MAGENTA}Unknown sources: ${GREEN}${sources}${NORMAL}"
+				;;
+		esac ## END of source case
+		;;
 esac ## END of action case

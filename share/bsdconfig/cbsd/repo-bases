@@ -1,0 +1,201 @@
+#!/usr/local/bin/cbsd
+############################################################ INCLUDES
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="cbsd"
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-repo.subr
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+. ${subr}
+. ${inventory}
+. ${strings}
+. ${tools}
+. ${nodes}
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt=""
+	local menu_list=
+	local defaultitem=
+	local hline="Hit ENTER for SELECT"
+	local prompt="'I:number' flags means that the base is already installed.\nnumber is indicated version. Anyway you can upgrade it"
+
+	local f_dialog_title=" CBSD FreeBSD Base Repository "
+
+	for i in $( seq 1 255 ); do
+		eval base_name="\$base${i}_name"
+		[ -z "${base_name}" ] && break
+		eval mark=\$selected_base${i}
+		base_installed=
+		if [ -f "${basejaildir}/${base_name}/bin/sh" ]; then
+			baseelf=$( ${miscdir}/elf_tables --ver ${basejaildir}/${base_name}/bin/sh 2>/dev/null )
+			base_installed="I:${baseelf}"
+		fi
+		[ -z "${mark}" ] && mark=" "
+		menu_list="$menu_list '${i} ${base_name}'	'[${mark}] ${base_installed}'"
+	done
+
+	menu_list="$menu_list '-'	''"
+	menu_list="$menu_list 'Download'	''"
+
+	local height width rows
+	eval f_dialog_menu_size height width rows \
+		\"\$DIALOG_TITLE\"     \
+		\"\$DIALOG_BACKTITLE\" \
+		\"\$prompt\"           \
+		\"\$hline\"            \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"         \
+		--backtitle \"\$DIALOG_BACKTITLE\" \
+		--hline \"\$hline\"                \
+		--ok-label \"\$msg_ok\"            \
+		--cancel-label \"\$msg_cancel\"    \
+		--default-item \"\$defaultitem\"   \
+		--menu \"\$prompt\"                \
+		$height $width $rows               \
+		$menu_list                         \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $DIALOG_OK
+}
+
+
+download_bases()
+{
+	local _fetch_bases=
+	local mark
+	local i
+	local _res
+
+	for i in $( seq 1 255 ); do
+		eval base_name="\$base${i}_name"
+		[ -z "${base_name}" ] && break
+		eval mark=\$selected_base${i}
+		[ "${mark}" = "X" ] && _fetch_bases="${_fetch_bases} ${base_name}"
+	done
+
+	[ -z "${_fetch_bases}" ] && return 0
+
+	for i in ${_fetch_bases}; do
+		eval $( echo "${i}" |/usr/bin/tr  "_" " "|while read _base _arch _target _ver; do
+			echo "rarch=\"${_arch}\""
+			echo "rver=\"${_ver}\""
+			_res=$( echo "${_ver}" |/usr/bin/grep -q '\.' )
+			stable=$?
+			echo "stable=\"${stable}\""
+		done )
+		echo
+		echo "exec: cbsd repo action=get sources=base ver=${rver} stable=${stable} arch=${rarch}"
+		repo action=get sources=base ver=${rver} stable=${stable} arch=${rarch} mode=upgrade
+	done
+	echo "Press a key..."
+	read p
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_repo_bases "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+baselist=$( mktemp )
+f_dialog_info "Obtain index files from ${repo}. Please wait..."
+trap "rm -f ${baselist}" HUP INT ABRT BUS TERM EXIT
+res=$( 2>/dev/null repo quiet=1 action=list sources=base ver=any arch=any > ${baselist} )
+
+i=0
+
+eval $( cat ${baselist} |while read _line; do
+	echo "base${i}_name=\"${_line}\""
+	i=$(( i + 1 ))
+done )
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main || break
+	f_dialog_menutag_fetch mtag
+
+	[ -z "${mtag}" ] && exit $SUCCESS
+
+	command=
+
+	case "$mtag" in
+		?" $msg_exit") break ;;
+		"Download")
+				download_bases
+				f_die
+				;;
+		*)
+			index=${mtag%% *}
+			base=${mtag##* }
+			echo "[${index}]"
+			eval mark=\$selected_base${index}
+			if [ "${mark}" = "X" ];then
+				eval "selected_base${index}=\" \""
+			else
+				eval "selected_base${index}=\"X\""
+			fi
+			continue
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################
