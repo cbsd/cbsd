@@ -1,0 +1,242 @@
+#!/usr/local/bin/cbsd
+############################################################ INCLUDES
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="cbsd"
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-nodecfg.subr
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+. ${subr}
+. ${inventory}
+. ${strings}
+. ${tools}
+
+############################################################ FUNCTIONS
+# form for $rnodename
+get_nodename()
+{
+	local _input
+
+	f_dialog_title " nodename "
+	f_dialog_input _input "Enter IP or DNS name of remote node" "${rnodename}" \
+		"${_message}" || return $?
+
+	rnodename="${_input}"
+}
+
+
+# form for $port
+get_port()
+{
+	local _input
+
+	f_dialog_title " port "
+	f_dialog_input _input "Enter remote node SSH port" "${port}" \
+		"${_message}" || return $?
+
+	port="${_input}"
+}
+
+# form for $password
+get_password()
+{
+	local prompt1="Enter CBSD user password of remote node"
+	local _input
+
+	local height1 width1
+	f_dialog_inputbox_size height1 width1 \
+		"$DIALOG_TITLE"     \
+		"$DIALOG_BACKTITLE" \
+		"$prompt1"          \
+		""                  \
+		"$hline"
+
+	local _password1 _password2
+	_input=$( $DIALOG \
+	--title "$DIALOG_TITLE"         \
+	--backtitle "$DIALOG_BACKTITLE" \
+	--hline "$hline"                \
+	--ok-label "$msg_ok"            \
+	--cancel-label "$msg_cancel"    \
+	--insecure                      \
+	--passwordbox "$prompt1"        \
+	$height1 $width1                \
+	2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	) || return $?
+
+	f_dialog_line_sanitize _input
+	password="${_input}"
+}
+
+
+
+
+
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+
+	local f_dialog_title=" Add CBSD Remote Node "
+	hline=
+
+	local prompt="${_desc}"
+
+	if [ -n "${password}" ]; then
+		pw_filled="***"
+	else
+		pw_filled=
+	fi
+
+	local menu_list="
+		'nodename'	'${rnodename}'	'Hostname or IP address of remote node'
+		'port'		'${port}'	'Remove port of SSH daemon'
+		'password'	'${pw_filled}'		'Password of CBSD user on remote node'
+		'-'		'-'			''
+		'ADD'		''		'Add new node via: cbsd node mode=add node=${rnodename} port=${port}'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG=""
+MYOPTARG=""
+MYDESC="Add node by ssh"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+[ -f "${globalconf}" ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${strings}
+. ${tools}
+. ${inventory}
+init $*
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_new_node "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+port=22222
+nodename=
+password=
+pw_filled=
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				nodename|port|password)
+					get_${mtag}
+					;;
+				"ADD")
+					[ -z "${rnodename}" ] && f_dialog_msgbox "nodename field is mandatory" && continue
+					[ -z "${port}" ] && f_dialog_msgbox "port field is mandatory" && continue
+					[ -z "${password}" ] && f_dialog_msgbox "password field is mandatory" && continue
+					f_dialog_info "Trying to communicate with cbsd@${rnodename}:${port}. Please wait..."
+					res=$( mktemp )
+					echo "cbsd mode=add node=\"${rnodename}\" port=\"${port}\":" > ${res}
+					echo >> ${res}
+					/usr/local/bin/cbsd node mode=add node="${rnodename}" port="${port}" pw="${password}" >> ${res} 2>&1
+					f_show_help "${res}"
+					rm -f ${res}
+					;;
+				*)
+					continue
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

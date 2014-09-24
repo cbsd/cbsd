@@ -1,0 +1,107 @@
+#!/usr/local/bin/cbsd
+#v10.1.0
+MYARG=""
+MYOPTARG="mode"
+MYDESC="Show summary statistics for the farm"
+ADDHELP=""
+
+. ${subr}
+. ${inventory}
+. ${system}
+. ${strings}
+. ${tools}
+init $*
+
+nodelist=$( cbsdsql nodes SELECT nodename FROM nodelist )
+
+nodelist_sum=0
+jaillist_sum=0
+cpu_sum=0
+physmem_sum=0
+cpusum_without_freq=0
+cpufreq_sum=0
+
+
+${ECHO} "${BOLD}  Summary statistics for the CBSD farm  ${NORMAL}"
+${ECHO} "${BOLD}  ====================================  ${NORMAL}"
+echo
+
+# incement global variable jaillist_sum, vmlist_sum
+# $1 - database name
+inc_jaillist_sum()
+{
+	local tmp_jaillist_sum=0
+	local tmp_vmlist_sum=0
+	local db="${1}"
+
+	[ -z "${db}" ] && return 0
+
+	tmp_jaillist_sum=$( cbsdsql ${db} SELECT count\(jname\) FROM jails WHERE emulator != \"bhyve\" )
+	tmp_vmlist_sum=$( cbsdsql ${db} SELECT count\(jname\) FROM jails WHERE emulator = \"bhyve\" )
+
+	if ! is_number ${tmp_jaillist_sum}; then
+		jaillist_sum=$(( jaillist_sum + tmp_jaillist_sum ))
+	fi
+
+	if ! is_number ${tmp_vmllist_sum}; then
+		vmlist_sum=$(( vmlist_sum + tmp_vmlist_sum ))
+	fi
+}
+
+#inc cpu_sum, physmem_sum, cpufreq_sum
+#
+inc_hwstats_sum()
+{
+	local tmp_ncpu=0
+	local tmp_physmem=0
+	local tmp_cpufreq=0
+	local db="${1}"
+
+	[ -z "${db}" ] && return 0
+
+	local sqldelimer=" "
+
+	eval $( cbsdsql ${db} SELECT ncpu,physmem,cpufreq FROM local | while read _ncpu _physmem _cpufreq; do
+		echo "local tmp_ncpu=\"${_ncpu}\""
+		echo "local tmp_physmem=\"${_physmem}\""
+		echo "local tmp_cpufreq=\"${_cpufreq}\""
+	done )
+
+	if ! is_number ${tmp_ncpu}; then
+		cpu_sum=$(( cpu_sum + tmp_ncpu ))
+	fi
+
+	if ! is_number ${tmp_physmem}; then
+		physmem_sum=$(( physmem_sum + tmp_physmem ))
+	fi
+
+	if ! is_number ${tmp_cpufreq}; then
+		cpufreq_sum=$(( cpufreq_sum + tmp_cpufreq ))
+	fi
+	[ "${tmp_cpufreq}" != "0" ] && cpu_with_freq=$(( cpu_with_freq + 1 ))
+}
+
+inc_jaillist_sum "local"
+inc_hwstats_sum "local"
+
+for db in ${nodelist}; do
+	nodelist_sum=$(( nodelist_sum + 1 ))
+
+	inc_jaillist_sum ${db}
+	inc_hwstats_sum ${db}
+done
+
+cpufreq_average=$(( cpufreq_sum / cpu_with_freq ))
+nodelist_sum=$( cbsdsql nodes SELECT count\(nodename\) FROM nodelist )
+
+${ECHO} "  ${MAGENTA}Total Nodes: ${GREEN}${nodelist_sum}${NORMAL}  "
+${ECHO} "  ${MAGENTA}Total Jail Environments: ${GREEN}${jaillist_sum}${NORMAL}  "
+${ECHO} "  ${MAGENTA}Total Virtual Machines: ${GREEN}${vmlist_sum}${NORMAL}  "
+
+${ECHO} "  ${MAGENTA}Total CPU Core's: ${GREEN}${cpu_sum}${NORMAL}  "
+${ECHO} "  ${MAGENTA}Average Frequency, Mhz: ${GREEN}${cpufreq_average} ${NORMAL}  "
+${ECHO} "  ${MAGENTA}Total RAM: ${GREEN}${physmem_sum}${NORMAL}  "
+${ECHO} "  ${MAGENTA}Total Storage, Gb: ${GREEN}unknown${NORMAL}  "
+
+echo
+
