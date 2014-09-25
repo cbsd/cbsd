@@ -95,3 +95,4 @@ for dir in $PORT_DIRS; do
 	# clean dir while https://github.com/freebsd/portmaster/pull/18 is not commited
 	rm -rf /tmp/usr
 done
+
