@@ -96,8 +96,6 @@ number(const char *s)
 	return atoi(s);
 }
 
-
-
 /*
  * Check for a valid number.  This should be elsewhere.
  */
