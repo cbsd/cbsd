@@ -1,0 +1,130 @@
+#!/bin/sh
+#v9.1.0
+globalconf="${workdir}/cbsd.conf";
+MYARG="mode"
+MYOPTARG="jname login fullname group uid secgroup shell pw"
+MYDESC="Add user to jail"
+ADDHELP="mode can be: remove, add, show\n"
+
+[ -f ${globalconf} ] || err 1 "no such conf file";
+. ${globalconf}
+. ${subr}
+. ${inventory}
+. ${strings}
+init $*
+
+#defines
+_MYDIR=$(dirname `realpath $0`)
+SERVICE="adduser"
+
+#trap "INSTALLLOOP=0 ; clear; echo; echo \"Exit to shell. To return into bootstrap script, please type: cbsd wb_installer\";  echo" HUP INT ABRT BUS TERM EXIT
+
+### MAIN Route ###
+#set -e
+#    . ${_MYDIR}/srv_${SERVICE}.subr
+#set +e
+
+#CFG="/usr/local/etc/${SERVICE}.ini"
+
+check_jaildir()
+{
+	[ -f ${data}/etc/master.passwd -a -f ${data}/etc/passwd -a -f ${data}/etc/group ] && return 0
+	return 1
+}
+
+getpw()
+{
+	local _oldmodes=$( stty -g ) _try=0
+	pw=""
+
+	while [ ${_try} -ne 3 ]; do
+		printf "${BOLD}Enter password:${NORMAL}"
+		while [ -z "${npw}" ]; do
+			stty -echo
+			read npw
+			stty ${_oldmodes}
+		done
+
+		printf "\n${BOLD}Re-enter password: ${NORMAL}"
+		while [ -z "${tpw}" ]; do
+			stty -echo
+			read tpw
+			stty ${_oldmodes}
+		done
+
+		[ "${tpw}" = "${npw}" ] && pw="${npw}" && break
+
+		printf "\n${MAGENTA}Wrong password${NORMAL}\n"
+		unset npw tpw
+		_try=$(( _try + 1 ))
+	done
+
+	stty ${_oldmodes}
+	echo
+}
+
+
+if [ -z "${jname}" ]; then
+	data=""
+	exec_cmd=""
+else
+	. ${jrcconf}
+	[ $? -eq 1 ] &&  err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	[ $jid -eq 0 ] && err 1 "${MAGENTA}Jail is not active: ${GREEN}${jname}${NORMAL}"
+	exec_cmd="/usr/sbin/jexec ${jid}"
+	check_jaildir
+
+	if [ $? -eq 1 ]; then
+		echo "bad data dir"
+		exit 1
+	fi
+fi
+
+case "${mode}" in
+	"remove")
+		T=$( ${exec_cmd} /usr/sbin/pw user show ${login} 2>&1)
+		case $? in
+			0)
+				;;
+			*)
+				err 1 "${MAGENTA}Error: ${NORMAL}${T}"
+				;;
+		esac
+		#  ADDON=""
+		${exec_cmd} /usr/sbin/pw user del ${login}
+		;;
+	"add")
+		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}"
+		T=$( ${exec_cmd} /usr/sbin/pw user show ${login} 2>&1)
+		case $? in
+			0)
+				err 1 "${MAGENTA}Already exist: ${NORMAL}${T}"
+				;;
+			67)
+				;;
+			*)
+				err 1 "${MAGENTA}Error: ${NORMAL}${T}"
+				;;
+		esac
+
+		[ -z "${pw}" ] && getpw
+		[ -z "${pw}" ] && err 1 "${GREEN}pw= ${MAGENTA} is mandatory${NORMAL}"
+		ADDON=""
+		[ -n "$uid" ] && ADDON="${ADDON} -u ${uid}"
+		[ -n "$fullname" ] && ADDON="${ADDON} -c ${fullname}"
+		[ -n "$group" ] && ADDON="${ADDON} -g ${group}"
+		[ -n "$secgroup" ] && ADDON="${ADDON} -G ${secgroup}"
+
+		if [ -n "$shell" ]; then
+			ADDON="${ADDON} -s ${shell}"
+		else
+			ADDON="${ADDON} -s /bin/csh"
+		fi
+		${exec_cmd} /usr/sbin/pw useradd ${login} ${ADDON} -m
+		echo "${pw}" |${exec_cmd} pw mod user ${login} -h 0 -
+		;;
+	"show")
+		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA}is mandatory${NORMAL}"
+		${exec_cmd} /usr/sbin/pw user show $login
+		;;
+esac

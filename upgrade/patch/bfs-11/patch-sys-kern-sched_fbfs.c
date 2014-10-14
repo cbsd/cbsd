@@ -1,6 +1,6 @@
---- /dev/null	2014-09-14 13:37:06.000000000 +0400
-+++ sched_fbfs.c	2014-09-14 13:31:13.000000000 +0400
-@@ -0,0 +1,1343 @@
+--- /dev/null	2014-10-13 13:58:39.000000000 +0400
++++ sched_fbfs.c	2014-10-13 13:57:35.000000000 +0400
+@@ -0,0 +1,1352 @@
 +/*-
 + * Copyright (c) 1982, 1986, 1990, 1991, 1993
 + *	The Regents of the University of California.  All rights reserved.
@@ -130,7 +130,7 @@
 +
 +static void	setup_runqs(void);
 +static void     schedcpu(void);
-+static void     schedcpu_thread(void);
++//static void     schedcpu_thread(void);
 +static void	sched_priority(struct thread *td, u_char prio);
 +static void	sched_setup(void *dummy);
 +static void	sched_initticks(void *dummy);
@@ -140,13 +140,13 @@
 +static int 	preempt_lastcpu(struct thread *td);
 +static struct	thread *worst_running_thread(void);
 +
-+static struct kproc_desc sched_kp = {
-+        "schedcpu",
-+        schedcpu_thread,
-+        NULL
-+};
-+SYSINIT(schedcpu, SI_SUB_LAST, SI_ORDER_FIRST, kproc_start,
-+    &sched_kp);
++//static struct kproc_desc sched_kp = {
++//        "schedcpu",
++//        schedcpu_thread,
++//        NULL
++//};
++//SYSINIT(schedcpu, SI_SUB_LAST, SI_ORDER_FIRST, kproc_start,
++//    &sched_kp);
 +
 +SYSINIT(sched_setup, SI_SUB_RUN_QUEUE, SI_ORDER_FIRST, sched_setup, NULL);
 +SYSINIT(sched_initticks, SI_SUB_CLOCKS, SI_ORDER_THIRD, sched_initticks, NULL);
@@ -207,55 +207,54 @@
 + * //Recompute process used and tick, every hz/PCT_WINDOW ticks.
 + * Recompute process used and tick, every hz ticks.
 + */
-+/* ARGSUSED */
-+static void
-+schedcpu(void)
-+{
-+        struct thread *td;
-+        struct proc *p;
-+        struct td_sched *ts;
++//static void
++//schedcpu(void)
++//{
++//        struct thread *td;
++//        struct proc *p;
++//        struct td_sched *ts;
 +
-+        sx_slock(&allproc_lock);
-+        FOREACH_PROC_IN_SYSTEM(p) {
-+                PROC_LOCK(p);
-+                if (p->p_state == PRS_NEW) {
-+                        PROC_UNLOCK(p);
-+                        continue;
-+                }
-+                FOREACH_THREAD_IN_PROC(p, td) {
-+                        thread_lock(td);
-+                        ts = td->td_sched;
-+                	if (ts->ts_incrtick == ticks){
-+				thread_unlock(td);
-+                                continue;
-+			}
-+			if (ts->ts_used < hz) {
-+////				ts->ts_used += hz/PCT_WINDOW;
-+				ts->ts_incrtick = ticks;
-+				ts->ts_used = imax(hz/PCT_WINDOW - ts->ts_incrtick + ts->ts_cswtick, 0);
-+//				if (ts->ts_used < 0)
-+//					ts->ts_used = 0;
-+			}
-+			thread_unlock(td);
-+                }
-+    		PROC_UNLOCK(p);
-+	}
-+	sx_sunlock(&allproc_lock);
-+}
++//        sx_slock(&allproc_lock);
++//        FOREACH_PROC_IN_SYSTEM(p) {
++//                PROC_LOCK(p);
++//                if (p->p_state == PRS_NEW) {
++//                        PROC_UNLOCK(p);
++//                        continue;
++//                }
++//                FOREACH_THREAD_IN_PROC(p, td) {
++//                        thread_lock(td);
++//                        ts = td->td_sched;
++//                	if (ts->ts_incrtick == ticks){
++//				thread_unlock(td);
++//                                continue;
++//			}
++////			if (ts->ts_used < (hz * PCT_WINDOW))
++////				ts->ts_used += ticks;
++//			if (ts->ts_used < hz) {
++//				ts->ts_used += hz / PCT_WINDOW;
++//				ts->ts_incrtick = ticks;
++//				ts->ts_used = imax(ts->ts_used - ts->ts_incrtick + ts->ts_cswtick, 0);
++//			}
++//			thread_unlock(td);
++//                }
++//    		PROC_UNLOCK(p);
++//	}
++//	sx_sunlock(&allproc_lock);
++//}
 +
 +/*
 + * Main loop for a kthread that executes schedcpu once a second.
 + */
-+static void
-+schedcpu_thread(void)
-+{
++//static void
++//schedcpu_thread(void)
++//{
 +
-+        for (;;) {
-+                schedcpu();
-+//                pause("-", hz/PCT_WINDOW);
-+                pause("-", hz);
-+        }
-+}
++//        for (;;) {
++//                schedcpu();
++////                pause("-", hz/PCT_WINDOW);
++//                pause("-", hz);
++//        }
++//}
 +
 +static int
 +sysctl_kern_quantum(SYSCTL_HANDLER_ARGS)
@@ -490,11 +489,15 @@
 +	THREAD_LOCK_ASSERT(td, MA_OWNED);
 +	if (td->td_priority == prio)
 +		return;
-+	td->td_priority = prio;
-+	if (TD_ON_RUNQ(td) && td->td_rqindex != (prio / RQ_PPQ)) {
++//	td->td_priority = prio;
++//	if (TD_ON_RUNQ(td) && td->td_rqindex != (prio / RQ_PPQ)) {
++	if (TD_ON_RUNQ(td) && prio < td->td_priority && td->td_rqindex != (prio / RQ_PPQ)) {
 +		sched_rem(td);
++		td->td_priority = prio;
 +		sched_add(td, SRQ_BORING);
++		return;
 +	}
++	td->td_priority = prio;
 +}
 +
 +/*
@@ -646,8 +649,6 @@
 +	} else {
 +		if (TD_IS_RUNNING(td)) {
 +			/* Put us back on the run queue. */
-+//			sched_add(td, (flags & SW_PREEMPT) ?
-+//			sched_add(td, (flags & SW_PREEMPT & SWT_RELINQUISH) ?
 +			sched_add(td, preempted ?
 +			    SRQ_OURSELF|SRQ_YIELDING|SRQ_PREEMPTED :
 +			    SRQ_OURSELF|SRQ_YIELDING);
@@ -772,21 +773,19 @@
 +	    (td->td_pri_class == PRI_IDLE)) {
 +		if (ts->ts_vdeadline >= tsc->ts_vdeadline)
 +			return (0);
-+//		else
-+//			return (1);
++		else
++			/*
++			 * Here, the priorities of td, and current thread on td_lastcpu are
++			 * equal. And their scheduling class is PRI_IDLE or PRI_TIMESHARE
++			 * Further, the virtual deadline of td is lower. Therefore we
++			 * reschedule the td_lastcpu.
++			 */
++			pcpu_thr->td_flags |= TDF_NEEDRESCHED;
++			if (PCPU_GET(cpuid) != c) 
++				ipi_cpu(c, IPI_AST);
++			return (1);
 +	} else
 +		return (0);
-+	/*
-+	 * Here, the priorities of td, and current thread on td_lastcpu are
-+	 * equal. And their scheduling class is PRI_IDLE or PRI_TIMESHARE
-+	 * Further, the virtual deadline of td is lower. Therefore we
-+	 * reschedule the td_lastcpu.
-+	 */
-+	pcpu_thr->td_flags |= TDF_NEEDRESCHED;
-+	if (PCPU_GET(cpuid) != c) 
-+		ipi_cpu(c, IPI_AST);
-+
-+	return (1);
 +}
 +
 +struct thread *
@@ -1210,6 +1209,16 @@
 +void
 +sched_tick(int cnt)
 +{
++	struct td_sched *ts;
++
++	THREAD_LOCK_ASSERT(curthread, MA_OWNED);
++	ts = curthread->td_sched;
++	if (ts->ts_incrtick == ticks)
++		return;
++	if (ts->ts_used < (hz * PCT_WINDOW)) {
++		ts->ts_used += 1;
++		ts->ts_incrtick = ticks;
++	}
 +}
 +
 +/*
