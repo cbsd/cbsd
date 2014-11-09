@@ -67,73 +67,69 @@ spawncmd(int argc, char **argv)
 	}
 
 	for (i = 3; i < argc; i++)
-	    res += strlen(argv[i]) + 1;
-	    if (res) {
-		command = (char *) malloc(res);
-		tmp = command;
-		for (i = 3; i < argc; i++) {
-		    strcpy(tmp, argv[i]);
-		    tmp += strlen(tmp);
-		    *tmp = ' ';
-		    tmp++;
+		res += strlen(argv[i]) + 1;
+		if (res) {
+			command = (char *) malloc(res);
+			tmp = command;
+			for (i = 3; i < argc; i++) {
+				strcpy(tmp, argv[i]);
+				tmp += strlen(tmp);
+				*tmp = ' ';
+				tmp++;
+			}
+			tmp[-1] = 0;
 		}
-		tmp[-1] = 0;
-	    }
 
-	logging_type=log_type_file_trunc;
-	strcpy(log_file_name,argv[2]);
-	jobid=atoi(argv[1]);
-	out2fmt_flush("spawn [job: %d, logfile: %s]: %s\n",jobid,log_file_name,command);
+		logging_type=log_type_file_trunc;
+		strcpy(log_file_name,argv[2]);
+		jobid=atoi(argv[1]);
+		out2fmt_flush("spawn [job: %d, logfile: %s]: %s\n",jobid,log_file_name,command);
 
-	if ((infd = open("/dev/null", O_RDONLY)) < 0)
-	{
-//		syslog(LOG_ERR, "Couldn't open file %s: %m", "/dev/null");
-		return 1;
-	}
+		if ((infd = open("/dev/null", O_RDONLY)) < 0) {
+			// syslog(LOG_ERR, "Couldn't open file %s: %m", "/dev/null");
+			return 1;
+		}
 
-	set_output(outfd);
+		set_output(outfd);
 
-	if ((pid = fork()) == 0)
-	{
-//		syslog(LOG_DEBUG, "exec'ing %s", command);
+		if ((pid = fork()) == 0) {
+			// syslog(LOG_DEBUG, "exec'ing %s", command);
+			dup2(infd, STDIN_FILENO);
+			dup2(outfd[1], STDOUT_FILENO);
+			dup2(outfd[1], STDERR_FILENO);
 
-		dup2(infd, STDIN_FILENO);
-		dup2(outfd[1], STDOUT_FILENO);
-		dup2(outfd[1], STDERR_FILENO);
+			/* close any open files */
+			close(infd);
+			close(outfd[0]);
+			close(outfd[1]);
 
-		/* close any open files */
+			// closelog();
+
+			setsid();
+
+			execle(shell, shell, "-c", command, NULL, env);
+
+			// doLogOpen(LOG_CRON, LOG_PID, "%s(child)", progName);
+			// syslog(LOG_ERR, "Couldn't exec '%s -c %s': %m", shell, command);
+
+			_exit(1);
+		} else if (pid == -1)
+		{
+			/* error */
+			// syslog(LOG_ERR, "Couldn't fork off child: %m");
+			return 1;
+		}
+
 		close(infd);
-		close(outfd[0]);
 		close(outfd[1]);
+		close(outfd[0]);
 
-//		closelog();
+		/* we make sure the command process finished successfully here */
+		waitpid(pid, &child_status, 0);
 
-		setsid();
+		/* here we deal with the logger child process */
+		if (logger_pid != -1)
+			waitpid(logger_pid, &child_status, 0);
 
-		execle(shell, shell, "-c", command, NULL, env);
-
-//		doLogOpen(LOG_CRON, LOG_PID, "%s(child)", progName);
-//		syslog(LOG_ERR, "Couldn't exec '%s -c %s': %m", shell, command);
-
-		_exit(1);
-
-	} else if (pid == -1)
-	{
-		/* error */
-//		syslog(LOG_ERR, "Couldn't fork off child: %m");
-		return 1;
-	}
-
-	close(infd);
-	close(outfd[1]);
-	close(outfd[0]);
-
-	/* we make sure the command process finished successfully here */
-	waitpid(pid, &child_status, 0);
-
-	/* here we deal with the logger child process */
-	if (logger_pid != -1)
-		waitpid(logger_pid, &child_status, 0);
-
-	return child_status;
+		return child_status;
 }

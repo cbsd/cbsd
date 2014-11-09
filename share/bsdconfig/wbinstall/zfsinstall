@@ -1,0 +1,415 @@
+#!/bin/sh
+# CBSD SAMPLE ./zfsinstall -u /usr/jails/tmp -d md0 -d md1 -r mirror -p zroot
+# $Id$
+#
+# mfsBSD ZFS install script
+# Copyright (c) 2011-2013 Martin Matuska <mm at FreeBSD.org>
+#
+FS_LIST="var tmp"
+
+usage() {
+	echo "Usage: $0 [-h] -d geom_provider [-d geom_provider ...] -u dist_url [-r mirror|raidz] [-m mount_point] [-p zfs_pool_name] [-V zfs_pool_version] [-s swap_partition_size] [-z zfs_partition_size] [-c] [-l] [-4]"
+}
+
+help() {
+	echo; echo "Install FreeBSD using ZFS from a compressed archive"
+	echo; echo "Required flags:"
+	echo "-d geom_provider  : geom provider(s) to install to (e.g. da0)"
+	echo "-u dist_url       : URL or directory with base.txz and kernel.txz"
+	echo; echo "Optional flags:"
+	echo "-r raidz|mirror   : select raid mode if more than one -d provider given"
+	echo "-s swap_part_size : create a swap partition with given size (default: no swap)"
+	echo "-z zfs_part_size  : create zfs parition of this size (default: all space left)"
+	echo "-p pool_name      : specify a name for the ZFS pool (default: tank)"
+	echo "-V pool_version   : specify a version number for ZFS pool (default: 13)"
+	echo "-m mount_point    : use this mount point for operations (default: /mnt)"
+	echo "-c                : enable lzjb compression for all datasets"
+	echo "-l                : use legacy mounts (via fstab) instead of ZFS mounts"
+	echo "-4                : use fletcher4 as default checksum algorithm"
+	echo; echo "Examples:"
+	echo "Install on a single drive with 2GB swap:"
+	echo "$0 -u /path/to/release -d da0 -s 2G"
+	echo "Install on a mirror without swap, pool name rpool:"
+	echo "$0 -u /path/to/release -d da0 -d da1 -r mirror -p rpool"
+	echo; echo "Notes:"
+	echo "When using swap and raidz/mirror, the swap partition is created on all drives."
+	echo "The /etc/fstab entry will contatin only the first drive's swap partition."
+	echo "You can enable all swap partitions and/or make a gmirror-ed swap later."
+}
+
+while getopts d:u:t:r:p:s:z:m:V:hcl4 o; do
+	case "$o" in
+        	d) DEVS="$DEVS ${OPTARG##/dev/}" ;;
+		u) URL="${OPTARG}" ;;
+		t) ARCHIVE="${OPTARG}" ;;
+		p) POOL="${OPTARG}" ;;
+		s) SWAP="${OPTARG}" ;;
+		m) MNT="${OPTARG}" ;;
+		r) RAID="${OPTARG}" ;;
+		z) ZPART="${OPTARG}" ;;
+		V) VERSION="${OPTARG}" ;;
+		c) LZJB=1 ;;
+		l) LEGACY=1 ;;
+		4) FLETCHER=1 ;;
+		h) help; exit 1;;
+		[?]) usage; exit 1;;
+esac
+done
+
+if ! `/sbin/kldstat -m zfs >/dev/null 2>/dev/null`; then
+	/sbin/kldload zfs >/dev/null 2>/dev/null
+fi
+
+ZFS_VERSION=`/sbin/sysctl -n vfs.zfs.version.spa 2>/dev/null`
+
+if [ -z "$ZFS_VERSION" ]; then
+        echo "Error: failed to load ZFS module"
+        exit 1
+elif [ "$ZFS_VERSION" -lt "13" ]; then
+	echo "Error: ZFS module too old, version 13 or higher required"
+	exit 1
+fi
+
+if [ -z "$DEVS" -o -z "$URL" -a -z "$ARCHIVE" ]; then
+	usage
+	exit 1
+fi
+
+if [ -z "$POOL" ]; then
+	POOL=tank
+fi
+
+if [ -z "$VERSION" ]; then
+	VERSION=${ZFS_VERSION}
+elif [ "$VERSION" -gt "$ZFS_VERSION" ]; then
+	echo "Error: invalid ZFS pool version (maximum: $ZFS_VERSION)"
+	exit 1
+fi
+
+if [ "$VERSION" = "5000" ]; then
+	VERSION=
+else
+	VERSION="-o version=${VERSION}"
+fi
+
+if /sbin/zpool list $POOL > /dev/null 2> /dev/null; then
+	echo Error: ZFS pool \"$POOL\" already exists
+	echo Please choose another pool name or rename/destroy the existing pool.
+	exit 1
+fi
+
+EXPOOLS=`/sbin/zpool import | /usr/bin/grep pool: | /usr/bin/awk '{ print $2 }'`
+
+if [ -n "${EXPOOLS}" ]; then
+	for P in ${EXPOOLS}; do
+		if [ "$P" = "$POOL" ]; then
+			echo Error: An exported ZFS pool \"$POOL\" already exists
+			echo Please choose another pool name or rename/destroy the exported pool.
+			exit 1
+		fi
+	done
+fi
+
+COUNT=`echo ${DEVS} | /usr/bin/wc -w | /usr/bin/awk '{ print $1 }'`
+if [ "$COUNT" -lt "3" -a "$RAID" = "raidz" ]; then
+	echo "Error: raidz needs at least three devices (-d switch)"
+	exit 1
+elif [ "$COUNT" = "1" -a "$RAID" = "mirror" ]; then
+	echo "Error: mirror needs at least two devices (-d switch)"
+	exit 1
+elif [ "$COUNT" = "2" -a "$RAID" != "mirror" ]; then
+	echo "Notice: two drives selected, automatically choosing mirror mode"
+	RAID="mirror"
+elif [ "$COUNT" -gt "2" -a "$RAID" != "mirror" -a "$RAID" != "raidz" ]; then
+	echo "Error: please choose raid mode with the -r switch (mirror or raidz)"
+	exit 1
+fi
+
+for DEV in ${DEVS}; do
+	if ! [ -c "/dev/${DEV}" ]; then
+		echo "Error: /dev/${DEV} is not a block device"
+		exit 1
+	fi
+	if /sbin/gpart show $DEV > /dev/null 2> /dev/null; then
+		echo "Error: /dev/${DEV} already contains a partition table."
+		echo ""
+		/sbin/gpart show $DEV
+		echo "You may erase the partition table manually with the destroygeom command"
+		exit 1
+	fi
+done
+
+if [ -z "${URL}" ]; then
+	if ! [ -f "${ARCHIVE}" ]; then
+		echo "Error: file $ARCHIVE does not exist"
+		exit 1
+	else
+		EXTRACT_FILES=${ARCHIVE}
+	fi
+else
+	if [ -d "${URL}" ]; then
+		for file in base.txz kernel.txz; do
+			if ! [ -f "${URL}/${file}" ]; then
+				echo "File not found: ${URL}/${file}"
+				exit 1
+			fi
+		done
+		EXTRACT_FILES="${URL}/base.txz ${URL}/kernel.txz"
+	else
+		EXTRACT_FILES="/tmp/base.txz /tmp/kernel.txz"
+	fi
+fi
+
+if [ -z "$MNT" ]; then
+	MNT=/mnt
+fi
+
+if ! [ -d "${MNT}" ]; then
+	echo "Error: $MNT is not a directory"
+	exit 1
+fi
+
+if [ -n "${ZPART}" ]; then
+	SZPART="-s ${ZPART}"
+fi
+
+if [ "${LEGACY}" = "1" ]; then
+	ALTROOT=
+	ROOTMNT=legacy
+else
+	ALTROOT="-o altroot=${MNT} -o cachefile=/boot/zfs/zpool.cache"
+	ROOTMNT=/
+fi
+
+# Fetch base.txz and kernel.txz
+
+if [ -n "${URL}" -a ! -d "${URL}" ]; then
+	if ! /usr/bin/fetch -o /tmp/base.txz "${URL}/base.txz"; then
+		echo "Error fetching ${URL}/base.txz"
+		exit 1
+	elif ! /usr/bin/fetch -o /tmp/kernel.txz "${URL}/kernel.txz"; then
+		echo "Error fetching ${URL}/kernel.txz"
+		exit 1
+	fi
+fi
+
+# Create GPT
+
+for DEV in ${DEVS}; do
+	echo -n "Creating GUID partitions on ${DEV} ..."
+	if ! /sbin/gpart create -s GPT /dev/${DEV} > /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	/bin/sleep 1
+	if ! echo "a 1" | /sbin/fdisk -f - ${DEV} > /dev/null 2> /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	if ! /sbin/gpart add -t freebsd-boot -s 128 ${DEV} > /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	if [ -n "${SWAP}" ]; then
+		if ! /sbin/gpart add -t freebsd-swap -s "${SWAP}" ${DEV} > /dev/null; then
+			echo " error"
+			exit 1
+		fi
+		SWAPPART=`/sbin/glabel status ${DEV}p2 | /usr/bin/grep gptid | /usr/bin/awk '{ print $1 }'`
+		if [ -z "$SWAPPART" ]; then
+			echo " error determining swap partition"
+		fi
+		if [ -z "$FSWAP" ]; then
+			FSWAP=${SWAPPART}
+		fi
+	fi
+	if ! /sbin/gpart add -t freebsd-zfs ${SZPART} ${DEV} > /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	/bin/dd if=/dev/zero of=/dev/${DEV}p2 bs=512 count=560 > /dev/null 2> /dev/null
+	if [ -n "${SWAP}" ]; then
+		/bin/dd if=/dev/zero of=/dev/${DEV}p3 bs=512 count=560 > /dev/null 2> /dev/null
+	fi
+	echo " done"
+
+	echo -n "Configuring ZFS bootcode on ${DEV} ..."
+		if ! /sbin/gpart bootcode -b /boot/pmbr -p /boot/gptzfsboot -i 1 ${DEV} > /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	echo " done"
+	/sbin/gpart show ${DEV}
+done
+
+# Create zpool and zfs
+
+for DEV in ${DEVS}; do
+	PART=`/sbin/gpart show ${DEV} | /usr/bin/grep freebsd-zfs | /usr/bin/awk '{ print $3 }'`
+
+	if [ -z "${PART}" ]; then
+		echo Error: freebsd-zfs partition not found on /dev/$DEV
+		exit 1
+	fi
+
+	GPART=`/sbin/glabel list ${DEV}p${PART} | /usr/bin/grep gptid | /usr/bin/awk -F"gptid/" '{ print "gptid/" $2 }'`
+
+	GPARTS="${GPARTS} ${GPART}"
+	PARTS="${PARTS} ${DEV}p${PART}"
+done
+
+echo -n "Creating ZFS pool ${POOL} on${PARTS} ..."
+echo "zpool create -f -m none ${ALTROOT} ${VERSION} ${POOL} ${RAID} ${PARTS}"
+
+if ! /sbin/zpool create -f -m none ${ALTROOT} ${VERSION} ${POOL} ${RAID} ${PARTS}; then
+	echo " error"
+	exit 1
+fi
+echo " done"
+
+if [ "${FLETCHER}" = "1" ]; then
+	echo -n "Setting default checksum to fletcher4 for ${POOL} ..."
+	if ! /sbin/zfs set checksum=fletcher4 ${POOL} > /dev/null 2> /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	echo " done"
+fi
+
+if [ "${LZJB}" = "1" ]; then
+	echo -n "Setting default compression to lzjb for ${POOL} ..."
+	if ! /sbin/zfs set compression=lzjb ${POOL} > /dev/null 2> /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	echo " done"
+fi
+
+echo -n "Creating ${POOL} root partition:"
+if ! /sbin/zfs create -o mountpoint=${ROOTMNT} ${POOL}/root > /dev/null 2> /dev/null; then
+	echo " error"
+	exit 1
+fi
+echo " ... done"
+echo -n "Creating ${POOL} partitions:"
+for FS in ${FS_LIST}; do
+	if [ "${LEGACY}" = 1 ]; then
+		MNTPT="-o mountpoint=legacy"
+	else
+		MNTPT=
+	fi
+	if ! /sbin/zfs create ${MNTPT} ${POOL}/root/${FS} > /dev/null 2> /dev/null; then
+		echo " error"
+		exit 1
+	fi
+	echo -n " ${FS}"
+done
+echo " ... done"
+echo -n "Setting bootfs for ${POOL} to ${POOL}/root ..."
+if ! /sbin/zpool set bootfs=${POOL}/root ${POOL} > /dev/null 2> /dev/null; then
+	echo " error"
+	exit 1
+fi
+echo " done"
+/sbin/zfs list -r ${POOL}
+
+# Mount and populate zfs (if legacy)
+if [ "${LEGACY}" = "1" ]; then
+	echo -n "Mounting ${POOL} on ${MNT} ..."
+	/bin/mkdir -p ${MNT}
+	if ! /sbin/mount -t zfs ${POOL}/root ${MNT} > /dev/null 2> /dev/null; then
+		echo " error mounting pool/root"
+		exit 1
+	fi
+	for FS in ${FS_LIST}; do
+		/bin/mkdir -p ${MNT}/${FS}
+		if ! /sbin/mount -t zfs ${POOL}/root/${FS} ${MNT}/${FS} > /dev/null 2> /dev/null; then
+			echo " error mounting ${POOL}/root/${FS}"
+			exit 1
+		fi
+	done
+echo " done"
+fi
+
+echo -n "Extracting FreeBSD distribution ..."
+for file in ${EXTRACT_FILES}; do
+	if ! /usr/bin/tar -C ${MNT} -x -f ${file} > /dev/null 2> /dev/null; then
+		echo " error"
+		exit 1
+	fi
+done
+echo " done"
+
+# Adjust configuration files
+
+echo -n "Writing /boot/loader.conf..."
+echo "zfs_load=\"YES\"" > ${MNT}/boot/loader.conf
+echo "vfs.root.mountfrom=\"zfs:${POOL}/root\"" >> ${MNT}/boot/loader.conf
+echo " done"
+
+# Write fstab if swap or legacy
+echo -n "Writing /etc/fstab..."
+rm -f ${MNT}/etc/fstab
+touch ${MNT}/etc/fstab
+if [ -n "${FSWAP}" -o "${LEGACY}" = "1" ]; then
+	if [ -n "${FSWAP}" ]; then
+		echo "/dev/${FSWAP} none swap sw 0 0" > ${MNT}/etc/fstab
+	fi
+	if [ "${LEGACY}" = "1" ]; then
+		for FS in ${FS_LIST}; do
+			echo ${POOL}/root/${FS} /${FS} zfs rw 0 0 >> ${MNT}/etc/fstab
+		done
+	fi
+fi
+if [ "${LEGACY}" != "1" ]; then
+	echo -n "Writing /etc/rc.conf..."
+	echo 'zfs_enable="YES"' >> ${MNT}/etc/rc.conf
+fi
+echo " done"
+
+echo -n "Copying /boot/zfs/zpool.cache ..."
+if [ -n "${LEGACY}" ]; then
+	for FS in ${FS_LIST}; do
+		/sbin/umount ${MNT}/${FS} > /dev/null 2> /dev/null
+	done
+	/sbin/umount ${MNT} > /dev/null 2> /dev/null
+fi
+if ! /sbin/zpool export ${POOL} > /dev/null 2> /dev/null; then
+	echo " error exporting pool"
+	exit 1
+fi
+if ! /sbin/zpool import ${ALTROOT} ${POOL} > /dev/null 2> /dev/null; then
+	echo " error importing pool"
+	exit 1
+fi
+if [ -n "${LEGACY}" ]; then
+	if ! /sbin/mount -t zfs ${POOL}/root ${MNT} > /dev/null 2> /dev/null; then
+		echo " error mounting ${POOL}/root"
+		exit 1
+	fi
+fi
+if ! /bin/cp /boot/zfs/zpool.cache ${MNT}/boot/zfs/ > /dev/null 2> /dev/null; then
+	echo " error copying zpool.cache"
+	exit 1
+fi
+if [ -n "${LEGACY}" ]; then
+	for FS in ${FS_LIST}; do
+		if ! /sbin/mount -t zfs ${POOL}/${FS} ${MNT}/${FS} > /dev/null 2> /dev/null; then
+		echo " error mounting ${POOL}/${FS}"
+		exit 1
+		fi
+	done
+fi
+echo " done"
+
+echo ""
+echo "Installation complete."
+echo "The system will boot from ZFS with clean install on next reboot"
+echo ""
+echo "You may make adjustments to the installed system using chroot:" 
+echo "chroot ${MNT}"
+echo ""
+echo "Some adjustments may require a mounted devfs:"
+echo "mount -t devfs devfs ${MNT}/dev"
+echo ""
+echo "WARNING - Don't export ZFS pool \"${POOL}\"!"

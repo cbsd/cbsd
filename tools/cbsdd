@@ -31,12 +31,13 @@ shmux()
 	if [ -f "${_locallockfile}" ]; then
 		if check_locktime ${_locallockfile} >/dev/null 2>&1; then
 			cbsdsql nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE ip=\"${_ip}\""
-		 fi
+		fi
 		return 0
 	fi
 
 	SSH_ARGS="-oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
-	/usr/sbin/daemon -f -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} /usr/sbin/iostat 10"
+#	/usr/sbin/daemon -f -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} /usr/sbin/iostat 10"
+	[ ! -f "${_locallockfile}" ] && ${miscdir}/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated
 }
 
 update_jaillock()
@@ -45,10 +46,8 @@ update_jaillock()
 
 	for jname in $( cbsdsql local SELECT jname FROM jails WHERE status=1 ); do
 		jaillock="${jailsysdir}/${jname}/locked"
-		/usr/sbin/daemon -f -u ${cbsduser} /usr/bin/lockf -s -t0 ${ftmpdir}/update_jaillock.lock touch ${jaillock}
+		/usr/sbin/daemon -f -u ${cbsduser} /usr/bin/lockf -s -t0 ${ftmpdir}/update_jaillock.lock /usr/bin/touch ${jaillock}
 	done
-
-
 }
 
 update_fw_counters()
@@ -58,6 +57,13 @@ update_fw_counters()
 	[ "${_curhour}" = "${last_hour_fwupdate}" ] && return 0
 	last_hour_fwupdate="${_curhour}"
 	/usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
+}
+
+update_inventory()
+{
+	[ ! -s "${tmpdir}/inv.${_ip}.updated" ] && return 0
+	/usr/bin/truncate -s0 ${tmpdir}/inv.${_ip}.updated
+	/usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/inv.${_ip}.updated.lock /usr/local/bin/cbsd retrinv node=${_nodename}
 }
 
 readconf task.conf
@@ -75,28 +81,36 @@ trap "/bin/rm -f /var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 
 cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 
+# remove stale lock
+/usr/bin/find ${ftmpdir} -depth 1 -maxdepth 1 -name shmux_\*.lock -delete
+
+# retrinv
+[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+
 while [ 1 ]; do
 	# internal tasks:
 	update_jaillock
-
 	[ ${ipfw_enable} -eq 1 ] && update_fw_counters
 
-	unset ip port keyfile _ip _port _keyfile
+	unset ip port keyfile _ip _port _keyfile queue
 
 	# make sshmux control master
 	if [ ${sqlreplica} -eq 1 ]; then
 		sqldelimer=" "
-		cbsdsql nodes select ip,port,keyfile from nodelist | while read _ip _port _keyfile; do
-			[ -n "${_ip}" ] && shmux
+		cbsdsql nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
+			if [ -n "${_ip}" ]; then
+				shmux
+				update_inventory
+			fi
 		done
 		unset sqldelimer
 	fi
 
 	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
 	_err=0
-	queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(*) FROM taskd WHERE status="0"' 2>/dev/null )
-	[ -z "${queue}" ] && queue=0
+	queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
 
+	[ -z "${queue}" ] && queue=0
 	[ ${queue} -eq 0 ] && continue
 
 	if [ ${queue} -gt ${max_simul_jobs} ]; then

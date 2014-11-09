@@ -1,0 +1,146 @@
+PROGRESS_FILE="/tmp/installprogress.html"
+IS_DISTRIBUTION="/tmp/is_distribution.txt"
+SRC_URL="/usr/freebsd-dist"
+DISTFILES="base.txz kernel.txz"
+POOLNAME="zroot"
+ZFSINSTALL_LOG="/tmp/zfsinstall.log"
+CBSD_PWFILE="/tmp/cbsdpw"
+
+init_distfiles()
+{
+	local i
+
+	for i in ${DISTFILES}; do
+		[ ! -f "${SRC_URL}/${i}" ] && err 1 "No such ${SRC_URL}/${i} distfile"
+	done
+}
+
+
+init_zfs_arg() {
+	local i IFS=":"
+	# todo: provide user-defined preferences
+
+	numdsk=0
+	darg=""
+
+	for i in $dsk; do
+		numdsk=$((numdsk + 1))
+		darg="${darg} -d ${i}"
+		cleandisk ${i}
+	done
+
+	case ${numdsk} in
+		1|2)
+			raidz="raidz"
+			;;
+		*)
+			raidz="raidz2"
+			;;
+	esac
+
+	zpool destroy ${POOLNAME} >/dev/null 2>&1
+}
+
+# $1 - "gpart:10" - stage:percent
+update_progress()
+{
+	echo "$1" > ${PROGRESS_FILE}
+	echo $1
+}
+
+
+copy_pwd()
+{
+	local i
+
+	PW_FILES="spwd.db pwd.db master.passwd passwd group"
+	for i in $PW_FILES; do
+		[ -f "/etc/${i}" ] && cp -a /etc/${i} ${MPT}/etc
+	done
+}
+
+
+set_rcconf()
+{
+	. /etc/rc.conf
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf hostname="${hostname}" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf sshd_enable="YES" > /dev/null
+}
+
+set_tz()
+{
+	[ -f "/etc/localtime" ] && cp /etc/localtime ${MPT}/etc
+}
+
+set_pkg()
+{
+	#    if [ -f "${IS_DISTRIBUTION}" ]; then
+	if [ $( /sbin/hostname ) != "home.my.domain" ]; then
+		    cp -a /usr/local ${MPT}/usr
+		    cp -a /var/db ${MPT}/var
+	else
+		# install from packages
+		mount_nullfs -oro /usr/freebsd-dist ${MPT}/mnt
+		mount -t devfs devfs ${MPT}/dev
+		chroot ${MPT} /bin/sh << EOF
+rm -f /etc/pkg/*.conf
+cd /mnt
+pkg add ./pkg.txz
+pkg add *
+EOF
+		umount ${MPT}/dev
+		umount ${MPT}/mnt
+	fi
+
+	[ ! -f "${MPT}/usr/local/etc" ] && mkdir -p ${MPT}/usr/local/etc
+	cp -Rp /usr/local/cbsd ${MPT}/usr/local
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf cbsdrsyncd_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf cbsdrsyncd_flags="--config=/usr/jails/etc/rsyncd.conf" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf cbsdd_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf cbsd_workdir="/usr/jails" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf mountd_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf dbus_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf clear_tmp_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf moused_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf sendmail_enable="NONE" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf nginx_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf php_fpm_enable="YES" > /dev/null
+	/usr/sbin/sysrc -qf ${MPT}/etc/rc.conf sshd_flags="-oUseDNS=no -p22222" > /dev/null
+
+	truncate -s0 ${MPT}/etc/motd
+}
+
+set_cbsd()
+{
+	CBSDPW=$(cat ${CBSD_PWFILE})
+	new_ip_address=$(cat ${CBSD_IP})
+
+	eval $( printf "NODEIP=\"${new_ip_address}\"" )
+	sed -Ees:CBSDPW:$CBSDPW:g -es:NODEIP:${NODEIP}:g ${_MYDIR}/initenv.conf > ${MPT}/tmp/initenv.conf
+
+	mount -t devfs devfs ${MPT}/dev
+	chroot ${MPT} /bin/sh << EOF
+/etc/rc.d/ldconfig restart
+env workdir="/usr/jails" /usr/local/cbsd/sudoexec/initenv /tmp/initenv.conf
+EOF
+
+	umount ${MPT}/dev
+}
+
+
+set_cfg()
+{
+	[ -d "${MPT}/usr/local/etc/nginx" ] && rm -rf "${MPT}/usr/local/etc/nginx"
+	cp -Rp /usr/local/etc/nginx ${MPT}/usr/local/etc
+	cp /usr/local/etc/php.ini ${MPT}/usr/local/etc
+	cp /usr/local/etc/php-fpm.conf ${MPT}/usr/local/etc
+
+	cp /root/.cshrc-local ${MPT}/root/.cshrc
+
+	cp /root/.xinitrc ${MPT}/root/.xinitrc
+	cp -Rp /root/.opera ${MPT}/root
+	cp /etc/syslog.conf ${MPT}/etc
+	cp -Rp /root/bin ${MPT}/root
+	cp -Rp /usr/home/web ${MPT}/usr/home
+	mkdir ${MPT}/var/log/httpd
+}

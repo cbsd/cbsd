@@ -1,9 +1,11 @@
 #!/usr/local/bin/cbsd
 #v10.1.0
 MYARG=""
-MYOPTARG="mode jname"
+MYOPTARG="mode jname human full"
 MYDESC="Show traffic statistics for the jail"
-ADDHELP=""
+ADDHELP="human= show output to: b - bytes, m - megabytes, g - gigabytes\n\
+mode=sum,average,min,max\n\
+full=0,1 - print all records. Default - 0 when no jail specified\n"
 
 . ${subr}
 . ${inventory}
@@ -17,11 +19,16 @@ jaillist=$( cbsdsql local SELECT jname FROM jails )
 # return 1 if no traffic stats
 init_jail_dbpath()
 {
+	local _res
 	TRAFDIR="${jailsysdir}/${jname}/traffic"
 	CURDATE=$( date "+%Y-%m" )
 	TRAFFILE="${TRAFDIR}/${CURDATE}.sqlite"
 
 	[ ! -f "${TRAFFILE}" ] && return 1
+
+	_res=$( /usr/local/bin/sqlite3 ${TRAFFILE} 'SELECT incoming FROM traffic LIMIT 1' )
+	[ -z "${_res}" ] && return 1
+
 	return 0
 }
 
@@ -33,7 +40,7 @@ jail_in_month()
 	${ECHO} "${header}\n${trafdata}"| /usr/bin/column -s "|" -t
 }
 
-jail_in_month_summary()
+jail_in_month_full()
 {
 	sum_in=$( /usr/local/bin/sqlite3 ${TRAFFILE} 'SELECT sum(incoming) FROM traffic' )
 	sum_out=$( /usr/local/bin/sqlite3 ${TRAFFILE} 'SELECT sum(outgoing) from traffic' )
@@ -50,23 +57,25 @@ jail_in_month_summary()
 	${ECHO} "${MAGENTA}Outgoing: ${GREEN}${sum_out}${NORMAL}"
 }
 
-jail_in_month_summary_header()
+jail_in_month_full_header()
 {
 	CURDATE=$( date "+%Y-%m" )
 	${ECHO} "${BOLD}Summary traffic stats for ${jname} in ${CURDATE} ${NORMAL}"
 	${ECHO} "${BOLD}=================================================${NORMAL}"
 }
 
-if [ -z "${jname}" ]; then
-	summary=1
-else
+[ -z "${jname}" -a -z "${full}" ] && full=0
+
+if [ -n "${jname}" ]; then
 	jaillist="${jname}"
-	summary=0
+	[ -z "${full}" ] && full=1
 fi
+
+[ -n "${jname}" -a -z "${full}" ] && full=0
 
 for jname in ${jaillist}; do
 	init_jail_dbpath || continue
-	[ ${summary} -eq 0 ] && jail_in_month
-	jail_in_month_summary_header
-	jail_in_month_summary
+	[ ${full} -eq 1 ] && jail_in_month
+	jail_in_month_full_header
+	jail_in_month_full
 done

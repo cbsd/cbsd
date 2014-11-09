@@ -23,7 +23,10 @@
 
 #include "sqlcmd.h"
 
+#define SQLITE_BUSY_TIMEOUT	5000
+
 char *delim;
+
 
 char *
 nm(void)
@@ -79,9 +82,7 @@ sqlitecmd(int argc, char **argv)
 	char		*tmp;
 	char		*dbdir;
 	char		*dbfile;
-	int		maxretry = 10;
-	int		retry = 0;
-	int		ret;
+	int		ret = 0;
 	sqlite3_stmt   *stmt;
 	char		*cp;
 
@@ -118,6 +119,8 @@ sqlitecmd(int argc, char **argv)
 	}
 	free(dbfile);
 
+	sqlite3_busy_timeout(db, SQLITE_BUSY_TIMEOUT);
+
 	res = 0;
 	for (i = 2; i < argc; i++)
 		res += strlen(argv[i]) + 1;
@@ -132,30 +135,21 @@ sqlitecmd(int argc, char **argv)
 		}
 		tmp[-1] = 0;
 	}
-	ret = sqlite3_prepare_v2(db, query, strlen(query) + 1, &stmt, NULL);
 
-	retry = 0;
+	ret = 	sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
 	if (ret == SQLITE_OK) {
-		while ((ret != SQLITE_DONE) && (retry < maxretry)) {
+		ret = sqlite3_step(stmt);
+
+		while ( ret == SQLITE_ROW ) {
+			sqlCB(stmt);
 			ret = sqlite3_step(stmt);
-			if (ret == SQLITE_ROW) {
-				sqlCB(stmt);
-				continue;
-			}
-			//
-			else if (ret == SQLITE_BUSY) {
-				sqlite3_sleep(5);
-				retry++;
-				//
-			}
 		}
 	}
-	sqlite3_finalize(stmt);
 
+	sqlite3_finalize(stmt);
 	sqlite3_free(query);
 	sqlite3_close(db);
-
-	//printf("ERR: %d(Q: %s)\n", ret, query);
 
 	return 0;
 }

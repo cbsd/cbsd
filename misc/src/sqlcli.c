@@ -3,14 +3,16 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
-//
 #include <unistd.h>
+#include <pthread.h>
 
 #include "sqlite3.h"
 
 #include "sqlcli.h"
 
-char           *
+#define SQLITE_BUSY_TIMEOUT 5000
+
+char *
 nm(void)
 {
 	return "sqlcli";
@@ -26,13 +28,13 @@ usage()
 int
 sqlCB(sqlite3_stmt * stmt)
 {
-	int		icol      , irow;
-	const char     *colname;
+	int		icol, irow;
+	const char	*colname;
 	int		allcol;
-	char           *delim;
-	char           *cp;
+	char		*delim;
+	char		*cp;
 	int		printheader = 0;
-	char           *sqlcolnames = NULL;
+	char		*sqlcolnames = NULL;
 	int		ret = 0;
 
 	if (stmt == NULL)
@@ -65,7 +67,6 @@ sqlCB(sqlite3_stmt * stmt)
 				printf("%s%s", sqlite3_column_text(stmt, icol), delim);
 		}
 	}
-
 
 	return 0;
 
@@ -114,31 +115,21 @@ main(int argc, char **argv)
 		}
 		tmp[-1] = 0;
 	}
-	ret = sqlite3_prepare_v2(db, query, strlen(query) + 1, &stmt, NULL);
 
-	retry = 0;
+	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 	if (ret == SQLITE_OK) {
-		while ((ret != SQLITE_DONE) && (retry < maxretry)) {
+		ret = sqlite3_step(stmt);
+
+		while ( ret == SQLITE_ROW ) {
+			sqlCB(stmt);
 			ret = sqlite3_step(stmt);
-			if (ret == SQLITE_ROW) {
-				sqlCB(stmt);
-				continue;
-			}
-			//
-			else if (ret == SQLITE_BUSY) {
-				sqlite3_sleep(5);
-				retry++;
-				//
-			}
 		}
 	}
-	sqlite3_finalize(stmt);
 
+	sqlite3_finalize(stmt);
 	sqlite3_free(query);
 	sqlite3_close(db);
-
-	//printf("ERR: %d(Q: %s)\n", ret, query);
 
 	return 0;
 }
