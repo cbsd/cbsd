@@ -177,34 +177,39 @@ main(int argc, char *argv[])
 
 	workdir=lookupvar("workdir");
 
-        if ( workdir == NULL )  {
-            read_profile("/etc/rc.conf");
-            setvarsafe("workdir", lookupvar("cbsd_workdir"), 0);
-        }
-        workdir=lookupvar("workdir");
-        if ( workdir == NULL ) {
-            out2fmt_flush("cbsd: No workdir defined\n");
-            exitshell(1);
-        }
-        setvarsafe("PS1","cbsd@\\h> ",1);
-        setvarsafe("workdir",workdir,1);
-        workdir=lookupvar("workdir"); //  ^^ after "setsave*" original is free
-        cbsdpath = calloc(MAXPATHLEN, sizeof(char *));
-
-        if (cbsdpath == NULL) {
-            out2fmt_flush("cbsd: out of memory for cbsdpath\n");
-            exitshell(1);
-        }
-        sprintf(cbsdpath,"%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir);
-        setvarsafe("PATH",cbsdpath,1);
-        read_profile("${workdir}/cbsd.conf");
-
-	if (cbsd_enable_history==1) {
-	    cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
-	    sprintf(cbsd_history_file,"%s/%s",workdir,CBSD_HISTORYFILE);
+	if ( workdir == NULL )  {
+		read_profile("/etc/rc.conf");
+		setvarsafe("workdir", lookupvar("cbsd_workdir"), 0);
 	}
 
-        ckfree(cbsdpath);
+	workdir=lookupvar("workdir");
+	if ( workdir == NULL ) {
+		out2fmt_flush("cbsd: No workdir defined\n");
+		exitshell(1);
+	}
+
+	setvarsafe("PS1","cbsd@\\h> ",1);
+	setvarsafe("workdir",workdir,1);
+	workdir=lookupvar("workdir"); //  ^^ after "setsave*" original is free
+	cbsdpath = calloc(MAXPATHLEN, sizeof(char *));
+
+	if (cbsdpath == NULL) {
+		out2fmt_flush("cbsd: out of memory for cbsdpath\n");
+		exitshell(1);
+	}
+
+	// %s/modules must be first for opportunity to have a module commands greater priority than the original CBSD command.
+	// This makes it possible to write a 3rd party modules with altered functionality of the original code.
+	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir,workdir);
+	setvarsafe("PATH",cbsdpath,1);
+	read_profile("${workdir}/cbsd.conf");
+
+	if (cbsd_enable_history==1) {
+		cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
+		sprintf(cbsd_history_file,"%s/%s",workdir,CBSD_HISTORYFILE);
+	}
+
+	ckfree(cbsdpath);
 #endif
 	procargs(argc, argv);
 	pwd_init(iflag);

@@ -1,13 +1,13 @@
 #!/bin/sh
-#v10.1.1
+#v10.1.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="ver stable rev svnbase dst patch"
+MYOPTARG="ver stable rev scmbase dst patch"
 MYDESC="Update FreeBSD source tree in $srcdir"
 ADDHELP="ver=head for current.\n\
 stable=1 for STABLE_X\n\
 rev=XXX where XXX - svn revision\n\
-svnbase - alternative svn base URL\n\
+scmbase - alternative svn base URL\n\
 dst - alternative dst dir\n\
 patchset=apply patchet\n"
 
@@ -112,7 +112,103 @@ patch_path_max11()
 	set -e
 }
 
+apply_cbsd_patchset()
+{
+	case "${ver}" in
+		10*)
+			if [ "${ver}" != "10.0" ]; then # not for 10.0-R
+				patch_kmem10
+				patch_bfs10
+			fi
+			;;
+		11*)
+			patch_kmem11
+			patch_bfs11
+			;;
+	esac
 
+	return 0
+}
+
+init_svn()
+{
+	SCM=""
+
+	if [ -f "/usr/bin/svnlite" ]; then
+		SCM="/usr/bin/svnlite"
+	elif [ -f "/usr/local/bin/svn" ]; then
+		SCM="/usr/local/bin/svn"
+	else
+		err 1 "${MAGENTA}No svn in the base. Please install devel/subversion${NORMAL}"
+	fi
+
+	[ -z "${scmbase}" ] && scmbase="${SVNBASE}"
+
+	if [ "${stable}" = "1" ]; then
+		SCM_URL="${scmbase}/stable/${ver}"
+	else
+		SCM_URL="${scmbase}/releng/${ver}"
+	fi
+
+	[ "$ver" = "11.0" -o "${ver}" = "11" ] && SCM_URL="${scmbase}/head"
+
+	return 0
+}
+
+
+init_git()
+{
+	SCM=""
+
+	if [ -f "/usr/local/bin/git" ]; then
+		SCM="/usr/local/bin/git"
+	else
+		err 1 "${MAGENTA}No git in the base. Please install devel/git${NORMAL}"
+	fi
+
+	[ -z "${scmbase}" ] && scmbase="${GITBASE}"
+
+	if [ "${stable}" = "1" ]; then
+		SCM_URL="${scmbase}/stable/${ver}"
+	else
+		SCM_URL="${scmbase}/releng/${ver}"
+	fi
+
+	[ "$ver" = "11.0" -o "${ver}" = "11" ] && SCM_URL="${scmbase}/head"
+
+	return 0
+}
+
+
+svn_checkout()
+{
+	# repair and upgrade
+	if [ -d "${dst}/.svn" ]; then
+		cd ${dst}
+		${SCM} cleanup
+		${SCM} upgrade
+		${SCM} cleanup
+	fi
+
+	${SCM} checkout -r ${rev} ${SCM_URL} ${dst}
+}
+
+git_checkout()
+{
+	local _depth
+
+	[ "${depth}" != "0" ] && _depth="${depth}"
+
+	if [ -d "${dst}/.git" ]; then
+		cd ${dst} && ${SCM} checkout DragonFly_RELEASE_3_8
+		cd ${dst} && ${SCM} pull ${_depth}
+	else
+		${SCM} clone -b ${rev} ${git_flags} ${SCM_URL} ${dst}
+	fi
+}
+
+
+### MAIN ###
 . ${buildconf}
 readconf buildworld.conf
 . ${workdir}/universe.subr
@@ -124,27 +220,9 @@ init_srcdir
 init_supported_arch
 init_make_flags
 
-SVN=""
-
-if [ -f "/usr/bin/svnlite" ]; then
-	SVN="/usr/bin/svnlite"
-elif [ -f "/usr/local/bin/svn" ]; then
-	SVN="/usr/local/bin/svn"
-else
-	err 1 "${MAGENTA}No svn in the base. Please install subversion${NORMAL}"
-fi
-
-[ -z "${svnbase}" ] && svnbase="${SVNBASE}"
-
 set +e
 . ${buildconf}
 set -e
-
-if [ "${stable}" = "1" ]; then
-	SVN_URL="${svnbase}/stable/${ver}"
-else
-	SVN_URL="${svnbase}/releng/${ver}"
-fi
 
 if [ -n "${dst}" ]; then
 	dst="${srcdir}/src_${ver}/src"
@@ -157,29 +235,20 @@ makelock ${LOCKFILE}
 
 [ ! -d "${dst}" ] && /bin/mkdir -p ${dst}
 
-[ "$ver" = "11.0" -o "${ver}" = "11" ] && SVN_URL="${svnbase}/head"
-
-if [ -d "${dst}/.svn" ]; then
-	cd ${dst}
-	${SVN} cleanup
-	${SVN} upgrade
-	${SVN} cleanup
-fi
-
-${SVN} checkout -r ${rev} ${SVN_URL} ${dst}
-
-case "${ver}" in
-10*)
-	if [ "${ver}" != "10.0" ]; then # not for 10.0-R
-		patch_kmem10
-		patch_bfs10
-	fi
-	;;
-11*)
-	patch_kmem11
-	patch_bfs11
-	;;
+case "${checkout_method}" in
+	svn*)
+		init_svn
+		svn_checkout
+		;;
+	git*)
+		init_git
+		git_checkout
+		;;
+	*)
+		err 1 "${ECHO}Unknown checkout method. Please specify it via: ${GREEN}srcup.conf${NORMAL}"
 esac
+
+[ "${apply_cbsd_patch}" = "1" ] && apply_cbsd_patchset
 
 if [ ! -f "${dst}/Makefile" ]; then
 	/bin/rm -rf ${dst}

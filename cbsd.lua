@@ -1,5 +1,5 @@
 product="CBSD"
-myversion="10.1.2b"
+myversion="10.1.2c"
 
 if not workdir then
 	print ( "no workdir" )

@@ -18,11 +18,15 @@ set +e
 [ -z "${1}" ] && select_jail_by_list -s "List of all jails"
 init $*
 
-[ -z "${imgname}" ] && imgname="${jname}.img"
+if [ -z "${imgname}" ]; then
+	imgname="${jname}.img"
+else
+	imgname="${imgname}.img"
+fi
+
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 [ ${jid} -ne 0 -a "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}VM is online${NORMAL}"
-
 
 DEST="${exportdir}/${imgname}"
 JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
@@ -45,36 +49,46 @@ ___NCSTART_DATA=1"
 for _part in ${SPACER}; do
 	case ${_part} in
 		___NCSTART_HEADER*)
-			imgpart mode=pack jname=${jname} part=header out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=header out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_RCCONF*)
 			#currenlty we import/export operation for rc.conf via ascii format
 			#cause diffrence node can have version of cbsd with incompattible jail schema
 			#so create rc.conf for pack operation
-			imgpart mode=pack jname=${jname} part=rcconf out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=rcconf out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_PKGINFO*)
-			imgpart mode=pack jname=${jname} part=pkginfo out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=pkginfo out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_DESCR*)
-			imgpart mode=pack jname=${jname} part=descr out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=descr out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_INFO*)
 			imgpart mode=pack jname=${jname} part=info out=${DEST}
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_FSTAB*)
 			TMPFSTAB="${ftmpdir}/fstab.$$"
 			[ ! -f "${mount_fstab}" ] && touch ${mount_fstab}
-			cp ${mount_fstab} ${TMPFSTAB}
-			replacewdir file0="${mount_fstab}" old=${workdir} new="CBSDROOT"
-			imgpart mode=pack jname=${jname} part=fstab out=${DEST}
-			mv ${TMPFSTAB} ${mount_fstab}
+			/bin/cp ${mount_fstab} ${TMPFSTAB}
+			res=$( replacewdir file0="${mount_fstab}" old=${workdir} new="CBSDROOT" )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part} replacewdir: ${res}${NORMAL}"
+			res=$( imgpart mode=pack jname=${jname} part=fstab out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+			/bin/mv ${TMPFSTAB} ${mount_fstab}
 			;;
 		___NCSTART_LOCALFSTAB*)
-			imgpart mode=pack jname=${jname} part=localfstab out=${DEST}
+			# localfstab is not mandatory file. Errcode is always 0
+			res=$( imgpart mode=pack jname=${jname} part=localfstab out=${DEST} || true )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_SYSDATA*)
-			imgpart mode=pack jname=${jname} part=sysdata out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=sysdata out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			;;
 		___NCSTART_DATA*)
 			#test for zfs mounted & mount if not
@@ -87,11 +101,23 @@ for _part in ${SPACER}; do
 					else
 						WASNOMOUNT=0
 					fi
-					[ $WASNOMOUNT -eq 1 ] && zfs mount "${ZPOOL}"
+					[ $WASNOMOUNT -eq 1 ] && /sbin/zfs mount "${ZPOOL}"
 					;;
 			esac
-			imgpart mode=pack jname=${jname} part=data out=${DEST}
+			res=$( imgpart mode=pack jname=${jname} part=data out=${DEST} )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 			[ "$WASNOMOUNT" = "1" ] && zfs unmount "${ZPOOL}"
 			;;
 	esac
 done
+
+if [ -s "${DEST}" ]; then
+	imgfile=$( basename ${DEST} )
+	img_size=$( stat -f "%z" ${DEST} 2>/dev/null )
+	if conv2human "${img_size}"; then
+		img_size=$convval
+	fi
+	err 0 "${MAGENTA}Images size for ${imgfile}: ${GREEN}${img_size}${NORMAL}"
+else
+	err 1 "${MAGENTA}Unknown error in jexport${NORMAL}"
+fi
