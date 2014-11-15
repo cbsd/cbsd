@@ -61,6 +61,8 @@ int setlock(int fd)
 
 int historycmd(int argc, char *argv[])
 {
+    return 0;
+
     int fd=0;
     int res=0;
     int i=0;

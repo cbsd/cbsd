@@ -56,6 +56,7 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 255215 2013-09-04 22:10:16Z jilles $");
 #include <sys/param.h> //MAXPATHLEN
 #include <stdlib.h> //setenv
 #include <malloc_np.h> //calloc
+//#include <libxo/xo.h> // XML/JSON/HTML stuff via xo_emit
 #endif
 
 #include "shell.h"
@@ -116,7 +117,7 @@ main(int argc, char *argv[])
 	chdir("/var/empty");
 	/* Only use history when stdin is a tty. */
 	if ( isatty(0) && isatty(1) ) {
-	    cbsd_enable_history = 1;
+		cbsd_enable_history = 1;
 	}
 #endif
 	(void) setlocale(LC_ALL, "");
