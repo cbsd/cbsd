@@ -1,0 +1,202 @@
+#!/usr/local/bin/cbsd
+############################################################ INCLUDES
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="cbsd"
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyvenic.subr
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+. ${subr}
+. ${inventory}
+. ${strings}
+. ${tools}
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+	local title=" ${jname} ${nic}: New NIC "
+	hline=
+
+	local prompt="${_desc}"
+
+	[ -z "${nic_driver}" ] && nic_driver="vtnet"
+	[ -z "${nic_type}" ] && nic_type="0"
+	[ -z "${nic_parent}" ] && nic_parent="auto"
+	[ -z "${nic_hwaddr}" ] && nic_hwaddr="0"
+
+	local menu_list="
+		'nic_driver'	'${nic_driver}'	'NIC driver'
+		'nic_parent'	'${nic_parent}'	'NIC parent interface. 0 - auto'
+		'nic_type'	'${nic_type}'	'Select NIC type'
+		'nic_hwadd'	'${nic_hwaddr}'	'Mac address. 0 - auto'
+		'-'		'-'			''
+		'COMMIT'	'COMMIT'		'Create and attach new NIC'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname nic"
+MYOPTARG=""
+MYDESC="Add and attach new vitual NIC to VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+. ${inventory}
+. ${vimagetui}
+init $*
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/bhyvenic.subr
+
+. ${workdir}/bhyve.subr
+. ${vimageconf}
+
+#load_nic_info
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_bhyvenic "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|slot|nic_type)
+					continue
+					;;
+				"nic_driver")
+					get_nic_driver
+					;;
+				"nic_hwaddr")
+					get_nic_hwaddr
+					;;
+				"nic_parent")
+					interface="${nic_parent}"
+					select_local_interface && nic_parent="${interface}"
+					;;
+				"COMMIT")
+					if [ -z "${nic_type}" -o -z "${nic_driver}" -o -z "${nic_hwaddr}" ]; then
+						f_dialog_msgbox "nic_type,nic_driver and nic_hwaddr field is mandatory"
+						continue
+					fi
+					_res=$( add_nic -d "${nic_driver}" -t "${nic_type}" -h "${nic_hwaddr}" )
+					if [ $? -ne 0 ]; then
+						f_dialog_msgbox "Error: ${_res}"
+					else
+						f_die
+					fi
+					;;
+				*)
+					index=${mtag%% *}
+					nic=${mtag##* }
+					command="bhyvenic-cfgnic jname=${jname} nic=${nic}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

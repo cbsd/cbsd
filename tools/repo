@@ -31,10 +31,77 @@ origver="${ver}"
 readconf buildworld.conf
 . ${workdir}/universe.subr
 
+
+# Wrapper for fetch and dpv
+# fetchme -u URL -o /tmp/out
 fetchme()
 {
-	cfetch -u $1 -o ${TF}
-	return $?
+	local _DPV="/usr/bin/dpv"
+	local _res
+
+	local _out="${TF}"
+	local _quiet=0
+	local _url=
+	local _TONULL
+
+	# global variable. Need for most dialog-based action
+	[ -n "${quiet}" ] && _quiet="${quiet}"
+
+	local _FETCH_CMD="/usr/bin/fetch"
+
+	while getopts "u:q:o:" opt; do
+		case "$opt" in
+			u) _url="${OPTARG}" ;;
+			q) _quiet="${OPTARG}" ;;
+			o) _out="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_url}" ] && return 1
+
+	local _sizebyte=
+	local _humansize=
+	# We use size output for non-quiet and for dpv(1) mode
+	[ ${_quiet} -eq 0 ] && _sizebyte=$( ${_FETCH_CMD} -qs ${_url} 2>/dev/null| /usr/bin/awk '{printf $1}' )
+
+	# test for human
+	if [ -n "${_sizebyte}" ]; then
+		if ! is_number ${_sizebyte}; then
+			if conv2human "${_sizebyte}"; then
+				local _humansize="${convval}"
+			else
+				unset _sizebyte
+			fi
+		else
+			unset _sizebyte
+		fi
+	fi
+
+
+
+#	[ ! -f "${_DPV}" -o -z "${DIALOG}" ] && unset _DPV
+	[ ! -f "${_DPV}" ] && unset _DPV
+
+	if [ ${_quiet} -eq 1 ]; then
+		unset _DPV
+		_FETCH_CMD="${_FETCH_CMD} -q"
+	fi
+
+	if [ -n "${_DPV}" ]; then
+#		set -o xtrace
+#		${_FETCH_CMD} -q ${_url} -o /dev/stdout | ${_DPV} -b "${product}" -p "Fetching: ${_url}" -t "CBSD Repository" -x "/bin/cat > ${_out}" ${_sizebyte}:kernel
+		${_FETCH_CMD} -q ${_url} -o - | ${_DPV} -b "${product}" -p "Fetching:" -t " CBSD Repository "  -x "/bin/cat > ${_out}" ${_sizebyte}:kernel.txz
+#		set +o xtrace
+#		read p
+#		${_FETCH_CMD} -q ${_url} -o /dev/stdout | ${_DPV} -b "${product}" -p "Fetching: ${_url}" -t "CBSD Repository" -x "/bin/cat > ${_out}" ${_sizebyte}:kernel
+	else
+		[ -n "${_humansize}" ] && ${ECHO} "${MAGENTA}Size: ${GREEN}${_humansize}${NORMAL}"
+		${_FETCH_CMD} -o ${_out} ${_url} ${_TONULL}
+		_res=$?
+	fi
+
+	return ${_res}
 }
 
 checkmd5()
@@ -43,10 +110,10 @@ checkmd5()
 	DIR=$1
 	_GOOD=0
 
-	for _i in $( find ${DIR} -type f -depth 1 -name *.md5 -print); do
-		_FILE=$( ${ECHO} ${_i} |sed 's/\.md5//g' )
-		_OMD5=$( cat ${_FILE}.md5 )
-		_RMD5=$( md5 -q ${_FILE} )
+	for _i in $( /usr/bin/find ${DIR} -type f -depth 1 -name *.md5 -print); do
+		_FILE=$( ${ECHO} ${_i} |/usr/bin/sed 's/\.md5//g' )
+		_OMD5=$( /bin/cat ${_FILE}.md5 )
+		_RMD5=$( /sbin/md5 -q ${_FILE} )
 		if [ "${_RMD5}" != "${_OMD5}" ]; then
 			_GOOD=$((_GOOD + 1))
 		fi
@@ -63,8 +130,8 @@ checkrepo()
 
 	for _i in ${repo}; do
 		[ -z $1 ] && printf "${MAGENTA}Check for repository${NORMAL}: ${GREEN}${_i}${NORMAL} ..."
-		if fetchme "${_i}/cbsd.index" >/dev/null 2>&1; then
-			cat "${TF}"
+		if fetchme -q 1 -u "${_i}/cbsd.index"; then
+			/bin/cat "${TF}"
 			exit 0
 		else
 			${ECHO} "${_i} Offline"
@@ -83,14 +150,14 @@ getsrc()
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
 		MIRROR="${MYREPO}/src_${ver}/mirror.html"
-		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+		fetchme -q 1 -u "${MIRROR}"
 		if [ $? -eq 0 ]; then
-			MYREPO=$( cat ${TF} )
+			MYREPO=$( /bin/cat ${TF} )
 			${ECHO} "${MAGENTA}Found new mirror for ${ver}${NORMAL}:${GREEN}${MYREPO}${NORMAL}"
 		fi
-		cfetch -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
+		fetchme -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
 		[ $? -eq 0 ] || ${ECHO} "${MAGENTA}Not found: ${GREEN}${MYREPO}/${DIR}/src.txz${NORMAL}" && icontinue
-		cfetch -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5 >/dev/null 2>&1
+		fetchme -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5
 		[ $? -eq 0 ] || ${ECHO} "${MAGENTA}Not found: ${GREEN}${MYREPO}/${DIR}/src.txz.md5${NORMAL}" && continue
 	done
 
@@ -103,7 +170,7 @@ getsrc()
 	fi
 
 	ARCHIVE="${workdir}/tmp/src_${ver}.txz"
-	[ ! -f "${ARCHIVE}" ] || rm -f ${ARCHIVE}
+	[ -f "${ARCHIVE}" ] && /bin/rm -f ${ARCHIVE}
 
 	${ECHO} "${MAGENTA}Extracting...${NORMAL}"
 	cd $workdir/tmp
@@ -140,7 +207,7 @@ getbase()
 		## Official fbsd repo
 		printf "${MAGENTA}Looking for official FreeBSD mirror:${NORMAL}"
 		ARCHIVE="$MYDIR/base.txz"
-		cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+		fetchme -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
 		if [ $? -eq 0 ]; then
 			printf "\n${MAGENTA}Extracting base...${NORMAL}\n"
 			[ ! -d "${BASE_DIR}" ] && mkdir -p $BASE_DIR
@@ -153,7 +220,7 @@ getbase()
 			if [ "${arch}" = "amd64" ]; then
 				BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
 				ARCHIVE="$MYDIR/lib32.txz"
-				cfetch -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
+				fetchme -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
 				if [ $? -eq 0 ]; then
 					printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
 					cd $BASE_DIR
@@ -179,25 +246,25 @@ getbase()
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
 		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html";
-		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
-			MYREPO=$( cat ${TF} )
+			MYREPO=$( /bin/cat ${TF} )
 			${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 		fi
 
 		if [ -z "${basename}" ]; then
 			${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
-			cfetch -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base.txz
+			fetchme -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base.txz
 
-		if [ $? -ne 0 ]; then
-			${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
-			continue
-		else
-			_src_found=1
-		fi
+			if [ $? -ne 0 ]; then
+				${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
+				continue
+			else
+				_src_found=1
+			fi
 
-#	    cfetch -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+#	    fetchme -q1 -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5
 
 #	    if [ $? -ne 0 ]; then
 #		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
@@ -207,7 +274,7 @@ getbase()
 #	    fi
 	    else
 		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
-		cfetch -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base_${basename}.txz
+		fetchme -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base_${basename}.txz
 
 		if [ $? -ne 0 ]; then
 			${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
@@ -216,7 +283,7 @@ getbase()
 			_src_found=1
 		fi
 
-#	    cfetch -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+#	    fetchme -q1 -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5
 
 #	    if [ $? -ne 0 ]; then
 #		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
@@ -288,7 +355,7 @@ getobj()
 			removeobj ver=${ver} arch=${arch}
 		fi
 
-		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
 			MYREPO=$( cat ${TF} )
@@ -296,22 +363,22 @@ getobj()
 		fi
 
 		if [ -z "${basename}" ]; then
-			cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
+			fetchme -o ${MYDIR}/obj_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz
 			[ $? -eq 0 ] || continue
-			cfetch -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+			fetchme -q1 -o ${MYDIR}/obj_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${arch}_${ver}.txz.md5
 			[ $? -eq 0 ] || continue
 		else
-			cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
+			fetchme -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.txz
 			[ $? -eq 0 ] || continue
-			cfetch -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5 >/dev/null 2>&1
+			fetchme -q1 -o ${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/obj_${basename}_${arch}_${ver}.md5
 			[ $? -eq 0 ] || continue
 		fi
 	done
 
 	if [ -z "${basename}" ]; then
-		[ -f "${MYDIR}/obj_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${arch}_${ver}.txz" ] || err 1 "No sources found"
+		[ ! -f "${MYDIR}/obj_${arch}_${ver}.txz.md5" -a ! -f "${MYDIR}/obj_${arch}_${ver}.txz" ] && err 1 "No sources found"
 	else
-		[ -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5" -a -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz" ] || err 1 "No sources found"
+		[ ! -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz.md5" -a ! -f "${MYDIR}/obj_${basename}_${arch}_${ver}.txz" ] && err 1 "No sources found"
 	fi
 
 	if checkmd5 ${MYDIR}; then
@@ -320,7 +387,7 @@ getobj()
 		err 1 "MD5sum incorrect."
 	fi
 
-	rm -f ${MYDIR}/obj_${arch}_${ver}.txz.md5
+	/bin/rm -f ${MYDIR}/obj_${arch}_${ver}.txz.md5
 
 	${ECHO} "Extracting..."
 	cd $srcdir
@@ -352,17 +419,17 @@ getkernel()
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
 		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html"
-		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
-			MYREPO=$( cat ${TF} )
+			MYREPO=$( /bin/cat ${TF} )
 			${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 		fi
 
 		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz${NORMAL}"
-		cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
+		fetchme -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
 		[ $? -eq 0 ] || continue
-		# cfetch -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5 >/dev/null 2>&1
+		# fetchme -q1 -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5
 		# [ $? -eq 0 ] || continue
 	done
 
@@ -412,15 +479,15 @@ getimg()
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
 		MIRROR="${MYREPO}/img/${FHIER}/mirror.html"
-		cfetch -u ${MIRROR} -o ${TF} > /dev/null 2>&1
+		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
-			MYREPO=$( cat ${TF} )
+			MYREPO=$( /bin/cat ${TF} )
 			${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
 		fi
 
 		${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
-		cfetch -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
+		fetchme -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
 
 		[ $? -eq 0 ] || continue
 	done
@@ -437,9 +504,9 @@ gethelpers()
 	MIRROR="http://boot.bsdstore.ru/helpers"
 
 	if [ -z "${name}" ]; then
-		cfetch -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list > /dev/null 2>&1
+		fetchme -q1 -u ${MIRROR}/helpersls -o ${ftmpdir}/helpers.$$.list
 		[ $? -ne 0 ] && err 1 "${MAGENTA}Error fetching for: ${GREEN}helper list${NORMAL}"
-		for i in $( cat ${ftmpdir}/helpers.$$.list ); do
+		for i in $( /bin/cat ${ftmpdir}/helpers.$$.list ); do
 			${ECHO} "${MAGENTA}Get helpers: ${GREEN}${i}${NORMAL}"
 			if [ "${mode}" = "upgrade" ]; then
 				repo action=get sources=helpers name=${i} mode=upgrade
@@ -447,12 +514,12 @@ gethelpers()
 				repo action=get sources=helpers name=${i}
 			fi
 		done
-		rm -f ${ftmpdir}/helpers.$$.list
-	exit
+		/bin/rm -f ${ftmpdir}/helpers.$$.list
+		exit 0
 	fi
 
 	[ ! -d "${tmpdir}/helpers" ] && mkdir -p ${tmpdir}/helpers
-	cfetch -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz > /dev/null 2>&1
+	fetchme -q1 -u ${MIRROR}/${name}.tgz -o ${tmpdir}/helpers/helpers_${name}.$$.tgz
 
 	if [ $? -eq 0 ]; then
 		if [ -d "${DST}/${name}" -a "${mode}" = "upgrade" ]; then
@@ -504,7 +571,7 @@ case "${action}" in
 		;;
 	"list")
 		for i in ${repo}; do
-			if fetchme "${i}/${sources}ls" >/dev/null 2>&1; then
+			if fetchme -q 1 -u "${i}/${sources}ls"; then
 				[ ${quiet} -ne 1 ] && ${ECHO} "${MAGENTA}Available sources on ${GREEN}$i:${NORMAL}"
 				if [ "${ver}" = "any" ]; then
 					ver="[[:alnum:]]"

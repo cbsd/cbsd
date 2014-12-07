@@ -3,14 +3,16 @@
 CBSDMODULE="node"
 MYARG="mode"
 MYOPTARG="node port rootkeyfile pw header allinfo"
-MYDESC="Manipulate with remote nodes"
-ADDHELP="mode = add , remove , list\n\
+MYDESC="Manipulate or show information for remote nodes"
+ADDHELP="mode = add, remove, list, status\n\
 node = remote node ip or fqdn\n\
 port = ssh port of remote node\n\
 rootkeyfile = path to id_rsa for root access\n\
 pw = password of cbsd user from remote node\n\
 header = print header in node list\n\
-allinfo = 1 (default) show all info for nodelist, 0 - only nodename\n"
+allinfo = 1 (default) show all info for nodelist, 0 - only nodename\n\
+mode=show - show details about node\n"
+
 EXTHELP="wf_node.html"
 
 . ${subr}
@@ -151,8 +153,75 @@ nodelist()
 		done
 	fi
 	unset sqldelimer
-	local IFS
 }
+
+
+shownode()
+{
+	local _res
+
+	local sqldelimer=" "
+	_res=$( cbsdsql nodes SELECT nodename FROM nodelist WHERE nodename=\"${node}\" )
+
+	[ -z "${_res}" ] && err 1 "${MAGENTA}No such node in databases: ${GREEN}${node}${NORMAL}"
+
+	${ECHO} "${BOLD}  Summary statistics for ${node}  ${NORMAL}"
+	${ECHO} "${BOLD}  ====================================  ${NORMAL}"
+	echo
+
+	if [ ! -f "${dbdir}/${node}.sqlite" ]; then
+		${ECHO} "${MAGENTA}No such inventory for: ${GREEN}${node}${NORMAL}. ${MAGENTA}Try to obtain it...${NORMAL}"
+		retrinv node=${node} tryoffline=1
+		[ ! -f "${dbdir}/${node}.sqlite" ] && err 1 "${MAGENTA}No such inventory for: ${GREEN}${node}${NORMAL}"
+	fi
+
+	local _nodeinv="hostname,nodeip,fs,ncpu,physmem,disks,cpumode,cpufreq,nics,osrelease,hostarch"
+
+	sqldelimer="|"
+
+	eval $( cbsdsql ${node} SELECT ${_nodeinv} FROM local | while read hostname nodeip fs ncpu physmem disks cpumodel cpufreq nics osrelease hostarch; do
+		echo "local hostname=\"\${hostname}\""
+		echo "local nodeip=\"\${nodeip}\""
+		echo "local fs=\"${fs}\""
+		echo "local ncpu=\"${ncpu}\""
+		echo "local physmem=\"${physmem}\""
+		echo "local disks=\"${disks}\""
+		echo "local cpumodel=\"${cpumodel}\""
+		echo "local cpufreq=\"${cpufreq}\""
+		echo "local nics=\"${nics}\""
+		echo "local osrelease=\"${osrelease}\""
+		echo "local hostarch=\"${hostarch}\""
+	done )
+
+	sqldelimer=" "
+
+
+	local jailsnum=$( cbsdsql ${node} SELECT count\(jname\) FROM jails WHERE emulator != \"bhyve\" )
+	local vmsnum=$( cbsdsql ${node} SELECT count\(jname\) FROM jails WHERE emulator = \"bhyve\" )
+
+	[ -z "${jailsnum}" ] && jailsnum="0"
+	[ -z "${vmsnum}" ] && vmsnum="0"
+
+	${ECHO} "${BOLD}Nodename: ${GREEN}${node}${NORMAL}"
+	${ECHO} "${BOLD}Hostname: ${GREEN}${hostname}${NORMAL}"
+	${ECHO} "${BOLD}Node IP: ${GREEN}${nodeip}${NORMAL}"
+	${ECHO} "${BOLD}FS: ${GREEN}${fs}${NORMAL}"
+	${ECHO} "${BOLD}Total core's: ${GREEN}${ncpu}${NORMAL}"
+	${ECHO} "${BOLD}CPU Model: ${GREEN}${cpumode}${NORMAL}"
+	${ECHO} "${BOLD}CPU Frequency: ${GREEN}${cpufrq}${NORMAL}"
+	${ECHO} "${BOLD}Total physmem: ${GREEN}${physmem}${NORMAL}"
+	${ECHO} "${BOLD}NICs: ${GREEN}${nics}${NORMAL}"
+	echo
+	${ECHO} "${BOLD}OS Release: ${GREEN}${osrelease}${NORMAL}"
+	${ECHO} "${BOLD}OS arch: ${GREEN}${hostarch}${NORMAL}"
+	${ECHO} "${BOLD}Total VMs: ${GREEN}${vmsnum}${NORMAL}"
+	${ECHO} "${BOLD}Total Jails: ${GREEN}${jailsnum}${NORMAL}"
+	echo
+	[ ${jailsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} jails:${NORMAL}" && jls node=${node} display=jname,host_hostname,status && echo
+	[ ${vmsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} VMs:${NORMAL}" && bls node=${node} display=jname,status && echo
+}
+
+
 
 
 # MAIN
@@ -170,6 +239,10 @@ case "${mode}" in
 		;;
 	"list")
 		nodelist |/usr/bin/column -t
+		;;
+	"show")
+		[ -z "${node}" ] && err 1 "${MAGENTA}Please specify: ${GREEN}node=${NORMAL}"
+		shownode
 		;;
 	*)
 		err 1 "${MAGENTA}Unknown mode${NORMAL}"

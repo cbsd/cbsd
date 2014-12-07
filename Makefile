@@ -16,7 +16,6 @@ clean:
 	${RM} -f misc/chk_arp_byip
 	${RM} -f bin/cbsdsftp
 	${RM} -f bin/cbsdssh
-	${RM} -f bin/cfetch
 	${RM} -f bin/cbsd
 	${RM} -f sbin/netmask
 	${RM} -f misc/sqlcli
@@ -31,7 +30,6 @@ clean:
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
 	${CC} bin/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh
-	${CC} bin/cfetch.c -o bin/cfetch -lfetch && ${STRIP} bin/cfetch
 	${CC} sbin/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} misc/src/sqlcli.c -static -pthread -lsqlite3 -L/usr/local/lib -I/usr/local/include -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail

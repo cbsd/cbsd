@@ -1,4 +1,5 @@
 #!/bin/sh
+# fetch http://pkgmir.pkg.freebsd.org/freebsd:11:x86:64/latest/packagesite.txz
 #v10.0.3
 globalconf="${workdir}/cbsd.conf"
 CBSDMODULE="helpers"
@@ -10,7 +11,8 @@ pkglist= use package list from file\n\
 name= name of pkg\n\
 repodir= repository configuration directory\n\
 pkgconf= specify pkg.conf to use for pkg\n\
-mode=bootstrap,install,add,info,query,status,remove,upgrade\n"
+mode=add,bootstrap,install,info,query,remove,update,upgrade\n"
+EXTHELP="modules_pkg.html"
 
 set -e
 . ${globalconf}
@@ -23,26 +25,28 @@ set +e
 init $*
 
 #defines
-_MYDIR=$(dirname `realpath $0`)
+_MYDIR=$( dirname `realpath $0` )
+noname=0
 
-#trap "INSTALLLOOP=0 ; clear; echo; echo \"Exit to shell. To return into bootstrap script, please type: cbsd wb_installer\";  echo" HUP INT ABRT BUS TERM EXIT
-
-### MAIN Route ###
 set -e
 	. ${_MYDIR}/pkg.subr
 set +e
+
+[ -n "${mode}" ] && shift
 
 if [ -n "${name}" ]; then
 	pkgtarget="${name}"
 elif [ -n "$pkglist" ]; then
 	[ ! -f "${pkglist}" ] && err 1 "${MAGENTA}No such file: ${GREEN}${pkglist}${NORMAL}"
-	pkgtarget=$( cat ${pkglist}|xargs )
+	pkgtarget=$( /bin/cat ${pkglist}|/usr/bin/xargs )
 else
-	[ "${mode}" != "bootstrap" ] && err 1 "${MAGENTA}Error: ${GREEN}name ${MAGENTA}or ${GREEN}pkglist${MAGENTA} arg is mandatory${NORMAL}"
+	noname=1
 fi
 
 PKGARGS=""
 TRAP=""
+# for chroot/jail env
+PKG_PRE=""
 
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
@@ -57,8 +61,14 @@ if [ -n "${jname}" ]; then
 	init_kerneldir
 
 	[ ${jid} -eq 0 ] && prepare_jail
-	PKGARGS="${PKGARGS} -c ${path}"
+	PKG_PRE="/usr/sbin/chroot ${path}"
+	shift
+else
+	path=""
 fi
+
+# init path and bootstrap pkg if necessary
+init_path
 
 [ -n "${repodir}" ] && PKGARGS="${PKGARGS} -R ${repodir}"
 [ -n "${chroot}" ] && PKGARGS="${PKGARGS} -c ${chroot}"
@@ -69,16 +79,22 @@ case "${mode}" in
 		pkg_bootstrap
 		;;
 	install|add)
-		pkg_install "$pkgtarget"
+		pkg_install "$*"
 		;;
 	"remove")
-		pkg_remove "$pkgtarget"
+		pkg_remove "$*"
 		;;
 	"info")
-		pkg_info "$pkgtarget"
+		pkg_info "$*"
 		;;
 	"query")
-		pkg_query "$pkgtarget"
+		pkg_query "$*"
+		;;
+	"update")
+		pkg_update "$*"
+		;;
+	"upgrade")
+		pkg_upgrade "$*"
 		;;
 	*)
 		err 1 "${MAGENTA}Unknown mode${NORMAL}"

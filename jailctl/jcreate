@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.1
+#v10.1.2
 MYARG="jconf"
 MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist"
 MYDESC="Create jail from config file"
@@ -39,24 +39,25 @@ EOF
 [ -n "${delpkglist}" ] && odelpkglist="${delpkglist}"
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
+
 . ${workdir}/universe.subr
 . ${workdir}/freebsd_world.subr
 [ -n "${odelpkglist}" ] && delpkglist="${odelpkglist}"
 
 [ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
 
-jconf=$( realpath $jconf )
+jconf=$( /bin/realpath $jconf )
 
 [ -z "${delpkglist}" ] && delpkglist=0
 
 temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
-cp ${jconf} ${temprcconf}
+/bin/cp ${jconf} ${temprcconf}
 
 if [ ${removejconf} = "1" ]; then
-	trap "rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
 else
-	trap "rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "/bin/rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 fi
 
 . ${temprcconf}
@@ -85,7 +86,7 @@ case $zfsfeat in
 		;;
 	"1")
 		. $zfstool
-		ZPOOL=$( zfs get -Ho value name ${jaildatadir} )
+		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 		if zfsroot $jname; then
 			err 1 "$ZPOOL/$jname already in use"
 		fi
@@ -106,8 +107,8 @@ ${jailsysdir}/${jname}/master_poststop.d \
 ${jailsysdir}/${jname}/master_poststart.d"
 
 for i in ${create_dir}; do
-	[ ! -d "${i}"  ] && mkdir -m 0775 -p ${i}
-	chown ${cbsduser}:${cbsduser} ${i}
+	[ ! -d "${i}"  ] && /bin/mkdir -m 0775 -p ${i}
+	/usr/sbin/chown ${cbsduser}:${cbsduser} ${i}
 done
 
 ## MD backend place
@@ -116,13 +117,13 @@ if [ "${mdsize}" != "0" ]; then
 	imgbytes=$convval
 	blockcount=$(( imgbytes  / 1048576 ))
 	mdimage="${jailsysdir}/${jname}/image.dat"
-	touch "${mdimage}"
-	dd if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "Error: Couldn't create the image file. ${mdimage}"
+	/usr/bin/touch "${mdimage}"
+	/bin/dd if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "Error: Couldn't create the image file. ${mdimage}"
 	# Attach the .img file as a memory disk.
-	mdimagedevice=$( mdconfig -a -t vnode -f "${mdimage}" )
+	mdimagedevice=$( /sbin/mdconfig -a -t vnode -f "${mdimage}" )
 	[ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
-	newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
-	mdconfig -d -u ${mdimagedevice}
+	/sbin/newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
+	/sbin/mdconfig -d -u ${mdimagedevice}
 	# mount here
 	mountmd jroot=${data} mdfile=${mdimage}
 fi
@@ -139,26 +140,38 @@ fi
 /usr/sbin/sysrc -qf ${temprcconf} arch="${arch}" > /dev/null
 /usr/sbin/sysrc -qf ${temprcconf} ver="${ver}" > /dev/null
 
-cp $temprcconf $rcconf
+/bin/cp $temprcconf $rcconf
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new status=3
+res=$?
 
-if [ $? -eq 0 ]; then
+# pkg bootstrap && user accounting
+if [ "${ver}" != "empty" ]; then
+
+	if [ ${applytpl} -eq 1 -a "${pkg_bootstrap}" = "1" ]; then
+		pkg mode=bootstrap jname=${jname} ||true
+	fi
+
+	if [ -n "${user_pw_root}" ]; then
+		passwd jname=${jname} user="root" pw="${user_pw_root}"
+	fi
+
+fi
+
+if [ ${res} -eq 0 ]; then
 	${ECHO}
 	${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
-	rm -f $rcconf
+	/bin/rm -f $rcconf
 
 	#[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
 	# pkg area
 	if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
 		if [ ! -f "${pkglist}" ]; then
-			pkg mode=bootstrap jname=${jname}
 			pkg mode=install name="${pkglist}" jname=${jname}
 		else
-			pkg mode=bootstrap jname=${jname}
 			pkg mode=install pkglist="${pkglist}" jname=${jname}
 			[ $delpkglist -eq 1 ] && rm -f ${pkglist}
 		fi

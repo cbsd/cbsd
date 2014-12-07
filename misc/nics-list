@@ -1,47 +1,61 @@
 #!/bin/sh
 # -d for description
+# -s "iface iface" for skip iface in list
 DESC=0
 ALL=0
+SKIP="ipfw ppp sl lp faith fwe fwip plip pfsync pflog tun vboxnet"
 
-while getopts "ad" opt; do
-    case "${opt}" in
-	a)
-	    ALL=1
-	    ;;
-	d)
-	    DESC=1
-	    ;;
-    esac
+while getopts "ads:" opt; do
+	case "${opt}" in
+		a)
+			ALL=1
+			;;
+		d)
+			DESC=1
+			;;
+		s)
+			SKIP="${SKIP} ${OPTARG}"
+	esac
 done
+
+[ ${ALL} -eq 1 ] && SKIP=""
 
 for i in $(/sbin/ifconfig -l); do
 
-    if [ ${ALL} -eq 0 ]; then
-	case "${i%%[0-9]*}" in
-	    ipfw|ppp|sl|lp|faith|fwe|fwip|plip|pfsync|pflog|tun|vboxnet|lo)
-		continue
-		;;
-	esac
-    fi
+	if_skip=0
 
-    if [ ${DESC} -eq 1 ]; then
-	    #this need for rewrite to more stable and simple code
-	    uptest=$(/sbin/ifconfig ${i}| head -1 | grep "UP,")
-	    if [ $? -eq 0 ]; then
-		STATUS="UP"
-	    else
-		STATUS="DOWN"
-	    fi
-	    IDENT=$(pciconf -vl | grep -A4 ^${i} | egrep "device*=*" | cut -d "=" -f 2|xargs)
-	    # this is not work in msk0: its looks like:
-	    # mskc0@pci0:3:0:0:       class=0x020000 card=0x84391043 chip=0x438111ab rev=0x11 hdr=0x00
-	    # vendor     = 'Marvell Technology Group Ltd.'
-	    # device     = 'Yukon Optima 88E8059 [PCIe Gigabit Ethernet Controller with AVB]'
-	    # class      = network
-	    # subclass   = ethernet
-	    # - in pciconv, not msk0
-	echo "${i}: $IDENT: ${STATUS}"
-    else
-	echo "${i}"
-    fi
+	tif="${i%%[0-9]*}"
+
+	for n in ${SKIP}; do
+		[ "${n}" = "${tif}" ] && if_skip=1 && break
+	done
+
+	[ ${if_skip} -eq 1 ] && continue
+
+	if [ ${DESC} -eq 1 ]; then
+		#this need for rewrite to more stable and simple code
+		uptest=$( /sbin/ifconfig ${i}| /usr/bin/awk '/status: /{printf $2}' )
+		case "${uptest}" in
+			active|associated)
+				STATUS="UP"
+				;;
+			no*)
+				STATUS="DOWN"
+				;;
+			*)
+				STATUS="NO STATE"
+		esac
+		IDENT=$( /usr/sbin/pciconf -vl | /usr/bin/grep -A4 ^${i} | /usr/bin/egrep "device*=*" | /usr/bin/cut -d "=" -f 2|/usr/bin/xargs )
+		# this is not work in msk0: its looks like:
+		# mskc0@pci0:3:0:0:       class=0x020000 card=0x84391043 chip=0x438111ab rev=0x11 hdr=0x00
+		# vendor     = 'Marvell Technology Group Ltd.'
+		# device     = 'Yukon Optima 88E8059 [PCIe Gigabit Ethernet Controller with AVB]'
+		# class      = network
+		# subclass   = ethernet
+		# - in pciconv, not msk0
+		echo "${i}: $IDENT: ${STATUS}"
+	else
+		echo "${i}"
+	fi
+
 done

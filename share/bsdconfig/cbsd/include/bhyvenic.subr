@@ -1,0 +1,186 @@
+load_nic_info()
+{
+	nic_last_id=1
+	local sqldelimer=" "
+
+	unset niclist
+
+	for last_nic in $( seq 1 16 ); do
+		unset nic_order${last_nic}
+	done
+
+	eval $( cbsdsql local SELECT nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+		echo "export nic_order${nic_last_id}=\"${nic_order}\"
+		echo "export nic_driver${nic_last_id}=\"${nic_driver}\"
+		echo "export nic_slot${nic_last_id}=\"${nic_slot}\"
+		echo "export nic_type${nic_last_id}=\"${nic_type}\"
+		echo "export nic_parent${nic_last_id}=\"${nic_parent}\"
+		echo "export nic_hwaddr${nic_last_id}=\"${nic_hwaddr}\"
+		nic_last_id=$(( nic_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+}
+
+# form for $nic_driver
+get_nic_driver()
+{
+	local _input _retval
+
+	local _par="${1}"
+	local title=" NIC driver for ${mtag} "
+	hline=
+
+	local menu_list="
+		'vtnet'		'Virtio Ethernet driver'	'Virtio network device'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	[ -n "${nic_driver}" ] && local defaultitem="${nic_driver}"
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	[ $retval -eq $DIALOG_OK ] && nic_driver="${menu_choice}"
+
+	return $retval
+}
+
+
+# form for $nic_parent
+get_nic_parent()
+{
+	local _input _retval
+
+	local _par="${1}"
+	local title=" NIC driver for ${mtag} "
+	hline=
+
+	local menu_list="
+		'vtnet'		'Virtio Ethernet driver'	'Virtio network device'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	[ -n "${nic_driver}" ] && local defaultitem="${nic_driver}"
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	[ $retval -eq $DIALOG_OK ] && nic_driver="${menu_choice}"
+
+	return $retval
+}
+
+
+# form for $nic_hwaddr
+get_nic_hwaddr()
+{
+	local _input
+	local _defhwaddr=$( ip2mac 192.168.0.2 )
+
+	f_dialog_title " NIC hwaddr "
+
+	[ -n "${nic_hwaddr}" ] && new_defhwaddr="${nic_hwaddr}"
+
+	f_dialog_input _input "Input MAC address, eg: ${_defhwaddr}" "${new_defhwaddr}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nic_hwaddr="${_input}"
+}
+
+
+
+# form for new nic
+# -d driver -t type -h hwaddr
+add_nic()
+{
+	local controller=
+	local nic=
+	local size=
+	local newnic=
+
+	while getopts "d:t:h:" opt; do
+		case "$opt" in
+			d) nic_driver="${OPTARG}" ;;
+			t) nic_type="${OPTARG}" ;;
+			h) nic_hwaddr="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${nic_driver}" ] && err 1 "${MAGENTA}Empty nic_driver${NORMAL}"
+	[ -z "${nic_type}" ] && err 1 "${MAGENTA}Empty nic_type${NORMAL}"
+	[ -z "${nic_hwaddr}" ] && err 1 "${MAGENTA}Empty nic_hwaddr${NORMAL}"
+
+	if [ -n "${driver}" ]; then
+		cbsdsql local "INSERT INTO bhyvenic ( jname,nic_driver,nic_type,nic_hwaddr ) VALUES ( \"${jname}\",\"${nic_driver}\",\"${nic_type}\",\"${nic_hwaddr}\" )"
+	else
+		cbsdsql local "INSERT INTO bhyvenic ( jname,nic_type,nic_hwaddr ) VALUES ( \"${jname}\",\"${nic_type}\",\"${nic_hwaddr}\" )"
+	fi
+
+	return 0
+}
+
+
+# update hwaddr by nic id
+# $nic_hwaddr must be set
+update_nic_hwaddr()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_hwaddr}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql local UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}

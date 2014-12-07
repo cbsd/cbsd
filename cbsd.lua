@@ -1,5 +1,5 @@
 product="CBSD"
-myversion="11.0.0"
+myversion="10.1.2e"
 
 if not workdir then
 	print ( "no workdir" )
@@ -19,6 +19,7 @@ color= workdir .. "/ansiicolor.subr"
 nodes= workdir .. "/nodes.subr"
 jrcconf= workdir .. "/rcconf.subr"
 vimageconf= workdir .. "/vnet.subr"
+vimagetui= workdir .. "/vnet-tui.subr"
 inventory= workdir .. "/nc.inventory"
 nodedescr= workdir .. "/node.desc"
 initenv= workdir .. "/initenv.subr"

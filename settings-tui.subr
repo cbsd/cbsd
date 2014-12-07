@@ -66,6 +66,25 @@ curval()
 	return 0
 }
 
+# Increment index for menu counter
+# required cbsd as shell for is_number
+inc_menu_index()
+{
+	local T
+	[ -z "${1}" ] && return 0
+
+	eval T="\$$1"
+
+	if ! is_number ${T}; then
+		T=$(( T + 1 ))
+	else
+		T="X"
+	fi
+	eval "${1}=${T}"
+	printf "${T}"
+	return 0
+}
+
 
 #find for first jnameX where X is number++
 freejname()
@@ -401,6 +420,83 @@ get_construct_ver()
 			"${_message}" || return $?
 
 	ver="${_input}"
+}
+
+# form for $user_pw_root
+get_construct_user_pw_root()
+{
+	local prompt1="Enter New Password"
+	local prompt2="Re-enter Password"
+	local hline="Use alpha-numeric, punctuation, TAB or ENTER"
+
+	f_dialog_title " Jail Root Password "
+
+	local height1 width1
+	f_dialog_inputbox_size height1 width1 \
+		"$DIALOG_TITLE"     \
+		"$DIALOG_BACKTITLE" \
+		"$prompt1"          \
+		""                  \
+		"$hline"
+
+	local height2 width2
+	f_dialog_inputbox_size height2 width2 \
+		"$DIALOG_TITLE"     \
+		"$DIALOG_BACKTITLE" \
+		"$prompt2"          \
+		""                  \
+		"$hline"
+
+	#
+	# Loop until the user provides taint-free/valid input
+	#
+	local _password1 _password2
+	while :; do
+		_password1=$( $DIALOG \
+			--title "$DIALOG_TITLE"         \
+			--backtitle "$DIALOG_BACKTITLE" \
+			--hline "$hline"                \
+			--ok-label "$msg_ok"            \
+			--cancel-label "$msg_cancel"    \
+			--insecure                      \
+			--passwordbox "$prompt1"        \
+			$height1 $width1                \
+			2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+		) || return $?
+		# Return if user either pressed ESC or chose Cancel/No
+		debug= f_dialog_line_sanitize _password1
+
+		_password2=$( $DIALOG \
+				--title "$DIALOG_TITLE"         \
+				--backtitle "$DIALOG_BACKTITLE" \
+				--hline "$hline"                \
+				--ok-label "$msg_ok"            \
+				--cancel-label "$msg_cancel"    \
+				--insecure                      \
+				--passwordbox "$prompt2"        \
+				$height2 $width2                \
+				2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+			) || return $?
+		# Return if user either pressed ESC or chose Cancel/No
+		debug= f_dialog_line_sanitize _password2
+
+		# Check for NULL entry
+		if ! [ "$_password1" -o "$_password2" ]; then
+			f_show_msg "$msg_password_is_empty"
+			continue
+		fi
+
+		# Check for password mismatch
+		if [ "$_password1" != "$_password2" ]; then
+			f_show_msg "$msg_passwords_do_not_match"
+			continue
+		fi
+
+		user_pw_root="$_password1"
+		break
+	done
+
+	return $DIALOG_OK
 }
 
 # form for $path
@@ -1558,11 +1654,17 @@ exec_master_poststart="${exec_master_poststart}";
 exec_master_poststop="${exec_master_poststop}";
 exec_master_prestart="${exec_master_prestart}";
 exec_master_prestop="${exec_master_prestop}";
+pkg_bootstrap="${pkg_bootstrap}";
+EOF
+
+	[ -n "${user_pw_root}" ] && cat >> ${TMPFILE} <<EOF
+user_pw_root='${user_pw_root}'
 EOF
 
 	[ -n "${interface}" ] && cat >> ${TMPFILE} <<EOF
 interface="${interface}"
 EOF
+
 
 	[ -n "${jailskeldir}" ] && cat >> ${TMPFILE} <<EOF
 jailskeldir="${jailskeldir}"
