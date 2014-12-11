@@ -49,6 +49,16 @@ __FBSDID("$FreeBSD: head/bin/sh/mystring.c 229219 2012-01-01 22:15:38Z jilles $"
 #ifdef CBSD
 #include <stdio.h>
 #include "output.h"
+#include <sys/types.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <errno.h>
+#include <string.h>
+#include <sysexits.h>
+
+//#include "shell.h"
+//#include "memalloc.h"
+//#include "output.h"
 #endif
 #include <stdlib.h>
 #include "shell.h"
@@ -56,6 +66,16 @@ __FBSDID("$FreeBSD: head/bin/sh/mystring.c 229219 2012-01-01 22:15:38Z jilles $"
 #include "error.h"
 #include "mystring.h"
 
+#ifdef CBSD
+enum {
+	C_POS,
+	C_LEN,
+	C_STR,
+};
+
+#define FALSE 0
+#define TRUE 1
+#endif
 
 char nullstr[1];		/* zero length string */
 
@@ -127,6 +147,86 @@ strlencmd(int argc, char **argv)
 	    out1fmt("%u",(unsigned int)strlen(argv[1]));
 	else
 	    out1fmt("0");
+	return 0;
+}
+
+int
+substr_usage(void)
+{
+	out1fmt("Substring\n");
+	out1fmt("require: --pos, --len, --str\n");
+	return (EX_USAGE);
+}
+
+int
+substrcmd(int argc, char **argv)
+{
+	char *pointer;
+	int c;
+	int optcode = 0;
+	int option_index = 0;
+	char *str = NULL;
+	int pos = 0;
+	int len = 0;
+
+	struct option long_options[] = {
+		{ "pos", required_argument, 0 , C_POS },
+		{ "len", required_argument, 0 , C_LEN },
+		{ "str", required_argument, 0 , C_STR },
+		/* End of options marker */
+		{ 0, 0, 0, 0 }
+	};
+
+	if (argc != 4)
+		substr_usage();
+
+	while (TRUE) {
+		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
+		if (optcode == -1) break;
+		switch (optcode) {
+			case C_POS:
+				pos = atoi(optarg);
+				break;
+			case C_LEN:
+				len=atoi(optarg);
+				break;
+			case C_STR:
+				str = malloc(strlen(optarg) + 1);
+				memset(str, 0, strlen(optarg) + 1);
+				strcpy(str, optarg);
+				break;
+		}
+	} //while
+
+	//zero for getopt* variables for next execute
+	optarg=NULL;
+	optind=0;
+	optopt=0;
+	opterr=0;
+	optreset=0;
+
+	if (str == NULL) return 1;
+	pointer = malloc(len+1);
+
+	if (pointer == NULL)
+	{
+		out1fmt("Unable to allocate memory.\n");
+		free(str);
+		return 1;
+	}
+
+	for (c = 0 ; c < pos -1 ; c++)
+		str++; 
+
+	for (c = 0 ; c < len ; c++)
+	{
+		*(pointer+c) = *str;
+		str++;
+	}
+
+	*(pointer+c) = '\0';
+	out1fmt("%s",pointer);
+	free(pointer);
 	return 0;
 }
 #endif

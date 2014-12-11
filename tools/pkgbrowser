@@ -1,8 +1,8 @@
-#!/bin/sh
-#v10.0.6
+#!/usr/local/bin/cbsd
+#v10.1.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="out repo conf"
+MYOPTARG="controlmaster out repo conf"
 MYDESC="Generate choosen package list from repository"
 ADDHELP="out=path_to_file with result, instead of random\n\
 repo= use this repository\n\
@@ -14,111 +14,233 @@ set +e
 
 . ${subr}
 . ${tools}
-
+. ${dialog}
 init $*
 
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
 
-sort_and_upgrade()
+readconf pkgbrowser.conf
+
+populate_menu_by_category()
 {
-    local list i tst
-    local tmp1="${tmpdir}/pkgtmp.$$"
+	cat_id="${1}"
+	shift
+	cat_name="${1}"
+	shift
+	[ -z "${cat_id}" -o -z "${cat_name}" ] && return 1
 
-    list=$( /usr/sbin/pkg ${PKGOPT} rquery "%n-%v" )
+	local _tmpdir="${tmpdir}/pkg"
+	[ ! -d "${_tmpdir}" ] && mkdir "${_tmpdir}"
 
-    [ $? -ne 0 ] && err 1 "${MAGENTA}Repository not configured or network error${NORMAL}"
+	[ ${UPDATED} -eq 1 ] && return 0
+	[ -f "${_tmpdir}/${cat_name}.mnu" -a ${UPDATED} -eq 0 ] && return 0
 
-    printf "${GREEN}New version detected${NORMAL}\n${MAGENTA}Create package list.\n Don't interrupt processing. It will take a long...${NORMAL}\n"
+	echo 'menu_list="' > ${_tmpdir}/${cat_name}.mnu
+	echo "'EXIT'	'EXIT'	'Exit this menu'" >> ${_tmpdir}/${cat_name}.mnu
 
-    truncate -s0 ${tmp1} ${LISTFILE}
+	/usr/bin/truncate -s0 ${_tmpdir}/${cat_name}.idx
+	/bin/rm -f ${_tmpdir}/${cat_name}.idx.gz
 
-    for i in ${list}; do
-	tst=$( /usr/sbin/pkg ${PKGOPT} query "%ro" $i 2>/dev/null )
-	[ -z "${tst}" ] &&  dot "/usr/sbin/pkg ${PKGOPT} query" && echo $i >> ${tmp1}
-    done
+	f_dialog_info "Dialogizing for ${cat_name}..."
 
-    printf "${MAGENTA}\nSorting. Please wait...${NORMAL}\n"
+	local sqldelimer="|"
+	local IFS="|"
 
-    cat ${tmp1} |/usr/bin/sort -u | \
-	while read _p; do
-#       CATEGORY=`pkg rquery \"%C\" $_p | xargs`
-#       [ "${CATEGORY}"  = "local" ] && continue
-#       [ -z "$CATEGORY" ] &&
-#       CATEGORY=$_p
-	echo "\"$_p\" \"\" off \ " >> ${LISTFILE}
+	local i=0
+
+	local prefix=X
+	local cur_prefix=Y
+
+	cbsdsql /var/db/pkg/${repofile} "SELECT name,origin,comment,flatsize FROM packages WHERE id IN ( SELECT package_id FROM pkg_categories WHERE category_id=\"${cat_id}\" ) AND id IN ( SELECT packages.id FROM packages LEFT JOIN deps ON packages.origin = deps.origin WHERE deps.origin IS NULL ) ORDER BY name" |while read name origin comment flatsize; do
+		prefix=$( substr --pos=0 --len=1 --str=${name} )
+
+		if [ "${prefix}" != "${cur_prefix}" ]; then
+			cur_prefix="${prefix}"
+		else
+			prefix=""
+		fi
+
+		comment=$( echo "${comment}" |/usr/bin/tr -d "\"()'\`" )
+		markname=$( echo "${name}" |/usr/bin/tr -d "\"()'\`-.+" )
+
+		if conv2human "$flatsize"; then
+			flatsize=${convval}
+		fi
+
+		echo "export pkgmark_${markname}_origin='${origin}'" >> ${_tmpdir}/${cat_name}.idx
+		echo "'${prefix} ${name}'	'[\$pkgmark_${markname}] ${origin}'	'${comment}. Size: ${flatsize}'" >> ${_tmpdir}/${cat_name}.mnu
+
 	done
 
-	/usr/bin/xz ${LISTFILE}
-	rm -f ${tmp1}
-
+	/usr/bin/gzip -9 ${_tmpdir}/${cat_name}.idx
+	echo '"' >> ${_tmpdir}/${cat_name}.mnu
 }
 
+browse_category()
+{
+	local title=" ${repofile} "
+	local btitle="Select packages"
+	local prompt=""
+	local defaultitem=
+	local hline="Hit ENTER for SELECT"
+	local prompt=" Choose category and select packages.\nSelected: ${pkgnum} "
+	local kversion
 
+	local f_dialog_title=" FreeBSD repository "
+
+	local menu_list="'EXIT'	'<<' 'Exit this menu'"
+
+	local num=0
+
+	local sqldelimer="|"
+	local IFS="|"
+
+	eval $( cbsdsql /var/db/pkg/${repofile} 'SELECT id,name FROM categories ORDER BY name'| while read id name; do
+			echo "local id_${num}=\"${id}\""
+			echo "local name_${num}=\"${name}\""
+			num=$(( num + 1 ))
+	done )
+
+	unset IFS
+	unset sqldelimer
+
+	for num in $( seq 0 200 ); do
+		eval id="\$id_${num}"
+		[ -z "${id}" ] && break
+		eval name="\$name_${num}"
+		[ -z "${name}" ] && break;
+		skip=0
+
+		# strict list by pkgbrowser.conf
+		for i in ${IGNORE_CATEGORY}; do
+			[ "${name}" = "${i}" ] && skip=1 && break
+		done
+
+		[ ${skip} -eq 1 ] && continue
+
+		populate_menu_by_category ${id} ${name}
+		menu_list="${menu_list} '${name}'	''	''"
+	done
+
+	IFS=" "
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\Choose\"                  \
+		--cancel-label \"Cancel\"               \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
 
 
 ### MAIN ###
 [ -z "${out}" ] && out="${tmpdir}/pkgbrowser.$$"
-tmp2="${ftmpdir}/pkgmytmp2.$$"
-
-trap "rm -f ${tmp2}" HUP INT ABRT BUS TERM EXIT
-
-DIALOG=${DIALOG=/usr/bin/dialog}
-
 PKGCONF=""
 PKGOPT=""
 PKG_MODIFIED="${tmpdir}/pkg_updated.txt"
 UPDATED="0"
 
-#if [ -n "${repo}" ]; then
-#    PKGCONF="${ftmpdir}/mypkg.conf.$$"
-#    echo "PACKAGESITE: ${repo}" > ${PKGCONF}
-#    trap "rm -f ${tmp1} ${tmp2} ${PKGCONF}" 0 1 2 3 4 5 9
-#elif [ -n "${conf}" ]; then
-#    [ -f "${conf}" ] && PKCONF="${conf}"
-#fi
+# controlmaster for submenu
+CONTROLMASTER=$( /usr/bin/mktemp )
+/usr/bin/touch ${CONTROLMASTER}
 
-#[ -z "${PKGCONF}" -a -f "/usr/local/etc/pkg.conf" ] && PKGCONF="/usr/local/etc/pkg.conf"
-#[ -z "${PKGCONF}" ] && err 0 "${MAGENTA}No such valid configuration${NORMAL}"
+trap "/bin/rm -f ${CONTROLMASTER}" HUP INT ABRT BUS TERM EXIT
 
-#[ -z "${PKGCONF}" ] && PKGOPT="-C ${PKGCONF}"
-
-printf "${MAGENTA}Update local copy of repository catalogues...${NORMAL}"
+#printf "${MAGENTA}Update local copy of repository catalogues...${NORMAL}"
 tst=$( /usr/sbin/pkg update 2>&1 )
 [ $? -ne 0 ] && err 1 "${MAGENTA}pkg update failed: ${NORMAL}${tst}"
 
-allrepos=$(find /var/db/pkg/ -type f -name repo-\*.sqlite -exec md5 -qs {} \; | xargs)
-tst=$(md5 -qs "${allrepos}")
+allrepos=$( /usr/bin/find /var/db/pkg/ -type f -depth 1 -maxdepth 1 -name repo-\*.sqlite -exec /sbin/md5 -qs {} \; | /usr/bin/xargs)
+tst=$( /sbin/md5 -qs "${allrepos}" )
 
 if [ -f "${PKG_MODIFIED}" ]; then
-    oldmd5=$(cat ${PKG_MODIFIED})
-    [ "${oldmd5}" != "${tst}" ] && UPDATED="1"
+	oldmd5=$( /bin/cat ${PKG_MODIFIED})
+	[ "${oldmd5}" != "${tst}" ] && UPDATED="1"
 else
-    UPDATED="1"
+	UPDATED="1"
 fi
 
 REPOFILE="repo"
 LISTFILE="${tmpdir}/pkg_${REPOFILE}.list"
 
 if [ "${UPDATED}" -eq 1 -o ! -f "${LISTFILE}.xz" ]; then
-    echo "${tst}" > ${PKG_MODIFIED}
-    sort_and_upgrade
+	echo "${tst}" > ${PKG_MODIFIED}
+	sort_and_upgrade
 else
-    printf "${GREEN}Not changed${NORMAL}"
+	printf "${GREEN}Not changed${NORMAL}"
 fi
 
 [ ! -f "${LISTFILE}.xz" ] && err 1 "${MAGENTA}No such sorted pkglist file${NORMAL}"
 
-cat > $tmp2 << EOF
---colors --backtitle "\Z1Select packages" --separate-output --title "Select packages" --checklist "Use space for mark packages \n" 0 61 0
-EOF
+f_dialog_info "Dialogizing..."
 
-/usr/bin/xzcat ${LISTFILE}.xz >> ${tmp2}
+pkgnum=0
 
-printf "${MAGENTA}\nDialogizing...${NORMAL}"
-${DIALOG} --file ${tmp2} 2>$out
+while :; do
+	pkgnum=$( /usr/bin/egrep -v '(pkgmark_)*(_origin=)' ${CONTROLMASTER} |/usr/bin/wc -l |/usr/bin/awk '{printf $1}' )
+	browse_category || break
+	UPDATED=0
+	f_dialog_menutag_fetch mtag
 
-if [ $? -ne 0 -o $( wc -l ${out}|awk '{printf $1}' ) = "0" ]; then
-    [ "${REPOFILE}" = "default" ] && rm -f ${LISTFILE}.xz
-    rm -f ${out} && err 1 "${MAGENTA}No pkg selected${NORMAL}"
-fi
+	[ -z "${mtag}" ] && exit $SUCCESS
 
-echo $out
+	case "$mtag" in
+		"EXIT")
+			. ${CONTROLMASTER}
+			if [ -z "${controlmaster}" ]; then
+				controlmaster="/dev/stdout"
+			else
+				/usr/bin/truncate -s0 ${controlmaster}
+			fi
+			for i in $( printenv |/usr/bin/egrep '(pkgmark_)*(_origin=)' |/usr/bin/cut -d "=" -f 2 ); do
+				printf "${i} " >> ${controlmaster}
+			done
+			f_die
+			;;
+		"-")
+			continue
+			;;
+		*)
+			pkgbrowsecat name="${mtag}" controlmaster="${CONTROLMASTER}"
+			continue
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+done
+
+return $SUCCESS

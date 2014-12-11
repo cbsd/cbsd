@@ -1,0 +1,143 @@
+#!/usr/local/bin/cbsd
+#v10.1.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="name controlmaster"
+MYOPTARG=""
+MYDESC="Generate choosen package list from repository"
+ADDHELP="out=path_to_file with result, instead of random\n\
+repo= use this repository\n\
+conf= use this pkg.conf\n"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${tools}
+. ${dialog}
+init $*
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+dialog_menu_main()
+{
+	local title=""
+	local btitle="Select packages"
+	local prompt=""
+	local defaultitem=
+	local hline="Hit ENTER for SELECT"
+	local prompt=" Use 'ENTER' to mark packages "
+	local kversion
+
+	local f_dialog_title=" CBSD FreeBSD Images Repository "
+
+	local _menufile="${tmpdir}/pkg/${name}.mnu"
+	
+	[ ! -f "${_menufile}" ] && err 1 "NO such menufile ${_menufile}"
+
+	. ${_menufile}
+
+	[ -z "${menu_list}" ] && return 0
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"Ok\"                       \
+		--cancel-label \"Cancel\"               \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+### MAIN ###
+PKGCONF=""
+PKGOPT=""
+PKG_MODIFIED="${tmpdir}/pkg_updated.txt"
+UPDATED="0"
+
+[ ! -f "${tmpdir}/pkg/${name}.idx.gz" ] && err 1 "${MAGENTA}No index file${NORMAL}"
+
+CONTROLMASTER="${controlmaster}"
+
+if [ ! -f "${CONTROLMASTER}" ]; then
+	CONTROLMASTER=$( /usr/bin/mktemp )
+	/usr/bin/touch ${CONTROLMASTER}
+fi
+
+. ${CONTROLMASTER}
+
+trap "/bin/rm -f ${CONTROLMASTER}" HUP INT ABRT BUS TERM EXIT
+
+REPOFILE="repo"
+LISTFILE="${tmpdir}/pkg_${REPOFILE}.list"
+
+while :; do
+	dialog_menu_main || break
+	f_dialog_menutag_fetch mtag
+
+	[ -z "${mtag}" ] && exit $SUCCESS
+
+	case "$mtag" in
+		"EXIT")
+			/usr/bin/truncate -s0 ${CONTROLMASTER}
+			for i in $( printenv |/usr/bin/grep pkgmark_ ); do
+				index=${i%%=*}
+				/usr/bin/zgrep "${index}_origin=" ${tmpdir}/pkg/${name}.idx.gz >> ${CONTROLMASTER}
+				echo "export ${i}" >> ${CONTROLMASTER}
+			done
+			trap "" HUP INT ABRT BUS TERM EXIT
+			exit 0
+		;;
+		"-")
+			continue
+			;;
+		*)
+			index=${mtag%% *}
+			pkg=${mtag##* }
+			markname=$( echo "${pkg}" |/usr/bin/tr -d "\"()'\`-.+" )
+			eval mark=\"\$pkgmark_${markname}\"
+			if [ "${mark}" = "X" ];then
+				unset pkgmark_${markname}
+			else
+				export pkgmark_${markname}="X"
+			fi
+			continue
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+done
+
+return $SUCCESS

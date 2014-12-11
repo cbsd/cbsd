@@ -20,7 +20,6 @@
 #define FALSE 0
 #define TRUE 1
 
-/* List of all nodesql */
 enum {
 	C_FILE,
 	C_TIMEOUT,
@@ -34,8 +33,6 @@ cbsd_fwatch_usage(void)
 	out1fmt("usage: cbsd_fwatch --file=path_to_file --timeout=0 (in seconds, 0 is infinity)\n");
 	return (EX_USAGE);
 }
-
-
 
 int
 cbsd_fwatchcmd(int argc, char *argv[])
