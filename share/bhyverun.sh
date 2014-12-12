@@ -38,8 +38,13 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	else
 		echo "Boot from CD"
-		echo "DEBUG: ${grub_iso_cmd}"
-		eval "${grub_iso_cmd}"
+		if [ "${boot_from_grub}" ] = "1" ]; then
+			echo "DEBUG: ${grub_iso_cmd}"
+			eval "${grub_iso_cmd}"
+		else
+			echo "DEBUG: ${bhyveload_cmd}"
+			eval "${bhyveload_cmd}"
+		fi
 	fi
 
 	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname};"
