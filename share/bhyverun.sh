@@ -1,7 +1,9 @@
 #!/bin/sh
 
-[ ! -f "${1}" ] && exit 0
-. ${1}
+conf="${1}"
+
+[ ! -f "${conf}" ] && exit 0
+. ${conf}
 
 detach=
 [ "${2}" = "-d" ] && detach="-d"
@@ -38,7 +40,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	else
 		echo "Boot from CD"
-		if [ "${boot_from_grub}" ] = "1" ]; then
+		if [ "${boot_from_grub}" = "1" ]; then
 			echo "DEBUG: ${grub_iso_cmd}"
 			eval "${grub_iso_cmd}"
 		else
@@ -57,12 +59,20 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 #	/usr/sbin/bhyvectl --get-vmcs-exit-interruption-info --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-interruption-error --vm ${jname} >> /tmp/reason.txt
 	if [ ${cd_boot_once} -eq 1 ]; then
+		# Eject cd
 		cd_boot_once=0
 		vm_boot="hdd"
+		[ -n "${bhyveload_cmd_once}" ] && bhyveload_cmd="${bhyveload_cmd_once}"
+		# replace hdd boot in conf
+		/usr/sbin/sysrc -qf ${conf} cd_boot_once=0
+		/usr/sbin/sysrc -qf ${conf} vm_boot=hdd
+		/usr/sbin/sysrc -qf ${conf} bhyveload_cmd="${bhyveload_cmd}"
 	fi
+	reset
+	clear
 done
 
-rm -f /tmp/bhyvestop.${jname}.lock
+/bin/rm -f /tmp/bhyvestop.${jname}.lock
 /usr/local/bin/cbsd bstop ${jname}
 /sbin/ifconfig ${mytap} destroy
 exit ${bhyve_exit}
