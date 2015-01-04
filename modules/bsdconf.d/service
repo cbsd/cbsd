@@ -3,9 +3,11 @@
 globalconf="${workdir}/cbsd.conf"
 CBSDMODULE="bsdconf"
 MYARG=""
-MYOPTARG="jname"
+MYOPTARG="jname mode baseonly ver arch"
 MYDESC="cbsd service wrapper"
-ADDHELP="jname= work in with jail\n"
+ADDHELP="jname= work in with jail\n\
+mode=list - show service list but apply IGNORE_SERVICES list from srvbrowser.conf\n\
+baseonly=1 - show services only from FreeBSD distribition (use basejail dir)\n"
 EXTHELP="modules/bsdconf.d.html"
 
 set -e
@@ -17,10 +19,34 @@ set +e
 . ${system}
 init $*
 
+
+srv_list()
+{
+	readconf ${platform}-srvbrowser.conf
+
+	local _i _x _skip
+	srv_list=
+
+	for _i in $( ${exec_cmd} -l ); do
+		_skip=0
+		for _x in ${IGNORE_SERVICES}; do
+			[ "${_x}" = "${_i}" ] && _skip=1
+		done
+		[ ${_skip} -eq 0 ] && srv_list="${srv_list} ${_i}"
+	done
+
+	for i in ${srv_list}; do
+		echo ${i}
+	done
+}
+
 #defines
 _MYDIR=$( dirname `realpath $0` )
 
-[ -n "${jname}" ] && shift # skip for jname
+[ -n "${jname}" ] && shift # skip for jname arg
+[ -n "${baseonly}" ] && shift # skip for baseonly arg
+[ -n "${arch}" ] && shift # skip for arch arg
+[ -n "${ver}" ] && shift # skip for ver arg
 
 cmd="${@}"
 [ -z "${cmd}" ] && err 1 "${MAGENTA}Empty command${NORMAL}"
@@ -29,12 +55,48 @@ cmd="${@}"
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ ${jid} -eq 0 ] && err 1 "Not running"
-	exec_cmd="/usr/sbin/jexec ${jid} /usr/sbin/service"
+	[ ${jid} -eq 0 -a "${mode}" != "list" ] && err 1 "Jail is not running"
+	[ $baserw -eq 1 ] && path=$data
+
+	if [ ${jid} -eq 0 ]; then
+		set -e
+		. ${_MYDIR}/bsdconf.subr
+		set +e
+		. ${workdir}/universe.subr
+		readconf buildworld.conf
+		init_target_arch
+		init_srcdir
+		init_basedir
+		init_kerneldir
+		prepare_jail
+	fi
+	exec_cmd="/usr/sbin/chroot ${path} /usr/sbin/service"
 else
 	data=""
-	exec_cmd="/usr/sbin/service"
+	if [ "${baseonly}" = "1" ]; then
+		. ${workdir}/universe.subr
+		readconf buildworld.conf
+		. ${buildconf}
+		init_target_arch
+		init_srcdir
+		init_basedir
+		[ ! -d "${BASE_DIR}/dev" ] && err 1 "${MAGENTA}No such base: ${GREEN}${BASE_DIR}${NORMAL}"
+		exec_cmd="/usr/sbin/chroot ${BASE_DIR} /usr/sbin/service"
+		/sbin/mount -t devfs devfs ${BASE_DIR}/dev
+		TRAP=""
+		trap "${TRAP} /sbin/umount ${BASE_DIR}/dev" HUP INT ABRT BUS TERM EXIT
+	else
+		exec_cmd="/usr/sbin/service"
+	fi
 fi
 
 [ ! -d "${data}/etc" ] && err 1 "${MAGENTA}No such etc dir: ${GREEN}${data}/etc${NORMAL}"
-exec ${exec_cmd} ${cmd}
+
+case "${mode}" in
+	list)
+		srv_list
+		;;
+	*)
+		exec ${exec_cmd} ${cmd}
+		;;
+esac

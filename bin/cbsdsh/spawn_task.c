@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <getopt.h>

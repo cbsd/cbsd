@@ -30,18 +30,10 @@
  * SUCH DAMAGE.
  */
 
-#ifndef lint
-#if 0
-static char sccsid[] = "@(#)exec.c	8.4 (Berkeley) 6/8/95";
-#endif
-#endif /* not lint */
-#include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/exec.c 255072 2013-08-30 12:09:59Z jilles $");
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <errno.h>
 #include <paths.h>
 #include <stdlib.h>

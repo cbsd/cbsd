@@ -17,6 +17,7 @@ SRCS= ${SHSRCS} ${GENSRCS} ${GENHDRS}
 # utilities of the same name are handled with the associated manpage,
 # builtin.1 in share/man/man1/.
 WITHOUT_MAN=	yes
+NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 LDADD= -ledit -ltermcap -lsqlite3 -pthread
@@ -24,8 +25,6 @@ LDADD= -ledit -ltermcap -lsqlite3 -pthread
 CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 # for debug:
 #DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
-WARNS?=	2
-WFORMAT=0
 
 .PATH:	${.CURDIR}/bltin \
 	${.CURDIR}/kill \

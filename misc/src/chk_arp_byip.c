@@ -35,7 +35,7 @@
 #include <net/if_dl.h>
 #include <net/if_types.h>
 #include <net/route.h>
-#include <net/iso88025.h>
+#include <net/if_types.h>
 
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
@@ -62,6 +62,14 @@
 #define IP6_HDRLEN 40         // IPv6 header length
 #define ICMP_HDRLEN 8         // ICMP header length for echo request, excludes data
 
+#ifdef __DragonFly__
+// net/route.h
+#define RTF_LLDATA  0x400           /* used by apps to add/del L2 entries */
+#define SA_SIZE(sa)                                             \
+    (  (!(sa) || ((struct sockaddr *)(sa))->sa_len == 0) ?      \
+        sizeof(long)            :                               \
+        1 + ( (((struct sockaddr *)(sa))->sa_len - 1) | (sizeof(long) - 1) ) )
+#endif
 
 useconds_t	pingtimeout = 0;
 int		pingnum = 0;

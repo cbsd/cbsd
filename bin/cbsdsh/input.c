@@ -39,7 +39,7 @@ static char sccsid[] = "@(#)input.c	8.3 (Berkeley) 6/9/95";
 __FBSDID("$FreeBSD: head/bin/sh/input.c 253658 2013-07-25 19:48:15Z jilles $");
 
 #include <stdio.h>	/* defines BUFSIZ */
-#include <fcntl.h>
+#include <sys/file.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>

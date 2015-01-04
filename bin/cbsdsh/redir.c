@@ -42,7 +42,7 @@ __FBSDID("$FreeBSD: head/bin/sh/redir.c 254426 2013-08-16 20:24:41Z jilles $");
 #include <sys/stat.h>
 #include <signal.h>
 #include <string.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>

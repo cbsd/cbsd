@@ -48,14 +48,14 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 255215 2013-09-04 22:10:16Z jilles $");
 #include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <locale.h>
 #include <errno.h>
 
 #ifdef CBSD
 #include <sys/param.h> //MAXPATHLEN
 #include <stdlib.h> //setenv
-#include <malloc_np.h> //calloc
+//#include <malloc_np.h> //calloc
 //#include <libxo/xo.h> // XML/JSON/HTML stuff via xo_emit
 #endif
 

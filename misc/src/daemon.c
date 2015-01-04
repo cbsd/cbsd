@@ -29,6 +29,11 @@
 
 #include "un-namespace.h"
 
+#ifdef __DragonFly__
+// sys/mman.h:
+#define      MADV_PROTECT    10      /* protect process from pageout kill */
+#endif
+
 static void dummy_sighandler(int);
 static void restrict_process(const char *);
 static int  wait_child(pid_t pid, sigset_t *mask);

@@ -3,9 +3,10 @@
 globalconf="${workdir}/cbsd.conf"
 CBSDMODULE="bsdconf"
 MYARG=""
-MYOPTARG="jname"
+MYOPTARG="jname fromfile"
 MYDESC="cbsd sysrc wrapper"
-ADDHELP="jname= work in with jail\n"
+ADDHELP="jname= work in with jail\n\
+fromfile - include file for read sysrc_enable, sysrc_disable list\n"
 EXTHELP="modules/bsdconf.d.html"
 
 set -e
@@ -18,22 +19,50 @@ set +e
 init $*
 
 #defines
-_MYDIR=$( dirname `realpath $0` )
+_MYDIR=$( /usr/bin/dirname `/bin/realpath $0` )
 
 [ -n "${jname}" ] && shift # skip for jname
+
+if [ -n "${fromfile}" ]; then
+	shift
+	[ -r "${fromfile}" ] && . ${fromfile}
+fi
+
 cmd="${@}"
-[ -z "${cmd}" ] && err 1 "${MAGENTA}Empty command${NORMAL}"
+[ -z "${cmd}" -a -z "${fromfile}" ] && err 1 "${MAGENTA}Empty command${NORMAL}"
 
 ## MAIN ##
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ ${jid} -eq 0 ] && err 1 "Not running"
-	exec_cmd="/usr/sbin/sysrc -f ${data}/etc/rc.conf"
+
+	[ $baserw -eq 1 ] && path=$data
+
+	if [ ${jid} -eq 0 ]; then
+		set -e
+			. ${_MYDIR}/bsdconf.subr
+		set +e
+		. ${workdir}/universe.subr
+		readconf buildworld.conf
+		init_target_arch
+		init_srcdir
+		init_basedir
+		init_kerneldir
+		prepare_jail
+	fi
+	exec_cmd="/usr/sbin/chroot ${path} ${SYSRC_CMD} -f /etc/rc.conf"
 else
 	data=""
-	exec_cmd="/usr/sbin/sysrc"
+	exec_cmd="${SYSRC_CMD}"
 fi
 
-[ ! -f "${data}/etc/rc.conf" ] && err 1 "${MAGENTA}No such etc dir: ${GREEN}${data}/etc/rc.conf${NORMAL}"
-exec ${exec_cmd} ${cmd}
+[ ! -f "${data}/etc/rc.conf" ] && touch ${data}/etc/rc.conf
+[ -z "${fromfile}" ] && ${exec_cmd} ${cmd}
+
+for i in ${sysrc_enable}; do
+	${exec_cmd} ${i}_enable="YES"
+done
+
+for i in ${sysrc_disable}; do
+	${exec_cmd} ${i}_enable="NO"
+done

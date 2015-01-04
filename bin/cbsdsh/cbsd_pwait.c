@@ -5,7 +5,7 @@
 
 #include <err.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>

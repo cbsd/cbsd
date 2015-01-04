@@ -1,0 +1,224 @@
+#!/usr/local/bin/cbsd
+#v10.1.2
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="controlmaster out repo conf baseonly"
+MYDESC="Generate choosen package list from repository"
+ADDHELP="out=path_to_file with result, instead of random\n\
+baseonly=1 - show services only from FreeBSD distribition (use basejail dir)\n"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${tools}
+. ${dialog}
+init $*
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+readconf ${platform}-srvbrowser.conf
+
+init_srv_list()
+{
+	local _cmd _res
+
+	if [ "${baseonly}" = "1" ];then
+		_cmd="service mode=list baseonly=1"
+	else
+		_cmd="service mode=list"
+	fi
+
+	_tmp=$( mktemp )
+
+	${_cmd} > ${_tmp}
+	_res=$?
+	if [ ${_res} -ne 0 ]; then
+		cat ${_tmp}
+		/bin/rm -f ${_tmp}
+		exit ${_res}
+	fi
+	srv_list=$( /bin/cat ${_tmp} |/usr/bin/sort )
+	/bin/rm -f ${_tmp}
+}
+
+# mark service as active when it enabled
+init_srv_status()
+{
+	local _res _active
+
+	for i in ${srv_list}; do
+		_res=$( sysrc ${i}_enable 2>/dev/null )
+		_active=${_res##*:}
+		case "${_active}" in
+			*YES)
+				eval "selected_srv_${i}=\"1\""
+				;;
+		esac
+	done
+}
+
+
+
+
+browse_service_list()
+{
+	local title=" ${repofile} "
+	local btitle="Select packages"
+	local prompt=""
+	local defaultitem=
+	local hline="Hit ENTER for SELECT"
+	local prompt=" Choose category and select packages.\nSelected: ${srvnum} "
+	local mark prefix name
+
+	local f_dialog_title=" Service list "
+
+	local menu_list=" \
+		'EXIT'		'<<'			'Exit this menu' \
+		'-'	'-'	'' \
+	" # END-QUOTE
+
+	local sqldelimer="|"
+	local IFS="|"
+
+	unset IFS
+	unset sqldelimer
+
+	local prefix=X
+	local cur_prefix=Y
+
+	for name in ${srv_list}; do
+
+		prefix=$( substr --pos=0 --len=1 --str=${name} )
+
+		if [ "${prefix}" != "${cur_prefix}" ]; then
+			cur_prefix="${prefix}"
+		else
+			prefix=""
+		fi
+
+		eval mark=\$selected_srv_${name}
+
+		if [ "${mark}" = "1" ]; then
+			srv_mark="X"
+		else
+			srv_mark=" "
+		fi
+
+		menu_list="${menu_list} '${prefix} ${name}'	'[${srv_mark}]'	''"
+	done
+
+	IFS=" "
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\Choose\"                  \
+		--cancel-label \"Cancel\"               \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+### MAIN ###
+[ -z "${out}" ] && out="${tmpdir}/srvbrowser.$$"
+# controlmaster for submenu
+CONTROLMASTER=$( /usr/bin/mktemp )
+/usr/bin/touch ${CONTROLMASTER}
+
+trap "/bin/rm -f ${CONTROLMASTER}" HUP INT ABRT BUS TERM EXIT
+
+init_srv_list
+[ "${baseonly}" != "1" ] && init_srv_status
+
+srvnum=0
+
+while :; do
+
+	# calculate num of selected srv. srvlist variable from input_manual method is preferred.
+	if [ -z "${srvlist}" ]; then
+		srvnum=$( /usr/bin/egrep -v '(srvmark_)*(_origin=)' ${CONTROLMASTER} |/usr/bin/wc -l |/usr/bin/awk '{printf $1}' )
+	else
+		srvnum=$( echo $srvlist |/usr/bin/wc -w| /usr/bin/awk '{printf $1}' )
+	fi
+
+	browse_service_list || break
+	UPDATED=0
+	f_dialog_menutag_fetch mtag
+
+	[ -z "${mtag}" ] && exit $SUCCESS
+
+	case "$mtag" in
+		"EXIT")
+			sysrc_enable=""
+
+			for i in ${srv_list}; do
+				eval mark=\$selected_srv_${i}
+				[ "${mark}" = "1" ] && sysrc_enable="${sysrc_enable} ${i}"
+			done
+
+			 . ${CONTROLMASTER}
+			if [ -z "${controlmaster}" ]; then
+				echo "${sysrc_enable}"
+			else
+				/usr/bin/truncate -s0 ${controlmaster}
+				${SYSRC_CMD} -qf ${controlmaster} sysrc_enable="${sysrc_enable}" >/dev/null
+			fi
+			f_die
+			;;
+		"-")
+			continue
+			;;
+		*)
+			index=${mtag%% *}
+			name=${mtag##* }
+
+			eval mark=\$selected_srv_${name}
+
+			if [ "${mark}" = "1" ];then
+				eval "selected_srv_${name}=\"0\""
+			else
+				eval "selected_srv_${name}=\"1\""
+			fi
+			continue
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+done
+
+return $SUCCESS

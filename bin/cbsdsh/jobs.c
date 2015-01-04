@@ -44,7 +44,7 @@ __FBSDID("$FreeBSD: head/bin/sh/jobs.c 256735 2013-10-18 12:35:12Z jilles $");
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <sys/file.h>
 #include <paths.h>
 #include <signal.h>
 #include <stddef.h>

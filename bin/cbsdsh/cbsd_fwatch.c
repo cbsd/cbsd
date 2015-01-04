@@ -1,10 +1,18 @@
+
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/file.h>
+
+#include <errno.h>
+#include <paths.h>
+#include <stdlib.h>
+
 #include <sys/event.h>
 #include <sys/time.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <err.h>
 #include <getopt.h>
 

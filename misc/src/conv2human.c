@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+#ifdef __DragonFly__
+#include "expand_number.c"
+#endif
+
 int
 prthumanval(uint64_t bytes)
 {

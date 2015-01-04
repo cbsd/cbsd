@@ -30,7 +30,7 @@ err()
 truncate -s0 ${LOGFILE} ${BUILDLOG} 
 rm -f /tmp/port_log* > /dev/null 2>&1 ||true
 #determine how we have free ccachefs 
-#CCACHE_SIZE=`df -m /root/.ccache | tail -n1 |awk '{print $2}'`
+#CCACHE_SIZE=`df -m /root/.ccache | tail -n1 |/usr/bin/awk '{print $2}'`
 #[ -z "${CCACHE_SIZE}" ] && CCACHE_SIZE="4096"
 #/usr/local/bin/ccache -M ${CCACHE_SIZE}m >>${LOGFILE} 2>&1|| err 1 "Cannot set ccache size"
 
@@ -40,7 +40,7 @@ PORT_DIRS=$( cat /tmp/ports_list.txt )
 
 mkdir -p ${PACKAGES}/All >>${LOGFILE} 2>&1 || err 1 "Cannot create PACKAGES/All directory!"
 
-ALLPORTS=$( wc -l /tmp/ports_list.txt |awk '{printf $1"\n"'} )
+ALLPORTS=$( wc -l /tmp/ports_list.txt |/usr/bin/awk '{printf $1"\n"'} )
 PROGRESS=0
 PASS=0
 
