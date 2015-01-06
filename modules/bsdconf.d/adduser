@@ -1,17 +1,14 @@
-#!/bin/sh
-#v9.1.0
+#!/usr/local/bin/cbsd
+#v10.1.3
 globalconf="${workdir}/cbsd.conf";
 MYARG="mode"
-MYOPTARG="jname login fullname group uid secgroup shell pw"
+MYOPTARG="fromfile jname login fullname group uid secgroup shell pw"
 MYDESC="Add user to jail"
 ADDHELP="mode can be: remove, add, show\n"
 
-set -e
-. ${globalconf}
-set +e
-
 . ${subr}
 . ${strings}
+. ${system}
 init $*
 
 #defines
@@ -27,10 +24,29 @@ SERVICE="adduser"
 
 #CFG="/usr/local/etc/${SERVICE}.ini"
 
+f_getvar()
+{
+	local __var_to_get="$1" __var_to_set="$2"
+	[ "$__var_to_set" ] || local value
+	eval [ \"\${$__var_to_get+set}\" ]
+	local __retval=$?
+	eval ${__var_to_set:-value}=\"\${$__var_to_get}\"
+	[ "$__var_to_set" ] || { [ "$value" ] && echo "$value"; }
+	return $__retval
+}
+
+
 check_jaildir()
 {
-	[ -f ${data}/etc/master.passwd -a -f ${data}/etc/passwd -a -f ${data}/etc/group ] && return 0
-	return 1
+	local check_file="${path}/etc/master.passwd ${path}/etc/passwd ${path}/etc/group ${path}/usr/sbin/pw"
+	local i
+	local ret=0
+	
+	for i in $check_file; do
+		[ ! -f "${i}" ] && echo ${i} && ret=1
+	done
+
+	return ${ret}
 }
 
 getpw()
@@ -64,15 +80,81 @@ getpw()
 	echo
 }
 
+# must be filled:
+# mandatory: login, pw
+# opt: uid, fullname, group, secgroup, shell
+adduser()
+{
+	local _res
+
+	[ -z "${login}" ] && ${ECHO} "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}" && return 1
+	_res=$( ${exec_cmd} user show ${login} 2>&1)
+	case $? in
+		0)
+			${ECHO} "${MAGENTA}Already exist: ${NORMAL}${_res}"
+			return 1
+			;;
+		67)
+			;;
+		*)
+			${ECHO} "${MAGENTA}Error: ${NORMAL}${_res}"
+			return 1
+			;;
+	esac
+
+	[ -z "${pw}" ] && getpw
+	[ -z "${pw}" ] && err 1 "${GREEN}pw= ${MAGENTA} is mandatory${NORMAL}"
+	ADDON=""
+	[ -n "$uid" ] && ADDON="${ADDON} -u ${uid}"
+	[ -n "$fullname" ] && ADDON="${ADDON} -c \"${fullname}\""
+	[ -n "$group" ] && ADDON="${ADDON} -g ${group}"
+	[ -n "$secgroup" ] && ADDON="${ADDON} -G ${secgroup}"
+
+	if [ -n "$shell" ]; then
+		ADDON="${ADDON} -s ${shell}"
+	else
+		ADDON="${ADDON} -s /bin/csh"
+	fi
+
+	/usr/sbin/chroot ${path} /bin/sh <<EOF
+/usr/sbin/pw useradd ${login} ${ADDON} -m
+echo "${pw}" |/usr/sbin/pw mod user ${login} -h 0 -
+EOF
+
+}
+
+# must be filled:
+# mandatory: login
+remove()
+{
+	${exec_cmd} user del ${login}
+}
+
 
 if [ -z "${jname}" ]; then
 	data=""
-	exec_cmd=""
+	exec_cmd="/usr/sbin/pw"
 else
 	. ${jrcconf}
 	[ $? -eq 1 ] &&  err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ $jid -eq 0 ] && err 1 "${MAGENTA}Jail is not active: ${GREEN}${jname}${NORMAL}"
-	exec_cmd="/usr/sbin/jexec ${jid}"
+
+	[ $baserw -eq 1 ] && path=$data
+
+	if [ ${jid} -eq 0 ]; then
+		set -e
+		. ${_MYDIR}/bsdconf.subr
+		set +e
+		. ${workdir}/universe.subr
+		readconf buildworld.conf
+		init_target_arch
+		init_srcdir
+		init_basedir
+		init_kerneldir
+		prepare_jail
+	fi
+
+	exec_cmd="/usr/sbin/chroot ${path} /usr/sbin/pw"
+
 	check_jaildir
 
 	if [ $? -eq 1 ]; then
@@ -81,51 +163,62 @@ else
 	fi
 fi
 
+
+if [ -r "${fromfile}" ]; then
+	. ${fromfile}
+	[ $baserw -eq 1 ] && path=$data
+	[ -z "${user_add}" ] && exit 0
+	for i in ${user_add}; do
+		unset login pw fullname secgroup group shell res err
+		login="${i}"
+		f_getvar user_pw_${i} pw
+		f_getvar user_gecos_${i} fullname
+		f_getvar user_home_${i} home
+		f_getvar user_shell_${i} shell
+		f_getvar user_member_groups_${i} secgroup
+		case "${mode}" in
+			"add")
+				res=$( adduser )
+				ret=$?
+				;;
+			"remove")
+				res=$( remove )
+				ret=$?
+				;;
+			"show")
+				res=$( show )
+				ret=$?
+				;;
+		esac
+		[ ${ret} -ne 0 ] && ${ECHO} "${res}" && continue
+	done
+	exit 0
+fi
+
 case "${mode}" in
 	"remove")
-		T=$( ${exec_cmd} /usr/sbin/pw user show ${login} 2>&1)
-		case $? in
+		res=$( ${exec_cmd} user show ${login} 2>&1)
+		err=$?
+		case ${err} in
 			0)
 				;;
 			*)
 				err 1 "${MAGENTA}Error: ${NORMAL}${T}"
 				;;
 		esac
-		#  ADDON=""
-		${exec_cmd} /usr/sbin/pw user del ${login}
+		res=$( remove )
+		err=$?
 		;;
 	"add")
-		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}"
-		T=$( ${exec_cmd} /usr/sbin/pw user show ${login} 2>&1)
-		case $? in
-			0)
-				err 1 "${MAGENTA}Already exist: ${NORMAL}${T}"
-				;;
-			67)
-				;;
-			*)
-				err 1 "${MAGENTA}Error: ${NORMAL}${T}"
-				;;
-		esac
-
-		[ -z "${pw}" ] && getpw
-		[ -z "${pw}" ] && err 1 "${GREEN}pw= ${MAGENTA} is mandatory${NORMAL}"
-		ADDON=""
-		[ -n "$uid" ] && ADDON="${ADDON} -u ${uid}"
-		[ -n "$fullname" ] && ADDON="${ADDON} -c ${fullname}"
-		[ -n "$group" ] && ADDON="${ADDON} -g ${group}"
-		[ -n "$secgroup" ] && ADDON="${ADDON} -G ${secgroup}"
-
-		if [ -n "$shell" ]; then
-			ADDON="${ADDON} -s ${shell}"
-		else
-			ADDON="${ADDON} -s /bin/csh"
-		fi
-		${exec_cmd} /usr/sbin/pw useradd ${login} ${ADDON} -m
-		echo "${pw}" |${exec_cmd} pw mod user ${login} -h 0 -
+		res=$( adduser )
+		err=$?
 		;;
 	"show")
 		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA}is mandatory${NORMAL}"
-		${exec_cmd} /usr/sbin/pw user show $login
+		res=$( ${exec_cmd} user show $login )
+		err=$?
 		;;
 esac
+
+[ ${err} -ne 0 ] && err 1 "${res}"
+exit 0

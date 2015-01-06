@@ -1,0 +1,156 @@
+#!/usr/local/bin/cbsd
+MYARG=""
+MYOPTARG="controlmaster"
+MYDESC="Ncurses based dialog for jcreate"
+CBSDMODULE="bsdconf"
+
+. ${subr}
+. ${settingstui}
+. ${tools}
+. ${dialog}
+init $*
+
+f_include $BSDCFG_SHARE/strings.subr
+f_include $BSDCFG_SHARE/usermgmt/group_input.subr
+f_include $BSDCFG_SHARE/usermgmt/user_input.subr
+
+: ${login:=""}
+: ${defaultclass:=""}
+: ${defaultshell:="/bin/csh"}
+: ${homeprefix:="/home"}
+: ${passwdtype:="yes"}
+: ${udotdir:="/usr/share/skel"}
+: ${uexpire:=""}
+: ${gecos:=""}
+: ${upwexpire:=""}
+: ${member_groups:="wheel"}
+case "$uexpire" in *[mhdwoy])
+	f_isinteger "${uexpire%[mhdwoy]}" && uexpire="+$uexpire"
+esac
+case "$upwexpire" in *[mhdwoy])
+	f_isinteger "${upwexpire%[mhdwoy]}" && upwexpire="+$upwexpire"
+esac
+
+# form for $login
+get_login()
+{
+	local _ok _message _input _retval
+
+	_message="Use alpha-numeric, punctuation, TAB or ENTER"
+	f_dialog_title " login "
+
+	_ok=0
+
+	while [ ${_ok} -ne 1 ]; do
+		f_dialog_input _input "Login:" "${login}" \
+			"${_message}" || return $?
+
+		validate_jname ${login}
+		case $? in
+		1)
+			_ok=1
+			;;
+		*)
+			_message="ERROR: Bad name. Try again."
+			;;
+		esac
+	done
+
+	[ -n "${_input}" ] && login="${_input}"
+	return 0
+}
+
+# form for $gecos
+get_gecos()
+{
+	local _ok _message _input _retval
+
+	_message="Use alpha-numeric, punctuation, TAB or ENTER"
+	f_dialog_title " gecos "
+
+	_ok=0
+
+	f_dialog_input _input "Full Name:" "${gecos}" \
+			"${_message}" || return $?
+
+	[ -n "${_input}" ] && gecos="${_input}"
+	return 0
+}
+
+
+# form for $gecos
+get_member_groups()
+{
+	local _ok _message _input _retval
+
+	_message="Use numbers, punctuation, TAB or ENTER"
+	f_dialog_title " member groups "
+
+	_ok=0
+
+	f_dialog_input _input "Groups (Separated by commas):" "${member_groups}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && member_groups="${_input}"
+	return 0
+}
+
+
+gen_cfg()
+{
+	local _out="/dev/stdout"
+
+	if [ -n "${controlmaster}" ]; then
+		_out="${controlmaster}"
+		/usr/bin/truncate -s0 ${controlmaster}
+	fi
+
+	/bin/cat >> ${_out} <<EOF
+user_add='${login}'
+user_pw_${login}='${user_password}'
+user_gecos_${login}='${gecos}'
+user_home_${login}='${home}'
+user_shell_${login}='${shell}'
+user_member_groups_${login}='${member_groups}'
+EOF
+}
+
+f_user_add()
+{
+	local funcname=f_user_add
+	local title # Calculated below
+	local alert=f_show_msg no_confirm=
+
+	get_login
+	[ -z "${login}" ] && return 1
+	get_gecos
+	[ -z "${gecos}" ] && return 1
+	get_member_groups
+
+	local user_account_expire user_class user_gecos user_gid user_home_dir
+	local user_member_groups user_password user_password_expire user_shell
+	local user_uid user_dotfiles_create= user_home_create=
+
+	home="${homeprefix}/${login}"
+	shell="${defaultshell}"
+
+
+	f_dialog_title " password "
+	f_dialog_input_password user_password
+	# user_password_disable
+
+	getyesno "Add new user ${login}?"
+	[ $? -eq 0 -o $? -eq 3 ] && gen_cfg
+
+	return $SUCCESS
+}
+
+
+[ -z "${out}" ] && out="${tmpdir}/adduser-tui.$$"
+# controlmaster for submenu
+CONTROLMASTER=$( /usr/bin/mktemp )
+/usr/bin/touch ${CONTROLMASTER}
+
+f_user_add
+
+f_die
