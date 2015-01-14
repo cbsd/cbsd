@@ -1,0 +1,305 @@
+#!/usr/local/bin/cbsd
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="cbsd"
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+. ${subr}
+. ${strings}
+. ${tools}
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+
+	local title=" VHID list "
+	hline=
+
+	local prompt="${_desc}"
+	local sqldelimer=" "
+
+	local mark
+
+	local menu_list=$( cbsdsql local SELECT id,vhid,advskew,pass,interface,state FROM carp | while read id vhid advskew pass interface state; do
+		eval mark=\$vhid_selected_${id}
+		if [ "${mark}" = "1" ]; then
+			mark="X"
+		else
+			mark=" "
+		fi
+		echo "'${id}'	'[${mark}] vhid=${vhid} advskew=${advskew}'	'iface=${interface};pass=${pass};state=${state}'"
+	done ) || err 1 "${MAGENTA}Error while create vhid map${NORMAL}"
+
+	[ -z "${menu_list}" ] && menu_list="''	'no data'	''"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Remove\"               \
+		--extra-button                          \
+		--extra-label \"Add\"                   \
+		--help-button				\
+		--help-label \"Exit\"			\
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+# inputform
+get_value()
+{
+	local _input _retval
+
+	f_dialog_title " ${mtag} "
+
+	eval VAL=\$${mtag}
+	eval _mydesc=\$${mtag}_desc
+
+	f_dialog_input _input "${_mydesc}" "${VAL}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && eval ${mtag}="${_input}"
+}
+
+
+
+vhid_add()
+{
+	local _par VAL
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select and edit limit"
+	local hline=
+
+	local title=" Add VHID "
+	local _mydesc
+
+	local vhid advskew iface pass state
+
+	while [ 1 ]; do
+
+		# default
+		[ -z "${vhid}" ] && vhid=1
+		[ -z "${advskew}" ] && advskew=100
+		[ -z "${iface}" ] && iface="auto"
+		[ -z "${state}" ] && state="master"
+		[ -z "${pass}" ] && pass="navuhodonosor"
+
+		local menu_list=
+
+		menu_list="
+			'vhid'		'${vhid}'		'vhid, must be integer, e.g.: 1'
+			'advskew'	'${advskew}'		'advertisement skew, 1-240, e.g: 100'
+			'iface'		'${iface}'		'configured for interface, e.g: auto (uplink)'
+			'pass'		'${pass}'		'password for vhid group'
+			'state'		'${state}'		'default state on boot: master or backup'
+		"
+
+		menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
+
+		local height width rows
+		eval f_dialog_menu_with_help_size height width rows \
+			\"\$title\"  \
+			\"\$btitle\" \
+			\"\$prompt\" \
+			\"\$hline\"  \
+			$menu_list
+
+		# Obtain default-item from previously stored selection
+		f_dialog_default_fetch defaultitem
+
+		mtag=$( eval $DIALOG \
+			--clear                                 \
+			--title \"\$title\"                     \
+			--backtitle \"\$btitle\"                \
+			--hline \"\$hline\"                     \
+			--item-help                             \
+			--ok-label \"\$msg_ok\"                 \
+			--cancel-label \"Exit\"                 \
+			${USE_XDIALOG:+--help \"\"}             \
+			--default-item \"\$defaultitem\"        \
+			--menu \"\$prompt\"                     \
+			$height $width $rows                    \
+			$menu_list                              \
+			2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+		)
+
+		local retval=$?
+		f_dialog_data_sanitize mtag
+		f_dialog_menutag_store "$mtag"
+
+		# Only update default-item on success
+		[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$mtag"
+
+		case ${retval} in
+			${DIALOG_OK})
+				if [ "${mtag}" = "COMMIT" ]; then
+					[ -z "${vhid}" ] && f_dialog_msgbox "vhid must be filled" && continue
+					[ -z "${advskew}" ] && f_dialog_msgbox "vhid must be filled" && continue
+					[ -z "${iface}" ] && f_dialog_msgbox "vhid must be filled" && continue
+					[ -z "${state}" ] && f_dialog_msgbox "vhid must be filled" && continue
+					[ -z "${pass}" ] && f_dialog_msgbox "vhid must be filled" && continue
+					cbsdsql local "INSERT INTO carp ( vhid,advskew,pass,interface,state ) VALUES ( \"${vhid}\",\"${advskew}\",\"${pass}\", \"${iface}\", \"${state}\" )"
+					return ${retval}
+				else
+					get_value
+					continue
+				fi
+				;;
+			${DIALOG_CANCEL})
+				return $retval
+				;;
+			*)
+				return ${retval}
+				;;
+		esac
+	done
+
+}
+
+
+vhid_remove()
+{
+	local _i
+	local _vhids=
+
+	for _i in $( /usr/bin/seq 1 128 ); do
+		eval mark=\$vhid_selected_${_i}
+		[ "${mark}" = "1" ] && _vhids="${_vhids} ${_i}"
+	done
+
+	for _i in ${_vhids}; do
+		cbsdsql local "DELETE FROM carp WHERE id='${_i}'"
+	done
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG=""
+MYOPTARG=""
+MYDESC="Edit properties for vitual image of VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " VHIDs "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-")
+					continue
+					;;
+				*)
+					vhid=${mtag%% *}
+					# val=${mtag##* }
+					eval mark=\$vhid_selected_${vhid}
+					if [ "${mark}" = "1" ];then
+						eval "vhid_selected_${vhid}=\"0\""
+					else
+						eval "vhid_selected_${vhid}=\"1\""
+					fi
+					;;
+			esac
+			;;
+		${DIALOG_CANCEL})
+			vhid_remove
+			continue
+			;;
+		${DIALOG_EXTRA})
+			vhid_add
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

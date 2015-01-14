@@ -2,17 +2,19 @@
 #v10.1.3
 globalconf="${workdir}/cbsd.conf";
 MYARG="mode"
-MYOPTARG="vhid advskew pass ip interface"
+MYOPTARG="vhid advskew pass ip interface state"
 MYDESC="Enable CARP configuration"
-ADDHELP="mode - set,unset\n\
+ADDHELP="mode - set,unset,update\n\
 interface - physical iface or 'auto'\n\
 advskew - advertisements value, e.g. 100\n\
 pass - passwordphrase\n\
 vhid - ID, e.g 1\n\
-ip - virtual ip, e.g: 192.168.1.200/24\n"
+ip - virtual ip, e.g: 192.168.1.200/24\n\
+state - master,backup\n"
 
 set -e
 . ${globalconf}
+. ${workdir}/carp.subr
 set +e
 
 . ${subr}
@@ -20,84 +22,9 @@ set +e
 . ${initenv}
 init $*
 
-carp_init()
-{
-	/sbin/kldstat -qm carp || /sbin/kldload carp
-	if [ ! -f "/usr/local/etc/devd/cbsd_carp.conf" ]; then
-		if getyesno "Configure cbsd_carp.conf notify in /usr/local/etc/devd directory?"; then
-			[ ! -d "/usr/local/etc/devd" ] && mkdir -p /usr/local/etc/devd
-			/bin/cp ${sharedir}/cbsd_carp.conf /usr/local/etc/devd/
-			/usr/sbin/service devd restart
-		fi
-	fi
-}
-
-# $1 - id
-# return 1 if vhid already set and print ip for it
-get_ip4_by_vhid()
-{
-	local _res
-	_res=$( /sbin/ifconfig ${interface}| /usr/bin/grep "inet *.*.*.* netmask [[:alnum:]]* *.*.*.* vhid ${1} "|/usr/bin/awk {'printf $2'} )
-
-	[ -z "${_res}" ] && return 0
-	printf "${_res}"
-	return 1
-}
-
-carp_unset()
-{
-	local _res
-	_res=$( get_ip4_by_vhid ${vhid} )
-	[ $? -eq 0 ] && err 1 "${MAGENTA}vhid not initializated: ${GREEN}${vhid}${NORMAL}"
-	# iptype ?
-	/sbin/ifconfig ${interface} inet ${_res} -alias
-}
-
-
-check_vhid()
-{
-	if [ -n "${vhid}" ]; then
-		is_number ${vhid} && err 1 "${MAGENTA}Error: vhid should be number${NORMAL}"
-	else
-		err 1 "${MAGENTA}No such mandatory params: ${GREEN}vhid, e.g. vhid=1${NORMAL}"
-	fi
-}
-
-check_interface()
-{
-	local _res
-
-	if [ "${interface}" != "auto" ]; then
-		# check for interface exist
-		_res=$( ${miscdir}/nics-list -s "lo" |while read _iface; do
-			[ "${interface}" = "${_iface}" ] && echo "${_iface}" ] && exit 0
-		done )
-		[ -z "${_res}" ] && err 1 "${MAGENTA}No such interface: ${GREEN}${interface}${NORMAL}"
-	else
-		auto_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
-		[ -z "${auto_iface}" ] && err 1 "${MAGENTA}Can't determine uplink interface${NORMAL}"
-		interface="${auto_iface}"
-	fi
-	[ -z "${interface}" ] && err 1 "${MAGENTA}No such interface: ${GREEN}${interface}, e.g: interface=auto${NORMAL}"
-}
-
-
-carp_set()
-{
-	local _res
-
-	_res=$( get_ip4_by_vhid ${vhid} )
-	[ $? -eq 1 ] && err 1 "${MAGENTA}vhid ${GREEN}${vhid}${MAGENTA} already initializated for: ${GREEN}${_res}${NORMAL}"
-
-	[ -z "${advskew}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}advskew, e.g: advskew=100${NORMAL}"
-	[ -z "${pass}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}pass, e.g: pass=pass${NORMAL}"
-	[ -z "${ip}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}ip, e.g: ip=10.10.10.10/24${NORMAL}"
-
-
-	echo "/sbin/ifconfig ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} alias"
-	/sbin/ifconfig ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} alias
-}
-
+set -e
+. ${workdir}/carp.subr
+set +e
 
 ### MAIN
 carp_init
@@ -112,6 +39,11 @@ case "${mode}" in
 		check_vhid
 		check_interface
 		carp_unset
+		;;
+	update)
+		check_vhid
+		check_interface
+		carp_update
 		;;
 	*)
 		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"

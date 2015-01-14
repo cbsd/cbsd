@@ -1,5 +1,5 @@
---- drmP.h.bak	2014-03-12 02:31:06.000000000 +0400
-+++ drmP.h	2014-03-12 02:31:39.000000000 +0400
+--- drmP.h.bak	2015-01-13 13:16:06.000000000 +0300
++++ drmP.h	2015-01-13 13:17:54.000000000 +0300
 @@ -228,7 +228,7 @@
  #define PAGE_ALIGN(addr) round_page(addr)
  /* DRM_SUSER returns true if the user is superuser */
