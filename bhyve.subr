@@ -103,10 +103,12 @@ normalize_nic_hwaddr()
 # fi
 compile_nic_args()
 {
-	local _id=0 i
+	local _id=0 i _res taplist=
 	local sqldelimer=" "
+	local mybridge
 
 	eval $( cbsdsql local SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+
 		if ! next_pci_id; then
 			# no free pci bus
 			exit 0
@@ -118,6 +120,23 @@ compile_nic_args()
 			pcislot=${nic_slot}
 		fi
 
+		# when ip=0 and interface=auto we must use default interface for upstream
+		if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
+			interface=$( getnics-by-ip ip=0.0.0.0 )
+		else
+			interface="${nic_parent}"
+		fi
+
+		if ! mybridge=$( get_my_device bridge ${interface} ); then
+			err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
+		fi
+
+		mytap=$( get_my_tap ${mybridge} )
+		[ $? -eq 1 ] && err 1 "${MAGENTA}Error: Cant get_my_tap by: ${GREEN}${mybridge}${NORMAL}"
+
+		/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
+		_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
+
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
 			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
@@ -125,22 +144,29 @@ compile_nic_args()
 		else
 			echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap}\" ;"
 		fi
+		
+		echo "export mytap${_id}=\"${mytap}\";"
+		
 		_id=$(( _id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create nic map${NORMAL}"
 
 	nic_args=""
 
-	for i in $(seq 0 31); do
+	for i in $( /usr/bin/seq 0 31 ); do
 		eval T="\$nic$i"
+		eval taplist="\$mytap$i"
 		[ -z "${T}" ] && break
+		[ -z "${taplist}" ] && break
 		# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
 		if ! next_pci_id; then
 			# no free pci bus
 		fi
 		nic_args="${nic_args} ${T}"
+		mytap="${taplist}"
 	done
 
 	[ -z "${nic_args}" ] && return 1
+
 	return 0
 }
 
