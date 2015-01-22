@@ -22,7 +22,6 @@ make_efi()
 {
 	local _md _tmpmnt
 
-	[ ! -f "${CHROOT}/boot/loader.efi" ] && return 0
 	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=100
 	_md=$( /sbin/mdconfig -a -t vnode -f /tmp/efiboot.$$.img )
 	/sbin/newfs_msdos -F 12 -m 0xf8 /dev/${_md}
@@ -38,17 +37,23 @@ make_efi()
 [ -z "${LABEL}" ] && LABEL="NOLABEL"
 
 if [ -z "${NAME}" ]; then
-    echo "Empty NAME, use -n "
-    exit 1
+	echo "Empty NAME, use -n "
+	exit 1
 fi
 
 if [ -z "${DPATH}" ]; then
-    echo "Empty DPATH, use -d "
-    exit 1
+	echo "Empty DPATH, use -d "
+	exit 1
 fi
 
 [ -z "${PUBLISHER}" ] && PUBLISHER="The CBSD Project. http://www.bsdstore.ru"
 [ -z "${EFI}" ] && EFI=1
+
+if [ ! -f "${CHROOT}/boot/loader.efi" -a ${EFI} -eq 1 ]; then
+	echo "Notes: You have no ${CHROOT}/boot/loader.efi. Disable EFI boot"
+	efi=0
+	EFI=0
+fi
 
 if [ ${EFI} -eq 1 ]; then
 	make_efi
