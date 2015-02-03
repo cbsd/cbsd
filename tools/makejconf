@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v10.1.4
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname out"
 MYOPTARG="ip6wa epair fbsd"
@@ -27,14 +27,32 @@ mkjhosts()
 	for i in $( /usr/bin/egrep "[:blank:]*${host_hostname}" ${JHOST} |/usr/bin/awk '/^;/{print $1"\n"}' ); do
 		if [ "$i" != "${IP}" ]; then
 			TMPH="${ftmpdir}/hosts.$$"
-			cp ${JHOST} ${TMPH}
-			grep -v "[:blank:]*${host_hostname}" ${TMPH} > ${JHOST}
-			rm -f ${TMPH}
+			/bin/cp ${JHOST} ${TMPH}
+			/usr/bin/grep -v "[:blank:]*${host_hostname}" ${TMPH} > ${JHOST}
+			/bin/rm -f ${TMPH}
 		fi
 	done
 
-	[ $( grep -c ^${IP} ${JHOST} ) = "0" ] && echo ${IP} ${host_hostname} >> ${JHOST}
+	[ $( /usr/bin/grep -c ^${IP} ${JHOST} ) = "0" ] && echo ${IP} ${host_hostname} >> ${JHOST}
 }
+
+# fill $interface variable by physical NIC
+get_iface_by_ip()
+{
+	local ip
+
+	if [ -n "${1}" ]; then
+		ip="${1}"
+	else
+		ip="0.0.0.0"
+	fi
+
+	# autodetect correct interface
+	if [ "${interface}" = "auto" ]; then
+		interface=$( getnics-by-ip ip=${ip} )
+	fi
+}
+
 
 # MAIN
 readconf jail-freebsd-default.conf
@@ -43,11 +61,9 @@ JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
 jmkrcconf jname=${jname} > ${JAILRCCONF}
 . ${JAILRCCONF}
 init_jail_path
-rm -f ${JAILRCCONF}
+/bin/rm -f ${JAILRCCONF}
 
 [ ${vnet} -eq 1 -a -z "${epair}" ] && err 1 "${MAGENTA}Error: Jail is ${GREEN}vnet${NORMAL}-feature enabled, but epair is not set.${NORMAL}"
-
-eval multiips4=\"\$ip4_addr\"
 
 [ $baserw -eq 1 ] && path=$data
 
@@ -119,51 +135,56 @@ EOF
 
 ALIAS4=""
 ALIAS6=""
-ips=$( echo ${multiips4}|tr "," " " )
 
-# autodetect correct interface
-if [ -n "${interface}" ]; then
-	if [ "${interface}" = "auto" ]; then
-		if [ -n "${ip4_addr}" ]; then
-			ip=$( echo ${ip4_addr}|/usr/bin/awk '{printf $1}' )
-			interface=$( getnics-by-ip ip=${ip} )
-		else
-			interface=$( getnics-by-ip ip=0.0.0.0 )
-		fi
-	fi
-	echo "interface=\"${interface}\";" >> $out
-fi
-
+# gen ipX.addr params
 if [ ${vnet} -eq 0 ]; then
 	# when vnet we not need ipX.addr
-	for a in ${ips}; do
+	OLDIFS="${IFS}"
+	IFS=","
+	for a in ${ip4_addr}; do
+		unset IWM VHID
 		iptype $a
 		_inet=$?
 		[ ${_inet} -eq 0 ] && continue
 
-		ipwmask ${a}
+		# this is carp records
+		if [ -n "${VHID}" ]; then
+#			a=$( carpcfg inter=0 mode=show vhid=${VHID} ip=${IPWVHID} )
+			a=$( carpcfg inter=0 mode=show vhid=${VHID} ip=${IWM} )
+			_res=$?
+			if [ ${_res} -ne 0 ]; then
+				err 1 "${MAGENTA}Error in CARP area from makejconf: ${a}${NORMAL}"
+				continue
+			fi
+		else
+			if [ -n "${interface}" ]; then
+				get_iface_by_ip ${IWM}
+				a="${interface}|${a}"
+			fi
+		fi
 
 		case ${_inet} in
-		1)
-			if [ -z "$ALIAS4" ]; then
-				echo "ip4.addr = ${a};" >> ${out}
-				[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-				ALIAS4="1"
-			else
-				[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
-				echo "ip4.addr += ${a};" >> ${out}
-			fi
-		;;
-		2)
-			if [ -z "$ALIAS6" ]; then
-				echo "ip6.addr = ${a};" >> ${out}
-				ALIAS6="1"
-			else
-				echo "ip6.addr += ${a};" >> ${out}
-			fi
-		;;
+			1)
+				if [ -z "$ALIAS4" ]; then
+					echo "ip4.addr = \"${a}\";" >> ${out}
+					[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+					ALIAS4="1"
+				else
+					[ "${mkhostsfile}" != "0" ] && mkjhosts ${IWM} ${data}/etc/hosts
+					echo "ip4.addr += \"${a}\";" >> ${out}
+				fi
+				;;
+			2)
+				if [ -z "$ALIAS6" ]; then
+					echo "ip6.addr = \"${a}\";" >> ${out}
+					ALIAS6="1"
+				else
+					echo "ip6.addr += \"${a}\";" >> ${out}
+				fi
+				;;
 		esac
 	done
+	IFS="${OLDIFS}"
 else
 	# vnet
 	cat >> ${out} <<EOF
@@ -188,6 +209,14 @@ fi
 
 if [ "${allow_nullfs}" = "1" ]; then
 	echo "allow.mount.nullfs = \"true\";" >> ${out}
+fi
+
+# this feature available for FreeBSD 10.2+
+_res=$( /sbin/sysctl -q security.jail.mount_fdescfs_allowed >/dev/null 2>&1 )
+if [ $? -ne 1 ]; then
+	if [ "${allow_fdescfs}" = "1" ]; then
+		echo "allow.mount.fdescfs = \"true\";" >> ${out}
+	fi
 fi
 
 if [ "${allow_devfs}" = "1" ]; then

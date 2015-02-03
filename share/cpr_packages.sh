@@ -36,7 +36,7 @@ rm -f /tmp/port_log* > /dev/null 2>&1 ||true
 
 find /tmp/usr/ports -type d -name work -exec rm -rf {} \; || true
 
-PORT_DIRS=$( cat /tmp/ports_list.txt )
+PORT_DIRS=$( /bin/cat /tmp/ports_list.txt )
 
 mkdir -p ${PACKAGES}/All >>${LOGFILE} 2>&1 || err 1 "Cannot create PACKAGES/All directory!"
 

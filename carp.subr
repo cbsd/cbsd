@@ -1,3 +1,9 @@
+if [ ! "$_CBSD_CARP_SUBR" ]; then
+	_CBSD_CARP_SUBR=1
+else
+	return 0
+fi
+
 carp_init()
 {
 	/sbin/kldstat -qm carp || /sbin/kldload carp
@@ -42,11 +48,29 @@ carp_unset()
 
 check_vhid()
 {
+	local vhid_count=0 _res=
+
 	if [ -n "${vhid}" ]; then
 		is_number ${vhid} && err 1 "${MAGENTA}Error: vhid should be number${NORMAL}"
 	else
 		err 1 "${MAGENTA}No such mandatory params: ${GREEN}vhid, e.g. vhid=1${NORMAL}"
 	fi
+
+	# we are prefered settings from CLI. Skip SQLite query when params already set:
+	_res=1
+	[ -z "${advskew}" ] && _res=$(( _res * 0 ))
+	[ -z "${pass}" ] && _res=$(( _res * 0 ))
+	[ -z "${interface}" ] && _res=$(( _res * 0 ))
+	[ -z "${state}" ] && _res=$(( _res * 0 ))
+	[ ${_res} -eq 1 ] && return 0
+
+	vhid_count=$( cbsdsql local SELECT count\(id\) FROM carp WHERE vhid=\"${vhid}\" )
+
+	[ "${vhid_count}" = "0" ] && err 1 "${MAGENTA}Error: no vhid in database with id: ${GREEN}${vhid}${NORMAL}"
+
+	_res=$( cbsdsql local SELECT id,vhid,advskew,pass,interface,state FROM carp WHERE vhid=\"${vhid}\" 2>/dev/null )
+	[ -z "${_res}" ] && err 1 "${MAGETA}Wrong data structure in carp database for vhid: ${GREEN}${vhid}${NORMAL}"
+	sqllist "${_res}" id vhid advskew pass interface state
 }
 
 check_interface()
@@ -72,8 +96,10 @@ carp_set()
 {
 	local _res _state
 
-	_res=$( get_ip4_by_vhid ${vhid} )
-	[ $? -eq 1 ] && err 1 "${MAGENTA}vhid ${GREEN}${vhid}${MAGENTA} already initializated for: ${GREEN}${_res}${NORMAL}"
+	if [ ${show} -ne 1 ]; then
+		_res=$( get_ip4_by_vhid ${vhid} )
+		[ $? -eq 1 ] && err 1 "${MAGENTA}vhid ${GREEN}${vhid}${MAGENTA} already initializated for: ${GREEN}${_res}${NORMAL}"
+	fi
 
 	[ -z "${advskew}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}advskew, e.g: advskew=100${NORMAL}"
 	[ -z "${pass}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}pass, e.g: pass=pass${NORMAL}"
@@ -81,8 +107,15 @@ carp_set()
 
 	[ -n "${state}" ] && _state="state ${state}"
 
-	echo "/sbin/ifconfig ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${_state} ${ip} alias"
+	if [ ${show} -eq 1 ]; then
+		echo "${interface}|${ip} vhid ${vhid} advskew ${advskew} pass ${pass} ${_state}"
+		return 0
+	else
+		echo "[DEBUG] /sbin/ifconfig ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} ${_state} alias"
+	fi
+
 	/sbin/ifconfig ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} ${_state} alias
+
 }
 
 
