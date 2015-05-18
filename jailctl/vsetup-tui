@@ -1,0 +1,221 @@
+#!/usr/local/bin/cbsd
+#v10.0.4
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${settingstui}
+. ${dialog}
+. ${strings}
+. ${tools}
+
+[ ! -f "${sharedir}/jail-arg" ] && err 1 "No such jail-arg skel"
+. ${sharedir}/jail-arg
+CBSDMODULE="virtualbox"
+MYDESC="Ncurses based setup for jail-arg"
+MYARG="jname"
+MYOPTARG="${JARG} outfile"
+
+init $*
+
+commit()
+{
+	local _oldjname _newjname
+
+	_oldjname="${jname}"
+
+	for i in ${JARG}; do
+		eval VAL=\$$i
+		eval OVAL=\$OLDVAL_${i}
+
+		if [ "${i}" = "jname" ]; then
+			_oldjname="${OVAL}"
+			_newjname="${VAL}"
+			continue
+		fi
+
+		if [ "${i}" = "vm_ram" ]; then
+			# test for human
+			if is_number ${VAL}; then
+				if conv2bytes ${VAL}; then
+					VAL="${convval}"
+				fi
+			fi
+			# test for human for original
+			if is_number ${OVAL}; then
+				if conv2bytes ${OVAL}; then
+					OVAL="${convval}"
+				fi
+			fi
+		fi
+
+		[ "${VAL}" = "${OVAL}" ] && continue
+		vset mode=quiet jname=${_oldjname} $i=\"${VAL}\"
+	done
+
+	[ "${_oldjname}" != "${_newjname}" -a -n "${_newjname}" ] && cbsd vrename old=${_oldjname} new=${_newjname}
+
+	exit 0
+}
+
+
+store_defaults()
+{
+	local i VAL
+
+	eval $( for i in "jname" ${JARG}; do
+		[ "${i}" = "repo" ] && repo=1 && continue
+		eval VAL=\$$i
+		echo "OLDVAL_${i}=\"${VAL}\""
+	done )
+}
+
+
+dialog_menu_main()
+{
+	title=" Config for ${jname} VM "
+	hline=
+	local defaultitem=
+
+	local menu_list="
+		'EXIT'  'EXIT'  'Exit jconstruct-tui'
+	" # END-QUOTE
+
+	local i _mytest skip
+	local _checkbox="astart"
+
+	item_let="A"
+	item_num=0
+
+	 f_dialog_default_fetch defaultitem
+
+	# checkbox mark
+	for i in ${_checkbox}; do
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+		else
+			export ${i}_mark=" "
+		fi
+	done
+
+	for i in ${JARG}; do
+		skip=0
+		inc_menu_index item_let
+
+		for x in ${_checkbox}; do
+			[ ${skip} -eq 1 ] && break
+			if [ "${x}" = "${i}" ]; then
+				eval _mytest=\$${x}_mark
+				[ -z "${_mytest}" ] && _mytest=" "
+				menu_list="${menu_list} '${item_let} ${x}'      '[${_mytest}]'  '${_mydesc}'"
+				skip=1
+			fi
+		done
+
+		[ ${skip} -eq 1 ] && continue
+
+		eval VAL=\$$i
+
+		if [ "${i}" = "vm_ram" ]; then
+			# test for human
+			if ! is_number ${VAL}; then
+				if conv2human "${VAL}"; then
+					VAL=$convval
+					vm_ram="${VAL}"
+					fi
+				fi
+			fi
+
+		if [ -z "${VAL}" ]; then
+			menu_list="${menu_list} '${item_let} ${i}'	' '	'Descr?'"
+		else
+			menu_list="${menu_list} '${item_let} ${i}'	'${VAL}'	'Descr?'"
+		fi
+	done
+
+	menu_list="${menu_list} '-'	'-' ''"
+	menu_list="${menu_list} 'virtualboxdsk'	'Storage config >>'		'cbsd virtualboxdsk-tui'"
+	menu_list="${menu_list} 'virtualboxnic'	'Network config >>'		'cbsd virtualboxnic-tui.'"
+	menu_list="${menu_list} 'order'		'Boot order >>'			'cbsd border-tui'"
+	menu_list="${menu_list} '-'	'-' ''"
+	menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+### MAIN
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "virtualbox" ] && err 1 "${MAGENTA}Only for virtualbox type VMs${NORMAL}"
+
+shift #skip for jname
+
+if [ ${jid} -ne 0 ]; then
+	# Command for modifying on-the fly here:
+	JARG="ip4_addr cpuset astart exec_consolelog"
+else
+	JARG="$@"
+fi
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+store_defaults
+
+# fill promt variable used in dialog_menu_main about active jail status
+# otherwise - append the argument that we can change also and jname.
+if [ ${jid} -ne 0 ]; then
+	prompt="VM is ONLINE. Only on-the-fly options printed."
+else
+	JARG="jname ${JARG}"
+fi
+
+while [ 1 ]; do
+	dialog_menu_main || f_die
+
+	index=${mtag%% *}
+	mychoice=${mtag##* }
+
+	case "${mychoice}" in
+		"-")
+			continue
+			;;
+		"virtualboxnic")
+			/usr/local/bin/cbsd virtualboxnic-tui jname=${jname}
+			;;
+		"virtualboxdsk")
+			/usr/local/bin/cbsd virtualboxdsk-tui jname=${jname}
+			;;
+		"order")
+			/usr/local/bin/cbsd border-tui jname="${jname}"
+			;;
+		"EXIT")
+			f_die
+			;;
+		"COMMIT")
+			commit
+			;;
+		astart)
+			invert_checkbox ${mychoice}
+			continue
+			;;
+		interface)
+			get_construct_interface -d 1 -s "tap bridge vboxnet"
+			;;
+		*)
+			get_construct_${mychoice}
+			;;
+	esac
+done

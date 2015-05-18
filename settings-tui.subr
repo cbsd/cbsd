@@ -1,8 +1,6 @@
 if [ ! "$_CBSD_SETTINGS_TUI_SUBR" ]; then
-	_CBSD_SETTINGS_TUI_SUBR=1
-else
-	return 0
-fi
+_CBSD_SETTINGS_TUI_SUBR=1
+###
 
 #required for . ${dialog} 
 TMPFILE="${ftmpdir}/inputbox.$$"
@@ -46,11 +44,13 @@ cpuset_msg="Associate group of CPUs to jail. 0 - for all cores, See man 1 cpuset
 GET_NODENAME_MSG="Change nodename. Warning: this operation will recreate the ssh keys in $workdir/.ssh dir"
 mdsize_msg="Enter size for the images"
 GET_IMGSIZE_MSG="Allocate X size of image free space: 100m, 1g"
+GET_SWAPSIZE_MSG="Configure swap partitional in X size (usual RAMx2), 0 - for disable, e.g: 4g"
 GET_CPUS_MSG="Number of CPUs: 1, max: 16"
 GET_RAM_MSG="RAM size, eg: 512M"
 GET_VMPROFILE_MSG="Select profile for VMs"
 GET_JAILPROFILE_MSG="Profile for jcreate"
 GET_HOSTBRIDGE_MSG="Hostbridge for VMs, eg: hostbridge or amd_hostbridge"
+GET_GUESTFS_MSG="Choose FS for boot image"
 GET_BOOT_MSG="First boot device, eg: cd or hdd"
 GET_ISOPATH_MSG="Path to ISO image in srcdir/iso, eg: release.iso. 0 - for default img_iso"
 GET_GW4_MSG="Enter default gateway inside VMs or jail"
@@ -112,7 +112,21 @@ freejname()
 # form for $pkglist
 get_construct_pkglist()
 {
-	pkglist="${ftmpdir}/tui.$$"
+	local _i
+
+	[ -z "${pkglist}" -o "${pkglist}" = "NO" ] && pkglist="${ftmpdir}/tui.$$"
+
+	# load pkg list from profile
+	if [ -n "${tpl_pkglist}" ]; then
+		if [ -r "${tpl_pkglist}" ]; then
+			/bin/cat ${tpl_pkglist} >> ${pkglist}
+		else
+			for _i in ${tpl_pkglist}; do
+				echo ${_i} >> ${pkglist}
+			done
+		fi
+	fi
+
 	pkgbrowser controlmaster="${pkglist}"
 	[ ! -s "${pkglist}" ] && pkglist="NO"
 }
@@ -372,10 +386,11 @@ get_construct_interface()
 				defaultitem="${interface}"
 		esac
 	else
+		interface="auto"
 		defaultitem="auto"
 	fi
 
-	for _num in $( seq 1 9999 ); do
+	for _num in $( /usr/bin/seq 1 9999 ); do
 		unset _mynic _mydesc _mystatus
 		eval _mynic="\$nic${_num}_name"
 		[ -z "${_mynic}" ] && break
@@ -393,38 +408,11 @@ get_construct_interface()
 		menu_list="${menu_list} '${_mynic}'	'${_mynic} (${_mystatus} )'	'Description: ${_mydesc}'"
 	done
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
+	cbsd_menubox
+	retval=$?
 
-	local menu_choice
-	menu_choice=$( eval $DIALOG \
-	--clear                                 \
-	--title \"\$title\"                     \
-	--backtitle \"\$btitle\"                \
-	--hline \"\$hline\"                     \
-	--item-help                             \
-	--ok-label \"\$msg_ok\"                 \
-	--cancel-label \"Exit\"                 \
-	${USE_XDIALOG:+--help \"\"}             \
-	--default-item \"\$defaultitem\"        \
-	--menu \"\$prompt\"                     \
-	$height $width $rows                    \
-	$menu_list                              \
-	2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-
-	f_dialog_menutag_fetch mtag
 	case $retval in
-		0)
+		${DIALOG_OK})
 			case "${mtag}" in
 				"-"|"EXIT")
 					return 1
@@ -433,7 +421,7 @@ get_construct_interface()
 					interface="0"
 					;;
 				*)
-					interface="${mtag}"
+					[ -n "${mtag}" ] && interface="${mtag}"
 					;;
 			esac
 			;;
@@ -616,6 +604,18 @@ get_construct_imgsize()
 	imgsize="${_input}"
 }
 
+get_construct_swapsize()
+{
+	local _input
+
+	f_dialog_title " swapsize "
+
+	f_dialog_input _input "${GET_SWAPSIZE_MSG}:" "${swapsize}" \
+			"${_message}" || return $?
+
+	swapsize="${_input}"
+}
+
 
 # form for $exec_timeout
 get_construct_exec_timeout()
@@ -756,7 +756,7 @@ get_construct_arch()
 
 	# test for qemu_mips64
 	if [ -n "${qemu_mips64}" ]; then
-		_res=$( 2>&1 /usr/bin/ldd ${qemu_mips64} |/usr/bin/grep -q "not a dynamic ELF executable" )
+		_res=$( 2>&1 /usr/bin/ldd ${qemu_mips64} |${GREP_CMD} -q "not a dynamic ELF executable" )
 		if [ $? -eq 0 ]; then
 			qemu_mips64_enable=1
 			qemu_mips64_desc="MIPS64 via ${qemu_mips64}"
@@ -771,7 +771,7 @@ get_construct_arch()
 
 	# test for qemu_arm
 	if [ -n "${qemu_arm}" ]; then
-		_res=$( 2>&1 /usr/bin/ldd ${qemu_arm} |/usr/bin/grep -q "not a dynamic ELF executable" )
+		_res=$( 2>&1 /usr/bin/ldd ${qemu_arm} |${GREP_CMD} -q "not a dynamic ELF executable" )
 		if [ $? -eq 0 ]; then
 			qemu_arm_enable=1
 			qemu_arm_desc="ARM via ${qemu_arm}"
@@ -814,38 +814,11 @@ get_construct_arch()
 		menu_list="${menu_list} ''	'mips unsupported'	'${qemu_mips64_desc}'"
 	fi
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
+	cbsd_menubox
+	retval=$?
 
-	local menu_choice
-	menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-
-	f_dialog_menutag_fetch mtag
 	case $retval in
-		0)
+		${DIALOG_OK})
 			if [ -n "${mtag}" ]; then
 				arch="${mtag}"
 			else
@@ -866,7 +839,6 @@ get_construct_vm_hostbridge()
 	local _input _res
 
 	local title="${GET_HOSTBRIDGE_MSG}"
-
 	local defaultitem="${vm_hostbridge}"
 
 	local menu_list="
@@ -874,38 +846,40 @@ get_construct_vm_hostbridge()
 		'amd_hostbridge'	'amd_hostbridge'	'The amd_hostbridge emulation is identical but uses a PCI vendor ID of AMD'
 	" # END-QUOTE
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
+	cbsd_menubox
+	retval=$?
 
-	local menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-
-	f_dialog_menutag_fetch mtag
 	case $retval in
-		0)
+		${DIALOG_OK})
 			[ -n "${mtag}" ] && vm_hostbridge="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+# form for $vm_guestfs
+get_construct_vm_guestfs()
+{
+	local _input _res
+
+	local title="${GET_GUESTFS_MSG}"
+	local defaultitem="${vm_guestfs}"
+
+	local menu_list="
+		'zfs'	'zfs'	'ZFS filesystem'
+		'ufs'	'ufs'	'UFS filesystem'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_guestfs="${mtag}"
 			;;
 		*)
 			;;
@@ -921,50 +895,19 @@ get_construct_vm_boot()
 	local _input _res
 
 	local title="${GET_BOOT_MSG}"
+	local defaultitem="${vm_boot}"
 
 	local menu_list="
 		'hdd'	'Boot from HDD'	'Boot from attached virtual SATA/SCSI device'
 		'cd'	'Boot from CD'	'Boot from attached virtual ATAPI CD/DVD device'
 	" # END-QUOTE
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
+	cbsd_menubox
+	retval=$?
 
-	local defaultitem="${vm_boot}"
-
-	local menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-
-	f_dialog_menutag_fetch mtag
 	case $retval in
-		0)
-			if [ -n "${mtag}" ]; then
-				vm_boot="${mtag}"
-			else
-				vm_boot="${hostarch}"
-			fi
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_boot="${mtag}"
 			;;
 		*)
 			;;
@@ -977,49 +920,24 @@ get_construct_vm_boot()
 get_construct_vm_os_type()
 {
 	local _input
-
-	local menu_list="
-		'freebsd'	'FreeBSD-kernel based distros'		'FreeBSD, FreeNAS, pfSense, ZFSguru, kFreeBSD, ArchBSD and so on..'
-		'linux'		'Linux-kernel based distros'		'Debian, Ubuntu, RHEL, Oracle and about 1024+ names ;-) also'
-		'openbsd'	'OpenBSD-kernel based distros'		'OpenBSD-based guests'
-		'netbsd'	'NetBSD-kernel based distros'		'NetBSD-based guests'
-		'dflybsd'	'DragonFlyBSD-kernel based distros'	'DragonFlyBSD-based guests'
-		" # END-QUOTE
-
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
-
 	local defaultitem="${vm_os_type}"
 
-	local menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"         \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
+	unset menu_list
 
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "${menu_choice}"
+	# load menu_list from external source by emulator opportunity
+	if [ -f "${sharedir}/emulators/ostype_${emulator}.subr" ]; then
+		. ${sharedir}/emulators/ostype_${emulator}.subr
+	else
+		f_dialog_msgbox "No such menu_list for emulator ${emulator}:\n${sharedir}/emulators/ostype_${emulator}.subr"
+		return 0
+	fi
 
-	f_dialog_menutag_fetch mtag
+	cbsd_menubox
+	retval=$?
+
 	case $retval in
-		0)
-			vm_os_type="${mtag}"
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_os_type="${mtag}"
 			;;
 		*)
 			;;
@@ -1045,13 +963,13 @@ get_construct_vm_os_profile()
 
 	for i in ${_res}; do
 		unset bhyve_profile
-		eval $( /usr/bin/grep ^bhyve_profile= ${i} )
-		eval $( /usr/bin/grep ^active= ${i} )
+		eval $( ${GREP_CMD} ^bhyve_profile= ${i} )
+		eval $( ${GREP_CMD} ^active= ${i} )
 
 		[ -z "${bhyve_profile}" -o ${active} -eq 0 ] && continue
 
 		unset long_description
-		eval $( /usr/bin/grep ^long_description= ${i} )
+		eval $( ${GREP_CMD} ^long_description= ${i} )
 
 		[ -z "${long_description}" ] && long_description="${bhyve_profile}"
 
@@ -1065,41 +983,11 @@ get_construct_vm_os_profile()
 
 	[ -z "${menu_list}" ] && unset vm_os_profile && return 0
 
+	cbsd_menubox
+	retval=$?
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
-
-	local defaultitem="${vm_os_profile}"
-
-	local menu_choice
-	menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-
-	f_dialog_menutag_fetch mtag
 	case $retval in
-		0)
+		${DIALOG_OK})
 			vm_os_profile="${mtag}"
 			_num=0
 			_myfile=$( while [ ${_num} -ne ${_all} ]; do
@@ -1112,6 +1000,8 @@ get_construct_vm_os_profile()
 			[ -z "${_myfile}" ] && return 0
 
 			if [ -f "${_myfile}" ]; then
+				unset from_jail
+				unset bhyve_profile
 				. ${_myfile}
 				global_profile_file="${_myfile}"
 			fi
@@ -1128,7 +1018,9 @@ get_construct_vm_os_profile()
 get_construct_profile()
 {
 	local _input _retval _search_profile="jail-freebsd-" jail_profile _res _myprofiles="" _myfile _old_profile
+	local menu_list=
 
+	local defaultitem="${profile}"
 	local title=" profile "
 	local prompt="${GET_JAILPROFILE_MSG}"
 
@@ -1137,36 +1029,30 @@ get_construct_profile()
 
 	for i in ${_res}; do
 		unset jail_profile
-		eval $( /usr/bin/grep ^jail_profile= ${i} )
+		eval $( ${GREP_CMD} ^jail_profile= ${i} )
+		eval $( ${GREP_CMD} ^long_description= ${i} )
 		[ -z "${jail_profile}" ] && continue
 		_mypath=$( echo $i | /usr/bin/sed s:^${workdir}/::g )
-		_myprofiles="${_myprofiles} ${jail_profile} ${_mypath} on "
+		#_myprofiles="${_myprofiles} ${jail_profile} ${_mypath} on "
+		menu_list="${menu_list} '${jail_profile}' '${_mypath}' '${long_description}'"
 		#store filename
 		local file_${jail_profile}="${i}"
 	done
 
-	[ -z "${_myprofiles}" ] && unset jail_profile && return 0
+	[ -z "${menu_list}" ] && unset jail_profile && return 0
+
+	# unset for previous template package list
+	unset tpl_pkglist
 
 	if [ -z "${1}" ]; then
-		_old_profile="${profile}"
-		profile=$( eval $DIALOG \
-		--colors \
-		--title \"\$title\"         \
-		--backtitle \"\$DIALOG_BACKTITLE\" \
-		--hline \"\$__hline\"              \
-		--ok-label \"\$msg_ok\"            \
-		--cancel-label \"\$msg_cancel\"    \
-		--default-item \"\$__defaultitem\" \
-		--radiolist \"\$prompt\"           \
-		0 0 0         \
-		${_myprofiles}                      \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-		)
-		if [ $? -ne 0 ]; then
-			# Return if user either pressed ESC or chose Cancel/No
-			profile="${_old_profile}"
-			return 1
-		fi
+		cbsd_menubox
+		case $retval in
+			${DIALOG_OK})
+				[ -n "${mtag}" ] && profile="${mtag}"
+				;;
+			*)
+				;;
+		esac
 	else
 		profile="${1}"
 	fi
@@ -1178,7 +1064,12 @@ get_construct_profile()
 		# reload some dynamic variables depended from jname
 		merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
 	fi
+
+	[ -n "${tpl_pkglist}" ] && pkglist="${tpl_pkglist}"
+
+	return ${retval}
 }
+
 
 # form for $gw4
 get_construct_gw4()
@@ -1221,8 +1112,6 @@ get_construct_jdomain()
 }
 
 
-
-
 make_bhyve_part()
 {
 cat >> ${TMPFILE} << EOF
@@ -1242,6 +1131,33 @@ bhyve_flags="${bhyve_flags}";
 virtio_type="${virtio_type}";
 gw4="${gw4}";
 vm_os_profile="${vm_os_profile}";
+swapsize="${swapsize}"
+vm_guestfs="${vm_guestfs}"
+EOF
+}
+
+
+make_virtualbox_part()
+{
+cat >> ${TMPFILE} << EOF
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+emulator="virtualbox";
+imgsize="${imgsize}";
+vm_cpus="${vm_cpus}";
+vm_ram="${vm_ram}";
+vm_os_type="${vm_os_type}";
+dist_site="";
+iso_site="";
+iso_img="";
+
+vm_hostbridge="${vm_hostbridge}";
+bhyve_flags="${bhyve_flags}";
+virtio_type="${virtio_type}";
+gw4="${gw4}";
+vm_os_profile="${vm_os_profile}";
+swapsize="${swapsize}"
+vm_guestfs="${vm_guestfs}"
 EOF
 }
 
@@ -1343,11 +1259,25 @@ EOF
 	else
 		case "${emulator}" in
 			"bhyve")
-			make_bhyve_part
-			getyesno "Do you want to create vm immediately?"
-			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
-			bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+				make_bhyve_part
+				getyesno "Do you want to create vm immediately?"
+				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
+				bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+			;;
+			"virtualbox")
+				make_virtualbox_part
+				getyesno "Do you want to create vm immediately?"
+				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd vcreate jconf=${TMPFILE}${NORMAL}"
+				vcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+			;;
+			"xen")
+				make_xen_part
+				getyesno "Do you want to create vm immediately?"
+				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd xcreate jconf=${TMPFILE}${NORMAL}"
+				xcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
 			;;
 		*)
 			make_emulator_part
@@ -1375,8 +1305,8 @@ merge_apply_profiles()
 	[ ! -f "${_orig}" ] && return 0
 	[ ! -f "${_custom}" -o "${_custom}" = "${_orig}" ] && unset _custom
 
-	/usr/bin/grep '\$' ${_orig} |/usr/bin/grep -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/1.sorted.$$
-	[ -n "${_custom}" ] && /usr/bin/grep '\$' ${_custom} |/usr/bin/grep -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/2.sorted.$$
+	${GREP_CMD} '\$' ${_orig} |${GREP_CMD} -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/1.sorted.$$
+	[ -n "${_custom}" ] && ${GREP_CMD} '\$' ${_custom} |${GREP_CMD} -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/2.sorted.$$
 
 	/usr/bin/cut -d "=" -f 1 /tmp/1.sorted.$$ > /tmp/1.cuted.$$
 	[ -n "${_custom}" ] && /usr/bin/cut -d "=" -f 1 /tmp/2.sorted.$$ > /tmp/2.cuted.$$
@@ -1386,7 +1316,7 @@ merge_apply_profiles()
 	[ -z "${_custom}" ] && /usr/bin/touch /tmp/2.cuted.$$
 
 	for i in $( /bin/cat /tmp/1.cuted.$$ /tmp/2.cuted.$$|sort -u ); do
-		/usr/bin/grep "^${i}" ${_custom} ${_orig} |/usr/bin/head -n1|/usr/bin/cut -d : -f 2 >> /tmp/run.sh.$$
+		${GREP_CMD} "^${i}" ${_custom} ${_orig} |/usr/bin/head -n1|/usr/bin/cut -d : -f 2 >> /tmp/run.sh.$$
 	done
 
 	. /tmp/run.sh.$$
@@ -1407,3 +1337,6 @@ invert_checkbox()
 	fi
 	continue
 }
+
+###
+fi

@@ -1,5 +1,5 @@
 product="CBSD"
-myversion="10.1.4"
+myversion="10.1.5a"
 
 if not workdir then
 	print ( "no workdir" )
@@ -7,7 +7,7 @@ if not workdir then
 end
 
 distdir="/usr/local/cbsd"
-subr= workdir .. "/nc.subr"
+subr= workdir .. "/nc.lua"
 nodenamefile= workdir .. "/nodename"
 settingstui= workdir .. "/settings-tui.subr"
 dialog= workdir .. "/dialog.subr"
@@ -63,7 +63,7 @@ maildir= vardir .. "/mail"
 logdir= vardir .. "/log"
 sharedir= workdir .. "/share"
 dbdir= vardir .. "/db"
-localcbsdconffile="cbsd.conf"
+localcbsdconffile= "/cbsd.lua"
 localcbsdconf= workdir .. localcbsdconffile
 sudoexecdir= workdir .. "/sudoexec"
 systemsudoexecdir= distdir .. "/sudoexec"
@@ -81,9 +81,9 @@ jailmapdb= dbdir .. "/jmap.txt"
 cbsddocsrc="http://www.bsdstore.ru/en" .. myversion .. "/"
 
 f=io.open(nodenamefile,"r")
-if f~=nil then 
-    nodename = f:read("*l")
-    io.close(f)
+if f ~= nil then
+	nodename = f:read("*l")
+	io.close(f)
 end
 
 -- if [ -n "${NOCOLOR}" ]; then

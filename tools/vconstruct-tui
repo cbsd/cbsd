@@ -1,0 +1,210 @@
+#!/usr/local/bin/cbsd
+#v10.1.5
+MYARG=""
+MYOPTARG="mode"
+MYDESC="Ncurses based Xen guest creation wizard"
+EXTHELP="wf_xcreate.html"
+ADDHELP="mode=full for all atributes\n"
+
+. ${subr}
+. ${settingstui}
+. ${tools}
+. ${dialog}
+. ${workdir}/virtualbox.subr
+
+init $*
+
+gen_newjail_conf()
+{
+	local _i _required _mytest _ret
+
+	_required="jname host_hostname ip4_addr ver arch imgsize"
+
+	msg_ok="ok"
+
+	for _i in ${_required}; do
+		eval _mytest=\$$_i
+		if [ -z "${_mytest}" ]; then
+			f_dialog_msgbox "${_i} must be not non-empty" "Error"
+			return 0
+		fi
+	done
+
+	#check for ip if oninterface
+	if [ "${interface}" != "0" -a -n "${ip4_addr}" ]; then
+		cbsd checkip ip=${ip4_addr} check=1 2>/dev/null
+		case $? in
+			2)
+				msg_yes="ok"
+				msg_no="not ok"
+				f_dialog_noyes "It seems like ${ip4_addr} address already used on several devices on the LAN\nYou can found MAC address by \"arp -an\" command.\n If you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
+				case $? in
+					0)
+						;;
+					*)
+						return 0
+						;;
+				esac
+		esac
+	fi
+	gen_jconf
+	ERR=$?
+
+	[ $ERR -eq 0 ] || err 1 "${MAGENTA}Bad conf${NORMAL}"
+	err 0 ${A}
+}
+
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for construct jail create config file"
+	local defaultitem= # Calculated below
+	local hline=
+	local mark
+	local i _mytest
+
+	f_dialog_default_fetch defaultitem
+
+	# checkbox mark
+	for i in astart; do
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+		else
+			export ${i}_mark=" "
+		fi
+	done
+
+	local menu_list="
+	'A vm_os_type'		'$(curval vm_os_type)'		'Guest OS type'
+	'B vm_os_profile'	'$(curval vm_os_profile)'	'Guest OS profile'
+	'C imgsize'		'$(curval imgsize)'		'reserved (expand) X size for free space'
+	'D jname'		'$(curval jname)'		'A short jail name'
+	'E host_hostname'	'$(curval host_hostname)'	'Full (FQDN) jail hostname'
+	'F vm_ram'		'$(curval vm_ram)'		'RAM'
+	'G vm_cpus'		'$(curval vm_cpus)'		'CPUs number'
+	'H vm_hostbridge'	'$(curval vm_hostbridge)'	'VMs hostbridge'
+	'I astart'		'[${astart_mark}]'		'Autostart with system'
+	'J interface'		'$(curval interface)'		'Interface selection and aliasing mode'
+	" # END-QUOTE
+
+	item_let="K"
+	item_num=0
+
+	#dynamic menu
+	if [ "${from_jail}" = "1" -a "${virtualbox_profile}" != "FreeBSD-bsdinstall-jail" ]; then
+		[ -z "${swapsize}" ] && swapsize="4g"
+		menu_list="${menu_list} '${item_let} vm_guestfs'	'$(curval vm_guestfs)'	'Choose filesystem for boot image'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} swapsize'	'$(curval swapsize)'	'Allocate and Configure for swap partition'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} pkglist'	'$(curval pkgnum)'	'mark pkg for install from repo'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} ip4_addr'	'$(curval ip4_addr)'	'Assing IP address'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} gw4'		'$(curval gw4)'	'Default router for virtualbox or vimage'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} ver'		'$(curval ver)'	'choose code base version'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} applytpl'	'$(curval applytpl)'	'Apply cbsd templates'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} floatresolv'	'$(curval floatresolv)'	'Auto correct for jail resolv.conf'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} arch'		'$(curval arch)'	'target arch'"
+	fi
+
+	menu_list="${menu_list} '-'	'-'	''"
+
+	if [ "${from_jail}" = "1" -a "${virtualbox_profile}" != "FreeBSD-bsdinstall-jail" ]; then
+		inc_menu_index item_num
+		menu_list="${menu_list} '${item_num} user_pw_root'	'Root Password'	'Change jail root password'"
+		inc_menu_index item_num
+		menu_list="${menu_list} '${item_num} add_user'	'$(curval user_add)'	'Create additional account within VM'"
+		inc_menu_index item_num
+		menu_list="${menu_list} '${item_num} services'		'Services >>'	'Toggle Startup Services'"
+		inc_menu_index item_num
+		menu_list="${menu_list} '${item_num} pkglist'	'$(curval pkgnum)'	'mark pkg for install from repo'"
+	fi
+
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} GO'        'PROCEED!'      'PROCEED!'"
+
+	cbsd_menubox_with_help
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+
+#### [ MAIN AREA ] ####
+[ ! -f ${localcbsdconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
+. ${localcbsdconf}
+. ${inventory}
+
+zero_profile="virtualbox-default-default.conf"
+default_profile="virtualbox-default-default.conf"
+
+#defaults
+. ${buildconf}
+
+emulator="virtualbox"
+init_virtualbox
+readconf ${default_profile}
+
+# re-read profile for init global_profile_file variable
+get_construct_profile ${default_profile}
+[ -z "${profile}" -a -n "${jail_profile}" ] && profile="${jail_profile}"
+
+baserw=1
+ip4_addr="DHCP"
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+while [ 1 ]; do
+	pkgnum=0
+	[ -n "${pkglist}" -a "${pkglist}" != "NO" ] && pkgnum=$( /usr/bin/wc -w ${pkglist}|/usr/bin/awk '{printf $1}' )
+
+	dialog_menu_main
+	retval=$?
+
+	if [ $retval -eq $DIALOG_HELP ]; then
+		get_help
+		continue
+	elif [ $retval -ne $DIALOG_OK ]; then
+		f_die
+	fi
+
+	index=${mtag%% *}
+	mychoice=${mtag##* }
+
+	case "${mychoice}" in
+		"EXIT")
+			exit 0
+			;;
+		"GO")
+			gen_newjail_conf
+			;;
+		"-")
+			continue
+			;;
+		interface)
+			get_construct_interface -d 1 -s "tap bridge vboxnet"
+			;;
+		astart)
+			invert_checkbox ${mychoice}
+			continue
+			;;
+		*)
+			get_construct_${mychoice}
+			;;
+	esac
+done
+

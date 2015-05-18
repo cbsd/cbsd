@@ -1,8 +1,6 @@
 if [ ! "$_CBSD_TOOLS_SUBR" ]; then
-	_CBSD_TOOLS_SUBR=1
-else
-	return 0
-fi
+_CBSD_TOOLS_SUBR=1
+###
 
 #v10.0.0
 #return 0 errcode for undefined type
@@ -128,29 +126,54 @@ cdr2mask ()
 	echo ${1-0}.${2-0}.${3-0}.${4-0}
 }
 
+# for select_jail_by_list
+# return 1 when node online
+# return 0 when only_local=0 and node is offnline
+# or only_online=1 or only_local=1
+node_state()
+{
+	[ -z "${nodename}" ] && return 0 # nothing to test
+	[ ${only_local} -eq 0 ] && return 0 # local only
+	[ ${only_online_node} -eq 1 ] && return 0 # any nodes
+
+	local ip
+
+	ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${nodename}\" )
+	[ -z "${ip}" ] && return 0 # nothing to test
+
+	if ! check_locktime ${ftmpdir}/shmux_${ip}.lock >/dev/null 2>&1; then
+		return 1	# Offline
+	else
+		return 0	# Online
+	fi
+}
+
 # return $jname as selected jail by id
 # -s "is subject for list"
 # -a [0|1] show only active (status=on jail): 0, or all: 1
 # -r [0|1] select jname from remote node too (1), or only local: 0
 # -e emulator ( jls for jail and bls for bhyve ): jls
+# -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
 select_jail_by_list()
 {
 	local _res _id i=1
 	local sqldelimer=" "
 	local emulator="jls"
 
-	local only_local=0 # default - local node only
+	local only_local=0	# default - local node only
 	local subject="List of online jails:"
 
 	local searchstr
 	local active="."
+	local only_online_node=0	# only online node
 
-	while getopts "a:r:s:e:" opt; do
+	while getopts "a:r:s:e:o:" opt; do
 		case "$opt" in
 			a) active="${OPTARG}" ;;
 			r) only_local="${OPTARG}" ;;
 			s) subject="${OPTARG}" ;;
 			e) emulator="${OPTARG}" ;;
+			o) only_online_node="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -159,9 +182,12 @@ select_jail_by_list()
 		searchstr="env NOCOLOR=1 ${emulator} shownode=1 display=jname,status header=0"
 	else
 		searchstr="env NOCOLOR=1 ${emulator} alljails=1 shownode=1 display=jname,status header=0"
+		. ${nodes}
 	fi
 
-	eval $( ${searchstr} |grep ${active}$ |while read nodename jname status; do
+	eval $( ${searchstr} |/usr/bin/egrep ${active}$ |while read nodename jname status; do
+		# continue only when any node status or when node is online (when -r 1)
+		node_state || continue
 		echo "local nodename${i}=\"${nodename}\""
 		echo "local jname${i}=\"${jname}\""
 		i=$(( i + 1 ))
@@ -169,7 +195,7 @@ select_jail_by_list()
 
 	${ECHO} "${BOLD}0 .. CANCEL${NORMAL}"
 
-	for i in $( seq 1 9999 ); do
+	for i in $( /usr/bin/seq 1 9999 ); do
 		eval _mynode="\$nodename${i}"
 		[ -z "${_mynode}" ] && break
 		[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${NORMAL}"
@@ -201,10 +227,11 @@ test_sql_stuff()
 {
 	local _files="/usr/local/bin/cbsd ${miscdir}/updatesql"
 	local _i _res
+	[ -z "${GREP_CMD}" ] && GREP_CMD="grep"
 
 	for _i in ${_files}; do
 		[ ! -f "${_i}" ] && continue
-		_res=$( /usr/bin/ldd ${_i} 2>/dev/null|grep " not found " )
+		_res=$( /usr/bin/ldd ${_i} 2>/dev/null|${GREP_CMD} " not found " )
 		if [ -n "${_res}" ]; then
 			echo "WARNING: ${_i} is broken:"
 			echo "${_res}"
@@ -213,3 +240,26 @@ test_sql_stuff()
 		fi
 	done
 }
+
+# re-edit /etc/hosts in jail for $1 IPs
+# $1 - ip
+# $2 - /etc/hosts
+mkjhosts()
+{
+	local _IP=$1
+	local _JHOST=$2
+
+	[ $applytpl -eq 0 -o "$ver" = "empty" ] && return 0
+	[ -z "${host_hostname}" ] && return 0
+
+	local _tpl="CBSD autotpl for mkhostsfile"
+	local _TMPH="${ftmpdir}/hosts.$$"
+
+	/bin/cp -a ${_JHOST} ${_TMPH}
+	${GREP_CMD} -v "${_tpl}" ${_TMPH} > ${_JHOST}
+	echo "${_IP} ${host_hostname} # ${_tpl}" >> ${_JHOST}
+	/bin/rm -f ${_TMPH}
+}
+
+###
+fi

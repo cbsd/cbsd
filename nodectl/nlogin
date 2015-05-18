@@ -1,72 +1,61 @@
 #!/usr/local/bin/cbsd
-#v10.0.5
+#v10.1.5
 CBSDMODULE="node"
 MYARG=""
-MYOPTARG="node remote"
+MYOPTARG="node remote tryroot"
 MYDESC="Login to remote node and/or exec command"
 ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
-use: cbsd node <node> date - to execute date cmd on <node> host\n"
+use: cbsd node <node> date - to execute date cmd on <node> host\n\
+tryroot=1 - user rootkey and root user instead of cbsd\n"
 EXTHELP="wf_nlogin.html"
 
 . ${subr}
 . ${strings}
+. ${nodes}
 
+readconf nlogin.conf
+_tryroot="${tryroot}"
+unset tryroot
 init $*
 
-select_node_by_list()
-{
-	local _res _id i=0
-
-	local sqldelimer=" "
-	eval $( cbsdsql nodes SELECT nodename,ip FROM nodelist |while read nodename ip status; do
-		echo "local nodename${i}=\"${nodename}\"
-		echo "local ip${i}=\"${ip}\"
-		i=$(( i + 1 ))
-	done )
-
-	for i in $(seq 0 255); do
-		eval _mynode="\$nodename${i}"
-		[ -z "${_mynode}" ] && break
-		[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${NORMAL}"
-		eval _ip="\$ip${i}"
-		[ -z "${_ip}" ] && break;
-		[ $i -eq 0 ] && ${ECHO} "${MAGENTA}Node base:${NORMAL}"
-		${ECHO} "${BOLD}${i} .. ${GREEN}${_mynode} ${NORMAL}on ${GREEN}${_ip}${NORMAL}"
-	done
-
-	[ $i -eq 0 ] && err 1 "${MAGENTA}No node found${NORMAL}"
-	echo
-	printf "${BOLD}Enter id to login:${NORMAL} "
-	set -e
-	read _id
-	set +e
-	if ! is_number ${_id}; then
-		eval node="\$nodename${_id}"
-	else
-		err 1 "${MAGENTA}Not number{NORMAL}"
-	fi
-
-	remote=2 # for autoremote
-}
+# must be first
+[ -n "${tryroot}" ] && _tryroot="${tryroot}" && shift
+[ -n "${_tryroot}" ] && tryroot="${_tryroot}"
+[ -z "${tryroot}" ] && tryroot=0
 
 [ -z "${node}" ] && node=$1
-[ -z "${node}" ] && select_node_by_list
+[ -z "${node}" ] && select_node_by_list -s "List of online nodes:" -a "0"
 [ -z "${node}" ] && err 1 "${MAGENTA}Empty node${NORMAL}"
+
 
 shift
 CMD="$@"
 
-NODEDATA=$(cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\")
+NODEDATA=$( cbsdsql nodes SELECT ip,port,keyfile,rootkeyfile FROM nodelist WHERE nodename=\"${node}\" )
 
 [ -z "${NODEDATA}" ] && err 1 "${node}: No such node in base"
 
-sqllist "$NODEDATA" myip myport mykey
-SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+sqllist "$NODEDATA" myip myport mykey rootkeyfile
+
+if [ ${tryroot} -eq 1 -a -f ${rootkeyfile} ]; then
+	mykey="${rootkeyfile}"
+	cbsduser="root"
+fi
+
+SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${cbsduser}@${myip}"
 
 [ -z "$SSHOP" -o -z "${myip}" ] && err 1 "${MAGENTA}No such node ${GREEN}${node}${MAGENTA} in database or have no ip/scpopt${NORMAL}"
 
 if [ -n "${CMD}" ]; then
-	su -m ${cbsduser} -c "/usr/bin/ssh ${SSHOP} -C \"${CMD}\""
+	if [ ${tryroot} -eq 1 ]; then
+		/usr/bin/ssh ${SSHOP} -C \"${CMD}\"
+	else
+		/usr/bin/su -m ${cbsduser} -c "/usr/bin/ssh ${SSHOP} -C \"${CMD}\""
+	fi
 else
-	su -m ${cbsduser} -c "/usr/bin/ssh ${SSHOP}"
+	if [ ${tryroot} -eq 1 ]; then
+		/usr/bin/ssh ${SSHOP}
+	else
+		/usr/bin/su -m ${cbsduser} -c "/usr/bin/ssh ${SSHOP}"
+	fi
 fi

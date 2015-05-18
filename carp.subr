@@ -1,8 +1,6 @@
 if [ ! "$_CBSD_CARP_SUBR" ]; then
-	_CBSD_CARP_SUBR=1
-else
-	return 0
-fi
+_CBSD_CARP_SUBR=1
+###
 
 carp_init()
 {
@@ -23,11 +21,11 @@ get_ip4_by_vhid()
 	local _res
 
 	if [ -z "${ip}" ]; then
-		_res=$( /sbin/ifconfig ${interface}| /usr/bin/grep "inet *.*.*.* netmask [[:alnum:]]* *.*.*.* vhid ${1} "|/usr/bin/awk {'printf $2'} )
+		_res=$( /sbin/ifconfig ${interface}| ${GREP_CMD} "inet *.*.*.* netmask [[:alnum:]]* *.*.*.* vhid ${1} "|/usr/bin/awk {'printf $2" "'} )
 	else
 		ipwmask "${ip}"
 		[ -n "${IWM}" ] && ip="${IWM}"
-		_res=$( /sbin/ifconfig ${interface}| /usr/bin/grep "inet ${ip} netmask [[:alnum:]]* *.*.*.* vhid ${1} "|/usr/bin/awk {'printf $2'} )
+		_res=$( /sbin/ifconfig ${interface}| ${GREP_CMD} "inet ${ip} netmask [[:alnum:]]* *.*.*.* vhid ${1} "|/usr/bin/awk {'printf $2" "'} )
 	fi
 
 	[ -z "${_res}" ] && return 0
@@ -38,11 +36,15 @@ get_ip4_by_vhid()
 carp_unset()
 {
 	local _res
+	local _resip
+
 	_res=$( get_ip4_by_vhid ${vhid} )
 
 	[ $? -eq 0 ] && err 1 "${MAGENTA}vhid not initializated: ${GREEN}${vhid}${NORMAL}"
 	# iptype ?
-	/sbin/ifconfig ${interface} inet ${_res} -alias
+	for _resip in ${_res}; do
+		/sbin/ifconfig ${interface} inet ${_resip} -alias
+	done
 }
 
 
@@ -73,6 +75,21 @@ check_vhid()
 	sqllist "${_res}" id vhid advskew pass interface state
 }
 
+
+# return jname list who have vhid = $1
+get_jname_by_vhid()
+{
+	[ -z "${1}" ] && return 1
+	local vhid="${1}"
+	local pattern="vhid_${vhid}#"
+	local jname
+
+	jname=$( cbsdsql local SELECT jname FROM jails WHERE ip4_addr LIKE \"%${pattern}%\" AND emulator != \"bhyve\" | /usr/bin/xargs )
+
+	[ -n "${jname}" ] && echo "${jname}"
+}
+
+
 check_interface()
 {
 	local _res
@@ -89,16 +106,24 @@ check_interface()
 		interface="${auto_iface}"
 	fi
 	[ -z "${interface}" ] && err 1 "${MAGENTA}No such interface: ${GREEN}${interface}, e.g: interface=auto${NORMAL}"
+
+	return 0
 }
 
 
 carp_set()
 {
-	local _res _state
+	local _res _state i
 
-	if [ ${show} -ne 1 ]; then
+	# do not set ip when already exist
+	if [ ${show} -eq 0 ]; then
 		_res=$( get_ip4_by_vhid ${vhid} )
-		[ $? -eq 1 ] && err 1 "${MAGENTA}vhid ${GREEN}${vhid}${MAGENTA} already initializated for: ${GREEN}${_res}${NORMAL}"
+
+		ipwmask ${ip}
+
+		for i in ${_res}; do
+			[ "${i}" = "${IWM}" ] && err 1 "${MAGENTA}vhid ${GREEN}${vhid}${MAGENTA} already initializated for: ${GREEN}${_res}${NORMAL}"
+		done
 	fi
 
 	[ -z "${advskew}" ] && err 1 "${MAGENTA}No such mandatory params: ${GREEN}advskew, e.g: advskew=100${NORMAL}"
@@ -135,3 +160,6 @@ carp_update()
 	echo "/sbin/ifconfig ${interface} vhid ${vhid} ${_cmd}"
 	/sbin/ifconfig ${interface} vhid ${vhid} ${_cmd}
 }
+
+###
+fi

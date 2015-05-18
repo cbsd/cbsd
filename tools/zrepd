@@ -1,0 +1,90 @@
+#!/usr/local/bin/cbsd
+MYARG=""
+MYOPTARG="reload"
+MYDESC="Daemon for executing zrep"
+CBSDMODULE="zrep"
+EXTHELP="wf_zrep.html"
+
+. ${subr}
+. ${system}
+. ${strings}
+
+init $*
+
+[ -z "${reload}" ] && reload=0
+
+readconf zrep.conf
+
+[ ! -f "${dbdir}/zrepd.sqlite" ] && err 1 "No such ${dbdir}/zrepd.sqlite"
+[ -z "${max_simul_jobs}" ] && max_simul_jobs="10"
+[ -z "${loop_timeout}" ] && loop_timeout="60"
+
+# first of all, checks for orphaned tasks in status 1 (running) and back to status 0,
+# due to next iteration take this job again
+
+#store pid
+echo $$ > /var/run/zrepd.pid
+trap "/bin/rm -f /var/run/zrepd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
+
+# sets mbuffer to 0 for all mbuffer=1
+cbsdsql zrepd UPDATE map SET mbuffer='0' WHERE mbuffer != '2'
+
+# return 0 when no mbuffer on any host
+# return 1 when both system have mbuffer
+check_for_mbuffer()
+{
+	mbuffer=0
+
+	if [ ! -x /usr/local/bin/mbuffer ]; then
+		echo "No such mbuffer on localhost"
+		return 0
+	fi
+
+	rexe node=${nodename} tryoffline=1 test -x /usr/local/bin/mbuffer
+
+	# file exist, so return 1
+	[ $? -eq 0 ] && mbuffer=1 && return 1
+
+	echo "No such mbuffer on ${nodename}"
+	return 0
+}
+
+
+unset id nodename mbuffer
+
+sqldelimer=" "
+cbsdsql zrepd SELECT id,nodename,mbuffer FROM map | while read id nodename mbuffer; do
+	echo "$nodename $mbuffer"
+	[ ${mbuffer} -eq 2 ] && continue
+	check_for_mbuffer
+	echo "MB: $mbuffer"
+	cbsdsql zrepd UPDATE map SET mbuffer=\"${mbuffer}\" WHERE id=\"$id\"
+done
+
+#cbsdsql zrepd SELECT id,nodename,mbuffer FROM map | while read id nodename mbuffer; do
+#	echo "$nodename $mbuffer"
+#	[ ${mbuffer} -eq 2 ] && continue
+#	check_for_mbuffer
+#	mbuffer=$?
+#	echo "MB: $mbuffer"
+#	cbsdsql zrepd UPDATE map SET mbuffer=\"${mbuffer}\" WHERE id=\"$id\"
+#done
+
+
+exit 0
+
+while [ 1 ]; do
+	unset jname nodename frequency
+	sqldelimer=" "
+	cbsdsql zrepd SELECT jname,nodename,frequency,mbuffer FROM map | while read jname nodename frequency mbuffer; do
+		[ ${mbuffer} -ne 1 ] && mbuffer=0
+		echo "cbsd zrep jname=$jname node=$nodename mode=sync mbuffer=${mbuffer}"
+		/usr/sbin/daemon -f /usr/bin/lockf -s -t0 /tmp/zrep-${jname}-${nodename}.lock zrep jname=${jname} node=${nodename} mode=sync mbuffer=${mbuffer}
+		# wait for pid of daemon here!!!
+		sleep 1
+	done
+
+	echo "Zzzzz"
+	[ -f /tmp/zrep.stop ] && exit 0
+	sleep ${loop_timeout}
+done

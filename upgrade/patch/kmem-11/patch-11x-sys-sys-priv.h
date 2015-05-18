@@ -1,10 +1,11 @@
---- priv.h.bak	2015-01-29 12:43:48.000000000 +0300
-+++ priv.h	2015-01-29 12:45:01.000000000 +0300
-@@ -503,10 +503,11 @@
+--- priv.h.orig	2015-03-09 06:30:15.000000000 +0300
++++ priv.h	2015-03-09 06:32:08.000000000 +0300
+@@ -503,10 +503,12 @@
  #define	PRIV_KMEM_READ		680	/* Open mem/kmem for reading. */
  #define	PRIV_KMEM_WRITE		681	/* Open mem/kmem for writing. */
  
 +#define	PRIV_DRI_DRIVER		682
++
  /*
   * Track end of privilege list.
   */

@@ -54,7 +54,8 @@ spawncmd(int argc, char **argv)
 	int child_status = 0, infd = -1, outfd[2] = {-1, -1};
 //	char ** env = NULL;
 	char *env[] = { "PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin", "NOCOLOR=1", "INTER=0", NULL};
-	char *shell="/bin/sh";
+//	char *shell="/bin/sh";
+	char *shell="/usr/local/bin/cbsd";
 	int res = 0;
 	int i = 0;
 	char *command;

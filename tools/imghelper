@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
-#v10.1.4
+#v10.1.5
 MYARG=""
-MYOPTARG="formfile bootstrap jname"
+MYOPTARG="formfile bootstrap module jname"
 MYDESC="Ncurses-based jail image boostrap helper"
 EXTHELP="wf_imghelper.html"
 
@@ -11,7 +11,6 @@ EXTHELP="wf_imghelper.html"
 . ${strings}
 . ${system}
 . ${dialog}
-
 
 if [ "${1}" != "--help" -a "${1}" != "--args" ]; then
 	# assume that this is the path to form when path geing with slash
@@ -27,48 +26,20 @@ fi
 
 init $*
 
-# if all_filled; then
-#    echo "ALL FILLED"
-# fi
-all_filled()
-{
-	local i _T
+# imghelper_version
+# Compare this YYYMM serial with database forms version. When forms have greater number
+# this helper is not support this
+imghelper_version="201502"
 
-	for i in ${param}; do
-		eval _T=\${${i}}
-		[ -z "${_T}" ] && return 1
-	done
+if [ -n "${jname}" -a -n "${module}" ]; then
+	JAIL_ROOT_DIR="${jailsysdir}/${jname}"
+	SKEL_DIR="${JAIL_ROOT_DIR}/skel"
 
-	return 0
-}
+	# keep this settins for imghelper
+	: ${formfile="${JAIL_ROOT_DIR}/modules/${module}cfg.d/forms.sqlite"}
+fi
 
-
-
-load_forms()
-{
-	FORMS=$( cbsdsql ${formfile} SELECT param FROM forms ORDER BY order_id |/usr/bin/xargs )
-	local _env
-
-	eval $( for i in ${FORMS}; do
-		unset _env
-		desc="$( cbsdsql ${formfile} SELECT desc FROM forms WHERE param=\"${i}\" )"
-
-		# check for H_environment
-		eval _res="\$H_${i}"
-		if [ -n "${_res}" ]; then
-			# environment is preferred
-			echo "${i}=\"${_res}\""
-		else
-			def="$( cbsdsql ${formfile} SELECT def FROM forms WHERE param=\"${i}\" )"
-			echo "${i}=\"${def}\""
-		fi
-
-		attr="$( cbsdsql ${formfile} SELECT attr FROM forms WHERE param=\"${i}\" )"
-		xattr="$( cbsdsql ${formfile} SELECT xattr FROM forms WHERE param=\"${i}\" )"
-		echo "${i}_desc=\"${desc}\""
-	done )
-}
-
+. ${workdir}/imghelper.subr
 
 dialog_menu_main()
 {
@@ -76,13 +47,20 @@ dialog_menu_main()
 	local btitle="$DIALOG_BACKTITLE"
 	local prompt="Use menu for select and edit limit"
 	local hline=
+	local defaultitem=
 
-	local title=" Image parameters for ${jname} "
+	local mytargets=
+
+	f_dialog_default_fetch defaultitem
+
+	[ -n "${jname}" ] && mytargets="for ${jname} "
+
+	local title=" Image parameters ${mytargets}"
 	local _mydesc
 
 	local menu_list=
 
-	for _items in ${FORMS}; do
+	for _items in ${param}; do
 		eval VAL=\$${_items}
 
 		if [ -z "${VAL}" ]; then
@@ -94,39 +72,13 @@ dialog_menu_main()
 
 	menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
+	cbsd_menubox
+	retval=$?
 
-	# Obtain default-item from previously stored selection
-	f_dialog_default_fetch defaultitem
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
 
-	mtag=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \"\$prompt\"                     \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
-	local retval=$?
-	f_dialog_data_sanitize mtag
-	f_dialog_menutag_store "$mtag"
-
-	# Only update default-item on success
-	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$mtag"
 	return $retval
 }
 
@@ -157,29 +109,46 @@ get_helper_value()
 #
 with_bootstrap=0
 
+if [ -n "${module}" ]; then
+	helper_workdir="${moduledir}/${module}cfg.d"
+	[ ! -d "${helper_workdir}" ] && err 1 "${MAGENTA}No such module dir: ${GREEN}${helper_workdir}"
+	with_bootstrap=1 # module always has bootsrap
+fi
+
+[ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
+
+if [ -z "${helper_workdir}" ]; then
+	helper_workdir=$( /usr/bin/dirname ${formfile} )
+fi
+
+active_jail=0
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	[ ${jid} -ne 0 ] && active_jail=1
+fi
+
 if [ -n "${bootstrap}" ]; then
+
+	check_version
 
 	[ ! -f "${bootstrap}" ] && err 1 "${MAGENTA}No such bootstrap file: ${GREEN}${bootstrap}${NORMAL}"
 
 	[ -z "${jname}" ] && err 1 "${MAGENTA}jname= is necessary for bootstrap${NORMAL}"
 
-	. ${jrcconf}
-	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ ${jid} -ne 0 ] && err 1 "${MAGENTA}Error: jail is active${NORMAL}"
-
 	. ${bootstrap}
 	. ${workdir}/universe.subr
 
 	[ -z "${formfile}" ] && err 1 "No such formfile"
-	[ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
 
 	[ $baserw -eq 1 ] && path=$data
-	[ ! -d "${path}" ] && mkdir -p ${path}
+	[ ! -d "${path}" ] && /bin/mkdir -p ${path}
 
 	with_bootstrap=1
 else
 	[ -z "${formfile}" ] && err 1 "No such formfile"
-	[ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
+	check_version
 fi
 
 param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |/usr/bin/xargs )
@@ -215,10 +184,21 @@ done
 # no bootrstap? this is the end my beautiful friend
 [ ${with_bootstrap} -eq 0 ] && f_die
 
+# Update new value
+update_params
+
 # Here is boostrap-only area
-jstart jname=${jname}
-install_img
-jstop jname=${jname}
-img_message
-sleep 1
-jcleanup jname=${jname}
+[ "${active_jail}" != "1" ] && jstart jname=${jname}
+
+# only image helper have install_img
+[ -z "${module}" ] && install_img
+
+[ "${active_jail}" != "1" ] && jstop jname=${jname}
+
+# only image helpers have img_message
+[ -z "${module}" ] && img_message && sleep 1
+
+# commit when works with module
+[ -n "${module}" ] && cbsd ${module}cfg jname=${jname} mode=commit
+
+[ "${active_jail}" != "1" ] && jcleanup jname=${jname}

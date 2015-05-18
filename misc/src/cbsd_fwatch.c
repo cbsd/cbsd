@@ -103,6 +103,7 @@ int main(int argc, char *argv[])
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
 		printf("kevent\n");
+		close(kq);
 		exit(1);
 	}
 
@@ -118,8 +119,11 @@ int main(int argc, char *argv[])
 
 	if (nev == -1) {
 		printf("kevent\n");
+		close(kq);
 		exit(1);
 	}
+
+	close(kq);
 
 	if (nev != 0) {
 		if (ev.fflags & NOTE_DELETE) {
@@ -157,5 +161,7 @@ int main(int argc, char *argv[])
 			ev.fflags &= ~NOTE_REVOKE;
 		}
 	}
+
+	free(watchfile);
 	return 0;
 }

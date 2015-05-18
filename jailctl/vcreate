@@ -1,0 +1,222 @@
+#!/usr/local/bin/cbsd
+#v10.1.6
+MYARG="jconf"
+MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist"
+MYDESC="Create jail from config file"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
+customskel = additional skel directory applyed above jail structrure\n\
+fstablocal = additional fstab file stored as fstab.local\n"
+CBSDMODULE="virtualbox"
+EXTHELP="wf_bcreate.html"
+
+. ${subr}
+. ${system}
+. ${tools}
+. ${mdtools}
+. ${jfs}
+readconf buildworld.conf
+readconf virtualbox-default-default.conf
+readconf zfs.conf
+. ${workdir}/universe.subr
+. ${workdir}/freebsd_world.subr
+. ${workdir}/virtualbox.subr
+
+init $*
+
+### MAIN
+[ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
+over="${ver}"
+oarch="${arch}"
+jconf=$( realpath $jconf )
+
+if [ -z "${delpkglist}" ]; then
+	delpkglist=0
+else
+	delpkglist=1
+fi
+
+temprcconf="${ftmpdir}/jcreate_jconf.$$"
+
+/bin/cp ${jconf} ${temprcconf}
+
+if [ ${removejconf} = "1" ]; then
+	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+else
+	trap "/bin/rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+fi
+
+. ${temprcconf}
+. ${buildconf}
+. ${temprcconf}
+
+[ -z "${jname}" ] && err 1 "${MAGENTA}No such jname variable${NORMAL}"
+
+# profile
+readconf bhyve-${vm_os_type}-${vm_os_profile}.conf
+[ -z "${virtualbox_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+# re-read jail params and apply personal after profile
+. ${temprcconf}
+
+jstatus jname=${jname} > /dev/null 2>&1
+[ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
+
+# ip validate
+if [ -n "${interface}" -a "${inteface}" != "0" ]; then
+	### CHECK FOR IP ( 1 - check for interfaces) ####
+	checkip ip=${ips} check=1 > /dev/null 2>&1
+	case $? in
+		0)
+			err 1 "${MAGENTA}Ip not in pool range${NORMAL}"
+			;;
+		1)	;;
+		2)
+			${ECHO} "${MAGENTA}Warning:${GREEN} Ip already exists in LAN${NORMAL}"
+			;;
+		*)
+			err 1 "Unknown code from checkip"
+			;;
+	esac
+fi
+
+${ECHO} "${MAGENTA}Please wait: ${GREEN}this will take a while...${NORMAL}"
+
+[ -d "${data}" ] && removedata ${data}
+
+case $zfsfeat in
+	"0")
+		[ ! -d ${data} ] && /bin/mkdir -p ${data}
+		;;
+	"1")
+		. $zfstool
+		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+
+		if zfsroot $jname; then
+			err 1 "$ZPOOL/$jname already in use"
+		fi
+
+		/sbin/zfs create ${zfs_create_flags} -o mountpoint=${data} ${ZPOOL}/$jname
+		;;
+esac
+
+[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
+[ ! -d ${path} -a "${baserw}" -eq 0 ] && mkdir -p ${path}
+[ ! -d ${jailfstabdir}  ] && mkdir -p ${jailfstabdir}
+[ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
+
+if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
+	case ${virtualbox_profile} in
+		"FreeBSD-bsdinstall-jail")
+			export UNAME_r="${ver}-RELEASE"
+			export DISTRIBUTIONS="kernel.txz base.txz"
+			bsdinstall jail ${data}
+			unset UNAME_r
+			nobase=1
+			;;
+		*)
+			nobase=0
+			init_target_arch
+			init_basedir
+			init_kerneldir
+			get_base
+			${ECHO} "${MAGENTA}Stage1: ${GREEN}jail hier...${NORMAL}"
+			populate_freebsd_world
+			;;
+	esac
+fi
+
+/bin/cp $temprcconf $rcconf
+
+[ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
+
+# Finnaly export to SQLite
+jregister jname=${jname} mode=new
+
+_res=$?
+
+if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
+	if [ -n "${pkglist}" ]; then
+		pkg mode=bootstrap jname=${jname} ||true
+		if [ ! -f "${pkglist}" ]; then
+			pkg mode=install jname=${jname} ${pkglist}
+		else
+			pkg mode=install pkglist="${pkglist}" jname=${jname}
+			[ $delpkglist -eq 1 ] && /bin/rm -f ${pkglist}
+		fi
+	fi
+
+	if [ -n "${user_pw_root}" ]; then
+		passwd jname=${jname} user="root" pw="${user_pw_root}"
+	fi
+
+	if [ -n "${sysrc_enable}" ]; then
+		for i in ${sysrc_enable}; do
+			sysrc jname=${jname} ${i}_enable="YES"
+		done
+	fi
+
+	[ -n "${user_add}" ] && adduser jname=${jname} mode=add fromfile="${jconf}"
+fi
+
+if [ ${_res} -eq 0 ]; then
+	${ECHO}
+	${ECHO} "${MAGENTA}To edit VM properties use: ${GREEN}cbsd bconfig jname=${jname}${NORMAL}"
+	${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
+	/bin/rm -f $rcconf
+
+	[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
+	#timezone
+
+	defdsk="dsk1.vhd"
+	defnic="nic1.vhd"
+
+	if [ "${from_jail}" ]; then
+		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
+		[ -z "${swapsize}" ] && swapsize="0"
+		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=virtualbox quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs}
+		jremove ${jname}
+		${SYSRC_CMD} -qf ${jconf} ver="empty" > /dev/null
+		${SYSRC_CMD} -qf ${jconf} sysrc_enable="" > /dev/null
+		jcreate jconf=${jconf}
+		#test for zfs mounted & mount if not
+		case $zfsfeat in
+			1)
+				. $zfstool
+				zfsmnt ${data}
+				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+				;;
+		esac
+		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
+		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
+	else
+		if ! virtualbox_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
+			err 1 "Error: Couldn't create the image file. ${mdimage}"
+		fi
+	fi
+
+	if [ -n "${virtio_type}" ]; then
+		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO virtualboxdsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
+	else
+		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO virtualboxdsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
+	fi
+
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO virtualboxnic ( jname ) VALUES ( \"${jname}\" )"
+
+	# store profile in jail system dir
+	[ ! -d "${jailsysdir}/${jname}/etc" ] && /bin/mkdir ${jailsysdir}/${jname}/etc && /usr/sbin/chown cbsd:cbsd ${jailsysdir}/${jname}/etc
+	storeconf virtualbox-${vm_os_type}-${vm_os_profile}.conf ${jailsysdir}/${jname}/etc/virtualbox-${vm_os_type}-${vm_os_profile}.conf
+
+	${VBOX_MGMT_CMD} createvm --name ${jname} --ostype ${virtualbox_ostype} --register
+
+	${VBOX_MGMT_CMD} storagectl ${jname} --name "IDE Controller" --add ide
+	${VBOX_MGMT_CMD} storageattach ${jname} --storagectl "IDE Controller" --port 0 --device 0 --type hdd --medium ${data}/${defdsk}
+	exit 0
+else
+	${ECHO}
+	${ECHO} "${MAGENTA}Creating ${jname} failed: ${GREEN}cbsd jregister${NORMAL}"
+	${ECHO} "${MAGENTA}Please review bad config file: ${GREEN}/tmp/rc.conf_${jname}${NORMAL}"
+	mv $rcconf /tmp
+	#cleanup
+	[ -f "${mount_fstab}" ] && /bin/rm -f ${mount_fstab}
+	removedata ${data}
+	exit 1
+fi

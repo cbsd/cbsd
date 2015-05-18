@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.3
+#v10.1.6
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="vhid advskew pass ip interface state"
@@ -20,11 +20,11 @@ set -e
 set +e
 
 ### MAIN
-carp_init
-
 args="$*"
 [ -z "${args}" ] && exit 0
 echo "${args}" >> /tmp/cbsd_carp.log
+
+/sbin/kldstat -qm carp || /sbin/kldload carp
 
 eval $( echo "${args}" |/usr/bin/tr "@" " "|while read vhid interface state; do
 	[ -z "${state}" ] && continue
@@ -33,17 +33,33 @@ eval $( echo "${args}" |/usr/bin/tr "@" " "|while read vhid interface state; do
 	echo "export state=${state}"
 done )
 
-jname="carp1"
+jname_list=$( get_jname_by_vhid ${vhid} )
 
-case "${state}" in
-	[Bb][Aa][Cc][Kk][Uu][Pp])
-		jstop inter=0 ${jname}
-		;;
-	[Mm][Aa][Ss][Tt][Ee][Rr])
-		jstart inter=0 ${jname}
-		;;
-	*)
-		err 1 "${MAGENTA}Unknown carp state: ${state}${NORMAL}"
-		;;
-esac
+[ -z "${jname_list}" ] && exit 0
+
+for jname in ${jname_list}; do
+
+	. ${jrcconf}
+	[ $? -eq 1 ] && continue
+	if [ ${astart} -eq 0 ]; then
+		echo "`/bin/date` CARP ${state} state for jail ${jname} received. But jail astart marked as Off. Skipp" >> /tmp/cbsd_carp.log
+		continue
+	else
+		echo "`/bin/date` CARP ${state} state for jail ${jname} received." >> /tmp/cbsd_carp.log
+	fi
+
+	case "${state}" in
+		[Bb][Aa][Cc][Kk][Uu][Pp])
+			NOCOLOR=1 jstop inter=0 ${jname} >> /tmp/cbsd_carp.log
+			;;
+		[Mm][Aa][Ss][Tt][Ee][Rr])
+			NOCOLOR=1 jstart inter=0 ${jname}
+			;;
+		*)
+			err 1 "${MAGENTA}Unknown carp state: ${state}${NORMAL}"
+			;;
+	esac
+
+done
+
 
