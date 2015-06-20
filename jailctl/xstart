@@ -1,0 +1,240 @@
+#!/usr/local/bin/cbsd
+#v10.1.2
+MYARG=""
+MYOPTARG="jname inter debug"
+MYDESC="Start jail"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
+CBSDMODULE="xen"
+EXTHELP="wf_jstop_jstart.html"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${workdir}/universe.subr
+. ${workdir}/xen.subr
+. ${tools}
+
+readconf buildworld.conf
+readconf jail-freebsd-default.conf
+. ${workdir}/xen.subr
+
+[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e xls -r ${sqlreplica}
+init $*
+
+. ${workdir}/fetch.subr
+
+# MAIN for multiple jails
+TRAP=""
+
+if [ $# -gt 1 -a -z "${jname}" ]; then
+	# multiple astart always non interactive
+	export inter=0
+	# recursive
+	JLIST=$*
+	for jname in ${JLIST}; do
+		[ "${jname}" = "inter=0" ] && continue
+		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/xstart.${jname}.$$;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		/usr/sbin/daemon -p ${ftmpdir}/xstart.${jname}.$$ /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
+		trap "" HUP INT ABRT BUS TERM EXIT
+		# Artificial delay to create a sequence (for order compliance)
+		# todo: determine VM complete starting
+		sleep 12
+	done
+
+	wait_for_fpid start ${parallel}
+	err 0 "${MAGENTA}Multiple xstart: ${GREEN}done${NORMAL}"
+fi
+
+
+make_freebsd_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder = "hvm"
+serial="pty"
+vncconsole=1
+EOF
+}
+
+make_linux_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder = "linux" 
+kernel = "${kernel_dir}/vmlinuz"
+ramdisk = "${kernel_dir}/initrd.gz"
+#extra = "debian-installer/exit/always_halt=true -- console=hvc0"
+#sdl=1
+serial='pty'
+EOF
+}
+
+make_windows_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+acpi = 1
+EOF
+}
+
+make_other_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+EOF
+}
+
+
+
+# MAIN
+init_xen
+
+[ -z "$jname" ] && jname=$1
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+[ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
+[ "${emulator}" != "xen" ] && err 1 "${MAGENTA}Not xen mode${NORMAL}"
+[ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
+
+
+# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+MDFILE=$( cbsdsql local SELECT dsk_path FROM ${emulator}dsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+
+case "${vm_vnc_port}" in
+	0)
+		vm_port=$( get_next_rd_port )
+		vnc_args="--vrde on --vrdeport ${vm_port}"
+		vncdisplay=$(( ${vm_port} - 5900 ))
+		${ECHO} "${MAGENTA}VRDP is enabled. VNC port: ${GREEN}. ${MAGENTA}VNC pass: 'cbsd'${NORMAL}${vm_port}${NORMAL}"
+		;;
+	1)
+		vm_port=0
+		vnc_args="--vrde off"
+		;;
+	*)
+		vm_port=${vm_vnc_port}
+		vnc_args="--vrde on --vrdeport ${vm_port}"
+		;;
+esac
+
+cbsdsql local UPDATE xen SET vm_rd_port=\"${vm_port}\" WHERE jname=\"${jname}\"
+
+if [ "${interface}" != "auto" ]; then
+	# check for interface exist
+	_res=$( ${miscdir}/nics-list -s "lo" |while read _iface; do
+		[ "${interface}" = "${_iface}" ] && echo "${_iface}" ] && exit 0
+	done )
+	[ -z "${_res}" ] && err 1 "${MAGENTA}No such interface: ${GREEN}${interface}${NORMAL}"
+else
+	auto_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
+	[ -z "${auto_iface}" ] && err 1 "${MAGENTA}Can't determine uplink interface${NORMAL}"
+	interface="${auto_iface}"
+fi
+
+xvm_ram=$(( vm_ram / 1024 / 1024  ))
+
+readconf vm-${vm_os_type}-${vm_os_profile}.conf
+[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+# re-read jail params and apply personal after profile
+. ${jrcconf}
+
+check_for_empty_hdd
+init_iso
+if [ $? -eq 1 -a "${vm_boot}" = "cd" ]; then
+	printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
+	for i in $( jot 5 ); do
+		printf "."
+		sleep 1
+	done
+	echo
+fi
+
+[ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
+
+
+kernel_dir="${srcdir}/iso"
+
+if [ -r "${iso_img}" ]; then
+	${ECHO} "${MAGENTA}Attaching as DVD-DRIVE: ${GREEN}${iso_img}${NORMAL}"
+#	${VBOX_MGMT_CMD} storageattach ${jname} --storagectl "IDE Controller" --port 1 --device 0 --type dvddrive --medium ${iso_img}
+fi
+
+${ECHO} "${MAGENTA}Boot from: ${GREEN}${vm_boot}${NORMAL}"
+
+case "${vm_boot}" in
+	"hdd")
+		boot_arg='boot="c"'
+		;;
+	"cd")
+		boot_arg='boot="d"'
+		;;
+esac
+
+cat > ${jailsysdir}/${jname}/xen.cfg << EOF
+name = "${jname}"
+memory = ${xvm_ram}
+vcpus = ${vm_cpus}
+
+# Network devices
+vif = [ 'bridge=bridge0' ]
+
+#disk = ['phy:/dev/zvol/zroot/debian,xvda,w','file:/usr/jails/src/iso/debian-7.8.0-amd64-CD-1.iso,hdc:cdrom,r']
+disk =  ['${data}/${MDFILE},raw,hda,rw','${iso_img},raw,hdc:cdrom,r' ]
+
+${boot_arg}
+
+vnc = 1
+vnclisten = "0.0.0.0"
+vncpasswd="cbsd"
+vncdisplay="${vncdisplay}"
+opengl=1
+vncconsole=1
+vncunused=0
+EOF
+
+
+case "${vm_os_type}" in
+	"freebsd")
+		make_freebsd_part ${jailsysdir}/${jname}/xen.cfg
+		;;
+	"linux")
+		if [ ! -f "${kernel_dir}/initrd.gz" ]; then
+			${ECHO} "${MAGENTA}No such kernel: ${GREEN}initrd.gz${MAGENTA} in ${GREEN}${kernel_dir}${NORMAL}"
+			if getyesno "Shall i download it from: http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/initrd.gz?"; then
+				${ECHO} "${MAGENTA}Download to: ${GREEN}${kernel_dir}/initrd.gz${NORMAL}"
+				fetchme -o ${kernel_dir}/initrd.gz -u http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/initrd.gz
+			fi
+		fi
+		if [ ! -f "${kernel_dir}/vmlinuz" ]; then
+			${ECHO} "${MAGENTA}No such kernel: ${GREEN}vmlinuz${MAGENTA} in ${GREEN}${kernel_dir}${NORMAL}"
+			if getyesno "Shall i download it from: http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/vmlinuz?"; then
+				${ECHO} "${MAGENTA}Download to: ${GREEN}${kernel_dir}/vmlinuz${NORMAL}"
+				fetchme -o ${kernel_dir}/vmlinuz -u http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/vmlinuz
+			fi
+		fi
+		make_linux_part ${jailsysdir}/${jname}/xen.cfg
+		;;
+	"windows")
+		make_windows_part ${jailsysdir}/${jname}/xen.cfg
+		;;
+	"other")
+		make_windows_part ${jailsysdir}/${jname}/xen.cfg
+		;;
+esac
+
+xl_cmd="cd $kernel_dir && ${XL_CMD} create -c ${jailsysdir}/${jname}/xen.cfg"
+
+echo "[debug]: $xl_cmd"
+${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $xl_cmd"
+exit 0

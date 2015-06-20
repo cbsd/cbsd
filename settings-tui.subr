@@ -46,6 +46,7 @@ mdsize_msg="Enter size for the images"
 GET_IMGSIZE_MSG="Allocate X size of image free space: 100m, 1g"
 GET_SWAPSIZE_MSG="Configure swap partitional in X size (usual RAMx2), 0 - for disable, e.g: 4g"
 GET_CPUS_MSG="Number of CPUs: 1, max: 16"
+GET_VM_VNC_PORT_MSG="VNC port. 0 - for auto, 1 - disable"
 GET_RAM_MSG="RAM size, eg: 512M"
 GET_VMPROFILE_MSG="Select profile for VMs"
 GET_JAILPROFILE_MSG="Profile for jcreate"
@@ -708,6 +709,20 @@ get_construct_vm_cpus()
 	vm_cpus="${_input}"
 }
 
+
+# form for $vm_vnc_port
+get_construct_vm_vnc_port()
+{
+	local _input
+
+	f_dialog_title " vnc port "
+
+	f_dialog_input _input "${GET_VM_VNC_PORT_MSG}" "${vm_vnc_port}" \
+			"${_message}" || return $?
+
+	vm_vnc_port="${_input}"
+}
+
 # form for $ram
 get_construct_vm_ram()
 {
@@ -951,7 +966,7 @@ get_construct_vm_os_type()
 # if $1 not empty just load profile without dialogizing
 get_construct_vm_os_profile()
 {
-	local _input _search_profile="bhyve-${vm_os_type}" _res bhyve_profile _myprofiles="" _myfile _all _num _myfile
+	local _input _search_profile="vm-${vm_os_type}" _res vm_profile _myprofiles="" _myfile _all _num _myfile
 	local menu_list=
 
 	local title=" profile "
@@ -962,21 +977,21 @@ get_construct_vm_os_profile()
 	_all=0
 
 	for i in ${_res}; do
-		unset bhyve_profile
-		eval $( ${GREP_CMD} ^bhyve_profile= ${i} )
+		unset vm_profile
+		eval $( ${GREP_CMD} ^vm_profile= ${i} )
 		eval $( ${GREP_CMD} ^active= ${i} )
 
-		[ -z "${bhyve_profile}" -o ${active} -eq 0 ] && continue
+		[ -z "${vm_profile}" -o ${active} -eq 0 ] && continue
 
 		unset long_description
 		eval $( ${GREP_CMD} ^long_description= ${i} )
 
-		[ -z "${long_description}" ] && long_description="${bhyve_profile}"
+		[ -z "${long_description}" ] && long_description="${vm_profile}"
 
 		_mypath=$( echo $i | /usr/bin/sed s:^${workdir}/::g )
-		menu_list="${menu_list} '${bhyve_profile}' '${_mypath}' '${long_description}'"
+		menu_list="${menu_list} '${vm_profile}' '${_mypath}' '${long_description}'"
 		# store filename
-		local profile${_all}="${bhyve_profile}"
+		local profile${_all}="${vm_profile}"
 		local file${_all}="${i}"
 		_all=$(( _all + 1 ))
 	done
@@ -1001,7 +1016,7 @@ get_construct_vm_os_profile()
 
 			if [ -f "${_myfile}" ]; then
 				unset from_jail
-				unset bhyve_profile
+				unset vm_profile
 				. ${_myfile}
 				global_profile_file="${_myfile}"
 			fi
@@ -1017,7 +1032,7 @@ get_construct_vm_os_profile()
 # if $1 not empty, just load $1 profile without dialogizing
 get_construct_profile()
 {
-	local _input _retval _search_profile="jail-freebsd-" jail_profile _res _myprofiles="" _myfile _old_profile
+	local _input _retval _search_profile="${emulator}-freebsd-" jail_profile _res _myprofiles="" _myfile _old_profile
 	local menu_list=
 
 	local defaultitem="${profile}"
@@ -1142,7 +1157,7 @@ make_virtualbox_part()
 cat >> ${TMPFILE} << EOF
 exec_start="${exec_start}"
 exec_stop="${exec_stop}"
-emulator="virtualbox";
+emulator="${emulator}";
 imgsize="${imgsize}";
 vm_cpus="${vm_cpus}";
 vm_ram="${vm_ram}";
@@ -1158,7 +1173,13 @@ gw4="${gw4}";
 vm_os_profile="${vm_os_profile}";
 swapsize="${swapsize}"
 vm_guestfs="${vm_guestfs}"
+vm_vnc_port="${vm_vnc_port}"
 EOF
+}
+
+make_xen_part()
+{
+	make_virtualbox_part
 }
 
 
@@ -1246,57 +1267,42 @@ EOF
 		/bin/rm -f ${adduser}
 	fi
 
-	# need custom exec_start for qemu-based jail
-	# todo: split qemu-based emul from other
-	if [ -z "${emulator}" -a "${emulator}" != "jail" ]; then
-		cat >> ${TMPFILE} << EOF
-exec_start="${exec_start}"
-exec_stop="${exec_stop}"
-EOF
-		getyesno "Do you want to create jail immediately?"
-		[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
-		jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-		[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-	else
-		case "${emulator}" in
-			"bhyve")
-				make_bhyve_part
-				getyesno "Do you want to create vm immediately?"
-				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
-				bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-			;;
-			"virtualbox")
-				make_virtualbox_part
-				getyesno "Do you want to create vm immediately?"
-				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd vcreate jconf=${TMPFILE}${NORMAL}"
-				vcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-			;;
-			"xen")
-				make_xen_part
-				getyesno "Do you want to create vm immediately?"
-				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd xcreate jconf=${TMPFILE}${NORMAL}"
-				xcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-			;;
-			"jail")
-				echo "emulator=\"${emulator}\"" >> ${TMPFILE}
-				getyesno "Do you want to create jail immediately?"
-				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
-				jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-			;;
-			*)
-				make_emulator_part
-				echo "emulator=\"${emulator}\"" >> ${TMPFILE}
-				getyesno "Do you want to create jail immediately?"
-				[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
-				jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
-				[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-			;;
-		esac
-	fi
+	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
+
+	case "${emulator}" in
+		"bhyve")
+			make_bhyve_part
+			getyesno "Do you want to create vm immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
+			bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+		;;
+		"virtualbox")
+			make_virtualbox_part
+			getyesno "Do you want to create vm immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd vcreate jconf=${TMPFILE}${NORMAL}"
+			vcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+		;;
+		"xen")
+			make_xen_part
+			getyesno "Do you want to create vm immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd xcreate jconf=${TMPFILE}${NORMAL}"
+			xcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+		;;
+		"jail")
+			echo "emulator=\"${emulator}\"" >> ${TMPFILE}
+			getyesno "Do you want to create jail immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
+			jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+		;;
+		*)
+			err 1 "${MAGENTA}Unsupported emulator type: ${GREEN}${emulator}${NORMAL}"
+		;;
+	esac
 
 	return 0
 }

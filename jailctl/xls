@@ -1,0 +1,169 @@
+#!/usr/local/bin/cbsd
+#v10.1.6
+CBSDMODULE="xen"
+MYARG=""
+MYOPTARG="alljails shownode display node header"
+MYDESC="List jail and status"
+ADDHELP="alljails=1 - get jaillist from remote node\n\
+shownode=1 - show nodename for jails\n\
+node= only for current node\n\
+header=0 don't print header\n\
+display= list by comma for column. Default: jname,vm_ram,vm_cpus,vm_os_type,path,vm_rd_port,status\n"
+EXTHELP="wf_xls.html"
+
+. ${subr}
+. ${strings}
+
+readconf xls.conf
+init $*
+
+[ -z "${display}" ] && display="jname,vm_ram,vm_cpus,vm_os_type,path,vm_rd_port,status"
+[ "${shownode}" = "1" ] && display="nodename,${display}"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]' )
+
+JLS=""
+
+conv_status()
+{
+	case "${status}" in
+		0)
+			status="Off"
+			;;
+		1)
+			status="On"
+			;;
+		2)
+			status="Slave"
+			;;
+		*)
+			status="Unknown"
+			;;
+	esac
+}
+
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ -z "${CBSDXO}" -a ${header} -eq 1 ] && $ECHO ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	[ -z "${CBSDXO}" ] && printf "${NORMAL}" # for column sort
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		if [ "${_i}" = "vm_ram" ]; then
+			# convert to MB
+			_val=$(( _val / 1024 / 1024 ))
+		fi
+
+		[ "$1" = "Unregister" -a "${_i}" = "status" ] && _val="Unregister"
+
+		[ -z "${_val}" ] && _val="-"
+
+		${XO} ${CBSDXO} "{:${_i}/%s} " ${_val}
+	done
+
+	[ -z "${CBSDXO}" ] && printf "\n"
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator=\"xen\" | while read jname; do
+		_status=""
+		. ${jrcconf}
+		conv_status
+		${XO} ${CBSDXO} --open xls
+		populate_output_data
+		${XO} ${CBSDXO} --close xls
+	done
+}
+
+
+show_local()
+{
+	local _errcode _status
+
+	show_header
+
+	show_jaildata_from_sql local
+
+	# Unregister area
+	[ ! -d "${jailrcconfdir}" ] && return 0
+	ip4_addr="-"
+	host_hostname="-"
+	path="-"
+	jid="0"
+
+	for J in $( /bin/ls ${jailrcconfdir} ); do
+		jname=""
+		. ${jailrcconfdir}/${J}
+		[ -z "${jname}" ] && continue
+		populate_output_data "Unregister"
+		${ECHO} ${_status}
+	done
+}
+
+
+show_remote()
+{
+	show_header
+
+	if [ -z "${node}" ]; then
+		node=$( cbsd node mode=list header=0 allinfo=0 )
+	fi
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql ${_n}
+	done
+}
+
+show_jails()
+{
+	if [ -n "${node}" ]; then
+		show_remote
+		exit 0
+	fi
+
+	if [ "${alljails}" = "1" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+}
+
+
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+
+if [ -n "${CBSDXO}" ]; then
+	show_jails
+else
+	show_jails | /usr/bin/column -t
+fi

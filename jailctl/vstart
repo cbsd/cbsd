@@ -18,10 +18,37 @@ readconf buildworld.conf
 readconf jail-freebsd-default.conf
 . ${workdir}/virtualbox.subr
 
-[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e bls -r ${sqlreplica}
+[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e vls -r ${sqlreplica}
 init $*
 
 . ${workdir}/fetch.subr
+
+# MAIN for multiple jails
+TRAP=""
+
+if [ $# -gt 1 -a -z "${jname}" ]; then
+	# multiple astart always non interactive
+	export inter=0
+	# recursive
+	JLIST=$*
+	for jname in ${JLIST}; do
+		[ "${jname}" = "inter=0" ] && continue
+		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/vstart.${jname}.$$;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		/usr/sbin/daemon -p ${ftmpdir}/vstart.${jname}.$$ /usr/local/bin/cbsd vstart inter=${inter} jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/vstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/vstart.${jname}.$$ ) --timeout=${parallel}
+		trap "" HUP INT ABRT BUS TERM EXIT
+		# Artificial delay to create a sequence (for order compliance)
+		# todo: determine VM complete starting
+		sleep 12
+	done
+
+	wait_for_fpid start ${parallel}
+	err 0 "${MAGENTA}Multiple vstart: ${GREEN}done${NORMAL}"
+fi
+
 
 # MAIN
 init_virtualbox
@@ -34,36 +61,84 @@ init_virtualbox
 [ "${emulator}" != "virtualbox" ] && err 1 "${MAGENTA}Not virtualbox mode${NORMAL}"
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 
-vm_ram=$(( vm_ram / 1024 / 1024 ))
-${VBOX_MGMT_CMD} modifyvm ${jname} --memory ${vm_ram} --cpus ${vm_cpus} --floppy disabled --audio none --nic1 bridged --bridgeadapter1 re0 --vram 4 --accelerate3d off --boot1 disk --acpi on --cableconnected1 on --usb off --vrde on --vrdeport ${vm_vnc_port}
 
-readconf bhyve-${vm_os_type}-${vm_os_profile}.conf
-[ -z "${bhyve_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}bhyve-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+MDFILE=$( cbsdsql local SELECT dsk_path FROM ${emulator}dsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+
+case "${vm_vnc_port}" in
+	0)
+		vm_port=$( get_next_rd_port )
+		vnc_args="--vrde on --vrdeport ${vm_port} --vrdeproperty VNCPassword=cbsd"
+		${ECHO} "${MAGENTA}VRDP is enabled. VNC port: ${GREEN}${vm_port}. ${MAGENTA}VNC pass: ${GREEN}cbsd${NORMAL}${NORMAL}"
+		;;
+	1)
+		vm_port=0
+		vnc_args="--vrde off"
+		;;
+	*)
+		vm_port=${vm_vnc_port}
+		vnc_args="--vrde on --vrdeport ${vm_port}"
+		;;
+esac
+
+cbsdsql local UPDATE virtualbox SET vm_rd_port=\"${vm_port}\" WHERE jname=\"${jname}\"
+
+if [ "${interface}" != "auto" ]; then
+	# check for interface exist
+	_res=$( ${miscdir}/nics-list -s "lo" |while read _iface; do
+		[ "${interface}" = "${_iface}" ] && echo "${_iface}" ] && exit 0
+	done )
+	[ -z "${_res}" ] && err 1 "${MAGENTA}No such interface: ${GREEN}${interface}${NORMAL}"
+else
+	auto_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
+	[ -z "${auto_iface}" ] && err 1 "${MAGENTA}Can't determine uplink interface${NORMAL}"
+	interface="${auto_iface}"
+fi
+
+
+xvm_ram=$(( vm_ram / 1024 / 1024 ))
+echo [debug] ${VBOX_MGMT_CMD} modifyvm ${jname} --memory ${xvm_ram} --cpus ${vm_cpus} --floppy disabled --audio none --nic1 bridged --bridgeadapter1 ${interface} --vram 16 --accelerate3d off --boot1 disk --acpi on --cableconnected1 on --usb off ${vnc_args}
+${VBOX_MGMT_CMD} modifyvm ${jname} --memory ${xvm_ram} --cpus ${vm_cpus} --floppy disabled --audio none --nic1 bridged --bridgeadapter1 ${interface} --vram 16 --accelerate3d off --boot1 disk --acpi on --cableconnected1 on --usb off ${vnc_args}
+
+${VBOX_MGMT_CMD} modifyvm ${jname} --nictype1 virtio
+
+readconf vm-${vm_os_type}-${vm_os_profile}.conf
+[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 # re-read jail params and apply personal after profile
 . ${jrcconf}
 
 check_for_empty_hdd
+init_iso
+if [ $? -eq 1 -a "${vm_boot}" = "cd" ]; then
+	printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
+	for i in $( jot 5 ); do
+		printf "."
+		sleep 1
+	done
+	echo
+fi
 
 [ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
-if [ "${vm_boot}" = "cd" ]; then
-	init_iso
-	if [ $? -eq 1 ]; then
-		printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
-		for i in $( jot 5 ); do
-			printf "."
-			sleep 1
-		done
-		echo
-	fi
+
+if [ -r "${iso_img}" ]; then
+	${ECHO} "${MAGENTA}Attaching as DVD-DRIVE: ${GREEN}${iso_img}${NORMAL}"
+	${VBOX_MGMT_CMD} storageattach ${jname} --storagectl "IDE Controller" --port 1 --device 0 --type dvddrive --medium ${iso_img}
 fi
+
+${ECHO} "${MAGENTA}Boot from: ${GREEN}${vm_boot}${NORMAL}"
 
 case "${vm_boot}" in
 	"hdd")
-		${VBOX_MGMT_CMD} modifyvm ${jname} --boot1 dvd
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot1 disk
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot2 dvd
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot3 none # net
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot4 none # floppy
 		;;
 	"cd")
-		${VBOX_MGMT_CMD} modifyvm ${jname} --boot1 disk
-		${VBOX_MGMT_CMD} storageattach ${jname} --storagectl "IDE Controller" --port 1 --device 0 --type dvddrive --medium ${iso_img}
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot1 dvd
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot2 disk
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot3 none # net
+		${VBOX_MGMT_CMD} modifyvm ${jname} --boot4 none # floppy
 		;;
 esac
 
