@@ -2,7 +2,7 @@
 // For identification of correct CBSD shell only
 #include "output.h"
 
-#define VERSION "10.2.0a"
+#define VERSION "10.2.0"
 
 int
 aboutcmd(int argc, char **argv)
