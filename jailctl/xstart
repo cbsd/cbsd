@@ -63,12 +63,35 @@ EOF
 
 make_linux_part()
 {
+
+#	case "${vm_boot}" in
+#		"cd")
+#			isodir=$( /usr/bin/mktemp -d )
+#			mddev=$( /sbin/mdconfig -a -t vnode -f ${iso_img} )
+#			/sbin/mount_cd9660 /dev/${mddev} ${isodir}
+
+#			if [ -f ${isodir}/${iso_vmlinuz_file} ]; then
+#				/bin/cp -a ${isodir}/${iso_vmlinuz_file} ${jailsysdir}/${jname}/iso_vmlinuz
+#				echo "kernel = \"${jailsysdir}/${jname}/iso_vmlinuz\"" >> ${1}
+#			else
+#				${ECHO} "${MAGENTA}No ${GREEN}${isodir}/${iso_vmlinuz_file}${NORMAL}"
+#			fi
+
+#			if [ -f ${isodir}/${iso_initrd_file} ]; then
+#				/bin/cp -a ${isodir}/${iso_initrd_file} ${jailsysdir}/${jname}/iso_initrd
+#				echo "ramdisk = \"${jailsysdir}/${jname}/iso_initrd\"" >> ${1}
+#			else
+#				${ECHO} "${MAGENTA} No ${GREEN}${isodir}/${iso_initrd_file}${NORMAL}"
+#			fi
+#			/sbin/umount ${isodir}
+#			/sbin/mdconfig -d -u ${mddev}
+#	esac
 /bin/cat >> $1 << EOF
 
 # $vm_os_type specific:
-builder = "linux" 
-kernel = "${kernel_dir}/vmlinuz"
-ramdisk = "${kernel_dir}/initrd.gz"
+builder = "hvm"
+#kernel = "/mnt/iso/isolinux/vmlinuz"
+#ramdisk = "/mnt/iso/isolinux/initrd.img"
 #extra = "debian-installer/exit/always_halt=true -- console=hvc0"
 #sdl=1
 serial='pty'
@@ -162,7 +185,6 @@ fi
 
 [ "${vm_iso_path}" != "0" ] && iso_img="${vm_iso_path}"
 
-
 kernel_dir="${srcdir}/iso"
 
 if [ -r "${iso_img}" ]; then
@@ -171,6 +193,9 @@ if [ -r "${iso_img}" ]; then
 fi
 
 ${ECHO} "${MAGENTA}Boot from: ${GREEN}${vm_boot}${NORMAL}"
+
+XENCFG="${jailsysdir}/${jname}/xen.cfg"
+/usr/bin/truncate -s0 ${XENCFG}
 
 case "${vm_boot}" in
 	"hdd")
@@ -181,7 +206,7 @@ case "${vm_boot}" in
 		;;
 esac
 
-cat > ${jailsysdir}/${jname}/xen.cfg << EOF
+cat >> ${XENCFG} << EOF
 name = "${jname}"
 memory = ${xvm_ram}
 vcpus = ${vm_cpus}
@@ -206,35 +231,22 @@ EOF
 
 case "${vm_os_type}" in
 	"freebsd")
-		make_freebsd_part ${jailsysdir}/${jname}/xen.cfg
+		make_freebsd_part ${XENCFG}
 		;;
 	"linux")
-		if [ ! -f "${kernel_dir}/initrd.gz" ]; then
-			${ECHO} "${MAGENTA}No such kernel: ${GREEN}initrd.gz${MAGENTA} in ${GREEN}${kernel_dir}${NORMAL}"
-			if getyesno "Shall i download it from: http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/initrd.gz?"; then
-				${ECHO} "${MAGENTA}Download to: ${GREEN}${kernel_dir}/initrd.gz${NORMAL}"
-				fetchme -o ${kernel_dir}/initrd.gz -u http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/initrd.gz
-			fi
-		fi
-		if [ ! -f "${kernel_dir}/vmlinuz" ]; then
-			${ECHO} "${MAGENTA}No such kernel: ${GREEN}vmlinuz${MAGENTA} in ${GREEN}${kernel_dir}${NORMAL}"
-			if getyesno "Shall i download it from: http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/vmlinuz?"; then
-				${ECHO} "${MAGENTA}Download to: ${GREEN}${kernel_dir}/vmlinuz${NORMAL}"
-				fetchme -o ${kernel_dir}/vmlinuz -u http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/xen/vmlinuz
-			fi
-		fi
-		make_linux_part ${jailsysdir}/${jname}/xen.cfg
+		make_linux_part ${XENCFG}
 		;;
 	"windows")
-		make_windows_part ${jailsysdir}/${jname}/xen.cfg
+		make_windows_part ${XENCFG}
 		;;
 	"other")
-		make_windows_part ${jailsysdir}/${jname}/xen.cfg
+		make_windows_part ${XENCFG}
 		;;
 esac
 
-xl_cmd="cd $kernel_dir && ${XL_CMD} create -c ${jailsysdir}/${jname}/xen.cfg"
+xl_cmd="cd $kernel_dir && ${XL_CMD} create -c ${XENCFG}"
 
+compile_nic_args
 echo "[debug]: $xl_cmd"
-${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $xl_cmd"
+${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
 exit 0

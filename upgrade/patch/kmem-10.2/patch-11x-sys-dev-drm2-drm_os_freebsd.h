@@ -1,5 +1,5 @@
---- drm_os_freebsd.h-orig	2015-08-09 12:58:55.340657000 +0300
-+++ drm_os_freebsd.h	2015-08-09 12:59:15.273177000 +0300
+--- drm_os_freebsd.h-orig	2015-08-09 15:04:46.535215000 +0300
++++ drm_os_freebsd.h	2015-08-09 15:05:16.919116000 +0300
 @@ -85,7 +85,7 @@
  #define	HZ			hz
  #define	DRM_HZ			hz

@@ -1,24 +1,24 @@
---- kern_jail.c.orig	2015-04-03 14:53:48.914366000 +0300
-+++ kern_jail.c	2015-04-03 14:58:10.864094000 +0300
-@@ -205,6 +205,8 @@
- 	"allow.mount.procfs",
- 	"allow.mount.tmpfs",
+--- kern_jail.c-orig	2015-08-09 13:07:17.120341000 +0300
++++ kern_jail.c	2015-08-09 13:12:44.531211000 +0300
+@@ -207,6 +207,8 @@
  	"allow.mount.fdescfs",
+ 	"allow.mount.linprocfs",
+ 	"allow.mount.linsysfs",
 +	"allow.dev_io_access",
-+	"allow.dev_dri_access"
++	"allow.dev_dri_access",
  };
  const size_t pr_allow_names_size = sizeof(pr_allow_names);
  
-@@ -222,6 +224,8 @@
- 	"allow.mount.noprocfs",
- 	"allow.mount.notmpfs",
+@@ -226,6 +228,8 @@
  	"allow.mount.nofdescfs",
+ 	"allow.mount.nolinprocfs",
+ 	"allow.mount.nolinsysfs",
 +	"allow.nodev_io_access",
 +	"allow.nodev_dri_access",
  };
  const size_t pr_allow_nonames_size = sizeof(pr_allow_nonames);
  
-@@ -3998,6 +4002,27 @@
+@@ -4003,6 +4007,27 @@
  		return (0);
  
  		/*
@@ -40,13 +40,13 @@
 +		if (cred->cr_prison->pr_allow & PR_ALLOW_DEV_DRI_ACCESS)
 +			return (0);
 +		else
-+		return (EPERM);
-+
++			return (EPERM);
++		
 +		/*
  		 * Allow jailed root to set loginclass.
  		 */
  	case PRIV_PROC_SETLOGINCLASS:
-@@ -4297,6 +4322,14 @@
+@@ -4310,6 +4335,14 @@
      CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE,
      NULL, PR_ALLOW_MOUNT_ZFS, sysctl_jail_default_allow, "I",
      "Processes in jail can mount the zfs file system");
@@ -61,7 +61,7 @@
  
  static int
  sysctl_jail_default_level(SYSCTL_HANDLER_ARGS)
-@@ -4443,6 +4476,10 @@
+@@ -4456,6 +4489,10 @@
      "B", "Jail may set file quotas");
  SYSCTL_JAIL_PARAM(_allow, socket_af, CTLTYPE_INT | CTLFLAG_RW,
      "B", "Jail may create sockets other than just UNIX/IPv4/IPv6/route");
