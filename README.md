@@ -1,4 +1,4 @@
-cbsd
+CBSD
 ====
 
 Yet one more wrapper around FreeBSD jail.
