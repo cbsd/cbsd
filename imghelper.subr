@@ -6,7 +6,7 @@ check_version()
 	forms_version=$( cbsdsql ${formfile} SELECT version FROM system )
 
 	[ -z "${forms_version}" ] && err 1 "${MAGENTA}Unsupported image schema: version is empty${NORMAL}"
-	[ ${forms_version} -gt ${imghelper_version} ] && err 1 "${MAGENTA}Unsupported image schema. Image version is: $GREEN}${forms_version}${MAGENTA}. Please update CBSD first${NORMAL}"
+	[ ${forms_version} -gt ${imghelper_version} ] && err 1 "${MAGENTA}Unsupported image schema. Image version is: ${GREEN}${forms_version}${MAGENTA}. Please update CBSD first${NORMAL}"
 	return 0
 }
 
@@ -20,24 +20,34 @@ all_filled()
 
 	for i in ${param}; do
 		eval _T=\${${i}}
-		[ -z "${_T}" ] && return 1
+		eval mandatory=\${$i}_mandatory}
+		[ -z "${_T}" -a "${mandatory}" = "1" ] && return 1
 	done
 
 	return 0
 }
 
-
+# $1 - specify field to update, default is 'new' column
 update_params()
 {
-	local i _T
+	local i _T _imgformfile
+	local _target="new"
+
+	[ -n "${1}" ] && _target="${1}"
+
+	[ ! -d "${jailsysdir}/${jname}/helpers" ] && mkdir -p ${jailsysdir}/${jname}/helpers
+
+	_imgformfile="${jailsysdir}/${jname}/helpers/${helpername}.sqlite"
+
+	[ "${cfg_existing}" != "1" ] && /bin/cp -aH ${formfile} ${_imgformfile}
 
 	for i in ${param}; do
 		eval _T=\${${i}}
 		[ -z "${_T}" ] && continue
-		${miscdir}/sqlcli ${formfile} UPDATE forms SET new=\"${_T}\" WHERE param=\"${i}\"
+		${miscdir}/sqlcli ${_imgformfile} UPDATE forms SET ${_target}=\"${_T}\" WHERE param=\"${i}\"
 	done
 
-	echo "${formfile}: updated"
+	echo "${helpername} formfile for ${jname}: updated"
 
 	return 0
 
@@ -51,6 +61,14 @@ load_forms()
 	[ ! -f ${formfile} ] && err 1 "${MAGENTA}formfile not found: ${GREEN}${formfile}${NORMAL}"
 
 	param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER BY order_id |/usr/bin/xargs )
+	helpername=$( cbsdsql ${formfile} SELECT helpername FROM system )
+	packages=$( cbsdsql ${formfile} SELECT packages FROM system )
+	have_restart=$( cbsdsql ${formfile} SELECT have_restart FROM system )
+
+	[ "${have_restart}" = "0" ] && unset have_restart
+
+	[ "${packages}" = "0" ] && packages=""
+
 	local _env
 
 	eval $( for i in ${param}; do
@@ -76,7 +94,9 @@ load_forms()
 
 		attr="$( cbsdsql ${formfile} SELECT attr FROM forms WHERE param=\"${i}\" )"
 		xattr="$( cbsdsql ${formfile} SELECT xattr FROM forms WHERE param=\"${i}\" )"
+		mandatory="$( cbsdsql ${formfile} SELECT mandatory FROM forms WHERE param=\"${i}\" )"
 		echo "${i}_desc=\"${desc}\""
+		echo "${i}_mandatory=\"${mandatory}\""
 	done )
 }
 

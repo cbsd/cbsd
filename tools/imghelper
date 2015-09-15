@@ -1,8 +1,9 @@
 #!/usr/local/bin/cbsd
 #v10.1.5
 MYARG=""
-MYOPTARG="formfile bootstrap module jname"
+MYOPTARG="formfile bootstrap module jname updcol"
 MYDESC="Ncurses-based jail image boostrap helper"
+ADDHELP="updcol = new (default) update new column, cur - update cur column\n"
 EXTHELP="wf_imghelper.html"
 
 . ${subr}
@@ -26,19 +27,7 @@ fi
 
 init $*
 
-# imghelper_version
-# Compare this YYYMM serial with database forms version. When forms have greater number
-# this helper is not support this
-imghelper_version="201502"
-
-if [ -n "${jname}" -a -n "${module}" ]; then
-	JAIL_ROOT_DIR="${jailsysdir}/${jname}"
-	SKEL_DIR="${JAIL_ROOT_DIR}/skel"
-
-	# keep this settins for imghelper
-	: ${formfile="${JAIL_ROOT_DIR}/modules/${module}cfg.d/forms.sqlite"}
-fi
-
+readconf helpers.conf
 . ${workdir}/imghelper.subr
 
 dialog_menu_main()
@@ -107,12 +96,51 @@ get_helper_value()
 # When no bootstrap - load and execute form then exist
 # when bootstrap exist - after form execute install_img func
 #
-with_bootstrap=0
 
-if [ -n "${module}" ]; then
-	helper_workdir="${moduledir}/${module}cfg.d"
-	[ ! -d "${helper_workdir}" ] && err 1 "${MAGENTA}No such module dir: ${GREEN}${helper_workdir}"
-	with_bootstrap=1 # module always has bootsrap
+# Show list modules with no arg
+if [ -z "${1}" ]; then
+	${ECHO} "${MAGENTA}Current helper module: ${GREEN}${helper_module}${NORMAL}"
+	[ ! -d ${moduledir}/${helper_module}.d ] && exit 0
+	${ECHO} "${MAGENTA}Available modules:${NORMAL}"
+	${ECHO} "${BOLD}"
+	/usr/bin/find ${moduledir}/${helper_module}.d  -type d -depth 1 -maxdepth 1 -name module_* -exec /usr/bin/basename {} \; |while read _dir; do
+		p1=${_dir%%_*}
+		p2=${_dir##*_}
+		echo ${p2}
+	done
+	${ECHO} "${NORMAL}"
+	exit 0
+fi
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	with_bootstrap=1
+	: ${with_bootstrap=1}
+fi
+
+: ${with_bootstrap=0}
+
+# imghelper_version
+# Compare this YYYMM serial with database forms version. When forms have greater number
+# this helper is not support this
+imghelper_version="201510"
+cfg_existing=0
+
+[ -z "${updcol}" ] && updcol="new"
+
+if [ -n "${jname}" -a -n "${module}" ]; then
+	cfg_existing=1
+	: ${formfile="${jailsysdir}/${jname}/helpers/${module}.sqlite"}
+	if [ ! -r ${formfile} ]; then
+		formfile="${workdir}/formfile/${module}.sqlite"
+		cfg_existing=0
+	else
+		cfg_existing=1
+		updcol="cur"
+	fi
+elif [ -n "${module}" ]; then
+	: ${formfile="${workdir}/formfile/${module}.sqlite"}
 fi
 
 [ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
@@ -121,35 +149,7 @@ if [ -z "${helper_workdir}" ]; then
 	helper_workdir=$( /usr/bin/dirname ${formfile} )
 fi
 
-active_jail=0
-
-if [ -n "${jname}" ]; then
-	. ${jrcconf}
-	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ ${jid} -ne 0 ] && active_jail=1
-fi
-
-if [ -n "${bootstrap}" ]; then
-
-	check_version
-
-	[ ! -f "${bootstrap}" ] && err 1 "${MAGENTA}No such bootstrap file: ${GREEN}${bootstrap}${NORMAL}"
-
-	[ -z "${jname}" ] && err 1 "${MAGENTA}jname= is necessary for bootstrap${NORMAL}"
-
-	. ${bootstrap}
-	. ${workdir}/universe.subr
-
-	[ -z "${formfile}" ] && err 1 "No such formfile."
-
-	[ $baserw -eq 1 ] && path=$data
-	[ ! -d "${path}" ] && /bin/mkdir -p ${path}
-
-	with_bootstrap=1
-else
-	[ -z "${formfile}" ] && err 1 "No such formfile.."
-	check_version
-fi
+check_version
 
 param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |/usr/bin/xargs )
 load_forms
@@ -185,20 +185,8 @@ done
 [ ${with_bootstrap} -eq 0 ] && f_die
 
 # Update new value
-update_params
-
-# Here is boostrap-only area
-[ "${active_jail}" != "1" ] && jstart jname=${jname}
-
-# only image helper have install_img
-[ -z "${module}" ] && install_img
-
-[ "${active_jail}" != "1" ] && jstop jname=${jname}
-
-# only image helpers have img_message
-[ -z "${module}" ] && img_message && sleep 1
+update_params ${updcol}
 
 # commit when works with module
-[ -n "${module}" ] && cbsd ${module}cfg jname=${jname} mode=commit
+[ -n "$helper_module}" ] && ${helper_module} jname=${jname} module=${module} mode=apply
 
-[ "${active_jail}" != "1" ] && jcleanup jname=${jname}
