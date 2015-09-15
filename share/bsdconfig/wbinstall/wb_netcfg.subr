@@ -1,0 +1,283 @@
+#!/bin/sh
+
+STORE_FILE="/tmp/networks_store.txt"
+CBSD_IP="/tmp/cbsdip.txt"
+
+save_settings()
+{
+	local out
+
+	[ -z "${out}" ] && out="/tmp/networks.${MYNIC}.txt"
+
+	eval IS_DHCP=\$dhcp_${MYNIC}
+	eval ip4=\$ip4_${MYNIC}
+	eval ip6=\$ip6_${MYNIC}
+	eval mask4=\$mask4_${MYNIC}
+	eval mask6=\$mask6_${MYNIC}
+
+	if [ "${IS_DHCP}" = "DHCP" ]; then
+		MYDHCP="YES"
+	else
+		MYDHCP="NO"
+	fi
+
+	cat >${out} <<EOF
+nic: ${MYNIC}
+defnic4: ${defnic4}
+defnic6: ${defnic6}
+ip4: ${ip4}
+gw4: ${gw4}
+ip6: ${ip6}
+gw6: ${gw6}
+mask4: ${mask4}
+mask6: ${mask6}
+dhcpd: ${MYDHCP}
+EOF
+}
+
+# $1- nic
+remove_dhcp_lease()
+{
+	leasefile="/var/db/dhclient.leases.${1}"
+	[ -f "${leasefile}" ] && rm -f ${leasefile}
+}
+
+
+
+dhcp_client()
+{
+	local i ALLNIC="$@" leasefile dhcp_cfg
+
+	[ -z "${ALLNIC}" ] && return 0
+
+	#renew only
+	if [ "${DHCP_TRY_MODE}" = "1" ]; then
+		dhcp_cfg="${_MYDIR}/dhclient-renew.conf"
+		sed -i '' s:CBSD_WORKDIR:${workdir}:g ${dhcp_cfg}
+	else
+		# apply
+		dhcp_cfg="${_MYDIR}/dhclient.conf"
+	fi
+
+	for i in ${ALLNIC}; do
+		${ECHO} " ${BOLD}*${NORMAL} ${MAGENTA}Trying DHCP for : ${GREEN}${i}${NORMAL}"
+		leasefile="/var/db/dhclient.leases.${i}"
+		[ -f "${leasefile}" ] && rm -f ${leasefile}
+
+		/sbin/dhclient -c ${dhcp_cfg} ${i} > /dev/null 2>&1
+		killall -9 dhclient > /dev/null 2>&1
+	done
+}
+
+
+get_nic_ip()
+{
+	local _nic="${1}" ip4 ip6
+
+	[ -z "${_nic}" ] && return 0
+
+	ip4=$(ifconfig ${_nic} 2>/dev/null| /usr/bin/awk '/inet / { print $2}' | head -n 1)
+	ip6=$(ifconfig ${_nic} 2>/dev/null| /usr/bin/awk '/inet6 / { print $2}' | head -n 1| grep -v ${_nic}\$)
+
+	if [ "${ip4}" != "0.0.0.0" ]; then
+		eval $( printf "ip4_${_nic}=\"${ip4}\"" )
+	fi
+
+	if [ -n "${ip6}" ]; then
+		eval $( printf "ip6_${_nic}=\"${ip6}\"" )
+	fi
+}
+
+get_nic_dhcp()
+{
+	local _nic="${1}"
+
+	[ -z "${_nic}" ] && return 0
+
+	# dhcp detect
+	leasefile="/var/db/dhclient.leases.${_nic}"
+	[ ! -f "${leasefile}" ] && return 0
+	dhcp_flags=$(stat -f %z ${leasefile} 2>&1)
+
+	if [ -n "${dhcp_flags}" ]; then
+		if [ ${dhcp_flags} -gt 0 ]; then
+			eval $( printf "dhcp_${_nic}='DHCP'" )
+		fi
+	fi
+}
+
+get_nic_mask()
+{
+	local _nic="${1}"
+
+	[ -z "${_nic}" ] && return 0
+
+	#hardcoded
+	mask4="255.255.255.0"
+	mask6=""
+
+	if [ -n "${mask4}" ]; then
+		eval $( printf "mask4_${_nic}=\"${mask4}\"" )
+	fi
+
+	if [ -n "${mask6}" ]; then
+		eval $( printf "mask6_${_nic}=\"${mask6}\"" )
+	fi
+}
+
+
+get_sys_route()
+{
+	local gateway interface
+
+	gw6=""
+	gw4=""
+	defnic4=""
+	defnic6=""
+
+	eval $( route -n get 0.0.0.0 2>/dev/null| /usr/bin/awk '/gateway:|interface/{print $1$2}'|tr ":" "=" )
+
+	gw4="$gateway"
+	defnic4="$interface"
+
+	unset gateway interface
+
+	eval $( route -n get -inet6 :: 2>/dev/null| /usr/bin/awk '/gateway:|interface/{print $1$2}'|tr ":" "=" )
+
+	gw6="${gateway}"
+	defnic6="${interface}"
+}
+
+nic_test()
+{
+	local nic_num=0 ALLNIC NO_CHOOSED=1 ip4 ip6 is_dhcp
+
+	nic_num=$( ${miscdir}/nics-list -d|wc -l )
+
+	if [ ${nic_num} -eq 0 ]; then
+		${ECHO} "${MAGENTA} No network card detected. Exit${NORMAL}"
+		exit 0
+	fi
+
+	ALLNIC=$( ${miscdir}/nics-list )
+
+	[ -n "${firststart}" ] && dhcp_client ${ALLNIC}
+
+	if [ ${nic_num} -eq 1 ]; then
+		MYNIC=${ALLNIC}
+		collect_net_data
+		save_settings
+		return 0
+	fi
+
+	${ECHO} "${MAGENTA}You have multiple active nics. Please choose default interface${NORMAL}"
+
+	while [ ${NO_CHOOSED} -eq 1 ]; do
+		nic_num=0
+		for MYNIC in ${ALLNIC}; do
+			eval $( printf "selectnic${nic_num}=\"${MYNIC}\"" )
+			collect_net_data
+			eval is_dhcp=\$dhcp_${MYNIC}
+			eval ip4=\$ip4_${MYNIC}
+			eval ip6=\$ip6_${MYNIC}
+			printf "${nic_num}) ${MYNIC} ${is_dhcp} ${ip4} ${ip6}\n"
+			nic_num=$(( nic_num + 1 ))
+			save_settings
+		done
+		read getnic
+		[ ${getnic} -ge 0 -a ${getnic} -le ${nic_num} ] && NO_CHOOSED=0
+	done
+
+	eval MYNIC=\$selectnic${getnic}
+	eval IS_DHCP=\$dhcp_${MYNIC}
+	eval ip=\$ip4_${MYNIC}
+
+	${ECHO} "${GREEN}$MYNIC ${MAGENTA}Selected.${NORMAL}"
+	sleep 2
+}
+
+
+collect_net_data()
+{
+	get_sys_route
+	get_nic_ip ${MYNIC}
+	get_nic_mask ${MYNIC}
+	get_nic_dhcp ${MYNIC}
+}
+
+validate_nic()
+{
+
+}
+
+validate_ip4()
+{
+
+}
+
+validate_ip6()
+{
+
+}
+
+validate_gw4()
+{
+
+}
+
+validate_gw6()
+{
+
+}
+
+validate_mask4()
+{
+
+}
+
+validate_mask6()
+{
+
+}
+
+set_ip4()
+{
+	local _myval
+
+	if [ "${1}" = "DHCP" ]; then
+		_myval="DHCP"
+	else
+		_myval="inet ${ip4} netmask ${mask4}"
+		echo "${ip4}" > ${CBSD_IP}
+	fi
+	#    echo "ifconfig_${nic}=\"inet ${ip4} netmask ${mask4}\""
+	#    printf "Change in rc.conf: "
+	/usr/sbin/sysrc -q "ifconfig_${nic}=${_myval}" >/dev/null 2>&1
+	#    /usr/sbin/daemon /usr/sbin/service netif restart
+	#    /usr/sbin/daemon /usr/sbin/service routing restart
+}
+
+set_ip6()
+{
+	local _myval
+
+	if [ "${1}" = "DHCP" ]; then
+		_myval="DHCP"
+	else
+		_myval="inet6 ${ip6} netmask ${mask6}"
+	fi
+
+	printf "Change in rc.conf: "
+	echo /usr/sbin/sysrc -q "ipv6_activate_all_interfaces=\"YES\""
+	echo /usr/sbin/sysrc -q "ifconfig_${nic}_ipv6=\"${_myval}\""
+}
+
+set_gw4()
+{
+	/usr/sbin/sysrc -q "defaultrouter=${gw4}" >/dev/null 2>&1
+}
+
+set_gw6()
+{
+	echo /usr/sbin/sysrc -q "ipv6_defaultrouter=\"${gw6}\""
+}

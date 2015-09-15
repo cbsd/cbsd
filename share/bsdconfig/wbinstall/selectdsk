@@ -1,0 +1,153 @@
+#!/bin/sh
+#v10.1.2
+MYARG=""
+MYOPTARG="mode"
+MYDESC="Ncurses based jail order editor"
+EXTHELP="wf_jorder.html"
+
+. ${subr}
+. ${settingstui}
+. ${tools}
+. ${dialog}
+
+init $*
+
+load_table()
+{
+	local jnum=0
+	local sqldelimer=" "
+
+	eval $( cbsdsql local 'SELECT jname,b_order FROM jails WHERE status<2 AND emulator!="bhyve" ORDER BY b_order ASC' |while read jname b_order; do
+		echo "export jails_${jnum}_jname=\"${jname}\""
+		echo "export jails_${jnum}_order=\"${b_order}\""
+		jnum=$(( jnum + 1 ))
+	done )
+}
+
+
+# $1 - jname
+# $2 - new order
+update_order()
+{
+	[ -z "${1}" ] && return 1
+	[ -z "${2}" ] && return 1
+
+	local jname="${1}"
+	local order="${2}"
+
+	cbsdsql local "UPDATE jails SET b_order='${order}' WHERE jname='${jname}' AND emulator!='bhyve'"
+}
+
+
+# $1 - jname
+# $2 - index
+get_new_value()
+{
+	local _input
+	[ -z "${1}" ] && return 1
+	local jname="${1}"
+
+	f_dialog_title " order "
+
+	f_dialog_input _input "Enter weight. Lower weight = higher priority, first boot: 0" "${index}" \
+		"${_message}" || return $?
+
+	update_order ${jname} ${_input}
+}
+
+
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select jail\nLess index weight value - earlier start"
+	local defaultitem=
+	local hline=
+	local i jnum order jname=
+
+	load_table
+
+	local menu_list=" \
+		'EXIT'		'' \
+		'-'		'' \
+	" # END-QUOTE
+
+	jnum=0
+	eval jname="\$jails_${jnum}_jname"
+	eval order="\$jails_${jnum}_order"
+
+	while [ -n "${jname}" ]; do
+		eval order="\$jails_${jnum}_order"
+		menu_list="$menu_list '${order} ${jname}'	''"
+		jnum=$(( jnum + 1 ))
+		unset jname order
+		eval jname="\$jails_${jnum}_jname"
+		eval order="\$jails_${jnum}_order"
+	done
+
+	local height width rows
+	eval f_dialog_menu_size height width rows \
+		\"\$DIALOG_TITLE\"     \
+		\"\$DIALOG_BACKTITLE\" \
+		\"\$prompt\"           \
+		\"\$hline\"            \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"         \
+		--backtitle \"\$DIALOG_BACKTITLE\" \
+		--hline \"\$hline\"                \
+		--ok-label \"\$msg_ok\"            \
+		--cancel-label \"\$msg_cancel\"    \
+		--default-item \"\$defaultitem\"   \
+		--menu \"\$prompt\"                \
+		$height $width $rows               \
+		$menu_list                         \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+#### [ MAIN AREA ] ####
+[ ! -f ${localcbsdconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
+. ${localcbsdconf}
+. ${inventory}
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+while [ 1 ]; do
+	dialog_menu_main || f_die
+	retval=$?
+
+	f_dialog_menutag_fetch mtag
+
+	index=${mtag%% *}
+	mychoice=${mtag##* }
+
+	case "${mychoice}" in
+		"EXIT")
+			exit 0
+			;;
+		"-")
+			continue
+			;;
+		*)
+			get_new_value ${mychoice} ${index}
+			;;
+	esac
+done

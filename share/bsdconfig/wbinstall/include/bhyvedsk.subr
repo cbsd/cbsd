@@ -1,0 +1,125 @@
+load_dsk_info()
+{
+	dsk_last_id=1
+	local sqldelimer=" "
+
+	unset dsklist
+
+	for last_disk in $( seq 1 16 ); do
+		unset dsk_controller${last_disk}
+	done
+
+	eval $( cbsdsql local SELECT dsk_controller,dsk_path,dsk_slot,dsk_type FROM bhyvedsk WHERE jname=\"${jname}\" | while read dsk_controller dsk_path dsk_slot dsk_type; do
+		echo "export dsk_controller${dsk_last_id}=\"${dsk_controller}\"
+		echo "export dsk_path${dsk_last_id}=\"${dsk_path}\"
+		echo "export dsk_slot${dsk_last_id}=\"${dsk_slot}\"
+		echo "export dsk_type${dsk_last_id}=\"${dsk_type}\"
+		dsk_last_id=$(( dsk_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+}
+
+# form for $new_dsk_controller
+get_dsk_controller()
+{
+	local _input _retval
+
+	local _par="${1}"
+	local title=" Controller type for ${mtag} "
+	hline=
+
+	local menu_list="
+		'virtio-blk'	'Virtio block storage'	''
+		'ahci-hd'	'AHCI controller'	''
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	[ -n "${new_dsk_controller}" ] && local defaultitem="${new_dsk_controller}"
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	[ $retval -eq $DIALOG_OK ] && new_dsk_controller="${menu_choice}"
+
+	return $retval
+}
+
+# form for $new_dsk_size
+get_dsk_size()
+{
+	local _input _defsize="20g"
+
+	f_dialog_title " image size "
+
+	[ -n "${new_dsk_size}" ] && _defsize="${new_dsk_size}"
+
+	f_dialog_input _input "Input size, eg: 20g" "${_defsize}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_dsk_size="${_input}"
+}
+
+
+# form for new dsk
+# -c controller -d dskname (dsk1) -s 10g
+add_dsk()
+{
+	local controller=
+	local dsk=
+	local size=
+	local newdsk=
+
+	while getopts "c:d:r:s:e:" opt; do
+		case "$opt" in
+			c) controller="${OPTARG}" ;;
+			d) dsk="${OPTARG}" ;;
+			s) size="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${controller}" ] && err 1 "${MAGENTA}Empty controller${NORMAL}"
+	[ -z "${dsk}" ] && err 1 "${MAGENTA}Empty dsk${NORMAL}"
+	[ -z "${size}" ] && err 1 "${MAGENTA}Empty size${NORMAL}"
+
+	newdsk="${dsk}.vhd"
+
+	if ! bhyve_create_dsk ${data}/${newdsk} ${size}; then
+		$ECHO "${MAGENTA}Error creating disk: ${data}/${newdsk}${NORMAL}"
+		sleep 5
+		return 1
+	fi
+
+	if [ -n "${controller}" ]; then
+		cbsdsql local "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${controller}\",\"${newdsk}\","0" )"
+	else
+		cbsdsql local "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${newdsk}\","0" )"
+	fi
+
+	return 0
+}

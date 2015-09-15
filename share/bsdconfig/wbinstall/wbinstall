@@ -1,0 +1,164 @@
+#!/bin/sh
+#-
+# Copyright (c) 2014 Oleg Ginzburg
+# All Rights Reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+# $FreeBSD$
+#
+############################################################ INCLUDES
+
+BSDCFG_SHARE="/usr/share/bsdconfig"
+. $BSDCFG_SHARE/common.subr || exit 1
+f_dprintf "%s: loading includes..." "$0"
+f_include $BSDCFG_SHARE/dialog.subr
+f_include $BSDCFG_SHARE/mustberoot.subr
+f_include $BSDCFG_SHARE/sysrc.subr
+
+BSDCFG_LIBE="/usr/local/libexec/bsdconfig" APP_DIR="wbinstall"
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages.subr
+
+ipgm=$( f_index_menusel_keyword $BSDCFG_LIBE/$APP_DIR/INDEX "$pgm" )
+[ $? -eq $SUCCESS -a "$ipgm" ] && pgm="$ipgm"
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt=
+	local menu_list= # Calculated below
+	local defaultitem= # Calculated below
+	local hline="$hline_arrows_tab_enter"
+
+	local menu_list="
+		'A $msg_configure_network'	'$msg_network_configured'
+		'B $msg_configure_storage'	'$msg_storage_configured'
+		'-'				'-'
+		'1 $msg_install'		''
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_size height width rows \
+		\"\$title\" \"\$btitle\" \"\$prompt\" \"\$hline\" $menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--title \"\$title\"              \
+		--backtitle \"\$btitle\"         \
+		--hline \"\$hline\"              \
+		--ok-label \"\$msg_select\"      \
+		--cancel-label \"\$msg_exit\"    \
+		--default-item \"\$defaultitem\" \
+		--menu \"\$prompt\"              \
+		$height $width $rows             \
+		$menu_list                       \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+############################################################ MAIN
+export NOCOLOR=1
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_configure_cbsd "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+msg_network_configured=
+msg_storage_configured=
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main || break
+	f_dialog_menutag_fetch mtag
+
+	command=
+	case "$mtag" in
+		?" $msg_exit") break ;;
+		?" $msg_configure_initenv")
+			/usr/local/bin/cbsd initenv-tui
+			;;
+		?" $msg_configure_network")
+			/usr/sbin/bsdconfig netdev
+			# test for gateway available
+			/usr/sbin/arp -ad > /dev/null 2>&1
+			GW4=$( /sbin/route -n get 0.0.0.0 2>/dev/null| /usr/bin/awk '/gateway:/{print $2}' )
+			if [ -n "${GW4}" ]; then
+				${miscdir}/chk_arp_byip --pingnum=1 --pingtimeout=0.001 --ip=${GW4}
+				[ $? -eq 1 ] && msg_network_configured="Selected"
+			fi
+			;;
+		?" $msg_configure_storage") command=selectdsk ;;
+		?" $msg_install") command=install ;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

@@ -1,0 +1,131 @@
+#!/bin/sh
+#v10.0.2
+# cbsd wb_netcfg mode=update nic=re0 ip4="10.0.0.2" mask4="255.255.255.0"
+globalconf="${workdir}/cbsd.conf";
+CBSDMODULE="webdev"
+MYARG="mode"
+MYOPTARG="nic out firststart ip4 mask4 ip6 mask6 gw4 gw6"
+MYDESC="WebDev network helper"
+ADDHELP="possible mode:\n\
+dhclient - execute dhclient on specified interface, apply and save in /tmp/networks.txt\n\
+trydhcp - try dhclient and save in /tmp/networks.txt, without applying\n\
+out= alternative save path instead of /tmp/networks.nic.txt\n\
+ip4/ip6= is ip or 'DHCP' for DHCP\n"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+init $*
+
+#defines
+_MYDIR=$(dirname `realpath $0`)
+
+### MAIN Route ###
+set -e
+	. ${_MYDIR}/wb_netcfg.subr
+set +e
+
+[ -z "${1}" ] && usage
+[ -z "${firststart}" ] && firststart=1
+
+case "${mode}" in
+	"dhclient")
+		[ -z "${nic}" ] && err 1 "nic= is mandatory"
+		DHCP_TRY_MODE=0
+		if [ "${nic}" = "all" ]; then
+			for nic in $( ${miscdir}/nics-list ); do
+				remove_dhcp_lease ${nic}
+				MYNIC="${nic}"
+				dhcp_client "${MYNIC}"
+				collect_net_data
+				save_settings
+			done
+			exit 0
+		else
+			MYNIC="${nic}"
+			dhcp_client "${MYNIC}"
+			collect_net_data
+			save_settings
+		fi
+		exit 0
+		;;
+	"trydhcp")
+		[ -z "${nic}" ] && err 1 "nic= is mandatory"
+		MYNIC="${nic}"
+		DHCP_TRY_MODE=1
+		dhcp_client "${MYNIC}"
+		exit 0
+		;;
+	"update")
+		[ -z "${nic}" ] && err 1 "nic= is mandatory"
+
+		if [ "${ip4}" = "DHCP" ]; then
+			set_ip4 "DHCP"
+			exit 0
+		elif [ "${ip6}" = "DHCP" ]; then
+			set_ip6 "DHCP"
+			exit 0
+		fi
+
+		[ -z "${ip4}" -a -z "${ip6}" ] && err 1 "ip4/mask4 or ip6/mask6 pair is mandatory"
+		[ -z "${mask4}" -a -z "${mask6}" ] && err 1 "ip4/mask4 or ip6/mask6 pair is mandatory"
+
+		validate_nic
+		# kill_dhclient ${nic}
+
+		if [ -n "${ip4}" -a -n "${mask4}" ]; then
+			validate_ip4
+			set_ip4
+		elif [ -n "${ip6}" -a -n "${mask6}" ]; then
+			validate_ip6
+			set_ip6
+		else
+			err 1 "ip4/mask4 or ip6/mask6 pair is mandatory"
+		fi
+
+		[ -n "${gw4}" ] && set_gw4
+		[ -n "${gw6}" ] && set_gw6
+		;;
+	"save")
+		[ -z "${nic}" ] && err 1 "nic= is mandatory"
+		truncate -s0 ${STORE_FILE}
+
+		if [ "${ip4}" = "DHCP" ]; then
+			/usr/sbin/sysrc -qf ${STORE_FILE} "ifconfig_${nic}=\"DHCP\"" >/dev/null 2>&1
+			ip4=$(ifconfig ${nic} 2>/dev/null| /usr/bin/awk '/inet / { print $2}' | head -n 1)
+			[ -z "${ip4}" -o "${ip4}" = "0.0.0.0" ] && ip4="127.0.0.1"
+			echo ${ip4} > ${CBSD_IP}
+			exit 0
+		elif [ "${ip6}" = "DHCP" ]; then
+			/usr/sbin/sysrc -qf ${STORE_FILE} "ifconfig_${nic}=\"DHCP\"" >/dev/null 2>&1
+			/usr/sbin/sysrc -qf ${STORE_FILE} "ipv6_activate_all_interfaces=\"YES\"" >/dev/null 2>&1
+			exit 0
+		fi
+
+		[ -z "${ip4}" -a -z "${ip6}" ] && err 1 "ip4/mask4 or ip6/mask6 pair is mandatory" > /dev/null
+		[ -z "${mask4}" -a -z "${mask6}" ] && err 1 "ip4/mask4 or ip6/mask6 pair is mandatory" > /dev/null
+
+		validate_nic
+		# kill_dhclient ${nic}
+
+		if [ -n "${ip4}" -a -n "${mask4}" ]; then
+			/usr/sbin/sysrc -qf ${STORE_FILE} ifconfig_${nic}="inet ${ip4} mask ${mask4}" >/dev/null 2>&1
+			echo "${ip4}" > ${CBSD_IP}
+		elif [ -n "${ip6}" -a -n "${mask6}" ]; then
+			/usr/sbin/sysrc -qf ${STORE_FILE} ifconfig_${nic}_ipv6="inet ${ip4} mask ${mask4}" >/dev/null 2>&1
+			/usr/sbin/sysrc -qf ${STORE_FILE} ipv6_activate_all_interfaces="YES" > /dev/null 2>&1
+		else
+			err 1 "ip4/mask4 or ip6/mask6 pair is mandatory"
+		fi
+
+		[ -n "${gw4}" ] && /usr/sbin/sysrc -qf ${STORE_FILE} defaultrouter="${gw4}" >/dev/null 2>&1
+		[ -n "${gw6}" ] && /usr/sbin/sysrc -qf ${STORE_FILE} ipv6_defaultrouter="${gw4}" >/dev/null 2>&1
+		;;
+	*)
+		usage
+		;;
+esac
+
+exit 0
