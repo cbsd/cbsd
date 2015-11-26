@@ -353,6 +353,7 @@ EOF
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/jail-arg ${sharedir}/jail-arg
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/rctl.conf ${sharedir}/rctl.conf
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/bhyve.conf ${sharedir}/bhyve.conf
+	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/bhyverun.sh ${sharedir}/bhyverun.sh
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/virtualbox.conf ${sharedir}/virtualbox.conf
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/xen.conf ${sharedir}/xen.conf
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/zrep.conf ${sharedir}/zrep.conf
@@ -425,7 +426,7 @@ EOF
 	[ ! -d "${sharedir}/emulators" -a -d "${distdir}/share/emulators" ] && /bin/mkdir -p ${sharedir}/emulators
 	/bin/cp -a ${distdir}/share/emulators/* ${sharedir}/emulators/
 
-	/bin/cp -a ${distdir}/modules ${workdir}
+	/bin/cp -Rp ${distdir}/modules ${workdir}
 }
 
 phase3()
@@ -471,8 +472,8 @@ phase4()
 				TMPR="${ftmpdir}/resolv.$$"
 				# system nserver must be always last
 				${ECHO} "nameserver ${i}" > ${TMPR}
-				cat ${sharedir}/${platform}-jail-skel/etc/resolv.conf >> ${TMPR}
-				mv ${TMPR} ${sharedir}/${platform}-jail-skel/etc/resolv.conf
+				/bin/cat ${sharedir}/${platform}-jail-skel/etc/resolv.conf >> ${TMPR}
+				/bin/mv ${TMPR} ${sharedir}/${platform}-jail-skel/etc/resolv.conf
 			fi
 		fi
 	done
@@ -714,6 +715,7 @@ start()
 			workdir="/usr/jails"
 		fi
 	fi
+
 	. ${globalconf}
 	. ${distdir}/nc.subr
 	. ${distdir}/tools.subr
@@ -740,6 +742,16 @@ EOF_HEADER
 	phase1
 	phase2
 	phase3
+
+	. /etc/rc.conf
+	if [ "${cbsd_workdir}" != "${workdir}" ]; then
+		if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: $p"; then
+			${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_workdir=""
+		fi
+	fi
+
 	phase4
 	phase5
 	# Inventory area
@@ -751,10 +763,15 @@ EOF_HEADER
 	phase7
 	phase8
 
+	[ ! -f "${workdir}/rc.conf" ] && /usr/bin/touch ${workdir}/rc.conf
 	configure_rsync
 
-	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf|/usr/bin/wc -l ) = 0 ]; then
-		getyesno "Shall i modify the /etc/rc.conf to sets cbsdd_enable=YES ?" && ${SYSRC_CMD} -vf /etc/rc.conf cbsdd_enable=YES
+	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Shall i modify the /etc/rc.conf to sets cbsdd_enable=YES ?"; then
+			${SYSRC_CMD} -vf /etc/rc.conf cbsdd_enable=YES
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdd_enable=NO
+		fi
 	fi
 
 	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
@@ -770,17 +787,20 @@ EOF_HEADER
 		fi
 	fi
 
-	. /etc/rc.conf
-	if [ "${cbsd_workdir}" != "${workdir}" ]; then
-		getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: $p" && ${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
+	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?"; then
+			${SYSRC_CMD} -vf /etc/rc.conf rcshutdown_timeout="900"
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf rcshutdown_timeout="900"
+		fi
 	fi
 
-	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf|/usr/bin/wc -l ) = 0 ]; then
-		getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?" && ${SYSRC_CMD} -vf /etc/rc.conf rcshutdown_timeout="900"
-	fi
-
-	if [ $( ${GREP_CMD} ^sshd_flags= /etc/rc.conf|/usr/bin/wc -l ) = 0 ]; then
-		getyesno "Shall i modify default SSH daemon port from 22 to 22222 on this host via /etc/rc.conf and sshd_flags=\"-oPort=22222\" which is default for cbsd?" && ${SYSRC_CMD} -vf /etc/rc.conf sshd_flags="-oPort=22222"
+	if [ $( ${GREP_CMD} ^sshd_flags= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Shall i modify default SSH daemon port from 22 to 22222 on this host via /etc/rc.conf and sshd_flags=\"-oPort=22222\" which is default for cbsd?"; then
+			${SYSRC_CMD} -vf /etc/rc.conf sshd_flags="-oPort=22222"
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf sshd_flags="-oPort=22222"
+		fi
 	fi
 
 	phaseX

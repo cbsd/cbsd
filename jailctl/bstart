@@ -114,13 +114,20 @@ start_bhyve()
 						fi
 					fi
 
-					if [ "${vm_boot}" = "cd" ]; then
-						bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -d ${iso_img} -m ${vm_ram} ${jname}"
-						bhyveload_cmd_once="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
-					else
-						bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
-					fi
 
+					case "${vm_efi}" in
+						uefi_csm|uefi)
+							bhyveload_cmd=""
+							;;
+						*)
+							if [ "${vm_boot}" = "cd" ]; then
+								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -d ${iso_img} -m ${vm_ram} ${jname}"
+								bhyveload_cmd_once="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+							else
+								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+							fi
+							;;
+					esac
 #					echo "DEBUG: $bhyveload_cmd"
 #					${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
 				fi
@@ -215,6 +222,18 @@ start_bhyve()
 		unset lpc_args
 	fi
 
+	# init efi_args
+	if ! compile_efi_args; then
+		${ECHO} "${MAGENTA}No such efi for VMs: ${GREEN}${jname}${NORMAL}"
+		unset efi_args
+	fi
+
+	# init console_args
+	if ! compile_console_args; then
+		${ECHO} "${MAGENTA}No such console for VMs: ${GREEN}${jname}${NORMAL}"
+		unset console_args
+	fi
+
 	# init virtiornd_args
 	if ! compile_virtiornd_args; then
 		${ECHO} "${MAGENTA}No such rnd for VMs: ${GREEN}${jname}${NORMAL}"
@@ -245,6 +264,13 @@ start_bhyve()
 #	passthr="-s 3:0,ehci,1"
 
 
+case "$vm_efi" in
+	uefi_csm|uefi)
+		boot_from_grub=0
+		;;
+esac
+
+
 cat > ${jailsysdir}/${jname}/bhyve.conf <<EOF
 boot_from_grub='${boot_from_grub}'
 vm_boot='${vm_boot}'
@@ -257,6 +283,8 @@ jname='${jname}'
 bhyve_flags='${bhyve_flags}'
 vm_cpus='${vm_cpus}'
 vm_ram='${vm_ram}'
+vm_efi='${vm_efi}'
+vm_console='${vm_console}'
 hostbridge_args='${hostbridge_args}'
 passthr='${passthr}'
 lpc_args='${lpc_args}'
@@ -264,12 +292,36 @@ virtiornd_args='${virtiornd_args}'
 nic_args='${nic_args}'
 dsk_args='${dsk_args}'
 cd_args='${cd_args}'
+efi_args='${efi_args}'
+console_args='${console_args}'
 mytap='${mytap}'
 cd_boot_once='${cd_boot_once}'
 bhyveload_cmd_once='${bhyveload_cmd_once}'
+console_nmdm='${console_nmdm}'
 EOF
 
 	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh ${jailsysdir}/${jname}/bhyve.conf"
+
+	if [ -n "${console_nmdm}" ]; then
+		${tmuxcmd} select-window -t cbsd-${jname}
+
+#		for i in ${console_nmdm}; do
+#			${tmuxcmd} new-window -t ${con} "cu -l ${i} -s 9600"
+#			con=$(( con + 1 ))
+#		done
+
+		con=0
+		for i in ${console_nmdm}; do
+			if [ $con -eq 0 ]; then
+				${tmuxcmd} split-window -v -t 0 "cu -l ${i} -s 9600"
+			else
+				${tmuxcmd} new-window -t 1 "cu -l ${i} -s 9600"
+			fi
+			con=$(( con + 1 ))
+		done
+		${tmuxcmd} select-window -t cbsd-${jname}:0
+	fi
+
 	err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
 }
 
@@ -305,6 +357,10 @@ fi
 init_bhyve
 
 [ -z "$jname" ] && jname=$1
+
+default_profile="bhyve-default-default.conf"
+readconf ${default_profile}
+
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"

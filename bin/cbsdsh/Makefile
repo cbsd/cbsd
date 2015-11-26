@@ -1,6 +1,3 @@
-#	@(#)Makefile	8.4 (Berkeley) 5/5/95
-# $FreeBSD: head/bin/sh/Makefile 253650 2013-07-25 15:08:41Z jilles $
-
 PROG=	cbsd
 BINDIR?=	/usr/local/bin
 INSTALLFLAGS=	-S -m 500
@@ -8,6 +5,10 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
 	test.c trap.c var.c
+
+# WITH_LUA
+#SHSRCS+=	cbsdlua.c
+
 GENSRCS= builtins.c nodes.c syntax.c
 GENHDRS= builtins.h nodes.h syntax.h token.h
 SRCS= ${SHSRCS} ${GENSRCS} ${GENHDRS}
@@ -22,6 +23,10 @@ DPADD= ${LIBEDIT} ${LIBTERMCAP}
 LDADD= -ledit -ltermcap -lsqlite3 -pthread
 
 CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+
+# WITH LUA
+#CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
+
 # for debug:
 #DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
 

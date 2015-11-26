@@ -53,6 +53,8 @@ GET_JAILPROFILE_MSG="Profile for jcreate"
 GET_HOSTBRIDGE_MSG="Hostbridge for VMs, eg: hostbridge or amd_hostbridge"
 GET_GUESTFS_MSG="Choose FS for boot image"
 GET_BOOT_MSG="First boot device, eg: cd or hdd"
+GET_EFI_MSG="Choose UEFI firmware"
+GET_CONSOLE_MSG="Choose default console"
 GET_ISOPATH_MSG="Path to ISO image in srcdir/iso, eg: release.iso. 0 - for default img_iso"
 GET_GW4_MSG="Enter default gateway inside VMs or jail"
 jdomain_msg="Specify CBSD node group name for jail"
@@ -337,10 +339,12 @@ get_construct_ip4_addr()
 # form for $interface
 # -s "skip this network list"
 # -d 1  - add "disable" choice
+# -m 1  - add "manual" choice
 get_construct_interface()
 {
 	local _input _def_iface _mynic _mydesc _mystatus
 	local defaultitem _skipnics="" _disable=0
+	local _manual=0
 
 	local title=" interface "
 	local prompt="${interface_msg}"
@@ -350,15 +354,20 @@ get_construct_interface()
 		'EXIT'	'EXIT'	'Exit'
 	" # END-QUOTE
 
-	while getopts "s:d:" opt; do
+	while getopts "s:d:m:" opt; do
 		case "$opt" in
 			s) _skipnics="${OPTARG}" ;;
 			d) _disable="${OPTARG}" ;;
+			m) _manual="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
 
 	menu_list="${menu_list} 'auto'		'auto'		'Recommended: determine nic for jail IP via route table.'"
+	if [ "${_manual}" = "1" ]; then
+		menu_list="${menu_list} 'manual'	'manual'	'Enter interface by hand.'"
+	fi
+
 	if [ ${_disable} -eq 1 ]; then
 		menu_list="${menu_list} 'disable'	'disable'	'Do not create/remove IP automatically: IP of jail must be already initialized or for vnet mode'"
 	fi
@@ -385,6 +394,7 @@ get_construct_interface()
 				;;
 			*)
 				defaultitem="${interface}"
+				;;
 		esac
 	else
 		interface="auto"
@@ -421,6 +431,12 @@ get_construct_interface()
 				"disable")
 					interface="0"
 					;;
+				"manual")
+					input="auto"
+					input_msg="Enter interface"
+					get_input
+					interface="${input}"
+					;;
 				*)
 					[ -n "${mtag}" ] && interface="${mtag}"
 					;;
@@ -445,6 +461,20 @@ get_construct_ver()
 
 	ver="${_input}"
 }
+
+# form for input
+get_input()
+{
+	local _input
+
+	f_dialog_title " input "
+
+	f_dialog_input _input "${input_msg}" "${input}" \
+			"${_message}" || return $?
+
+	input="${_input}"
+}
+
 
 # form for $user_pw_root
 get_construct_user_pw_root()
@@ -931,6 +961,62 @@ get_construct_vm_boot()
 	return ${retval}
 }
 
+# form for $vm_efi
+get_construct_vm_efi()
+{
+	local _input _res
+
+	local title="${GET_EFI_MSG}"
+	local defaultitem="${vm_efi}"
+
+	local menu_list="
+		'none'		'No UEFI boot'	'Legacy boot mode'
+		'uefi'		'UEFI'		'Boot using UEFI firmware'
+		'uefi_csm'	'UEFI CSM'	'Boot using UEFI CSM firmware'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_efi="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for $vm_console
+get_construct_vm_console()
+{
+	local _input _res
+
+	local title="${GET_CONSOLE_MSG}"
+	local defaultitem="${vm_console}"
+
+	local menu_list="
+		'tmux'		'tmux console'			'No serial, just tmux session'
+		'nmdm'		'serial console via nmdm'	'Serial console via nullmodem driver'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_console="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
 # form for $arch
 get_construct_vm_os_type()
 {
@@ -1080,7 +1166,19 @@ get_construct_profile()
 		merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
 	fi
 
-	[ -n "${tpl_pkglist}" ] && pkglist="${tpl_pkglist}"
+	# populate pkglist from tpl_pkglist if not empty
+	if [ -n "${tpl_pkglist}" ]; then
+		if [ -r "${tpl_pkglist}" ]; then
+			# its file
+			pkglist="${tpl_pkglist}"
+		else
+			pkglist="${ftmpdir}/tui.$$"
+			trap "/bin/rm -f ${pkglist}" HUP INT ABRT BUS TERM EXIT
+			for _i in ${tpl_pkglist}; do
+				echo ${_i} >> ${pkglist}
+			done
+		fi
+	fi
 
 	return ${retval}
 }
@@ -1263,6 +1361,16 @@ EOF
 	[ -n "${jailsysskeldir}" ] && /bin/cat >> ${TMPFILE} <<EOF
 jailsysskeldir="${jailsysskeldir}"
 EOF
+
+	if [ -z "${profile}" ]; then
+/bin/cat >> ${TMPFILE} <<EOF
+jail_profile="default"
+EOF
+		else
+/bin/cat >> ${TMPFILE} <<EOF
+jail_profile="${profile}"
+EOF
+	fi
 
 	[ -n "${pkglist}" ] && echo "pkglist=\"${pkglist}\";" >> ${TMPFILE}
 

@@ -11,7 +11,7 @@ _CBSD_BHYVE_SUBR=1
 # test environment for bhyveing
 init_bhyve()
 {
-	local _required_kmods="vmm if_tap if_bridge" _i _res
+	local _required_kmods="vmm if_tap if_bridge nmdm" _i _res
 
 	_res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
 	[ $? -ne 0 ] && err 1 "${MAGENTA}Your CPU does not appear to support ${GREEN}EPT${NORMAL}"
@@ -19,7 +19,7 @@ init_bhyve()
 	for _i in ${_required_kmods}; do
 		if ! /sbin/kldstat -qm ${_i} >/dev/null 2>&1; then
 			${ECHO} "${MAGENTA}No kldloaded module: ${GREEN}${_i}${NORMAL}"
-			${ECHO} "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
+			${ECHO} "${MAGENTA}Put ${GREEN}kld_list=\"if_bridge if_tap vmm nmdm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} and execute: ${GREEN}service kld restart${MAGENTA} or load modules via loader.conf and try again.${NORMAL}"
 			[ -n "${DIALOG}" ] && read p
 			exit 0
 		fi
@@ -38,6 +38,25 @@ next_pci_id()
 	[ ${bhyve_pci_index} -gt 31 ] && ${ECHO} "${MAGENTA}No free available bhyve_pci_index, 31 is max${NORMAL}" && return 1
 	return 0
 }
+
+# autoincement for nmdm_index
+next_nmdm_id()
+{
+	local _i
+	nmdm_index=0
+
+	for _i in $( /usr/bin/seq 0 500 ); do
+		/bin/ls /dev/nmdm${_i}A* > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			nmdm_index=${_i}
+			return 0
+		fi
+	done
+
+	[ ${_i} -eq 500 ] && return 1
+	return 0
+}
+
 
 # export arguments for bhyve about dsk vms in $dsk_args variable
 # $jname must be set's
@@ -129,12 +148,15 @@ compile_nic_args()
 			interface="${nic_parent}"
 		fi
 
+		# always up parent device
+		/sbin/ifconfig ${interface} up
+
 		if ! mybridge=$( get_my_device bridge ${interface} ); then
-			err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
+			err 1 "${MAGENTA}Error:get_my_device_bridge_for_${interface}: ${mybridge}${NORMAL}"
 		fi
 
 		mytap=$( get_my_tap ${mybridge} )
-		[ $? -eq 1 ] && err 1 "${MAGENTA}Error: Cant get_my_tap by: ${GREEN}${mybridge}${NORMAL}"
+		[ $? -eq 1 ] && err 1 "${MAGENTA}Error:get_my_tap_for_${mybridge}: ${GREEN}${mybridge}${NORMAL}"
 
 		/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
 		_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
@@ -146,9 +168,9 @@ compile_nic_args()
 		else
 			echo "export nic${_id}=\"-s ${pcislot}:0,virtio-net,${mytap}\" ;"
 		fi
-		
+
 		echo "export mytap${_id}=\"${mytap}\";"
-		
+
 		_id=$(( _id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create nic map${NORMAL}"
 
@@ -189,6 +211,52 @@ compile_lpc_args()
 
 	lpc_args="-s ${bhyve_pci_index}:0,lpc"
 }
+
+# export arguments for bhyve efi_args
+compile_efi_args()
+{
+	case "${vm_efi}" in
+		"uefi")
+			efi_args="-l bootrom,${efi_firmware}"
+#			efi_args="-s 31,lpc -l com1,/dev/nmdm0A -l com2,/dev/nmdm1A -l bootrom,${efi_firmware}"
+			;;
+		"uefi_csm")
+			efi_args="-l bootrom,${efi_firmware_csm}"
+			;;
+		*)
+			efi_args=""
+			;;
+	esac
+	return 0
+}
+
+# export arguments for bhyve console_args
+compile_console_args()
+{
+	local com1=0 com2=0
+
+	case "${vm_console}" in
+		"nmdm")
+
+			if ! next_nmdm_id ; then
+				${ECHO} "${MAGENTA}No such next_nmdm_id for VMs: ${GREEN}${jname}${NORMAL}"
+				return 1
+			fi
+
+			com1=${nmdm_index}
+			com2=$(( nmdm_index + 1 ))
+
+			console_args="-l com1,/dev/nmdm${com1}A -l com2,/dev/nmdm${com2}A"
+			console_nmdm="/dev/nmdm${com1}B /dev/nmdm${com2}B"
+			;;
+		*)
+			console_args="-l com1,stdio"
+			;;
+	esac
+	return 0
+}
+
+
 
 # export arguments for bhyve virtio-rnd
 compile_virtiornd_args()

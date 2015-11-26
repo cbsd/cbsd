@@ -57,6 +57,13 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 255215 2013-09-04 22:10:16Z jilles $");
 #include <stdlib.h> //setenv
 //#include <malloc_np.h> //calloc
 //#include <libxo/xo.h> // XML/JSON/HTML stuff via xo_emit
+
+#ifdef LUA
+#include "lua.h"
+#include "lauxlib.h"
+#include "lualib.h"
+#endif
+
 #endif
 
 #include "shell.h"
@@ -89,6 +96,9 @@ int localeisutf8, initial_localeisutf8;
 #ifdef CBSD
 char *cbsd_history_file = NULL;
 int cbsd_enable_history=0;
+#ifdef LUA
+lua_State *L;
+#endif
 #endif
 
 static void reset(void);
@@ -211,6 +221,10 @@ main(int argc, char *argv[])
 	}
 
 	ckfree(cbsdpath);
+#ifdef LUA
+	L = luaL_newstate();
+	luaL_openlibs(L);
+#endif
 #endif
 	procargs(argc, argv);
 	pwd_init(iflag);

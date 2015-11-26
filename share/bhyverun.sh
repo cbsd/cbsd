@@ -49,12 +49,13 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname};"
+	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname};"
+	logger -t CBSD "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname};"
 
 	for i in ${mytap}; do
 		/sbin/ifconfig ${i} up
 	done
-	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} -l com1,stdio ${jname} || touch /tmp/bhyvestop.${jname}.lock
+	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname} || touch /tmp/bhyvestop.${jname}.lock
 #	/usr/sbin/bhyvectl --get-vmcs-exit-reason --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-ctls --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt
