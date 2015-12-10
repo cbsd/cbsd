@@ -15,6 +15,7 @@ clean:
 	${MAKE} -C bin/cbsdsh clean
 	${RM} -f misc/chk_arp_byip
 	${RM} -f bin/cbsdsftp
+	${RM} -f bin/cfetch
 	${RM} -f bin/cbsdssh
 	${RM} -f bin/cbsd
 	${RM} -f sbin/netmask
