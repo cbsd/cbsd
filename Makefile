@@ -27,6 +27,7 @@ clean:
 	${RM} -f misc/popcnttest
 	${RM} -f misc/cbsd_dot
 	${RM} -f misc/daemon
+	${RM} -f misc/resolv
 	${RM} -f tools/xo
 
 
@@ -43,6 +44,7 @@ cbsd:
 	${CC} misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && ${STRIP} misc/popcnttest > /dev/null 2>&1 || /usr/bin/true
 	${CC} misc/src/cbsd_dot.c -o misc/cbsd_dot && ${STRIP} misc/cbsd_dot
 	${CC} misc/src/daemon.c -lutil -o misc/daemon && ${STRIP} misc/daemon
+	${CC} misc/src/resolv.c -o misc/resolv && ${STRIP} misc/resolv
 	${CC} tools/src/xo.c -lxo -I/usr/include/libxo -I/usr/local/include/libxo -L/usr/local/lib -lxo -lutil -o tools/xo && ${STRIP} tools/xo
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
