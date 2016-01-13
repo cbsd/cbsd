@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)mail.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/mail.c 213760 2010-10-13 04:01:01Z obrien $");
+__FBSDID("$FreeBSD: head/bin/sh/mail.c 278820 2015-02-15 21:47:43Z jilles $");
 
 /*
  * Routines to check for mail.  (Perhaps make part of main.c?)
@@ -85,7 +85,7 @@ chkmail(int silent)
 	setstackmark(&smark);
 	mpath = mpathset()? mpathval() : mailval();
 	for (i = 0 ; i < nmboxes ; i++) {
-		p = padvance(&mpath, nullstr);
+		p = padvance(&mpath, "");
 		if (p == NULL)
 			break;
 		if (*p == '\0')

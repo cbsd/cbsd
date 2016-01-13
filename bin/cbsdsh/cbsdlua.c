@@ -11,6 +11,7 @@
 #include "shell.h"
 #include "memalloc.h"
 #include "output.h"
+#include "var.h"
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -33,24 +34,31 @@ void cbsdlua_error( lua_State *L, const char *fmt, ... ) {
 // вызываем функцию на lua
 // указываем тип входящих аргументов через d(oble),i(nteger),s(tring)
 // символ > отделяет аргументы входащих от результата
-void call_va(lua_State *L, const char *func, const char *sig, ...) {
-	va_list vl;
-	int narg, nres;
-	va_start(vl,sig);
+//void call_va(lua_State *L, const char *func, const char *sig, ...) {
+//int cbsdlua_funccmd(const char *func, const char *sig, ...) {
+int cbsdlua_funccmd(int argc, char **argv) {
+//const char *func, const char *sig, ...) {
+	char *func=argv[1];
+	char *sig=argv[2];
+
+	int narg, nres, npos;
 	lua_getglobal(L,func);
+
+//	out2fmt_flush("func: %s\n", func);
 
 	//push args
 	for (narg=0; *sig; narg++ ) {
+		npos=3 + narg; // 3 -$0, func, sig
 		luaL_checkstack(L, 1, "too many arguments");
 		switch (*sig++) {
 			case 'd': /* double */
-				lua_pushnumber(L, va_arg(vl,double));
+//				lua_pushnumber(L, va_arg(vl,double));
 				break;
 			case 'i': /* integer */
-				lua_pushinteger(L, va_arg(vl,int));
+				lua_pushinteger(L, atoi(argv[npos]));
 				break;
 			case 's': /* string */
-				lua_pushstring(L, va_arg(vl,char *));
+				lua_pushstring(L, argv[npos]);
 				break;
 			case '>': /* end of argument */
 				goto endargs;
@@ -65,7 +73,6 @@ void call_va(lua_State *L, const char *func, const char *sig, ...) {
 	if (lua_pcall(L, narg, nres, 0)!= 0)
 		cbsdlua_error(L, "error calling '%s': %s",func, lua_tostring(L,-1));
 
-
 	//get result
 	nres = -nres;
 	while (*sig) {
@@ -75,7 +82,7 @@ void call_va(lua_State *L, const char *func, const char *sig, ...) {
 				double n = lua_tonumberx(L, nres, &isnum);
 				if (!isnum)
 					cbsdlua_error(L,"wrong result type");
-				*va_arg(vl, double *) = n;
+//				*va_arg(vl, double *) = n;
 				break;
 			}
 			case 'i': {
@@ -83,14 +90,20 @@ void call_va(lua_State *L, const char *func, const char *sig, ...) {
 				int n = lua_tointegerx(L, nres, &isnum);
 				if (!isnum)
 					cbsdlua_error(L,"wrong result type");
-				*va_arg(vl, int *) = n;
+//				*va_arg(vl, int *) = n;
+//				out2fmt_flush("LUA Return for %s: %d\n", argv[npos], n);
+				char str[100];
+				fmtstr(str, sizeof(str), "%d", n);
+				setvarsafe(argv[npos],str, 0);
 				break;
 			}
 			case 's': {
 				const char *s = lua_tostring(L, nres);
 				if (s == NULL)
 					cbsdlua_error(L,"wrong result type");
-				*va_arg(vl, const char **) = s;
+//				*va_arg(vl, const char **) = s;
+//				out2fmt_flush("LUA Return for %s: %s\n", argv[npos], s);
+				setvarsafe(argv[npos],s, 0);
 				break;
 			}
 			default:
@@ -99,11 +112,8 @@ void call_va(lua_State *L, const char *func, const char *sig, ...) {
 	nres++;
 	}
 
-	va_end(vl);
-
+	return 0;
 }
-
-
 
 
 // вызываем функцию на lua
@@ -131,39 +141,6 @@ void call_va(lua_State *L, const char *func, const char *sig, ...) {
 
 //	return 0;
 //}
-
-
-int cbsdlua_funccmd(int argc,char **argv) {
-
-	int w=0;
-	int h=0;
-
-	if (argc>2) {
-		w=atoi(argv[3]);
-		h=atoi(argv[4]);
-	}
-
-	int z=0;
-
-//	out2fmt_flush("KK=%s\n", argv[3]);
-//	out2fmt_flush("KK=%d\n", argc);
-
-	// only exec func without args
-	if (argc==2)
-		call_va(L,argv[1],">");
-	else
-		call_va(L,argv[1],argv[2], w, h, &z);
-
-//	call_va(L,argv[1],argv[2]);
-
-	return 0;
-}
-
-
-
-
-
-
 
 
 void lua_loadscript (lua_State *L, const char *fname) {
@@ -199,6 +176,7 @@ int cbsdlua_loadcmd(int argc, char **argv) {
 //}
 
 
+
 int cbsdluacmd(void) {
 	char buff[256];
 	int error;
@@ -218,3 +196,5 @@ int cbsdluacmd(void) {
 
 	return 0;
 }
+
+

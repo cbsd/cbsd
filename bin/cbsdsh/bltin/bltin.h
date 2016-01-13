@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)bltin.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/bltin/bltin.h 223060 2011-06-13 21:03:27Z jilles $
+ * $FreeBSD: head/bin/sh/bltin/bltin.h 279503 2015-03-01 21:46:55Z jilles $
  */
 
 /*
@@ -42,6 +42,7 @@
 #include "../shell.h"
 #include "../mystring.h"
 #ifdef SHELL
+#include "../error.h"
 #include "../output.h"
 #include "builtins.h"
 #define FILE struct output
@@ -73,7 +74,6 @@
 #include <unistd.h>
 
 pointer stalloc(int);
-void error(const char *, ...) __printf0like(1, 2);
-pid_t getjobpgrp(char *);
+int killjob(const char *, int);
 
 extern char *commandname;

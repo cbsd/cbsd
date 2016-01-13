@@ -1,12 +1,13 @@
 #!/usr/local/bin/cbsd
 #v10.1.6
 MYARG="jconf"
-MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile"
+MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc"
 MYDESC="Create jail from config file"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
 customskel = additional skel directory applyed above jail structrure\n\
 fstablocal = additional fstab file stored as fstab.local\n\
-jprofile = specify jail profile for creating jail\n"
+jprofile = specify jail profile for creating jail\n\
+zfs_snapsrc = use ZFS snapshot as data source\n"
 
 CBSDMODULE="bhyve"
 EXTHELP="wf_bcreate.html"
@@ -16,14 +17,73 @@ EXTHELP="wf_bcreate.html"
 . ${tools}
 . ${mdtools}
 . ${jfs}
+
 readconf buildworld.conf
 readconf bhyve-default-default.conf
 readconf zfs.conf
+
 . ${workdir}/universe.subr
 . ${workdir}/freebsd_world.subr
 . ${workdir}/bhyve.subr
 
 init $*
+
+really_create_base()
+{
+	if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
+		case ${vm_profile} in
+			"FreeBSD-bsdinstall-jail")
+				export UNAME_r="${ver}-RELEASE"
+				export DISTRIBUTIONS="kernel.txz base.txz"
+				bsdinstall jail ${data}
+				unset UNAME_r
+				nobase=1
+				;;
+			*)
+				nobase=0
+				init_target_arch
+				init_basedir
+				init_kerneldir
+				get_base
+				${ECHO} "${MAGENTA}Stage1: ${GREEN}jcreate...${NORMAL}"
+				jcreate jconf=${temprcconf}
+#				populate_freebsd_world
+#				populate_freebsd_kernel
+				customskel
+				;;
+		esac
+	fi
+}
+
+really_create_vm()
+{
+	if [ "${from_jail}" ]; then
+		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
+		[ -z "${swapsize}" ] && swapsize="0"
+		mountbase -o "" -p "" -d "" -c "" -s ""
+		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs}
+		jremove ${jname}
+		/bin/cp $temprcconf $rcconf
+		jregister jname=${jname} mode=new
+		create_fs ${data}
+		#test for zfs mounted & mount if not
+		case $zfsfeat in
+			1)
+				. $zfstool
+				zfsmnt ${data}
+				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+				;;
+		esac
+		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
+		#echo "/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}"
+		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
+	else
+		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
+			err 1 "Error: Couldn't create the image file. ${mdimage}"
+		fi
+	fi
+}
+
 
 ### MAIN
 [ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
@@ -115,28 +175,8 @@ create_fs ${data}
 [ ! -d ${jailfstabdir}  ] && mkdir -p ${jailfstabdir}
 [ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
 
-if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
-	case ${vm_profile} in
-		"FreeBSD-bsdinstall-jail")
-			export UNAME_r="${ver}-RELEASE"
-			export DISTRIBUTIONS="kernel.txz base.txz"
-			bsdinstall jail ${data}
-			unset UNAME_r
-			nobase=1
-			;;
-		*)
-			nobase=0
-			init_target_arch
-			init_basedir
-			init_kerneldir
-			get_base
-			${ECHO} "${MAGENTA}Stage1: ${GREEN}jcreate...${NORMAL}"
-			jcreate jconf=${temprcconf}
-			populate_freebsd_world
-#			populate_freebsd_kernel
-			customskel
-			;;
-	esac
+if [ -z "${zfs_snapsrc}" ]; then
+	really_create_base
 fi
 
 /bin/cp $temprcconf $rcconf
@@ -148,62 +188,7 @@ jregister jname=${jname} mode=new
 
 _res=$?
 
-if [ ${_res} -eq 0 ]; then
-	echo
-	${ECHO} "${MAGENTA}To edit VM properties use: ${GREEN}cbsd bconfig jname=${jname}${NORMAL}"
-	${ECHO} "${MAGENTA}To start VM use: ${GREEN}cbsd bstart ${jname}${NORMAL}"
-	${ECHO} "${MAGENTA}To stop VM use: ${GREEN}cbsd bstop ${jname}${NORMAL}"
-	${ECHO} "${MAGENTA}To remove VM use: ${GREEN}cbsd bremove ${jname}${NORMAL}"
-	${ECHO} "${MAGENTA}For attach VM console use: ${GREEN}cbsd blogin ${jname}${NORMAL}"
-	echo
-	${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
-	/bin/rm -f $rcconf
-
-	[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
-	#timezone
-
-	defdsk="dsk1.vhd"
-	defnic="nic1.vhd"
-
-	if [ "${from_jail}" ]; then
-		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
-		[ -z "${swapsize}" ] && swapsize="0"
-		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs}
-		jremove ${jname}
-		/bin/cp $temprcconf $rcconf
-		jregister jname=${jname} mode=new
-		create_fs ${data}
-		#test for zfs mounted & mount if not
-		case $zfsfeat in
-			1)
-				. $zfstool
-				zfsmnt ${data}
-				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
-				;;
-		esac
-		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
-		#echo "/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}"
-		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
-	else
-		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
-			err 1 "Error: Couldn't create the image file. ${mdimage}"
-		fi
-	fi
-
-	if [ -n "${virtio_type}" ]; then
-		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
-	else
-		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
-	fi
-
-	${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvenic ( jname ) VALUES ( \"${jname}\" )"
-
-	# store profile in jail system dir
-	[ ! -d "${jailsysdir}/${jname}/etc" ] && /bin/mkdir ${jailsysdir}/${jname}/etc && /usr/sbin/chown cbsd:cbsd ${jailsysdir}/${jname}/etc
-	storeconf vm-${vm_os_type}-${vm_os_profile}.conf ${jailsysdir}/${jname}/etc/vm-${vm_os_type}-${vm_os_profile}.conf
-
-	exit 0
-else
+if [ ${_res} -ne 0 ]; then
 	${ECHO}
 	${ECHO} "${MAGENTA}Creating ${jname} failed: ${GREEN}cbsd jregister${NORMAL}"
 	${ECHO} "${MAGENTA}Please review bad config file: ${GREEN}/tmp/rc.conf_${jname}${NORMAL}"
@@ -213,3 +198,38 @@ else
 	removedata ${data}
 	exit 1
 fi
+
+echo
+${ECHO} "${MAGENTA}To edit VM properties use: ${GREEN}cbsd bconfig jname=${jname}${NORMAL}"
+${ECHO} "${MAGENTA}To start VM use: ${GREEN}cbsd bstart ${jname}${NORMAL}"
+${ECHO} "${MAGENTA}To stop VM use: ${GREEN}cbsd bstop ${jname}${NORMAL}"
+${ECHO} "${MAGENTA}To remove VM use: ${GREEN}cbsd bremove ${jname}${NORMAL}"
+${ECHO} "${MAGENTA}For attach VM console use: ${GREEN}cbsd blogin ${jname}${NORMAL}"
+echo
+${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
+/bin/rm -f $rcconf
+
+[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
+
+defdsk="dsk1.vhd"
+defnic="nic1.vhd"
+
+if [ -z "${zfs_snapsrc}" ]; then
+	really_create_vm
+fi
+
+if [ -n "${virtio_type}" ]; then
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
+else
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
+fi
+
+${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvenic ( jname ) VALUES ( \"${jname}\" )"
+
+# store profile in jail system dir
+[ ! -d "${jailsysdir}/${jname}/etc" ] && /bin/mkdir ${jailsysdir}/${jname}/etc && /usr/sbin/chown cbsd:cbsd ${jailsysdir}/${jname}/etc
+storeconf vm-${vm_os_type}-${vm_os_profile}.conf ${jailsysdir}/${jname}/etc/vm-${vm_os_type}-${vm_os_profile}.conf
+
+jcleanup jname=${jname}
+
+exit 0

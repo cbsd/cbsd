@@ -43,7 +43,7 @@ static char sccsid[] = "@(#)kill.c	8.4 (Berkeley) 4/28/95";
 #endif /* not lint */
 #endif
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/kill/kill.c 250035 2013-04-28 22:05:01Z eadler $");
+__FBSDID("$FreeBSD: head/bin/kill/kill.c 279503 2015-03-01 21:46:55Z jilles $");
 
 #include <ctype.h>
 #include <err.h>
@@ -56,7 +56,6 @@ __FBSDID("$FreeBSD: head/bin/kill/kill.c 250035 2013-04-28 22:05:01Z eadler $");
 #ifdef SHELL
 #define main killcmd
 #include "bltin/bltin.h"
-#include "error.h"
 #endif
 
 static void nosig(const char *);
@@ -67,7 +66,7 @@ static void usage(void);
 int
 main(int argc, char *argv[])
 {
-	int errors, numsig, pid;
+	int errors, numsig, pid, ret;
 	char *ep;
 
 	if (argc < 2)
@@ -134,15 +133,16 @@ main(int argc, char *argv[])
 	for (errors = 0; argc; argc--, argv++) {
 #ifdef SHELL
 		if (**argv == '%')
-			pid = getjobpgrp(*argv);
+			ret = killjob(*argv, numsig);
 		else
 #endif
 		{
 			pid = strtol(*argv, &ep, 10);
 			if (!**argv || *ep)
 				errx(2, "illegal process id: %s", *argv);
+			ret = kill(pid, numsig);
 		}
-		if (kill(pid, numsig) == -1) {
+		if (ret == -1) {
 			warn("%s", *argv);
 			errors = 1;
 		}

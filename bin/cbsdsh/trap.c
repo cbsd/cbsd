@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)trap.c	8.5 (Berkeley) 6/5/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/trap.c 255157 2013-09-02 21:57:46Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/trap.c 281718 2015-04-18 23:49:57Z bdrewery $");
 
 #include <signal.h>
 #include <unistd.h>
@@ -74,13 +74,12 @@ __FBSDID("$FreeBSD: head/bin/sh/trap.c 255157 2013-09-02 21:57:46Z jilles $");
 
 static char sigmode[NSIG];	/* current value of signal */
 volatile sig_atomic_t pendingsig;	/* indicates some signal received */
-volatile sig_atomic_t pendingsig_waitcmd;	/* indicates SIGINT/SIGQUIT received */
-int in_dotrap;			/* do we execute in a trap handler? */
+volatile sig_atomic_t pendingsig_waitcmd;	/* indicates wait builtin should be interrupted */
+static int in_dotrap;			/* do we execute in a trap handler? */
 static char *volatile trap[NSIG];	/* trap handler commands */
 static volatile sig_atomic_t gotsig[NSIG];
 				/* indicates specified signal received */
 static int ignore_sigchld;	/* Used while handling SIGCHLD traps. */
-volatile sig_atomic_t gotwinch;
 static int last_trapsig;
 
 static int exiting;		/* exitshell() has been called */
@@ -184,7 +183,7 @@ trapcmd(int argc __unused, char **argv)
 		return 0;
 	}
 	action = NULL;
-	if (*argv && sigstring_to_signum(*argv) == -1) {
+	if (*argv && !is_number(*argv)) {
 		if (strcmp(*argv, "-") == 0)
 			argv++;
 		else {
@@ -293,12 +292,6 @@ setsignal(int signo)
 				action = S_IGN;
 			break;
 #endif
-#ifndef NO_HISTORY
-		case SIGWINCH:
-			if (rootshell && iflag)
-				action = S_CATCH;
-			break;
-#endif
 		}
 	}
 
@@ -362,10 +355,12 @@ void
 ignoresig(int signo)
 {
 
+	if (sigmode[signo] == 0)
+		setsignal(signo);
 	if (sigmode[signo] != S_IGN && sigmode[signo] != S_HARD_IGN) {
 		signal(signo, SIG_IGN);
+		sigmode[signo] = S_IGN;
 	}
-	sigmode[signo] = S_HARD_IGN;
 }
 
 
@@ -385,7 +380,15 @@ onsig(int signo)
 {
 
 	if (signo == SIGINT && trap[SIGINT] == NULL) {
-		onint();
+		/*
+		 * The !in_dotrap here is safe.  The only way we can arrive
+		 * here with in_dotrap set is that a trap handler set SIGINT to
+		 * SIG_DFL and killed itself.
+		 */
+		if (suppressint && !in_dotrap)
+			SET_PENDING_INT;
+		else
+			onint();
 		return;
 	}
 
@@ -397,12 +400,8 @@ onsig(int signo)
 	    (signo != SIGCHLD || !ignore_sigchld)) {
 		gotsig[signo] = 1;
 		pendingsig = signo;
+		pendingsig_waitcmd = signo;
 	}
-
-#ifndef NO_HISTORY
-	if (signo == SIGWINCH)
-		gotwinch = 1;
-#endif
 }
 
 
@@ -488,9 +487,6 @@ setinteractive(int on)
 	setsignal(SIGINT);
 	setsignal(SIGQUIT);
 	setsignal(SIGTERM);
-#ifndef NO_HISTORY
-	setsignal(SIGWINCH);
-#endif
 	is_interactive = on;
 }
 
@@ -523,28 +519,25 @@ exitshell_savedstatus(void)
 			exiting_exitstatus = oexitstatus;
 	}
 	exitstatus = oexitstatus = exiting_exitstatus;
-	if (setjmp(loc1.loc)) {
-		goto l1;
+	if (!setjmp(loc1.loc)) {
+		handler = &loc1;
+		if ((p = trap[0]) != NULL && *p != '\0') {
+			/*
+			 * Reset evalskip, or the trap on EXIT could be
+			 * interrupted if the last command was a "return".
+			 */
+			evalskip = 0;
+			trap[0] = NULL;
+			evalstring(p, 0);
+		}
 	}
-	if (setjmp(loc2.loc)) {
-		goto l2;
-	}
-	handler = &loc1;
-	if ((p = trap[0]) != NULL && *p != '\0') {
-		/*
-		 * Reset evalskip, or the trap on EXIT could be
-		 * interrupted if the last command was a "return".
-		 */
-		evalskip = 0;
-		trap[0] = NULL;
-		evalstring(p, 0);
-	}
-l1:   handler = &loc2;			/* probably unnecessary */
-	flushall();
+	if (!setjmp(loc2.loc)) {
+		handler = &loc2;		/* probably unnecessary */
+		flushall();
 #if JOBS
-	setjobctl(0);
+		setjobctl(0);
 #endif
-l2:
+	}
 	if (sig != 0 && sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN &&
 	    sig != SIGTTOU) {
 		signal(sig, SIG_DFL);

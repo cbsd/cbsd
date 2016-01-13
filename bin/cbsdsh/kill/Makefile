@@ -3,4 +3,7 @@
 
 PROG=	kill
 
+WITHOUT_MAN=	yes
+NOMAN=		yes
+
 .include <bsd.prog.mk>

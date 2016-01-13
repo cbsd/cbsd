@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)histedit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/histedit.c 240541 2012-09-15 21:56:30Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/histedit.c 279508 2015-03-01 22:32:23Z jilles $");
 
 #include <sys/param.h>
 #include <limits.h>
@@ -122,13 +122,9 @@ histedit(void)
 				if (hist)
 					el_set(el, EL_HIST, history, hist);
 				el_set(el, EL_PROMPT, getprompt);
-//				el_set(el, EL_ADDFN, "sh-complete",
-//				    "Filename completion",
-//				    _el_fn_sh_complete);
 				el_set(el, EL_ADDFN, "sh-complete",
 				    "Filename completion",
-				    _el_fn_complete);
-
+				    _el_fn_sh_complete);
 			} else {
 bad:
 				out2fmt_flush("sh: can't initialize editing\n");
@@ -170,9 +166,10 @@ sethistsize(const char *hs)
 	HistEvent he;
 
 	if (hist != NULL) {
-		if (hs == NULL || *hs == '\0' ||
-		   (histsize = atoi(hs)) < 0)
+		if (hs == NULL || !is_number(hs))
 			histsize = 100;
+		else
+			histsize = atoi(hs);
 		history(hist, &he, H_SETSIZE, histsize);
 		history(hist, &he, H_SETUNIQUE, 1);
 	}
@@ -341,8 +338,8 @@ histcmd(int argc, char **argv __unused)
 				out1fmt("%5d ", he.num);
 			out1str(he.str);
 		} else {
-			char *s = pat ?
-			   fc_replace(he.str, pat, repl) : (char *)he.str;
+			const char *s = pat ?
+			   fc_replace(he.str, pat, repl) : he.str;
 
 			if (sflg) {
 				if (displayhist) {
@@ -480,7 +477,7 @@ bindcmd(int argc, char **argv)
 
 	if (el == NULL)
 		error("line editing is disabled");
-	return (el_parse(el, argc, (const char **)argv));
+	return (el_parse(el, argc, __DECONST(const char **, argv)));
 }
 
 #else

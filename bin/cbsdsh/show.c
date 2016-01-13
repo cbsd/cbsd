@@ -36,9 +36,9 @@ static char sccsid[] = "@(#)show.c	8.3 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/show.c 213811 2010-10-13 22:18:03Z obrien $");
+__FBSDID("$FreeBSD: head/bin/sh/show.c 258776 2013-11-30 21:27:11Z jilles $");
 
-#include <sys/file.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -390,11 +390,11 @@ opentrace(void)
 			else
 				p = "/tmp";
 		}
-		scopy(p, s);
+		strcpy(s, p);
 		strcat(s, "/trace");
 	}
 #else
-	scopy("./trace", s);
+	strcpy(s, "./trace");
 #endif /* not_this_way */
 	if ((tracefile = fopen(s, "a")) == NULL) {
 		fprintf(stderr, "Can't open %s: %s\n", s, strerror(errno));

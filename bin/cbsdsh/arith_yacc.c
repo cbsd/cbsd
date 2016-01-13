@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/arith_yacc.c 230530 2012-01-25 08:42:19Z charnier $");
+__FBSDID("$FreeBSD: head/bin/sh/arith_yacc.c 270246 2014-08-20 20:15:43Z jilles $");
 
 #include <limits.h>
 #include <errno.h>
@@ -139,9 +139,9 @@ static arith_t do_binop(int op, arith_t a, arith_t b)
 	case ARITH_SUB:
 		return (uintmax_t)a - (uintmax_t)b;
 	case ARITH_LSHIFT:
-		return a << b;
+		return (uintmax_t)a << (b & (sizeof(uintmax_t) * CHAR_BIT - 1));
 	case ARITH_RSHIFT:
-		return a >> b;
+		return a >> (b & (sizeof(uintmax_t) * CHAR_BIT - 1));
 	case ARITH_LT:
 		return a < b;
 	case ARITH_LE:

@@ -30,15 +30,16 @@
  * SUCH DAMAGE.
  *
  *	@(#)mystring.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/mystring.h 229219 2012-01-01 22:15:38Z jilles $
+ * $FreeBSD: head/bin/sh/mystring.h 268920 2014-07-20 12:06:52Z jilles $
  */
 
 #include <string.h>
 
-int prefix(const char *, const char *);
 int number(const char *);
 int is_number(const char *);
+
+#ifdef CBSD
 int substr(int, char **);
+#endif
 
 #define equal(s1, s2)	(strcmp(s1, s2) == 0)
-#define scopy(s1, s2)	((void)strcpy(s2, s1))

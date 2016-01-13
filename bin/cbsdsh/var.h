@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)var.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/var.h 230998 2012-02-04 23:12:14Z jilles $
+ * $FreeBSD: head/bin/sh/var.h 289159 2015-10-11 21:33:00Z jilles $
  */
 
 /*
@@ -68,14 +68,13 @@ struct localvar {
 };
 
 
-struct localvar *localvars;
+extern struct localvar *localvars;
 extern int forcelocal;
 
 extern struct var vifs;
 extern struct var vmail;
 extern struct var vmpath;
 extern struct var vpath;
-extern struct var vppid;
 extern struct var vps1;
 extern struct var vps2;
 extern struct var vps4;
@@ -115,8 +114,8 @@ extern int initial_localeisutf8;
 void initvar(void);
 void setvar(const char *, const char *, int);
 void setvareq(char *, int);
-struct strlist;
-void listsetvar(struct strlist *, int);
+struct arglist;
+void listsetvar(struct arglist *, int);
 char *lookupvar(const char *);
 char *bltinlookup(const char *, int);
 void bltinsetlocale(void);

@@ -30,7 +30,12 @@
  * $FreeBSD: head/bin/sh/myhistedit.h 229220 2012-01-01 22:17:12Z jilles $
  */
 
+
+#ifdef CBSD
+#include "/usr/include/histedit.h"
+#else
 #include <histedit.h>
+#endif
 
 extern History *hist;
 extern EditLine *el;

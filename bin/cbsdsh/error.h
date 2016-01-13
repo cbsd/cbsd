@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)error.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/error.h 220978 2011-04-23 22:28:56Z jilles $
+ * $FreeBSD: head/bin/sh/error.h 276038 2014-12-21 23:09:59Z jilles $
  */
 
 /*
@@ -75,11 +75,12 @@ extern volatile sig_atomic_t intpending;
 #define is_int_on() suppressint
 #define SETINTON(s) suppressint = (s)
 #define FORCEINTON {suppressint = 0; if (intpending) onint();}
+#define SET_PENDING_INT intpending = 1
 #define CLEAR_PENDING_INT intpending = 0
 #define int_pending() intpending
 
 void exraise(int) __dead2;
-void onint(void);
+void onint(void) __dead2;
 void warning(const char *, ...) __printflike(1, 2);
 void error(const char *, ...) __printf0like(1, 2) __dead2;
 void exerror(int, const char *, ...) __printf0like(2, 3) __dead2;

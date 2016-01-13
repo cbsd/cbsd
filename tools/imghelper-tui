@@ -1,0 +1,139 @@
+#!/usr/local/bin/cbsd
+#v10.3.0
+MYARG="jname"
+MYOPTARG="own"
+MYDESC="Ncurses-based jail image boostrap helper"
+ADDHELP="own = 1: Do not show global/available modules, only existing helpers\n"
+EXTHELP="wf_imghelper.html"
+
+. ${subr}
+. ${settingstui}
+. ${tools}
+. ${strings}
+. ${system}
+. ${dialog}
+
+own=0
+
+init $*
+
+readconf helpers.conf
+. ${workdir}/imghelper.subr
+
+dialog_menu_main()
+{
+	local _par VAL
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select and edit limit"
+	local hline=
+	local defaultitem=
+	local _configured
+
+	local mytargets=
+
+	f_dialog_default_fetch defaultitem
+
+	local title=" Available helpers "
+	local _mydesc
+
+	local menu_list=
+
+	local _id=0
+	local is_delimer=0
+
+	for helper in ${helper_list}; do
+		eval _mydesc="\$${helper}_desc"
+		eval _configured="\$${helper}_configured"
+		if [ "${_configured}" = "1" ]; then
+			menu_list="${menu_list} '${_id} ${helper}'	'${helper} (installed)'	'${_mydesc}'"
+		else
+			menu_list="${menu_list} '${_id} ${helper}'	'${helper}'	'${_mydesc}'"
+		fi
+		_id=$(( _id + 1 ))
+	done
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+load_forminfo()
+{
+	local _desc formfile
+	local _i _configured helper
+
+	jail_helper_list=$( /usr/bin/find ${jail_helper_dir} -type f -depth 1 -maxdepth 1 -name \*.sqlite -exec /usr/bin/basename {} \; |while read _dir; do
+		p1=${_dir%%_*}
+		p2=${_dir##*_}
+		echo ${p2} |/usr/bin/sed 's/\.sqlite//g'
+	done )
+
+	helper_list=$( /usr/bin/find ${moduledir}/${helper_module}.d  -type d -depth 1 -maxdepth 1 -name module_* -exec /usr/bin/basename {} \; |while read _dir; do
+		p1=${_dir%%_*}
+		p2=${_dir##*_}
+		echo ${p2}
+	done )
+
+	if [ ${own} -eq 1 ]; then
+		helper_list=${jail_helper_list}
+		unset jail_helper_list
+	fi
+
+	eval $( for helper in ${helper_list}; do
+
+		_configured=0
+
+		for _i in ${jail_helper_list}; do
+			[ "${_i}" = "${helper}" ] && _configured=1 && break
+		done
+
+		if [ ${own} -eq 1 ]; then
+			formfile="${jail_helper_dir}/${helper}.sqlite"
+		else
+			formfile="${workdir}/formfile/${helper}.sqlite"
+		fi
+
+		[ ! -f ${formfile} ] && continue
+		_desc=$( cbsdsql ${formfile} SELECT helperdesc FROM system )
+
+		[ -z "${_desc}" ] && _desc="No description"
+		echo "${helper}_desc=\"${_desc}\""
+		echo "${helper}_configured=\"${_configured}\""
+	done )
+
+}
+
+
+jail_helper_dir="${jailsysdir}/${jname}/helpers"
+
+[ ! -d ${helper_dir} ] && exit 0
+
+while [ 1 ]; do
+	load_forminfo
+	[ -z "${helper_list}" ] && err 0 "No such helpers"
+	dialog_menu_main
+	ret=$?
+	case $ret in
+		${DIALOG_OK})
+			case "${mtag}" in
+				-)
+					continue
+					;;
+				*)
+					index=${mtag%% *}
+					module=${mtag##* }
+					imghelper jname=${jname} module=${module}
+					;;
+			esac
+			;;
+		*)
+			f_die
+			;;
+	esac
+done

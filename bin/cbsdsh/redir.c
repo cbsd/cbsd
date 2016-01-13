@@ -36,13 +36,13 @@ static char sccsid[] = "@(#)redir.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/redir.c 254426 2013-08-16 20:24:41Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/redir.c 272575 2014-10-05 21:51:36Z jilles $");
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/file.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -69,6 +69,7 @@ __FBSDID("$FreeBSD: head/bin/sh/redir.c 254426 2013-08-16 20:24:41Z jilles $");
 struct redirtab {
 	struct redirtab *next;
 	int renamed[10];
+	int fd0_redirected;
 };
 
 
@@ -91,6 +92,13 @@ static int openhere(union node *);
  * undone by calling popredir.  If the REDIR_BACKQ flag is set, then the
  * standard output, and the standard error if it becomes a duplicate of
  * stdout, is saved in memory.
+*
+ * We suppress interrupts so that we won't leave open file
+ * descriptors around.  Because the signal handler remains
+ * installed and we do not use system call restart, interrupts
+ * will still abort blocking opens such as fifos (they will fail
+ * with EINTR). There is, however, a race condition if an interrupt
+ * arrives after INTOFF and before open blocks.
  */
 
 void
@@ -102,6 +110,7 @@ redirect(union node *redir, int flags)
 	int fd;
 	char memory[10];	/* file descriptors to write to memory */
 
+	INTOFF;
 	for (i = 10 ; --i >= 0 ; )
 		memory[i] = 0;
 	memory[1] = flags & REDIR_BACKQ;
@@ -109,11 +118,14 @@ redirect(union node *redir, int flags)
 		sv = ckmalloc(sizeof (struct redirtab));
 		for (i = 0 ; i < 10 ; i++)
 			sv->renamed[i] = EMPTY;
+		sv->fd0_redirected = fd0_redirected;
 		sv->next = redirlist;
 		redirlist = sv;
 	}
 	for (n = redir ; n ; n = n->nfile.next) {
 		fd = n->nfile.fd;
+		if (fd == 0)
+			fd0_redirected = 1;
 		if ((n->nfile.type == NTOFD || n->nfile.type == NFROMFD) &&
 		    n->ndup.dupfd == fd)
 			continue; /* redirect from/to same file descriptor */
@@ -134,14 +146,15 @@ redirect(union node *redir, int flags)
 			sv->renamed[fd] = i;
 			INTON;
 		}
-		if (fd == 0)
-			fd0_redirected++;
 		openredirect(n, memory);
+		INTON;
+		INTOFF;
 	}
 	if (memory[1])
 		out1 = &memout;
 	if (memory[2])
 		out2 = &memout;
+	INTON;
 }
 
 
@@ -150,40 +163,22 @@ openredirect(union node *redir, char memory[10])
 {
 	struct stat sb;
 	int fd = redir->nfile.fd;
-	char *fname;
+	const char *fname;
 	int f;
 	int e;
 
-	/*
-	 * We suppress interrupts so that we won't leave open file
-	 * descriptors around.  Because the signal handler remains
-	 * installed and we do not use system call restart, interrupts
-	 * will still abort blocking opens such as fifos (they will fail
-	 * with EINTR). There is, however, a race condition if an interrupt
-	 * arrives after INTOFF and before open blocks.
-	 */
-	INTOFF;
 	memory[fd] = 0;
 	switch (redir->nfile.type) {
 	case NFROM:
 		fname = redir->nfile.expfname;
 		if ((f = open(fname, O_RDONLY)) < 0)
 			error("cannot open %s: %s", fname, strerror(errno));
-movefd:
-		if (f != fd) {
-			if (dup2(f, fd) == -1) {
-				e = errno;
-				close(f);
-				error("%d: %s", fd, strerror(e));
-			}
-			close(f);
-		}
 		break;
 	case NFROMTO:
 		fname = redir->nfile.expfname;
 		if ((f = open(fname, O_RDWR|O_CREAT, 0666)) < 0)
 			error("cannot create %s: %s", fname, strerror(errno));
-		goto movefd;
+		break;
 	case NTO:
 		if (Cflag) {
 			fname = redir->nfile.expfname;
@@ -201,19 +196,19 @@ movefd:
 			} else
 				error("cannot create %s: %s", fname,
 				    strerror(EEXIST));
-			goto movefd;
+			break;
 		}
 		/* FALLTHROUGH */
 	case NCLOBBER:
 		fname = redir->nfile.expfname;
 		if ((f = open(fname, O_WRONLY|O_CREAT|O_TRUNC, 0666)) < 0)
 			error("cannot create %s: %s", fname, strerror(errno));
-		goto movefd;
+		break;
 	case NAPPEND:
 		fname = redir->nfile.expfname;
 		if ((f = open(fname, O_WRONLY|O_CREAT|O_APPEND, 0666)) < 0)
 			error("cannot create %s: %s", fname, strerror(errno));
-		goto movefd;
+		break;
 	case NTOFD:
 	case NFROMFD:
 		if (redir->ndup.dupfd >= 0) {	/* if not ">&-" */
@@ -227,15 +222,22 @@ movefd:
 		} else {
 			close(fd);
 		}
-		break;
+		return;
 	case NHERE:
 	case NXHERE:
 		f = openhere(redir);
-		goto movefd;
+		break;
 	default:
 		abort();
 	}
-	INTON;
+	if (f != fd) {
+		if (dup2(f, fd) == -1) {
+			e = errno;
+			close(f);
+			error("%d: %s", fd, strerror(e));
+		}
+		close(f);
+	}
 }
 
 
@@ -248,7 +250,7 @@ movefd:
 static int
 openhere(union node *redir)
 {
-	char *p;
+	const char *p;
 	int pip[2];
 	size_t len = 0;
 	int flags;
@@ -303,8 +305,6 @@ popredir(void)
 
 	for (i = 0 ; i < 10 ; i++) {
 		if (rp->renamed[i] != EMPTY) {
-                        if (i == 0)
-                                fd0_redirected--;
 			if (rp->renamed[i] >= 0) {
 				dup2(rp->renamed[i], i);
 				close(rp->renamed[i]);
@@ -314,6 +314,7 @@ popredir(void)
 		}
 	}
 	INTOFF;
+	fd0_redirected = rp->fd0_redirected;
 	redirlist = rp->next;
 	ckfree(rp);
 	INTON;

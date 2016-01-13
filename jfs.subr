@@ -106,11 +106,13 @@ removedata()
 
 	[ ! -d "${_data}" ] && return 0
 
-	if [ $zfsfeat -eq 1 ]; then
+	if [ "${zfsfeat}" = "1" ]; then
 		. $zfstool
 		unmountdata ${_data}
 		/sbin/zfs destroy -r "${ZPOOL}"
 		[ -d "${_data}" ] && rmdir ${_data}
+	elif [ "${hammerfeat}" = "1" ]; then
+		destroy_hammer_fs ${jname}
 	else
 		if [ "$2" = "force" ]; then
 			${CHFLAGS_CMD} -R noschg ${_data}
@@ -152,21 +154,32 @@ create_fs()
 	[ -z "${data}" ] && return 0
 
 	if [ "${zfsfeat}" = "1" ]; then
-		. $zfstool
-		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-		if zfsroot $jname; then
-			err 1 "$ZPOOL/$jname already in use"
-		fi
-		/sbin/zfs create ${zfs_create_flags} -o mountpoint=${data} ${ZPOOL}/$jname
+		create_zfs_fs ${data}
 	elif [ "${hammerfeat}" = "1" ]; then
-		[ ! -d /pfs ] && err 1 "${MAGENTA}No such /pfs directory${NORMAL}"
-		local localdir=$( /usr/bin/basename ${data} )
-		cd /pfs
-		/bin/mkdir -p ${data}
-		/sbin/hammer pfs-master ${localdir}
-		/sbin/mount -t ${NULLFS} /pfs/${localdir} ${data}
+		create_hammer_fs ${jname}
 	else
 		[ ! -d ${data} ] && /bin/mkdir -p ${data}
+	fi
+}
+
+
+create_zfs_fs()
+{
+	local data="${1}"
+
+	[ -z "${data}" ] && return 0
+
+	. $zfstool
+	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+	if zfsroot $jname; then
+		err 1 "$ZPOOL/$jname already in use"
+	fi
+
+	if [ -z "${zfs_snapsrc}" ]; then
+		/sbin/zfs create ${zfs_create_flags} -o mountpoint=${data} ${ZPOOL}/${jname}
+	else
+		/sbin/zfs clone ${zfs_snapsrc} ${ZPOOL}/${jname}
+		/sbin/zfs set mountpoint=${data} ${ZPOOL}/${jname}
 	fi
 }
 
@@ -175,16 +188,20 @@ create_fs()
 #
 create_hammer_fs()
 {
-	cd /pfs
-	/sbin/hammer pfs-master $1
+	[ -z "${1}" ] && return 1
+	local dname="${1}"
+
+	/sbin/hammer pfs-master ${jaildatadir}/${dname}-${jaildatapref}
 }
 
 #  destroy_hammer_fs jails
 # 
 destroy_hammer_fs()
 {
-	cd /pfs
-	/sbin/hammer -y pfs-destroy $1
+	[ -z "${1}" ] && return 1
+	local dname="${1}"
+
+	/sbin/hammer -y pfs-destroy ${jaildatadir}/${dname}-${jaildatapref}
 }
 
 ###

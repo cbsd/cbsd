@@ -40,7 +40,7 @@ extern struct jmploc main_handler;	/* top level exception handler */
 void readcmdfile(const char *);
 
 #ifdef CBSD
-#define CBSD_HISTORYFILE	".cbsd_history"
+#define CBSD_HISTORYFILE        ".cbsd_history"
 extern char *cbsd_history_file; /* full path to history for "cbsd history" command */
 extern int cbsd_enable_history; /* true if we must register command in history journal */
 #endif

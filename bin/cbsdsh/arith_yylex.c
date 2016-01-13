@@ -33,7 +33,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 254806 2013-08-24 20:06:00Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 279503 2015-03-01 21:46:55Z jilles $");
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -49,8 +49,6 @@ __FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 254806 2013-08-24 20:06:00Z jilles
 #if ARITH_BOR + 11 != ARITH_BORASS || ARITH_ASS + 11 != ARITH_EQ
 #error Arithmetic tokens are out of order.
 #endif
-
-extern const char *arith_buf;
 
 int
 yylex(void)

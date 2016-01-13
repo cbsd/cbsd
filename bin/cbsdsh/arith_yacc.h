@@ -31,7 +31,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: head/bin/sh/arith_yacc.h 218466 2011-02-08 23:18:06Z jilles $
+ * $FreeBSD: head/bin/sh/arith_yacc.h 279503 2015-03-01 21:46:55Z jilles $
  */
 
 #define ARITH_ASS 1
@@ -80,6 +80,8 @@
 #define ARITH_BNOT 36
 #define ARITH_QMARK 37
 #define ARITH_COLON 38
+
+extern const char *arith_buf;
 
 union yystype {
 	arith_t val;

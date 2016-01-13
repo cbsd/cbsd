@@ -4,7 +4,7 @@ INSTALLFLAGS=	-S -m 500
 SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c cbsd_pwait.c cd.c echo.c \
 	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
-	test.c trap.c var.c
+	test.c trap.c var.c jail.c
 
 # WITH_LUA
 #SHSRCS+=	cbsdlua.c
@@ -20,9 +20,9 @@ WITHOUT_MAN=	yes
 NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-LDADD= -ledit -ltermcap -lsqlite3 -pthread
+LDADD= -ledit -ltermcap -lsqlite3 -pthread -ljail
 
-CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
 
 # WITH LUA
 #CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
@@ -54,8 +54,8 @@ mknodes: mknodes.o
 mksyntax: mksyntax.o
 
 .ORDER: nodes.c nodes.h
-nodes.c nodes.h: mknodes nodetypes-cbsd nodes.c.pat
-	./mknodes ${.CURDIR}/nodetypes-cbsd ${.CURDIR}/nodes.c.pat
+nodes.c nodes.h: mknodes nodetypes nodes.c.pat
+	./mknodes ${.CURDIR}/nodetypes ${.CURDIR}/nodes.c.pat
 
 .ORDER: syntax.c syntax.h
 syntax.c syntax.h: mksyntax

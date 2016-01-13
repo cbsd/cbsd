@@ -2,11 +2,13 @@
 #v10.1.2
 CBSDMODULE="jail"
 MYARG="node jname"
-MYOPTARG="verbose"
+MYOPTARG="verbose sharedfs"
 MYDESC="Prepare remote node for accepting jail via j2slave"
 
 . ${subr}
 . ${strings}
+
+sharedfs=0
 
 init $*
 
@@ -21,32 +23,6 @@ SECFILE="${workdir}/etc/${jname}.secrets"
 
 printf "${MAGENTA}Preparing.${NORMAL}"
 
-jgensecrets jname=${jname} mode=force > $DEBLOG 2>&1
-dot "jgensecrets"
-
-[ ! -f "${SECFILE}" ] && err 1 "${MAGENTA}No such secrets${NORMAL}"
-
-NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\" )
-
-[ -z "${NODEDATA}" ] && err 1 "${MAGENTA}: No such node. Please execute ${GREEN}cbsd add node=${node} ${MAGENTA}first${NORMAL}"
-sqllist "$NODEDATA" myip myport mykey
-
-SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
-
-rexe node=$node cbsd secretsfile jname=$jname mode=off > $DEBLOG 2>&1
-dot "rexe"
-nodescp ${SECFILE} ${node}:etc > $DEBLOG 2>&1
-dot "scp_secfile"
-imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
-trap "rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
-nodescp ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > $DEBLOG 2>&1
-dot "scp_sysdata"
-rexe node=$node cbsd secretsfile jname=$jname mode=on > $DEBLOG 2>&1
-dot "rexe_2"
-RDIR="${jname}-data"
-rexe node=$node cbsd mkdatadir jname=${jname} > $DEBLOG 2>&1
-dot "rexe_3"
-
 JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
 RJAILRCCONF="jails-rcconf/rc.conf_${jname}"
 
@@ -58,10 +34,47 @@ RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}"
 
 [ ! -d ${JAILDIR} ] && err 1 "No jail data for ${jname}"
 
-if [ -f ${JAILFSTAB} ]; then
-	nodescp ${JAILFSTAB} ${node}:${RJAILFSTAB} > $DEBLOG 2>&1
-	dot "scp fstab"
-fi
+not_sharedfs_action()
+{
+	jgensecrets jname=${jname} mode=force > $DEBLOG 2>&1
+	dot "jgensecrets"
+
+	[ ! -f "${SECFILE}" ] && err 1 "${MAGENTA}No such secrets${NORMAL}"
+
+	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\" )
+
+	[ -z "${NODEDATA}" ] && err 1 "${MAGENTA}: No such node. Please execute ${GREEN}cbsd add node=${node} ${MAGENTA}first${NORMAL}"
+	sqllist "$NODEDATA" myip myport mykey
+
+	SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
+
+	rexe node=$node cbsd secretsfile jname=$jname mode=off > $DEBLOG 2>&1
+	dot "rexe"
+	nodescp ${SECFILE} ${node}:etc > $DEBLOG 2>&1
+	dot "scp_secfile"
+	imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
+	trap "rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+	nodescp ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > $DEBLOG 2>&1
+	dot "scp_sysdata"
+	rexe node=$node cbsd secretsfile jname=$jname mode=on > $DEBLOG 2>&1
+	dot "rexe_2"
+	RDIR="${jname}-data"
+	rexe node=$node cbsd mkdatadir jname=${jname} > $DEBLOG 2>&1
+	dot "rexe_3"
+
+	if [ -f ${JAILFSTAB} ]; then
+		nodescp ${JAILFSTAB} ${node}:${RJAILFSTAB} > $DEBLOG 2>&1
+		dot "scp fstab"
+	fi
+
+	cbsd rexe node=${node} cbsd imgpart mode=extract jname=jails-system/${jname}-sysdata.tgz part=sysdata out=jails-system > ${DEBLOG} 2>&1
+	dot "rexe_img_extract_sysdata"
+
+	rexe node=$node rm -f jails-system/${jname}-sysdata.tgz > $DEBLOG 2>&1
+	dot "rexe_rm-f-sysdata"
+}
+
+[ ${sharedfs} -eq 0 ] && not_sharedfs_action
 
 jmkrcconf jname=${jname} > ${JAILRCCONF}
 nodescp ${JAILRCCONF} ${node}:${RJAILRCCONF} > $DEBLOG 2>&1
@@ -70,12 +83,6 @@ rm -f ${JAILRCCONF}
 
 rexe node=$node cbsd jrsyncconf jname=${jname} > $DEBLOG 2>&1
 dot "rexe_jrsyncconf"
-
-cbsd rexe node=${node} cbsd imgpart mode=extract jname=jails-system/${jname}-sysdata.tgz part=sysdata out=jails-system > ${DEBLOG} 2>&1
-dot "rexe_img_extract_sysdata"
-
-rexe node=$node rm -f jails-system/${jname}-sysdata.tgz > $DEBLOG 2>&1
-dot "rexe_rm-f-sysdata"
 
 rexe node=$node cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > $DEBLOG 2>&1
 dot "rexe_4"
