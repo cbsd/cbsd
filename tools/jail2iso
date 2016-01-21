@@ -71,64 +71,6 @@ clear_tmp_dir()
 	[ -d "${TMP_DIR}" -o -f "${TMP_DIR}" ] && ${CHFLAGS_CMD} -R noschg ${TMP_DIR} && /bin/rm -rf ${TMP_DIR}
 }
 
-make_mtree()
-{
-	[ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.include.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.include.dist -p ${DST_DIR}/usr/include >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.tests.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.tests.dist -p ${DST_DIR}/usr/tests >/dev/null
-}
-
-make_libmap()
-{
-	A=$( /usr/bin/mktemp /tmp/libtxt.XXX )
-	B=$( /usr/bin/mktemp /tmp/libtxtsort.XXX )
-	TRAP="${TRAP} /bin/rm -f ${A} ${B};"
-	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-
-	/bin/cat ${FILES} |while read line; do
-		[ -z "${line}" ] && continue
-		case ":${line}" in
-			:#*)
-				continue
-				;;
-		esac
-		/usr/bin/ldd -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
-	done
-	/usr/bin/sort -u ${A} > ${B}
-}
-
-copy_binlib()
-{
-	/bin/cat ${FILES}| while read line; do
-		[ -z "${line}" ] && continue
-		case ":${line}" in
-			:#*)
-				continue
-				;;
-		esac
-		D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
-		/usr/local/bin/rsync -av ${BASE_DIR}${line} ${DST_DIR}${D}
-		A=$( /usr/bin/readlink ${BASE_DIR}${line} )
-		if [ -n "${A}" -a -f "${D}/${A}" ]; then
-			echo "SYM: $A"
-			/usr/local/bin/rsync -av -${D}${A} ${DST_DIR}${D}
-		fi
-	done
-
-	/bin/cat ${B}| while read line; do
-		[ -z "${line}" ] && continue
-		D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
-		/usr/local/bin/rsync -avzx ${BASE_DIR}${line} ${DST_DIR}${D}
-	done
-
-	/bin/rm -f ${A} ${B}
-}
-
-
 # Prepare MFSRoot part
 prepare_dir()
 {
@@ -254,8 +196,32 @@ epilogue_img()
 
 makemfsroot()
 {
+	local _filelist _ver
+	local _tmpdir=$( /usr/bin/mktemp -d )
+
 	mfsrootfile="${tmpdir}/mfsroot.$$"
-	/bin/dd if=/dev/zero of=${mfsrootfile} count=40000 bs=1k
+
+	_ver=${ver%%.*}
+
+	_filelist="${sharedir}/${platform}-filemin_${_ver}.txt.xz"
+
+	copy-binlib filelist=${_filelist} dstdir=${_tmpdir} basedir=${BASE_DIR} chaselibs=1
+
+	local _size=0
+
+#	_size=$(/usr/bin/find ${_tmpdir} | while read _myfile; do
+#		_size=$((_size + `/usr/bin/stat -f %z ${_myfile}`))
+#		echo ${_size}
+#	done |/usr/bin/tail -n1 )
+
+#	_size=$(( _size / 1024 / 1024 ))
+#	_size=$(( _size + 10 ))
+#	_size=$(( _size * 1024 ))
+
+#	echo "$_size"
+	_size=80000
+
+	/bin/dd if=/dev/zero of=${mfsrootfile} count=${_size} bs=1k
 
 	DEV=$( /sbin/mdconfig -a -t vnode -f ${mfsrootfile} )
 	/sbin/bsdlabel -w /dev/${DEV} auto
@@ -263,9 +229,11 @@ makemfsroot()
 	/bin/mkdir -p ${DST_DIR}
 	/sbin/mount /dev/${DEV} ${DST_DIR}
 
-	make_mtree
-	make_libmap
-	copy_binlib
+	echo "cd ${_tmpdir} && find -E ${_tmpdir} \( -type f -or -type d -or -type l \) -print |/usr/bin/sed s:${_tmpdir}:./:g |/usr/bin/cpio -pdmu ${DST_DIR}"
+	cd ${_tmpdir} && find -E ${_tmpdir} \( -type f -or -type d -or -type l \) -print |/usr/bin/sed s:${_tmpdir}:./:g |/usr/bin/cpio -pdmu ${DST_DIR}
+
+	/bin/chflags -R noschg ${_tmpdir}
+	/bin/rm -rf ${_tmpdir}
 
 	prepare_dir
 	[ "${prunelist}" != "0" ] && prunelist ${DST_DIR}
@@ -412,9 +380,6 @@ fi
 mountbase -o "" -p "" -d "" -c "" -s ""
 [ "${ver}" != "empty" ] && mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
 
-FILES="${sharedir}/${platform}-defbase_${ver}.txt"
-
-[ ! -f "${FILES}" ] && err 1 "No such default base listing: ${FILES}"
 BS=8192
 
 [ "${media}" != "bhyve" ] && makemfsroot

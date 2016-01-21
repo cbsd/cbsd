@@ -22,7 +22,9 @@ make_efi()
 {
 	local _md _tmpmnt
 
-	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=100
+#	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=100
+	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=200
+
 	_md=$( /sbin/mdconfig -a -t vnode -f /tmp/efiboot.$$.img )
 	/sbin/newfs_msdos -F 12 -m 0xf8 /dev/${_md}
 	_tmpmnt=$( mktemp -d )
