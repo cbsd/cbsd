@@ -495,7 +495,11 @@ getopts(char *optstr, char *optvar, char **optfirst, char ***optnext,
 		if (*optnext == NULL)
 			return 1;
 		p = **optnext;
+#ifdef CBSD
+		if (p == NULL || p[0] != '-' || p[1] != '-' || p[2] != '\0') {
+#else
 		if (p == NULL || *p != '-' || *++p == '\0') {
+#endif
 atend:
 			ind = *optnext - optfirst + 1;
 			*optnext = NULL;
@@ -504,7 +508,11 @@ atend:
 			goto out;
 		}
 		(*optnext)++;
+#ifdef CBSD
+		if (p[0] == '-' && p[1] == '-' && p[2] == '\0') /* check for "--" */
+#else
 		if (p[0] == '-' && p[1] == '\0')	/* check for "--" */
+#endif
 			goto atend;
 	}
 
