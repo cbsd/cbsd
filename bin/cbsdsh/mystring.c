@@ -114,9 +114,12 @@ is_number(const char *p)
 	for (q = p; *q != '\0'; q++)
 		if (! is_digit(*q))
 			return 0;
-	if (q - p > 10 ||
-	    (q - p == 10 && memcmp(p, "2147483647", 10) > 0))
-		return 0;
+//	if (q - p > 1000 ||
+//	    (q - p == 1000 && memcmp(p, "2147483647", 10) > 0))
+//		return 0;
+
+	if (q - p > 10000 ) return 0;
+
 	return 1;
 }
 
