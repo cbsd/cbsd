@@ -55,7 +55,10 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	for i in ${mytap}; do
 		/sbin/ifconfig ${i} up
 	done
+
 	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${passthr} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname} || touch /tmp/bhyvestop.${jname}.lock
+#	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -H ${passthr} ${lpc_args} ${efi_args} ${cd_args} ${console_args} ${jname} || touch /tmp/bhyvestop.${jname}.lock
+
 #	/usr/sbin/bhyvectl --get-vmcs-exit-reason --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-ctls --vm ${jname} >> /tmp/reason.txt
 #	/usr/sbin/bhyvectl --get-vmcs-exit-qualification --vm ${jname} >> /tmp/reason.txt

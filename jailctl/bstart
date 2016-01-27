@@ -133,7 +133,7 @@ start_bhyve()
 				fi
 			fi
 			;;
-		linux)
+		linux|other)
 			_devicemap="${jailsysdir}/${jname}/device.map"
 			# profile
 			readconf vm-${vm_os_type}-${vm_os_profile}.conf
@@ -154,12 +154,9 @@ start_bhyve()
 				fi
 			fi
 			${ECHO} "${MAGENTA}Creating ${GREEN}device.map ${MAGENTA}in ${GREEN}${_devicemap}${NORMAL}"
-			truncate -s0 ${_devicemap}
+			/usr/bin/truncate -s0 ${_devicemap}
 			echo "(hd0) ${data}/${MDFILE}" >> "${_devicemap}"
 			echo "(cd0) ${iso_img}" >> "${_devicemap}"
-			cat "${_devicemap}"
-			[ -z "${grub_boot_cmd}" ] && err 1 "${MAGENTA}No such grub_boot_cmd variable. Check ${GREEN}vm_os_profile${MAGENTA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${MAGENTA} in ${etcdir}${NORMAL}"
-			[ -z "${grub_iso_cmd}" -a "${vm_boot}" = "cd" ] && err 1 "${MAGENTA}No such grub_iso_cmd variable. Check ${GREEN}vm_os_profile${MANGETA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf ${MAGENTA}in ${etcdir}${NORMAL}"
 			;;
 		openbsd|dflybsd|netbsd)
 			_devicemap="${jailsysdir}/${jname}/device.map"
@@ -182,7 +179,7 @@ start_bhyve()
 				fi
 			fi
 
-			_err=$( file -s ${data}/${MDFILE}| cut -d":" -f2|xargs )
+			_err=$( /usr/bin/file -s ${data}/${MDFILE}| cut -d":" -f2|xargs )
 
 			if [ "${_err}" = "data" -a "${vm_boot}" = "hdd" ]; then
 				${ECHO} "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}"
@@ -195,13 +192,16 @@ start_bhyve()
 			truncate -s0 ${_devicemap}
 			echo "(hd0) ${data}/${MDFILE}" >> "${_devicemap}"
 			echo "(cd0) ${iso_img}" >> "${_devicemap}"
-			cat "${_devicemap}"
-			[ -z "${grub_boot_cmd}" ] && err 1 "${MAGENTA}No such grub_boot_cmd variable. Check ${GREEN}vm_os_profile${MAGENTA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${MAGENTA} in ${etcdir}${NORMAL}"
-			[ -z "${grub_iso_cmd}" -a "${vm_boot}" = "cd" ] && err 1 "${MAGENTA}No such grub_iso_cmd variable. Check ${GREEN}vm_os_profile${MANGETA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf ${MAGENTA}in ${etcdir}${NORMAL}"
 			;;
 		*)
 			err 1 "${MAGENTA}Unknown vm profile: ${GREEN}${vm_os_type}${NORMAL}"
 	esac
+
+	if [ "${boot_from_grub}" = "1" ]; then
+		[ -z "${grub_boot_cmd}" ] && err 1 "${MAGENTA}No such grub_boot_cmd variable. Check ${GREEN}vm_os_profile${MAGENTA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${MAGENTA} in ${etcdir}${NORMAL}"
+		[ -z "${grub_iso_cmd}" -a "${vm_boot}" = "cd" ] && err 1 "${MAGENTA}No such grub_iso_cmd variable. Check ${GREEN}vm_os_profile${MANGETA} of config for ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf ${MAGENTA}in ${etcdir}${NORMAL}"
+		/bin/cat "${_devicemap}"
+	fi
 
 	# for vnet we can make another action
 	. ${vimageconf}
@@ -246,15 +246,28 @@ start_bhyve()
 		unset nic_args
 	fi
 
-	# init dsk_args
-	if ! compile_dsk_args; then
-		${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
-		unset dsk_args
-	fi
+	if [ "${vm_boot}" = "hdd" ]; then
+		# init dsk_args first
+		if ! compile_dsk_args; then
+			${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
+			unset dsk_args
+		fi
 
-	# init cd_args
-	if ! compile_cd_args; then
-		unset cd_args
+		# init cd_args
+		if ! compile_cd_args; then
+			unset cd_args
+		fi
+	else
+		# init cd_args first
+		if ! compile_cd_args; then
+			unset cd_args
+		fi
+
+		# init dsk_args
+		if ! compile_dsk_args; then
+			${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
+			unset dsk_args
+		fi
 	fi
 
 	# Poehali!
@@ -292,6 +305,7 @@ virtiornd_args='${virtiornd_args}'
 nic_args='${nic_args}'
 dsk_args='${dsk_args}'
 cd_args='${cd_args}'
+#
 efi_args='${efi_args}'
 console_args='${console_args}'
 mytap='${mytap}'
@@ -313,11 +327,15 @@ EOF
 		con=0
 		for i in ${console_nmdm}; do
 			if [ $con -eq 0 ]; then
-				${tmuxcmd} split-window -v -t 0 "cu -l ${i} -s 9600"
+				${tmuxcmd} split-window -v -p 96 -t 0 "cu -l ${i} -s 9600" # DEBUG string
+#				${tmuxcmd} split-window -v -p 100 -t 0 "cu -l ${i} -s 9600"
 			else
 				${tmuxcmd} new-window -t 1 "cu -l ${i} -s 9600"
 			fi
 			con=$(( con + 1 ))
+
+			con=$(( con + 1 ))
+
 		done
 		${tmuxcmd} select-window -t cbsd-${jname}:0
 	fi
