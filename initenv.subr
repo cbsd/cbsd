@@ -11,7 +11,7 @@ init_items_desc()
 	jnameserver_desc="Jails default DNS name-server"
 	nodeippool_desc="Jail pool IP address range"
 	nat_enable_desc="Enable NAT for RFC1918 networks"
-	natip_desc="NAT IP"
+	natip_desc="NAT IP or NIC"
 	fbsdrepo_desc="Use official FreeBSD repository? When no (0) repository of CBSD is preferred (usefull for stable=1)"
 	mdtmp_desc="Configure memory disk"
 	repo_desc="Use repository for images and template?"
@@ -27,7 +27,7 @@ init_items_desc()
 
 init_items_default()
 {
-	local INITIP=$(/sbin/ifconfig $( /sbin/route -n get 0.0.0.0 2>/dev/null | /usr/bin/awk '/interface/{print $2}' ) 2>/dev/null|/usr/bin/awk '/inet /{print $2}'|/usr/bin/head -n1)
+	local INITIP=$(/sbin/ifconfig $( /sbin/route -n get 0.0.0.0 2>/dev/null | /usr/bin/awk '/interface/{print $2}' ) 2>/dev/null|/usr/bin/awk '/inet [0-9]+/{print $2}'|/usr/bin/head -n1)
 
 	##default area
 	nodename_default=$( hostname )
@@ -70,10 +70,23 @@ make_nat()
 	local rfc1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 	local _extiface
 
-	_extiface=$( /sbin/route -n get 0.0.0.0 | /usr/bin/awk '/interface:/{print $2}' )
+	iptype ${natip} >/dev/null 2>&1
+
+	# if natip is not valid IPv4, assume it is NIC variable.
+	# so try to find out first IPv4 for aliasing
+	if [ $? -ne 1 ]; then
+		_extiface="${natip}"
+		natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+		if [ $? -ne 0 ]; then
+			${ECHO} "${MAGENTA}Unable to determine first IPv4 for nic: ${GREEN}${_extiface}${NORMAL}"
+			return 1
+		fi
+	else
+		# natip is valid IPv4, search for default-gateway nic
+		_extiface=$( /sbin/route -n get 0.0.0.0 | /usr/bin/awk '/interface:/{print $2}' )
+	fi
 
 	/sbin/ifconfig ${_extiface} >/dev/null 2>&1
-
 	if [ $? -ne 0 ]; then
 		${ECHO} "Unable to determine default interface"
 		return 1
@@ -157,7 +170,7 @@ configure_nat()
 {
 	ext_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
 
-	local _default
+	local _default _tmpdef
 	local _net _nm
 
 	. ${tools}
@@ -173,11 +186,15 @@ configure_nat()
 
 	iptype ${_default} >/dev/null 2>&1
 
+	# if natip is not valid IPv4, assume it is NIC variable.
+	# so try to find out first IPv4 for aliasing
 	if [ $? -ne 1 ]; then
-		_default=$( cbsd -c "cbsdsql local SELECT nodeip FROM local" )
+		_extiface="${_default}"
+		_tmpdef=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+		[ -z "${_tmpdef}" ] && _default=$( cbsd -c "cbsdsql local SELECT nodeip FROM local" )
 	fi
 
-	${ECHO} "${BOLD}Set IP address as the aliasing NAT address, e.g: ${GREEN}${_default}${NORMAL}"
+	${ECHO} "${BOLD}Set IP address or NIC as the aliasing NAT address or interface, e.g: ${GREEN}${_default}${NORMAL}"
 	read natip
 	[ -z "${natip}" ] && natip="${_default}"
 

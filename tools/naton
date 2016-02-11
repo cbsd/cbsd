@@ -7,6 +7,8 @@ ADDHELP="nat= name of framework. default in inventory config\n"
 
 . ${subr}
 . ${system}
+. ${tools}
+. ${initenv}
 
 init $*
 
@@ -22,6 +24,20 @@ check_nat_ip()
 ${ECHO} "${MAGENTA}CBSD: Enable IP forwarding for NAT service${NORMAL}"
 /sbin/sysctl net.inet6.ip6.forwarding=1 >/dev/null
 /sbin/sysctl net.inet.ip.forwarding=1 >/dev/null
+
+iptype ${natip} >/dev/null 2>&1
+# if natip is not valid IPv4, assume it is NIC variable.
+# so try to find out first IPv4 for aliasing
+if [ $? -ne 1 ]; then
+	_extiface="${natip}"
+	natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+	if [ $? -ne 0 ]; then
+		${ECHO} "${MAGENTA}Unable to determine first IPv4 for nic: ${GREEN}${_extiface}${NORMAL}"
+		return 1
+	fi
+	ok="${nat_enable}" # used by make_nat
+	make_nat
+fi
 
 case "${nat_enable}" in
 	"pf")
@@ -41,7 +57,7 @@ case "${nat_enable}" in
 	"ipfilter")
 		[ ! -f "${etcdir}/ipfilter.conf" ] && err 1 "No ipfilter.conf. run cbsd natcfg first"
 		/sbin/kldstat -qm ipfilter || /sbin/kldload ipfilter
-		/sbin/ping -c1 -S ${natip} 127.0.0.1 > /dev/null 2>&1 || err 1 "Cant assign nat address ${natip}. Probably wrong ip. Nat cfg skipped"
+		check_nat_ip
 		/sbin/ipnat -CF -f ${etcdir}/ipfilter.conf
 	;;
 esac
