@@ -367,45 +367,41 @@ EOF
 
 make_ufs()
 {
-# move to kernel init?
-if [ ! -d "${KERNEL_DIR}" ]; then
-	getyesno "No kernel ${KERNEL_DIR}. Try to fetch from remote repository?"
-	[ $? -eq 1 -o $? -eq 3 ] && err 1 "${MAGENTA}No base data on: ${GREEN}${KERNEL_DIR}${NORMAL}"
-	repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
-fi
+	# move to kernel init?
+	get_kernel
 
-[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
-[ "$media" = "iso" -o "$media" = "memstick" -o "${media}" = "bhyve" ] || err 1 "${MAGENTA}Unknown media type. Must be: ${GREEN}iso${MAGENTA},${GREEN} memstick ${MAGENTA}or${GREEN} bhyve${NORMAL}"
+	[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
+	[ "$media" = "iso" -o "$media" = "memstick" -o "${media}" = "bhyve" ] || err 1 "${MAGENTA}Unknown media type. Must be: ${GREEN}iso${MAGENTA},${GREEN} memstick ${MAGENTA}or${GREEN} bhyve${NORMAL}"
 
-mountbase -o "" -p "" -d "" -c "" -s ""
-[ "${ver}" != "empty" ] && mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
+	mountbase -o "" -p "" -d "" -c "" -s ""
+	[ "${ver}" != "empty" ] && mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
 
-BS=8192
+	BS=8192
 
-[ "${media}" != "bhyve" ] && makemfsroot
+	[ "${media}" != "bhyve" ] && makemfsroot
 
-TRAP="${TRAP} clear_tmp_dir;"
-trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-/bin/mkdir -p ${TMP_DIR}
-cd ${path} && /bin/pax -p eme -rw . ${TMP_DIR}
+	TRAP="${TRAP} clear_tmp_dir;"
+	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	/bin/mkdir -p ${TMP_DIR}
+	cd ${path} && /bin/pax -p eme -rw . ${TMP_DIR}
 
-[ "${media}" != "bhyve" ] && /bin/rm -rf ${TMP_DIR}/rescue
-[ "${prunelist}" != "0" ] && prunelist ${TMP_DIR}
+	[ "${media}" != "bhyve" ] && /bin/rm -rf ${TMP_DIR}/rescue
+	[ "${prunelist}" != "0" ] && prunelist ${TMP_DIR}
 
-# remove archive
-[ "${media}" != "bhyve" ] && /usr/bin/find ${TMP_DIR} -type f -name \*.a -delete
+	# remove archive
+	[ "${media}" != "bhyve" ] && /usr/bin/find ${TMP_DIR} -type f -name \*.a -delete
 
-/bin/cp -a ${KERNEL_DIR}/boot/kernel ${TMP_DIR}/boot
+	/bin/cp -a ${KERNEL_DIR}/boot/kernel ${TMP_DIR}/boot
 
-if [ "${media}" != "bhyve" ]; then
-	/bin/rm -f ${TMP_DIR}/boot/kernel/*.symbols
-	cd ${TMP_DIR}/boot/kernel && /usr/bin/gzip -9 ./kernel
-fi
+	if [ "${media}" != "bhyve" ]; then
+		/bin/rm -f ${TMP_DIR}/boot/kernel/*.symbols
+		cd ${TMP_DIR}/boot/kernel && /usr/bin/gzip -9 ./kernel
+	fi
 
-[ -f "${jailsysdir}/${jname}/loader.conf" ] && /bin/cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
+	[ -f "${jailsysdir}/${jname}/loader.conf" ] && /bin/cp ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
 
-if [ "${media}" != "bhyve" ]; then
-/bin/cat >> ${TMP_DIR}/boot/loader.conf << EOF
+	if [ "${media}" != "bhyve" ]; then
+		/bin/cat >> ${TMP_DIR}/boot/loader.conf << EOF
 #hw.vga.textmode=1
 geom_uzip_load="YES"
 tmpfs_load="YES"
@@ -427,63 +423,63 @@ console="userboot"
 #virtio_blk_load="YES"
 #if_vtnet_load="YES"
 EOF
-fi
+	fi
 
-case "${media}" in
-	"iso")
-		ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
-		;;
-	"memstick")
-		ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
-		;;
-	"bhyve")
-#		ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
-		ROOTFS="/dev/gpt/${LABEL} / ufs rw 1 1"
-		;;
-esac
+	case "${media}" in
+		"iso")
+			ROOTFS="/dev/iso9660/${LABEL} /mnt cd9660 ro 0 0"
+			;;
+		"memstick")
+			ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
+			;;
+		"bhyve")
+	#		ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
+			ROOTFS="/dev/gpt/${LABEL} / ufs rw 1 1"
+			;;
+	esac
 
-if [ "${media}" != "bhyve" ]; then
+	if [ "${media}" != "bhyve" ]; then
 /bin/cat > ${TMP_DIR}/etc/fstab << EOF
 tmpfs /tmp tmpfs rw 0 0
 ${ROOTFS}
 /mnt/boot /boot ${NULLFS} ro 0 0
 tmpfs /boot/zfs tmpfs rw 0 0
 EOF
-else
+	else
 /bin/cat > ${TMP_DIR}/etc/fstab <<EOF
 ${ROOTFS}
 EOF
 
-[ "${swap_size}" != "0" ] && /bin/cat >> ${TMP_DIR}/etc/fstab <<EOF
+		[ "${swap_size}" != "0" ] && /bin/cat >> ${TMP_DIR}/etc/fstab <<EOF
 /dev/gpt/swap	none	swap	sw	0	0
 EOF
-fi
+	fi
 
-echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
+	echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
 
-if [ "${media}" != "bhyve" ]; then
-	/bin/mv ${mfsrootfile} ${TMP_DIR}/mfsroot
-	cd ${TMP_DIR}
-	/usr/bin/gzip -9 ${TMP_DIR}/mfsroot
-	TRAP="${TRAP} /bin/rm -f /tmp/usr.img.$$ ;"
-	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-	/usr/sbin/makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMP_DIR}/usr
-	/usr/bin/mkuzip -o ${TMP_DIR}/usr.uzip /tmp/usr.img.$$
-	${CHFLAGS_CMD} -R noschg ${TMP_DIR}/usr && /bin/rm -rf ${TMP_DIR}/usr && /bin/mkdir ${TMP_DIR}/usr
-	#
+	if [ "${media}" != "bhyve" ]; then
+		/bin/mv ${mfsrootfile} ${TMP_DIR}/mfsroot
+		cd ${TMP_DIR}
+		/usr/bin/gzip -9 ${TMP_DIR}/mfsroot
+		TRAP="${TRAP} /bin/rm -f /tmp/usr.img.$$ ;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		/usr/sbin/makefs -o optimization=space -t ffs /tmp/usr.img.$$ ${TMP_DIR}/usr
+		/usr/bin/mkuzip -o ${TMP_DIR}/usr.uzip /tmp/usr.img.$$
+		${CHFLAGS_CMD} -R noschg ${TMP_DIR}/usr && /bin/rm -rf ${TMP_DIR}/usr && /bin/mkdir ${TMP_DIR}/usr
+		#
 
-	# LiveCD location
-	[ -f "$jailsysdir/${jname}/tmpfsdir" ] && /bin/cp ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
-fi
+		# LiveCD location
+		[ -f "$jailsysdir/${jname}/tmpfsdir" ] && /bin/cp ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
+	fi
 
-if [ "${media}" = "bhyve" ]; then
+	if [ "${media}" = "bhyve" ]; then
 /bin/cat > ${TMP_DIR}/etc/ttys <<EOF
 console "/usr/libexec/getty std.9600"   vt100   on secure
 EOF
-fi
+	fi
 
-# post action inside image
-epilogue_img ${TMP_DIR}
+	# post action inside image
+	epilogue_img ${TMP_DIR}
 }
 
 # MAIN
