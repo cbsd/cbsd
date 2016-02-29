@@ -55,7 +55,7 @@ dialog_menu_main()
 
 	local menu_list=
 
-	local _id=0
+	local _id=1
 	local is_delimer=0
 
 	for _items in ${param}; do
@@ -66,7 +66,6 @@ dialog_menu_main()
 			_items="forms_delimer_${_id}"
 			is_delimer=1
 			eval _mydesc="\$${_items}_desc"
-			_items="-"
 			VAL="${_mydesc}"
 		else
 			eval VAL=\$${_items}
@@ -74,7 +73,9 @@ dialog_menu_main()
 			eval _mydesc="\$${_items}_desc"
 		fi
 
-		if [ -z "${VAL}" ]; then
+		if [ ${is_delimer} -eq 1 ]; then
+			menu_list="${menu_list} '-'	'${_mydesc}'	'Field delimer'"
+		elif [ -z "${VAL}" ]; then
 			menu_list="${menu_list} '${_items}'	' '	'${_mydesc}'"
 		else
 			menu_list="${menu_list} '${_items}'	'${VAL}'	'${_mydesc}'"
@@ -95,18 +96,74 @@ dialog_menu_main()
 	return $retval
 }
 
+
+# $1 table
+get_radio()
+{
+	local param
+	local table="${1}"
+
+	[ -z "${table}" ] && return 1
+
+	param_list=$( cbsdsql ${formfile} SELECT text FROM ${table} ORDER BY order_id |/usr/bin/xargs )
+	local menu_list=
+	local x=0
+	local _par VAL
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select"
+	local hline=
+	local defaultitem
+	defaultitem="yes"
+
+	local title=" syslog "
+	local _mydesc
+
+	local menu_list=
+	for item in ${param_list}; do
+		eval _mydesc="\$${helper}_desc"
+		menu_list="${menu_list} '${item}'      '${item}'     '${_mydesc}'"
+	done
+
+	cbsd_menubox
+	retval=$?
+
+	mtag=$( cbsdsql ${formfile} SELECT id FROM ${table} WHERE text=\"${menu_choice}\" )
+
+	f_dialog_data_sanitize menu_choice
+
+	return $retval
+}
+
+
 # inputform
 get_helper_value()
 {
-	local _input _retval
+	local _input _retval _type _link _mtag
 
 	f_dialog_title " ${mtag} "
 
 	eval VAL=\$${mtag}
 	eval _mydesc=\$${mtag}_desc
+	eval _type=\$${mtag}_type
+	eval _link=\$${mtag}_link
 
-	f_dialog_input _input "${_mydesc}" "${VAL}" \
-		"${_message}" || return $?
+	case "${_type}" in
+		inputbox)
+			f_dialog_input _input "${_mydesc}" "${VAL}" "${_message}" || return $?
+			;;
+		password)
+			f_dialog_input _input "${_mydesc}" "${VAL}" "${_message}" || return $?
+			;;
+		radio|select)
+			_defaultvalue="${defaultvalue}"
+			_mtag="${mtag}"
+			get_radio ${_link} && _input="${mtag}"
+			mtag="${_mtag}"
+			defaultvalue="${_defaultvalue}"
+			;;
+		*)
+			;;
+	esac
 
 	[ -n "${_input}" ] && eval ${mtag}="${_input}"
 
@@ -152,14 +209,13 @@ fi
 # imghelper_version
 # Compare this YYYMM serial with database forms version. When forms have greater number
 # this helper is not support this
-imghelper_version="201510"
+imghelper_version="201602"
 cfg_existing=0
 
 [ -z "${updcol}" ] && updcol="new"
 
 if [ -n "${jname}" -a -n "${module}" ]; then
-	cfg_existing=1
-	: ${formfile="${jailsysdir}/${jname}/helpers/${module}.sqlite"}
+	formfile="${jailsysdir}/${jname}/helpers/${module}.sqlite"
 	if [ ! -r ${formfile} ]; then
 		formfile="${workdir}/formfile/${module}.sqlite"
 		cfg_existing=0
@@ -184,7 +240,7 @@ elif [ -n "${jname}" ]; then
 fi
 
 # update formfile
-[ ! -d "${workdir}/formfile" ] && mkdir ${workdir}/formfile
+[ ! -d "${workdir}/formfile" ] && /bin/mkdir ${workdir}/formfile
 mksitefile="${moduledir}/puppet.d/module_${module}/initforms.sh"
 [ ! -f "${mksitefile}" ] && err 1 "No ${mksitefile}"
 /bin/sh ${mksitefile}
@@ -199,6 +255,7 @@ check_version
 
 param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |/usr/bin/xargs )
 load_forms
+load_new
 
 # in non interactive mode we apply default settings
 if [ "${inter}" = "0" ]; then
@@ -243,5 +300,8 @@ done
 update_params ${updcol}
 
 # commit when works with module
-[ -n "$helper_module}" ] && ${helper_module} jname=${jname} module=${module} mode=apply
+if [ -n "$helper_module}" ]; then
+	${helper_module} jname=${jname} module=${module} mode=apply
+fi
 
+exit 0
