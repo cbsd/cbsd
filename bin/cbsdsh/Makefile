@@ -22,7 +22,8 @@ NOMAN=		yes
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 LDADD= -ledit -ltermcap -lsqlite3 -pthread -ljail
 
-CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
+#CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
+CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 
 # WITH LUA
 #CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
