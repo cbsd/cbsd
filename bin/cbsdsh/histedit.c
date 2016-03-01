@@ -122,9 +122,11 @@ histedit(void)
 				if (hist)
 					el_set(el, EL_HIST, history, hist);
 				el_set(el, EL_PROMPT, getprompt);
+#ifndef CBSD
 				el_set(el, EL_ADDFN, "sh-complete",
 				    "Filename completion",
 				    _el_fn_sh_complete);
+#endif
 			} else {
 bad:
 				out2fmt_flush("sh: can't initialize editing\n");
@@ -141,7 +143,9 @@ bad:
 				el_set(el, EL_EDITOR, "vi");
 			else if (Eflag)
 				el_set(el, EL_EDITOR, "emacs");
+#ifndef CBSD
 			el_set(el, EL_BIND, "^I", "sh-complete", NULL);
+#endif
 			el_source(el, NULL);
 		}
 	} else {
