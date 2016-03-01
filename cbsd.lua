@@ -79,7 +79,7 @@ greeting="node"
 jailmapdb= dbdir .. "/jmap.txt"
 -- external source for online doc
 docversion="10.3"
-cbsddocsrc="http://www.bsdstore.ru/en" .. docversion .. "/"
+cbsddocsrc="https://www.bsdstore.ru/en" .. docversion .. "/"
 
 f=io.open(nodenamefile,"r")
 if f ~= nil then
