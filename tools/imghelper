@@ -1,9 +1,10 @@
 #!/usr/local/bin/cbsd
 #v10.3.0
 MYARG=""
-MYOPTARG="formfile bootstrap module jname updcol header inter"
+MYOPTARG="formfile bootstrap module jname updcol header inter table"
 MYDESC="Ncurses-based jail image boostrap helper"
-ADDHELP="updcol = new (default) update new column, cur - update cur column\n"
+ADDHELP="updcol = new (default) update new column, cur - update cur column\n\
+table - initial table, default is forms\n"
 EXTHELP="wf_imghelper.html"
 
 . ${subr}
@@ -26,6 +27,8 @@ if [ "${1}" != "--help" -a "${1}" != "--args" ]; then
 fi
 
 init $*
+
+[ -z "${table}" ] && table="forms"
 
 if [ -n "${header}" ]; then
 	shift
@@ -55,23 +58,40 @@ dialog_menu_main()
 
 	local menu_list=
 
-	local _id=1
-	local is_delimer=0
+	local _id=0
 
 	for _items in ${param}; do
 
-		unset VAL
+		_id=$(( _id + 1 ))
 
-		if [ "${_items}" == "-" ]; then
-			_items="forms_delimer_${_id}"
-			is_delimer=1
-			eval _mydesc="\$${_items}_desc"
-			VAL="${_mydesc}"
+		unset VAL _type
+		is_value=0
+		is_delimer=0
+
+		if [ "${_items}" = "-" ]; then
+			_type="delimer"
 		else
-			eval VAL=\$${_items}
-			is_delimer=0
-			eval _mydesc="\$${_items}_desc"
+			eval _type="\$${_items}_type"
 		fi
+
+		case "${_type}" in
+			subtable)
+				VAL=">>"
+				;;
+			hiddendelim)
+				continue
+				;;
+			delimer)
+				_items="forms_delimer_${_id}"
+				is_delimer=1
+				;;
+			*)
+				eval VAL=\$${_items}
+				is_value=1
+				;;
+		esac
+
+		eval _mydesc="\$${_items}_desc"
 
 		if [ ${is_delimer} -eq 1 ]; then
 			menu_list="${menu_list} '-'	'${_mydesc}'	'Field delimer'"
@@ -81,7 +101,6 @@ dialog_menu_main()
 			menu_list="${menu_list} '${_items}'	'${VAL}'	'${_mydesc}'"
 		fi
 
-		_id=$(( _id + 1 ))
 	done
 
 	menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
@@ -241,9 +260,12 @@ fi
 
 # update formfile
 [ ! -d "${workdir}/formfile" ] && /bin/mkdir ${workdir}/formfile
-mksitefile="${moduledir}/puppet.d/module_${module}/initforms.sh"
-[ ! -f "${mksitefile}" ] && err 1 "No ${mksitefile}"
-/bin/sh ${mksitefile}
+
+if [ -n "${module}" ]; then
+	mksitefile="${moduledir}/puppet.d/module_${module}/initforms.sh"
+	[ ! -f "${mksitefile}" ] && err 1 "No ${mksitefile}"
+	/bin/sh ${mksitefile}
+fi
 
 [ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
 
@@ -253,7 +275,24 @@ fi
 
 check_version
 
-param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER by idx |/usr/bin/xargs )
+sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
+
+#for i in ${subtable_param}; do
+#	lnk=$( cbsdsql ${formfile} SELECT link FROM ${table} WHERE param = \"${i}\" )
+#	[ -z "${lnk}" ] && continue
+#	sql_part="${sql_part} UNION SELECT param FROM ${lnk} WHERE type != \"subtable\" AND mytable =\"${lnk}\""
+#done
+
+sql_part="${sql_part} ORDER BY order_id"
+
+param=$( cbsdsql ${formfile} ${sql_part} )
+
+#echo "${sql_part}"
+#exit 0
+
+#echo "$param"
+#exit 0
+
 load_forms
 load_new
 

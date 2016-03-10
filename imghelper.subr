@@ -67,14 +67,25 @@ update_params()
 
 }
 
-
+# $formfile and $table must be present
 load_forms()
 {
-	local param _id def def2 link type _env
+	local param _id def def2 link type _env idx lnk
 
 	[ ! -f ${formfile} ] && err 1 "${MAGENTA}formfile not found: ${GREEN}${formfile}${NORMAL}"
+	[ -z "${table}" ] && table="forms"
 
-	param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER BY order_id |/usr/bin/xargs )
+	idx=0
+
+	param="$( cbsdsql ${formfile} SELECT param FROM ${table}|/usr/bin/xargs )"
+
+#	eval $( cbsdsql ${formfile} SELECT param,mytable FROM ${table} WHERE type != \"subtable\" ORDER BY order_id |while read _x; do
+#		idx=$(( idx + 1 ))
+#		unset _param _mytable
+#		sqllist "${_x}" _param _mytable
+#		echo "param${idx}=\"${_param}\""
+#		echo "table${idx}=\"${_mytable}\""
+#	done )
 
 	helpername=$( cbsdsql ${formfile} SELECT helpername FROM system )
 	packages=$( cbsdsql ${formfile} SELECT packages FROM system )
@@ -84,44 +95,58 @@ load_forms()
 
 	[ "${packages}" = "0" ] && packages=""
 
-	_id=1
+	_id=0 # First SQL sequence is 1
 
 	eval $( for i in ${param}; do
 		unset _env desc _res cur attr xattr mandatory
 
-#		desc="$( cbsdsql ${formfile} SELECT desc FROM forms WHERE param=\"${i}\" |/usr/bin/tr -d "'\"")"
-		desc="$( cbsdsql ${formfile} SELECT desc FROM forms WHERE idx=\"${_id}\" |/usr/bin/tr -d "'\"")"
+		_id=$(( _id + 1 ))
+		desc="$( cbsdsql ${formfile} SELECT desc FROM ${table} WHERE idx=\"${_id}\" |/usr/bin/tr -d "'\"")"
 
 		is_delimer=0
+		is_hiddendelim=0
+		is_subtable=0
+		is_value=0
+
+		unset type
+		type="$( cbsdsql ${formfile} SELECT type FROM ${table} WHERE idx=\"${_id}\" )"
+
+		# check for special type or its value
+		case "${type}" in
+			hiddendelim)
+				is_hiddendelim=1
+				;;
+			subtable)
+				is_subtable=1
+				;;
+			delimer)
+				is_delimer=1
+				i="forms_delimer_${_id}"
+				;;
+			*)
+				is_value=1
+				;;
+		esac
 
 		# check for H_environment
-		if [ "${i}" != "-" ]; then
-			eval _res="\$H_${i}"
-		else
-			# just get unique name for delimer_field
-			i="forms_delimer_${_id}"
-			is_delimer=1
-		fi
+		[ ${is_value} -eq 1 ] && eval _res="\$H_${i}"
 
 		if [ -n "${_res}" ]; then
 			# environment is preferred
 			echo "${i}=\"${_res}\""
-		elif [ ${is_delimer} -eq 0 ]; then
-
-			unset type
-			type="$( cbsdsql ${formfile} SELECT type FROM forms WHERE param=\"${i}\" )"
-
+		elif [ ${is_value} -eq 1 ]; then
 			# preferred for cur value
-			cur="$( cbsdsql ${formfile} SELECT cur FROM forms WHERE param=\"${i}\" )"
+			cur="$( cbsdsql ${formfile} SELECT cur FROM ${table} WHERE idx=\"${_id}\" )"
 
 			if [ -n "${cur}" ]; then
 				def="${cur}"
 			else
-				def="$( cbsdsql ${formfile} SELECT def FROM forms WHERE param=\"${i}\" )"
+				def="$( cbsdsql ${formfile} SELECT def FROM ${table} WHERE idx=\"${_id}\" )"
 			fi
 
 			unset link
-			link="$( cbsdsql ${formfile} SELECT link FROM forms WHERE param=\"${i}\" )"
+			link="$( cbsdsql ${formfile} SELECT link FROM ${table} WHERE idx=\"${_id}\" )"
+
 			if [ -n "${link}" ]; then
 				def2="$( cbsdsql ${formfile} SELECT text FROM ${link} WHERE id=\"${def}\" )"
 				if [ -n "${def2}" ]; then
@@ -134,32 +159,32 @@ load_forms()
 			echo "${i}=\"${i}\""
 		fi
 
-		attr="$( cbsdsql ${formfile} SELECT attr FROM forms WHERE param=\"${i}\" )"
-		xattr="$( cbsdsql ${formfile} SELECT xattr FROM forms WHERE param=\"${i}\" )"
-		mandatory="$( cbsdsql ${formfile} SELECT mandatory FROM forms WHERE param=\"${i}\" )"
+		attr="$( cbsdsql ${formfile} SELECT attr FROM ${table} WHERE idx=\"${_id}\" )"
+		xattr="$( cbsdsql ${formfile} SELECT xattr FROM ${table} WHERE idx=\"${_id}\" )"
+		mandatory="$( cbsdsql ${formfile} SELECT mandatory FROM ${table} WHERE idx=\"${_id}\" )"
 
 		echo "${i}_desc=\"${desc}\""
 		echo "${i}_mandatory=\"${mandatory}\""
 		echo "${i}_link=\"${link}\""
 		echo "${i}_type=\"${type}\""
-
-		_id=$(( _id +1 ))
+		echo "${i}_attr=\"${attr}\""
 	done )
 }
 
-
+# $formfile and $table must be present
 load_new()
 {
 	[ ! -f ${formfile} ] && err 1 "${MAGENTA}formfile not found: ${GREEN}${formfile}${NORMAL}"
+	[ -z "${table}" ] && table="forms"
 
 	local param
-	param=$( cbsdsql ${formfile} SELECT param FROM forms ORDER BY order_id |/usr/bin/xargs )
+	param=$( cbsdsql ${formfile} SELECT param FROM ${table} ORDER BY order_id |/usr/bin/xargs )
 	local _env
 
 	eval $( for i in ${param}; do
 		[ "${i}" = "-" ] && continue
 		unset _env new
-		new="$( cbsdsql ${formfile} SELECT new FROM forms WHERE param=\"${i}\" )"
+		new="$( cbsdsql ${formfile} SELECT new FROM ${table} WHERE param=\"${i}\" )"
 		[ -z "${new}" ] && continue
 		echo "${i}=\"${new}\""
 	done )
