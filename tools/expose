@@ -1,0 +1,194 @@
+#!/usr/local/bin/cbsd
+#v10.3.2
+MYARG=""
+MYOPTARG="jname mode proto in out inaddr"
+MYDESC="Exposing a port to jail from master host"
+ADDHELP="mode - add,delete,apply,clear,flush,list\n\
+  - add : add and apply one rule, e.g: in=222 out=22 proto=tcp\n\
+  - delete : delete and clear one rule, e.g: in=222 out=22\n\
+  - apply : apply all rules from database\n\
+  - clear : clear all rules from database\n\
+  - flush : clear and remove all rules\n\
+proto = udp, tcp. default: tcp\n\
+in - master port for incoming connection\n\
+out - destination port inside jail\n\
+inaddr - use IP as nodeip (for incoming connection). Default is $nodeip\n"
+CBSDMODULE="jail"
+
+. ${subr}
+. ${strings}
+init $*
+
+
+show_all_expose()
+{
+
+	/usr/bin/find ${jailsysdir}/*/  -type f -depth 1 -maxdepth 1 -name expose.sqlite -exec /bin/realpath {} \; |while read _file; do
+#		p1=${_file%%_*}
+#		p2=${_file##*_}
+		myjail=$( echo ${_file} |sed -Ees:${jailsysdir}/::g -es:/expose.sqlite::g )
+		${ECHO} "${MAGENTA}Expose for ${GREEN}${myjail}${MAGENTA}:${NORMAL}"
+		fw_expose_list ${_file}
+	done
+
+}
+
+get_first_ip()
+{
+	local IFS=","
+	local ip IWM
+
+	for ip in ${ip4_addr}; do
+		ipwmask "${ip}"
+		if [ -n "${IWM}" ]; then
+			echo "${IWM}"
+			return 0
+		fi
+	done
+}
+
+get_first_fwnum()
+{
+	local tmp
+	unset fwnum
+
+	tmp=$( for i in $( /usr/bin/seq ${fwexpose_st} ${fwexpose_end} ); do
+		/sbin/ipfw list ${i} > /dev/null 2>&1
+		[ $? -eq 0 ] && continue
+		echo ${i}
+		break
+	done )
+
+	[ -z "${tmp}" ] && err 1 "${MAGENTA}Unable to determine first fwnum for expose${NORMAL}"
+	[ ${tmp} -eq ${fwexpose_end} ] && err 1 "${MAGENTA}No free ipfw num for expose in expose range: ${GREEN}${fwexpose_st} - ${fwexpose_end}${NORMAL}"
+
+	fwnum="${tmp}"
+
+}
+
+fw_expose_add()
+{
+	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
+
+	res=$( /usr/bin/nc -w1 -z ${inaddr} ${in} 2>/dev/null )
+
+	if [ $? -eq 0 ]; then
+		${ECHO} "${MAGENTA}Port already in use on ${inaddr}: ${GREEN}${in}${NORMAL}"
+		return 0
+	fi
+
+	[ -f ${ftmpdir}/${jname}-expose_fwnum ] && fwnum=$( /bin/cat ${ftmpdir}/${jname}-expose_fwnum )
+
+	${ECHO} "${MAGENTA}CBSD Expose for ${jname}: ${GREEN}${in} -> ${out} (${proto})${NORMAL}"
+	/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
+	echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
+}
+
+fw_expose_apply()
+{
+	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
+		fw_expose_add
+	done
+
+}
+
+# if $1 than use it as exposefile
+fw_expose_list()
+{
+
+	[ -n "${1}" ] && exposefile="${1}"
+
+	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
+		echo "${in} -> ${out} (via ${inaddr} ${proto})"
+	done
+}
+
+
+fw_expose_clear()
+{
+	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
+		fw_expose_delete
+	done
+}
+
+
+fw_expose_delete()
+{
+	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
+
+	if [ ! -f ${ftmpdir}/${jname}-expose_fwnum ]; then
+		${ECHO} "${MAGENTA}No ${ftmpdir}/${jname}-expose_fwnum: skip for deletion expose rule${NORMAL}"
+		return 0
+	else
+		fwnum=$( /bin/cat ${ftmpdir}/${jname}-expose_fwnum )
+	fi
+
+	cbsdsql ${exposefile} "DELETE FROM expose WHERE pin=$in AND pout=$out AND proto=\"${proto}\" AND inaddr=\"${inaddr}\""
+	/sbin/ipfw delete ${fwnum}
+}
+
+
+# MAIN
+if [ -z "$1" ]; then
+	show_all_expose
+	exit 0
+fi
+
+[ -z "${jname}" ] && err 1 "Give me jname"
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+[ -z "${proto}" ] && proto="tcp"
+[ -z "${inaddr}" ] && inaddr="nodeip"  # "nodeip"  - reserverd word for $nodeip variable
+[ "$( /sbin/sysctl -qn net.inet.ip.fw.enable 2>/dev/null )" != "1" ] && err 1 "${MAGENTA}IPFW is not enabled${NORMAL}"
+# init ipfw number
+get_first_fwnum
+[ -z "${fwnum}" ] && err 1 "${MAGENTA}Empty fwnum variable${NORMAL}"
+
+jip=$( get_first_ip )
+
+[ -z "${jip}" ] && err 1 "${MAGENTA}Unable to determine jail ip${NORMAL}"
+
+exposefile="${jailsysdir}/${jname}/expose.sqlite"
+
+[ ! -r "${exposefile}" ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${exposefile} ${distdir}/share/system-expose.schema expose
+
+case "${mode}" in
+	list)
+		fw_expose_list
+		exit 0
+		;;
+	apply)
+		fw_expose_apply
+		exit 0
+		;;
+	clear)
+		fw_expose_clear
+		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && /bin/rm -f ${ftmpdir}/${jname}-expose_fwnum
+		exit 0
+		;;
+	flush)
+		fw_expose_clear
+		/bin/rm -f ${exposefile}
+		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && /bin/rm -f ${ftmpdir}/${jname}-expose_fwnum
+		exit 0
+		;;
+esac
+
+[ -z "${in}" ] && err 1 "${MAGENTA}Empty ${GREEN}in${NORMAL}"
+[ -z "${out}" ] && err 1 "${MAGENTA}Empty ${GREEN}out${NORMAL}"
+
+case "${mode}" in
+	add)
+		fw_expose_add
+		cbsdsql ${exposefile} "INSERT INTO expose ( pin, pout, proto, inaddr ) VALUES ( ${in}, ${out}, \"${proto}\", \"${inaddr}\" )"
+		;;
+	delete)
+		fw_expose_delete
+		fw_expose_apply
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+		;;
+esac

@@ -101,16 +101,9 @@ get_base()
 	# fill $BASE_DIR
 	init_basedir
 
-	# check for $BASE_DIR existance
-	if [ ! -x "${BASE_DIR}/bin/sh" ]; then
-		getyesno "No ${arch}-${target_arch}-${ver} base. Try to fetch from remote repository?"
-		if [ $? -eq 1 ]; then
-			get_base_from_current
-		else
-			repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}
-			[ ! -x "${BASE_DIR}/bin/sh" ] && get_base_from_current
-		fi
-	fi
+	[ -x "${BASE_DIR}/bin/sh" ] && return 0
+
+	select_getbase
 
 	[ ! -x "${BASE_DIR}/bin/sh" ] && err 1 "${MAGENTA}No base data on: ${GREEN}${BASE_DIR}${NORMAL}"
 }
@@ -316,7 +309,7 @@ umount_cdirs()
 	# when error before path, we do not have any mounts by scripts
 	[ -z "${path}" ] && return 0
 
-	MOUNT_LIST=$( mount |sort -r| /usr/bin/awk -F" on " '{print $2}' )
+	MOUNT_LIST=$( /sbin/mount |/usr/bin/sort -r| /usr/bin/awk -F" on " '{print $2}' )
 
 	MPATH=""
 	for mount_point in $MOUNT_LIST; do
@@ -330,7 +323,7 @@ umount_cdirs()
 	[ -n "${MPATH}" ] && umount -f ${MPATH}
 	#finaly unmount cdir
 	if [ ${_unmount_root} -eq 1 ]; then
-		is_mounted ${path} && umount -f ${path}
+		is_mounted ${path} && /sbin/umount -f ${path}
 	fi
 }
 
@@ -466,5 +459,132 @@ usr/share"
 	# populate
 }
 
+# return getbase_source variable
+select_getbase_source_by_list()
+{
+
+	if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
+		# set default for non interactive action
+		getbase_source="repo"
+		return 0
+	fi
+
+	local _res _id i=1
+	local _elf_ver
+
+	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
+	_jail_ver=${ver%%.*}
+
+	local subject="Select base sources:"
+
+	local _method_list=
+
+	${ECHO} "${MAGENTA}${subject}${NORMAL}"
+	echo
+	${ECHO} "${BOLD}0 .. CANCEL${NORMAL}"
+
+	${ECHO} "${BOLD}${i} .. ${GREEN}repo${MAGENTA} (Fetch base from repository over Internet). ${GREEN}(default)${NORMAL}"
+	_method_list="${_method_list} repo"
+	i=$(( i + 1 ))
+	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
+		${ECHO} "${BOLD}${i} .. ${GREEN}populate${MAGENTA} (Create base from your master environment)${NORMAL}"
+		i=$(( i + 1 ))
+		_method_list="${_method_list} populate"
+	fi
+
+	${ECHO} "${BOLD}${i} .. ${GREEN}extract${MAGENTA} (Specify path to base.txz and extract it)${NORMAL}"
+	i=$(( i + 1 ))
+	_method_list="${_method_list} extract"
+	${ECHO} "${BOLD}${i} .. ${GREEN}build${MAGENTA} (cbsd srcup + cbsd world. Checkout source and build it. Long method)${NORMAL}"
+	_method_list="${_method_list} build"
+	echo
+	printf "${BOLD}Enter id 0-${i} or method name:${NORMAL} "
+	set -e
+	read _id
+	set +e
+
+	[ "${_id}" = "0" ] && exit 0
+	if [ -z "${_id}" ]; then
+		# Empty input, use default
+		getbase_source="repo"
+		return 0
+	fi
+
+	getbase_source=
+
+	if ! is_number ${_id}; then
+		local _tmp _x=0
+		for _tmp in ${_method_list}; do
+			_x=$(( _x + 1 ))
+			[ ${_x} -eq ${_id} ] && getbase_source="${_tmp}" && break
+			[ ${_x} -gt ${i} ] && break
+		done
+	else
+		getbase_source="${_id}"
+	fi
+
+	[ -z "${getbase_source}" ] && return 1
+	return 0
+}
+
+select_getbase()
+{
+	local _repeat=1
+
+	while [ ${_repeat} -ne 0 ]; do
+		select_getbase_source_by_list
+
+		[ $? -ne 0 ] && echo "No valid source"
+		[ "${inter}" = "0" -o "${INTER}" = "0" ] && _repeat=0
+
+		case "${getbase_source}" in
+			repo)
+				repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}
+				;;
+			populate)
+				get_base_from_current
+				;;
+			extract)
+				${ECHO} "${MAGENTA}Please provide full path to base archive, (e.g. default: ${GREEN}/mnt/usr/freebsd-dist/base.txz${MAGENTA}):${NORMAL}"
+				local _path
+				read _path
+				[ -z "${_path}" ] && _path="/mnt/usr/freebsd-dist/base.txz"
+				if [ ! -r "${_path}" ]; then
+					${ECHO} "${MAGENTA}No such archive file: ${GREEN}${_path}${NORMAL}"
+					continue
+				fi
+
+				[ ! -d "${BASE_DIR}" ] && /bin/mkdir -p ${BASE_DIR}
+				cd ${BASE_DIR}
+				set -e
+				/usr/bin/tar vxfz ${_path}
+				set +e
+				;;
+			build)
+				local origver stable
+				origver=${ver%%.*}
+				if [ "${origver}" = "${ver}" ]; then
+					stable=1
+				else
+					stable=0
+				fi
+				srcup ver=${ver} stable=${stable} && world ver=${ver} arch=${arch} stable=${stable}
+				;;
+			*)
+				${ECHO} "${MAGENTA} select_getbase: unknown source: ${GREEN}${getbase_source}${NORMAL}"
+				;;
+		esac
+
+			if [ -x "${BASE_DIR}/bin/sh" ]; then
+				preparebase dst=${BASE_DIR}
+				_repeat=0
+			fi
+	done
+
+	return 0
+
+}
+
 ###
 fi
+

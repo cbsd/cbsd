@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.3
+#v10.2.3
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname"
@@ -43,12 +43,29 @@ fi
 #[ ${jid} -eq 0 ] && err 1 "${MAGENTA}Not Running: ${GREEN}${jname}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
-/bin/ps axopid,ucomm,command|while read pid comm cmd; do
-	if [ "${comm}" = "bhyve" -o "${comm}" = "grub-bhyve" ]; then
-		_res=$( echo $cmd|grep " ${jname}$" 2>/dev/null)
-		[ -n "${_res}" ] && kill $pid
-	fi
-done
+pid=
+
+pid=$( /bin/ps axopid,ucomm,command|while read pid comm cmd; do
+	case "${comm}" in
+		bhyve|grub-bhyve)
+			_res=$( echo $cmd|/usr/bin/grep " ${jname}" 2>/dev/null)
+			[ -n "${_res}" ] && echo "${pid}" && exit 0
+			;;
+	esac
+done 2>/dev/null)
+
+if [ -n "${pid}" ]; then
+	# soft stop, send SIGTERM
+	printf "${MAGENTA}Send SIGTERM to VM: ${GREEN}${jname}${NORMAL}"
+	/bin/kill -15 ${pid}
+	for i in $( /usr/bin/seq 1 30 ); do
+		cbsd_pwait --pid=${pid} --timeout=1 > /dev/null 2>&1
+		printf "${MAGENTA}."
+	done
+	printf "${NORMAL}\n"
+else
+	${ECHO} "${MAGENTA}Warning: unable to determine bhyve pid for: ${GREEN}${jname}${NORMAL}"
+fi
 
 /usr/sbin/bhyvectl --destroy --vm="${jname}"
 
