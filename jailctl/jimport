@@ -2,12 +2,14 @@
 #v10.1.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="jname list newjname newip"
+MYOPTARG="jname list new_jname new_ip4_addr new_host_hostname"
 #mode=ls
 MYDESC="Import jail from image"
 ADDHELP="list=1 for list images\n\
-newjname=namename - import image and register as newname jail\n\
-newip=ip - change ip. Use 'DHCP' for detect ip automatically\n"
+new_jname= - import image and register as newname jail\n\
+new_ip4_addr= - change ip. Use 'DHCP' for detect ip automatically\n\
+new_host_hostname= - change hostname while importing. By default, domain is inherits\n\
+   from original with change of hostname.\n"
 CBSDMODULE="jail"
 
 set -e
@@ -17,6 +19,8 @@ set +e
 . ${subr}
 . ${tools}
 init $*
+
+. ${system}
 
 readconf zfs.conf
 
@@ -52,7 +56,7 @@ imgpart mode=extract jname=${SRC} part=header out=${TMPDIR}
 [ -z "${hdrver}" ] && hdrver=0
 origjname="${jname}"
 /bin/rm -f "${TMPDIR}"
-[ -n "${newjname}" ] && jname=${newjname}
+[ -n "${new_jname}" ] && jname=${new_jname}
 jstatus jname=$jname > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "${MAGENTA}Jail already exist: ${GREEN}${jname}${NORMAL}"
 
@@ -110,7 +114,7 @@ if [ "${origjname}" = "${jname}" ]; then
 				if zfsroot $jname; then
 					err 1 "ZFS with $jname in pool already exist"
 				fi
-				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/$jname
+				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
 			fi
 			;;
 	esac
@@ -138,11 +142,13 @@ else
 				TMPDATADIR="${jaildatadir}/tmp.$$"
 				TMPJAILDATADIR="${TMPDATADIR}/${origjname}-${jaildatapref}"
 				/bin/mkdir -p ${TMPJAILDATADIR}
-				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${TMPJAILDATADIR} ${ZPOOL}/$jname
+				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${TMPJAILDATADIR} ${ZPOOL}/${jname} > /dev/null 2>&1
 				imgpart mode=extract jname=${SRC} part=data out=${TMPDATADIR} hdrver=${imgver} > /dev/null
 				/sbin/zfs unmount ${ZPOOL}/${jname}
 				/sbin/zfs set mountpoint=${JAILDIR} ${ZPOOL}/${jname}
-				/sbin/zfs mount ${ZPOOL}/${jname}
+				if ! is_mounted ${JAILDIR}; then
+					/sbin/zfs mount ${ZPOOL}/${jname}
+				fi
 				/bin/rmdir ${TMPJAILDATADIR} ${TMPDATADIR}
 			fi
 			;;
@@ -150,16 +156,28 @@ else
 fi
 
 # post action: modify ip if necessary
-if [ -n "${newip}" ]; then
-	case "${newip}" in
+if [ -n "${new_ip4_addr}" ]; then
+	case "${new_ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
-			newip=$( dhcpd )
+			new_ip4_addr=$( dhcpd )
 			;;
 		*)
 	esac
-	${ECHO} "${MAGENTA}IP sets to: ${GREEN}${newip}${NORMAL}"
-	${SYSRC_CMD} -qf ${JAILRCCONF} ip4_addr="${newip}" >/dev/null
+	${ECHO} "${MAGENTA}IP sets to: ${GREEN}${new_ip4_addr}${NORMAL}"
+	${SYSRC_CMD} -qf ${JAILRCCONF} ip4_addr="${new_ip4_addr}" >/dev/null
 fi
+
+if [ -z "${new_host_hostname}" ]; then
+	mydomain=${host_hostname#*.}
+	if [ -n "${mydomain}" ]; then
+		new_host_hostname="${new_jname}.${mydomain}"
+	else
+		new_host_hostname="${host_hostname}"
+	fi
+fi
+
+${ECHO} "${MAGENTA}Hostname sets to: ${GREEN}${new_host_hostname}${NORMAL}"
+${SYSRC_CMD} -qf ${JAILRCCONF} host_hostname="${new_host_hostname}" >/dev/null
 
 jregister jname=${jname} mode=new rcfile=${JAILRCCONF}
 
