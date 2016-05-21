@@ -55,6 +55,7 @@ function init()
 		print ( "opt: " .. MYOPTARG )
 
 		if ADDHELP then print ( ADDHELP ) end
+		if MANPAGE then print ( "Check out manual page: " .. MANPAGE ) end
 		if EXTHELP then print ( "External help: " .. cbsddocsrc .. "/" .. EXTHELP ) end
 		os.exit(0)
 	end
