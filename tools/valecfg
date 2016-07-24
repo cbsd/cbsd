@@ -1,0 +1,112 @@
+#!/usr/local/bin/cbsd
+#v11.0.0
+MYARG=""
+MYOPTARG="alljails shownode display node header mode jname"
+MYDESC="Operate with bhyve disk images and databse"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve.html"
+ADDHELP="alljails=1 - get jaillist from remote node\n\
+shownode=1 - show nodename for jails\n\
+node= only for current node\n\
+header=0 don't print header\n\
+display= list by comma for column. Default: id,vhid,advskew,pass,interface,state\n\
+mode=rescan - rescan vhd and sync info in sql base\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+[ -z "${display}" ] && display="name,vm"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -eq 1 ] && $ECHO ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val
+
+	_status=
+
+	printf "${NORMAL}" # for column sort
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+
+		_val=""
+
+		if [ "${_i}" = "vm" ]; then
+			_val=$( populate_vale_member ${name} )
+		else
+			eval _val=\$$_i
+		fi
+		[ -z "${_val}" ] && _val="-"
+
+		printf "${_val} "
+	done
+
+	printf "\n"
+}
+
+# $1 - switch name
+# compile vale member by jname
+populate_vale_member()
+{
+	local _sql="SELECT jname FROM bhyvenic WHERE nic_driver=\"vale\" AND nic_parent=\"${1}\""
+
+	local _list
+	local count=0
+
+	_list=$( cbsdsql local ${_sql}| while read jname; do
+		[ $count -ne 0 ] && printf ","
+		printf "${jname}"
+		count=$(( count + 1 ))
+	done )
+
+	printf "${_list}"
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	_sql="SELECT idx,name FROM vale ORDER BY idx"
+	cbsdsql local ${_sql}| while read idx name; do
+		populate_output_data
+	done
+
+	IFS=" "
+}
+
+
+show_local()
+{
+	local _errcode _status
+
+	show_header
+	show_jaildata_from_sql local
+}
+
+show_vhid()
+{
+	show_local
+}
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_local | /usr/bin/column -t

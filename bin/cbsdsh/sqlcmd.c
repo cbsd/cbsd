@@ -86,6 +86,8 @@ sqlitecmd(int argc, char **argv)
 	sqlite3_stmt   *stmt;
 	char		*cp;
 
+	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
+
 	if ((cp = lookupvar("sqldelimer")) == NULL)
 		delim = DEFSQLDELIMER;
 	else
@@ -136,6 +138,7 @@ sqlitecmd(int argc, char **argv)
 		tmp[-1] = 0;
 	}
 
+	sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
 	ret = 	sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 	if (ret == SQLITE_OK) {

@@ -40,14 +40,16 @@ really_create_base()
 				nobase=1
 				;;
 			*)
-				nobase=0
+				nobase=0 # 0 for jail2iso
 				init_target_arch
 				init_basedir
 				init_kerneldir
 				get_base
 				get_kernel
 				${ECHO} "${MAGENTA}Stage1: ${GREEN}jcreate...${NORMAL}"
-				jcreate jconf=${temprcconf}
+				echo "jcreate jconf=${temprcconf} pkg_bootstrap=0"
+				jcreate jconf=${temprcconf} pkg_bootstrap=0
+
 #				populate_freebsd_world
 #				populate_freebsd_kernel
 				customskel
@@ -61,11 +63,14 @@ really_create_vm()
 	if [ "${from_jail}" ]; then
 		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
 		[ -z "${swapsize}" ] && swapsize="0"
+
 		mountbase -o "" -p "" -d "" -c "" -s ""
-		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs}
+		#echo "jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs} fromfile=${temprcconf}"
+#		jail2iso jname=jail5    nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs} fromfile=${temprcconf} addmod=0
+		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 vm_guestfs=${vm_guestfs}
+		# fromfile=${temprcconf} addmod=0
+
 		jremove ${jname}
-		/bin/cp $temprcconf $rcconf
-		jregister jname=${jname} mode=new
 		create_fs ${data}
 		#test for zfs mounted & mount if not
 		case $zfsfeat in
@@ -78,8 +83,17 @@ really_create_vm()
 		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
 		#echo "/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}"
 		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
+
+#		if [ "${zfsfeat}" = "1" ]; then
+#			. $zfstool
+#			old_zvol="${is_zvol}"
+#                                new_zvol=$( echo ${is_zvol} |/usr/bin/sed s:${old}:${new}:g )
+#                                /sbin/zfs rename ${old_zvol} ${new_zvol}
+#                                /bin/ln -sf /dev/zvol/${new_zvol} ${i}
+
 	else
-		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
+#		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
+		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} 1; then
 			err 1 "Error: Couldn't create the image file. ${mdimage}"
 		fi
 	fi
@@ -109,7 +123,6 @@ else
 fi
 
 . ${temprcconf}
-
 . ${buildconf}
 . ${temprcconf}
 
@@ -120,22 +133,21 @@ readconf vm-${vm_os_type}-${vm_os_profile}.conf
 [ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 
 if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
-
-#	# change emulator type for jcreate
+	# change emulator type for jcreate
 	${SYSRC_CMD} -qf ${temprcconf} emulator="jail" > /dev/null 2>&1
 
 	if [ -n "${jprofile}" ]; then
+		. ${settingstui}
 		if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/jail-freebsd-${jprofile}.conf${NORMAL}"
-			/bin/cat ${etcdir}/jail-freebsd-${jprofile}.conf >> ${temprcconf}
+			merge_apply_profiles ${etcdir}/jail-freebsd-${jprofile}.conf ${temprcconf}
 		elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${NORMAL}"
-			/bin/cat ${etcdir}/defaults/jail-freebsd-${jprofile}.conf >> ${temprcconf}
+			merge_apply_profiles ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${temprcconf}
 		fi
 	fi
 
 	${SYSRC_CMD} -qf ${temprcconf} emulator="bhyve" > /dev/null 2>&1
-
 fi
 
 # re-read jail params and apply personal after profile
@@ -169,20 +181,25 @@ fi
 
 [ -d "${data}" ] && removedata ${data}
 
-create_fs ${data}
-
-[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
-[ ! -d ${path} -a "${baserw}" -eq 0 ] && mkdir -p ${path}
-[ ! -d ${jailfstabdir}  ] && mkdir -p ${jailfstabdir}
-[ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
+defdsk="dsk1.vhd"
+defnic="nic1.vhd"
 
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
+	really_create_vm
+	/bin/cp $jconf $rcconf
+else
+	create_fs ${data}
 fi
 
-/bin/cp $temprcconf $rcconf
+[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
+[ ! -d ${path} -a "${baserw}" -eq 0 ] && /bin/mkdir -p ${path}
+[ ! -d ${jailfstabdir}  ] && /bin/mkdir -p ${jailfstabdir}
+[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
+
+. ${rcconf}
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new
@@ -211,13 +228,6 @@ ${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
 /bin/rm -f $rcconf
 
 [ "${mdsize}" != "0" ] && unmountmd jroot=${data}
-
-defdsk="dsk1.vhd"
-defnic="nic1.vhd"
-
-if [ -z "${zfs_snapsrc}" ]; then
-	really_create_vm
-fi
 
 if [ -n "${virtio_type}" ]; then
 	${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"

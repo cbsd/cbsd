@@ -1,0 +1,111 @@
+#!/bin/sh
+#v10.0.2
+globalconf="${workdir}/cbsd.conf";
+MYARG="action sources"
+MYOPTARG="arch target_arch ver name basename stable dstdir"
+MYDESC="Working with CBSD Repository for upload"
+ADDHELP="action can be: upload, prepare\n
+sources can be: \"src obj base kernel\" and img\n\
+stable=1 for base_arch_X instead of base_arch_X_Y\n"
+CBSDMODULE="bsdstore"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+
+readconf buildworld.conf
+. ${workdir}/universe.subr
+
+init $*
+
+do_img()
+{
+	BDIR="${exportdir}/${name}.img"
+	#[ ! -f "${BDIR}" ] || err 0 "Image ready for upload"
+	echo "Exporting to image"
+	cbsd jexport jname=${name} name=${name}.img
+}
+
+
+do_upload()
+{
+	### UPLOAD ###
+	RFLAGS="--delete -avzz --partial --progress --password-file=/root/bin/cbsd_rsync.secrets"
+
+	#REPO=`cbsd getinfo -q repo`
+	case "${sources}" in
+		"src")
+			TFOLDER="src_${ver}"
+			SFOLDER="${tmpdir}/${TFOLDER}"
+			;;
+	"obj")
+		if [ -z "${basename}" ]; then
+			TFOLDER="obj_${arch}_${ver}"
+		else
+			TFOLDER="obj_${basename}_${arch}_${ver}"
+		fi
+		SFOLDER="${tmpdir}/${TFOLDER}"
+		;;
+	"base")
+		if [ -z "${basename}" ]; then
+			TFOLDER="base_${arch}_${ver}"
+		else
+			TFOLDER="base_${basename}_${arch}_${ver}"
+		fi
+		SFOLDER="${tmpdir}/${TFOLDER}"
+		;;
+	"kernel")
+		[ -z "${name}" ] && name="GENERIC"
+		TFOLDER="kernel_${name}_${arch}_${ver}"
+		SFOLDER="${tmpdir}/${TFOLDER}"
+		;;
+	"img")
+		TFOLDER="img_${arch}_${ver}_${name}"
+		SFOLDER="${exportdir}/${name}.img"
+		;;
+	esac
+
+	if [ -d "${SFOLDER}" ]; then
+		/usr/local/bin/rsync ${RFLAGS} ${SFOLDER}/ rsync://cbsd@dev/${TFOLDER}/
+		return 0
+	fi
+
+	err 1 "No such source ${SFOLDER} here"
+	exit 0
+}
+
+### MAIN ###
+UPLOAD=0
+PREPARE=0
+over=$ver
+oarch=$arch
+
+[ "${action}" = "upload" ] && UPLOAD=1
+[ "${action}" = "prepare" ] && PREPARE=1
+[ -z "${dstdir}" ] && dstdir="${tmpdir}"
+[ -z "${sources}" ] && sources="base kernel"
+[ $UPLOAD -eq 1 -o $PREPARE -eq 1 ] || err 1 "Set action to upload or prepare"
+. ${buildconf}
+
+init_target_arch
+init_srcdir
+init_supported_arch
+init_basedir
+init_kerneldir
+
+if [ $UPLOAD -eq 1 ];then 
+	do_upload
+	exit
+fi
+
+if [ "${sources}" != "img" ]; then
+	cbsd mkdistribution distribution="${sources}" dstdir=${dstdir}
+else
+	[ -z "$name" ] && err 1 "Give me name"
+	ST=$( cbsd jstatus jname=${name} )
+	[ $? -eq 0 ] && err 1 "Jail not exist"
+	[ $ST -gt 0 ] && err 1 "Jail must be offline. Please stop them"
+	do_img
+fi

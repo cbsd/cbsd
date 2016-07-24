@@ -16,7 +16,7 @@ mvdata()
 	[ -d "${_dst}" ] && err 1 "${_dst} directory exist. Please remove them first"
 
 	if [ "${zfsfeat}" = "0" ]; then
-		mv ${_src} ${_dst}
+		/bin/mv ${_src} ${_dst}
 		return 0
 	fi
 
@@ -83,11 +83,26 @@ clonedata()
 			/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
 			/sbin/zfs mount ${_zpool}/${jname}
 		else
-			mkdir -p ${_dst}
+			/bin/mkdir -p ${_dst}
 		fi
 	fi
 
 	${_go} ${_src}/* ${_dst}/
+
+	# additional loop to check for symlink and zvol
+	if [ $zfsfeat -eq 1 ]; then
+		for i in $( /usr/bin/find ${_dst}/ -type l -depth 1 -maxdepth 1 ); do
+			if is_getzvol ${i}; then
+				imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+				# create_bhyvedsk ?
+				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+				new_zvol=$( echo ${is_zvol} |/usr/bin/sed s:${old}:${new}:g )
+				/sbin/zfs create -V ${imgbytes} -o volmode=dev ${new_zvol}
+				/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
+				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
+			fi
+		done
+	fi
 }
 
 # remove data from disk
@@ -105,9 +120,26 @@ removedata()
 	[ ! -d "${_data}" ] && return 0
 
 	if [ "${zfsfeat}" = "1" ]; then
+
+		for i in $( /usr/bin/find ${data}/ -type l -depth 1 -maxdepth 1 ); do
+			if is_getzvol ${i}; then
+				/sbin/zfs destroy ${is_zvol}
+			fi
+			/bin/rm -f ${i}
+		done
+
+		# extra check for zfs still exist
+		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
+		if [ -n "${ZPOOL}" ]; then
+			local _jailfs="${ZPOOL}/bcbsd-${jname}-dsk1.vhd ${ZPOOL}/${jname}"
+			local i
+			for i in ${_jailfs}; do
+				/sbin/zfs list ${i} >/dev/null 2>/dev/null
+				[ $? -eq 0 ] && /sbin/zfs destroy ${i}
+			done
+		fi
 		unmountdata ${_data}
-		/sbin/zfs destroy -r "${ZPOOL}"
-		[ -d "${_data}" ] && rmdir ${_data}
+		[ -d "${_data}" ] && /bin/rm -rf ${_data}
 	elif [ "${hammerfeat}" = "1" ]; then
 		destroy_hammer_fs ${jname}
 	else
@@ -180,7 +212,6 @@ create_zfs_fs()
 
 
 #  create_hammer_fs jails
-#
 create_hammer_fs()
 {
 	[ -z "${1}" ] && return 1
@@ -190,7 +221,6 @@ create_hammer_fs()
 }
 
 #  destroy_hammer_fs jails
-# 
 destroy_hammer_fs()
 {
 	[ -z "${1}" ] && return 1

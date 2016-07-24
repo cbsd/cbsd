@@ -1,0 +1,229 @@
+#!/usr/local/bin/cbsd
+. ${subr}
+. ${strings}
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+
+	local title=" VALE switch list "
+	hline=
+
+	local prompt="${_desc}"
+	local sqldelimer=" "
+
+	local mark
+
+	local menu_list=$( cbsdsql local SELECT idx,name FROM vale | while read id name; do
+		eval mark=\$vale_selected_${name}
+		if [ "${mark}" = "1" ]; then
+			mark="X"
+		else
+			mark=" "
+		fi
+		echo "'${name}'	'[${mark}] vale=${name}'	'Switch named ${name}'"
+	done ) || err 1 "${MAGENTA}Error while create vale map${NORMAL}"
+
+	[ -z "${menu_list}" ] && menu_list="''	'no data'	''"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Remove\"               \
+		--extra-button                          \
+		--extra-label \"Add\"                   \
+		--help-button				\
+		--help-label \"Exit\"			\
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+vale_add()
+{
+	local _par VAL
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select and edit limit"
+	local hline=
+
+	local title=" Add vale "
+	local _mydesc
+
+	# default
+	local menu_list=
+
+	menu_list="
+		'name'		'${name}'		'Switch name'
+	"
+
+	menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	local name
+
+	case $retval in
+		${DIALOG_OK})
+			case "${mtag}" in
+				"-"|"EXIT")
+					return 1
+					;;
+				name)
+					name=
+					cbsd_inputbox_simple && name="${mtag}"
+					[ -z "${name}" ] && return 0
+					cbsdsql local "INSERT INTO vale ( name ) VALUES ( \"${name}\" )"
+					return ${retval}
+					;;
+			esac
+	esac
+
+	return ${retval}
+}
+
+
+vale_remove()
+{
+	local _i
+	local _vales=
+
+	local vale_list=$( cbsdsql local SELECT name FROM vale )
+
+	for _i in ${vale_list}; do
+		eval mark=\$vale_selected_${_i}
+		[ "${mark}" = "1" ] && _vales="${_vales} ${_i}"
+	done
+
+	for _i in ${_vales}; do
+		cbsdsql local "DELETE FROM vale WHERE name='${_i}'"
+	done
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG=""
+MYOPTARG=""
+MYDESC="Edit properties for vitual image of VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
+. ${settingstui}
+. ${dialog}
+. ${workdir}/carp.subr
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " vales "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-")
+					continue
+					;;
+				*)
+					vale=${mtag%% *}
+					# val=${mtag##* }
+					eval mark=\$vale_selected_${vale}
+					if [ "${mark}" = "1" ];then
+						eval "vale_selected_${vale}=\"0\""
+					else
+						eval "vale_selected_${vale}=\"1\""
+					fi
+					;;
+			esac
+			;;
+		${DIALOG_CANCEL})
+			vale_remove
+			continue
+			;;
+		${DIALOG_EXTRA})
+			vale_add
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

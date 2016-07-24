@@ -29,7 +29,8 @@ clean:
 	${RM} -f misc/daemon
 	${RM} -f misc/resolv
 	${RM} -f tools/xo
-
+	${RM} -f tools/vale-ctl
+	${RM} -f tools/bridge
 
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
@@ -46,6 +47,8 @@ cbsd:
 	${CC} misc/src/daemon.c -lutil -o misc/daemon && ${STRIP} misc/daemon
 	${CC} misc/src/resolv.c -o misc/resolv && ${STRIP} misc/resolv
 	${CC} tools/src/xo.c -lxo -I/usr/include/libxo -I/usr/local/include/libxo -L/usr/local/lib -lxo -lutil -o tools/xo && ${STRIP} tools/xo
+	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
+	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
 
