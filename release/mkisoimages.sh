@@ -22,7 +22,6 @@ make_efi()
 {
 	local _md _tmpmnt
 
-#	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=100
 	/bin/dd if=/dev/zero of=/tmp/efiboot.$$.img bs=4k count=200
 
 	_md=$( /sbin/mdconfig -a -t vnode -f /tmp/efiboot.$$.img )
@@ -33,7 +32,7 @@ make_efi()
 	/bin/cp ${CHROOT}/boot/loader.efi ${_tmpmnt}/efi/boot/bootx64.efi
 	/sbin/umount ${_tmpmnt}
 	/sbin/mdconfig -d -u ${_md}
-	rmdir ${_tmpmnt}
+	/bin/rmdir ${_tmpmnt}
 }
 
 [ -z "${LABEL}" ] && LABEL="NOLABEL"
@@ -59,8 +58,10 @@ fi
 
 if [ ${EFI} -eq 1 ]; then
 	make_efi
+	echo "EFI enabled"
 	bootable="-o bootimage=i386;/tmp/efiboot.$$.img -o no-emul-boot -o bootimage=i386;${CHROOT}/boot/cdboot -o no-emul-boot"
 else
+	echo "EFI disabled"
 	bootable="-o bootimage=i386;${CHROOT}/boot/cdboot -o no-emul-boot"
 fi
 

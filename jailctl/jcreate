@@ -1,13 +1,14 @@
 #!/usr/local/bin/cbsd
-#v10.3.0
+#v11.0.0
 MYARG="jconf"
-MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc"
-MYDESC="Create jail from config file"
+MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap"
+MYDESC="Create jail from config file. If jail exist and autorestart=1 - jset will be used to update params."
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
 customskel = additional skel directory applyed above jail structrure\n\
 fstablocal = additional fstab file stored as fstab.local\n\
 jprofile = specify jail profile for creating jail\n\
-zfs_snapsrc = use ZFS snapshot as data source\n"
+zfs_snapsrc = use ZFS snapshot as data source\n\
+pkg_bootstrap= 0,1; overwrite pkg_bootstrap from con file.\n"
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate.html"
 
@@ -18,6 +19,8 @@ EXTHELP="wf_jcreate.html"
 . ${jfs}
 
 init $*
+
+[ -z "${autorestart}" ] && autorestart=0
 
 mkfstab() {
 	if [ $baserw -eq 0 ]; then
@@ -36,8 +39,34 @@ EOF
 	fi
 }
 
+install_and_apply_helpers()
+{
+	local _srcfile="${1}"
+
+	local module=$( cbsdsql ${_srcfile} SELECT helpername FROM system |/usr/bin/awk '{printf $1}' )
+
+	${ECHO} "${MAGENTA}Install and apply helpers ${_srcfile}: ${GREEN}${module}${NORMAL}"
+
+	local helperdir="${jailsysdir}/${jname}/helpers"
+
+	[ ! -d "${helperdir}" ] && /bin/mkdir -p ${helperdir}
+
+	local formfile="${helperdir}/${module}.sqlite"
+
+	echo ":: /bin/cp -a ${_srcfile} ${formfile}"
+	/bin/cp -a ${_srcfile} ${formfile}
+
+	echo ":: imghelper module=${module} mode=apply jname=${jname} inter=0"
+	imghelper module=${module} mode=apply jname=${jname} inter=0
+
+
+}
+
+
 ### MAIN
 [ -n "${delpkglist}" ] && odelpkglist="${delpkglist}"
+# push pkg_bootstrap to orig_ variable
+[ -n "${pkg_bootstrap}" ] && orig_pkg_bootstrap="${pkg_bootstrap}"
 readconf zfs.conf
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -96,7 +125,12 @@ init_basedir
 init_kerneldir
 
 jstatus jname=${jname} > /dev/null 2>&1
-[ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
+
+if [ $? -ne 0 ]; then
+	[ ${autorestart} -eq 0 ] && err 1 "${MAGENTA}Jail with ${jname} already exist. Use autorestart=1 for updating via jset${NORMAL}"
+	jset jname=${jname} jconf=${jconf} autorestart=1
+	exit 0
+fi
 
 get_base
 
@@ -181,29 +215,14 @@ jregister jname=${jname} mode=new status=3
 
 res=$?
 
-# pkg bootstrap && user accounting
-if [ "${ver}" != "empty" ]; then
-
-	if [ ${applytpl} -eq 1 -a "${pkg_bootstrap}" = "1" ]; then
-		pkg mode=bootstrap jname=${jname} ||true
-	fi
-
-	if [ -n "${user_pw_root}" ]; then
-		passwd jname=${jname} user="root" pw="${user_pw_root}"
-	fi
-
-	if [ -n "${sysrc_enable}" ]; then
-		for i in ${sysrc_enable}; do
-			sysrc jname=${jname} ${i}_enable="YES"
-		done
-	fi
-
-	[ -n "${user_add}" ] && adduser jname=${jname} mode=add fromfile="${jconf}"
-fi
-
-[ -n "${odelpkglist}" ] && delpkglist="${odelpkglist}"
-
 if [ ${res} -eq 0 ]; then
+	. ${workdir}/jcreate.subr
+
+	# pkg bootstrap && user accounting
+	if [ "${ver}" != "empty" ]; then
+		postcreate_module_action ${jname} ${jconf}
+	fi
+
 	echo
 	${ECHO} "${MAGENTA}To edit VM properties use: ${GREEN}cbsd jconfig jname=${jname}${NORMAL}"
 	${ECHO} "${MAGENTA}To start VM use: ${GREEN}cbsd jstart ${jname}${NORMAL}"
@@ -215,28 +234,33 @@ if [ ${res} -eq 0 ]; then
 
 	/bin/rm -f $rcconf
 
-	#[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
-	# pkg area
-	if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
-		if [ ! -f "${pkglist}" ]; then
-			pkg mode=install jname=${jname} ${pkglist}
-		else
-			pkg mode=install pkglist="${pkglist}" jname=${jname}
-			[ $delpkglist -eq 1 ] && /bin/rm -f ${pkglist}
-		fi
-	fi
-
 	[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
 	# set status to Off
 	cbsdsql local UPDATE jails SET status=0 WHERE jname=\"${jname}\"
-	exit 0
 else
 	${ECHO}
 	${ECHO} "${MAGENTA}Creating ${jname} failed: ${GREEN}cbsd jregister${NORMAL}"
 	${ECHO} "${MAGENTA}Please review bad config file: ${GREEN}/tmp/rc.conf_${jname}${NORMAL}"
 	mv $rcconf /tmp
 	#cleanup
-	[ -f "${mount_fstab}" ] && rm -f ${mount_fstab}
+	[ -f "${mount_fstab}" ] && /bin/rm -f ${mount_fstab}
 	removedata ${data}
 	exit 1
 fi
+
+
+for i in ${with_img_helpers}; do
+
+	if [ ! -r "${i}" ]; then
+		${ECHO} "${MAGENTA}Helper doesn't available by path: ${GREEN}${i}${NORMAL}"
+		continue
+	fi
+
+	install_and_apply_helpers ${i}
+done
+
+
+# autostart asap upon jail created
+[ "${runasap}" = "1" ] && jstart ${jname}
+
+exit 0

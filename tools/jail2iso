@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.0.6
 globalconf="${workdir}/cbsd.conf"
 MYARG="jname dstdir media"
 MYOPTARG="dstname name label product publisher prunelist freesize host_hostname ip4_addr gw4 timezone nameserver nic inter quiet efi nobase swapsize fromfile vm_guestfs"
@@ -37,13 +37,13 @@ readconf buildworld.conf
 . ${workdir}/bhyve.subr
 
 readconf jail2iso.conf
-[ -r "${fromfile}" ] && . ${fromfile}
 init $*
 
 . ${buildconf}
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
+[ -r "${fromfile}" ] && . ${fromfile}
 [ -z "${quiet}" ] && quiet=0
 [ -z "${efi}" ] && efi=1
 [ -z "${swapsize}" ] && swapsize=0
@@ -309,7 +309,7 @@ create_img_for_dir()
 	all_size=$(( base_size + freesize + minfree1 + minfree2 + imgfreesize + swapsize ))
 	fs_size=$(( base_size + freesize + minfree1 + minfree2 ))
 
-	if ! bhyve_create_dsk ${2} ${all_size}; then
+	if ! bhyve_create_dsk ${2} ${all_size} 0; then
 		err 1 "Error: Couldn't create the image file. ${mdimage}"
 	fi
 }
@@ -317,7 +317,7 @@ create_img_for_dir()
 
 bhyve_zfs_install()
 {
-	local mnttmp
+	local mnttmp tmpjname
 	/sbin/kldstat -qm zfs || /sbin/kldload zfs
 	mnttmp=$( /usr/bin/mktemp -d )
 
@@ -357,6 +357,9 @@ fi
 /bin/rm -f /etc/rc.local
 EOF
 	epilogue_img ${mnttmp}
+
+	_post_module_action ${mnttmp}
+
 	/sbin/umount ${mnttmp}/var > /dev/null 2>&1
 	/sbin/umount ${mnttmp}/tmp > /dev/null 2>&1
 	/sbin/umount ${mnttmp} > /dev/null 2>&1
@@ -482,6 +485,67 @@ EOF
 	epilogue_img ${TMP_DIR}
 }
 
+
+# rootpath
+_post_module_action()
+{
+	local TMPFILE
+	local rootpath
+	local tmpjname
+
+	[ -n "${1}" ] && rootpath="${1}"
+
+	echo "HERE" > /tmp/1.txt
+
+	[ ! -d "${rootpath}" ] && return 0
+
+	tmpjname=$( path2jail root=${rootpath} )
+
+	echo "2" >> /tmp/1.txt
+
+	# create temporary jail for post-action
+	. ${workdir}/jcreate.subr
+	TMPFILE=$( /usr/bin/mktemp )
+
+	echo "fromfile $fromfile and $TMPFILE" >> /tmp/1.txt
+
+	if [ -r "${fromfile}" ]; then
+		echo "3" >> /tmp/1.txt
+		/bin/cp -a ${fromfile} ${TMPFILE}
+		${SYSRC_CMD} -qf ${TMPFILE} -x jname
+		${SYSRC_CMD} -qf ${TMPFILE} path="${rootpath}"
+		${SYSRC_CMD} -qf ${TMPFILE} data="${rootpath}"
+	else
+
+		echo "4 else" >> /tmp/1.txt
+
+		# additional area
+		[ -n "${user_pw_root}" ] && /bin/cat >> ${TMPFILE} <<EOF
+user_pw_root='${user_pw_root}';
+EOF
+
+		[ -n "${pkglist}" ] && echo "pkglist=\"${pkglist}\";" >> ${TMPFILE}
+		if [ -n "${srvlist}" -a -r "${srvlist}" ]; then
+			/bin/cat ${srvlist} >> ${TMPFILE}
+			/bin/rm -f ${srvlist}
+		fi
+	fi
+
+	# end of additional area
+	# pkg bootstrap && user accounting
+	echo "postcreate_module_action ${tmpjname} ${TMPFILE}" >> /tmp/1.txt
+	postcreate_module_action ${tmpjname} ${TMPFILE}
+
+	/bin/rm -f ${TMPFILE}
+	jcleanup jname=${tmpjname}
+
+	JAILRCCONF="${jailrcconfdir}/rc.conf_${tmpjname}"
+	# make sure jail is offline 
+	jstop jname=${tmpjname} > /dev/null 2>&1
+	junregister jname=${tmpjname}
+	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
+}
+
 # MAIN
 clear_tmp_dir
 [ $baserw -eq 1 ] && path=$data
@@ -547,6 +611,7 @@ case "${media}" in
 		fi
 
 		unit=$( /sbin/mdconfig -a -t vnode -f ${dstdir}/${dstname} )
+
 		[ $? -ne 0 ] && err 1 "mdconfig failed"
 
 		case "${vm_guestfs}" in
@@ -573,6 +638,8 @@ case "${media}" in
 				cd ${TMP_DIR} && /bin/pax -p eme -rw . ${tdir}
 
 				/sbin/umount ${tdir} && /bin/rmdir ${tdir}
+				# mkimg -s gpt -b ${1}/boot/pmbr -p efi:=${1}/boot/boot1.efifat -p freebsd-boot:=${1}/boot/gptboot -p freebsd-ufs:=${2}.part -p freebsd-swap::1M -o ${2}
+				# mkimg -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname} -p freebsd-swap::1M -o /tmp/test.img
 				;;
 			"zfs")
 				bhyve_zfs_install

@@ -15,15 +15,6 @@ init $*
 _MYDIR=$(dirname `realpath $0`)
 SERVICE="adduser"
 
-#trap "INSTALLLOOP=0 ; clear; echo; echo \"Exit to shell. To return into bootstrap script, please type: cbsd wb_installer\";  echo" HUP INT ABRT BUS TERM EXIT
-
-### MAIN Route ###
-#set -e
-#    . ${_MYDIR}/srv_${SERVICE}.subr
-#set +e
-
-#CFG="/usr/local/etc/${SERVICE}.ini"
-
 f_getvar()
 {
 	local __var_to_get="$1" __var_to_set="$2"
@@ -84,11 +75,14 @@ getpw()
 # must be filled:
 # mandatory: login, pw
 # opt: uid, fullname, group, secgroup, shell
-adduser()
+c_adduser()
 {
 	local _res
 
 	[ -z "${login}" ] && ${ECHO} "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}" && return 1
+
+	echo " $exec_cmd user show $login "
+
 	_res=$( ${exec_cmd} user show ${login} 2>&1)
 	case $? in
 		0)
@@ -125,6 +119,8 @@ adduser()
 		CHROOT_EXEC="/usr/sbin/chroot ${path}"
 	fi
 
+echo "$CHROOT_EXEC /bin/sh  : pw useradd $login $ADDON"
+
 	${CHROOT_EXEC} /bin/sh <<EOF
 /usr/sbin/pw useradd ${login} ${ADDON} -m
 echo "${pw}" |/usr/sbin/pw mod user ${login} -h 0 -
@@ -139,12 +135,16 @@ remove()
 	${exec_cmd} user del ${login}
 }
 
+origjname=
 
 if [ -z "${jname}" ]; then
 	data=""
 	exec_cmd="/usr/sbin/pw"
 else
+	# push original jname to temporary variable for extract after fromfile action
+	origjname="${jname}"
 	. ${jrcconf}
+
 	[ $? -eq 1 ] &&  err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
 	[ $baserw -eq 1 ] && path=$data
@@ -182,19 +182,29 @@ fi
 
 if [ -r "${fromfile}" ]; then
 	. ${fromfile}
+
+	if [ -n "${origjname}" ]; then
+		# extract after fromfile original jname if exist
+		jname="${origjname}"
+		. ${jrcconf}
+	fi
+
 	[ $baserw -eq 1 ] && path=$data
 	[ -z "${user_add}" ] && exit 0
+
 	for i in ${user_add}; do
 		unset login pw fullname secgroup group shell res err
 		login="${i}"
+
 		f_getvar user_pw_${i} pw
 		f_getvar user_gecos_${i} fullname
 		f_getvar user_home_${i} home
 		f_getvar user_shell_${i} shell
 		f_getvar user_member_groups_${i} secgroup
+
 		case "${mode}" in
 			"add")
-				res=$( adduser )
+				res=$( c_adduser )
 				ret=$?
 				;;
 			"remove")

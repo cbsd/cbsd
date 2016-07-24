@@ -98,6 +98,13 @@ compile_dsk_args()
 		dsk_args="${dsk_args} ${T}"
 	done
 
+	if [ -r ${data}/cbsd.img ]; then
+		if ! next_pci_id; then
+			# no free pci bus
+		fi
+		dsk_args="${dsk_args} -s ${bhyve_pci_index}:0,virtio-blk,${data}/cbsd.img"
+	fi
+
 	[ -z "${dsk_args}" ] && return 1
 	return 0
 }
@@ -108,7 +115,7 @@ normalize_nic_hwaddr()
 	local _hwaddr
 	[ -z "${1}" ] && return 0
 	
-	_hwaddr=$( echo "${1}" |tr -d ":"| sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	_hwaddr=$( echo "${1}" |/usr/bin/tr -d ":"| /usr/bin/sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
 	printf ${_hwaddr}
 }
 
@@ -141,25 +148,34 @@ compile_nic_args()
 			pcislot=${nic_slot}
 		fi
 
-		# when ip=0 and interface=auto we must use default interface for upstream
-		if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
-			interface=$( getnics-by-ip ip=0.0.0.0 )
+		if [ "${nic_driver}" = "vale" ]; then
+			valeid=$( cbsdsql local SELECT idx FROM vale WHERE name=\"${nic_parent}\"  )
+			echo "${valeid} X : ${nic_parent} " >> /tmp/xxx.txt
+
+			[ -z "${valeid}" ] && err 1 "${MAGENTA}compile_nic_args: can't determine valen nic for: ${GREEN}${nic_parent}${NORMAL}"
+			mytap="vale${valeid}:${jname}"
+			echo "${mytap}" >> /tmp/xxx.txt
 		else
-			interface="${nic_parent}"
+			# when ip=0 and interface=auto we must use default interface for upstream
+			if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
+				interface=$( getnics-by-ip ip=0.0.0.0 )
+			else
+				interface="${nic_parent}"
+			fi
+
+			# always up parent device
+			/sbin/ifconfig ${interface} up
+
+			if ! mybridge=$( get_my_device bridge ${interface} ); then
+				err 1 "${MAGENTA}Error:get_my_device_bridge_for_${interface}: ${mybridge}${NORMAL}"
+			fi
+
+			mytap=$( get_my_tap ${mybridge} )
+			[ $? -eq 1 ] && err 1 "${MAGENTA}Error:get_my_tap_for_${mybridge}: ${GREEN}${mybridge}${NORMAL}"
+
+			/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
+			_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
 		fi
-
-		# always up parent device
-		/sbin/ifconfig ${interface} up
-
-		if ! mybridge=$( get_my_device bridge ${interface} ); then
-			err 1 "${MAGENTA}Error:get_my_device_bridge_for_${interface}: ${mybridge}${NORMAL}"
-		fi
-
-		mytap=$( get_my_tap ${mybridge} )
-		[ $? -eq 1 ] && err 1 "${MAGENTA}Error:get_my_tap_for_${mybridge}: ${GREEN}${mybridge}${NORMAL}"
-
-		/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
-		_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
 
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
@@ -305,16 +321,26 @@ compile_cd_args()
 # create new disk image for bhyve VMs
 # $1 full path
 # $2 size (eg: 1g)
+# $3 fsfeat ( 1 or 0 ) - use of skip FS features
 # require: /usr/local/bin/cbsd as shell
 # require: ${tools}
 #
-# if ! bhyve_create_dsk /tmp/olala.vhd 10g; then
+# if ! bhyve_create_dsk /tmp/olala.vhd 10g 0; then
 #    echo ";=("
 # fi
 bhyve_create_dsk()
 {
 	local newdsk="${1}"; shift
 	local imgsize="${1}"; shift
+	local fsfeat="${1}"; shift
+
+	if [ "${fsfeat}" = "0" ]; then
+		zfsfeat=0
+		hammerfeat=0
+	fi
+
+	local lunname=$( /usr/bin/basename ${newdsk} ) # for ZFS vol
+	local datadir=$( /usr/bin/dirname ${newdsk} )  # for ZFS vol
 
 	local convval imgbytes blockcount
 
@@ -331,11 +357,29 @@ bhyve_create_dsk()
 		imgbytes=$imgsize
 	fi
 
-	blockcount=$(( imgbytes  / 1048576 ))
-	/usr/bin/touch "${newdsk}"
-	/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
-#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
-	return 0
+	if [ "${zfsfeat}" = "1" ]; then
+		readconf zfs.conf
+		. $zfstool
+		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+#		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+#		if zfsroot $jname; then
+#			err 1 "$ZPOOL/$jname already in use"
+#		fi
+#		/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
+		/sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname}
+
+		[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
+		/bin/ln -s /dev/zvol/${DATA}/bcbsd-${jname}-${lunname} ${newdsk}
+
+	elif [ "${hammerfeat}" = "1" ]; then
+		err 1 "Hammer not supported yet"
+	else
+		blockcount=$(( imgbytes  / 1048576 ))
+		/usr/bin/touch "${newdsk}"
+		/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
+	#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
+		return 0
+	fi
 }
 
 # detach and remove disk image from bhyve VMs
@@ -348,7 +392,22 @@ bhyve_remove_dsk()
 	[ -z "${jname}" -o -z "${dsk}" ] && return 0
 
 	cbsdsql local DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk}\" AND jname=\"${jname}\"
-	[ -f "${data}/${dsk}" ] && rm -f "${data}/${dsk}"
+
+	if [ "${zfsfeat}" = "1" ]; then
+		readconf zfs.conf
+		. $zfstool
+
+		if is_getzvol ${data}/${dsk}; then
+			/sbin/zfs destroy ${is_zvol}
+		fi
+
+	elif [ "${hammerfeat}" = "1" ]; then
+		err 1 "Hammer not supported yet"
+	else
+		
+	fi
+
+	[ -f "${data}/${dsk}" -o -h "${data}/${dsk}" ] && /bin/rm -f "${data}/${dsk}"
 
 	return 0
 }
@@ -398,5 +457,34 @@ populate_dsk_size()
 	[ -n "${dsk_realsize}" ] && dsk_size="${dsk_realsize}/${dsk_size}"
 }
 
+
+compile_vnc_args()
+{
+	local vm_port
+
+	vnc_args=
+
+	case "${vm_vnc_port}" in
+		0)
+			vm_port=$( get_next_rd_port )
+			;;
+		1)
+			return 1
+			;;
+		*)
+			vm_port="${vm_vnc_port}"
+			;;
+	esac
+
+	if ! next_pci_id; then
+		return 1
+	fi
+
+	${ECHO} "${MAGENTA}VRDP is enabled. VNC port: ${GREEN}${vm_port}. ${MAGENTA}VNC pass: ${GREEN}cbsd${NORMAL}${NORMAL}"
+
+	vnc_args="-s ${bhyve_pci_index},fbuf,tcp=0.0.0.0:5900,w=800,h=600"
+#	vnc_args="-s ${bhyve_pci_index},fbuf,tcp=0.0.0.0:5900,w=800,h=600,wait"
+	return 0
+}
 ###
 fi

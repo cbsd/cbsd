@@ -1,14 +1,16 @@
 #!/usr/local/bin/cbsd
-#v10.0.6
+#v10.3.3
 MYARG="jname"
 CBSDMODULE="jail"
+ADDHELP="jconf=<path_to_file> - load and set settings from jconf\n"
+EXTHELP="wf_jset.html"
 
 . ${subr}
 
 [ ! -f ${sharedir}/jail-arg ] && err 1 "${GREEN}no jail-arg file${NORMAL}";
 . ${sharedir}/jail-arg
 
-MYOPTARG="$JARG"
+MYOPTARG="autorestart jconf $JARG"
 MYDESC="Modify parameter for jail"
 ADDHELP="mode=force for modification on the running jail\n"
 
@@ -16,6 +18,10 @@ ADDHELP="mode=force for modification on the running jail\n"
 . ${strings}
 
 init $*
+
+[ -z "${autorestart}" ] && autorestart=0
+
+need_for_restart=0
 
 # jid, interface, ip4_addr and jname must be set
 modify_ipaddr()
@@ -88,7 +94,7 @@ modify_ipaddr()
 
 	IFS=" "
 
-	[ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr |sed s:DHCP:${_dhcp}:g )
+	[ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr |/usr/bin/sed s:DHCP:${_dhcp}:g )
 
 	#construct ipX.addr string 
 	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
@@ -312,25 +318,76 @@ modify_mount_kernel()
 	esac
 }
 
+need_action()
+{
+	eval VAL="\$$i"
+	local oldval=
+
+	oldval=$( cbsdsql local SELECT ${i} FROM jails  WHERE jname=\"${jname}\" LIMIT 1 2>/dev/null )
+
+	[ "${oldval}" != "${VAL}" ] && return 1
+
+	return 0
+}
 
 update_jails()
 {
-	eval VAL=\$$i
-	cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
-	${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
+	eval VAL="\$$i"
+
+	# special word - we not update arch/ver to 'native'
+	case "${i}" in
+		arch|ver)
+			[ "${VAL}" = "native" ] && return 0
+			;;
+	esac
+
+	if ! need_action; then
+		cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+		${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
+		need_for_restart=1
+	fi
 }
 
-
+# MAIN
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
 jid=$( jstatus jname=${jname} )
 [ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
-for n in $@; do
+if [ -n "${jconf}" ]; then
+	[ ! -r "${jconf}" ] && err 1 "${MAGENTA}No such jconf file: ${GREEN}${jconf}${NORMAL}"
+	#jset jname=${jname} `/usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"`
+	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"| /usr/bin/sed 's/"/\\"/g'| /usr/bin/xargs )
+#	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr ";\n" " " )
+
+#	echo "[$my_arg]"
+	exec /bin/sh << EOF
+/usr/local/bin/cbsd jset "$my_arg" autorestart=$autorestart
+EOF
+	exit 0
+
+else
+	my_arg="$@"
+fi
+
+for n in ${my_arg}; do
 
 	argpart=${n%%=*}
 
+	[ "${argpart}" = "jconf" ] && continue
+	[ "${argpart}" = "autorestart" ] && continue
+	[ "${argpart}" = "exec_stop" ] && continue
+	[ "${argpart}" = "exec_start" ] && continue
+	[ "${argpart}" = "exec_poststop" ] && continue
+	[ "${argpart}" = "exec_poststart" ] && continue
+
+
 	for i in ${JARG}; do
 		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
+
+			if need_action; then
+				continue
+			fi
+
 			##### check for already running
 			if [ ${jid} -ne 0  ]; then
 				case "${argpart}" in
@@ -368,7 +425,11 @@ for n in $@; do
 						modify_allow_fdescfs
 						;;
 					*)
-						${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently unimplemented${NORMAL}"
+						if [ ${autorestart} -eq 0 ]; then
+							${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently unimplemented${NORMAL}"
+						else
+							update_jails
+						fi
 						;;
 				esac
 			else
@@ -377,6 +438,8 @@ for n in $@; do
 		fi
 	done
 done
+
+[ ${need_for_restart} -eq 1 -a ${autorestart} -eq 1 ] && jrestart ${jname}
 
 # exit code 0 is nessesary for dot()
 exit 0
