@@ -139,6 +139,7 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	}
 
 	close(kq);
+	close(fd);
 
 	if (nev != 0) {
 		if (ev.fflags & NOTE_DELETE) {
