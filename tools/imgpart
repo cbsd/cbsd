@@ -29,20 +29,20 @@ extractchunk()
 		fi
 	fi
 
-	if [ $BINARY -eq 0 ]; then
-		if [ -n "${out}" ]; then
-			if [ "$END" != "0" ]; then
-				/usr/bin/tail -n +${FROM} ${SRC} | /usr/bin/head -n${END} > ${out}
-			else ##this is empty file
-				/usr/bin/touch ${out}
-			fi
-		else
-			/usr/bin/tail -n +${FROM} ${SRC} | /usr/bin/head -n${END}
-		fi
-	else
-		[ -z "${out}" ] && out=$( pwd )
-		/usr/bin/tail +${FROM} ${SRC} | /usr/bin/tar xpf - -C "${out}" --numeric-owner
-	fi
+	[ -n "${out}" ] && /usr/bin/touch ${out}
+
+	case ${BINARY} in
+		0)
+			[ -z "${out}" ] && out="/dev/stdout"
+			imghelper --start ${FROM} --end ${TO} --infile ${SRC} --outfile ${out}
+			echo >> ${out}
+			;;
+		1)
+			[ -z "${out}" ] && out=$( /bin/pwd )
+			imghelper --start ${FROM} --end ${TO} --infile ${SRC} | /usr/bin/tar xpf - -C "${out}" --numeric-owner
+			;;
+	esac
+
 }
 
 # $hdrver used for determine correct struct of header
@@ -61,73 +61,58 @@ extractme()
 
 	DEST="${DATA}/${jname}"
 
-	SPACER="___NCSTART_"
 	BINARY=0
-	END=0
+	TO=0
 
 	case "${part}" in
 		"header")
-			FROM="$( /usr/bin/awk '/^___NCSTART_HEADER=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_RCCONF=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_HEADER=1"
+			TO="___NCSTOP_HEADER=1"
 			;;
 		"rcconf")
-			FROM="$( /usr/bin/awk '/^___NCSTART_RCCONF=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_FSTAB=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_RCCONF=1"
+			TO="___NCSTOP_RCCONF=1"
 			;;
 		"fstab")
-			FROM="$( /usr/bin/awk '/^___NCSTART_FSTAB=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_PKGINFO=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_FSTAB=1"
+			TO="___NCSTOP_FSTAB=1"
 			;;
 		"pkginfo")
-			FROM="$( /usr/bin/awk '/^___NCSTART_PKGINFO=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_DESCR=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_PKGINFO=1"
+			TO="___NCSTART_PKGINFO=1"
 			;;
 		"descr")
-			FROM="$( /usr/bin/awk '/^___NCSTART_DESCR=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_INFO=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_DESCR=1"
+			TO="___NCSTOP_DESCR=1"
 			;;
 		"info")
-			FROM="$( /usr/bin/awk '/^___NCSTART_INFO=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			if [ ${_imgpart} -ge 2 ]; then
-				TO="$( /usr/bin/awk '/^___NCSTART_LOCALFSTAB=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			else
-				TO="$( /usr/bin/awk '/^___NCSTART_SYSDATA=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			fi
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_INFO=1"
+			TO="___NCSTOP_INFO=1"
 			;;
 		"localfstab")
-			FROM="$( /usr/bin/awk '/^___NCSTART_LOCALFSTAB=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_SYSDATA=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			END=$((TO - FROM -1))
+			FROM="___NCSTART_LOCALFSTAB=1"
+			TO="___NCSTOP_LOCALFSTAB=1"
 			;;
 		"sysdata")
-			FROM="$( /usr/bin/awk '/^___NCSTART_SYSDATA=1/ { print NR + 1; exit 0; }' ${SRC} )"
-			TO="$( /usr/bin/awk '/^___NCSTART_DATA=1/ { print NR + 1; exit 0; }' ${SRC} )"
+			FROM="___NCSTART_SYSDATA=1"
+			TO="___NCSTOP_SYSDATA=1"
 			BINARY=1
-			END=0
 			;;
 		"data")
-			FROM="$( /usr/bin/awk '/^___NCSTART_DATA=1/ { print NR + 1; exit 0; }' ${SRC} )"
+			FROM="___NCSTART_DATA=1"
+			TO="___NCSTOP_DATA=1"
 			BINARY=1
-			END=0
 			;;
 	esac
 
-	if ! is_number ${FROM}; then
-		[ $FROM -ge 0 ] && extractchunk
-	else
-		err 1 "${MAGENTA}Error: image has no FROM/TO symbols. Looks like wrong format version or it is not CBSD image: ${GREEN}${jname}${NORMAL}"
-	fi
+	extractchunk || err 1 "${MAGENTA}Error: image has no FROM/TO symbols for ${part}. Probably wrong format version: ${GREEN}${jname}${NORMAL}"
 }
 
 packme()
 {
 	local _hwnum=$( /sbin/sysctl -qn hw.ncpu )
+	local _dsk_list _zvol_list _zvol_name
+
 	[ -z "${_hwnum}" ] && _hwnum="0"
 
 	case ${part} in
@@ -137,14 +122,45 @@ packme()
 			[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && . ${jailrcconfdir}/rc.conf_${jname}
 			[ -f "$jailsysdir/$jname/rc.conf_${jname}" ] && . $jailsysdir/$jname/rc.conf_${jname}
 			echo "add header"
-			echo "___NCSTART_HEADER=1_" > ${out}
-			echo "hdrver=\"2\"" >> ${out}
-			echo "jname=\"${jname}\"" >> ${out}
-			echo "compress=\"1\"" >> ${out}
-			echo "arch=\"${arch}\"" >> ${out}
-			echo "ver=\"${ver}\"" >> ${out}
 			DT=$( /bin/date "+%Y%m%d" )
-			echo "date=\"${DT}\"" >> ${out}
+
+			/bin/cat > ${out} <<EOF
+___NCSTART_HEADER=1
+hdrver="3"
+jname="${jname}"
+compress="1"
+arch="${arch}"
+ver="${ver}"
+date="${DT}"
+EOF
+
+			# collect storage info
+			case "${emulator}" in
+				bhyve)
+					# get info about storage
+
+					_zvol_list=0
+
+					# additional loop to check for symlink and zvol
+					if [ $zfsfeat -eq 1 ]; then
+						. $zfstool
+						for i in $( /usr/bin/find ${data}/ -type l -depth 1 -maxdepth 1 ); do
+							if is_getzvol ${i}; then
+								_zvol_name=$( /usr/bin/basename ${i} | /usr/bin/sed 's:\.vhd::g' )
+								imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+								echo "vm_zvol_size_${_zvol_name}=\"${imgbytes}\"" >> ${out}
+								_zvol_list=$(( _zvol_list + 1 ))
+							fi
+						done
+					fi
+					;;
+				*)
+			esac
+
+			_dsk_list=$( cbsdsql local SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" |/usr/bin/sed 's:\.vhd::g' )
+			echo "vm_dsk_list=\"${_dsk_list}\"" >> ${out}
+			echo "vm_zvol_list=\"${_zvol_name}\"" >> ${out}
+			echo "___NCSTOP_HEADER=1" >> ${out}
 			;;
 		rcconf)
 			# use jailrcconfdir for back compatible with CBSD < 10.1.0
@@ -154,7 +170,7 @@ packme()
 			else
 				[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && /bin/cat ${jailrcconfdir}/rc.conf_${jname} >> ${out}
 			fi
-			echo >> ${out}
+			echo "___NCSTOP_RCCONF=1" >> ${out}
 			;;
 		pkginfo)
 			echo "___NCSTART_PKGINFO=1" >> ${out}
@@ -164,7 +180,7 @@ packme()
 			else
 				echo "No pinfo" >> ${out}
 			fi
-			echo >> ${out}
+			echo "___NCSTOP_PKGINFO=1" >> ${out}
 			;;
 		descr)
 			echo "___NCSTART_DESCR=1" >> ${out}
@@ -174,7 +190,7 @@ packme()
 			else
 				echo "No descr" >> ${out}
 			fi
-			echo >> ${out}
+			echo "___NCSTOP_DESCR=1" >> ${out}
 			;;
 		info)
 			echo "___NCSTART_INFO=1" >> ${out}
@@ -184,17 +200,17 @@ packme()
 			else
 				echo "No info" >> ${out}
 			fi
-			echo >> ${out}
+			echo "___NCSTOP_INFO=1" >> ${out}
 			;;
 		fstab)
 			echo "___NCSTART_FSTAB=1" >> ${out}
 			[ -f "${jailfstabdir}/${jailfstabpref}${jname}" ] && /bin/cat ${jailfstabdir}/${jailfstabpref}${jname} >> ${out}
-			echo >> ${out}
+			echo "___NCSTOP_FSTAB=1" >> ${out}
 			;;
 		localfstab)
 			echo "___NCSTART_LOCALFSTAB=1" >> ${out}
 			[ -f "${jailfstabdir}/${jailfstabpref}${jname}.local" ] && /bin/cat ${jailfstabdir}/${jailfstabpref}${jname}.local >> ${out}
-			echo >> ${out}
+			echo "___NCSTOP_LOCALFSTAB=1" >> ${out}
 			;;
 		sysdata)
 			echo "add sysdata"
@@ -205,8 +221,8 @@ packme()
 			trap "/bin/rm -f ${TMPCHUNK}" 0 1 2 3 4
 			/usr/bin/tar cfz ${TMPCHUNK} ${jname} --numeric-owner > /dev/null 2>&1
 			/bin/cat ${TMPCHUNK} >> ${out}
-#			/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner ${jname}| /usr/bin/nice -n 20 /usr/bin/xz -e0 -T${_hwnum} >> ${out}
 			echo >> ${out}
+			echo "___NCSTOP_SYSDATA=1" >> ${out}
 			;;
 		data)
 			echo "add data"
@@ -217,12 +233,25 @@ packme()
 			eval data=\"\$data\"
 			[ -n "${data}" -a -d "${data}" ] || err 1 "No such data directory $data."
 			echo "___NCSTART_DATA=1" >> ${out}
-			cd $( dirname ${data} )
-#			TMPCHUNK="$tmpdir/tmp$$.tgz"
-#			trap "/bin/rm -f ${TMPCHUNK}" 0 1 2 3 4
-#			/usr/bin/tar cfz ${TMPCHUNK} $( basename ${data} ) --numeric-owner > /dev/null 2>&1
+			cd $( /usr/bin/dirname ${data} )
 			/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) |/usr/bin/nice -n 20 /usr/bin/xz -e0 -T${_hwnum} >> ${out}
-#			/bin/cat ${TMPCHUNK} >> ${out}
+			echo >> ${out}
+			echo "___NCSTOP_DATA=1" >> ${out}
+
+			# additional loop to check for symlink and zvol
+			if [ $zfsfeat -eq 1 ]; then
+				. $zfstool
+				for i in $( /usr/bin/find ${data}/ -type l -depth 1 -maxdepth 1 ); do
+					if is_getzvol ${i}; then
+						_zvol_name=$( /usr/bin/basename ${i} | /usr/bin/sed 's:\.vhd::g' )
+						echo "___NCSTART_ZVOL_${_zvol_name}=1" >> ${out}
+						/bin/dd if=/dev/zvol/${is_zvol} |/usr/bin/gzip --fast -c >> ${out}
+						echo >> ${out}
+						echo "___NCSTOP_ZVOL_${_zvol_name}=1" >> ${out}
+					fi
+				done
+			fi
+
 			;;
 	esac
 }
@@ -233,9 +262,12 @@ cd ${workdir}
 
 case "$mode" in
 	extract)
-		extractme
+		extractme || err 1 "Error extract"
 		;;
 	pack)
+		. ${jrcconf}
+		[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+		[ ${jid} -ne 0 -a "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}VM is online${NORMAL}"
 		[ -z "$out" ] && err 1 "${MAGENTA}out=tofile is mandatory${NORMAL}"
 		packme
 		;;

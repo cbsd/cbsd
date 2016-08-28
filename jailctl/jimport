@@ -43,17 +43,30 @@ DATA="${importdir}"
 SRC="${DATA}/${jname}.img"
 
 if [ ! -f "${SRC}" ]; then
-	SRC=$jname
+	SRC=${jname}
 	[ ! -f "${SRC}" ] && err 1 "${MAGENTA}No such jail or image here: ${GREEN}${SRC}${NORMAL}"
 fi
 
 TMPDIR="${ftmpdir}/header.$$"
-imgpart mode=extract jname=${SRC} part=header out=${TMPDIR}
+imgpart mode=extract jname=${SRC} part=header out=${TMPDIR} >/dev/null 2>&1 || imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR} || err 1 "header"
 
 [ ! -f "${TMPDIR}" ] && err 1 "${MAGENTA}No header info extracted${NORMAL}"
 
 . "$TMPDIR"
 [ -z "${hdrver}" ] && hdrver=0
+
+if [ ${hdrver} -ne 3 ]; then
+	${ECHO} "${MAGENTA}Legacy image version detected. Using imgpart2 for extract${NORMAL}"
+	/bin/rm -f ${TMPDIR}
+	imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR}
+	[ ! -f ${TMPDIR} ] && err 1 "Error retreive header v2"
+	. ${TMPDIR}
+	imgpart_tool="imgpart2"
+else
+	${ECHO} "${MAGENTA}CBSD Image, version: ${GREEN}${hdrver}${NORMAL}"
+	imgpart_tool="imgpart"
+fi
+
 origjname="${jname}"
 /bin/rm -f "${TMPDIR}"
 [ -n "${new_jname}" ] && jname=${new_jname}
@@ -68,7 +81,7 @@ JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
 # check for already existance and offline
 [ -d "${JAILDIR}" ] &&  err 1 "${MAGENTA}Jail datadir for ${jname} already exist. Please check and remove first: ${GREEN}${JAILDIR}${NORMAL}"
 
-imgpart mode=extract jname=${SRC} part=rcconf out=${JAILRCCONF} hdrver=${imgver}
+${imgpart_tool} mode=extract jname=${SRC} part=rcconf out=${JAILRCCONF} hdrver=${hdrver} || err 1 "error extract rcconf"
 
 [ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILRCCONF}
 
@@ -81,26 +94,24 @@ ${SYSRC_CMD} -qf ${JAILRCCONF} rcconf=${jailrcconfdir}/${jname}-rcconf >/dev/nul
 
 init_jail_path
 
-imgpart mode=extract jname=${SRC} part=fstab out=${JAILFSTAB} hdrver=${imgver}
+${imgpart_tool} mode=extract jname=${SRC} part=fstab out=${JAILFSTAB} hdrver=${hdrver} || err 1 "fsta"
 [ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILFSTAB}
 replacewdir file0="${JAILFSTAB}" file1="${JAILRCCONF}" old="CBSDROOT"
 
 if [ "${origjname}" != "${jname}" ]; then
 	/bin/mkdir -p ${jailsysdir}/tmp.$$
-	imgpart mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${imgver} > /dev/null
+	${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "sysdata"
 	# migrate new version of rc.conf and delete old
 	[ -f "${JAILRCCONF}" ] && /bin/mv ${JAILRCCONF} ${jailsysdir}/tmp.$$/${origjname}/
 	[ -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}" ] && /bin/rm -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}"
 	[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf ${jailsysdir}/${jname}
-	[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
+	[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && /bin/mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
 	/bin/rmdir ${jailsysdir}/tmp.$$
 else
-	imgpart mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${imgver} > /dev/null
+	${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${hdrver} > /dev/null || err 1 "sysdata"
 fi
 
-if [ ${hdrver} -ge 2 ]; then
-	imgpart mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${imgver}
-fi
+${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver} || err 1 "localfstab"
 
 if [ "${origjname}" = "${jname}" ]; then
 	case $zfsfeat in
@@ -118,14 +129,14 @@ if [ "${origjname}" = "${jname}" ]; then
 			fi
 			;;
 	esac
-	imgpart mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${imgver} > /dev/null
+	${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} > /dev/null || err 1 "data"
 else
 	# create temporary zfs file system for extract $origname data then rename it to $jname
 	case $zfsfeat in
 		0)
 			/bin/mkdir -p ${jaildatadir}/tmp.$$
-			imgpart mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${imgver} > /dev/null
-			[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
+			${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "data"
+			[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && /bin/mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
 			/bin/rmdir ${jaildatadir}/tmp.$$
 			;;
 		1)
@@ -134,8 +145,8 @@ else
 			if [ -z "${ZPOOL}" ]; then
 				${ECHO} "Can't determine ZPOOL for ${jaildatadir}. Working on non-zfs scenario"
 				/bin/mkdir -p ${jaildatadir}/tmp.$$
-				imgpart mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${imgver} > /dev/null
-				[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
+				${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "data"
+				[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && /bin/mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
 				/bin/rmdir ${jaildatadir}/tmp.$$
 			else
 				#create temp zfs
@@ -143,7 +154,7 @@ else
 				TMPJAILDATADIR="${TMPDATADIR}/${origjname}-${jaildatapref}"
 				/bin/mkdir -p ${TMPJAILDATADIR}
 				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${TMPJAILDATADIR} ${ZPOOL}/${jname}
-				imgpart mode=extract jname=${SRC} part=data out=${TMPDATADIR} hdrver=${imgver} > /dev/null
+				${imgpart_tool} mode=extract jname=${SRC} part=data out=${TMPDATADIR} hdrver=${hdrver} > /dev/null || err 1 "data"
 				/sbin/zfs unmount ${ZPOOL}/${jname}
 				/sbin/zfs set mountpoint=${JAILDIR} ${ZPOOL}/${jname}
 				if ! is_mounted ${JAILDIR}; then
@@ -153,6 +164,30 @@ else
 			fi
 			;;
 	esac
+fi
+
+# zvol area
+if [ -n "${vm_zvol_list}" ]; then
+	. ${workdir}/bhyve.subr
+	for i in ${vm_zvol_list}; do
+		vol_size=0
+		dsk=
+		eval vol_size="\$vm_zvol_size_${i}"
+
+		dsk=${jaildatadir}/${jname}-${jaildatapref}/${i}.vhd
+
+		if ! bhyve_create_dsk ${dsk} ${vol_size} 1; then
+			err 1 "${MAGENTA}Unable bhyve_create_dsk for disk: ${i}${NORMAL}"
+		fi
+
+		# ___NCSTART_ZVOL_dsk1=1
+		# ___NCNCSTOP_ZVOL_dsk1=1
+
+#		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} > /usr/${i}.gz
+		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} | /usr/bin/gunzip -c > ${dsk}
+
+		# /bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
+	done
 fi
 
 # post action: modify ip if necessary
@@ -170,7 +205,11 @@ fi
 if [ -z "${new_host_hostname}" ]; then
 	mydomain=${host_hostname#*.}
 	if [ -n "${mydomain}" ]; then
-		new_host_hostname="${new_jname}.${mydomain}"
+		if [ -n "${new_jname}" ]; then
+			new_host_hostname="${new_jname}.${mydomain}"
+		else
+			new_host_hostname="${jname}.${mydomain}"
+		fi
 	else
 		new_host_hostname="${host_hostname}"
 	fi

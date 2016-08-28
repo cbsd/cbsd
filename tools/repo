@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v11.0.0
 globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
@@ -7,7 +7,7 @@ MYARG="action"
 MYOPTARG="mode quiet arch targer_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile"
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
-sources can be: src, obj, base, kernel, img, helpers, modules\n
+sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n
 mode can be: check, upgrade\n\
 stable=1 for RELENG_X\n\
 ver=any for mode=list for show all version (no for cur. version only\n\
@@ -103,11 +103,11 @@ getsrc()
 	${ECHO} "${MAGENTA}Extracting...${NORMAL}"
 	cd $workdir/tmp
 	set -e
-	tar xfz ${MYDIR}/src.txz
+	/usr/bin/tar xfz ${MYDIR}/src.txz
 	set +e
-	rm -f ${MYDIR}/src.txz
-	mkdir -p ${srcdir}/src_${ver}
-	mv ${workdir}/tmp/src_${ver} ${srcdir}/
+	/bin/rm -f ${MYDIR}/src.txz
+	/bin/mkdir -p ${srcdir}/src_${ver}
+	/bin/mv ${workdir}/tmp/src_${ver} ${srcdir}/
 	${ECHO} "${MAGENTA}Done...${NORMAL}"
 	DT=$( /bin/date "+%Y%m%d" )
 }
@@ -256,6 +256,13 @@ getbase()
 #		rm -f ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz.md5
 	fi
 
+	#idx platform name arch ver stable elf date
+	baseelf=
+	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
+
+	[ -z "${baseelf}" ] && baseelf="0"
+
+	register_base
 	${ECHO} "${MAGENTA}Done...${NORMAL}"
 
 	return 0
@@ -423,6 +430,50 @@ getimg()
 	[ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
 }
 
+getbhyve()
+{
+	local FHIER DST
+
+	[ -z "${name}" ] && err 1 "${MAGENTA}Empty name=${NORMAL}"
+
+	[ -z "${newjname}" ] && newjname="${name}"
+
+	DST="${importdir}/${newjname}.img"
+
+	if [ -f "${DST}" ]; then
+		getyesno "You already have ${DST}. Remove them?"
+		if [ $? -eq 0 -o $? -eq 3 ]; then
+			/bin/rm -f ${DST}
+		else
+			err 1 "${MAGENTA}You already have: ${GREEN}${DST}${NORMAL}"
+		fi
+	fi
+
+	jstatus jname=${newjname} > /dev/null 2>&1
+	[ $? -ne 0 ] && err 1 "${MAGENTA}You already have ${GREEN}${newjname}${MAGENTA} vm."
+
+	for MYREPO in ${repo}; do
+		${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
+		MIRROR="${MYREPO}/bhyve/${name}/mirror.html"
+		fetchme -q1 -u ${MIRROR} -o ${TF}
+
+		if [ $? -eq 0 ]; then
+			MYREPO=$( /bin/cat ${TF} )
+			${ECHO} "${MAGENTA}Found new mirror for ${name} ${NORMAL}: ${MYREPO}"
+		fi
+
+		${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
+		fetchme -o ${DST} -u ${MYREPO}/bhyve/${name}.img
+
+		[ $? -eq 0 ] || continue
+	done
+
+	[ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
+}
+
+
+
+
 gethelpers()
 {
 	DST="${sharedir}/helpers"
@@ -546,18 +597,25 @@ case "${action}" in
 		for i in ${repo}; do
 			if fetchme -q 1 -u "${i}/${sources}ls"; then
 				[ ${quiet} -ne 1 ] && ${ECHO} "${MAGENTA}Available sources on ${GREEN}$i:${NORMAL}"
-				if [ "${ver}" = "any" ]; then
-					ver="[[:alnum:]]"
-				else
-					[ -z "${ver}" ] && ver=$( /sbin/sysctl -n kern.osrelease|cut -d "-" -f1 )
-				fi
-				if [ "${arch}" = "any" ]; then
-					arch="[[:alnum:]]"
-				else
-					[ -z "${arch}" ] && arch=$( /sbin/sysctl -n hw.machine_arch )
-				fi
-				${GREP_CMD} -E ${arch}_${ver} ${TF} |/usr/bin/cut -d " " -f2-100
-				rm -f ${TF}
+				case "${sources}" in
+					"bhyve")
+						/bin/cat ${TF}
+					;;
+				*)
+					if [ "${ver}" = "any" ]; then
+						ver="[[:alnum:]]"
+					else
+						[ -z "${ver}" ] && ver=$( /sbin/sysctl -n kern.osrelease|cut -d "-" -f1 )
+					fi
+					if [ "${arch}" = "any" ]; then
+						arch="[[:alnum:]]"
+					else
+						[ -z "${arch}" ] && arch=$( /sbin/sysctl -n hw.machine_arch )
+					fi
+					${GREP_CMD} -E ${arch}_${ver} ${TF} |/usr/bin/cut -d " " -f2-100
+					;;
+				esac
+				/bin/rm -f ${TF}
 			fi
 		done
 		;;
@@ -638,6 +696,9 @@ case "${action}" in
 				;;
 			modules)
 				getmodules
+				;;
+			bhyve)
+				getbhyve
 				;;
 			*)
 				err 1 "${MAGENTA}Unknown sources: ${GREEN}${sources}${NORMAL}"
