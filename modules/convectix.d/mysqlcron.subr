@@ -1,0 +1,110 @@
+initmodule()
+{
+	TASKDIR="${_MYDIR}/new"
+	MASTERMYSQLPW="zelepuka"
+	MYSQL="/usr/local/bin/mysql"
+	MODULEDB="${MYNAME}_helper"
+	MODULEDB_FILE="${dbdir}/${MODULEDB}.sqlite"
+	MYSHARE="${_MYDIR}/share"
+	[ ! -f "${MYSQL}" ] && err 1 "No such mysql"
+	[ ! -f "${MODULEDB_FILE}" ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${MODULEDB_FILE} ${MYSHARE}/mysqlcron.schema clientdb
+}
+
+exec_grantstr()
+{
+	local _err=1
+
+	case "${acl}" in
+		"jname")
+			local IPS=$( /usr/local/bin/cbsd jget jname=${jname} mode=quiet ip4_addr 2>/dev/null )
+			[ -z "${IPS}" ] && return 1
+			local IFS=","
+
+			for i in ${IPS}; do
+				ipwmask ${i}
+				[ -z "${IWM}" ] && continue
+				sql_exec "GRANT ALL PRIVILEGES ON ${db}.* TO ${client}@'$IWM' IDENTIFIED BY '${cleanpw}';"
+				_err=$?
+			done
+
+			IFS=" "
+
+			# grant for admin resources like PMA
+			for i in ${ADD_GRANTIP}; do
+				sql_exec "GRANT ALL PRIVILEGES ON ${db}.* TO ${client}@'$i' IDENTIFIED BY '${cleanpw}';"
+				_err=$?
+			done
+			;;
+		"any")
+			sql_exec "GRANT ALL PRIVILEGES ON ${db}.* TO ${client}@'%' IDENTIFIED BY '${cleanpw}';"
+			_err=$?
+			;;
+		*)
+			local IFS=","
+			for i in ${acl}; do
+				ipwmask ${i}
+				[ -z "${IWM}" ] && continue
+				sql_exec "GRANT ALL PRIVILEGES ON ${db}.* TO ${client}@'$IWM' IDENTIFIED BY '${cleanpw}';"
+				_err=$?
+			done
+
+			IFS=" "
+
+			# grant for admin resources like PMA
+			for i in ${ADD_GRANTIP}; do
+				sql_exec "GRANT ALL PRIVILEGES ON ${db}.* TO ${client}@'$i' IDENTIFIED BY '${cleanpw}';"
+				_err=$?
+			done
+			;;
+	esac
+
+	[ ${_err} -eq 0 ] && sql_exec "FLUSH PRIVILEGES;"
+
+	return $?
+}
+
+sql_exec()
+{
+	local _err
+	_res=$( ${MYSQL} -uroot -p${MASTERMYSQLPW} mysql <<EOF
+$1
+EOF
+2>&1)
+
+	_err=$?
+	[ -n "${_res}" ] && echo ${_res}
+	return ${_err}
+}
+
+insert_sql()
+{
+
+	exec_grantstr || return 1
+
+	# default grant if zero
+	[ "${grant}" = "0" ] && grant="Select_priv='Y',\
+Insert_priv='Y',\
+Update_priv='Y',\
+Delete_priv='Y',\
+Create_priv='N',\
+Drop_priv='N',\
+Grant_priv='N',\
+References_priv='Y',\
+Index_priv='N',\
+Alter_priv='N',\
+Create_tmp_table_priv='Y',\
+Lock_tables_priv='Y',\
+Create_view_priv='Y',\
+Show_view_priv='Y',\
+Create_routine_priv='N',\
+Alter_routine_priv='N',\
+Execute_priv='N',\
+Event_priv='N',\
+Trigger_priv='Y'"
+
+	echo "UPDATE db SET ${grant} WHERE User='${client}' AND Db='${db}';"
+	echo
+	sql_exec "UPDATE db SET ${grant} WHERE User='${client}' AND Db='${db}';" || return 1
+
+	return 0
+}

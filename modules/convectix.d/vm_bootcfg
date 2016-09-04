@@ -1,0 +1,66 @@
+#!/usr/local/bin/cbsd
+#v10.1.2
+MYARG="jname ip4_addr gw mask"
+MYOPTARG="nameserver"
+MYDESC="Configure first/primary settings for ConvectIX VM Appliance"
+ADDHELP=""
+CBSDMODULE="convectix"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${workdir}/universe.subr
+. ${workdir}/bhyve.subr
+. ${tools}
+init $*
+
+orig_ip4_addr="${ip4_addr}"
+orig_gw="${gw}"
+orig_mask="${mask}"
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}Not found: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+dsk_path="${jaildatadir}/${jname}-${jaildatapref}"
+system_dsk_path="${dsk_path}/cbsd.img"
+
+[ ! -d ${dsk_path} ] && /bin/mkdir -p ${dsk_path}
+
+readconf freecloud.conf
+
+if [ -z "${convectix_ssh_pubkey}" ]; then
+	_md5name=$( /sbin/md5 -qs ${nodename} )
+	_keyfile="${sshdir}/${_md5name}.id_rsa"
+	convectix_ssh_pubkey="${sshdir}/authorized_keys"
+fi
+
+[ ! -f ${convectix_ssh_pubkey} ] && err 1 "${MAGENTA}Unable to read pubkey: ${GREEN}${convectix_ssh_pubkey}${NORMAL}"
+[ -z "${nameserver}" ] && nameserver="8.8.8.8,8.8.4.4"
+
+/bin/cat > ${system_dsk_path} <<CEOF
+#!/bin/sh
+cat > /root/bin/network.txt <<EOF
+ip4_addr="${orig_ip4_addr}"
+netmask="${orig_mask}"
+gw="${orig_gw}"
+nameserver="${nameserver}"
+EOF
+CEOF
+
+if [ -f ${_pubfile} ]; then
+	# copy content of _pubfile in /root/.ssh/authorized_keys inside vm
+
+	/bin/cat >> ${system_dsk_path} <<CEOF
+cat > /root/.ssh/authorized_keys <<EOF
+CEOF
+
+	/bin/cat ${convectix_ssh_pubkey} >> ${system_dsk_path}
+
+	/bin/cat >> ${system_dsk_path} <<CEOF
+EOF
+CEOF
+fi
+
+/usr/bin/truncate -s1m ${system_dsk_path}
+

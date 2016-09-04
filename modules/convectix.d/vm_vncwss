@@ -1,0 +1,72 @@
+#!/usr/local/bin/cbsd
+#v10.1.2
+MYARG="jname permit"
+MYOPTARG=""
+MYDESC="Launch wss to vnc"
+CBSDMODULE="convectix"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${workdir}/universe.subr
+. ${workdir}/bhyve.subr
+. ${tools}
+init $*
+
+
+[ ! -f ${jailsysdir}/${jname}/vnc_port ] && err 1 "${MAGENTA}No vnc_port file${NORMAL}"
+
+port=$( /bin/cat ${jailsysdir}/${jname}/vnc_port |awk '{printf $1}' )
+
+/bin/cat > /usr/local/etc/supervisor.d/vnc2wss.conf <<EOF
+[program:vnc2wss]
+environment=PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin"
+command=/usr/home/web/cp/cp/public/novnc/utils/launch.sh --listen 6081 --vnc 127.0.0.1:${port}
+directory=/usr/home/web/cp/cp/public/novnc
+stdout_logfile=/var/log/supervisor/vnc2wss.log
+stderr_logfile=/var/log/supervisor/vnc2wss.err
+numprocs=1
+numprocs_start=1
+autostart=true
+autorestart=true
+user=web
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=10
+stderr_logfile_maxbytes=10MB
+stderr_logfile_backups=10
+EOF
+
+#/usr/local/bin/supervisorctl reread
+#/usr/local/bin/supervisorctl restart vnc2wss
+
+cat > /usr/local/etc/nginx/vnc.d/vnc.conf <<EOF
+stream {
+	upstream cbsd_vnc {
+		server 127.0.0.1:6081;
+	}
+
+	server {
+		listen ${nodeip}:6080;
+
+		allow ${permit};
+		allow ${nodeip};
+		deny all;
+
+		proxy_pass cbsd_vnc;
+	}
+}
+EOF
+
+/usr/sbin/service nginx reload
+/usr/sbin/service supervisord stop
+
+/bin/ps -axfw -w -o pid,ucomm,command  |/usr/bin/grep "novnc 6081" | while read _pid _ucomm _cmd; do
+	case "${_ucomm}" in
+		python*)
+			#echo $_pid >> /tmp/aaa.txt
+			kill -9 ${_pid}
+			;;
+	esac
+done
+/usr/sbin/service supervisord start
+sleep 3

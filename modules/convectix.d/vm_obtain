@@ -1,0 +1,114 @@
+#!/usr/local/bin/cbsd
+#v11.0.0
+MYARG="jname vm_size vm_cpus vm_ram vm_os_type"
+MYOPTARG="authkey ip4_addr gw authkey host_hostname mask"
+MYDESC="Obtaing new VM"
+ADDHELP=""
+CBSDMODULE="convectix"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${workdir}/universe.subr
+. ${workdir}/bhyve.subr
+. ${tools}
+init $*
+
+if [ -n "${vm_size}" ]; then
+	orig_vm_size="${vm_size}"
+fi
+
+if [ -n "${mask}" ]; then
+	orig_mask="${mask}"
+fi
+
+if [ -n "${vm_cpus}" ]; then
+	orig_vm_cpus="${vm_cpus}"
+fi
+
+if [ -n "${vm_ram}" ]; then
+	orig_vm_ram="${vm_ram}"
+fi
+
+if [ -z "${ip4_addr}" ]; then
+	orig_ip4_addr="DHCP"
+else
+	orig_ip4_addr="${ip4_addr}"
+fi
+
+if [ -z "${gw}" ]; then
+	orig_gw="10.0.0.1"
+else
+	orig_gw="${gw}"
+fi
+
+if [ -z "${host_hostname}" ]; then
+	orig_host_hostname="${jname}.convectix.com"
+else
+	orig_host_hostname="${host_hostname}"
+fi
+
+if [ -z "${authkey}" ]; then
+	orig_authkey=0
+else
+	orig_authkey="${authkey}"
+fi
+
+if [ "${orig_authkey}" != "0" ]; then
+	[ ! -r "${orig_authkey}" ] && err 1 "${MAGENTA}No such pubkey: ${GREEN}${orig_authkey}${NORMAL}"
+fi
+
+. ${jrcconf}
+[ $? -eq 0 ] && err 1 "${MAGENTA}Already exist: ${GREEN}${jname}${NORMAL}"
+
+echo "READY"
+lockfile="/tmp/vm_obtain.lock"
+
+[ -f ${lockfile} ] && err 1 "Already locked $lockfile"
+
+readconf freecloud.conf
+
+/usr/bin/touch ${lockfile}
+trap "/etc/rc.d/ctld onestop > /dev/null 2>&1; /bin/rm -f ${lockfile}" HUP INT ABRT BUS TERM EXIT
+
+readconf freecloud.conf
+
+# client IP
+case ${vm_os_type} in
+	freebsd)
+		[ -z "${convectix_srv4freebsd_ip}" -o "${convectix_srv4freebsd_ip}" = "unset" ] && err 1 "${MAGENTA}Please set in freecloud.conf: ${GREEN}convectix_srv4freebsd_ip${NORMAL}"
+		template_vm="f120a" ## source for clone_vm
+		clone_vm="emptyf120a" ## source for new vm
+		login="freebsd"
+		pw="cbsd"
+		;;
+	linux)
+		[ -z "${convectix_srv4linux_ip}" -o "${convectix_srv4linux_ip}" = "unset" ] && err 1 "${MAGENTA}Please set in freecloud.conf: ${GREEN}convectix_srv4linux_ip${NORMAL}"
+		template_vm="u1604a" ## source for clone_vm
+		clone_vm="emptyu1604a" ## source for new vm
+		login="ubuntu"
+		pw="cbsd"
+		;;
+	*)
+		err 1 "VM obtain: unsupported vm_os_type type: $vm_os_type"
+		;;
+esac
+
+vm_size=$( echo ${orig_vm_size} |/usr/bin/tr -d "[:alpha:]" )
+
+brename old=${clone_vm} new=${jname}
+task mode=new /usr/local/bin/cbsd bclone old=${template_vm} new=${clone_vm} > /dev/null 2>&1
+echo "--"
+echo "vm_resize jname=${jname} size=${vm_size} ip4_addr=${orig_ip4_addr} gw=${orig_gw} authkey=${orig_authkey} vm_os_type=${vm_os_type} host_hostname=${orig_host_hostname} login=${login} pw=${pw}"
+timeout 60 vm_resize jname=${jname} size=${vm_size} ip4_addr="${orig_ip4_addr}" gw="${orig_gw}" authkey="${orig_authkey}" vm_os_type="${vm_os_type}" host_hostname="${orig_host_hostname}" login="${login} pw=${pw}"
+echo "--"
+echo "bset jname=${jname} vm_ram=${vm_ram}g vm_cpus=${vm_cpus}"
+bset jname=${jname} vm_ram="${vm_ram}g" vm_cpus="${vm_cpus}"
+
+/bin/rm -f ${lockfile}
+
+if [ -n "${mask}" ]; then
+	vm_bootcfg jname=${jname} ip4_addr=${orig_ip4_addr} gw=${orig_gw} mask=${orig_mask}
+fi
+
+#bstart ${jname}

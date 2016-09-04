@@ -1,0 +1,84 @@
+#!/usr/local/bin/cbsd
+#v10.0.4
+globalconf="${workdir}/cbsd.conf"
+CBSDMODULE="helpers"
+MYARG=""
+MYDESC="mysql helper for add,delete,modify accounts, create/remove and link db to the client jail"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${system}
+. ${tools}
+init $*
+
+#defines
+_MYDIR=$(dirname `realpath $0`)
+MYNAME="mysqlcron"
+ADD_GRANTIP="192.168.1.109 127.0.0.1"  # PHPMyAdmin and other
+
+### MAIN Route ###
+set -e
+	. ${_MYDIR}/${MYNAME}.subr
+set +e
+
+### MAIN ##
+initmodule
+
+sqldelimer=" "
+cbsdsql ${MODULEDB} SELECT client,jname,db,cleanpw,acl,grant,action FROM clientdb 2>/dev/null |while read client jname db cleanpw acl grant action; do
+	unset sqldelim
+
+	case "${action}" in
+		0)
+			echo "Nothing else matters for ${client}"
+			continue
+			;;
+		1)
+			[ -z "${cleanpw}" ] && echo "Empty cleanpw for ${client}." && continue
+			[ -z "${db}" ] && echo "Empty db for ${client}." && continue
+			[ -z "${jname}" ] && echo "Empty jname for ${client}." && continue
+			path=$( /usr/local/bin/cbsd jget jname=${jname} mode=quiet data 2>&1 )
+			[ $? -ne 0 ] && echo "Error for jget: ${path}" && continue
+			[ ! -d "${path}" ] && echo "No such dir: ${path}" && continue
+			[ ! -d "${path}/var/db/mysql" ] && mkdir -p ${path}/var/db/mysql && chown mysql:mysql ${path}/var/db/mysql
+			if [ ! -d "${path}/var/db/mysql/${db}" ]; then
+				sql_exec "CREATE DATABASE IF NOT EXISTS ${db};" || continue
+			else
+				echo "Base already exist in jail. Just link it"
+			fi
+
+			insert_sql
+
+			if [ -d "/var/db/mysql/${db}" -a ! -d "${path}/var/db/mysql/${db}" ]; then
+				[ ! -d "${path}/var/db/mysql" ] && mkdir -p ${path}/var/db/mysql
+				mv /var/db/mysql/${db} ${path}/var/db/mysql/
+			fi
+
+			ln -sfh ${path}/var/db/mysql/${db} /var/db/mysql/${db}
+			[ ! -h "/var/db/mysql/${db}" -o ! -d "${path}/var/db/mysql/${db}" ] && echo "database ${db} not created for $client from $jname" && continue
+
+			# update state
+			PW=$( sql_exec "SELECT Password FROM user where User='${client}' LIMIT 1" |cut -d " " -f 2 )
+			[ -n "${PW}" ] && cbsdsql ${MODULEDB} "UPDATE clientdb set md5pw='${PW}',action='0' WHERE client='${client}'"
+			echo "${client} added to SQL, db created and linked to MySQL/jail"
+			;;
+		2)
+			sql_exec "DELETE FROM db WHERE User='${client}';"
+			sql_exec "DELETE FROM user WHERE User='${client}';"
+			sql_exec "FLUSH PRIVILEGES;"
+			[ -h "/var/db/mysql/${db}" ] && rm -f "/var/db/mysql/${db}"
+			cbsdsql ${MODULEDB} "DELETE FROM clientdb WHERE client='${client}'"
+			path=$( /usr/local/bin/cbsd jget jname=${jname} mode=quiet data 2>&1 )
+			[ $? -ne 0 ] && echo "Error for jget: ${path}" && continue
+			[ -d "${path}/var/db/mysql/${db}" ] && rm -rf "${path}/var/db/mysql/${db}"
+			echo "${client} deleted from SQL and removed/unlinked from MySQL/jail"
+			;;
+		*)
+			echo "BAD ACTION : ${action}"
+			;;
+	esac
+done
