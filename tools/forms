@@ -49,19 +49,22 @@ dialog_menu_main()
 	local prompt="Use menu for select and edit limit"
 	local hline=
 	local defaultitem=
-
 	local mytargets=
 
 	f_dialog_default_fetch defaultitem
 
 	[ -n "${jname}" ] && mytargets="for ${jname} "
 
-	local title=" Image parameters ${mytargets}"
+	local title
 	local _mydesc
-
 	local menu_list=
-
 	local _id=0
+
+	if [ -n "${forms_title}" ]; then
+		title="${forms_title}"
+	else
+		title=" Image parameters ${mytargets}"
+	fi
 
 	for _items in ${param}; do
 
@@ -157,6 +160,96 @@ get_radio()
 }
 
 
+# $1 table
+get_checkbox()
+{
+	local param
+	local table="${1}"
+
+	[ -z "${table}" ] && return 1
+
+	param_list=$( cbsdsql ${formfile} SELECT text FROM ${table} ORDER BY order_id |/usr/bin/xargs )
+	local menu_list=
+	local x=0
+	local _par VAL
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for select"
+	local hline=
+	local defaultitem
+
+	local title=" syslog "
+	local _mydesc
+
+	local menu_list=
+
+	while [ 1 ]; do
+
+		menu_list=
+
+		for i in ${param_list}; do
+			eval _mytest=\$$i
+			if [ "${_mytest}" = "1" ]; then
+				export ${i}_mark="X"
+			else
+				export ${i}_mark=" "
+			fi
+		done
+
+		for item in ${param_list}; do
+			eval _mydesc="\$${helper}_desc"
+			eval _mytest=\$${item}_mark
+			[ -z "${_mytest}" ] && _mytest=" "
+			menu_list="${menu_list} '${item}'      '[${_mytest}]'     '${_mydesc}'"
+		done
+
+		menu_list="${menu_list} 'SELECT'      ''     'Select items'"
+
+		cbsd_menubox || return 0
+
+		retval=$?
+
+		index=${mtag%% *}
+		mychoice=${mtag##* }
+
+		case "${mychoice}" in
+			"SELECT")
+				mtag=
+				local num=0
+				for i in ${param_list}; do
+					eval _mytest=\$$i
+					if [ "${_mytest}" = "1" ]; then
+						if [ ${num} -eq 0 ]; then
+							mtag="${i}"
+						else
+							mtag="${mtag} ${i}"
+						fi
+						num=$(( num + 1 ))
+					fi
+				done
+#				printf "${mtag}"
+				return 0
+			;;
+			"-")
+				continue
+				;;
+			*)
+				eval _mytest=\$$mychoice
+				if [ ${_mytest} = "1" ]; then
+					export ${mychoice}="0"
+				else
+					export ${mychoice}="1"
+				fi
+				defaultitem="${mychoice}"
+				;;
+		esac
+	done
+
+	mtag=$( cbsdsql ${formfile} SELECT id FROM ${table} WHERE text=\"${menu_choice}\" )
+
+	return $retval
+}
+
+
 # inputform
 get_helper_value()
 {
@@ -169,17 +262,41 @@ get_helper_value()
 	eval _type=\$${mtag}_type
 	eval _link=\$${mtag}_link
 
+	# errcode from dialog
+	local dialog_ok=0
+
 	case "${_type}" in
 		inputbox)
 			f_dialog_input _input "${_mydesc}" "${VAL}" "${_message}" || return $?
 			;;
 		password)
-			f_dialog_input _input "${_mydesc}" "${VAL}" "${_message}" || return $?
+			_defaultvalue="${defaultvalue}"
+			_mtag="${mtag}"
+			if get_password ${_link}; then
+				eval ${_mtag}_password="\"${mtag}\""
+				_input="*****"
+				dialog_ok="1"
+			fi
+			mtag="${_mtag}"
+			defaultvalue="${_defaultvalue}"
 			;;
 		radio|select)
 			_defaultvalue="${defaultvalue}"
 			_mtag="${mtag}"
-			get_radio ${_link} && _input="${mtag}"
+			if get_radio ${_link}; then
+				_input="${mtag}"
+				dialog_ok="1"
+			fi
+			mtag="${_mtag}"
+			defaultvalue="${_defaultvalue}"
+			;;
+		checkbox)
+			_defaultvalue="${defaultvalue}"
+			_mtag="${mtag}"
+			if get_checkbox ${_link}; then
+				_input="${mtag}"
+				dialog_ok="1"
+			fi
 			mtag="${_mtag}"
 			defaultvalue="${_defaultvalue}"
 			;;
@@ -187,7 +304,7 @@ get_helper_value()
 			;;
 	esac
 
-	[ -n "${_input}" ] && eval ${mtag}="\"${_input}\""
+	[ -n "${_input}" -o "${dialog_ok}" = "1" ] && eval ${mtag}="\"${_input}\""
 
 }
 
@@ -277,6 +394,7 @@ if [ -z "${helper_workdir}" ]; then
 fi
 
 check_version
+init_title
 
 sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
 

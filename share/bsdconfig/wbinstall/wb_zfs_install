@@ -1,0 +1,90 @@
+#!/bin/sh
+#v10.0.2
+globalconf="${workdir}/cbsd.conf";
+CBSDMODULE="webdev"
+MYARG="dsk"
+MYOPTARG="daemon"
+MYDESC="WebDev install script. wrapper for zfsinstall"
+ADDHELP="possible mode:\n"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+init $*
+
+#defines
+_MYDIR=$(dirname `realpath $0`)
+
+### MAIN Route ###
+set -e
+	. ${_MYDIR}/wb_installer.subr
+	. ${_MYDIR}/wb_zfs_install.subr
+	. ${_MYDIR}/wb_netcfg.subr
+set +e
+
+if [ -z "${daemon}" ]; then
+	echo "0:0:0" >${PROGRESS_FILE}
+	chmod 0777 ${PROGRESS_FILE}
+	daemon /usr/local/bin/cbsd wb_zfs_install daemon=1 $* >/dev/null 2>&1
+	exit
+fi
+
+
+### emulator
+#for i in `jot 10 1 100`; do
+#    if  [ $i -gt 10 ]; then
+#        STAGE="fs"
+#    fi
+#    if  [ $i -gt 50 ]; then
+#       STAGE="os"
+#    fi
+#    if  [ $i -gt 70 ]; then
+#        STAGE="pkg"
+#    fi
+#    if  [ $i -gt 90 ]; then
+#        STAGE="cfg"
+#    fi
+#    update_progress "${STAGE}:$i:0"
+#    sleep 1
+#done
+#exit
+### emulator
+
+update_progress "fs:1:0"
+init_distfiles
+update_progress "fs:5:0"
+init_zfs_arg
+
+[ ! -f "${IS_DISTRIBUTION}" ] && err 1 "You running in not distribution media mode (${IS_DISTRIBUTION}). Exit"
+[ ${numdsk} -eq 0 ] && err 1 "Invalid disk number"
+
+[ ! -d "${MPT}" ] && mkdir -p ${MPT}
+update_progress "copying basefile:28:0"
+set -e
+trap "cat ${ZFSINSTALL_LOG}" HUP INT ABRT BUS TERM EXIT
+${_MYDIR}/zfsinstall -u ${SRC_URL} ${darg} -p ${POOLNAME} -m ${MPT} > ${ZFSINSTALL_LOG}  2>&1
+set +e
+
+truncate -s2g ${MPT}/tmp/swp.dat
+SWP=$( mdconfig -a -t vnode -f ${MPT}/tmp/swp.dat )
+swapon /dev/${SWP} > /dev/null 2>&1
+
+trap "" HUP INT ABRT BUS TERM EXIT
+set_tz
+update_progress "os:40:0"
+copy_pwd
+update_progress "os:41:0"
+set_rcconf
+[ -f ${STORE_FILE} ] && /bin/cat ${STORE_FILE} >> ${MPT}/etc/rc.conf
+update_progress "pkg:62:0"
+set_pkg
+update_progress "cfg:89:0"
+set_cbsd
+update_progress "cfg:93:0"
+set_cfg
+update_progress "complete:99:0"
+swapoff /dev/${SWP} && mdconfig -d -u /dev/${SWP}
+update_progress "complete:100:0"
+sync

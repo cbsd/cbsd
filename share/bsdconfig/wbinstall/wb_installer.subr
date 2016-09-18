@@ -1,0 +1,178 @@
+#!/bin/sh
+
+#defines
+INSTALLLOOP=1
+PRODUCT="WebDev"
+# mount point for zfsinstall and operation in installed environment
+MPT="/tmp/zroot"
+
+show_menu()
+{
+	if [ -n "${ip}" ]; then
+		echo
+		${ECHO} "   ${BOLD}${PRODUCT}${MAGENTA} installer available via: ${GREEN}http://${ip}/${NORMAL}"
+		echo
+	else
+		echo
+		echo
+		echo
+	fi
+
+	${ECHO} "   ${BOLD}1 .. ${MAGENTA}Network setup (inteface: ${GREEN}${MYNIC}${MAGENTA})${NORMAL}"
+	#    ${ECHO} "   ${BOLD}2 .. ${MAGENTA}Storage setup (disks: ${GREEN}${MYDSK}${MAGENTA})${NORMAL}"
+
+	${ECHO} "   ${BOLD}0 .. ${MAGENTA}Reboot.${NORMAL}"
+
+	echo
+	echo
+	echo
+
+	${ECHO} "  ${MAGENTA} For drop in shell just interrupt script by Ctrl+C ${NORMAL}"
+}
+
+
+cfg_web()
+{
+	[ -n "${ip}" ] && ifconfig ${MYNIC} ${ip} -alias
+
+	arp -ad > /dev/null 2>&1
+
+	ip=${newip}
+
+	if [ -n "${newmask}" ]; then
+		mask=${newmask}
+		IPCFG="/sbin/ifconfig ${MYNIC} inet ${getip} netmask ${mask}"
+	else
+		unset mask
+		IPCFG="/sbin/ifconfig ${MYNIC} inet ${getip}"
+	fi
+
+	$IPCFG
+
+	if [ -n "${newgw}" ]; then
+		route add default ${newgw}
+		gw=$newgw
+	else
+		unset gw
+	fi
+}
+
+
+
+network() {
+	local _testmask
+	ip_with_prefix=0
+
+	printf "${MAGENTA}Enter IP (valid form sample: ${GREEN}192.168.0.10 ${MAGENTA}or${GREEN} 192.168.0.10/24${MAGENTA}): ${NORMAL}"
+	read getip
+
+	newip=$(echo $getip |cut -d "/" -f 1)
+	_testmask=$(echo $getip|grep /)
+
+	if [ -n "${_testmask}" ]; then
+		unset newmask
+	else
+		printf "${MAGENTA}Enter network mask (valid form sample: ${GREEN}255.255.255.0${MAGENTA}): ${NORMAL}"
+		read newmask
+	fi
+	printf "${MAGENTA}Enter network gateway (valid form sample: ${GREEN}192.168.0.1${MAGENTA}): ${NORMAL}"
+	read newgw
+
+	[ -n "${newip}" ] && cfg_web
+}
+
+storage() {
+	local _testmask
+	ip_with_prefix=0
+	local IFS
+
+	printf "${MAGENTA}Select disk for installing ${PRODUCT}: (valid form sample: ${GREEN}ada0${MAGENTA} or ${GREEN}da0 da1 da3${MAGENTA}): ${NORMAL}"
+	${ECHO} "${MAGENTA} Visible disks in your system: ${NORMAL}${GREEN}"
+	echo
+	IFS=":"
+	/usr/jails/misc/disks-list |while read a b c; do
+		SIZE=""
+		VENDOR=""
+		if [ -n "${c}" ]; then
+			c=$(( c / 1024 / 1024 / 1024 ))
+			SIZE=": ${c} GB"
+		fi
+		if [ -n "${b}" ]; then
+				VENDOR="(${b})"
+		fi
+		echo ">> ${a} << ${VENDOR} ${SIZE}"
+	done
+	IFS=" "
+	echo
+	${ECHO} "${NORMAL}Enter one or multiple disks (${MAGENTA}${BOLD}Warning! All data on selected disk will be desroyed!!!${NORMAL})"
+	echo
+	read getdsk
+
+	MYDSK=${getdsk}
+}
+
+disk_test()
+{
+	local nic_num=0 ALLNIC
+
+	dsk_num=$( /usr/jails/misc/disks-list|wc -l )
+
+	if [ ${dsk_num} -eq 0 ]; then
+		${ECHO} "${MAGENTA}No storage detected. Exit${NORMAL}"
+		exit
+	fi
+}
+
+
+# remove all gpt index and destroy gpart data
+cleandisk()
+{
+	local dsk=${1}
+	local i
+
+	gpart recover ${dsk} >/dev/null 2>&1
+
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		gpart delete -i ${i} ${dsk} >/dev/null 2>&1
+	done
+
+	gpart destroy ${dsk} >/dev/null 2>&1
+}
+
+
+install()
+{
+	local DSKARG=""
+
+	for i in ${MYDSK}; do
+		cleandisk ${i}
+		DSKARG="${DSKARG} -d ${i}"
+	done
+
+	${ECHO} "${MAGENTA}READY FOR ACTION: ${GREEN} please standby${GREEN}"
+
+	[ ! -d "${MPT}" ] && mkdir -p ${MPT}
+
+	${_MYDIR}/zfsinstall -u /usr/freebsd-dist ${DSKARG} -p zroot -m ${MPT} > /tmp/zfsinstall.log
+
+	${ECHO} "Complete${NORMAL}."
+	sleep 2
+}
+
+
+post_install()
+{
+	. /etc/rc.conf
+
+	if [ ! -f "${MPT}/bin/sh" ]; then
+		${ECHO} "${MAGENTA}Installation failed: can't find necessary file in ${GREEN}/mnt${MAGENTA}"
+		read p
+		return 0
+	fi
+
+	# No populate new FS, configure all possible stuff before reboot
+	/usr/sbin/sysrc -f ${MPT}/etc/rc.conf hostname="${hostname}"
+
+	# chroot /mnt pkg install cbsd
+	# shutdown -r now
+}
