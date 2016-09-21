@@ -60,8 +60,6 @@ function init()
 		os.exit(0)
 	end
 
-	-- XO wrapper here
-
 	dofile(localcbsdconf)
 
 	local i=1

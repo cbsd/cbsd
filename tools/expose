@@ -11,7 +11,7 @@ ADDHELP="mode - add,delete,apply,clear,flush,list\n\
   - flush : clear and remove all rules\n\
 proto = udp, tcp. default: tcp\n\
 in - master port for incoming connection\n\
-out - destination port inside jail\n\
+out - \(optional\) destination port inside jail\n\
 inaddr - use IP as nodeip (for incoming connection). Default is $nodeip\n"
 CBSDMODULE="jail"
 
@@ -22,13 +22,11 @@ init $*
 
 show_all_expose()
 {
-
 	/usr/bin/find ${jailsysdir}/*/  -type f -depth 1 -maxdepth 1 -name expose.sqlite -exec /bin/realpath {} \; |while read _file; do
 		myjail=$( echo ${_file} |/usr/bin/sed -Ees:${jailsysdir}/::g -es:/expose.sqlite::g )
 		${ECHO} "${MAGENTA}Expose for ${GREEN}${myjail}${MAGENTA}:${NORMAL}"
 		fw_expose_list ${_file}
 	done
-
 }
 
 get_first_ip()
@@ -78,22 +76,31 @@ fw_expose_add()
 	[ -f ${ftmpdir}/${jname}-expose_fwnum ] && fwnum=$( /bin/cat ${ftmpdir}/${jname}-expose_fwnum )
 
 	${ECHO} "${MAGENTA}CBSD Expose for ${jname}: ${GREEN}${in} -> ${out} (${proto})${NORMAL}"
-	/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
+
+
+	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
+
+	if [ ${baseelf} -gt 1100120 ]; then
+		COMMENT="// Setup by CBSD expose: ${jname}"
+	else
+		COMMENT=
+	fi
+
+	/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
 	echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
 }
+
 
 fw_expose_apply()
 {
 	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
 		fw_expose_add
 	done
-
 }
 
 # if $1 than use it as exposefile
 fw_expose_list()
 {
-
 	[ -n "${1}" ] && exposefile="${1}"
 
 	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
@@ -155,6 +162,10 @@ jip=$( get_first_ip )
 exposefile="${jailsysdir}/${jname}/expose.sqlite"
 
 [ ! -r "${exposefile}" ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${exposefile} ${distdir}/share/system-expose.schema expose
+
+[ -z "${in}" -a -n "${out}" ] && in="${out}"
+[ -z "${out}" -a -n "${in}" ] && out="${in}"
+
 
 case "${mode}" in
 	list)

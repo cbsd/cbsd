@@ -68,6 +68,7 @@ main(int argc, char *argv[])
 	int		rc;
 	LIBSSH2_SFTP   *sftp_session;
 	LIBSSH2_SFTP_HANDLE *sftp_handle;
+	struct hostent *server;
 
 	if (!strcmp(argv[1], "--help"))
 		usage();

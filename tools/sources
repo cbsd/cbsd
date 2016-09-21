@@ -1,0 +1,108 @@
+#!/usr/local/bin/cbsd
+#v10.1.0
+MYARG=""
+MYOPTARG="shownode display node header mode"
+MYDESC="Show BSD sources"
+CBSDMODULE="sys"
+ADDHELP="shownode=1 - show nodename for jails\n\
+node= only for current node\n\
+header=0 don't print header\n\
+display= list by comma for column. Default: platform,name,ver,rev,date\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+[ -z "${display}" ] && display="platform,name,ver,rev,date"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && $ECHO ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val src_size
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ -z "${_status}" ]; then
+			_status="${NORMAL}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_srcdata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	_sql="SELECT platform,name,ver,rev,date FROM bsdsrc"
+	cbsdsql ${sqlfile} ${_sql}| while read platform name ver rev date; do
+		populate_output_data
+		${ECHO} ${_status}
+	done
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && node=$(cbsd node mode=list header=0 allinfo=0)
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_srcdata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode _status
+
+	show_header
+	show_srcdata_from_sql local
+}
+
+show_src()
+{
+
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	show_local
+}
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_src|/usr/bin/column -t

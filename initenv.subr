@@ -6,12 +6,12 @@ init_items_desc()
 {
 	nodename_desc="Short form nodename for this host e.g. like hostname. Warning: this operation will recreate the ssh keys in $workdir/.ssh dir"
 	hostname_desc="Fully qualified domain name (FQDN) of the host"
-	nodeip_desc="Node management IP address"
+	nodeip_desc="Node management IPv4 or IPv6 address"
 	nodedescr_desc="Node info/description"
 	jnameserver_desc="Jails default DNS name-server"
 	nodeippool_desc="Jail pool IP address range"
 	nat_enable_desc="Enable NAT for RFC1918 networks"
-	natip_desc="NAT IP or NIC"
+	natip_desc="NAT IPv4/IPv6 or NIC"
 	fbsdrepo_desc="Use official FreeBSD repository? When no (0) repository of CBSD is preferred (usefull for stable=1)"
 	mdtmp_desc="Configure memory disk"
 	repo_desc="Use repository for images and template?"
@@ -27,19 +27,35 @@ init_items_desc()
 
 init_items_default()
 {
-	local INITIP=$(/sbin/ifconfig $( /sbin/route -n get 0.0.0.0 2>/dev/null | /usr/bin/awk '/interface/{print $2}' ) 2>/dev/null|/usr/bin/awk '/inet [0-9]+/{print $2}'|/usr/bin/head -n1)
+	update_netinfo
 
 	##default area
-	nodename_default=$( hostname )
-	nodeip_default="${INITIP}"
+	nodename_default=$( /bin/hostname )
+
+	case "${CBSD_NODE_IP6_ACTIVE}" in
+		1)
+			nodeip_default="${CBSD_IP6}"
+			jnameserver_default="2001:4860:4860::8888,2001:4860:4860::8844,8.8.8.8,8.8.4.4"
+			# todo: ipv6 calc/net
+			nodeippool_default="10.0.0.0/16 ${CBSD_IP4}/24"
+			natip_default="${CBSD_IP6}"
+			;;
+		*)
+			nodeip_default="${CBSD_IP4}"
+			jnameserver_default="8.8.8.8,8.8.4.4"
+			nodeippool_default="10.0.0.0/16 ${CBSD_IP4}/24"
+			natip_default="${CBSD_IP4}"
+			;;
+		*)
+	esac
+
 	nodedescr_default="Datacenter #5, Middle of Nowhere"
-	jnameserver_default="${INITIP},8.8.8.8,8.8.4.4"
-	nodeippool_default="10.0.0.0/16 ${INITIP}/24"
+	jnameserver_default="${jnameserver_default}"
+
 	nat_enable_default="Enable NAT"
-	natip_default="${INITIP}"
 	fbsdrepo_default="1"
 	mdtmp_default="8"
-	repo_default="http://bsdstore.ru"
+	repo_default="https://bsdstore.ru"
 	workdir_default="/usr/jails"
 	ipfw_enable_default="1"
 	zfsfeat_default="1"
@@ -69,22 +85,33 @@ make_nat()
 {
 	local rfc1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
 	local _extiface
+	local _ret
+
+	update_netinfo
 
 	iptype ${natip} >/dev/null 2>&1
+	_ret=$?
 
 	# if natip is not valid IPv4, assume it is NIC variable.
 	# so try to find out first IPv4 for aliasing
-	if [ $? -ne 1 ]; then
-		_extiface="${natip}"
-		natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
-		if [ $? -ne 0 ]; then
-			${ECHO} "${MAGENTA}Unable to determine first IPv4 for nic: ${GREEN}${_extiface}${NORMAL}"
-			return 2
-		fi
-	else
-		# natip is valid IPv4, search for default-gateway nic
-		_extiface=$( /sbin/route -n get 0.0.0.0 | /usr/bin/awk '/interface:/{print $2}' )
-	fi
+	case ${_ret} in
+		1)
+			# natip is valid IPv4
+			_extiface="${CBSD_UPLINK_IFACE4}"
+			;;
+		2)
+			# natip is valid IPv6
+			_extiface="${CBSD_UPLINK_IFACE6}"
+			;;
+		*)
+			${ECHO} "${MAGENTA}make_nat: iptype unknown for ${natip}, trying to obtain info via getip-by-nics..${NORMAL}"
+			_extiface="${natip}"
+			natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+			if [ $? -ne 0 ]; then
+				${ECHO} "${MAGENTA}Unable to determine first IP for nic: ${GREEN}${_extiface}${NORMAL}"
+				return 2
+			fi
+	esac
 
 	/sbin/ifconfig ${_extiface} >/dev/null 2>&1
 	if [ $? -ne 0 ]; then
@@ -173,7 +200,14 @@ EOF
 # if arg then force configure
 configure_nat()
 {
-	ext_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
+	update_netinfo
+
+#	ext_iface=$( /sbin/route -n get 0.0.0.0 |/usr/bin/awk '/interface/{print $2}' )
+	if [ "${CBSD_NODE_IP6_ACTIVE}" = "1" ]; then
+		ext_iface="${CBSD_UPLINK_IFACE6}"
+	else
+		ext_iface="${CBSD_UPLINK_IFACE4}"
+	fi
 
 	local _default _tmpdef
 	local _net _nm
@@ -190,14 +224,19 @@ configure_nat()
 	_default=$( cbsd -c "cbsdsql local SELECT natip FROM local" 2>/dev/null )
 
 	iptype ${_default} >/dev/null 2>&1
+	_ret=$?
 
 	# if natip is not valid IPv4, assume it is NIC variable.
 	# so try to find out first IPv4 for aliasing
-	if [ $? -ne 1 ]; then
-		_extiface="${_default}"
-		_tmpdef=$( getip-by-nics nic=${_extiface} 2>/dev/null )
-		[ -z "${_tmpdef}" ] && _default=$( cbsd -c "cbsdsql local SELECT nodeip FROM local" )
-	fi
+	case ${_ret} in
+		1|2)
+			;;
+		*)
+			_extiface="${_default}"
+			_tmpdef=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+			[ -z "${_tmpdef}" ] && _default=$( cbsd -c "cbsdsql local SELECT nodeip FROM local" )
+			;;
+	esac
 
 	${ECHO} "${BOLD}Set IP address or NIC as the aliasing NAT address or interface, e.g: ${GREEN}${_default}${NORMAL}"
 	read natip
@@ -608,6 +647,59 @@ change_nodename()
 	env sqlcolnames="1" ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT * FROM local" > ${inventory}
 }
 
+# export CBSD_UPLINK_IFACE[4|6] variable
+# export CBSD_IP[4|6] variable
+# export CBSD_NODE_IP[4|6]_ACTIVE variable
+update_netinfo()
+{
+	local CBSD_NODE_IP4_ACTIVE=0
+	local CBSD_NODE_IP6_ACTIVE=0
+	local uplink_iface4=$( /sbin/route -n -4 get 0.0.0.0 2>/dev/null | /usr/bin/awk '/interface/{print $2}' )
+	local uplink_iface6=$( /sbin/route -n -6 get ::0 2>/dev/null | /usr/bin/awk '/interface/{print $2}' )
+
+	if [ -n "${uplink_iface4}" ]; then
+		CBSD_UPLINK_IFACE4="${uplink_iface4}"
+		local INITIP4=$( /sbin/ifconfig ${uplink_iface4} | /usr/bin/awk '/inet [0-9]+/{print $2}'|/usr/bin/head -n1 )
+	else
+		CBSD_UPLINK_IFACE4="lo0"
+		local INITIP4="127.0.0.1"
+	fi
+
+	if [ -n "${uplink_iface6}" ]; then
+		CBSD_UPLINK_IFACE6="${uplink_iface6}"
+		local INITIP6=$( /sbin/ifconfig ${uplink_iface6} | /usr/bin/awk '/inet6 *:*+/{print $2}'|/usr/bin/head -n1 |/usr/bin/grep -v %${uplink_iface6}$ )
+	else
+		CBSD_UPLINK_IFACE6="lo0"
+		local INITIP6="::1"
+	fi
+
+	[ -z "${INITIP4}" ] && INITIP4="127.0.0.1"
+	[ -z "${INITIP6}" ] && INITIP6="::1"
+
+	CBSD_IP4="${INITIP4}"
+	CBSD_IP6="${INITIP6}"
+
+	echo "$CBSD_IP6" >> /tmp/xx.txt
+
+	if [ "${CBSD_IP6}" = "::1" ]; then
+		CBSD_NODE_IP6_ACTIVE=0
+	else
+		CBSD_NODE_IP6_ACTIVE=1
+	fi
+
+	if [ "${CBSD_IP4}" = "127.0.0.1" ]; then
+		CBSD_NODE_IP4_ACTIVE=0
+	else
+		CBSD_NODE_IP4_ACTIVE=1
+	fi
+
+	node_ip4_active=${CBSD_NODE_IP4_ACTIVE}
+	node_ip6_active=${CBSD_NODE_IP6_ACTIVE}
+
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip4_active=\"${node_ip4_active}\"
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip6_active=\"${node_ip6_active}\"
+}
+
 
 ## MAIN
 #user settings
@@ -633,7 +725,7 @@ stable \
 sqlreplica"
 
 #system settins
-HWINI="fs ncpu physmem memtype disks cpumodel cpufreq kernhz sched eventtimer nics osrelease hostarch vimage_feature racct platform"
+HWINI="fs ncpu physmem memtype disks cpumodel cpufreq kernhz sched eventtimer nics osrelease hostarch vimage_feature racct platform node_ip4_active node_ip6_active"
 
 ###
 fi

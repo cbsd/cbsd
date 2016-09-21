@@ -164,7 +164,7 @@ init_target_arch()
 	fi
 }
 
-# init SVN_REV
+# init SCM_REV
 # require: $SRC_DIR
 init_scm_and_version()
 {
@@ -178,9 +178,12 @@ init_scm_and_version()
 	*)
 		err 1 "${ECHO}Unknown checkout method. Please specify it via: ${GREEN}srcup.conf${NORMAL}"
 	esac
+
+	[ -z "${SCM_REV}" ] && SCM_REV=$( /bin/date )
+	return 0
 }
 
-# init SVN_REV
+# init SCM_REV
 # require: $SRC_DIR
 init_svn_version()
 {
@@ -194,11 +197,11 @@ init_svn_version()
 		err 1 "${MAGENTA}No svn in the base. Please install devel/subversion${NORMAL}"
 	fi
 
-	SVN_REV=$( cd ${SRC_DIR} && ${SCM} info 2>/dev/null |/usr/bin/awk '/^Revision: /{printf $2}' )
-	[ -z "${SVN_REV}" ] && SVN_REV=$( /bin/date )
+	SCM_REV=$( cd ${SRC_DIR} && ${SCM} info 2>/dev/null |/usr/bin/awk '/^Revision: /{printf $2}' )
+	return 0
 }
 
-# init SVN_REV
+# init SCM_REV
 # require: $SRC_DIR
 init_git_version()
 {
@@ -210,8 +213,8 @@ init_git_version()
 		err 1 "${MAGENTA}No git in the base. Please install devel/git${NORMAL}"
 	fi
 
-#	SVN_REV=$( cd ${SRC_DIR} && ${SCM} info 2>/dev/null |/usr/bin/awk '/^Revision: /{printf $2}' )
-	[ -z "${SVN_REV}" ] && SVN_REV=$( /bin/date )
+#	SCM_REV=$( cd ${SRC_DIR} && ${SCM} info 2>/dev/null |/usr/bin/awk '/^Revision: /{printf $2}' )
+	return 0
 }
 
 
@@ -226,6 +229,89 @@ init_make_flags()
 	[ ${clean} -ne 1 ] && NOCLEANUP="-DNO_CLEAN"
 
 	return 0
+}
+
+
+# return idx from sql for base
+get_baseidx()
+{
+	cbsdsql local SELECT idx FROM bsdbase WHERE platform=\"${platform}\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\" 2>/dev/null
+}
+
+# return idx from sql for src
+get_srcidx()
+{
+	 cbsdsql local SELECT idx FROM bsdsrc WHERE platform=\"${platform}\" AND ver=\"${ver}\" 2>/dev/null
+}
+
+
+# update sql for src
+# Require: $platform, $ver, $SCM_REV
+register_src()
+{
+	[ -z "${platform}" ] && echo "Empty platform" && return 0
+	[ -z "${ver}" ] && echo "Empty ver" && return 0
+	[ -z "${SCM_REV}" ] && echo "Empty SCM_REV" && return 0
+
+	local idx=$( get_srcidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsql local "UPDATE bsdsrc SET rev=\"${SCM_REV}\",date=datetime('now','localtime') WHERE idx=\"${idx}\""
+	else
+		cbsdsql local "INSERT INTO bsdsrc ( platform,name,ver,rev ) VALUES ( \"${platform}\", \"src\", \"${ver}\", \"${SCM_REV}\" )"
+	fi
+}
+
+# remove sql records for src
+# Require: $platform, $ver, $SCM_REV
+unregister_src()
+{
+	[ -z "${platform}" ] && echo "Empty platform" && return 0
+	[ -z "${ver}" ] && echo "Empty ver" && return 0
+	[ -z "${SCM_REV}" ] && echo "Empty SCM_REV" && return 0
+
+	local idx=$( get_srcidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsql local "DELETE FROM bsdsrc WHERE idx=\"${idx}\""
+	fi
+}
+
+
+# update sql for base
+# Require: $platform, $arch, $TARGET_ARCH, $ver, $stable
+register_base()
+{
+	[ -z "${platform}" ] && echo "Empty platform" && return 0
+	[ -z "${ver}" ] && echo "Empty ver" && return 0
+	[ -z "${TARGET_ARCH}" ] && echo "Empty TARGET_ARCH" && return 0
+	[ -z "${stable}" ] && echo "Empty stable" && return 0
+
+	local idx=$( get_baseidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsql local "UPDATE bsdbase SET elf=\"${baseelf}\",date=datetime('now','localtime') WHERE idx=\"${idx}\""
+	else
+		cbsdsql local "INSERT INTO bsdbase ( platform,name,arch,targetarch,ver,stable,elf ) VALUES ( \"${platform}\", \"base\", \"${arch}\", \"${TARGET_ARCH}\", \"${ver}\", \"${stable}\", \"${baseelf}\" )"
+	fi
+}
+
+# remove sql records for base
+# Require: $platform, $arch, $TARGET_ARCH, $ver, $stable
+unregister_base()
+{
+	[ -z "${platform}" ] && echo "Empty platform" && return 0
+	[ -z "${ver}" ] && echo "Empty ver" && return 0
+	[ -z "${TARGET_ARCH}" ] && echo "Empty TARGET_ARCH" && return 0
+	[ -z "${stable}" ] && echo "Empty stable" && return 0
+
+	local idx=$( get_baseidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsql local "DELETE FROM bsdbase WHERE idx=\"${idx}\""
+	else
+		echo "unregister_base: No idx for platform:$platform, arch:$arch, target_arch:$TARGET_ARCH, ver:$ver, stable:$stable"
+	fi
 }
 
 ###
