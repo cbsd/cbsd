@@ -13,10 +13,13 @@ all:	cbsd
 
 clean:
 	${MAKE} -C bin/cbsdsh clean
+	${RM} -f bin/cbsdsh/.depend*
 	${RM} -f misc/chk_arp_byip
 	${RM} -f bin/cbsdsftp
+	${RM} -f bin/cbsdsftp6
 	${RM} -f bin/cfetch
 	${RM} -f bin/cbsdssh
+	${RM} -f bin/cbsdssh6
 	${RM} -f bin/cbsd
 	${RM} -f sbin/netmask
 	${RM} -f misc/sqlcli
@@ -35,7 +38,9 @@ clean:
 
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
+	${CC} bin/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
 	${CC} bin/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh
+	${CC} bin/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
 	${CC} sbin/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} misc/src/sqlcli.c -static -pthread -lsqlite3 -L/usr/local/lib -I/usr/local/include -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
@@ -48,7 +53,6 @@ cbsd:
 	${CC} misc/src/daemon.c -lutil -o misc/daemon && ${STRIP} misc/daemon
 	${CC} misc/src/resolv.c -o misc/resolv && ${STRIP} misc/resolv
 	${CC} tools/src/imghelper.c -o tools/imghelper && ${STRIP} tools/imghelper
-	${CC} tools/src/xo.c -lxo -I/usr/include/libxo -I/usr/local/include/libxo -L/usr/local/lib -lxo -lutil -o tools/xo && ${STRIP} tools/xo
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd

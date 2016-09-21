@@ -74,7 +74,6 @@ sshdir= workdir .. "/.ssh"
 templateldir= workdir .. "/template"
 fwcount_st="99"
 fwcount_end="2000"
-rsync_flags="arlHpEAXogt8 --delete"
 greeting="node"
 jailmapdb= dbdir .. "/jmap.txt"
 -- external source for online doc

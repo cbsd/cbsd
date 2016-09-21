@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <ctype.h>
 
+#include <netdb.h>
+
 const char     *keyfile1 = "~/.ssh/id_rsa.pub";
 const char     *keyfile2 = "~/.ssh/id_rsa";
 const char     *username = "username";
@@ -59,9 +61,9 @@ usage()
 int 
 main(int argc, char *argv[])
 {
-	unsigned long	hostaddr;
 	int		sock      , i, auth_pw = 0, port = 22;
-	struct sockaddr_in sin;
+	struct sockaddr_in6 sin;
+
 	const char     *fingerprint;
 	char           *userauthlist;
 	LIBSSH2_SESSION *session;
@@ -74,9 +76,7 @@ main(int argc, char *argv[])
 		usage();
 
 	if (argc > 1) {
-		hostaddr = inet_addr(argv[1]);
-	} else {
-		hostaddr = htonl(0x7F000001);
+		inet_pton(AF_INET6,argv[1],sin.sin6_addr.s6_addr);
 	}
 
 	if (argc > 2) {
@@ -94,13 +94,23 @@ main(int argc, char *argv[])
 	if (argc > 6) {
 		localpath = argv[6];
 	}
-	sock = socket(AF_INET, SOCK_STREAM, 0);
 
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = hostaddr;
+	sock = socket(AF_INET6, SOCK_STREAM, 0);
+
+	server = gethostbyname2(argv[1],AF_INET6);
+	if (server == NULL) {
+		fprintf(stderr, "ERROR, no such host\n");
+		exit(0);
+	}
+
+	memset((char *) &sin, 0, sizeof(sin));
+	sin.sin6_flowinfo = 0;
+	sin.sin6_family = AF_INET6;
+	memmove((char *) &sin.sin6_addr.s6_addr, (char *) server->h_addr, server->h_length);
+	sin.sin6_port = htons(port);
+
 	if (connect(sock, (struct sockaddr *)(&sin),
-		    sizeof(struct sockaddr_in)) != 0) {
+			sizeof(struct sockaddr_in6)) != 0) {
 		fprintf(stderr, "failed to connect!\n");
 		return -1;
 	}

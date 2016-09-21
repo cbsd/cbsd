@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v11.0.0
 CBSDMODULE="node"
 MYARG="mode"
 MYOPTARG="node port rootkeyfile pw header allinfo"
@@ -45,21 +45,52 @@ getpw()
 nodeadd()
 {
 	local _res
-	local HST
+	local _myip
 
 	[ -z "${node}" ] && err 1 "${MAGENTA}Empty node${NORMAL}"
 	[ -z "${port}" ] && port=22222
 	[ -z "${pw}" ] && getpw
 	[ -z "${rootkeyfile}" ] && rootkeyfile="/root/.ssh/id_rsa"
 
-	if iptype $node; then
-		HST=$( resolvhost ${node} )
-		[ -z "${HST}" ] && err 1 "${MAGENTA}Can't resolv IP for ${node} hostname. Use IP address.${NORMAL}"
-		node=${HST}
-	fi
+	iptype ${node} >/dev/null 2>&1
+	_ret=$?
 
-	${ECHO} "${MAGENTA}Connecting to ${node}...${NORMAL}"
-	NODENAME=$( cbsdssh $node $port $cbsduser $pw /usr/local/bin/cbsd getinfo -q nodename )
+	case ${_ret} in
+		1|2)
+			# ip4 or ip6
+			_myip="${node}"
+			;;
+		*)
+			_myip=$( resolvhost ${node} )
+			[ -z "${_myip}" ] && err 1 "${MAGENTA}Can't resolv IP for ${node} hostname. Use IP address.${NORMAL}"
+			node=${_myip}
+			;;
+	esac
+
+	iptype ${_myip} >/dev/null 2>&1
+	_ret=$?
+
+	# if natip is not valid IPv4, assume it is NIC variable.
+	# so try to find out first IPv4 for aliasing
+	case ${_ret} in
+		1)
+			CBSD_SSH_CMD="cbsdssh"
+			CBSD_SFTP_CMD="cbsdsftp"
+			proto="IPv4"
+			;;
+		2)
+			CBSD_SSH_CMD="cbsdssh6"
+			CBSD_SFTP_CMD="cbsdsftp6"
+			proto="IPv6"
+			;;
+		*)
+			err 1 "${MAGENTA}Unknown IP type: ${GREEN}${_myip}${NORMAL}"
+		;;
+	esac
+
+
+	${ECHO} "${MAGENTA}Connecting to ${node} via ${proto}...${NORMAL}"
+	NODENAME=$( ${CBSD_SSH_CMD} ${node} ${port} ${cbsduser} ${pw} /usr/local/bin/cbsd getinfo -q nodename )
 	code=$?
 
 	case ${code} in
@@ -88,7 +119,7 @@ nodeadd()
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node SSHKEY=$LOCALKEY > /dev/null
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node IP=$node > /dev/null
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node PORT=$port > /dev/null
-			chown ${cbsduser} ${rsshdir}/${NODENAME}.node
+			/usr/sbin/chown ${cbsduser} ${rsshdir}/${NODENAME}.node
 			IP=$( cbsdsql nodes select ip from nodelist where nodename=\"${NODENAME}\" )
 
 			if [ -z "${IP}" ]; then
