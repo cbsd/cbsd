@@ -14,12 +14,14 @@
 
 int main(int argc, char **argv)
 {
-	if (argc!=2) {
-		printf("Usage: resolv <hostname>\r\n");
+	if (argc!=3) {
+		printf("Usage: resolv <proto: 4|6> <hostname>\r\n");
 		exit(0);
 	}
 
-	char *source=argv[1];
+	int proto = atoi(argv[1]);
+
+	char *source=argv[2];
 	struct hostent *hp;
 	struct hostent *hp6;
 
@@ -29,8 +31,12 @@ int main(int argc, char **argv)
 	char text_addr6[INET6_ADDRSTRLEN];
 	char *text_addr4;
 
-	inet_pton(AF_INET6,source,sin6.sin6_addr.s6_addr);
-	hp6 = gethostbyname2(source,AF_INET6);
+	if ( proto == 6 ) {
+		inet_pton(AF_INET6,source,sin6.sin6_addr.s6_addr);
+		hp6 = gethostbyname2(source,AF_INET6);
+	} else {
+		hp6 = NULL;
+	}
 
 	if (hp6 == NULL) {
 		//try ipv4
