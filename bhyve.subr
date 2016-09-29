@@ -14,7 +14,14 @@ init_bhyve()
 	local _required_kmods="vmm if_tap if_bridge nmdm" _i _res
 
 	_res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
-	[ $? -ne 0 ] && err 1 "${MAGENTA}Your CPU does not appear to support ${GREEN}EPT${NORMAL}"
+	if [ $? -ne 0 ]; then
+		# work-around for Alex (CBSD Telegram) issue: this is not clean check for EPT existance:
+		# sometimes errcode = 16 but POPCNT feature present in CPU
+		# So, just print warning about this. Need for deep investigation
+		${ECHO} "${MAGENTA}Warning: Seems like your CPU does not appear to support ${GREEN}EPT${NORMAL}"
+		${ECHO} "${MAGENTA}But im try to run bhyve anyway...${NORMAL}"
+		sleep 2
+	fi
 
 	for _i in ${_required_kmods}; do
 		if ! /sbin/kldstat -qm ${_i} >/dev/null 2>&1; then
@@ -72,7 +79,10 @@ compile_dsk_args()
 	local dsk_id=0
 	local sqldelimer=" "
 
+	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
+	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
+
 		if ! next_pci_id; then
 			# no free pci bus
 			exit 0
@@ -83,7 +93,15 @@ compile_dsk_args()
 		else
 			pcislot=${dsk_slot}
 		fi
-		echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${data}/${dsk_path}\" ;"
+
+		dsk_conf=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" 2>/dev/null )
+
+		if [ -n "${dsk_conf}" ]; then
+			echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${data}/${dsk_path},${dsk_conf}\" ;"
+		else
+			echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${data}/${dsk_path}\" ;"
+		fi
+
 		dsk_id=$(( dsk_id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
 
@@ -375,6 +393,7 @@ bhyve_create_dsk()
 		err 1 "Hammer not supported yet"
 	else
 		blockcount=$(( imgbytes  / 1048576 ))
+		[ ! -d ${datadir} ] && /bin/mkdir -p ${datadir}
 		/usr/bin/touch "${newdsk}"
 		/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
 	#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
@@ -462,7 +481,17 @@ compile_vnc_args()
 {
 	local vm_port
 
+	local baseelf
+
+	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
+
 	vnc_args=
+
+	if [ ${baseelf} -lt 1100120 ]; then
+		${ECHO} "${MAGENTA}VNC available only on FreeBSD 11.0+. Disable VNC${MAGENTA}"
+		sleep 2
+		return 0
+	fi
 
 	case "${vm_vnc_port}" in
 		0)
