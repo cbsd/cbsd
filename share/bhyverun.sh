@@ -86,6 +86,12 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		/sbin/ifconfig ${i} up
 	done
 
+	local baseelf
+
+	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
+
+	[ ${baseelf} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
+
 	if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
 		xhci_args="-s 30,xhci,tablet"
 	else

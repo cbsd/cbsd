@@ -78,15 +78,52 @@ gw_enable()
 # cbsd store uplink interface in description area ;)
 # this func extract and show this
 # $1 - iface (eg: bridge0)
+# $2 - (optional) for bridge: try to search not only by desc - search for $2 as addm member
 # example:
 #    ttt=$( get_device_uplink bridge0 )
+# example2:
+#    ttt=$( get_device_uplink bridge0 em0 )
 get_device_uplink()
 {
-	local _desc
-	[ -z "${1}" ] && return 1
+	local _desc1 _desc2
+	local _is_bridge
+	local _addm
+	local _addm_list
+	local _i
 
-	_desc=$( /sbin/ifconfig ${1} 2>/dev/null | /usr/bin/awk '/description:/{print $2}' )
-	[ -n "${_desc}" ] && printf "${_desc}"
+	[ -z "${1}" ] && return 1
+	[ -n "${2}" ] && _addm="${2}"
+
+	_desc1=$( /sbin/ifconfig ${1} 2>/dev/null | /usr/bin/awk '/description:/{print $2}' )
+
+	# extra check for bridge for cases where bridge created not by CBSD but member of
+	# right uplink
+	# required $2 for member
+	# Also, inforamtion from bridge addm pasring preferred to desc
+	if [ -z "${_addm}" ]; then
+		[ -n "${_desc1}" ] && printf "${_desc1}"
+		return 0
+	fi
+
+	_is_bridge=$( substr --pos=0 --len=6 --str=${1} )
+
+	if [ "${_is_bridge}" != "bridge" ]; then
+		[ -n "${_desc1}" ] && printf "${_desc1}"
+		return 0
+	fi
+
+	_addm_list=$( /sbin/ifconfig ${1} 2>/dev/null |/usr/bin/awk '/member: /{printf $2" "}' )
+
+	for _i in ${_addm_list}; do
+		if [ "${_addm}" = "${_i}" ]; then
+			printf "${_addm}"
+			return 0
+		fi
+	done
+
+	[ -n "${_desc1}" ] && printf "${_desc1}"
+
+	return 0
 }
 
 # function search for available bridges in system who have uplink to ${interface}
@@ -107,7 +144,7 @@ get_my_device()
 	_desc=$2
 
 	for _i in $( show_all_nic_by_name ${_dev} ); do
-		_uplink=$( get_device_uplink ${_i} )
+		_uplink=$( get_device_uplink ${_i} ${_desc} )
 		[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
 	done
 
