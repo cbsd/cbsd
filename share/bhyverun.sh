@@ -74,9 +74,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	case "${vm_boot}" in
 		"cd")
 			# add ,wait args when boot from CD
-			if [ -n "${vnc_args}" -a "${vm_vnc_port}" != "1" ]; then
-				orig_vnc_args="${vnc_args}"
-				vnc_args="${vnc_args},wait"
+			if [ "${vm_efi}" != "none" ]; then
+				if [ -n "${vnc_args}" -a "${vm_vnc_port}" != "1" ]; then
+					orig_vnc_args="${vnc_args}"
+					vnc_args="${vnc_args},wait"
+				fi
 			fi
 			;;
 		*)
@@ -86,27 +88,38 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		/sbin/ifconfig ${i} up
 	done
 
-	local baseelf
+	baseelf=
 
 	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
 
 	[ ${baseelf} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
 
-	if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
-		xhci_args="-s 30,xhci,tablet"
-	else
-		xhci_args=""
+	if [ "${vm_efi}" != "none" ]; then
+		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
+			xhci_args="-s 30,xhci,tablet"
+		else
+			xhci_args=""
+		fi
 	fi
+
+	add_bhyve_opts="-H"  # Yield the virtual CPU thread when a HLT instruction is detected.
+
+	[ "${bhyve_generate_acpi}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -A"
+	[ "$bhyve_wire_memory}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -S"
+	[ "${bhyve_rts_keeps_utc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -u"
+	[ "${bhyve_force_msi_irq}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -W"
+	[ "${bhyve_x2apic_mode}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -x"
+	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 
 	#passthru
 	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
-	logger -t CBSD "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
+	logger -t CBSD "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
 
 	# wait for VNC in upstream: xhci and vnc_args
-	# /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} -s 30,xhci,tablet ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
+	# /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} -s 30,xhci,tablet ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
 
-#	echo "/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname}"
-	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} ${xhci_args} ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
+#	echo "/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname}"
+	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} ${xhci_args} ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
 
 	# restore original value
 	[ -n "${orig_vnc_args}" ] && vnc_args="${orig_vnc_args}"
