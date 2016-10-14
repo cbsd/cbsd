@@ -7,44 +7,95 @@ _CBSD_VIRTUAL_SUBR=1
 
 init_iso()
 {
-	[ -z "${iso_img}" ] && return 1
+	if [ -z "${iso_img}" ]; then
+		${ECHO} "no cd: iso_img and register_iso_as is empty"
+		return 1
+	fi
+
+	# test for media database
+	local media_db
+
+	if [ -n "${vm_iso_path}" ]; then
+		media_db=$( media mode=get name=${vm_iso_path} path="" )
+		if [ -n "${media_db}" -a -r "${media_db}" ]; then
+			${ECHO} "${MAGENTA}media found: ${GREEN}${vm_iso_path}${MAGENTA} --> ${GREEN}${media_db}${NORMAL}"
+			iso_img="${media_db}"
+			return 0
+		fi
+	fi
+
+	echo "ISO_ $iso_img"
+
 	local _mydir="${srcdir}/iso"
 	local _myfile="${_mydir}/${iso_img}"
 	local i
 
-	[ ! -d "${_mydir}" -o ! -h "${_mydir}" ] && mkdir -p ${_mydir}
+	[ ! -d "${_mydir}" -o ! -h "${_mydir}" ] && /bin/mkdir -p ${_mydir}
 
 	[ -z "${iso_img_dist}" ] && iso_img_dist="${iso_img}"
 
 	# Unessesary when we boot not from cd
 	[ "${vm_boot}" != "cd" ] && iso_img="${_myfile}" && return 0
 
-	if [ ! -f "${_myfile}" -a ! -f "${_mydir}/${iso_img_dist}" -a "${fetch}" = "1" ]; then
+	if [ -z "${register_iso_name}" ]; then
+		_myfile="${_mydir}/${iso_img}"
+		${ECHO} "${MAGENTA}Warning: empty register_iso_name. Use iso_img: ${_myfile}"
+	fi
+
+	_myfile=$( media mode=get name="${register_iso_name}" path='' )
+	[ -z "${_myfile}" ] && _myfile="${_mydir}/${register_iso_name}"
+
+	if [ -r "${_myfile}" ]; then
+		iso_img="${_myfile}"
+		return 0
+	fi
+
+	if [ ! -f "${_myfile}" -a "${fetch}" = "1" ]; then
 		[ -z "${iso_site}" ] && ${ECHO} "${MAGENTA}No such iso: ${GREEN}${_myfile}${MAGENTA} and ${GREEN}iso_site${MAGENTA} variable not found" && return 1
 		${ECHO} "${MAGENTA}No such iso: ${GREEN}${_myfile}${MAGENTA} in ${GREEN}${_mydir}${NORMAL}"
 		ALWAYS_YES=1
 		if getyesno "Shall i download it from: ${iso_site}?"; then
-			${ECHO} "${MAGENTA}Download to: ${GREEN}${_mydir}/${iso_img_dist}${NORMAL}"
+			${ECHO} "${MAGENTA}Download to: ${GREEN}${_myfile}${NORMAL}"
+
+			if [ -n "${iso_extract}" ]; then
+				outfile="${_mydir}/${iso_img_dist}"
+			else
+				outfile="${_myfile}"
+			fi
+
 			for i in ${iso_site}; do
 				${ECHO} "${MAGENTA}Processing: ${GREEN}${i}${NORMAL}"
-				[ -s "${_mydir}/${iso_img_dist}" ] && continue # skip all other mirror when file exist
-				fetchme -o ${_mydir}/${iso_img_dist} -u ${i}${iso_img_dist}
+				[ -s "${_myfile}" ] && continue # skip all other mirror when file exist
+				fetchme -o ${outfile} -u ${i}${iso_img_dist}
+				[ -r ${outfile} ] && break
 			done
+
 		fi
 		ALWAYS_YES=0
 	fi
 
-	[ ! -s "${_mydir}/${iso_img_dist}" -a ! -s "${_myfile}" ] && err 1 "${MAGENTA}No such ${GREEN}${iso_img_dist}${MAGENTA}. Try to download it manually and put into ${GREEN}${_mydir}${NORMAL}"
-
-	if [ -n "${iso_extract}" -a -f "${_mydir}/${iso_img_dist}" -a ! -f "${_myfile}" -a "${fetch}" = "1" ]; then
+	if [ -n "${iso_extract}" -a -f "${outfile}" ]; then
 		${ECHO} "${MAGENTA}Extracting...${NORMAL}"
 		set -o xtrace
 		cd ${_mydir}
-		${iso_extract} ${_mydir}/${iso_img_dist}
+		${iso_extract} ${outfile}
 		set +o xtrace
+		[ -f "${outfile}" ] && /bin/rm -f ${outfile}
+		[ -f "${_mydir}/${iso_img}" ] && /bin/mv ${_mydir}/${iso_img} ${_myfile}
 	fi
 
-	[ ! -f "${_myfile}" ] && return 1
+	[ ! -s "${_myfile}" ] && err 1 "${MAGENTA}No such ISO image. Try to download it manually and put into ${GREEN}${_myfile}${NORMAL}"
+
+	if [ -r "${_myfile}" ]; then
+		${ECHO} "${MAGENTA}Automatically register iso as: ${GREEN}${register_iso_name}${NORMAL}"
+		local reg_name
+		if [ -n "${register_iso_as}" ]; then
+			reg_name="${register_iso_as}"
+		else
+			reg_name="${register_iso_name}"
+		fi
+		media mode=register name="${reg_name}" path="${_myfile}"
+	fi
 
 	iso_img="${_myfile}"
 	return 0

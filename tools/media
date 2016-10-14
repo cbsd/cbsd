@@ -1,0 +1,179 @@
+#!/usr/local/bin/cbsd
+#v11.0.4
+MYARG="mode"
+MYOPTARG="name path display"
+MYDESC="Operate with virtual storage media such as ISO"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve.html"
+ADDHELP="mode=list - list of registered media\n\
+mode=flushall - unregister all records, without deleting\n\
+mode=register - register new media (req: name, path)\n\
+mode=unregister - unregister new media (req: name, path), without delete\n\
+mode=delete|remove - unregister and delete iso file (req: name, path)\n\
+mode=deleteall|removeall - unregister and delete all iso files (req: name, path)\n\
+mode=get - print 'name' or 'path' for 'path=' or 'name='\n\
+display= list by comma for column. Default: id,vhid,advskew,pass,interface,state\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+[ -z "${display}" ] && display="name,path"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -eq 1 ] && $ECHO ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val
+
+	_status=
+
+	printf "${NORMAL}" # for column sort
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		printf "${_val} "
+	done
+
+	printf "\n"
+}
+
+
+# $1 - which file from. Eg: local
+show_data_from_sql()
+{
+	local _i
+
+	_sql="SELECT name,path FROM media"
+
+	cbsdsql storage_media ${_sql} | while read name path; do
+		IFS=" "
+		populate_output_data
+		IFS="|"
+	done
+
+	IFS=" "
+}
+
+
+show_local()
+{
+	local _errcode _status
+
+	show_header
+	show_data_from_sql local
+}
+
+show_vhid()
+{
+	show_local
+}
+
+
+# select into $vm_res variable path of media by name
+# return 0 if data exist
+#
+select_by_name()
+{
+	vm_res=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${name}\" )
+
+	[ -z "${vm_res}" ] && return 1
+
+	return 0
+}
+
+# select into $vm_res variable name of media by path
+# return 0 if data exist
+#
+select_by_path()
+{
+	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${path}\" )
+
+	[ -z "${vm_res}" ] && return 1
+
+	return 0
+}
+
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+vm_res=
+
+case "${mode}" in
+	list)
+		show_local | /usr/bin/column -t
+		;;
+	get)
+		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
+		[ -n "${name}" -a -n "${path}" ] && err 1 "${MAGENTA}media: Please specify ${GREEN}name=${MAGENTA} OR ${GREEN}path=${MAGENTA}, not both${NORMAL}"
+		[ -n "${name}" ] && select_by_name
+		[ -n "${path}" ] && select_by_path
+		err 0 "${vm_res}"
+		;;
+	register)
+		[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} is mandatory${NORMAL}"
+		[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${MAGENTA} is mandatory${NORMAL}"
+		select_by_path && err 1 "${MAGENTA}Path already exist for: ${GREEN}${vm_res}${NORMAL}"
+		select_by_name && err 1 "${MAGENTA}Name already exist for: ${GREEN}${vm_res}${NORMAL}"
+		cbsdsql storage_media "INSERT INTO media ( name, path ) VALUES ( \"${name}\", \"${path}\" )"
+		err 0 "${MAGENTA}Updated${NORMAL}"
+		;;
+	unregister)
+		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
+		if [ -n "${name}" ]; then
+			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\""
+		elif [ -n "${path}" ]; then
+			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\""
+		fi
+		err 0 "${MAGENTA}Unregistered${NORMAL}"
+		;;
+	flushall)
+		cbsdsql storage_media "DELETE FROM media"
+		err 0 "${MAGENTA}Flushed${NORMAL}"
+		;;
+	delete|remove)
+		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
+		if [ -n "${name}" ]; then
+			select_by_name
+			iso_path="${vm_res}"
+			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\""
+		elif [ -n "${path}" ]; then
+			iso_path="${path}"
+			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\""
+		fi
+
+		[ -r "${iso_path}" ] && /bin/rm -f ${iso_path}
+		err 0 "${MAGENTA}Deleted${NORMAL}"
+		;;
+	deleteall|removeall)
+		for i in $( cbsdsql storage_media SELECT path FROM media ); do
+			cbsdsql storage_media "DELETE FROM media WHERE path=\"${i}\""
+			[ -r "${i}" ] && /bin/rm -f ${i}
+		done
+		err 0 "${MAGENTA}Deleted${NORMAL}"
+		;;
+	*)
+
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+		;;
+esac
+
