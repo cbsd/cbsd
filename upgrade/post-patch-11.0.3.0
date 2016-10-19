@@ -1,0 +1,35 @@
+#!/bin/sh
+#v11.0.3
+# Update bhyves to latest sql schema
+: ${distdir="/usr/local/cbsd"}
+unset workdir
+
+# MAIN
+. /etc/rc.conf
+
+[ -z "${cbsd_workdir}" ] && exit
+
+workdir="${cbsd_workdir}"
+
+[ ! -f "${workdir}/cbsd.conf" ] && exit
+
+. ${distdir}/cbsd.conf
+. ${distdir}/tools.subr
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit
+
+vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+
+for i in ${vms}; do
+	mydb="${jailsysdir}/${i}/local.sqlite"
+	[ ! -r "${mydb}" ] && continue
+	/usr/local/bin/cbsd ${miscdir}/updatesql ${mydb} ${distdir}/share/local-vnetnic.schema bhyvenic
+	/usr/local/bin/cbsd ${miscdir}/updatesql ${mydb} ${distdir}/share/local-bhyvedsk.schema bhyvedsk
+
+	# alter nic_address if not exist
+	_test=$( ${miscdir}/sqlcli ${mydb} "SELECT nic_address FROM bhyvenic" )
+	[ -n "${_test}" ] && continue
+	${ECHO} "  * ${MAGENTA}Update bhyvenic tables: nic_address for ${GREEN}${i}${NORMAL}"
+	${miscdir}/sqlcli ${mydb} ALTER TABLE bhyvenic ADD COLUMN nic_address text default 0
+done

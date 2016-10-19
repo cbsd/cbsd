@@ -77,7 +77,10 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			if [ "${vm_efi}" != "none" ]; then
 				if [ -n "${vnc_args}" -a "${vm_vnc_port}" != "1" ]; then
 					orig_vnc_args="${vnc_args}"
-					vnc_args="${vnc_args},wait"
+					if [ "${cd_vnc_wait}" = "1" ]; then
+						echo "Waiting for first connection via VNC to starting VMs..."
+						vnc_args="${vnc_args},wait"
+					fi
 				fi
 			fi
 			;;
@@ -110,6 +113,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_force_msi_irq}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -W"
 	[ "${bhyve_x2apic_mode}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -x"
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
+	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
 
 	#passthru
 	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
