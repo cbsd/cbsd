@@ -155,7 +155,7 @@ compile_nic_args()
 
 	local errmsg=
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address; do
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -168,43 +168,80 @@ compile_nic_args()
 			pcislot=${nic_slot}
 		fi
 
-		if [ "${nic_driver}" = "vale" ]; then
-			valeid=$( cbsdsql local SELECT idx FROM vale WHERE name=\"${nic_parent}\"  )
-			# echo "${valeid} X : ${nic_parent} " >> /tmp/xxx.txt
+		case ${nic_driver} in
+			vale)
+				valeid=$( cbsdsql local SELECT idx FROM vale WHERE name=\"${nic_parent}\"  )
+				[ -z "${valeid}" ] && err 1 "errmsg=\"compile_nic_args: can't determine valen nic for: ${nic_parent}\""
+				mytap="vale${valeid}:${jname}"
+				;;
+			*)
+				# when ip=0 and interface=auto we must use default interface for upstream
+				if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
 
-			[ -z "${valeid}" ] && err 1 "errmsg=\"compile_nic_args: can't determine valen nic for: ${nic_parent}\""
-			mytap="vale${valeid}:${jname}"
-			# echo "${mytap}" >> /tmp/xxx.txt
-		else
-			# when ip=0 and interface=auto we must use default interface for upstream
-			if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
+					. ${workdir}/initenv.subr
+					update_netinfo
 
-				. ${workdir}/initenv.subr
-				update_netinfo
+					if [ "${node_ip6_active}" = "1" ]; then
+						interface="${CBSD_UPLINK_IFACE6}"
+					else
+						interface="${CBSD_UPLINK_IFACE4}"
+					fi
 
-				if [ "${node_ip6_active}" = "1" ]; then
-					interface="${CBSD_UPLINK_IFACE6}"
 				else
-					interface="${CBSD_UPLINK_IFACE4}"
+					interface="${nic_parent}"
 				fi
 
-			else
-				interface="${nic_parent}"
-			fi
+				if [ "${interface}" != "disable" ]; then
+					# always up parent device
+					/sbin/ifconfig ${interface} up
 
-			# always up parent device
-			/sbin/ifconfig ${interface} up
+					if ! mybridge=$( get_my_device bridge ${interface} ); then
+						err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+					fi
+				else
+					# dont create/attach to bridge
+					mybridge="disable"
+				fi
 
-			if ! mybridge=$( get_my_device bridge ${interface} ); then
-				err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
-			fi
+				mytap=$( get_my_tap ${mybridge} )
+				[ $? -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
 
-			mytap=$( get_my_tap ${mybridge} )
-			[ $? -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
+				/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
+				if [ "${mybridge}" != "disable" ]; then
+					_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
+				fi
 
-			/sbin/ifconfig ${mytap} description ${jname}-nic${_id} up
-			_res=$( /sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1 )
-		fi
+				if [ -n "${nic_address}" ]; then
+					if [ "${nic_address}" != "0" -o "${nic_address}" != "disable" ]; then
+
+						IFS=","
+						for ip in ${nic_address}; do
+							[ "${ip}" = "DHCP" ] && ip=$( dhcpd )
+							IFS=" "
+							ipwmask ${ip}
+							iptype ${IWM}
+							local _inet=$?
+							case "${_inet}" in
+								1)
+									local proto="inet"
+									;;
+								2)
+									local proto="inet6"
+									;;
+								*)
+									continue
+									;;
+							esac
+							# ipv type + mask
+							/sbin/ifconfig ${mytap} ${proto} ${ip} alias
+						IFS=","
+					done
+					IFS=" "
+					fi
+				fi
+
+				;;
+		esac
 
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
@@ -501,6 +538,8 @@ populate_dsk_size()
 compile_vnc_args()
 {
 	local vm_port
+	local vnc_bind
+	local width height
 
 	local baseelf
 
@@ -530,11 +569,29 @@ compile_vnc_args()
 		return 1
 	fi
 
-	${ECHO} "${MAGENTA}VRDP is enabled. VNC port: ${GREEN}${vm_port}. ${MAGENTA}VNC pass: ${GREEN}cbsd${NORMAL}${NORMAL}"
-
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
-	vnc_args="-s ${bhyve_pci_index},fbuf,tcp=${default_vnc_tcp_bind}:${vm_port},w=${default_vnc_width},h=${default_vnc_width}"
+	if [ -n "${bhyve_vnc_tcp_bind}" ]; then
+		vnc_bind="${bhyve_vnc_tcp_bind}"
+	else
+		vnc_bind="${default_vnc_tcp_bind}"
+	fi
+
+	if [ -n "${bhyve_vnc_resolution}" ]; then
+		width=${bhyve_vnc_resolution%%x*}
+		height=${bhyve_vnc_resolution##*x}
+	else
+		width="${default_vnc_width}"
+		heigh="${default_vnc_height}"
+	fi
+
+	vnc_args="-s ${bhyve_pci_index},fbuf,tcp=${vnc_bind}:${vm_port},w=${width},h=${height}"
+
+	if [ "${vm_efi}" != "none" ]; then
+		${ECHO} "${MAGENTA}VRDP is enabled. VNC bind/port: ${GREEN}${vnc_bind}:${vm_port}${NORMAL}"
+		${ECHO} "${MAGENTA}Resolution: ${GREEN}${width}x${height}. ${MAGENTA}VNC pass: ${GREEN}cbsd${NORMAL}${NORMAL}"
+	fi
+
 	return 0
 }
 ###
