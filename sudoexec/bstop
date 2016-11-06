@@ -1,0 +1,133 @@
+#!/usr/local/bin/cbsd
+#v10.2.3
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname"
+MYDESC="Stop jail"
+CBSDMODULE="bhyve"
+EXTHELP="wf_jstop_jstart.html"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${system}
+. ${mdtools}
+. ${strings}
+. ${tools}
+
+[ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e bls -r ${sqlreplica}
+init $*
+
+
+# users custom stop for executing in master host
+# $1 - is source dir name ( master_poststop.d master_prestop.d )
+external_exec_master_script()
+{
+	local _res
+	local _dir="${1}"
+
+	[ -z "${_dir}" ] && return 1
+
+	local _srcdir="${jailsysdir}/${jname}/${_dir}"
+
+	[ ! -d "${_srcdir}" ] && return 0
+	[ -z "$( /bin/ls ${_srcdir}/ )" ] && return 0
+
+	/usr/bin/find "${_srcdir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
+		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
+		${_srcdir}/${_file}
+	done
+}
+
+# MAIN
+if [ $# -gt 1 ]; then
+#	recursive stop
+	JLIST=$*
+	for jname in ${JLIST}; do
+		/usr/sbin/daemon -p ${ftmpdir}/bstop.${jname}.$$ /usr/local/bin/cbsd bstop jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/bstop.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/bstop.${jname}.$$ ) --timeout=${parallel}
+	done
+
+	wait_for_fpid stop
+
+	err 0 "${MAGENTA}Multiple stop: ${GREEN}done${NORMAL}"
+fi
+
+[ -z "${jname}" ] && jname=$1
+. ${sharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+#[ ${jid} -eq 0 ] && err 1 "${MAGENTA}Not Running: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+pid=
+
+pid=$( /bin/ps axopid,ucomm,command|while read pid comm cmd; do
+	case "${comm}" in
+		bhyve|grub-bhyve)
+			_res=$( echo $cmd|/usr/bin/grep " ${jname}" 2>/dev/null)
+			[ -n "${_res}" ] && echo "${pid}" && exit 0
+			;;
+	esac
+done 2>/dev/null)
+
+# export variables for external hooks
+export jname=${jname}
+
+for _i in ${JARG} ${MYCOL}; do
+	T=
+	eval T="\$$_i"
+	export ${_i}="${T}"
+done
+
+external_exec_master_script "master_prestop.d"
+
+if [ -n "${pid}" ]; then
+	# soft stop, send SIGTERM
+	printf "${MAGENTA}Send SIGTERM to VM: ${GREEN}${jname}${NORMAL}"
+	kill -15 ${pid} > /dev/null 2>&1
+	for i in $( /usr/bin/seq 1 30 ); do
+		cbsd_pwait --pid=${pid} --timeout=1 > /dev/null 2>&1
+		printf "${MAGENTA}."
+	done
+	printf "${NORMAL}\n"
+else
+	${ECHO} "${MAGENTA}Warning: unable to determine bhyve pid for: ${GREEN}${jname}${NORMAL}"
+fi
+
+[ -f ${jailsysdir}/${jname}/vnc_port ] && /bin/rm -f ${jailsysdir}/${jname}/vnc_port
+
+_res=$( /usr/sbin/bhyvectl --destroy --vm="${jname}" 2>&1 )
+[ $? -ne 0 ] && ${ECHO} "${MAGENTA}byvectl --destroy: ${_res}${NORMAL}"
+
+# extra check for no any cbsd process related to this VM is active
+epid=$( /bin/ps axopid,ucomm,command | /usr/bin/grep "/tmp/bhyveload.${jname}.lock" |/usr/bin/grep -v grep |/usr/bin/awk '{printf $1" "}' )
+[ -n "${epid}" ] && kill -9 ${epid} > /dev/null 2>&1
+epid=$( /bin/ps axopid,ucomm,command | /usr/bin/grep "${sharedir}/bhyverun.sh -c ${workdir}/jails-system/${jname}/bhyve.conf" | /usr/bin/grep -v grep | /usr/bin/awk '{printf $1" "}' )
+[ -n "${epid}" ] && kill -9 ${epid} > /dev/null 2>&1
+
+cbsdsql local UPDATE jails SET status=0 WHERE jname=\"${jname}\"
+
+# cleanup for ifaces
+. ${vimageconf}
+
+nic_num=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT count\(id\) FROM bhyvenic WHERE jname=\"${jname}\" )
+
+[ -z "${nic_num}" ] && exit 0
+
+while [ ${nic_num} -ne 0 ]; do
+	nic_num=$(( nic_num -1 ))
+	mytap=$( get_my_device tap ${jname}-nic${nic_num} )
+	if [ -n "${mytap}" ]; then
+		/sbin/ifconfig ${mytap} >/dev/null 2>&1 && /sbin/ifconfig ${mytap} destroy
+	fi
+done
+
+external_exec_master_script "master_poststop.d"
+
+exit 0
