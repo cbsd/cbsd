@@ -63,6 +63,17 @@ get_first_fwnum()
 
 }
 
+pf_del()
+{
+	[ -z "${COMMENT}" ] && ${ECHO} "${MAGENTA}No comment in pf_del${NORMAL}" && return 1
+
+	if ${GREP_CMD} "${COMMENT}" ${etcdir}/pfnat.conf >/dev/null 2>&1; then
+		/bin/cp -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
+		${GREP_CMD} -v "${COMMENT}" ${tmpdir}/pfnat.conf |${GREP_CMD} "." > ${etcdir}/pfnat.conf
+	fi
+}
+
+
 fw_expose_add()
 {
 	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
@@ -78,23 +89,33 @@ fw_expose_add()
 
 	${ECHO} "${MAGENTA}CBSD Expose for ${jname}: ${GREEN}${in} -> ${out} (${proto})${NORMAL}"
 
-
 	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
 
-	if [ ${baseelf} -gt 1100120 ]; then
-		COMMENT="// Setup by CBSD expose: ${jname}"
-	else
-		COMMENT=
-	fi
-
-	/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
-	echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
+	case "${nat_enable}" in
+		pf)
+			pf_del
+			/bin/cat >> ${etcdir}/pfnat.conf << EOF
+rdr pass proto tcp from any to ${inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
+EOF
+			# reload rule
+			naton
+			;;
+		*)
+			if [ ${baseelf} -gt 1100120 ]; then
+				/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
+			else
+				/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
+			fi
+			echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
+			;;
+	esac
 }
 
 
 fw_expose_apply()
 {
 	cbsdsql ${exposefile} SELECT pin,pout,proto,inaddr FROM expose |/usr/bin/tr "|" " "|while read in out proto inaddr; do
+		COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
 		fw_expose_add
 	done
 }
@@ -112,13 +133,26 @@ fw_expose_list()
 
 fw_expose_clear()
 {
-	if [ ! -f ${ftmpdir}/${jname}-expose_fwnum ]; then
-		return 0
-	else
-		fwnum=$( /bin/cat ${ftmpdir}/${jname}-expose_fwnum )
-	fi
 
-	/sbin/ipfw delete ${fwnum}
+	case "${nat_enable}" in
+		pf)
+			[ ! -f ${etcdir}/pfnat.conf ] && return 0
+			if ${GREP_CMD} -E "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${etcdir}/pfnat.conf 2>&1; then
+				/bin/cp -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
+				${GREP_CMD} -E -v "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${tmpdir}/pfnat.conf |${GREP_CMD} "." > ${etcdir}/pfnat.conf
+				naton
+			fi
+			;;
+		ipfw)
+			if [ ! -f ${ftmpdir}/${jname}-expose_fwnum ]; then
+				return 0
+			else
+				fwnum=$( /bin/cat ${ftmpdir}/${jname}-expose_fwnum )
+			fi
+			/sbin/ipfw delete ${fwnum}
+			;;
+	esac
+
 }
 
 
@@ -134,7 +168,17 @@ fw_expose_delete()
 	fi
 
 	cbsdsql ${exposefile} "DELETE FROM expose WHERE pin=$in AND pout=$out AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
-	/sbin/ipfw delete ${fwnum}
+
+	case "${nat_enable}" in
+		pf)
+			pf_del
+			# reload pf
+			naton
+			;;
+		*)
+			/sbin/ipfw delete ${fwnum}
+			;;
+	esac
 }
 
 
@@ -171,7 +215,6 @@ exposefile="${jailsysdir}/${jname}/expose.sqlite"
 [ -z "${in}" -a -n "${out}" ] && in="${out}"
 [ -z "${out}" -a -n "${in}" ] && out="${in}"
 
-
 case "${mode}" in
 	list)
 		fw_expose_list
@@ -196,6 +239,8 @@ esac
 
 [ -z "${in}" ] && err 1 "${MAGENTA}Empty ${GREEN}in${NORMAL}"
 [ -z "${out}" ] && err 1 "${MAGENTA}Empty ${GREEN}out${NORMAL}"
+
+COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
 
 case "${mode}" in
 	add)
