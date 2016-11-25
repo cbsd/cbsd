@@ -23,6 +23,7 @@ clean:
 	${RM} -f bin/cbsd
 	${RM} -f sbin/netmask
 	${RM} -f misc/sqlcli
+	${RM} -f misc/pwcrypt
 	${RM} -f misc/cbsdlogtail
 	${RM} -f misc/elf_tables
 	${RM} -f misc/conv2human
