@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.0.5
 globalconf="${workdir}/cbsd.conf";
 MYARG="mode"
-MYOPTARG="fromfile jname login fullname group uid secgroup shell pw"
+MYOPTARG="fromfile jname login fullname group uid secgroup shell pw epw"
 MYDESC="Add user to jail"
 ADDHELP="mode can be: remove, add, show\n"
 
@@ -32,7 +32,7 @@ check_jaildir()
 	local check_file="${path}/etc/master.passwd ${path}/etc/passwd ${path}/etc/group ${path}/usr/sbin/pw"
 	local i
 	local ret=0
-	
+
 	for i in $check_file; do
 		[ ! -f "${i}" ] && echo ${i} && ret=1
 	done
@@ -97,8 +97,10 @@ c_adduser()
 			;;
 	esac
 
-	[ -z "${pw}" -a -z "${fromfile}" ] && getpw
-	[ -z "${pw}" ] && err 1 "${GREEN}pw= ${MAGENTA} is mandatory${NORMAL}"
+	if [ -z "${pw}" -a -z "${fromfile}" ]; then
+		[ -z "${epw}" ] && getpw
+	fi
+	[ -z "${pw}" -a -z "${epw}" ] && err 1 "${GREEN}pw= ${MAGENTA}or ${GREEN}epw= ${MAGENTA} is mandatory${NORMAL}"
 	ADDON=""
 	[ -n "$uid" ] && ADDON="${ADDON} -u ${uid}"
 	[ -n "$fullname" ] && ADDON="${ADDON} -c \"${fullname}\""
@@ -119,13 +121,21 @@ c_adduser()
 		CHROOT_EXEC="/usr/sbin/chroot ${path}"
 	fi
 
-echo "$CHROOT_EXEC /bin/sh  : pw useradd $login $ADDON"
+	#echo "$CHROOT_EXEC /bin/sh  : pw useradd $login $ADDON"
 
 	${CHROOT_EXEC} /bin/sh <<EOF
 /usr/sbin/pw useradd ${login} ${ADDON} -m
-echo "${pw}" |/usr/sbin/pw mod user ${login} -h 0 -
 EOF
 
+	if [ -n "${pw}" ]; then
+		${CHROOT_EXEC} /bin/sh <<EOF
+echo "${pw}" |/usr/sbin/pw mod user ${login} -h 0 -
+EOF
+	elif [ -n "${epw}" ]; then
+		${CHROOT_EXEC} /bin/sh <<EOF
+/usr/bin/chpass -p '${epw}' ${login}
+EOF
+	fi
 }
 
 # must be filled:
@@ -193,10 +203,11 @@ if [ -r "${fromfile}" ]; then
 	[ -z "${user_add}" ] && exit 0
 
 	for i in ${user_add}; do
-		unset login pw fullname secgroup group shell res err
+		unset login epw pw fullname secgroup group shell res err
 		login="${i}"
 
 		f_getvar user_pw_${i} pw
+		f_getvar user_pw_${i}_crypt epw
 		f_getvar user_gecos_${i} fullname
 		f_getvar user_home_${i} home
 		f_getvar user_shell_${i} shell
@@ -241,7 +252,7 @@ case "${mode}" in
 		;;
 	"show")
 		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA}is mandatory${NORMAL}"
-		res=$( ${exec_cmd} user show $login )
+		res=$( ${exec_cmd} user show ${login} )
 		err=$?
 		;;
 esac

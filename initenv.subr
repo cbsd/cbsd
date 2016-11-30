@@ -104,13 +104,14 @@ make_nat()
 			_extiface="${CBSD_UPLINK_IFACE6}"
 			;;
 		*)
-			${ECHO} "${MAGENTA}make_nat: iptype unknown for ${natip}, trying to obtain info via getip-by-nics..${NORMAL}"
+			#${ECHO} "${MAGENTA}make_nat: iptype unknown for ${natip}, trying to obtain info via getip-by-nics..${NORMAL}"
 			_extiface="${natip}"
 			natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
 			if [ $? -ne 0 ]; then
 				${ECHO} "${MAGENTA}Unable to determine first IP for nic: ${GREEN}${_extiface}${NORMAL}"
 				return 2
 			fi
+			${ECHO} "${MAGENTA}make_nat: ${natip} IP selected via: ${GREEN}${_extiface}${NORMAL}"
 	esac
 
 	/sbin/ifconfig ${_extiface} >/dev/null 2>&1
@@ -124,17 +125,24 @@ make_nat()
 			if [ $( /usr/bin/grep ^pf_load= /boot/loader.conf| /usr/bin/wc -l ) = 0 ]; then
 				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && ${SYSRC_CMD} -vf /boot/loader.conf pf_load=YES
 			fi
+
+			#save other rule, except nat
+			/usr/bin/grep -E -v "(^nat)|(Setup by CBSD NAT)" ${etcdir}/pfnat.conf |/usr/bin/sort -u > ${tmpdir}/pfnat.conf.bak
 			/usr/bin/truncate -s0 ${etcdir}/pfnat.conf
 
 			for _net in ${rfc1918}; do
 				_nm=$( echo ${_net} |/usr/bin/tr "/" " " )
 				${workdir}/sbin/netmask ${_nm} ${natip}
 				if [ $? -ne 1 ]; then
-					cat >> ${etcdir}/pfnat.conf <<EOF
-nat on ${_extiface} from ${_net} to ! ${_net} -> ${natip}
+					/bin/cat >> ${etcdir}/pfnat.conf <<EOF
+nat on ${_extiface} from ${_net} to ! ${_net} -> ${natip} # // Setup by CBSD NAT
 EOF
 				fi
 			done
+
+			#restore other rule
+			/bin/cat ${tmpdir}/pfnat.conf.bak >> ${etcdir}/pfnat.conf
+
 			answ="${ok}"
 			ok="ok"
 			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
@@ -249,7 +257,11 @@ configure_nat()
 
 	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET natip=\"${natip}\"
 
-	_default="pf"
+	if [ -n "${nat_enable}" ]; then
+		_default="${nat_enable}"
+	else
+		_default="pf"
+	fi
 
 	answ=0
 	ok=
@@ -336,6 +348,13 @@ get_initenv_hostname()
 	f_dialog_title " hostname "
 	f_dialog_msgbox "Already set: ${hostname}"
 }
+
+# execute external natcfg-tui script
+get_initenv_natcfg()
+{
+	natcfg-tui
+}
+
 
 # trigger for cbsdd_enable
 get_initenv_rcconf()
@@ -678,8 +697,6 @@ update_netinfo()
 
 	CBSD_IP4="${INITIP4}"
 	CBSD_IP6="${INITIP6}"
-
-	echo "$CBSD_IP6" >> /tmp/xx.txt
 
 	if [ "${CBSD_IP6}" = "::1" ]; then
 		CBSD_NODE_IP6_ACTIVE=0

@@ -1,11 +1,12 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v11.0.5
 MYARG=""
 MYOPTARG="formfile bootstrap module jname updcol header inter table out"
 MYDESC="Ncurses-based jail image boostrap helper"
 ADDHELP="updcol = new (default) update new column, cur - update cur column\n\
 table - initial table, default is forms\n\
 if jname name is cbsdpuppet1 then just generate manifest or hiera\n\
+if jname name is CBSDSYS then configure current system\n\
 out - out manifest content to file, when jname=cbsdpuppet1\n"
 EXTHELP="wf_imghelper.html"
 
@@ -317,8 +318,12 @@ get_helper_value()
 # when bootstrap exist - after form execute install_img func
 #
 # Check for cbsd_puppet_jname jail exist
-jstatus jname=${cbsd_helper_jname} >/dev/null 2>&1
-[ $? -ne 1 ] && err 1 "${MAGENTA}No such ${GREEN}${cbsd_helper_jname}${MAGENTA} for helper ${GREEN}${helper_module}${MAGENTA}. Please fetch it via repo command or create from template${NORMAL}"
+if [ "${jname}" != "CBSDSYS" ]; then
+	jstatus jname=${cbsd_helper_jname} >/dev/null 2>&1
+	[ $? -ne 1 ] && err 1 "${MAGENTA}No such ${GREEN}${cbsd_helper_jname}${MAGENTA} for helper ${GREEN}${helper_module}${MAGENTA}. Please fetch it via repo command or create from template${NORMAL}"
+else
+	with_bootstrap=1
+fi
 
 # Show list modules with no arg
 if [ -z "${1}" ]; then
@@ -327,16 +332,18 @@ if [ -z "${1}" ]; then
 	[ ${header} -eq 1 ] && ${ECHO} "${MAGENTA}Available modules:${NORMAL}"
 	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}"
 
-	/usr/bin/find ${moduledir}/${helper_module}.d  -type d -depth 1 -maxdepth 1 -name module_* -exec /usr/bin/basename {} \; |while read _dir; do
+	# rename helper_module to forms-<helper>-name!!!
+	/usr/bin/find ${moduledir}/forms.d/  -type d -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |/usr/bin/sort| while read _dir; do
 		p1=${_dir%%_*}
 		p2=${_dir##*_}
 		echo ${p2}
 	done
+
 	[ ${header} -eq 1 ] && ${ECHO} "${NORMAL}"
 	exit 0
 fi
 
-if [ -n "${jname}" ]; then
+if [ -n "${jname}" -a "${jname}" != "CBSDSYS" ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 	with_bootstrap=1
@@ -382,7 +389,8 @@ fi
 [ ! -d "${workdir}/formfile" ] && /bin/mkdir ${workdir}/formfile
 
 if [ -n "${module}" ]; then
-	mksitefile="${moduledir}/puppet.d/module_${module}/initforms.sh"
+	[ -f "${moduledir}/forms.d/${module}/helpers.conf" ] && . ${moduledir}/forms.d/${module}/helpers.conf
+	mksitefile="${moduledir}/forms.d/${module}/initforms.sh"
 	[ ! -f "${mksitefile}" ] && err 1 "No ${mksitefile}"
 	/bin/sh ${mksitefile}
 fi
@@ -407,12 +415,6 @@ sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
 sql_part="${sql_part} ORDER BY order_id"
 
 param=$( cbsdsql ${formfile} ${sql_part} )
-
-#echo "${sql_part}"
-#exit 0
-
-#echo "$param"
-#exit 0
 
 load_forms
 load_new
@@ -461,6 +463,10 @@ update_params ${updcol}
 # commit when works with module
 if [ -n "$helper_module}" ]; then
 	case "${jname}" in
+		CBSDSYS)
+			echo "HERE ${formfile}"
+			${moduledir}/forms.d/${module}/cbsdsys ${formfile}
+			;;
 		cbsdpuppet1)
 			[ -z "${out}" ] && out="/dev/stdout"
 			${helper_module} jname=${jname} module=${module} mode=manifest > ${out}
