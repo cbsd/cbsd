@@ -123,6 +123,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	# /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} -s 30,xhci,tablet ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
 
 #	echo "/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname}"
+	# clean ARP cache
+	/usr/sbin/arp -nda > /dev/null 2>&1
+
 	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} ${xhci_args} ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
 
 	# restore original value
