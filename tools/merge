@@ -1,0 +1,53 @@
+#!/usr/local/bin/cbsd
+#v11.0.7
+MYARG="from to out"
+MYDESC="Merge two ascii files with param into one"
+ADDHELP="from= low priority file with params\n\
+to= highest priority file with params (this params always wins)\n\
+out= outfile with merge result\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+# $1 - orig file
+# $2 - custom file
+# $3 - new merged outfile
+merge_profiles()
+{
+	[ ! -f ${from} -a ! -f ${to} ] && return 1
+	local _tmp1=$( /usr/bin/mktemp )
+	local _tmp2=$( /usr/bin/mktemp )
+
+	# string from to= always win, so copy it first
+	# by sed, merge splited '\$' multi-line strings
+	${GREP_CMD} -v ^# ${to} | /usr/bin/sed -e ':a' -e 'N' -e '$!ba' -e 's/\\\n/ /g' > ${_tmp1}
+	${GREP_CMD} -v ^# ${from} | /usr/bin/sed -e ':a' -e 'N' -e '$!ba' -e 's/\\\n/ /g' > ${_tmp2}
+
+	# second pass:
+	# find xxx= strings in from= file
+	# and match test it with $out=
+	# skip when matched and append when not
+	${GREP_CMD} -v ^# ${_tmp2} | while read _line; do
+		strpos --str="${_line}" --search="="
+		pos=$?
+		[ ${pos} -eq 0 ] && continue
+		pos=$(( pos + 1 ))
+		prefix=$( substr --pos=0 --len=${pos} --str="${_line}" )
+		${GREP_CMD} -q ^${prefix} ${_tmp1} > /dev/null 2>&1
+		[ $? -eq 0 ] && continue
+		${GREP_CMD} ^${prefix} ${_tmp2} >> ${_tmp1}
+	done
+
+	${GREP_CMD} . ${_tmp1} |/usr/bin/sort -n > ${out}
+	/bin/rm -f ${_tmp1} ${_tmp2}
+	return 0
+}
+
+[ ! -f ${from} ] && err 1 "No file $from"
+[ ! -f ${to} ] && err 1 "No file $to"
+
+merge_profiles ${from} ${to} ${out}

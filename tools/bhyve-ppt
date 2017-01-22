@@ -1,0 +1,127 @@
+#!/usr/local/bin/cbsd
+#v10.1.0
+MYARG="mode"
+MYOPTARG="jname ppt"
+MYDESC="Show ppt devices"
+CBSDMODULE="bhyve"
+ADDHELP="mode=list - show ppt\n\
+mode=attach - attach ppt to jname\n\
+mode=detach - detach ppt from jname\n\
+ppt - ppt\n
+"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+device=$( /sbin/sysctl -nq hw.vmm.ppt.devices )
+
+[ -z "${device}" ] && err 1 "${MAGENTA}No such ppt devices${NORMAL}"
+
+for id in $( /usr/bin/seq 0 ${device} ); do
+	eval $( /usr/sbin/pciconf -vl | /usr/bin/grep -A4 ^ppt${id}@pci |/usr/bin/grep -E "^ppt${id}@|vendor|device" |while read a; do
+		prefix=$( substr --pos=0 --len=6 --str="$a" )
+		case "${prefix}" in
+			vendor)
+				value=$( echo "${a}" |/usr/bin/cut -d = -f 2 |/usr/bin/tr -d "'")
+				echo "vendor${id}=\"${value}\""
+				;;
+			device)
+				value=$( echo "${a}" |/usr/bin/cut -d = -f 2 |/usr/bin/tr -d "'")
+				echo "device${id}=\"${value}\""
+				;;
+			ppt*)
+				value=$( echo  "${a}" |/usr/bin/awk '{printf $1}' |/usr/bin/tr -d "a-z@" | /usr/bin/cut -d : -f 2-4 | /usr/bin/tr ":" "/" )
+				echo "ppt${id}=\"${value}\""
+				;;
+			*)
+				;;
+		esac
+	done )
+done
+
+# export $device, $ppt, $vendor variable
+# $1 - as ppt, e.g: 5/1/0
+load_ppt()
+{
+	my_ppt="${1}"
+
+	[ -z "${my_ppt}" ] && return 1
+
+	device=
+	ppt=
+	vendor=
+
+	local tmp_ppt
+
+	for id in $( /usr/bin/seq 0 ${device} ); do
+		tmp_ppt=
+
+		eval tmp_ppt="\$ppt${id}"
+		[ -z "${tmp_ppt}" ] && continue
+
+		if [ "${my_ppt}" = "${tmp_ppt}" ]; then
+			eval device="\$device${id}"
+			eval vendor="\$vendor${id}"
+		fi
+	done
+
+	export ppt="${my_ppt}"
+}
+
+# export tmp_jname as linked jail to $ppt
+init_ppt_action()
+{
+	[ -z "${ppt}" ] && err 1 "${MAGENTA}Please set: ${GREEN}ppt=${NORMAL}"
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Please set: ${GREEN}jname=${NORMAL}"
+
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Only for bhyve type VMs${NORMAL}"
+
+	load_ppt "${ppt}"
+	[ -z "${ppt}" ] && err 1 "${MAGENTA}No such ppt: ${GREEN}${ppt}${NORMAL}"
+
+	tmp_jname=$( cbsdsql local SELECT jname FROM bhyveppt WHERE ppt=\"${ppt}\" 2>/dev/null )
+}
+
+case "${mode}" in
+	list)
+		for id in $( /usr/bin/seq 0 ${device} ); do
+			ppt=
+			device=
+			vendor=
+			jname=0
+
+			eval ppt="\$ppt${id}"
+			[ -z "${ppt}" ] && continue
+
+			eval device="\$device${id}"
+			eval vendor="\$vendor${id}"
+
+			jname=$( cbsdsql local SELECT jname FROM bhyveppt WHERE ppt=\"${ppt}\" 2>/dev/null )
+			[ -z "${jname}" -o "${jname}" = "0" ] && jname="-"
+			[ -n "${ppt}" ] && echo "${ppt} : ${device} : ${vendor} : ${jname}"
+		done
+		;;
+	attach)
+		init_ppt_action
+		[ -n "${tmp_jname}" -a "${tmp_jname}" != "0" ] && err 1 "${MAGENTA}ppt already used by: ${GREEN}${tmp_jname}${MAGENTA}. Please detach first${NORMAL}"
+
+		cbsdsql local "INSERT INTO bhyveppt ( ppt, device, vendor, jname ) VALUES ( \"${ppt}\", \"device\", \"${vendor}\", \"${jname}\" )"
+		err 0 "${MAGENTA}Attached${NORMAL}"
+		;;
+	detach)
+		init_ppt_action
+
+		[ -z "${tmp_jname}" -a "${tmp_jname}" = "0" ] && err 1 "${MAGENTA}ppt is not attached: ${GREEN}${ppt}${MAGENTA}"
+
+		cbsdsql local "DELETE FROM bhyveppt WHERE ppt=\"${ppt}\""
+		err 0 "${MAGENTA}Dettached${NORMAL}"
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+esac

@@ -50,14 +50,17 @@ init_grubcheck()
 
 create_from_jail()
 {
+	local passt_args=
+
+	[ -n "${pci_passthru_args}" ] && passt_args="-S"
+
 	# from jail2iso mode
 	case "${vm_efi}" in
 		uefi_csm|uefi)
 			bhyveload_cmd=""
 		;;
 		*)
-		bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
-	# installer_opt="-s 31:0,virtio-blk,${BOOTDISK}"
+			bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 		;;
 	esac
 }
@@ -99,6 +102,11 @@ start_bhyve()
 	local bhyveload_cmd _devicemap _err
 	local grubmem
 
+	local passt_args=
+
+	local is_ppt=$( cbsdsql local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
+	[ -n "${is_ppt}" ] && passt_args="-S"
+
 	external_exec_master_script "master_prestart.d"
 	grubmem=$(( vm_ram / 1024 / 1024 ))
 
@@ -130,7 +138,7 @@ start_bhyve()
 						init_iso
 						if [ $? -eq 1 ]; then
 							printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
-							for i in $( jot 5 ); do
+							for i in $( /usr/bin/jot 5 ); do
 								printf "."
 								sleep 1
 							done
@@ -138,17 +146,16 @@ start_bhyve()
 						fi
 					fi
 
-
 					case "${vm_efi}" in
 						uefi_csm|uefi)
 							bhyveload_cmd=""
 							;;
 						*)
 							if [ "${vm_boot}" = "cd" ]; then
-								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -d ${iso_img} -m ${vm_ram} ${jname}"
-								bhyveload_cmd_once="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -d ${iso_img} -m ${vm_ram} ${jname}"
+								bhyveload_cmd_once="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 							else
-								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+								bhyveload_cmd="/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 							fi
 							;;
 					esac
@@ -227,7 +234,7 @@ start_bhyve()
 					;;
 				*)
 					${ECHO} "${MAGENTA}Creating ${GREEN}device.map ${MAGENTA}in ${GREEN}${_devicemap}${NORMAL}"
-					truncate -s0 ${_devicemap}
+					/usr/bin/truncate -s0 ${_devicemap}
 					echo "(hd0) ${data}/${MDFILE}" >> "${_devicemap}"
 					echo "(cd0) ${iso_img}" >> "${_devicemap}"
 				;;
@@ -263,12 +270,12 @@ start_bhyve()
 		unset hostbridge_args
 	fi
 
-	# init lpc_args
-	if ! compile_lpc_args; then
-		${ECHO} "${MAGENTA}No such lpc for VMs: ${GREEN}${jname}${NORMAL}"
-		unset lpc_args
+	# Must be after hoster and before cd/hdd
+	if ! compile_uefi_boot_args; then
+		unset uefi_boot_args
 	fi
 
+	# Must be after hoster bridge to take 2-4 slot id
 	if [ "${vm_boot}" = "hdd" ]; then
 		# init dsk_args first
 		if ! compile_dsk_args; then
@@ -293,16 +300,16 @@ start_bhyve()
 		fi
 	fi
 
+	# init nic_args
+	if ! compile_nic_args ; then
+		${ECHO} "${MAGENTA}No such nic for VMs: ${GREEN}${jname}${NORMAL}"
+		unset nic_args
+	fi
+
 	# init pci_passthru_args
 	if ! compile_pci_passthru_args; then
 		${ECHO} "${MAGENTA}No such pci_passthru for VMs: ${GREEN}${jname}${NORMAL}"
 		unset pci_passthru_args
-	fi
-
-	# init efi_args
-	if ! compile_efi_args; then
-		${ECHO} "${MAGENTA}No such efi for VMs: ${GREEN}${jname}${NORMAL}"
-		unset efi_args
 	fi
 
 	# init console_args
@@ -317,11 +324,19 @@ start_bhyve()
 		unset lpc_args
 	fi
 
-	# init nic_args
-	if ! compile_nic_args ; then
-		${ECHO} "${MAGENTA}No such nic for VMs: ${GREEN}${jname}${NORMAL}"
-		unset nic_args
+	# init efi_args
+	if ! compile_efi_args; then
+		${ECHO} "${MAGENTA}No such efi for VMs: ${GREEN}${jname}${NORMAL}"
+		unset efi_args
 	fi
+
+
+	# init lpc_args
+	if ! compile_lpc_args; then
+		${ECHO} "${MAGENTA}No such lpc for VMs: ${GREEN}${jname}${NORMAL}"
+		unset lpc_args
+	fi
+
 
 	# init vnc_args
 	if ! compile_vnc_args ; then
@@ -357,6 +372,7 @@ lpc_args='${lpc_args}'
 pci_passthru_args='${pci_passthru_args}'
 virtiornd_args='${virtiornd_args}'
 nic_args='${nic_args}'
+uefi_boot_args='${uefi_boot_args}'
 dsk_args='${dsk_args}'
 cd_args='${cd_args}'
 #
@@ -384,6 +400,7 @@ bhyve_vnc_tcp_bind="${bhyve_vnc_tcp_bind}"
 
 EOF
 
+#	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf > /tmp/bhyve.${jname}.log"
 	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf"
 
 	if [ -n "${console_nmdm}" ]; then
@@ -461,6 +478,8 @@ readconf ${default_profile}
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+
+
 [ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
@@ -469,18 +488,26 @@ readconf ${default_profile}
 MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${data}/${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
 
-if [ "${emulator}" = "bhyve" ]; then
-	# export variables for external hooks
+# export variables for external hooks
 
-	export jname=${jname}
+export jname=${jname}
 
-	for _i in ${JARG} ${MYCOL}; do
-		T=
-		eval T="\$$_i"
-		export ${_i}="${T}"
-	done
+for _i in ${JARG} ${MYCOL}; do
+	T=
+	eval T="\$$_i"
+	export ${_i}="${T}"
+done
 
-	start_bhyve
+# test for incorrect state
+if [ ${status} -eq 3 ]; then
+	cbsdsql local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
+	comment=cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\"
+	if [ "${comment}" = "Stopping_VM" ]; then
+		jswmode jname=${jname} mode=master comment='0'
+	else
+		${ECHO} "${MAGENTA}Bhyve in maintenance: ${GREEN}${comment}${NORMAL}"
+		err 1 "${MAGENTA}Please finish maintenance and switch mode via: ${GREEN}jswmode jname=${jname} mode=master comment='0'${NORMAL}"
+	fi
 fi
-
+start_bhyve
 exit 0

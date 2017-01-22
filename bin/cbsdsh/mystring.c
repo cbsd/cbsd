@@ -72,6 +72,11 @@ enum {
 	C_STR,
 };
 
+enum {
+	D_SEARCH,
+	D_STR,
+};
+
 #define FALSE 0
 #define TRUE 1
 #endif
@@ -152,6 +157,14 @@ substr_usage(void)
 }
 
 int
+strpos_usage(void)
+{
+	out1fmt("Find first include of --search in --str. Return 0 if no any match\n");
+	out1fmt("require: --search, --str\n");
+	return (EX_USAGE);
+}
+
+int
 substrcmd(int argc, char **argv)
 {
 	char *pointer;
@@ -222,4 +235,60 @@ substrcmd(int argc, char **argv)
 	free(pointer);
 	return 0;
 }
+
+
+int
+strposcmd(int argc, char **argv)
+{
+	int optcode = 0;
+	int option_index = 0;
+	char *str = NULL;
+	char *search = NULL;
+	int pos = 0;
+
+	struct option long_options[] = {
+		{ "search", required_argument, 0 , D_SEARCH },
+		{ "str", required_argument, 0 , D_STR },
+		/* End of options marker */
+		{ 0, 0, 0, 0 }
+	};
+
+	if (argc != 3)
+		strpos_usage();
+
+	while (TRUE) {
+		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
+		if (optcode == -1) break;
+		switch (optcode) {
+			case D_SEARCH:
+				search = malloc(strlen(optarg) + 1);
+				memset(search, 0, strlen(optarg) + 1);
+				strcpy(search, optarg);
+				break;
+			case D_STR:
+				str = malloc(strlen(optarg) + 1);
+				memset(str, 0, strlen(optarg) + 1);
+				strcpy(str, optarg);
+				break;
+		}
+	} //while
+
+	//zero for getopt* variables for next execute
+	optarg=NULL;
+	optind=0;
+	optopt=0;
+	opterr=0;
+	optreset=0;
+
+	if (str == NULL) return 1;
+
+	char *p = strstr(str, search);
+	if (p)
+		pos = p - str;
+
+	if (pos<0) pos=0;
+	return pos;
+}
+
+
 #endif

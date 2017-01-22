@@ -1,0 +1,102 @@
+#!/usr/local/bin/cbsd
+#v11.0.5
+MYARG="path size"
+MYOPTARG="format type name jname"
+MYDESC="Create virtual storage media for bhyve"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve.html"
+ADDHELP="name=storage name\n\
+path=storage path\n\
+type=hdd,cd\n\
+format=vdi,vmdk,vhd\n\
+size=size of image\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+# $1 - which file from. Eg: local
+show_data_from_sql()
+{
+	local _i
+
+	_sql="SELECT name,path,type,jname FROM media"
+
+	cbsdsql storage_media ${_sql} | while read name path type jname; do
+		populate_output_data
+	done
+
+	IFS=" "
+}
+
+
+# select into $vm_res variable path of media by name
+# return 0 if data exist
+#
+select_by_name()
+{
+	vm_res=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${name}\" )
+
+	[ -z "${vm_res}" ] && return 1
+
+	return 0
+}
+
+# select into $vm_res variable name of media by path
+# return 0 if data exist
+#
+select_by_path()
+{
+	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${path}\" )
+
+	[ -z "${vm_res}" ] && return 1
+
+	return 0
+}
+
+update_jname()
+{
+	cbsdsql storage_media "UPDATE media SET jname=\"${jname}\" WHERE name=\"${name}\" AND path=\"${path}\""
+}
+
+update_type()
+{
+	cbsdsql storage_media "UPDATE media SET type=\"${type}\" WHERE name=\"${name}\" AND path=\"${path}\""
+}
+
+
+#### MAIN
+[ -r "${path}" ] && err 1 "${MAGENTA}File already exist in FS: ${GREEN}${path}${NORMAL}"
+
+if is_number ${size}; then
+	if conv2bytes ${size}; then
+		size="${convval}"
+	fi
+fi
+
+prefix=$( substr --pos=0 --len=1 --str=${path} )
+
+named_disk=0		# 1 - seq/named disk for existing jail
+
+[ "${prefix}" != "/" ] && named_disk=1
+
+[ ${named_disk} -eq 1 -a -z "${jname}" ] && err 1 "${MAGENTA}For non-FS-based path (path not started from /), ${GREEN}jname=${MAGENTA} is mandatory${NORMAL}"
+
+if [ ${named_disk} -eq 1 ]; then
+	prefix=$( substr --pos=0 --len=3 --str=${path} )
+	[ "${prefix}" != "dsk" ] && err 1 "${MAGENTA}Non-FS-based path must be named as: ${GREEN}dskX${NORMAL}"
+fi
+
+[ -z "${name}" ] && name="hdd-${path}"
+[ -z "${type}" ] && type="hdd"
+[ -z "${jname}" ] && jname="-"
+
+case ${named_disk} in
+	0)
+		/usr/bin/truncate -s${size} ${path}
+		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname, size ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\", \"${size}\" )"
+		;;
+esac

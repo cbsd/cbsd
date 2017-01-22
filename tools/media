@@ -5,7 +5,9 @@ MYOPTARG="name path display type jname"
 MYDESC="Operate with virtual storage media such as ISO"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve.html"
-ADDHELP="mode=list - list of registered media\n\
+ADDHELP="mode=attach - attach media to jname\n\
+mode=detach - detach media from jname\n\
+mode=list - list of registered media\n\
 mode=flushall - unregister all records, without deleting\n\
 mode=register - register new media (req: name, path)\n\
 mode=unregister - unregister new media (req: name, path), without delete\n\
@@ -13,7 +15,7 @@ mode=delete|remove - unregister and delete media file (req: name, path)\n\
 mode=deleteall|removeall - unregister and delete all ISO files\n\
 mode=get - print 'name' or 'path' for 'path=' or 'name='\n\
 mode=update - update type or jname by 'path=' and 'name='\n\
-display= list by comma for column. Default: name,path,type,jname\n"
+display= list by comma for column. Default: name,path,type,jname,size\n"
 
 . ${subr}
 . ${system}
@@ -22,7 +24,7 @@ display= list by comma for column. Default: name,path,type,jname\n"
 
 init $*
 
-[ -z "${display}" ] && display="name,path,type,jname"
+[ -z "${display}" ] && display="name,path,type,jname,size"
 
 #remove commas for loop action on header
 mydisplay=$(echo ${display} |/usr/bin/tr ',' ' ')
@@ -47,9 +49,24 @@ populate_output_data()
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
-		_val=""
-		eval _val=\$$_i
-		[ -z "${_val}" ] && _val="\-"
+
+		case "${_i}" in
+			size)
+				_val=
+				eval _val=\$$_i
+
+				if conv2human "${_val}"; then
+					_val=${convval}
+				fi
+				;;
+			*)
+				_val=
+				eval _val=\$$_i
+				[ -z "${_val}" ] && _val="\-"
+				prefix=$( substr --pos=0 --len=1 --str=${_val} )
+				[ "${prefix}" = "-" ] && _val="\-"
+				;;
+		esac
 		printf "${_val} "
 	done
 
@@ -62,9 +79,9 @@ show_data_from_sql()
 {
 	local _i
 
-	_sql="SELECT name,path,type,jname FROM media"
+	_sql="SELECT name,path,type,jname,size FROM media"
 
-	cbsdsql storage_media ${_sql} | while read name path type jname; do
+	cbsdsql storage_media ${_sql} | while read name path type jname size; do
 		populate_output_data
 	done
 
@@ -88,10 +105,14 @@ show_vhid()
 
 # select into $vm_res variable path of media by name
 # return 0 if data exist
-#
+# $1 - alternative jname
 select_by_name()
 {
-	vm_res=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${name}\" )
+	local j="${jname}"
+
+	[ -n "${1}" ] && j="${1}"
+
+	vm_res=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${name}\" AND jname=\"${j}\" )
 
 	[ -z "${vm_res}" ] && return 1
 
@@ -100,10 +121,13 @@ select_by_name()
 
 # select into $vm_res variable name of media by path
 # return 0 if data exist
-#
+# $1 - alternative jname
 select_by_path()
 {
-	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${path}\" )
+	local j="${jname}"
+
+	[ -n "${1}" ] && j="${1}"
+	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${path}\" AND jname=\"${j}\" )
 
 	[ -z "${vm_res}" ] && return 1
 
@@ -117,7 +141,7 @@ update_jname()
 
 update_type()
 {
-	cbsdsql storage_media "UPDATE media SET type=\"${type}\" WHERE name=\"${name}\" AND path=\"${path}\""
+	cbsdsql storage_media "UPDATE media SET type=\"${type}\" WHERE name=\"${name}\" AND path=\"${path}\" AND jname=\"${jname}\""
 }
 
 
@@ -127,6 +151,33 @@ sqldelimer=" "
 vm_res=
 
 case "${mode}" in
+	attach)
+		[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${NORMAL}"
+		[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${NORMAL}"
+		[ -z "${jname}" ] && err 1 "${MAGENTA}Give me ${GREEN}jname=${NORMAL}"
+
+		test_jname=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${path}\" AND name=\"${name}\" )
+		[ -n "${test_jname}" -a "${test_jname}" != "-" ] && err 1 "${MAGENTA}disk ${name} with path ${path} already attached to: ${GREEN}${test_jname}${NORMAL}"
+
+		select_by_path "-"
+		[ $? -ne 0 ] && err 1 "${MAGENTA}Path not exist for jname '-': ${GREEN}${path}${NORMAL}"
+		select_by_name "-"
+		[ $? -ne 0 ] && err 1 "${MAGENTA}Name not exist for jname '-': ${GREEN}${name}${NORMAL}"
+
+		dsk_path="${path}"
+
+		. ${jrcconf}
+		[ $? -eq 1 ] && err 1 "${MAGENTA}attachzfs: no such jail: ${GREEN}${jname}${NORMAL}"
+		# [ ${status} -ne 1 ] && err 1 "${MAGENTA}attachzfs: jail is not running: ${GREEN}${jname}${NORMAL}"
+		mydb="${jailsysdir}/${jname}/local.sqlite"
+		virtio_type="virtio-blk"
+		cbsdsql ${mydb} "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
+
+		sql="UPDATE media SET jname=\"${jname}\" WHERE name=\"${name}\" AND path=\"${dsk_path}\""
+		cbsdsql ${dbdir}/storage_media.sqlite "${sql}"
+
+		err 0 "${MAGENTA}Attached to: ${GREEN}${jname}${NORMAL}"
+		;;
 	list)
 		show_local | /usr/bin/column -t
 		;;
@@ -142,39 +193,42 @@ case "${mode}" in
 		[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${MAGENTA} is mandatory${NORMAL}"
 		select_by_path && err 1 "${MAGENTA}Path already exist for: ${GREEN}${vm_res}${NORMAL}"
 		select_by_name && err 1 "${MAGENTA}Name already exist for: ${GREEN}${vm_res}${NORMAL}"
-		cbsdsql storage_media "INSERT INTO media ( name, path ) VALUES ( \"${name}\", \"${path}\" )"
-		[ -n "${type}" ] && update_type
-		[ -n "${jname}" ] && update_jname
+		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
 		err 0 "${MAGENTA}Updated${NORMAL}"
 		;;
 	unregister)
+		# test_for_protected
+
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
 		if [ -n "${name}" ]; then
-			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\""
+			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
 		elif [ -n "${path}" ]; then
-			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\""
+			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
 		fi
 		err 0 "${MAGENTA}Unregistered${NORMAL}"
 		;;
 	flushall)
-		cbsdsql storage_media "DELETE FROM media"
+		# test for protected by select jname ???
+		cbsdsql storage_media "DELETE FROM media WHERE type != \"hdd\""
 		err 0 "${MAGENTA}Flushed${NORMAL}"
 		;;
 	delete|remove)
+		# test_for_protected
+
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
 		if [ -n "${name}" ]; then
 			select_by_name
 			iso_path="${vm_res}"
-			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\""
+			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
 		elif [ -n "${path}" ]; then
 			iso_path="${path}"
-			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\""
+			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
 		fi
 		[ -r "${iso_path}" ] && /bin/rm -f ${iso_path}
 		err 0 "${MAGENTA}Deleted${NORMAL}"
 		;;
 	deleteall|removeall)
-		for i in $( cbsdsql storage_media SELECT path FROM media ); do
+		for i in $( cbsdsql storage_media SELECT path FROM media WHERE type != \"hdd\" ); do
 			cbsdsql storage_media "DELETE FROM media WHERE path=\"${i}\""
 			[ -r "${i}" ] && /bin/rm -f ${i}
 		done

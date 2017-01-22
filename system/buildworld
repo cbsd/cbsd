@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 #v10.0.3
 globalconf="${workdir}/cbsd.conf";
 CBSDMODULE="build"
@@ -10,12 +10,13 @@ stable=1 for RELENG_X\n\
 distcc=1 - enable distcc\n\
 ccache=1 - enable ccache\n"
 
-set -e
-. ${globalconf}
-set +e
-
 . ${subr}
+. ${system}
+. ${strings}
+. ${tools}
 init $*
+
+# MAIN
 
 over="${ver}"
 oarch="${arch}"
@@ -26,6 +27,7 @@ oarch="${arch}"
 . ${mailconf}
 readconf buildworld.conf
 . ${workdir}/universe.subr
+
 # for checkout_method
 readconf srcup.conf
 
@@ -35,6 +37,7 @@ init_target_arch
 init_srcdir
 init_supported_arch
 init_make_flags
+init_basedir
 
 if [ "${ccache}" = "1"  ]; then
 	ccache_prefix="cbsd buildworld ${ver} ${arch} ${target_arch} ${basename}"
@@ -48,17 +51,30 @@ else
 	ccache=0
 fi
 
-truncate -s0 ${ftmpdir}/make.$$.conf
+/usr/bin/truncate -s0 ${ftmpdir}/make.$$.conf
 
 export __MAKE_CONF=${ftmpdir}/make.$$.conf
 [ $ccache -eq 1 -o $distcc -eq 1 ] && prepare_make_conf ${origmakeconf} ${__MAKE_CONF} && init_make_flags
 
 LOCKFILE=${ftmpdir}/$( /sbin/md5 -qs ${MAKEOBJDIRPREFIX} ).lock
 [ $notify -eq 1 ] && BLDLOG="${tmpdir}/build.$$.log"
-makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}"
+makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}; cleanup_bases"
 
 [ ${distcc} -eq 1 ] && export DISTCC_HOSTS="${CBSD_DISTCCHOST}"
-DT_START=$( date +%s )
+DT_START=$( /bin/date +%s )
+
+register_base
+
+if [ -x "${BASE_DIR}/bin/sh" ]; then
+
+	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
+	[ -z "${baseelf}" ] && baseelf="0"
+	register_base	# again: update elf
+
+	base_status_is_maintenance_soft
+else
+	base_status_is_maintenance_hard
+fi
 
 if [ $notify -eq 1 ]; then
 	[ -z "$TAILSTRING" ] && TAILSTRING=50
@@ -66,11 +82,12 @@ if [ $notify -eq 1 ]; then
 	res=$?
 else
 	 /usr/bin/nice -n ${NICE} /usr/bin/make $NUMJOBS -C ${SRC_DIR} buildworld ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
-
 	res=$?
 fi
 
-DT_END=$( date +%s )
+cleanup_bases
+
+DT_END=$( /bin/date +%s )
 init_scm_and_version
 
 if [ $res -ne 0 ]; then
