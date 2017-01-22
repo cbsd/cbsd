@@ -115,15 +115,28 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
 
-	#passthru
-	echo "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} -A -H -P ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
-	logger -t CBSD "[debug] /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${vnc_args} ${xhci_args} ${console_args} ${jname};"
+	# clean ARP cache
+	/usr/sbin/arp -nda > /dev/null 2>&1
 
-	# wait for VNC in upstream: xhci and vnc_args
-	# /usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} -s 30,xhci,tablet ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
+	bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${uefi_boot_args} ${dsk_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${jname}"
 
-#	echo "/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${jname}"
-	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${lpc_args} ${efi_args} ${virtiornd_args} ${nic_args} ${dsk_args} ${cd_args} ${console_args} ${vnc_args} ${xhci_args} ${jname} >> ${vm_logfile} || touch /tmp/bhyvestop.${jname}.lock
+	echo "[debug] ${bhyve_cmd}"
+	logger -t CBSD "[debug] ${bhyve_cmd}"
+	echo "cmd: ${bhyve_cmd}" >> ${vm_logfile}
+	echo "-----" >>  ${vm_logfile}
+
+	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd} >> ${vm_logfile} 2>&1
+	ret=$?
+	if [ ${ret} -ne 0 ]; then
+		touch /tmp/bhyvestop.${jname}.lock
+		echo "Exit code: ${ret}. See ${vm_logfile} for details"
+		echo
+		tail -n50 ${vm_logfile}
+		echo "Sleep 15 seconds..."
+		sleep 15
+	else
+		/bin/rm -f ${vm_logfile}
+	fi
 
 	# restore original value
 	[ -n "${orig_vnc_args}" ] && vnc_args="${orig_vnc_args}"

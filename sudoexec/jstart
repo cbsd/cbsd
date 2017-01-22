@@ -18,53 +18,8 @@ readconf jail-freebsd-default.conf
 [ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
 init $*
 
-# users custom stop script
-# $1 - is source dir
-external_exec_script()
-{
-	local _res
-	local _dir="${1}"
-
-	[ -z "${_dir}" ] && return 1
-
-	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
-	[ -z "$( /bin/ls ${jailsysdir}/${jname}/${_dir}/ )" ] && return 0
-	[ -d "${data}/tmp/${_dir}" ] && rm -rf "${data}/tmp/${_dir}"
-	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
-
-	/usr/bin/find "${data}/tmp/${_dir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
-		${ECHO} "${MAGENTA}Execute script: ${GREEN}${_file}${NORMAL}"
-		jexec jname="${jname}" /tmp/${_dir}/${_file}
-	done
-	/bin/rm -rf "${data}/tmp/${_dir}"
-}
-
-# users custom stop for executing in master host
-# $1 - is source dir name ( master_poststart.d master_prestart.d )
-external_exec_master_script()
-{
-	local _res
-	local _dir="${1}"
-	local _i
-
-	[ -z "${_dir}" ] && return 1
-
-	local _srcdir="${jailsysdir}/${jname}/${_dir}"
-
-	[ ! -d "${_srcdir}" ] && return 0
-	[ -z "$( /bin/ls ${_srcdir}/ )" ] && return 0
-
-#	# export variables for external hooks
-#	export jname=${jname}
-#	for _i in ${JARG}; do
-#		export ${_i}=\$${_i}
-#	done
-
-	/usr/bin/find "${_srcdir}" -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
-		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
-		${_srcdir}/${_file}
-	done
-}
+# for external_exec-related command
+. ${workdir}/jcreate.subr
 
 # check environment scripts from tests dir
 # when error code != 0 - exit
@@ -90,8 +45,6 @@ check_environment_script()
 		[ $? -ne 0 ] && err 1 "${MAGENTA}Error: ${GREEN}${_file}${NORMAL}"
 	done
 }
-
-
 
 exec_master_poststart()
 {
@@ -360,7 +313,7 @@ if [ -f "${jaillock}" ]; then
 	fi
 fi
 
-TRAP="${TRAP} rm -f ${jaillock};"
+TRAP="${TRAP} /bin/rm -f ${jaillock};"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
 #Check for md vnode backend
@@ -564,16 +517,15 @@ if [ -n "${res}" ]; then
 fi
 
 /usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
-#cp ${ftmpdir}/${jname}.conf /
 
 trap "" HUP INT ABRT BUS TERM EXIT
+
 [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
 
 # make id file
 UNDHOSTNAME=$( echo ${hostname} |/usr/bin/tr  "." "_" )
 FID="/var/run/jail_${UNDHOSTNAME}.id"
 echo ${ST} > ${FID}
-sync
 exec_cbsdjail_first_boot
 
 external_exec_script "start.d"
@@ -582,6 +534,7 @@ external_exec_master_script "master_poststart.d"
 exec_poststart
 
 get_jid
+
 if [ $myjid -gt 0 ]; then
 	status="1"
 	# make shared lock
@@ -589,7 +542,12 @@ if [ $myjid -gt 0 ]; then
 	chown ${cbsduser}:${cbsduser} ${jaillock}
 else
 	status="0"
+	# looks like jail start is failed, execute post script
+	exec_master_poststop
+	external_exec_master_script "master_poststop.d"
+	exec_poststop
 fi
+
 cbsdsql local UPDATE jails SET jid=$myjid,status=$status where jname=\"${jname}\"
 /bin/rm -f ${ftmpdir}/${jname}.conf
 fwcounter
@@ -598,7 +556,8 @@ expose jname=${jname} mode=apply
 
 # VNC auto start
 if [ -x "${moduledir}/vncterm.d/cbsdvnc" ]; then
-	vncterm jname=${jname} mode=run addr=127.0.0.1 || true
+	${ECHO} "${MAGENTA}vncterm is installed, launch vncterm session...${NORMAL}"
+	/usr/sbin/daemon -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
 fi
 
 exit 0

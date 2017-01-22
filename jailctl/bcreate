@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v11.0.7
 MYARG="jconf"
 MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc"
 MYDESC="Create jail from config file"
@@ -60,6 +60,8 @@ really_create_base()
 
 really_create_vm()
 {
+	local _res _msg
+
 	if [ "${from_jail}" ]; then
 		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
 		[ -z "${swapsize}" ] && swapsize="0"
@@ -92,9 +94,11 @@ really_create_vm()
 #                                /bin/ln -sf /dev/zvol/${new_zvol} ${i}
 
 	else
-#		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
-		if ! bhyve_create_dsk ${data}/${defdsk} ${imgsize} 1; then
-			err 1 "Error: Couldn't create the image file. ${mdimage}"
+		_msg=$( bhyve_create_dsk ${data}/${defdsk} ${imgsize} 1 )
+		_res=$?
+		if [ ${_res} -ne 0 ]; then
+			bremove ${jname}
+			err 1 "Error: Couldn't create the image file. ${_msg}"
 		fi
 	fi
 }
@@ -114,7 +118,9 @@ fi
 
 temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
-/bin/cp ${jconf} ${temprcconf}
+# TRIM DOS CRLF
+/bin/cat ${jconf} |/usr/bin/tr -d \\r > ${temprcconf}
+/bin/cp -a ${temprcconf} ${jconf}
 
 if [ ${removejconf} = "1" ]; then
 	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
@@ -203,6 +209,19 @@ fi
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
 . ${rcconf}
+
+template_profile=
+
+# Merge with default and profile settings
+[ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
+
+for merge_me in ${etcdir}/${template_profile} ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/defaults/bhyve-default-default.conf; do
+	[ ! -r "${merge_me}" ] && continue;
+	tmp_merge=$( /usr/bin/mktemp )
+	merge from=${merge_me} to=${rcconf} out=${tmp_merge}
+	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${rcconf}
+	. ${rcconf}
+done
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new

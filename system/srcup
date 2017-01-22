@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v11.0.6
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="ver stable rev scmbase dst patch"
@@ -102,6 +102,23 @@ git_checkout()
 	fi
 }
 
+status_is_maintenance_soft()
+{
+	cbsdsql local "UPDATE bsdsrc SET status='1' WHERE ver=\"${ver}\""
+}
+
+status_is_maintenance_hard()
+{
+	cbsdsql local "UPDATE bsdsrc SET status='2' WHERE ver=\"${ver}\""
+
+}
+
+status_is_normal()
+{
+	cbsdsql local "UPDATE bsdsrc SET status='0' WHERE ver=\"${ver}\""
+}
+
+
 ### MAIN ###
 . ${buildconf}
 readconf buildworld.conf
@@ -124,19 +141,57 @@ else
 	dst="${SRC_DIR}"
 fi
 
+cleanup_sources()
+{
+	[ -f ${LOCKFILE} ] && /bin/rm -f ${LOCKFILE}
+
+	if [ ! -f "${dst}/Makefile" ]; then
+		/bin/rm -rf ${dst}
+		unregister_src
+		err 1 "No source code for ${ver}"
+	fi
+
+	# restore operability status
+	status_is_normal
+}
+
 LOCKFILE=${ftmpdir}/src_$( /sbin/md5 -qs ${dst} ).lock
 makelock ${LOCKFILE}
 
 [ ! -d "${dst}" ] && /bin/mkdir -p ${dst}
 
+trap "cleanup_sources" HUP INT ABRT BUS TERM EXIT
+
 case "${checkout_method}" in
 	svn*)
 		init_svn
+
+		# conditional registration:
+		init_scm_and_version
+		register_src
+
+		if [ ! -f "${dst}/Makefile" ]; then
+			status_is_maintenance_hard
+		else
+			status_is_maintenance_soft
+		fi
+
 		svn_checkout
 		init_scm_and_version
 		;;
 	git*)
 		init_git
+
+		# conditional registration:
+		init_scm_and_version
+		register_src
+
+		if [ ! -f "${dst}/Makefile" ]; then
+			status_is_maintenance_hard
+		else
+			status_is_maintenance_soft
+		fi
+
 		git_checkout
 		init_scm_and_version
 		;;
@@ -145,11 +200,6 @@ case "${checkout_method}" in
 esac
 
 [ "${apply_cbsd_patch}" = "1" ] && /usr/local/bin/cbsd srcpatch $*
-
-if [ ! -f "${dst}/Makefile" ]; then
-	/bin/rm -rf ${dst}
-	err 1 "No source code for ${ver}"
-fi
-
 register_src
+status_is_normal
 
