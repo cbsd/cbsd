@@ -173,8 +173,27 @@ get_my_epair()
 	[ $? -eq 1 ] && echo "No free available epair" && return 1
 
 	/sbin/ifconfig ${_firstfree} create >/dev/null 2>/dev/null
-	/sbin/ifconfig ${1} addm ${_firstfree}a
-	/sbin/ifconfig ${_firstfree}a up
+	/sbin/ifconfig ${1} addm ${_firstfree}a >/dev/null 2>/dev/null
+
+	# MAC MGMT
+	local maca=
+	local macb=
+
+	if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
+		macb=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic )
+	else
+		/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+	fi
+
+	if [ -z "${macb}" ]; then
+		macb=$( mac_gen 02:ff:f0 )
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${macb}\" )"
+	fi
+
+	# flush stdout
+	/sbin/ifconfig ${_firstfree}a up > /dev/null 2>&1
+	/sbin/ifconfig ${_firstfree}b ether ${macb} up > /dev/null 2>&1
+
 	echo ${_firstfree}
 }
 
@@ -233,6 +252,27 @@ ip2mac() {
 	done )
 
 	echo "${MAC_PREFIX}:${mac_4}:${mac_5}:${mac_6}:${mac_7}"
+}
+
+# MAC random generator
+# $1 - OUI (Organizationally Unique Identifier) or MFG (Manufacturing/vendor's code), e.g: "02:ff:f0"
+# $2 - how many mac generated, by default - 1
+# mac=$( mac_gen 02:ff:f0 2 )
+#
+# TODO
+# make possible to OUI dynamically size: 02:ff or 02:ff:f0:01 or 02:ff:f0:01:01
+#   and generate only missing parts
+mac_gen() {
+	local OUI="${1}"
+	local num
+
+	[ -z "${2}" ] && num=1
+	[ -z "${OUI}" ] && return 1
+
+	for i in $( /usr/bin/seq 1 ${num} ); do
+		echo -n $OUI; dd bs=1 count=3 if=/dev/random 2>/dev/null | hexdump -v -e '/1 ":%02X"'
+		echo
+	done
 }
 
 ###
