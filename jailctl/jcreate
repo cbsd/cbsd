@@ -65,6 +65,8 @@ install_and_apply_helpers()
 [ -n "${delpkglist}" ] && odelpkglist="${delpkglist}"
 # push pkg_bootstrap to orig_ variable
 [ -n "${pkg_bootstrap}" ] && orig_pkg_bootstrap="${pkg_bootstrap}"
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
+
 readconf zfs.conf
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -91,6 +93,12 @@ else
 fi
 
 . ${temprcconf}
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} astart=${astart} protected=${protected} status=1
+fi
+
 over="${ver}"
 # Determine stable value. Must be after buildconf
 strpos --str="${over}" --search="."
@@ -141,6 +149,12 @@ jstatus jname=${jname} > /dev/null 2>&1
 if [ $? -ne 0 ]; then
 	[ ${autorestart} -eq 0 ] && err 1 "${MAGENTA}Jail with ${jname} already exist. Use autorestart=1 for updating via jset${NORMAL}"
 	jset jname=${jname} jconf=${jconf} autorestart=1
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} astart=${astart} protected=${protected} status=2
+	fi
+
 	exit 0
 fi
 
@@ -187,7 +201,7 @@ if [ "${mdsize}" != "0" ]; then
 	# Attach the .img file as a memory disk.
 	mdimagedevice=$( /sbin/mdconfig -a -t vnode -f "${mdimage}" )
 	[ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
-	/sbin/newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
+	/sbin/newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || /sbin/mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
 	/sbin/mdconfig -d -u ${mdimagedevice}
 	# mount here
 	mountmd jroot=${data} mdfile=${mdimage}
@@ -204,10 +218,16 @@ fi
 customskel
 mkfstab
 
-if [ "${ip4_addr}" = "DHCP" ]; then
-	ip4_addr=$( dhcpd )
-	${SYSRC_CMD} -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
-fi
+case "${ip4_addr}" in
+	[Dd][Hh][Cc][Pp])
+		ip4_addr=$( dhcpd )
+		${SYSRC_CMD} -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=update ip4_addr=${ip4_addr} status=1
+		fi
+		;;
+esac
 
 ${SYSRC_CMD} -qf ${temprcconf} arch="${arch}" > /dev/null
 ${SYSRC_CMD} -qf ${temprcconf} ver="${ver}" > /dev/null
@@ -277,5 +297,10 @@ jswmode jname=${jname} mode=master comment='0'
 
 # autostart asap upon jail created
 [ "${runasap}" = "1" ] && jstart ${jname}
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate status=2
+fi
 
 exit 0

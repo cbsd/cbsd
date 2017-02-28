@@ -13,11 +13,12 @@ checkstate - 0 do not check for jail online. Default is 1 - check\n"
 . ${strings}
 
 checkstate=1
-
 init $*
 
 myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null )
 [ -z "${myjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
+
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
 
 if [ ${checkstate} -eq 1 ]; then
 	[ $myjid -ne 0 ] && err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${NORMAL}"
@@ -28,16 +29,34 @@ myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null 
 
 jname="${old}"
 
-if [ "${ip4_addr}" = "DHCP" ]; then
-	dhcpip=$( dhcpd )
-	[ -z "${dhcpip}" ] && err 1 "${MAGENTA}Unable to dhcpd${NORMAL}"
-	ipwmask ${dhcpip}
-	[ -z "${IWM}" ] && err 1 "${MAGENTA}Unable IWM for dhcpd${NORMAL}"
-	iptype ${IWM}
-	[ $? -eq 0 ] && err 1 "${MAGENTA}Not ip from dhcpd?: ${dhcpip} / ${IWM}"
-	ip4_addr="${dhcpip}"
-	${ECHO} "${MAGENTA}Selected IP: ${GREEN}${ip4_addr}${NORMAL}"
+protected=$( cbsdsql local SELECT protected FROM jails WHERE jname=\"${old}\" )
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=jclone ip4_addr="${ip4_addr}" protected="${protected}" status=1
 fi
+
+case "${ip4_addr}" in
+	[Dd][Hh][Cc][Pp])
+		dhcpip=$( dhcpd )
+		[ -z "${dhcpip}" ] && err 1 "${MAGENTA}Unable to dhcpd${NORMAL}"
+		ipwmask ${dhcpip}
+		[ -z "${IWM}" ] && err 1 "${MAGENTA}Unable IWM for dhcpd${NORMAL}"
+		iptype ${IWM}
+		[ $? -eq 0 ] && err 1 "${MAGENTA}Not ip from dhcpd?: ${dhcpip} / ${IWM}"
+		ip4_addr="${dhcpip}"
+		${ECHO} "${MAGENTA}Selected IP: ${GREEN}${ip4_addr}${NORMAL}"
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr}" status=1
+		fi
+		;;
+	*)
+		[ -z "${ip4_addr}" ] && ip4_addr=$( cbsdsql local SELECT ip4_addr FROM jails WHERE jname=\"${old}\" )
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr}" status=1
+		fi
+		;;
+esac
 
 ip4_addr_new="${ip4_addr}"
 host_hostname_new="${host_hostname}"
@@ -58,7 +77,7 @@ SYSDIROLD="${jailsysdir}/${old}"
 SYSDIRNEW="${jailsysdir}/${new}"
 
 #rename zfs fs source
-case $zfsfeat in
+case ${zfsfeat} in
 	1)
 		. $zfstool
 		zfsmnt ${SRC}
@@ -69,18 +88,26 @@ esac
 [ ! -d "${SRC}" ] && err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
 
 if [ -d "${DST}" ]; then
-	rmdir ${DST} >/dev/null 2>&1
+	/bin/rmdir ${DST} >/dev/null 2>&1
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=jclone status=2 data_status=0
+	fi
+
 	[ -d "${DST}" ] && err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
 fi
 
-[ ! -d "${JAILDIR}" ] && mkdir -p ${JAILDIR}
-[ ! -d "${jailfstab}"  ] && mkdir -p $jailfstabdir
-[ ! -d "${jailrcconf}"  ] && mkdir -p $jailrcconfdir
+for i in ${JAILDIR} ${jailfstab} ${jailrcconf}; do
+	[ ! -d "${i}" ] && /bin/mkdir -p ${i}
+done
 
 printf "${MAGENTA}Cloning.${NORMAL}"
 jmkrcconf jname=${old} > $JAILRCCONF
 
 ${SYSRC_CMD} -qf ${JAILRCCONF} jname="${new}" > /dev/null 2>&1
+${SYSRC_CMD} -qf ${JAILRCCONF} status="0" > /dev/null 2>&1
+
 jregister jname=${new}
 
 /bin/rm -f ${JAILRCCONF}
@@ -119,5 +146,10 @@ jmkrctlconf jname=${old} type=extra mode=tofile file=${LIMITS}.extra
 jmkrctlconf jname=${new} type=rctl mode=tosql file=${LIMITS}
 jmkrctlconf jname=${new} type=extra mode=tosql file=${LIMITS}.extra
 #
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=jclone status=2 data_status=0
+fi
 
 err 0 "${GREEN}ok${NORMAL}"
