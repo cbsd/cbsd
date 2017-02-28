@@ -624,11 +624,27 @@ get_initenv_sqlreplica()
 
 # nodename must be set
 # if exist $old_nodename than remove it
+# $1 - new id_rsa file ( 'skip' to skip id_rsa )
+# $2 - new authorized_key file ( 'skip' to skip authorized_key)
 install_sshkey()
 {
-	local _md5name _keyfile _pubfile
+	local _md5name _keyfile _pubfile _prune_keyfile
+	local _install_key
+	local _install_pub
+	local _update=0
 
-	[ -z "${nodename}" ] && err 1 "${MAGENTA}Empty nodename${NORMAL}"
+	if [ -n "${1}" -a "${1}" != "skip" ]; then
+		_install_key="${1}"
+		[ ! -r "${_install_key}" ] && err 1 "${MAGENTA}No read access for: ${GREEN}${_install_key}${MAGENTA}"
+		_update=1
+	fi
+
+	if [ -n "${2}" -a "${2}" != "skip" ]; then
+		_install_pub="${1}"
+		[ ! -r "${_install_pub}" ] && err 1 "${MAGENTA}No read access for: ${GREEN}${_install_pub}${MAGENTA}"
+	fi
+
+	[ -z "${nodename}" ] && err 1 "${MAGENTA}Install sshkey: empty nodename${NORMAL}"
 
 	# first remove old keys if exist old_nodename
 	if [ -n "${old_nodename}" ]; then
@@ -637,6 +653,13 @@ install_sshkey()
 
 		[ -f ${_keyfile} ] && /bin/rm -f ${_keyfile}
 		[ -f "${_pubkey}" ] && /bin/rm -f ${_pubkey}
+		_update=1
+	fi
+
+	# store old key for remove
+	if [ -h ${sshdir}/id_rsa -a ${_update} -eq 1 ]; then
+		_prune_keyfile=$( /usr/bin/readlink ${sshdir}/id_rsa )
+		[ ! -r ${_prune_keyfile} ] && unset _prune_keyfile
 	fi
 
 	# keygen
@@ -644,14 +667,21 @@ install_sshkey()
 	_keyfile="${sshdir}/${_md5name}.id_rsa"
 	_pubfile="${sshdir}/authorized_keys"
 
-	if [ ! -f ${_keyfile} ]; then
-		/usr/bin/ssh-keygen -t rsa -f ${_keyfile} -N ''
-		/bin/mv ${_keyfile}.pub ${_pubfile}
+	if [ -z "${_install_key}" -a -z "${_install_pub}" ]; then
+		if [ ! -f ${_keyfile} ]; then
+			/usr/bin/ssh-keygen -t rsa -f ${_keyfile} -N ''
+			/bin/mv ${_keyfile}.pub ${_pubfile}
+		fi
+	else
+		[ -n "${_install_key}" ] && /bin/cp -a ${_install_key} ${_keyfile}
+		[ -n "${_install_pub}" ] && /bin/cp -a ${_install_pub} ${_pubfile}
 	fi
 
 	/bin/chmod 0444 ${_pubfile}
 	/bin/chmod 0400 ${_keyfile}
 	/usr/sbin/chown ${cbsduser}:${cbsduser} ${_keyfile} ${_pubfile}
+	/bin/ln -sf ${_keyfile} ${sshdir}/id_rsa
+	[ -n "${_prune_keyfile}" ] && /bin/rm -f ${_prune_keyfile}
 }
 
 # run install_sshkey for change ssh key

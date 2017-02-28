@@ -1,21 +1,25 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v11.0.10
 MYARG="old new"
-MYOPTARG="host_hostname ip4_addr"
+MYOPTARG="host_hostname ip4_addr restart"
 MYDESC="Rename jail"
 CBSDMODULE="jail"
 EXTHELP="wf_jrename.html"
+ADDHELP="restart=1 - for online jails. Force to stop if online, rename and start again\n"
 
 . ${subr}
 . ${tools}
 . ${jfs}
 . ${strings}
 
+restart=0
+
 init $*
 
 [ -z "${old}" ] && err 1 "${MAGENTA}Give me old jname${NORMAL}"
 [ -z "${new}" ] && err 1 "${MAGENTA}Give me new jname${NORMAL}"
 
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
 DST="${jaildatadir}/${new}-${jaildatapref}"
 SRC="${jaildatadir}/${old}-${jaildatapref}"
 JAILDIR="${jaildir}/${new}"
@@ -26,48 +30,79 @@ JAILLOCALFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}.local"
 SYSDIROLD="${jailsysdir}/${old}"
 SYSDIRNEW="${jailsysdir}/${new}"
 
+# store new params in tmp variable
 host_hostname_new="${host_hostname}"
 ip4_addr_new="${ip4_addr}"
 
-myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null )
-[ -z "${myjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
-[ $myjid -ne 0 ] && err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${NORMAL}"
+oldjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null )
+[ -z "${oldjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
 
 myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
 [ -n "${myjid}" ] && err 1 "${MAGENTA}Jail already exist: ${GREEN}${new}${NORMAL}"
 
+case ${oldjid} in
+	0)
+		;;
+	*)
+		if [ ${restart} -eq 1 ]; then
+			jstop jname=${old}
+		else
+			err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${MAGENTA} or add ${GREEN}restart=1${MAGENTA} to auto stop and start jail during rename${NORMAL}"
+		fi
+		;;
+esac
+
 jname="${old}"
 . ${jrcconf}
-[ "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}Jail in bhyve mode. Use ${GREEN}cbsd brename${MAGENTA} instead${NORMAL}"
 
+[ -z "${host_hostname_new}" ] && host_hostname_new="${host_hostname}"
+[ -z "${ip4_addr_new}" ] && ip4_addr_new="${ip4_addr}"
+
+[ "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}Jail in bhyve mode. Use ${GREEN}cbsd brename${MAGENTA} instead${NORMAL}"
 [ ! -d "${SRC}" ] && err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
 
 if [ -d "${DST}" ]; then
-	rmdir ${DST} >/dev/null 2>&1
+	/bin/rmdir ${DST} >/dev/null 2>&1
 	[ -d "${DST}" ] && err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
 fi
 
-[ ! -d "${JAILDIR}" ] && mkdir -p ${JAILDIR}
-[ ! -d "${jailfstab}"  ] && mkdir -p $jailfstabdir
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${old}" jname="${new}" cmd=jrename ip4_addr="${ip4_addr_new}" status=1
+fi
+
+[ ! -d "${JAILDIR}" ] && /bin/mkdir -p ${JAILDIR}
+[ ! -d "${jailfstab}"  ] && /bin/mkdir -p $jailfstabdir
 
 printf "${MAGENTA}Rename${NORMAL}"
 
 if [ -f "${JAILFSTABORIG}" ]; then
-	mv ${JAILFSTABORIG} ${JAILFSTAB}
-	sed -i '' s:/${old}:/${new}:g ${JAILFSTAB}
+	/bin/mv ${JAILFSTABORIG} ${JAILFSTAB}
+	/usr/bin/sed -i '' s:/${old}:/${new}:g ${JAILFSTAB}
 fi
 
-[ -f "${JAILLOCALFSTABORIG}" ] && mv ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
+case "${ip4_addr_new}" in
+	[Dd][Hh][Cc][Pp])
+		dhcpip=$( dhcpd )
+		[ -z "${dhcpip}" ] && err 1 "${MAGENTA}Unable to dhcpd${NORMAL}"
+		ipwmask ${dhcpip}
+		[ -z "${IWM}" ] && err 1 "${MAGENTA}Unable IWM for dhcpd${NORMAL}"
+		iptype ${IWM}
+		[ $? -eq 0 ] && err 1 "${MAGENTA}Not ip from dhcpd?: ${dhcpip} / ${IWM}"
+		ip4_addr_new="${dhcpip}"
+		${ECHO} "${MAGENTA}Selected IP: ${GREEN}${ip4_addr_new}${NORMAL}"
+		;;
+esac
+
+[ -f "${JAILLOCALFSTABORIG}" ] && /bin/mv ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
 
 cbsdsql local UPDATE jails SET jname=\"${new}\",path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\" WHERE jname=\"${old}\"
 cbsdsql local UPDATE rctl SET jname=\"${new}\" WHERE jname=\"${old}\" 2>/dev/null
 
-if [ -n "${ip4_addr_new}" ]; then
-	cbsdsql local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
-fi
+cbsdsql local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
+cbsdsql local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
 
-if [ -n "${host_hostname_new}" ]; then
-	cbsdsql local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr_new}" host_hostname="${host_hostname}" status=1
 fi
 
 jname=${new}
@@ -97,20 +132,34 @@ case $zfsfeat in
 			NEWPOOL="${DATA}/${new}"
 			if [ ${_err} -eq 1 ]; then
 				# we need unmount this first
-				zfs unmount -f ${DST}
+				/sbin/zfs unmount -f ${DST}
 				sleep 5  #Hack - sometimes we got "cannot rename: dataset is busy"
-				zfs unmount -f ${DST} >/dev/null 2>&1
+				/sbin/zfs unmount -f ${DST} >/dev/null 2>&1
 			fi
 			zfs rename ${OLDPOOL} ${NEWPOOL}
 			if [ $? -eq 0 ]; then
-				zfs mount ${NEWPOOL}
+				/sbin/zfs mount ${NEWPOOL}
 				[ -d ${SRC} ] && rmdir ${SRC}
 			fi
 		fi
 		;;
 esac
 
-[ -d "$SYSDIROLD" ] && mv $SYSDIROLD ${SYSDIRNEW}
+[ -d "${SYSDIROLD}" ] && /bin/mv ${SYSDIROLD} ${SYSDIRNEW}
+[ -d "${SRC}" ] && /bin/rmdir ${SRC}
 
-[ -d "${SRC}" ] && rmdir ${SRC}
+[ ${restart} -eq 1 -a ${oldjid} -ne 0 ] && jstart jname=${new}
+
+myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
+
+if [ ${myjid} -eq 0 ]; then
+	data_status=0
+else
+	data_status=1
+fi
+
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=jrename status=2 data_status=${data_status}
+fi
+
 err 0 "${GREEN}ok${NORMAL}"

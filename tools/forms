@@ -1,14 +1,16 @@
 #!/usr/local/bin/cbsd
 #v11.0.5
 MYARG=""
-MYOPTARG="formfile bootstrap module jname updcol header inter table out"
+MYOPTARG="formfile bootstrap module jname updcol header inter table out index group"
 MYDESC="Ncurses-based jail image boostrap helper"
 ADDHELP="updcol = new (default) update new column, cur - update cur column\n\
 table - initial table, default is forms\n\
 if jname name is cbsdpuppet1 then just generate manifest or hiera\n\
 if jname name is CBSDSYS then configure current system\n\
-out - out manifest content to file, when jname=cbsdpuppet1\n"
-EXTHELP="wf_imghelper.html"
+out - out manifest content to file, when jname=cbsdpuppet1\n\
+index - index id for group_add and group_del operation\n\
+group - group=add or group=del to add/del custom params group, in dynamical forms\n"
+EXTHELP="wf_forms.html"
 
 . ${subr}
 . ${tools}
@@ -250,11 +252,47 @@ get_checkbox()
 	return $retval
 }
 
+reload_forms_full()
+{
+	sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
+	sql_part="${sql_part} ORDER BY order_id"
+	param=$( cbsdsql ${formfile} ${sql_part} )
+	load_forms
+	load_new
+}
+
+
+group_add()
+{
+	[ ! -x ${moduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${MAGENTA}Forms not support for dynamic data, no such: ${GREEN}${moduledir}/forms.d/${module}/custom_forms.sh${NORMAL}"
+	${moduledir}/forms.d/${module}/custom_forms.sh -a add -f ${formfile}
+}
+
+# $1 - overvrite index
+group_del()
+{
+	local _group_id
+
+	[ ! -x ${moduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${MAGENTA}Forms not support for dynamic data, no such: ${GREEN}${moduledir}/forms.d/${module}/custom_forms.sh${NORMAL}"
+
+	if [ -n "${1}" ]; then
+		_group_id="${1}"
+	else
+		_group_id="${index}"
+	fi
+
+	if [ -n "${_group_id}" ]; then
+		${moduledir}/forms.d/${module}/custom_forms.sh -a delete -f ${formfile} -i ${_group_id}
+	else
+		${moduledir}/forms.d/${module}/custom_forms.sh -a delete -f ${formfile}
+	fi
+}
+
 
 # inputform
 get_helper_value()
 {
-	local _input _retval _type _link _mtag
+	local _input _retval _type _link _mtag _group_id
 
 	f_dialog_title " ${mtag} "
 
@@ -262,6 +300,7 @@ get_helper_value()
 	eval _mydesc=\$${mtag}_desc
 	eval _type=\$${mtag}_type
 	eval _link=\$${mtag}_link
+	eval _group_id=\$${mtag}_group_id
 
 	# errcode from dialog
 	local dialog_ok=0
@@ -301,13 +340,25 @@ get_helper_value()
 			mtag="${_mtag}"
 			defaultvalue="${_defaultvalue}"
 			;;
+		group_add)
+			# add button
+			# echo "${moduledir}/forms.d/${module}/initforms.sh"
+			group_add
+			reload_forms_full
+			;;
+		group_del)
+			# add button
+			# echo "${moduledir}/forms.d/${module}/initforms.sh"
+			group_del ${_group_id}
+			reload_forms_full
+			;;
 		*)
 			;;
 	esac
 
 	[ -n "${_input}" -o "${dialog_ok}" = "1" ] && eval ${mtag}="\"${_input}\""
-
 }
+
 
 #### [ MAIN AREA ] ####
 # we work in two modes:
@@ -403,21 +454,7 @@ fi
 
 check_version
 init_title
-
-sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
-
-#for i in ${subtable_param}; do
-#	lnk=$( cbsdsql ${formfile} SELECT link FROM ${table} WHERE param = \"${i}\" )
-#	[ -z "${lnk}" ] && continue
-#	sql_part="${sql_part} UNION SELECT param FROM ${lnk} WHERE type != \"subtable\" AND mytable =\"${lnk}\""
-#done
-
-sql_part="${sql_part} ORDER BY order_id"
-
-param=$( cbsdsql ${formfile} ${sql_part} )
-
-load_forms
-load_new
+reload_forms_full
 
 # in non interactive mode we apply default settings
 if [ "${inter}" = "0" ]; then
@@ -446,6 +483,11 @@ while [ ${x} -eq 1 ]; do
 					;;
 				*)
 					get_helper_value
+					# reread
+					#sql_part="${sql_part} ORDER BY order_id"
+					#param=$( cbsdsql ${formfile} ${sql_part} )
+					#load_forms
+					#load_new
 					;;
 			esac
 			;;
@@ -454,6 +496,20 @@ while [ ${x} -eq 1 ]; do
 			;;
 	esac
 done
+
+# mostly for inter=0 operation (e.g. webdev/clonos/other frontend)
+# before with_bootstrap exit
+case "${group}" in
+	add)
+		group_add
+		;;
+	del)
+		group_del
+		;;
+	*)
+		;;
+esac
+
 
 # no bootrstap? this is the end my beautiful friend
 [ ${with_bootstrap} -eq 0 ] && exit 0

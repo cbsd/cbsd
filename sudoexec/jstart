@@ -250,7 +250,11 @@ if [ $# -gt 1 -a -z "${jname}" ]; then
 	JLIST=$*
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
-		/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname}
+		if [ -n "${cbsd_queue_name}" ]; then
+			/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} cbsd_queue_name="${cbsd_queue_name}"
+		else
+			/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname}
+		fi
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
@@ -301,6 +305,7 @@ fi
 [ ${jid} -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
 [ "${vnet}" = "1" -a "${vimage_feature}" = "0" ] && err 1 "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} have vnet=1 flags but your kernel is not support VIMAGE${NORMAL}"
 [ "${emulator}" = "bhyve" -a -z "${mdsize}" ] && err 1 "${MAGENTA}Bhyve required for file image${NORMAL}"
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
 
 TRAP=""
 
@@ -336,6 +341,11 @@ trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	MDFILE="${jailsysdir}/${jname}/image.dat"
 	[ ! -f "${MDFILE}" -a ! -h "${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
+fi
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jstart status=1
 fi
 
 [ "${emulator}" = "bhyve" ] && start_bhyve
@@ -541,7 +551,7 @@ trap "" HUP INT ABRT BUS TERM EXIT
 [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
 
 # make id file
-UNDHOSTNAME=$( echo ${hostname} |/usr/bin/tr  "." "_" )
+UNDHOSTNAME=$( echo ${hostname} | /usr/bin/tr  "." "_" )
 FID="/var/run/jail_${UNDHOSTNAME}.id"
 echo ${ST} > ${FID}
 exec_cbsdjail_first_boot
@@ -576,6 +586,11 @@ expose jname=${jname} mode=apply
 if [ -x "${moduledir}/vncterm.d/cbsdvnc" ]; then
 	${ECHO} "${MAGENTA}vncterm is installed, launch vncterm session...${NORMAL}"
 	/usr/sbin/daemon -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
+fi
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jstart status=2
 fi
 
 exit 0
