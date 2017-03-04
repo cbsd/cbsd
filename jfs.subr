@@ -52,54 +52,125 @@ mvdata()
 
 
 # clone data
-# mode = cp, rsync, rsyncforce (no warning for existance TO dir)
-# #clonedata /usr/jails/jails-data/jail1-data /mn rsync
+# -d <path> - destination dir
+# -f - force (no check for dir exist)
+# -j - newjname
+# -m <mode> - mode: cp, rsync, rsyncforce, zfs, zfspromote
+# -n <new_name> - name of the clone for zfs/zfspromote method, e.g: $newjname variable
+#		it was as cbsd-original-$new_name snapshot
+# -p ${promote} - promote ZFS 0,1: ( 0 - promote)
+# -s <path> - source dir
+# e.g: clonedata -s /usr/jails/jails-data/jail1-data -d /mn -m rsync
 clonedata()
 {
-	local _src _dst _mode _go _force _zpool
+	local _src _dst _mode _go _force _zpool _name _res _jname
 
-	[ -z "$1" -o -z "$2" -o -z "$3"  ] && err 1 "clonedata: empty arguments"
-	[ -z "${jname}" ] && err 1 "No jname"
-
-	_src=$1
-	_dst=$2
-	_mode=$3
 	_force=0
+
+	while getopts "d:fj:m:n:p:s:" opt; do
+		case "$opt" in
+			d) _dst="${OPTARG}" ;;
+			f) force=1 ;;
+			m) _mode="${OPTARG}" ;;
+			n) _new_name="${OPTARG}" ;;
+			p) _promote="${OPTARG}" ;;
+			s) _src="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_dst}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}dst${NORMAL}"
+	[ -z "${_mode}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}mode${NORMAL}"
+	[ -z "${_src}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}src${NORMAL}"
+	[ -z "${jname}" ] && err 1 "${MAGENTA}clonedata: no jname${NORMAL}"
+	[ -z "${_new_name}" ] && _new_name="${jname}"
+	[ -z "${_promote}" ] && _promote="0"
+
+	[ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${MAGENTA}clonedata: ${GREEN}${_dst}${MAGENTA} directory exist. Please remove them${NORMAL}"
 
 	readconf zfs.conf
 
+	# check for ZFS clone possibility and create snapshot
 	case "${_mode}" in
-		"cp") _go="/bin/cp -Rp " ;;
-		"rsync") _go="/usr/local/bin/rsync -avzz --devices --numeric-ids --delete --recursive --partial " ;;
-		"rsyncforce") _go="/usr/local/bin/rsync -avzz --devices --numeric-ids --delete --recursive --partial "; _force=1 ;;
-		*) err 1 "Unsupported mode" ;;
+		zfs|zfspromote)
+			[ ${zfsfeat} -ne 1 ] && err 1 "${MAGENTA}clonedata: zfs clone method but zfsfeat=0${NORMAL}"
+			[ -z "${_new_name}" ] && err 1 "${MAGENTA}clonedata: empty -n new_name of the snapshot${NORMAL}"
+
+			zfsmnt "${_src}"
+			_res=$?
+			case "${_res}" in
+				0)
+					# not valid ZFS mp, force non-zfs clone method
+					${ECHO} "${MAGENTA}Force to rsync clone method, not ZFS mount point: ${GREEN}${_src}${NORMAL}"
+					_method="rsync"
+					;;
+				1|2)
+					local _origdata=$( /sbin/zfs get -Ho value name ${_src} 2>/dev/null )
+					if [ -z "${_origdata}" ]; then
+						${ECHO} "${MAGENTA}${_src} is not ZFS dataset, force to rsync clone method${NORMAL}"
+						_method="rsync"
+					else
+						local _createtime=$( date "+%Y%m%d%H%M%S" )
+						/sbin/zfs snapshot ${_origdata}@cbsd-original-${_new_name}
+						/sbin/zfs set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
+						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
+						create_zfs_fs -d "${_src}" -m "${_dst}" -n "${_new_name}" -p ${_promote} -z "${_origdata}@cbsd-original-${_new_name}"
+					fi
+					;;
+				*)
+					err 1 "${MAGENTA}clonedata: unknown code for: zfsmnt ${_src}${NORMAL}"
+					;;
+			esac
 	esac
 
-	[ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${_dst} directory exist. Please remove them"
+	case "${_mode}" in
+		"cp")
+			_go="/bin/cp -Rp "
+			;;
+		"rsync")
+			_go="/usr/local/bin/rsync -avzz --devices --numeric-ids --delete --recursive --partial "
+			;;
+		"rsyncforce")
+			_go="/usr/local/bin/rsync -avzz --devices --numeric-ids --delete --recursive --partial "
+			_force=1
+			;;
+		zfs|zfspromote)
+			[ -n "${_name}" ] && err 1 "${MAGENTA}clonedata: empty -n name of the snapshot${NORMAL}"
+			unset _go
+			;;
+		*)
+			err 1 "clonedata: unsupported mode: ${_mode}"
+			;;
+	esac
 
-	if [ ! -d "${_dst}" ]; then
-		if [ $zfsfeat -eq 1 ]; then
-			_zpool=$( /sbin/zfs list ${jaildatadir} |/usr/bin/tail +2 |/usr/bin/awk '{printf $1}' )
-			/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
-			/sbin/zfs mount ${_zpool}/${jname}
-		else
-			/bin/mkdir -p ${_dst}
+	# create directory and copy data via rsync/copy method
+	if [ -n "${_go}" ]; then
+		if [ ! -d "${_dst}" ]; then
+			if [ ${zfsfeat} -eq 1 ]; then
+				_zpool=$( /sbin/zfs list ${jaildatadir} |/usr/bin/tail +2 |/usr/bin/awk '{printf $1}' )
+				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
+				/sbin/zfs mount ${_zpool}/${jname}
+			else
+				/bin/mkdir -p ${_dst}
+			fi
 		fi
+
+		${_go} ${_src}/* ${_dst}/
 	fi
 
-	${_go} ${_src}/* ${_dst}/
-
 	# additional loop to check for symlink and zvol
-	if [ $zfsfeat -eq 1 ]; then
+	if [ ${zfsfeat} -eq 1 ]; then
 		for i in $( /usr/bin/find ${_dst}/ -type l -depth 1 -maxdepth 1 ); do
 			if is_getzvol ${i}; then
 				imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
 				# create_bhyvedsk ?
 				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+
 				new_zvol=$( echo ${is_zvol} |/usr/bin/sed s:${old}:${new}:g )
 				/sbin/zfs create -V ${imgbytes} -o volmode=dev ${new_zvol}
 				/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
 				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
+
 			fi
 		done
 	fi
@@ -117,7 +188,7 @@ clonedata()
 # if "$2" = "force" then force to remove non-empty dir
 removedata()
 {
-	local _data
+	local _data _test _res
 
 	[ -z "$1"  ] && err 1 "removedata: empty arguments"
 	[ -z "${jname}"  ] && err 1 "removedata: jname variable must be set"
@@ -127,7 +198,6 @@ removedata()
 	[ ! -d "${_data}" ] && return 0
 
 	if [ "${zfsfeat}" = "1" ]; then
-
 		case "${emulator}" in
 			bhyve|xen)
 				for i in $( /usr/bin/find ${data}/ -type l -depth 1 -maxdepth 1 ); do
@@ -151,7 +221,7 @@ removedata()
 					# workaround for dataset busy, give the pause with three attempts
 					/sbin/zfs list ${i} >/dev/null 2>/dev/null
 					if [ $? -eq 0 ]; then
-						sleep 2
+						sleep 1
 						/sbin/zfs destroy ${i} > /dev/null 2>&1
 					fi
 				done
@@ -202,7 +272,7 @@ create_fs()
 	[ -z "${data}" ] && return 0
 
 	if [ "${zfsfeat}" = "1" ]; then
-		create_zfs_fs ${data}
+		create_zfs_fs -d ${data}
 	elif [ "${hammerfeat}" = "1" ]; then
 		create_hammer_fs ${jname}
 	else
@@ -211,27 +281,63 @@ create_fs()
 }
 
 
+# -d data
+# -m mount_point, can be: none
+# -n - jail_name
+# -p promote fs ( 0 or 1 )
+# -z zfs_snapsrc
 create_zfs_fs()
 {
-	local data="${1}"
+	local _data _mount_point _name _promote _zfs_snapsrc
+
+	while getopts "d:m:n:p:z:" opt; do
+		case "$opt" in
+			d) _data="${OPTARG}" ;;
+			m) _mount_point="${OPTARG}" ;;
+			n) _name="${OPTARG}" ;;
+			p) _promote="${OPTARG}" ;;
+			z) _zfs_snapsrc="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
 	local res
 
-	[ -z "${data}" ] && return 0
+	[ -z "${_data}" ] && return 0
+	[ -z "${_name}" ] && _name="${jname}"
+	[ -n "${zfs_snapsrc}" ] && _zfs_snapsrc="${zfs_snapsrc}"
+	[ -z "${_promote}" ] && _promote=0
+
+	local ZPOOL
 
 	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 
-	if zfsroot $jname; then
-		err 1 "$ZPOOL/$jname already in use"
+	if zfsroot ${_name}; then
+		err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
 	fi
 
-	if [ -z "${zfs_snapsrc}" ]; then
-		res=$( /sbin/zfs create ${zfs_create_flags} -o mountpoint=${data} ${ZPOOL}/${jname} 2>&1 )
-		[ $? -ne 0 ] && err 1 "${MAGENTA}zfs create failed: ${res}${NORMAL}"
+	if [ -z "${_zfs_snapsrc}" ]; then
+		res=$( /sbin/zfs create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
+		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs create failed: ${res}${NORMAL}"
 	else
-		/sbin/zfs clone ${zfs_snapsrc} ${ZPOOL}/${jname}
-		[ $? -ne 0 ] && err 1 "${MAGENTA}zfs clone failed: ${res}${NORMAL}"
-		/sbin/zfs set mountpoint=${data} ${ZPOOL}/${jname}
+		# ${ECHO} "${MAGENTA}create_zfs_fs: create ${ZPOOL}${_data} from original: ${GREEN}${_zfs_snapsrc}${NORMAL}"
+		/sbin/zfs clone ${_zfs_snapsrc} ${ZPOOL}/${_name}
+		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs clone failed: ${res}${NORMAL}"
+
+		if [ "${_mount_point}" != "none" ]; then
+			if [ -n "${_mount_point}" ]; then
+				/sbin/zfs set mountpoint=${_mount_point} ${ZPOOL}/${_name}
+			else
+				/sbin/zfs set mountpoint=${_data} ${ZPOOL}/${_name}
+			fi
+		fi
 	fi
+
+	if [ ${_promote} -eq 1 ]; then
+		echo "zfs promote ${ZPOOL}/${_name}"
+		zfs promote ${ZPOOL}/${_name}
+	fi
+
 }
 
 

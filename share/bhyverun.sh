@@ -159,7 +159,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 done
 
 /bin/rm -f /tmp/bhyvestop.${jname}.lock
-/usr/local/bin/cbsd bstop ${jname}
 
 for i in ${mytap}; do
 	/sbin/ifconfig ${i} destroy

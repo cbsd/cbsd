@@ -1,13 +1,16 @@
 #!/usr/local/bin/cbsd
-#v10.1.4
+#v11.0.10
 MYARG="mode"
 MYOPTARG="jname snapname snapfs header display"
 MYDESC="Jail snapshot management"
-ADDHELP="mode can: list, create, destroy, destroyall, clone, rollback\n\
+ADDHELP="mode can: list, create, destroy, destroyall, destroyall_original, clone, rollback\n\
 snapfs can be: rsync\n\
 snapname can be: \"gettimeofday\" or any arbitrary word\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: snapname,jname,creation,refer\n"
+display= list by comma for column. Default: snapname,jname,creation,refer\n\
+mode:\n\
+  - destroyall: remove all snapshot for current jail\n\
+  - destroyall_original: remove all original snapshot, ZPOOL@cbsd-original-<jname>\n"
 CBSDMODULE="jail"
 
 . ${subr}
@@ -104,6 +107,23 @@ zfs_snapshot_destroy_by_snapname()
 	done
 }
 
+zfs_snapshot_destroyall_original()
+{
+	local _fs _jname _mod _snapname ZPOOL
+	readconf zfs.conf
+
+	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+
+	[ -z "${ZPOOL}" ] && err 1 "${MAGENTA}Empty zpool for: ${GREEN}${jaildatadir}${NORMAL}"
+	_mod="${ZPOOL}"
+
+	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
+		_snapname=${_fs##*@}
+		[ "${_snapname}" != "cbsd-original-${jname}" ] && continue
+		zfs_snapshot_destroy ${_fs} && ${ECHO} "${MAGENTA}zfs original snapshot for ${jname} destoyed: ${GREEN}${_fs}${NORMAL}"
+	done
+}
+
 rsync_snapshot_list()
 {
 	err 1 "${MAGENTA}jsnapshot: rsync not implemented${NORMAL}"
@@ -153,7 +173,7 @@ zfs_snapshot_create()
 
 	[ -z "${snapname}" ] && err 1 "${MAGENTA}Empty ${GREEN}snapname=${NORMAL}"
 
-	_createtime=$( date "+%Y%m%d%H%M%S" )
+	_createtime=$( /bin/date "+%Y%m%d%H%M%S" )
 	[ "${snapname}" = "gettimeofday" ] && snapname=${_createtime}
 
 	_tst=$( /sbin/zfs snapshot ${ZPOOL}/${jname}@${snapname} 2>&1)
@@ -262,8 +282,14 @@ case "${mode}" in
 		check_jname
 		${snapfs}_snapshot_destroyall
 		;;
+	"destroyall_original")
+		check_jname
+		${snapfs}_snapshot_destroyall_original
+		;;
 	"rollback")
 		check_jname
 		${snapfs}_snapshot_rollback
 		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
 esac
