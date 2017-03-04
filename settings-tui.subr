@@ -1460,14 +1460,14 @@ get_construct_profile()
 	local prompt="${GET_JAILPROFILE_MSG}"
 
 	# default must be first due to last dir with user settings must overwrite
-	_res=$( /usr/bin/find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec /bin/realpath {} \;| /usr/bin/sort -u )
+	_res=$( /usr/bin/find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec /bin/realpath {} \;| /usr/bin/sort -u | /usr/bin/sort -n )
 
 	for i in ${_res}; do
 		unset jail_profile
 		eval $( ${GREP_CMD} ^jail_profile= ${i} )
 		eval $( ${GREP_CMD} ^long_description= ${i} )
-		[ -z "${jail_profile}" ] && continue
-		_mypath=$( echo $i | /usr/bin/sed s:^${workdir}/::g )
+#		[ -z "${jail_profile}" ] && continue
+		_mypath=$( echo ${i} | /usr/bin/sed s:^${workdir}/::g )
 		menu_list="${menu_list} '${jail_profile}' '${_mypath}' '${long_description}'"
 		#store filename
 		local file_${jail_profile}="${i}"
@@ -1498,7 +1498,11 @@ get_construct_profile()
 		. ${_myfile}
 		global_profile_file="${_myfile}"
 		# reload some dynamic variables depended from jname
-		merge_apply_profiles ${etcdir}/defaults/${zero_profile} ${global_profile_file}
+		if [ -f ${etcdir}/${zero_profile} ]; then
+			merge_apply_profiles ${global_profile_file} ${etcdir}/${zero_profile}
+		else
+			merge_apply_profiles ${global_profile_file} ${etcdir}/defaults/${zero_profile}
+		fi
 	fi
 
 	# populate pkglist from tpl_pkglist if not empty
@@ -1795,6 +1799,7 @@ EOF
 
 merge_apply_profiles()
 {
+	local _out
 	[ -z "${1}" ] && return 0
 
 	local _orig="$1"; shift
@@ -1802,24 +1807,18 @@ merge_apply_profiles()
 	local _i
 
 	[ ! -f "${_orig}" ] && return 0
-	[ ! -f "${_custom}" -o "${_custom}" = "${_orig}" ] && unset _custom
+	if [ ! -f "${_custom}" ]; then
+		. ${_orig}
+		return 0
+	fi
 
-	${GREP_CMD} '\$' ${_orig} |${GREP_CMD} -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/1.sorted.$$
-	[ -n "${_custom}" ] && ${GREP_CMD} '\$' ${_custom} |${GREP_CMD} -v "^#" |/usr/bin/cut -d "=" -f 1 |/usr/bin/sort > /tmp/2.sorted.$$
+	_out=$( /usr/bin/mktemp )
 
-	/usr/bin/cut -d "=" -f 1 /tmp/1.sorted.$$ > /tmp/1.cuted.$$
-	[ -n "${_custom}" ] && /usr/bin/cut -d "=" -f 1 /tmp/2.sorted.$$ > /tmp/2.cuted.$$
+	merge from=${_orig} to=${_custom} out=${_out}
 
-	/usr/bin/truncate -s0 /tmp/run.sh.$$
-	# dummy file if $2 is empty
-	[ -z "${_custom}" ] && /usr/bin/touch /tmp/2.cuted.$$
+	. ${_out}
+	/bin/rm -f ${_out}
 
-	for i in $( /bin/cat /tmp/1.cuted.$$ /tmp/2.cuted.$$|/usr/bin/sort -u ); do
-		${GREP_CMD} "^${i}" ${_custom} ${_orig} |/usr/bin/head -n1|/usr/bin/cut -d : -f 2 >> /tmp/run.sh.$$
-	done
-
-	. /tmp/run.sh.$$
-	/bin/rm -f /tmp/1.sorted.$$ /tmp/2.sorted.$$ /tmp/1.cuted.$$ /tmp/2.cuted.$$ /tmp/run.sh.$$
 }
 
 # invert boolean value for \$$1

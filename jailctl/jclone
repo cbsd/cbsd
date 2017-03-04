@@ -1,11 +1,12 @@
 #!/usr/local/bin/cbsd
-#v10.0.7
+#v10.0.10
 MYARG="old new host_hostname"
-MYOPTARG="ip4_addr checkstate verbose"
+MYOPTARG="ip4_addr checkstate verbose promote"
 MYDESC="Jail cloning"
 CBSDMODULE="jail"
 ADDHELP="ip4_addr - can be DHCP\n\
-checkstate - 0 do not check for jail online. Default is 1 - check\n"
+checkstate - 0 do not check for jail online. Default is 1 - check\n\
+promote - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote)\n"
 
 . ${subr}
 . ${tools}
@@ -13,7 +14,11 @@ checkstate - 0 do not check for jail online. Default is 1 - check\n"
 . ${strings}
 
 checkstate=1
+readconf bclone.conf		# read users promite
+
 init $*
+
+[ -z "${promote}" ] && promote=0
 
 myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null )
 [ -z "${myjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
@@ -81,7 +86,7 @@ case ${zfsfeat} in
 	1)
 		. $zfstool
 		zfsmnt ${SRC}
-		[ $? -eq 2  ] && zfs mount ${ZPOOL}
+		[ $? -eq 2  ] && /sbin/zfs mount ${ZPOOL}
 	;;
 esac
 
@@ -103,9 +108,10 @@ for i in ${JAILDIR} ${jailfstab} ${jailrcconf}; do
 done
 
 printf "${MAGENTA}Cloning.${NORMAL}"
-jmkrcconf jname=${old} > $JAILRCCONF
+jmkrcconf jname=${old} > ${JAILRCCONF}
 
 ${SYSRC_CMD} -qf ${JAILRCCONF} jname="${new}" > /dev/null 2>&1
+# set status to offline if original jail was active
 ${SYSRC_CMD} -qf ${JAILRCCONF} status="0" > /dev/null 2>&1
 
 jregister jname=${new}
@@ -117,7 +123,7 @@ if [ -f "${JAILFSTABORIG}" ]; then
 	dot "fstab"
 fi
 
-[ -f "${JAILLOCALFSTABORIG}" ] && cp ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "cp fstablocal"
+[ -f "${JAILLOCALFSTABORIG}" ] && /bin/cp ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "cp fstablocal"
 
 cbsdsql local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname}\" WHERE jname=\"${new}\"
 
@@ -125,17 +131,24 @@ cbsdsql local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${jailfs
 [ -n "${host_hostname_new}" ] && cbsdsql local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
 
 jname=${new}
-if [ "${verbose}" = "1" ]; then
-	clonedata $SRC $DST rsync
-else
-	clonedata $SRC $DST rsync > /dev/null 2>&1
-fi
+
+case ${zfsfeat} in
+	1)
+		clonedata -s ${SRC} -d ${DST} -m zfs -n ${new} -p ${promote}
+		;;
+	*)
+		if [ "${verbose}" = "1" ]; then
+			clonedata -s ${SRC} -d ${DST} -m rsync
+		else
+			clonedata -s ${SRC} -d ${DST} -m rsync > /dev/null 2>&1
+		fi
+esac
 
 dot "clone rsync"
 
-if [ -d "$SYSDIROLD" ]; then
-	[ -d "${SYSDIRNEW}" ] && rm -rf ${SYSDIRNEW}
-	cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
+if [ -d "${SYSDIROLD}" ]; then
+	[ -d "${SYSDIRNEW}" ] && /bin/rm -rf ${SYSDIRNEW}
+	/bin/cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
 	dot "cp sysdir"
 fi
 
