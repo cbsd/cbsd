@@ -159,6 +159,8 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 done
 
 /bin/rm -f /tmp/bhyvestop.${jname}.lock
+# extra stop
+/usr/local/bin/cbsd bstop cbsd_queue_name=none jname=${jname}
 
 for i in ${mytap}; do
 	/sbin/ifconfig ${i} destroy

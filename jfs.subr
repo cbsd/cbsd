@@ -63,7 +63,7 @@ mvdata()
 # e.g: clonedata -s /usr/jails/jails-data/jail1-data -d /mn -m rsync
 clonedata()
 {
-	local _src _dst _mode _go _force _zpool _name _res _jname
+	local _src _dst _mode _go _force _zpool _name _res _jname _orig_mode
 
 	_force=0
 
@@ -86,6 +86,9 @@ clonedata()
 	[ -z "${_new_name}" ] && _new_name="${jname}"
 	[ -z "${_promote}" ] && _promote="0"
 
+	# save original clone method
+	_orig_mode="${_mode}"
+
 	[ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${MAGENTA}clonedata: ${GREEN}${_dst}${MAGENTA} directory exist. Please remove them${NORMAL}"
 
 	readconf zfs.conf
@@ -102,15 +105,15 @@ clonedata()
 				0)
 					# not valid ZFS mp, force non-zfs clone method
 					${ECHO} "${MAGENTA}Force to rsync clone method, not ZFS mount point: ${GREEN}${_src}${NORMAL}"
-					_method="rsync"
+					_mode="rsync"
 					;;
 				1|2)
 					local _origdata=$( /sbin/zfs get -Ho value name ${_src} 2>/dev/null )
 					if [ -z "${_origdata}" ]; then
 						${ECHO} "${MAGENTA}${_src} is not ZFS dataset, force to rsync clone method${NORMAL}"
-						_method="rsync"
+						_mode="rsync"
 					else
-						local _createtime=$( date "+%Y%m%d%H%M%S" )
+						local _createtime=$( /bin/date "+%Y%m%d%H%M%S" )
 						/sbin/zfs snapshot ${_origdata}@cbsd-original-${_new_name}
 						/sbin/zfs set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
 						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
@@ -149,7 +152,9 @@ clonedata()
 			if [ ${zfsfeat} -eq 1 ]; then
 				_zpool=$( /sbin/zfs list ${jaildatadir} |/usr/bin/tail +2 |/usr/bin/awk '{printf $1}' )
 				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
-				/sbin/zfs mount ${_zpool}/${jname}
+				if ! is_mounted ${_zpool}/${jname}; then
+					/sbin/zfs mount ${_zpool}/${jname}
+				fi
 			else
 				/bin/mkdir -p ${_dst}
 			fi
@@ -164,13 +169,25 @@ clonedata()
 			if is_getzvol ${i}; then
 				imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
 				# create_bhyvedsk ?
-				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-
+#				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 				new_zvol=$( echo ${is_zvol} |/usr/bin/sed s:${old}:${new}:g )
-				/sbin/zfs create -V ${imgbytes} -o volmode=dev ${new_zvol}
-				/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
-				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
 
+				case "${_orig_mode}" in
+					zfs|zfspromote)
+						local _createtime=$( /bin/date "+%Y%m%d%H%M%S" )
+						/sbin/zfs snapshot ${is_zvol}@cbsd-original-${_new_name}
+						/sbin/zfs set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}
+						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}
+						/sbin/zfs clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name} ${new_zvol}
+#						create_zfs_fs -d "${_src}" -n "${_new_name}" -p ${_promote} -z "${is_zvol}@cbsd-original-${_new_name}"
+						;;
+					*)
+						/sbin/zfs create -V ${imgbytes} -o volmode=dev ${new_zvol}
+						/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
+						;;
+				esac
+
+				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
 			fi
 		done
 	fi
@@ -321,7 +338,7 @@ create_zfs_fs()
 		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs create failed: ${res}${NORMAL}"
 	else
 		# ${ECHO} "${MAGENTA}create_zfs_fs: create ${ZPOOL}${_data} from original: ${GREEN}${_zfs_snapsrc}${NORMAL}"
-		/sbin/zfs clone ${_zfs_snapsrc} ${ZPOOL}/${_name}
+		/sbin/zfs clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
 		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs clone failed: ${res}${NORMAL}"
 
 		if [ "${_mount_point}" != "none" ]; then
