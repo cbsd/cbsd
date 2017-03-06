@@ -4,7 +4,9 @@ MYARG="old new"
 MYOPTARG="verbose ip4_addr host_hostname promote"
 MYDESC="Jail cloning"
 CBSDMODULE="bhyve"
-ADDHELP="promote - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote)\n"
+ADDHELP="promote - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote)\n\
+clone_method - can be 'auto' or 'rsync'. Default is: auto\n"
+EXTHELP="wf_bclone.html"
 
 . ${subr}
 . ${tools}
@@ -13,8 +15,10 @@ ADDHELP="promote - Promotes clone to no longer be dependent from origin: 0 or 1.
 
 init $*
 
-readconf bclone.conf
+readconf bclone.conf		# read users promote and clone_method settings
+
 [ -z "${promote}" ] && promote=0
+[ -z "${clone_method}" ] && clone_method="auto"
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
 
@@ -31,11 +35,12 @@ myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null 
 jname="${old}"
 . ${jrcconf}
 
-protected=$( cbsdsql local SELECT protected FROM jails WHERE jname=\"${old}\" )
+protected=$( cbsdsql local SELECT protected FROM bhyve WHERE jname=\"${old}\" )
+hidden=$( cbsdsql local SELECT hidden FROM bhyve WHERE jname=\"${old}\" )
 
 # CBSD QUEUE
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=bclone protected="${protected}" status=1
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=bclone status=1 vm_ram="${vm_ram}" vm_os_type="${vm_os_type}" vm_cpus="${vm_cpus}" hidden="${hidden}"
 fi
 
 DST="${jaildatadir}/${new}-${jaildatapref}"
@@ -99,8 +104,10 @@ cbsdsql local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${jailfs
 
 jname=${new}
 
-case ${zfsfeat} in
-	1)
+[ "${zfsfeat}" != "1" ] && clone_method="rsync"
+
+case ${clone_method} in
+	auto)
 		clonedata -s ${SRC} -d ${DST} -m zfs -n ${new} -p ${promote}
 		;;
 	*)
@@ -119,7 +126,7 @@ cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"0\
 
 # CBSD QUEUE
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=bclone status=2 data_status=0
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=bclone status=2 protected="${protected}" hidden="${hidden}" data_status=0 hidden="${hidden}"
 fi
 
 err 0 "${GREEN}ok${NORMAL}"
