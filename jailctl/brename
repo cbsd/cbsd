@@ -1,9 +1,10 @@
 #!/usr/local/bin/cbsd
 #v10.0.10
 MYARG="old new"
-MYOPTARG="host_hostname"
+MYOPTARG="host_hostname restart"
 MYDESC="Rename jail"
 CBSDMODULE="bhyve"
+ADDHELP="restart=1 - for online jails. Force to stop if online, rename and start again\n"
 EXTHELP="wf_jrename.html"
 
 . ${subr}
@@ -11,6 +12,7 @@ EXTHELP="wf_jrename.html"
 . ${jfs}
 . ${strings}
 
+restart=0
 init $*
 
 [ -z "${old}" ] && err 1 "${MAGENTA}Give me old jname${NORMAL}"
@@ -30,24 +32,40 @@ SYSDIRNEW="${jailsysdir}/${new}"
 jname="${old}"
 . ${jrcconf}
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
-[ "${status}" != "0" ] && err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${NORMAL}"
 
-myjid=$( cbsdsql local SELECT jname FROM jails WHERE jname=\"${new}\" 2>/dev/null) 
+myjid=$( cbsdsql local SELECT jname FROM jails WHERE jname=\"${new}\" 2>/dev/null)
 [ -n "${myjid}" ] && err 1 "${MAGENTA}Jail already exist: ${GREEN}${new}${NORMAL}"
-
-[ ! -d "${SRC}" ] && err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
 
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${old}" jname="${new}" cmd=brename status=1
 fi
 
+oldjid=${status}
+
+case ${status} in
+	0)
+		;;
+	*)
+		if [ ${restart} -eq 1 ]; then
+			bstop jname=${old}
+		else
+			if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+				[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" jname="${new}" cmd=brename status=2
+			fi
+			err 1 "${MAGENTA}VM is online. Please stop them: ${GREEN}${old}${MAGENTA} or add ${GREEN}restart=1${MAGENTA} to auto stop and start VM during rename${NORMAL}"
+		fi
+		;;
+esac
+
+[ ! -d "${SRC}" ] && err 1 "${MAGENTA}No VM data: ${GREEN}${SRC}${NORMAL}"
+
 if [ -d "${DST}" ]; then
 	/bin/rmdir ${DST} >/dev/null 2>&1
-	[ -d "${DST}" ] && err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
+	[ -d "${DST}" ] && err 1 "${MAGENTA}VM data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
 fi
 
-[ ! -d "${JAILDIR}" ] && mkdir -p ${JAILDIR}
-[ ! -d "${jailfstab}"  ] && mkdir -p $jailfstabdir
+[ ! -d "${JAILDIR}" ] && /bin/mkdir -p ${JAILDIR}
+[ ! -d "${jailfstab}"  ] && /bin/mkdir -p ${jailfstabdir}
 
 printf "${MAGENTA}Rename${NORMAL}"
 
@@ -56,7 +74,7 @@ if [ -f "${JAILFSTABORIG}" ]; then
 	/usr/bin/sed -i '' s:/${old}:/${new}:g ${JAILFSTAB}
 fi
 
-[ -f "${JAILLOCALFSTABORIG}" ] && mv ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
+[ -f "${JAILLOCALFSTABORIG}" ] && /bin/mv ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
 
 cbsdsql local UPDATE jails SET jname=\"${new}\",path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\" WHERE jname=\"${old}\"
 cbsdsql local UPDATE rctl SET jname=\"${new}\" WHERE jname=\"${old}\" 2>/dev/null
@@ -122,8 +140,15 @@ if [ -d "$SYSDIROLD" ]; then
 	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
 fi
 
+if [ ${restart} -eq 1 -a ${oldjid} -ne 0 ]; then
+	bstart jname=${new}
+	data_status=1
+else
+	data_status=0
+fi
+
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=brename status=2 data_status=0
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${new}" cmd=brename status=2 data_status=${data_status}
 fi
 
 [ -d "${SRC}" ] && /bin/rmdir ${SRC}
