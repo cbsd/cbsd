@@ -144,8 +144,8 @@ set_limit()
 {
 	local LIMITS="${jailsysdir}/${jname}/jail.limits"
 	local _formfile
-	local _val
-	local i
+	local _val _valnew
+	local i DATA
 
 	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
 
@@ -154,10 +154,58 @@ set_limit()
 	/usr/bin/truncate -s0 ${LIMITS}
 
 	for i in ${RCTL}; do
-		_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
+		_valnew=$( cbsdsql ${_formfile} "SELECT new FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
+		if [ -z "${_valnew}" -o "${_valnew}" ]; then
+			_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
+		else
+			# apply 'cur' values and truncate 'new'
+			_val="${_valnew}"
+			cbsdsql ${_formfile} "UPDATE form SET cur=\"${_val}\" AND new='' WHERE param=\"${i}\" LIMIT 1" 2>/dev/null
+		fi
 		[ -z "${_val}" ] && _val=0
 		[ "${_val}" = "0" ] && continue
 		echo "${i}:deny=${_val}" >> ${LIMITS}
+	done
+
+	for i in ${RCTL_EXTRA}; do
+
+		_valnew=$( cbsdsql ${_formfile} "SELECT new FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
+		if [ -z "${_valnew}" -o "${_valnew}" ]; then
+			_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
+		else
+			# apply 'cur' values and truncate 'new'
+			_val="${_valnew}"
+			cbsdsql ${_formfile} "UPDATE form SET cur=\"${_val}\" AND new='' WHERE param=\"${i}\" LIMIT 1" 2>/dev/null
+		fi
+
+		[ "${_val}" = "0" ] && continue
+
+		case "${i}" in
+			fsquota)
+				. ${zfstool}
+				if [ ${zfsfeat} -ne 1 ]; then
+					${ECHO} "${MAGENTA}fsquota supported only on ZFS. Currently zfsfeat is: ${GREEN}${zfsfeat}${MAGENTA}. Skip set fsquota${NORMAL}"
+					break
+				fi
+
+				zfsmnt ${data}
+				if [ $? -eq 0 ]; then
+					${ECHO} "${MAGENTA}${data} is not ZFS separated fileset. Skip set fsquota${NORMAL}"
+					break
+				fi
+
+				DATA=$( /sbin/zfs get -Ho value name ${data} )
+				if [ -z "${DATA}" ]; then
+					${ECHO} "${MAGENTA}Unable to get dataset name for: ${GREEN}${jaildatadir}${MAGENTA}. Skip set fsquota${NORMAL}"
+					break
+				fi
+
+				${ECHO} "${MAGENTA}Set new quota for ${jname}:${data}: ${GREEN}${_val}${NORMAL}"
+				/sbin/zfs set quota=${_val} ${DATA}
+				;;
+			bw)
+				;;
+		esac
 	done
 
 	if [ -f "${LIMITS}"  ]; then
@@ -185,7 +233,6 @@ jail_rctl()
 	case "${mode}" in
 		"set")
 			set_limit
-			_action="/usr/bin/rctl -a "
 			;;
 		"unset")
 			[ -z "${jname}" ] && err 1 "${MAGENTA}jname= must be set${NORMAL}"
