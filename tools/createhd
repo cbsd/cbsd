@@ -18,6 +18,10 @@ size=size of image\n"
 
 init $*
 
+. ${workdir}/bhyve.subr
+
+dsk_path="${path}"
+
 # $1 - which file from. Eg: local
 show_data_from_sql()
 {
@@ -45,12 +49,19 @@ select_by_name()
 	return 0
 }
 
-# select into $vm_res variable name of media by path
+# select into $vm_res variable name of media by $path or $1
 # return 0 if data exist
-#
 select_by_path()
 {
-	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${path}\" )
+	local _p
+
+	if [ -n "${1}" ]; then
+		_path="${1}"
+	else
+		_path="${path}"
+	fi
+
+	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE path=\"${_path}\" )
 
 	[ -z "${vm_res}" ] && return 1
 
@@ -69,34 +80,54 @@ update_type()
 
 
 #### MAIN
-[ -r "${path}" ] && err 1 "${MAGENTA}File already exist in FS: ${GREEN}${path}${NORMAL}"
-
 if is_number ${size}; then
 	if conv2bytes ${size}; then
 		size="${convval}"
 	fi
 fi
 
-prefix=$( substr --pos=0 --len=1 --str=${path} )
+named_disk=1		# 1 - seq/named disk for existing jail
+			# 0: /full/path
+			# 1: dskX
 
-named_disk=0		# 1 - seq/named disk for existing jail
-
-[ "${prefix}" != "/" ] && named_disk=1
-
-[ ${named_disk} -eq 1 -a -z "${jname}" ] && err 1 "${MAGENTA}For non-FS-based path (path not started from /), ${GREEN}jname=${MAGENTA} is mandatory${NORMAL}"
+prefix=$( substr --pos=0 --len=1 --str=${dsk_path} )
+[ "${prefix}" = "/" ] && named_disk=0
 
 if [ ${named_disk} -eq 1 ]; then
-	prefix=$( substr --pos=0 --len=3 --str=${path} )
+	prefix=$( substr --pos=0 --len=3 --str=${dsk_path} )
 	[ "${prefix}" != "dsk" ] && err 1 "${MAGENTA}Non-FS-based path must be named as: ${GREEN}dskX${NORMAL}"
 fi
 
-[ -z "${name}" ] && name="hdd-${path}"
+[ ${named_disk} -eq 0 -a -r "${dsk_path}" ] && err 1 "${MAGENTA}File already exist in FS: ${GREEN}${dsk_path}${NORMAL}"
+[ ${named_disk} -eq 1 -a -z "${jname}" ] && err 1 "${MAGENTA}For non-FS-based path (path not started from /), ${GREEN}jname=${MAGENTA} is mandatory${NORMAL}"
+
+[ -z "${name}" ] && name="hdd-${dsk_path}"
 [ -z "${type}" ] && type="hdd"
-[ -z "${jname}" ] && jname="-"
+
+if [ ${named_disk} -eq 1 ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such vm: ${GREEN}${jname}${NORMAL}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+fi
 
 case ${named_disk} in
 	0)
-		/usr/bin/truncate -s${size} ${path}
-		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname, size ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\", \"${size}\" )"
+		echo "/usr/bin/truncate -s${size} ${dsk_path}"
+		/usr/bin/truncate -s${size} ${dsk_path}
+
+		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname, size ) VALUES ( \"${name}\", \"${dsk_path}\", \"${type}\", \"${jname}\", \"${size}\" )"
+		;;
+	1)
+		full_path="${data}/${dsk_path}.vhd"
+
+		[ -r "${full_path}" -a -h "${full_path}" ] && err 1 "${MAGENTA}Disk file already exist: ${GREEN}${full_path}${NORMAL}"
+
+		select_by_path ${full_path}
+		[ $? -eq 0 ] && err 1 "${MAGENTA}Path already registered: ${GREEN}${vm_res}${NORMAL}"
+
+		if ! bhyve_create_dsk ${full_path} ${size} 1; then
+			err 1 "${MAGENTA}bhyve_create_dsk from createhd failed for: ${GREEN}${full_path}${NORMAL}"
+		fi
+
 		;;
 esac
