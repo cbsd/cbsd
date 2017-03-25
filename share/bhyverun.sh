@@ -151,8 +151,18 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		/usr/sbin/sysrc -qf ${conf} vm_boot=hdd
 		/usr/sbin/sysrc -qf ${conf} bhyveload_cmd="${bhyveload_cmd}"
 		# remove CD string for EFI
-		/usr/sbin/sysrc -qf ${conf} cd_args=""
-		unset cd_args
+		if [ "${vm_efi}" != "none" ]; then
+			if [ -n "${cd_args2}" ]; then
+				/usr/sbin/sysrc -qf ${conf} cd_args="${cd_args2}"
+				cd_args="${cd_args2}"
+			else
+				/usr/sbin/sysrc -qf ${conf} cd_args=""
+				unset cd_args
+			fi
+		else
+			/usr/sbin/sysrc -qf ${conf} cd_args=""
+			unset cd_args
+		fi
 	fi
 	reset
 	clear
