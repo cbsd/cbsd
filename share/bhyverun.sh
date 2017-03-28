@@ -89,6 +89,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	for i in ${mytap}; do
 		/sbin/ifconfig ${i} up
+		/sbin/ifconfig ${i} mtu 1500
 	done
 
 	baseelf=
@@ -114,9 +115,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_x2apic_mode}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -x"
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
-
-	# clean ARP cache
-	/usr/sbin/arp -nda > /dev/null 2>&1
 
 	bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${uefi_boot_args} ${dsk_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${jname}"
 
