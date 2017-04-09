@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.12
+#v11.0.15
 MYARG="mode"
 MYOPTARG="name path display type jname"
 MYDESC="Operate with virtual storage media such as ISO"
@@ -27,6 +27,8 @@ init $*
 
 . ${workdir}/bhyve.subr
 
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/media/"
+
 [ -z "${display}" ] && display="name,path,type,jname,size"
 
 #remove commas for loop action on header
@@ -39,6 +41,82 @@ show_header()
 {
 	local _header="${BOLD}${myheader}${NORMAL}"
 	[ ${header} -eq 1 ] && $ECHO ${_header}
+}
+
+# 1) if -n name -p path -t type exist for jail='-' than UPDATE this records to -j jname
+# 2) if -n name -p path -t type not exist for jail='-', remove records for -j jname
+unregister_or_remove()
+{
+	local rec_num
+	local exist
+	local name path type jname
+
+	while getopts "n:p:t:j:" opt; do
+		case "$opt" in
+			n) name="${OPTARG}" ;;
+			p) path="${OPTARG}" ;;
+			t) type="${OPTARG}" ;;
+			j) jname="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${jname}" ] && return 0
+	[ "${jname}" = "-" ] && return 0
+
+	rec_num=$( cbsdsql storage_media SELECT COUNT\(path\) FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\" AND jname != \"${jname}\" )
+
+	if [ "${rec_num}" = "0" ]; then
+		# this is last one, clean ISO register and drop to unassigned stage
+		# echo "cbsdsql storage_media UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"${type}\""
+		cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"${type}\""
+	else
+		# delete iso registered when we have greater then 1 records with path= name=
+		# echo "cbsdsql storage_media DELETE FROM media WHERE jname=\"${jname}\" AND name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
+		cbsdsql storage_media "DELETE FROM media WHERE jname=\"${jname}\" AND name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+	fi
+}
+
+# 1) if -n name -p path -t type exist for jail='-' than UPDATE this records to -j jname
+# 2) if -n name -p path -t type not exist for jail='-', add records for -j jname
+register_or_add()
+{
+	local rec_num
+	local exist
+	local name path type jname
+
+	while getopts "n:p:t:j:" opt; do
+		case "$opt" in
+			n) name="${OPTARG}" ;;
+			p) path="${OPTARG}" ;;
+			t) type="${OPTARG}" ;;
+			j) jname="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${jname}" ] && return 0
+	[ "${jname}" = "-" ] && return 0
+
+	rec_num=$( cbsdsql storage_media SELECT COUNT\(path\) FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\" AND jname=\"-\" )
+
+	if [ "${rec_num}" = "1" ]; then
+		# echo "cbsdsql storage_media UPDATE media SET jname=\"${jname}\" WHERE jname=\"${jname}\" AND type=\"${type}\""
+		cbsdsql storage_media "UPDATE media SET jname=\"${jname}\" WHERE jname=\"-\" AND name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
+	else
+		echo "cbsdsql storage_media INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
+		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+	fi
 }
 
 # if $1 = "Unregister" then overwrite status to "Unregister"
@@ -203,6 +281,11 @@ case "${mode}" in
 		sql="UPDATE media SET jname=\"${jname}\" WHERE name=\"${name}\" AND path=\"${dsk_path}\""
 		cbsdsql ${dbdir}/storage_media.sqlite "${sql}"
 
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 		err 0 "${MAGENTA}Attached to: ${GREEN}${jname}${NORMAL}"
 		;;
 	list)
@@ -222,7 +305,14 @@ case "${mode}" in
 		select_by_name && err 1 "${MAGENTA}Name already exist for: ${GREEN}${vm_res}${NORMAL}"
 		[ -z "${type}" ] && type="hdd"
 		[ -z "${jname}" ] && jname="-"
-		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
+
+		register_or_add -n "${name}" -p "${path}" -t "${type}" -j "${jname}"
+
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 		err 0 "${MAGENTA}Updated${NORMAL}"
 		;;
 	unregister)
@@ -232,16 +322,31 @@ case "${mode}" in
 		check_protected
 
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
-		if [ -n "${name}" ]; then
+
+		if [ -n "${name}" -a -n "${path}" ]; then
+			unregister_or_remove -n "${name}" -p "${path}" -t "${type}" -j "${jname}"
+		elif [ -n "${name}" ]; then
 			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
 		elif [ -n "${path}" ]; then
 			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
 		fi
+
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 		err 0 "${MAGENTA}Unregistered${NORMAL}"
 		;;
 	flushall)
 		# test for protected by select jname ???
 		cbsdsql storage_media "DELETE FROM media WHERE type != \"hdd\""
+
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 		err 0 "${MAGENTA}Flushed${NORMAL}"
 		;;
 	delete|remove)
@@ -251,18 +356,39 @@ case "${mode}" in
 		check_protected
 
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
-		if [ -n "${name}" ]; then
-			select_by_name
-			iso_path="${vm_res}"
-			cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
-		elif [ -n "${path}" ]; then
-			iso_path="${path}"
-			cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
+
+		if [ -n "${name}" -a -n "${path}" ]; then
+			if [ "${jname}" = "-" ]; then
+				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
+			else
+				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\" AND jname=\"${jname}\""
+			fi
+		else
+			if [ -n "${name}" ]; then
+				select_by_name
+				path="${vm_res}"
+				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
+			elif [ -n "${path}" ]; then
+				cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
+			fi
 		fi
 
-		[ -z "${iso_path}" ] && err 1 "${MAGENTA}File not exist${NORMAL}"
+		[ -z "${path}" ] && err 1 "${MAGENTA}media delete: empty path variable${NORMAL}"
 
-		bhyve_remove_dsk ${iso_path}
+		case "${type}" in
+			iso)
+				/bin/rm -f ${path}
+				;;
+			vhd)
+				bhyve_remove_dsk ${path}
+				;;
+		esac
+
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 
 		err 0 "${MAGENTA}Deleted${NORMAL}"
 		;;
@@ -271,6 +397,12 @@ case "${mode}" in
 			cbsdsql storage_media "DELETE FROM media WHERE path=\"${i}\""
 			[ -r "${i}" ] && /bin/rm -f ${i}
 		done
+
+		# CBSD QUEUE
+		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+		fi
+
 		err 0 "${MAGENTA}Deleted${NORMAL}"
 		;;
 	update)
