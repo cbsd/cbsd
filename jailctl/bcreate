@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.0.15
 MYARG="jconf"
 MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc"
 MYDESC="Create jail from config file"
@@ -33,7 +33,7 @@ init $*
 really_create_base()
 {
 	if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
-		case ${vm_profile} in
+		case ${vm_os_profile} in
 			"FreeBSD-bsdinstall-jail")
 				export UNAME_r="${ver}-RELEASE"
 				export DISTRIBUTIONS="kernel.txz base.txz"
@@ -110,7 +110,7 @@ really_create_vm()
 [ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
 over="${ver}"
 oarch="${arch}"
-jconf=$( /bin/realpath $jconf )
+jconf=$( /bin/realpath ${jconf} )
 
 if [ -z "${delpkglist}" ]; then
 	delpkglist=0
@@ -122,7 +122,34 @@ temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
 # TRIM DOS CRLF
 /bin/cat ${jconf} |/usr/bin/tr -d \\r > ${temprcconf}
-/bin/cp -a ${temprcconf} ${jconf}
+
+. ${buildconf}
+. ${temprcconf}
+
+# profile
+[ -z "${vm_os_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+
+template_profile=
+
+# Merge with default and profile settings
+[ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
+
+conf_owner=$( /usr/bin/stat -f "%u" ${jconf} )
+conf_group=$( /usr/bin/stat -f "%g" ${jconf} )
+
+/usr/bin/truncate -s0 ${jconf}
+
+for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/${template_profile} ${temprcconf}; do
+	[ ! -r "${merge_me}" ] && continue;
+	tmp_merge=$( /usr/bin/mktemp )
+	merge from=${jconf} to=${merge_me} out=${tmp_merge}
+	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${jconf}
+done
+
+# make permission for group write
+/usr/sbin/chown ${conf_owner}:${conf_group} ${jconf}
+
+. ${jconf}
 
 if [ ${removejconf} = "1" ]; then
 	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
@@ -130,39 +157,31 @@ else
 	trap "/bin/rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 fi
 
-. ${temprcconf}
-. ${buildconf}
-. ${temprcconf}
-
 [ -z "${jname}" ] && err 1 "${MAGENTA}No such jname variable${NORMAL}"
-
-# profile
-readconf vm-${vm_os_type}-${vm_os_profile}.conf
-[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 
 if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
 	# change emulator type for jcreate
-	${SYSRC_CMD} -qf ${temprcconf} emulator="jail" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${jconf} emulator="jail" > /dev/null 2>&1
 
 	if [ -n "${jprofile}" ]; then
 		. ${settingstui}
 		if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/jail-freebsd-${jprofile}.conf${NORMAL}"
-			merge_apply_profiles ${etcdir}/jail-freebsd-${jprofile}.conf ${temprcconf}
+			merge_apply_profiles ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf}
 		elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${NORMAL}"
-			merge_apply_profiles ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${temprcconf}
+			merge_apply_profiles ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf}
 		fi
 	fi
 
-	${SYSRC_CMD} -qf ${temprcconf} emulator="bhyve" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${jconf} emulator="bhyve" > /dev/null 2>&1
 fi
 
 # re-read jail params and apply personal after profile
-. ${temprcconf}
+. ${jconf}
 
 # apply pkglist from tpl_pkglist
-[ -n "${tpl_pkglist}" ] && ${SYSRC_CMD} -qf ${temprcconf} pkglist="${tpl_pkglist}" > /dev/null 2>&1
+[ -n "${tpl_pkglist}" ] && ${SYSRC_CMD} -qf ${jconf} pkglist="${tpl_pkglist}" > /dev/null 2>&1
 
 jstatus jname=${jname} > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
@@ -215,21 +234,19 @@ fi
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
+#template_profile=
+
+## Merge with default and profile settings
+#[ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
+#
+#for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/${template_profile} ${jconf}; do
+#	[ ! -r "${merge_me}" ] && continue;
+#	tmp_merge=$( /usr/bin/mktemp )
+#	merge from=${rcconf} to=${merge_me} out=${tmp_merge}
+#	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${rcconf}
+#done
+#
 #. ${rcconf}
-
-template_profile=
-
-# Merge with default and profile settings
-[ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
-
-for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/${template_profile} ${temprcconf}; do
-	[ ! -r "${merge_me}" ] && continue;
-	tmp_merge=$( /usr/bin/mktemp )
-	merge from=${rcconf} to=${merge_me} out=${tmp_merge}
-	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${rcconf}
-done
-
-. ${rcconf}
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new
@@ -255,7 +272,8 @@ ${ECHO} "${MAGENTA}To remove VM use: ${GREEN}cbsd bremove ${jname}${NORMAL}"
 ${ECHO} "${MAGENTA}For attach VM console use: ${GREEN}cbsd blogin ${jname}${NORMAL}"
 echo
 ${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
-/bin/rm -f $rcconf
+
+/bin/rm -f ${rcconf}
 
 [ "${mdsize}" != "0" ] && unmountmd jroot=${data}
 
@@ -266,6 +284,23 @@ else
 fi
 
 ${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname ) VALUES ( \"${jname}\" )"
+
+if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
+	cd_name="${register_iso_as}"
+	cd_path="${srcdir}/iso/${register_iso_name}"
+
+	cd_rec_num=$( cbsdsql storage_media SELECT COUNT\(path\) FROM media WHERE name=\"${cd_name}\" AND path=\"${cd_path}\" AND type=\"iso\" AND jname=\"-\" )
+
+	if [ "${cd_rec_num}" = "0" ]; then
+		# register new ISO with assignment to this VM
+		media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
+	else
+		# we have free/unassignent CD. link to this VM
+		cbsdsql storage_media "UPDATE media SET jname=\"${jname}\" WHERE jname=\"-\" AND type=\"iso\" AND name=\"${cd_name}\" AND path=\"${cd_path}\""
+	fi
+
+#	media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
+fi
 
 [ ! -d ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
 [ ! -d ${jailsysdir}/${jname}/etc ] && /bin/mkdir -p ${jailsysdir}/${jname}/etc

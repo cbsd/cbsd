@@ -152,7 +152,7 @@ int
 substr_usage(void)
 {
 	out1fmt("Substring\n");
-	out1fmt("require: --pos, --len, --str\n");
+	out1fmt("require: --pos, --len, --str (--len=0 - read until end)\n");
 	return (EX_USAGE);
 }
 
@@ -203,6 +203,8 @@ substrcmd(int argc, char **argv)
 				break;
 		}
 	} //while
+
+	if ( len == 0 ) len=strlen(str);
 
 	//zero for getopt* variables for next execute
 	optarg=NULL;
