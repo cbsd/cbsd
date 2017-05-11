@@ -26,7 +26,7 @@ Tested with following OSes and distribution:
 
 ## Contributing
 
-* Fork me on GitHub: [https://github.com/clonos/cp.git](https://github.com/clonos/cp.git)
+* Fork me on GitHub: [https://github.com/cbsd/cbsd.git](https://github.com/cbsd/cbsd.git)
 * Switch to 'develop' branch
 * Commit your changes (`git commit -am 'Added some feature'`)
 * Push to the branch (`git push`)
