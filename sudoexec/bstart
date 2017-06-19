@@ -391,6 +391,8 @@ cd_vnc_wait="${cd_vnc_wait}"
 bhyve_vnc_resolution="${bhyve_vnc_resolution}"
 bhyve_vnc_tcp_bind="${bhyve_vnc_tcp_bind}"
 
+vnc_password="${vnc_password}"
+
 EOF
 
 #	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf > /tmp/bhyve.${jname}.log"
@@ -426,6 +428,37 @@ EOF
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstart status=2 data_status=1
 	fi
+
+	search_cmd="bhyve: ${jname}"
+	strlen_search_cmd=$( strlen "${search_cmd}" )
+
+	printf "${MAGENTA}Waiting for PID"
+	for i in $( /usr/bin/seq 10 ); do
+		vm_pid=$( /bin/ps axopid,ucomm,command|while read pid ucomm command; do
+			[ "${ucomm}" != "bhyve" ] && continue
+			cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+
+			if [ "${cmd_pref}" = "${search_cmd}" ]; then
+				echo ${pid}
+				break
+			fi
+
+			if echo "${command}" |/usr/bin/egrep -q -e " ${jname}"$ 2>/dev/null; then
+				echo ${pid}
+			fi
+
+		done )
+		[ -n "${vm_pid}" ] && break
+		sleep 1
+		printf "."
+	done
+
+	[ -z "${vm_pid}" ] && vm_pid="0"
+
+	echo
+
+	${ECHO} "${MAGENTA}PID: ${GREEN}${vm_pid}${NORMAL}"
+	cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
 	if [ "${vm_efi}" = "none" ]; then
 		err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"

@@ -41,6 +41,7 @@ mkhostsfile_msg="Automatically set IP/NAME in /etc/hosts when jail started"
 allow_nullfs_msg="Allow privileged users inside the jail mount and unmount NULLFS file system"
 allow_tmpfs_msg="Allow privileged users inside the jail mount and unmount TMPFS file system"
 allow_procfs_msg="Allow privileged users inside the jail mount and unmount PROCFS file system"
+allow_reserved_ports_msg="Allow the jail root may bind to ports lower than 1024. For FreeBSD 11.1+"
 allow_fdescfs_msg="Jail may mount the fdescfs file system"
 allow_sysvipc_msg="Jail may use SYSV IPC (separated for FreeBSD 11.0+)"
 mount_fdescfs_msg="Mount a FDESCFS filesystem on the chrooted /dev/fd directory"
@@ -495,11 +496,18 @@ get_construct_zfs_snapsrc()
 
 
 # form for select password
+# if $1 - can_empty than allow empty passowrd
 get_password()
 {
 	local prompt1="Enter New Password"
 	local prompt2="Re-enter Password"
 	local hline="Use alpha-numeric, punctuation, TAB or ENTER"
+
+	if [ "${1}" = "can_empty" ]; then
+		local can_empty=1
+	else
+		local can_empty=0
+	fi
 
 	f_dialog_title " Select Password "
 
@@ -552,10 +560,13 @@ get_password()
 		# Return if user either pressed ESC or chose Cancel/No
 		debug= f_dialog_line_sanitize _password2
 
-		# Check for NULL entry
-		if ! [ "$_password1" -o "$_password2" ]; then
-			f_show_msg "Password is empty"
-			continue
+		if [ ${can_empty} -eq 0 ]; then
+			# Check for NULL entry
+			if ! [ "$_password1" -o "$_password2" ]; then
+				f_show_msg "Password is empty"
+				continue
+			fi
+			mtag=''
 		fi
 
 		# Check for password mismatch
@@ -584,6 +595,18 @@ get_construct_user_pw_root()
 			unset user_pw_root_crypt
 		fi
 	fi
+}
+
+# form for $vnc_password
+get_construct_vnc_password()
+{
+	if get_password can_empty; then
+		vnc_password="${mtag}"
+	else
+		unset vnc_password
+	fi
+
+	[ -z "${vnc_password}" ] && vnc_password="0"
 }
 
 # form for $path
@@ -1097,6 +1120,11 @@ get_construct_vnc_options_menu()
 	readconf vnc.conf
 	[ -z "${bhyve_vnc_resolution}" ] && bhyve_vnc_resolution="${default_vnc_width}x${default_vnc_height}"
 	[ -z "${bhyve_vnc_tcp_bind}" ] && bhyve_vnc_tcp_bind="${default_vnc_tcp_bind}"
+	if [ "${vnc_password}" = "0" ]; then
+		unset vnc_password
+	else
+		[ -z "${vnc_password}" ] && vnc_password="${default_vnc_password}"
+	fi
 
 	# checkbox mark
 	for i in ${_checkbox}; do
@@ -1112,9 +1140,15 @@ get_construct_vnc_options_menu()
 
 	menu_list="${menu_list} '${item_let} cd_vnc_wait'		'[${cd_vnc_wait_mark}]'		'When booting from CD - wait connections on VNC before VM run'"
 	inc_menu_index item_let
-	menu_list="${menu_list} '${item_let} bhyve_vnc_resolution'	'[${bhyve_vnc_resolution}]'		'Default: width - ${default_vnc_width}, height - ${default_vnc_height}'"
+	menu_list="${menu_list} '${item_let} bhyve_vnc_resolution'	'[${bhyve_vnc_resolution}]'	'Default: width - ${default_vnc_width}, height - ${default_vnc_height}'"
 	inc_menu_index item_let
-	menu_list="${menu_list} '${item_let} bhyve_vnc_tcp_bind'	'[${bhyve_vnc_tcp_bind}]'		'Default: ${default_vnc_tcp_bind}'"
+	menu_list="${menu_list} '${item_let} bhyve_vnc_tcp_bind'	'[${bhyve_vnc_tcp_bind}]'	'Default: ${default_vnc_tcp_bind}'"
+
+	# VNC password support introduced in FreeBSD 11.1 (-beta1)
+	if [ ${freebsdhostversion} -gt 1100513 ]; then
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} vnc_password'		'[${vnc_password}]'		'Default: see vnc.conf file'"
+	fi
 
 	menu_list="${menu_list} 'Save'	'Save changes and quit'	'Save!'"
 
@@ -1188,6 +1222,9 @@ get_construct_vnc_options()
 			;;
 		bhyve_vnc_resolution)
 			get_construct_bhyve_vnc_resulution_menu
+			;;
+		vnc_password)
+			get_construct_vnc_password
 			;;
 		*)
 			invert_checkbox ${mychoice}
@@ -1391,7 +1428,7 @@ get_construct_vm_os_profile()
 	local title=" profile "
 	local prompt="${GET_VMPROFILE_MSG}"
 
-	_res=$( /usr/bin/find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec /bin/realpath {} \;| /usr/bin/sort -u )
+	_res=$( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} display=path header=0 )
 
 	_all=0
 
@@ -1465,7 +1502,8 @@ get_construct_profile()
 	local prompt="${GET_JAILPROFILE_MSG}"
 
 	# default must be first due to last dir with user settings must overwrite
-	_res=$( /usr/bin/find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec /bin/realpath {} \;| /usr/bin/sort -u | /usr/bin/sort -n )
+#	_res=$( /usr/bin/find ${etcdir}/defaults ${etcdir} -type f -depth 1 -maxdepth 1 -name ${_search_profile}\* -exec /bin/realpath {} \;| /usr/bin/sort -u | /usr/bin/sort -n )
+	_res=$( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} display=path header=0 )
 
 	for i in ${_res}; do
 		unset jail_profile
@@ -1611,6 +1649,8 @@ bhyve_vnc_tcp_bind="${bhyve_vnc_tcp_bind}";
 
 with_img_helpers="";
 runasap="${runasap}";
+
+vnc_password="${vnc_password}"
 EOF
 }
 

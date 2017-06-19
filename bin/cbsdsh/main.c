@@ -198,7 +198,7 @@ main(int argc, char *argv[])
 
         workdir=lookupvar("workdir");
         if ( workdir == NULL ) {
-                out2fmt_flush("cbsd: No workdir defined\n");
+                out2fmt_flush("cbsd: no workdir defined\n");
                 exitshell(1);
         }
 

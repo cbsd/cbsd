@@ -92,17 +92,20 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		/sbin/ifconfig ${i} mtu 1500
 	done
 
-	baseelf=
-
-	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
-
-	[ ${baseelf} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
+	[ ${freebsdhostversion} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
 
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
 			xhci_args="-s 30,xhci,tablet"
 		else
 			xhci_args=""
+		fi
+	fi
+
+	# VNC password support introduced in FreeBSD 11.1 (-beta1)
+	if [ ${freebsdhostversion} -gt 1100513 ]; then
+		if [ -n "${vnc_password}" ]; then
+			vnc_args="${vnc_args},password=${vnc_password}"
 		fi
 	fi
 
