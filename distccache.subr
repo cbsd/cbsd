@@ -36,7 +36,7 @@ ccache_check() {
 
 	_res=$( which ccache )
 	if [ $? -ne 0 ]; then
-		echo "no ccache in system"
+		${ECHO} "${MAGENTA}No ccache in system, ccache disabled${NORMAL}"
 		return 1
 	fi
 
@@ -71,13 +71,12 @@ prepare_make_conf()
 	local    dst=$1
 
 	[ -z "${src}" ] && return 0
-	[ -z "${dst}" ] && dst=$src
+	[ -z "${dst}" ] && dst=${src}
 
-	/usr/bin/truncate -s0 $dst
+	/usr/bin/truncate -s0 ${dst}
+	[ -r "${src}" ] && /bin/cp -a ${src} ${dst}
 
-	[ -r ${src} ] && /bin/cp -a ${src} ${dst}
-
-	[ ${ccache} -eq 0 -o ${distcc} -eq 0 ] && return 0
+	[ "${ccache}" = "0" -a "${distcc}" = "0" ] && return 0
 
 	local PATH
 
@@ -107,7 +106,6 @@ CC:=/usr/local/bin/distcc
 CXX:=/usr/local/bin/distcc
 EOF
 
-
 		cat >> $dst <<EOF
 MAKE_JOBS_NUMBER=${maxjobs}
 MAKE_ARGS+=-j${maxjobs}
@@ -118,11 +116,23 @@ EOF
 	fi
 
 	if [ $ccache -eq 1 ]; then
-		PKGSRC_COMPILER="${PKGSRC_COMPILER} ccache"
+		PKGSRC_COMPILER="ccache"
 		cat >> $dst <<EOF
+WITH_CCACHE_BUILD=yes
+.if (!empty(.CURDIR:M/usr/src*) || !empty(.CURDIR:M/usr/obj*))
+.if !defined(NOCCACHE) && exists(/usr/local/libexec/ccache/world/cc)
 CC:=\${CC:C,^cc,/usr/local/libexec/ccache/world/cc,1}
 CXX:=\${CXX:C,^c\+\+,/usr/local/libexec/ccache/world/c++,1}
-PATH="/usr/local/libexec/ccache:$PATH"
+.endif
+.endif
+
+# /usr/local/share/doc/ccache/ccache-howto-freebsd.txt
+#Clang will return a lot of 'unused argument' warnings: they are harmless.
+#Just add this to /etc/make.conf if you want to hide them:
+.if \${CC:T} == "clang"
+CFLAGS+=        -Qunused-arguments
+.endif
+
 EOF
 	fi
 
@@ -146,15 +156,14 @@ EOF
 	return 0
 }
 
-init_ccache_dir() {
+init_ccache_dir()
+{
+	[ -z "${ccache_dir_prefix}" ] && ccache_dir_prefix="ccache"
+	ccache_dir_source="${dbdir}/ccache/${ccache_dir_prefix}-${arch}-${ver}-${stable}"
+	${ECHO} "${MAGENTA}Init ccache directory: ${GREEN}${ccache_dir_source}${MAGENTA}...${NORMAL}"
+	[ ! -d "${ccache_dir_source}" ] && /bin/mkdir -p ${ccache_dir_source}
 
-	[ -z "$ccache_dir" -o -z "${ccache_prefix}" ] && return 0
-
-	ccache_realdir="$ccache_dir/`/sbin/md5 -qs \"$ccache_prefix\"`"
-	[ ! -d "${ccache_realdir}" ] && mkdir -p "${ccache_realdir}"
-	echo "${ccache_prefix}" > "${ccache_realdir}/readme"
-
-	export ccache_realdir
+	export ccache_dir_source="${ccache_dir_source}"
 }
 
 ###

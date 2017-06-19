@@ -18,11 +18,95 @@ init $*
 # create SQL schema
 #${miscdir}/sqlcli ${dbdir}/local.sqlite DROP TABLE IF EXISTS local
 #/usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-local.schema local
-
-collect_info()
+sysinv_get_info_hostname()
 {
-	local _dmidecode _meminfo _realmem
+	hostname=$( /sbin/sysctl -n kern.hostname 2>/dev/null )
+	[ -z "${hostname}" ] && hostname="unknown"
+}
 
+sysinv_get_info_hostarch()
+{
+	hostarch=$( /sbin/sysctl -n hw.machine 2>/dev/null )
+	[ -z "${hostarch}" ] && hostarch="unknown"
+}
+
+sysinv_get_info_osrelease()
+{
+	osrelease=$( /sbin/sysctl -n kern.osrelease 2>/dev/null )
+	[ -z "${osrelease}" ] && osrelease="unknown"
+}
+
+sysinv_get_info_cpumodel()
+{
+	cpumodel=$( /sbin/sysctl -n hw.model 2>/dev/null )
+	[ -z "${cpumodel}" ] && cpumodel="unknown"
+}
+
+sysinv_get_info_ncpu()
+{
+	ncpu=$( /sbin/sysctl -n hw.ncpu 2>/dev/null )
+	[ -z "${ncpu}" ] && ncpu="0"
+}
+
+sysinv_get_info_cpufreq()
+{
+	cpufreq=$( /sbin/sysctl -n dev.cpu.0.freq 2>/dev/null )
+	[ -z "${cpufreq}" ] && cpufreq="0"
+}
+
+sysinv_get_info_kernhz()
+{
+	kernhz=$( /sbin/sysctl -n kern.hz 2>/dev/null )
+	[ -z "${kernhz}" ] && kernhz="0"
+}
+
+sysinv_get_info_sched()
+{
+	sched=$( /sbin/sysctl -n kern.sched.name 2>/dev/null )
+	[ -z "${sched}" ] && sched="unknown"
+}
+
+sysinv_get_info_eventtimer()
+{
+	eventtimer=$( /sbin/sysctl -n kern.eventtimer.choice 2>/dev/null )
+	[ -z "${eventtimer}" ] && eventtimer="unknown"
+}
+
+sysinv_get_info_disks()
+{
+	disks=$( /sbin/sysctl -n kern.disks 2>/dev/null )
+	[ -z "${disks}" ] && disks="unknown"
+}
+
+sysinv_get_info_nodenamefile()
+{
+	[ -r "${nodenamefile}" ] && nodename=$( /bin/cat ${nodenamefile} )
+	[ -z "${nodenamefile}" ] && nodenamefile="unknown"
+}
+
+sysinv_get_info_vimage_feature()
+{
+	_ret=$( /sbin/sysctl -n kern.features.vimage 2>/dev/null )
+	if [ -z "${_ret}" ]; then
+		vimage_feature=0
+	else
+		vimage_feature=1
+	fi
+}
+
+sysinv_get_info_racct()
+{
+	_ret=$( /sbin/sysctl -n kern.features.racct 2>/dev/null )
+	if [ -z "${_ret}" ]; then
+		racct=0
+	else
+		racct=1
+	fi
+}
+
+sysinv_get_info_physmem()
+{
+	local _realmem
 	_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
 
 	if [ -n "${_realmem}" ]; then
@@ -30,6 +114,31 @@ collect_info()
 	else
 		physmem=0
 	fi
+}
+
+sysinv_get_info_freemem()
+{
+	local _realmem _page_size _active_count _wire_count _active_size _wire_size _freemem
+
+	_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
+	_page_size=$( sysctl -n vm.stats.vm.v_page_size )
+	_active_count=$( sysctl -n vm.stats.vm.v_active_count )
+	_wire_count=$( sysctl -n vm.stats.vm.v_wire_count )
+	_active_size=$(( _page_size * _active_count ))
+	_wire_size=$(( _page_size * _wire_count ))
+
+	_freemem=$(( _realmem - _active_size - _wire_size ))
+
+	if [ -n "${_freemem}" ]; then
+		freemem=$(( _freemem / 1048576 ))
+	else
+		freemem=0
+	fi
+}
+
+sysinv_get_info_memtype()
+{
+	local _dmidecode
 
 	_dmidecode=$( which dmidecode )
 
@@ -38,35 +147,10 @@ collect_info()
 	else
 		memtype=""
 	fi
+}
 
-	hostname=$( /sbin/sysctl -n kern.hostname 2>/dev/null )
-	hostarch=$( /sbin/sysctl -n hw.machine 2>/dev/null )
-	osrelease=$( /sbin/sysctl -n kern.osrelease 2>/dev/null )
-	cpumodel=$( /sbin/sysctl -n hw.model 2>/dev/null )
-	ncpu=$( /sbin/sysctl -n hw.ncpu 2>/dev/null )
-
-	cpufreq=$( /sbin/sysctl -n dev.cpu.0.freq 2>/dev/null )
-	kernhz=$( /sbin/sysctl -n kern.hz 2>/dev/null )
-	sched=$( /sbin/sysctl -n kern.sched.name 2>/dev/null )
-	eventtimer=$( /sbin/sysctl -n kern.eventtimer.choice 2>/dev/null )
-	disks=$( /sbin/sysctl -n kern.disks 2>/dev/null )
-	[ -f "${nodenamefile}" ] && nodename=$( /bin/cat ${nodenamefile} )
-	_ret=$( /sbin/sysctl -n kern.features.vimage 2>/dev/null )
-
-	if [ -z "${_ret}" ]; then
-		vimage_feature=0
-	else
-		vimage_feature=1
-	fi
-	_ret=$( /sbin/sysctl -n kern.features.racct 2>/dev/null )
-	if [ -z "${_ret}" ]; then
-		racct=0
-	else
-		racct=1
-	fi
-
-	cbsdver=${myversion}
-
+sysinv_get_info_nics()
+{
 	nics=""
 	for i in $(/sbin/ifconfig -l); do
 		case "${i%%[0-9]*}" in
@@ -76,9 +160,63 @@ collect_info()
 		esac
 		nics="${nics} ${i}"
 	done
-	[ -n "${nics}" ] && nics=$( echo ${nics}|/usr/bin/tr " " "," )
+	[ -n "${nics}" ] && nics=$( echo ${nics}| /usr/bin/tr " " "," )
+}
 
+# NEW
+sysinv_get_info_la()
+{
+	la=$( /sbin/sysctl -qn vm.loadavg | /usr/bin/tr -d "{}" | /usr/bin/awk '{printf $1" "$2" "$3"\n"}' )
+	[ -z "${la}" ] && la="0 0 0"
+}
+
+sysinv_get_info_is_virtual()
+{
+	case "$( /bin/kenv smbios.system.product )" in
+		VirtualBox*)
+			is_virtual="virtualbox"
+			;;
+		VMware*)
+			is_virtual="vmware"
+			;;
+		Parallels*)
+			is_virtual="parallels"
+			;;
+		KVM*)
+			is_virtual="kvm"
+			;;
+		"Virtual Machine")
+			is_virtual="hyperv"
+			;;
+		"RHEV Hypervisor")
+			is_virtual="redhat_ev"
+			;;
+		"oVirt Node")
+			is_virtual="ovirt"
+			;;
+		"HVM domU")
+			is_virtual="xen_hardware"
+			;;
+		Bochs*)
+			is_virtual="bochs"
+			;;
+		BHYVE)
+			is_virtual="bhyve"
+			;;
+		*)
+			is_virtual="physical"
+			;;
+	esac
+}
+
+collect_info()
+{
+	cbsdver=${myversion}
 	platform=$( /usr/bin/uname -s )
+
+	for i in hostname hostarch osrelease cpumodel ncpu cpufreq kernhz sched eventtimer disks nodenamefile vimage_feature racct physmem freemem memtype nics la is_virtual; do
+		sysinv_get_info_${i}
+	done
 }
 
 ## MAIN
