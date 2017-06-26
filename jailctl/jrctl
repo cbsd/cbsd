@@ -2,7 +2,7 @@
 #v11.0.10
 CBSDMODULE="jail"
 MYARG=""
-MYOPTARG="mode jname alljails shownode display node header human"
+MYOPTARG="mode jname alljails shownode display node header human prometheus"
 MYDESC="Set or flush resource limit for jail"
 ADDHELP="mode= set (apply), unset, show (show current state) or get (show limits)\n\
 alljails=1 - get jaillist from remote node\n\
@@ -10,7 +10,8 @@ shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
 human=0 don't convert bytes to human readable form\n\
-display= list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw\n"
+display= list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw\n\
+prometheus=0 or 1 = prometheus metric mode output"
 EXTHELP="wf_jrctl.html"
 
 . ${subr}
@@ -24,6 +25,7 @@ init $*
 
 [ -z "${display}" ] && display="jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw"
 [ "${shownode}" = "1" ] && display="nodename,${display}"
+[ -z "${prometheus}" ] && prometheus=0
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} |/usr/bin/tr ',' '  ' )
@@ -87,9 +89,9 @@ show_jaildata_from_sql()
 	fi
 
 	if [ -n "${jname}" ]; then
-		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator != \"bhyve\""
+		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator = \"bhyve\" OR emulator = \"jail\""
 	else
-		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator != \"bhyve\""
+		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator = \"bhyve\" OR emulator = \"jail\""
 	fi
 
 	${_sqlq}| while read jname; do
@@ -114,7 +116,7 @@ show_remote()
 	show_header
 
 	if [ -z "${node}" ]; then
-		node=$(cbsd node mode=list header=0 allinfo=0)
+		node=$( node mode=list header=0 allinfo=0 )
 	fi
 
 	for _n in $node; do
@@ -241,12 +243,96 @@ jail_rctl()
 			;;
 		"show")
 			if [ -n "${jname}" ]; then
-				/usr/bin/rctl -hu jail:${jname}
+				emulator=$( cbsdsql local SELECT emulator FROM jails WHERE jname=\"${jname}\" )
+				if [ "${prometheus}" = "0" ]; then
+					case "${emulator}" in
+						jail)
+							/usr/bin/rctl -hu jail:${jname}
+							;;
+						bhyve)
+							pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
+							vm_cpus=$( cbsdsql local SELECT vm_cpus FROM bhyve WHERE jname=\"${jname}\" )
+							eval $( /usr/bin/rctl -hu process:${pid} )
+							for res in ${RCTL}; do
+								eval _val=\$${res}
+								if [ "${res}" = "pcpu" -a -n "${_val}" ]; then
+									# take into account multi-core guest in pcpu value
+									# On multi-core guest we need to: pcpu / vm_cpus
+									[ ${vm_cpus} -gt 1 ] && _val=$(( _val / vm_cpus ))
+								fi
+								[ -n "${_val}" ] && echo "${res}=${_val}"
+							done
+							;;
+					esac
+				else
+					case "${emulator}" in
+						jail)
+							eval $( /usr/bin/rctl -u jail:${jname} )
+							;;
+						bhyve)
+							pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
+							vm_cpus=$( cbsdsql local SELECT vm_cpus FROM bhyve WHERE jname=\"${jname}\" )
+							eval $( /usr/bin/rctl -u process:${pid} )
+							# take into account multi-core guest in pcpu value
+							# On multi-core guest we need to: pcpu / vm_cpus
+							[ ${vm_cpus} -gt 1 ] && pcpu=$(( pcpu / vm_cpus ))
+							;;
+					esac
+
+					for res in ${RCTL}; do
+						eval _mydesc="\$${res}_desc"
+						eval _val=\$${res}
+						echo "# HELP ${emulator}_${jname}_${res} ${_mydesc}"
+						echo "${emulator}_${jname}_${res} ${_val}"
+					done
+				fi
 			else
-				for i in $( jorder ); do
-					echo "--- ${i} ---"
-					/usr/bin/rctl -hu jail:${i}
-				done
+				if [ "${prometheus}" = "0" ]; then
+					for i in $( jorder ); do
+						echo "--- ${i} ---"
+						/usr/bin/rctl -hu jail:${i}
+					done
+					for i in $( border ); do
+						echo "--- ${i} ---"
+						pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${i}\" )
+						vm_cpus=$( cbsdsql local SELECT vm_cpus FROM bhyve WHERE jname=\"${i}\" )
+						eval $( /usr/bin/rctl -hu process:${pid} )
+						for res in ${RCTL}; do
+							eval _val=\$${res}
+							if [ "${res}" = "pcpu" -a -n "${_val}" ]; then
+								# take into account multi-core guest in pcpu value
+								# On multi-core guest we need to: pcpu / vm_cpus
+								[ ${vm_cpus} -gt 1 ] && _val=$(( _val / vm_cpus ))
+							fi
+							[ -n "${_val}" ] && echo "${res}=${_val}"
+						done
+					done
+				else
+					for i in $( jorder ); do
+						eval $( /usr/bin/rctl -u jail:${i} )
+						for res in ${RCTL}; do
+							eval _mydesc="\$${res}_desc"
+							eval _val=\$${res}
+							echo "# HELP jail_${i}_${res} ${_mydesc}"
+							echo "jail_${i}_${res} ${_val}"
+						done
+					done
+					for i in $( border ); do
+						pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${i}\" )
+						vm_cpus=$( cbsdsql local SELECT vm_cpus FROM bhyve WHERE jname=\"${i}\" )
+						eval $( /usr/bin/rctl -u process:${pid} )
+						# take into account multi-core guest in pcpu value
+						# On multi-core guest we need to: pcpu / vm_cpus
+						[ ${vm_cpus} -gt 1 ] && pcpu=$(( pcpu / vm_cpus ))
+
+						for res in ${RCTL}; do
+							eval _mydesc="\$${res}_desc"
+							eval _val=\$${res}
+							echo "# HELP bhyve_${i}_${res} ${_mydesc}"
+							echo "bhyve_${i}_${res} ${_val}"
+						done
+					done
+				fi
 			fi
 			return 0
 			;;
