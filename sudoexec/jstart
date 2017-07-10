@@ -114,9 +114,7 @@ fwcounter()
 		return 0
 	fi
 
-	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
-
-	if [ ${baseelf} -gt 1100120 ]; then
+	if [ ${freebsdhostversion} -gt 1100120 ]; then
 		COMMENT="// Setup by CBSD jstart: ${jname}"
 	else
 		COMMENT=
@@ -141,14 +139,20 @@ fwcounter()
 # check that the emulator is able to execute commands
 emulator_exec_check()
 {
-	local _res
+	local _res _ret
 
 	[ -z "${emulator}" ] && return 0
 	[ "${emulator}" = "bhyve" ] && return 0
 	[ "${emulator}" = "jail" ] && return 0
 	[ "${emulator}" = "0" ] && return 0
-	_res=$( /usr/sbin/chroot ${path} /bin/${emulator} ${path}/bin/sh -n "echo ping" 2>&1 )
-	[ $? -ne 0 ] && printf "${_res}"
+
+	preparebase dst=${BASE_DIR} emulator=${emulator} >/dev/null 2>/dev/null
+
+	_res=$( /usr/sbin/chroot ${path} /bin/${emulator} /bin/sh -c "echo ping" 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && printf "${_res}"
+	return ${_ret}
+
 }
 
 
@@ -313,9 +317,9 @@ TRAP=""
 jaillock="${jailsysdir}/${jname}/locked"
 if [ -f "${jaillock}" ]; then
 	masterhost=$( /bin/cat ${jaillock} )
-	if [ "${masterhost}" = "${nodename}" ]; then
+	if [ "${masterhost}" = "${nodename}" -o -z "${masterhost}" ]; then
 		${ECHO} "${MAGENTA}Remove my stale lock file: ${GREEN}${jaillock}${NORMAL}"
-		rm -f ${jaillock}
+		/bin/rm -f ${jaillock}
 	else
 		cur_time=$( /bin/date +%s )
 		eval $( /usr/bin/stat -s ${jaillock} )
@@ -461,8 +465,11 @@ if [ "$mount_obj" = "1" ]; then
 fi
 
 if [ "$mount_kernel" = "1" ]; then
-	SRCDIR="${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel"
-	MOUNTOPT="${MOUNTOPT} -k ${SRCDIR}"
+
+	if [ -d ${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel ]; then
+		SRCDIR="${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel"
+		MOUNTOPT="${MOUNTOPT} -k ${SRCDIR}"
+	fi
 fi
 
 
@@ -534,7 +541,9 @@ trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 # check that the emulator is able to execute commands
 res=$( emulator_exec_check )
 
-if [ -n "${res}" ]; then
+ret=$?
+
+if [ ${ret} -ne 0 ]; then
 	$ECHO "${MAGENTA}Emulator error: ${GREEN}${res}${NORMAL}"
 	jcleanup jname="${jname}"
 	exit 0

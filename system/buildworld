@@ -40,13 +40,18 @@ init_make_flags
 init_basedir
 
 if [ "${ccache}" = "1"  ]; then
-	ccache_prefix="cbsd buildworld ${ver} ${arch} ${target_arch} ${basename}"
-	ccache_dir="/var/cache/ccache"
 	init_ccache_dir
-	export CCACHE_DIR=${ccache_realdir}
 	if ! ccache_check; then
+		${ECHO} "${MAGENTA}*** ${GREEN}Ccache disabled: no binaries at /usr/local/bin/ccache${MAGENTA} ***${NORMAL}"
 		ccache=0
 	fi
+
+	${ECHO} "${MAGENTA}*** ${GREEN}Ccache enabled${MAGENTA} ***${NORMAL}"
+	export PATH=/usr/local/libexec/ccache:${PATH}
+	export CCACHE_PATH=/usr/bin:/usr/local/bin
+	export CCACHE_DIR=${ccache_dir_source}
+	CCACHE_SIZE="8"
+	/usr/local/bin/ccache -M ${CCACHE_SIZE}
 else
 	ccache=0
 fi
@@ -55,6 +60,7 @@ fi
 
 export __MAKE_CONF=${ftmpdir}/make.$$.conf
 prepare_make_conf ${origmakeconf} ${__MAKE_CONF}
+
 init_make_flags
 
 LOCKFILE=${ftmpdir}/$( /sbin/md5 -qs ${MAKEOBJDIRPREFIX} ).lock
@@ -62,7 +68,6 @@ LOCKFILE=${ftmpdir}/$( /sbin/md5 -qs ${MAKEOBJDIRPREFIX} ).lock
 makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}; cleanup_bases"
 
 [ ${distcc} -eq 1 ] && export DISTCC_HOSTS="${CBSD_DISTCCHOST}"
-DT_START=$( /bin/date +%s )
 
 register_base
 
@@ -81,7 +86,7 @@ else
 	base_status_is_maintenance_hard
 fi
 
-# test
+st_date=$( /bin/date +%s )
 if [ $notify -eq 1 ]; then
 	[ -z "$TAILSTRING" ] && TAILSTRING=50
 	script ${BLDLOG} /usr/bin/nice -n ${NICE} /usr/bin/make $NUMJOBS -C ${SRC_DIR} buildworld ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
@@ -90,6 +95,25 @@ else
 	 /usr/bin/nice -n ${NICE} /usr/bin/make $NUMJOBS -C ${SRC_DIR} buildworld ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
 	res=$?
 fi
+end_date=$( /bin/date +%s )
+
+diff_time=$(( end_date - st_date ))
+
+run_time=$(( diff_time / 60 ))
+
+if [ ${notify} -eq 1 ]; then
+cat >> ${BLDLOG} << EOF
+Start build date: ${st_date}
+End build date: ${end_date}
+Runtime minutes: ${run_time} min ( ${diff_time} seconds )
+EOF
+fi
+
+cat <<EOF
+Start build date: ${st_date}
+End build date: ${end_date}
+Runtime minutes: ${run_time} min ( ${diff_time} seconds )
+EOF
 
 cleanup_bases
 
@@ -102,10 +126,6 @@ if [ $res -ne 0 ]; then
 fi
 
 if [ $res -eq 0 -a $notify -eq 1 ]; then
-	cat > ${BLDLOG} << EOF
-Start time: `date -r ${DT_START}`
-End time: `date -r ${DT_END}`
-EOF
 	send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} complete." -f ${BLDLOG}
 	return 0
 fi

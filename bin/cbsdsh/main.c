@@ -55,9 +55,7 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 265772 2014-05-09 13:27:30Z jilles $");
 #ifdef CBSD
 #include <sys/param.h> //MAXPATHLEN
 #include <stdlib.h> //setenv
-//#include <malloc_np.h> //calloc
-//#include <libxo/xo.h> // XML/JSON/HTML stuff via xo_emit
-
+#include "about.h" //VERSION
 #ifdef LUA
 #include "lua.h"
 #include "lauxlib.h"
@@ -179,11 +177,17 @@ main(int argc, char *argv[])
 	setstackmark(&smark2);
 
 #ifdef CBSD
-        if (argc>1)
-            if (!strcmp(argv[1],"--help")) {
-                system("/usr/local/bin/cbsd help");
-                exit(0);
-            }
+	if (argc>1) {
+		if (!strcmp(argv[1],"--help")) {
+			system("/usr/local/bin/cbsd help");
+			exit(0);
+		} else {
+			if (!strcmp(argv[1],"version")) {
+				printf("%s\n",VERSION);
+				exit(0);
+			}
+		}
+	}
 
         cbsd_disable_history=lookupvar("NO_CBSD_HISTORY");
 
@@ -198,7 +202,7 @@ main(int argc, char *argv[])
 
         workdir=lookupvar("workdir");
         if ( workdir == NULL ) {
-                out2fmt_flush("cbsd: No workdir defined\n");
+                out2fmt_flush("cbsd: no workdir defined\n");
                 exitshell(1);
         }
 

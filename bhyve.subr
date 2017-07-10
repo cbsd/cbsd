@@ -13,14 +13,31 @@ init_bhyve()
 {
 	local _required_kmods="vmm if_tap if_bridge nmdm" _i _res
 
-	_res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
-	if [ $? -ne 0 ]; then
-		# work-around for Alex (CBSD Telegram) issue: this is not clean check for EPT existance:
-		# sometimes errcode = 16 but POPCNT feature present in CPU
-		# So, just print warning about this. Need for deep investigation
-		${ECHO} "${MAGENTA}Warning: Seems like your CPU does not appear to support ${GREEN}EPT${NORMAL}"
-		${ECHO} "${MAGENTA}But im try to run bhyve anyway...${NORMAL}"
-		sleep 2
+	if [ "${skip_bhyve_init_warning}" != "1" ]; then
+
+		_res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
+
+		if [ $? -ne 0 ]; then
+			# work-around for Alex (CBSD Telegram) issue: this is not clean check for EPT existance:
+			# sometimes errcode = 16 but POPCNT feature present in CPU
+			# So, just print warning about this. Need for deep investigation
+			${ECHO} "${MAGENTA}Warning: Seems like your CPU does not appear to support ${GREEN}EPT${NORMAL}"
+			${ECHO} "${MAGENTA}But im try to run bhyve anyway...${NORMAL}"
+			echo
+			${ECHO} "${MAGENTA}To disable this warning, please set: ${GREEN}skip_bhyve_init_warning${MAGENTA} to: ${GREEN}1${NORMAL}"
+			${ECHO} "${MAGENTA}Pause for 10 seconds${NORMAL}"
+			sleep 10
+		fi
+
+		if [ "${is_virtual}" != "physical" ]; then
+			${ECHO} "${MAGENTA}Warning: current environment is not physical what is required for the work of the bhyve${NORMAL}"
+			${ECHO} "${MAGENTA}Virtual engine detected: ${GREEN}${is_virtual}${NORMAL}"
+			${ECHO} "${MAGENTA}Please refer to this page for more information: ${GREEN}https://wiki.freebsd.org/bhyve${NORMAL}"
+			${ECHO} "${MAGENTA}Try to run bhyve anyway...${NORMAL}"
+			${ECHO} "${MAGENTA}To disable this warning, please set: ${GREEN}skip_bhyve_init_warning${MAGENTA} to: ${GREEN}1${NORMAL}"
+			${ECHO} "${MAGENTA}Pause for 10 seconds${NORMAL}"
+			sleep 10
+		fi
 	fi
 
 	for _i in ${_required_kmods}; do
@@ -29,6 +46,12 @@ init_bhyve()
 			${ECHO} "${MAGENTA}Please add ${GREEN}vmm_load=\"YES\"${MAGENTA} into /boot/loader.conf and${MAGENTA}"
 			${ECHO} "${MAGENTA}put ${GREEN}kld_list=\"if_bridge if_tap nmdm\"${MAGENTA} into your ${GREEN}/etc/rc.conf${MAGENTA} then reboot host.${NORMAL}"
 			[ -n "${DIALOG}" ] && ${ECHO} "${MAGENTA}Press any key...${NORMAL}" && read p
+
+			# CBSD QUEUE
+			if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+				[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstart status=2 data_status=1
+			fi
+
 			exit 0
 		fi
 	done
@@ -339,14 +362,24 @@ compile_pci_passthru_args()
 
 	[ -z "${ppt}" ] && return 0
 
-	if ! next_pci_id; then
-		return 1
-	fi
+	pci_passthru_args=
 
-	${ECHO} "${MAGENTA}Passthru enabled: ${GREEN}${ppt}${NORMAL}"
+	for _i in ${ppt}; do
 
-	pci_passthru_args="-s ${bhyve_pci_index},passthru,${ppt}"
-	pci_passthru_args="-s ${bhyve_pci_index},passthru,${ppt} -S"
+		if ! next_pci_id; then
+			return 1
+		fi
+
+		${ECHO} "${MAGENTA}Passthru enabled: ${GREEN}${_i}${NORMAL}"
+
+		pci_passthru_args="${pci_passthru_args} -s ${bhyve_pci_index},passthru,${_i}"
+	done
+
+	pci_passthru_args="${pci_passthru_args} -S"
+
+	local _dmar_test=$( /usr/sbin/acpidump -t | /usr/bin/grep DMAR )
+	[ -z "${_dmar_test}" ] && err 1 "${MAGENTA}I/O MMU / VT-d not enabled. Check you hardware or BIOS setting${NORMAL}"
+
 }
 
 
@@ -356,7 +389,6 @@ compile_efi_args()
 	case "${vm_efi}" in
 		uefi)
 			efi_args="-l bootrom,${efi_firmware}"
-#			efi_args="-s 31,lpc -l com1,/dev/nmdm0A -l com2,/dev/nmdm1A -l bootrom,${efi_firmware}"
 			;;
 		uefi_csm)
 			efi_args="-l bootrom,${efi_firmware_csm}"
@@ -402,12 +434,8 @@ compile_console_args()
 # export arguments for bhyve virtio-rnd
 compile_virtiornd_args()
 {
-	local baseelf
-
-	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
-
 	# this is feature of FreeBSD 10.1+
-	[ ${baseelf} -lt 1000730 ] && return 0
+	[ ${freebsdhostversion} -lt 1000730 ] && return 0
 
 	if ! next_pci_id; then
 		return 1
@@ -441,6 +469,13 @@ compile_cd_args()
 			iso_img="${iso_img2}"
 		fi
 	fi
+
+	## for check via ref
+	# cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
+	#if ! next_pci_id; then
+	#	return 1
+	#fi
+	# cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
 
 	cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
 	cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
@@ -602,13 +637,9 @@ compile_vnc_args()
 
 	local width height
 
-	local baseelf
-
-	baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
-
 	vnc_args=
 
-	if [ ${baseelf} -lt 1100120 ]; then
+	if [ ${freebsdhostversion} -lt 1100120 ]; then
 		${ECHO} "${MAGENTA}VNC available only on FreeBSD 11.0+. Disable VNC${MAGENTA}"
 		sleep 2
 		return 0
@@ -650,8 +681,9 @@ compile_vnc_args()
 
 	if [ "${vm_efi}" != "none" ]; then
 		${ECHO} "${MAGENTA}VRDP is enabled. VNC bind/port: ${GREEN}${vnc_bind}:${vm_port}${NORMAL}"
-		${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer -truecolour ${vnc_bind}:${vm_port}${NORMAL}"
-		${ECHO} "${MAGENTA}Resolution: ${GREEN}${width}x${height}. ${MAGENTA}VNC pass: ${GREEN}cbsd${NORMAL}${NORMAL}"
+		${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer ${vnc_bind}:${vm_port}${NORMAL}"
+		${ECHO} "${MAGENTA}Resolution: ${GREEN}${width}x${height}.${NORMAL}"
+		[ -n "${vnc_password}" ] && ${ECHO} "${MAGENTA}VNC pass: ${GREEN}${vnc_password}${NORMAL}"
 
 		if [ "${vnc_bind}" = "0.0.0.0" ]; then
 			echo
@@ -687,7 +719,7 @@ get_vm_uplink_interface()
 			;;
 		*)
 			# when ip=0 and interface=auto we must use default interface for upstream
-			if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
+			if [ "${tmp_nic_parent}" = "0" -o "${tmp_nic_parent}" = "auto" ]; then
 				. ${workdir}/initenv.subr
 				update_netinfo
 					if [ "${node_ip6_active}" = "1" ]; then
@@ -700,6 +732,8 @@ get_vm_uplink_interface()
 			fi
 			;;
 	esac
+
+	[ -z "${interface}" ] && return 1
 
 	return 0
 }
