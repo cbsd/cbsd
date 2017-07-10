@@ -830,6 +830,7 @@ get_construct_arch()
 
 	local qemu_mips64=$( /usr/bin/which qemu-mips64-static 2>/dev/null )
 	local qemu_arm=$( /usr/bin/which qemu-arm-static 2>/dev/null )
+	local qemu_aarch64=$( /usr/bin/which qemu-aarch64-static 2>/dev/null )
 
 	local amd64_menu=
 	local i386_menu=
@@ -843,10 +844,15 @@ get_construct_arch()
 
 	local qemu_mips64_desc=
 	local qemu_arm_desc=
+	local qemu_aarch64_desc=
+
 	local qemu_mips64_enable=
 	local qemu_arm_enable=
+	local qemu_aarch64_enable=
+
 	local qemu_mips64_menu="MIPS64"
 	local qemu_arm_menu="ARMv6"
+	local qemu_aarch64_menu="ARMv8"
 
 	# test for qemu_mips64
 	if [ -n "${qemu_mips64}" ]; then
@@ -878,6 +884,21 @@ get_construct_arch()
 		qemu_arm_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static )"
 	fi
 
+	# test for qemu_aarch64
+	if [ -n "${qemu_aarch64}" ]; then
+		_res=$( 2>&1 /usr/bin/ldd ${qemu_aarch64} |${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_aarch64_enable=1
+			qemu_aarch64_desc="aarch64 aka ARMv8 and arm-64 via ${qemu_arm}"
+		else
+			qemu_aarch64_enable=0
+			qemu_aarch64_desc="${qemu_aarch64} is not static. Please rebuild with STATIC ( emulators/qemu-user-static )"
+		fi
+	else
+		qemu_aarch64_enable=0
+		qemu_aarch64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static )"
+	fi
+
 	local defaultitem="${arch}"
 
 	case "${hostarch}" in
@@ -892,6 +913,10 @@ get_construct_arch()
 		"arm")
 			arm_menu="*"
 			arm_desc="This is native architecture for this node"
+			;;
+		"aarch64")
+			aarch64_menu="*"
+			aarch64_desc="This is native architecture for this node"
 			;;
 		"mips")
 			mips_menu="*"
@@ -916,6 +941,11 @@ get_construct_arch()
 			'arm'	'arm ${arm_menu}'		'ARM architecture. ${arm_desc}'
 			" # END-QUOTE
 			;;
+		aarch64)
+			local menu_list="
+			'arm'	'aarch64 ${aarch64_menu}'	'ARM architecture. ${aarch64_desc}'
+			" # END-QUOTE
+			;;
 		mips)
 			local menu_list="
 			'mips'	'mips ${mips_menu}'		'MIPS architecture. ${mips_desc}'
@@ -933,6 +963,12 @@ get_construct_arch()
 		menu_list="${menu_list} 'arm'	'${qemu_arm_menu}'	'${qemu_arm_desc}'"
 	else
 		menu_list="${menu_list} ''	'armv6 unsupported'	'${qemu_arm_desc}'"
+	fi
+
+	if [ ${qemu_aarch64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'aarch64'	'${qemu_aarch64_menu}'	'${qemu_aarch64_desc}'"
+	else
+		menu_list="${menu_list} ''		'aarch64 unsupported'	'${qemu_aarch64_desc}'"
 	fi
 
 	if [ ${qemu_mips64_enable} -eq 1 ]; then
@@ -1651,7 +1687,7 @@ with_img_helpers="";
 runasap="${runasap}";
 nic_driver="${nic_driver}";
 
-vnc_password="${vnc_password}"
+vnc_password='${vnc_password}';
 EOF
 }
 
@@ -1695,13 +1731,15 @@ make_xen_part()
 
 make_emulator_part()
 {
-/bin/cat >> ${TMPFILE} << EOF
-exec_start="/bin/${emulator} ${exec_start}";
-exec_stop="/bin/${emulator} ${exec_stop}";
-EOF
-
+	${SYSRC_CMD} -qf ${TMPFILE} exec_start="/bin/${emulator} ${exec_start}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="/bin/${emulator} ${exec_stop}" > /dev/null 2>&1
 }
 
+make_jail_part()
+{
+	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
+}
 
 # generate temp .jconf
 gen_jconf()
@@ -1810,8 +1848,8 @@ EOF
 	fi
 	# end of additional area
 
-	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
-	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
+#	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
+#	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
 
 	if [ -n "${alt_iso}" ]; then
 		iso_site=
@@ -1821,37 +1859,46 @@ EOF
 	fi
 
 	case "${emulator}" in
-		"bhyve")
+		bhyve)
 			make_bhyve_part
 			getyesno "Do you want to create vm immediately?"
 			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd bcreate jconf=${TMPFILE}${NORMAL}"
 			bcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-		;;
-		"virtualbox")
+			;;
+		virtualbox)
 			make_virtualbox_part
 			getyesno "Do you want to create vm immediately?"
 			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd vcreate jconf=${TMPFILE}${NORMAL}"
 			vcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-		;;
-		"xen")
+			;;
+		xen)
 			make_xen_part
 			getyesno "Do you want to create vm immediately?"
 			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd xcreate jconf=${TMPFILE}${NORMAL}"
 			xcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-		;;
-		"jail")
+			;;
+		jail)
+			make_jail_part
 			echo "emulator=\"${emulator}\"" >> ${TMPFILE}
 			getyesno "Do you want to create jail immediately?"
 			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
 			jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
 			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
-		;;
+			;;
+		qemu-arm-static|qemu-mips64-static|qemu-aarch64-static)
+			make_emulator_part
+			echo "emulator=\"${emulator}\"" >> ${TMPFILE}
+			getyesno "Do you want to create jail immediately?"
+			[ $? -eq 1 -o $? -eq 3 ] && err 0 "${MAGENTA}You can make now: ${GREEN}cbsd jcreate jconf=${TMPFILE}${NORMAL}"
+			jcreate jconf=${TMPFILE} delpkglist=${delpkglist} removejconf=${removejconf}
+			[ $? -ne 0 ] && err 0 "${MAGENTA}Config file for jconf: ${GREEN}${TMPFILE}${NORMAL}"
+			;;
 		*)
 			err 1 "${MAGENTA}Unsupported emulator type: ${GREEN}${emulator}${NORMAL}"
-		;;
+			;;
 	esac
 
 	return 0
