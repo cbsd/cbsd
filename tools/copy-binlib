@@ -1,13 +1,14 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.1.0
 CBSDMODULE="build"
 MYARG="filelist dstdir basedir"
-MYOPTARG="prunelist verbose chaselibs"
+MYOPTARG="prunelist verbose chaselibs excludedir"
 MYDESC="Copy bin/lib files by filelist{.xz} from basedir to dstdir"
 ADDHELP="filelist - source with file list to copy\n\
 dstdir - destination dir\n\
 basedir - copy file from this dir\n\
-prunelist - source with file list to exclude\n"
+prunelist - source with file list to exclude\n\
+excludedir - skip manage files from this directories list (use pipe as delimer, e.g: /dev|/root\n"
 
 . ${subr}
 
@@ -15,6 +16,8 @@ verbose=0
 chaselibs=0
 
 init $*
+
+[ -n "${excludedir}" ] && excludedir=$( echo ${excludedir} |/usr/bin/tr '|' ' ' )
 
 BASE_DIR="${basedir}"
 FILES="${filelist}"
@@ -55,25 +58,83 @@ make_libmap()
 copy_binlib()
 {
 	local _dotnum=0
+	local _prefix
+	local _strlen
+	local _skip
 
 	# pass one: copy files
 	/usr/bin/xzcat ${FILES}| while read line; do
 		[ -z "${line}" ] && continue
-		case ":${line}" in
-			:#*)
+
+		_prefix=$( substr --pos=0 --len=1 --str="${line}" )
+		_hard_link=0
+
+		case "${_prefix}" in
+			"#")
 				continue
+				;;
+			"%")
+				_all_files=
+				_hard_link=1
+				# collect all hard-links in variables
+				for i in ${line}; do
+					[ "${i}" = "%" ] && continue
+					_all_files="${_all_files} ${i}"
+				done
+				;;
+			*)
+				_all_files="${line}"
 				;;
 		esac
 
-		if [ ! -r "${BASE_DIR}${line}" ]; then
-			[ ${verbose} -eq 1 ] && ${ECHO} "\n${MAGENTA}Notice: Exist in index, but not found in ${GREEN}${BASE_DIR}: ${MAGENTA}${line}${NORMAL}\n"
-			continue
-		fi
+		_skip=0
 
-		D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
-		[ ! -d "{DST_DIR}${D}" ] && mkdir -p ${DST_DIR}${D}
-		[ ${verbose} -eq 1 ] && echo "/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}"
-		/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}
+		for i in ${_all_files}; do
+
+			if [ -n "${excludedir}" ]; then
+				for skipdir in ${excludedir}; do
+					_strlen=$( strlen ${skipdir} )
+					_test_for_skip=$( substr --pos=0 --len=${_strlen} --str="${i}" )
+					if [ "${skipdir}" = "${_test_for_skip}" ]; then
+						[ ${verbose} -eq 1 ] && echo "** skip list dir: ${skipdir}"
+						_skip=1
+						continue
+					fi
+				done
+			fi
+
+			if [ ! -r "${BASE_DIR}${i}" ]; then
+				[ ${verbose} -eq 1 ] && ${ECHO} "\n${MAGENTA}Notice: Exist in index, but not found in ${GREEN}${BASE_DIR}: ${MAGENTA}${i}${NORMAL}\n"
+				continue
+			fi
+
+			[ ${verbose} -eq 1 ] && echo "copying ${BASE_DIR}${i} to ${DST_DIR}${D}"
+		done
+
+		[ ${_skip} -eq 1 ] && continue
+
+		if [ ${_hard_link} -eq 0 ]; then
+			D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
+			[ ! -d "{DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
+			/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}
+		else
+			_hard_count=0
+			_hard_dst=		# store destination for hard links
+
+			for i in ${_all_files}; do
+				D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${i} )
+				[ ! -d "{DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
+
+				if [ ${_hard_count} -eq 0 ]; then
+					_hard_dst="${DST_DIR}${i}"
+					/bin/cp -a ${BASE_DIR}${i} ${DST_DIR}${D}
+					_hard_count=1
+				else
+					_hard_src="${DST_DIR}${i}"
+					cd ${DST_DIR}${D} && /bin/ln -f ${_hard_dst} ${_hard_src}
+				fi
+			done
+		fi
 
 		_dotnum=$(( _dotnum + 1 ))
 		if [ ${_dotnum} -gt 100 -a ${verbose} -eq 0 ]; then
@@ -83,7 +144,6 @@ copy_binlib()
 	done
 
 	[ ${chaselibs} -eq 0 ] && return 0
-
 	_dotnum=0
 
 	# necessary libs
@@ -94,7 +154,7 @@ copy_binlib()
 		D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
 		[ ! -d "${DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
 		[ ${verbose} -eq 1 ] && echo "/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}"
-		/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}
+		/usr/local/bin/rsync -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${BASE_DIR}${line} ${DST_DIR}${D}
 		_dotnum=$(( _dotnum + 1 ))
 		if [ ${_dotnum} -gt 100 -a ${verbose} -eq 0 ]; then
 			printf "."
