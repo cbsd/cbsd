@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.1.0
 MYARG="mode"
 MYOPTARG="jname snapname snapfs header display"
 MYDESC="Jail snapshot management"
@@ -23,6 +23,58 @@ show_header()
 	[ ${header} -ne 0 ] && $ECHO ${_header}
 }
 
+init_zfs_mod_by_jname()
+{
+	mod=
+
+	if [ -n "${jname}" ]; then
+
+		. ${jrcconf}
+
+		case "${emulator}" in
+			jail)
+				mod="${ZPOOL}/${jname}"
+				;;
+			bhyve)
+				# only dsk1.vhd at the moment
+				_dsk="dsk1.vhd"
+				readconf zfs.conf
+				. ${zfstool}
+				if is_getzvol ${data}/${_dsk}; then
+					mod="${is_zvol}"
+				else
+					err 1 "${MAGENTA}bhyve zfs_snapshot_create: unable to find zvol for ${data}/${_dsk}${NORMAL}"
+				fi
+				;;
+		esac
+	fi
+}
+
+
+init_zfs_snappath_by_jname()
+{
+	snappath=
+	local _dsk
+
+	case "${emulator}" in
+		jail)
+			snappath="${ZPOOL}/${jname}@${snapname}"
+			;;
+		bhyve)
+			# only dsk1.vhd at the moment
+			_dsk="dsk1.vhd"
+			readconf zfs.conf
+			. ${zfstool}
+
+			if is_getzvol ${data}/${_dsk}; then
+				snappath="${is_zvol}@${snapname}"
+			else
+				err 1 "${MAGENTA}bhyve zfs_snapshot_create: unable to find zvol for ${data}/${_dsk}${NORMAL}"
+			fi
+			;;
+	esac
+}
+
 
 check_jname()
 {
@@ -33,15 +85,17 @@ check_jname()
 
 zfs_snapshot_list()
 {
-	local _mod _fs _p1 _jname _createtime _status _snaptime _snapname _refer
-	[ -n "${jname}" ] && _mod="${ZPOOL}/${jname}"
+	local _fs _p1 _jname _createtime _status _snaptime _snapname _refer
+
+	init_zfs_mod_by_jname
 
 	show_header
 
-	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
+	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_status=""
 		_jname=$( /sbin/zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
-		[ -z "${_jname}" ] && continue
+
+		[ -z "${_jname}" ] && continue		# not my snap
 		[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
 		_snapname=$( /sbin/zfs get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null )
 		[ -z "${_snapname}" ] && continue
@@ -71,11 +125,11 @@ zfs_snapshot_list()
 
 zfs_snapshot_destroyall()
 {
-	local _fs _jname _mod _snapname
+	local _fs _jname _snapname
 
-	[ -n "${jname}" ] && _mod="${ZPOOL}/${jname}"
+	init_zfs_mod_by_jname
 
-	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
+	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_jname=$( /sbin/zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
 		[ -z "${_jname}" ] && continue
 		[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
@@ -88,12 +142,12 @@ zfs_snapshot_destroyall()
 
 zfs_snapshot_destroy_by_snapname()
 {
-	local _fs _jname _mod _snapname _chkloop=0
+	local _fs _jname _snapname _chkloop=0
 
 	[ -z "${snapname}" ] && err 1 "${MAGENTA}Please set ${GREEN}snapname=${MAGENTA} or use ${GREEN}mode=destroyall ${MAGENTA}to destroy all snapshots for this jail${NORMAL}"
-	[ -n "${jname}" ] && _mod="${ZPOOL}/${jname}@${snapname}"
+	init_zfs_mod_by_jname
 
-	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
+	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_chkloop=$(( _chkloop + 1 ))
 		# normally we never got _chkloop greater than 1
 		[ ${_chkloop} -gt 10 ] && err 1 "${MAGENTA}Error for parsing snapname in zfs_snapshot_destroy_by_snapname${NORMAL}"
@@ -109,15 +163,17 @@ zfs_snapshot_destroy_by_snapname()
 
 zfs_snapshot_destroyall_original()
 {
-	local _fs _jname _mod _snapname ZPOOL
+	local _fs _jname _snapname ZPOOL
 	readconf zfs.conf
+
+	[ "${emulator}" != "jail" ] && err 1 "${MAGENTA}destroyall_original not supported yet for vm${NORMAL}"
 
 	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 
 	[ -z "${ZPOOL}" ] && err 1 "${MAGENTA}Empty zpool for: ${GREEN}${jaildatadir}${NORMAL}"
-	_mod="${ZPOOL}"
+	mod="${ZPOOL}"
 
-	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
+	for _fs in $( /sbin/zfs list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_snapname=${_fs##*@}
 		[ "${_snapname}" != "cbsd-original-${jname}" ] && continue
 		zfs_snapshot_destroy ${_fs} && ${ECHO} "${MAGENTA}zfs original snapshot for ${jname} destoyed: ${GREEN}${_fs}${NORMAL}"
@@ -170,16 +226,20 @@ ufs_snapshot_list()
 zfs_snapshot_create()
 {
 	local _tst _createtime
+	local _zfs _dsk
 
 	[ -z "${snapname}" ] && err 1 "${MAGENTA}Empty ${GREEN}snapname=${NORMAL}"
 
 	_createtime=$( /bin/date "+%Y%m%d%H%M%S" )
 	[ "${snapname}" = "gettimeofday" ] && snapname=${_createtime}
 
-	_tst=$( /sbin/zfs snapshot ${ZPOOL}/${jname}@${snapname} 2>&1)
+	init_zfs_snappath_by_jname
+
+	_tst=$( /sbin/zfs snapshot ${snappath} 2>&1)
+
 	[ $? -ne 0 ] && err 1 "${MAGENTA}zfs snapshot error: ${NORMAL}${_tst}"
-	/sbin/zfs set cbsdsnap:jname=${jname} ${ZPOOL}/${jname}@${snapname}
-	/sbin/zfs set cbsdsnap:snapname=${snapname} ${ZPOOL}/${jname}@${snapname}
+	/sbin/zfs set cbsdsnap:jname=${jname} ${snappath}
+	/sbin/zfs set cbsdsnap:snapname=${snapname} ${snappath}
 }
 
 ufs_snapshot_create()
@@ -221,17 +281,18 @@ rsync_snapshot_destroy()
 
 zfs_snapshot_rollback()
 {
-	local _createtime _fs _snapname _jname
+	local _createtime _snapname _jname
 	[ -z "${snapname}" ] && err 1 "${MAGENTA}empty ${GREEN}snapname=${NORMAL}"
-	_fs="${ZPOOL}/${jname}@${snapname}"
 
-	_jname=$( /sbin/zfs get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null)
+	init_zfs_snappath_by_jname
+
+	_jname=$( /sbin/zfs get -H -o value -s local cbsdsnap:jname "${snappath}" 2>/dev/null)
 	[ -z "${_jname}" ] && err 1 "${MAGENTA}no such snapshot ${snapname} for ${jname}${NORMAL}"
 	[ -n "${jname}" -a "${jname}" != "${_jname}" ] && err "${MAGENTA}Found snapshot ${GREEN}${snapname}${MANGETA} but its owner is ${GREEN}${_jname}${NORMAL}"
-	_snapname=$( /sbin/zfs get -H -o value -s local cbsdsnap:snapname "${_fs}" )
+	_snapname=$( /sbin/zfs get -H -o value -s local cbsdsnap:snapname "${snappath}" )
 	[ -z "${_snapname}" ] && err 1 "${MAGENTA}Snapshot found but he is not created by ${GREEN}cbsd${NORMAL} - skipp${NORMAL}"
-	 _createtime=$( /sbin/zfs get -H -o value creation "${_fs}" )
-	/sbin/zfs rollback -r ${_fs} && ${ECHO} "${MAGENTA}Restored state to ${GREEN}${snapname}${MAGENTA} snapshot created in ${GREEN}${_createtime}${NORMAL}"
+	 _createtime=$( /sbin/zfs get -H -o value creation "${snappath}" )
+	/sbin/zfs rollback -r ${snappath} && ${ECHO} "${MAGENTA}Restored state to ${GREEN}${snapname}${MAGENTA} snapshot created in ${GREEN}${_createtime}${NORMAL}"
 }
 
 ufs_snapshot_rollback()
