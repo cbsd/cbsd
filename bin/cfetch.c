@@ -120,7 +120,7 @@ fetch_files(char *urls, char *fout)
 	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0)
 		total_bytes += ustat.size;
 
-	fetchTimeout = 30;
+	fetchTimeout = 20;
 
 	fetch_out = fetchXGetURL(urls, &ustat, "");
 	if (fetch_out == NULL)
