@@ -125,10 +125,13 @@ init() {
 # Show $1 strings and get answer in infinity loop
 # return 0 when YES/1 and 1 when not
 # return 3 if not interactive ($inter=0) (or INTER=0 env exist)
+# if ALWAYS_YES=1 and inter=0, always return 0
+# if ALWAYS_NO=1 and inter=0, always return 1
 getyesno()
 {
 	if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
 		[ "${ALWAYS_YES}" = "1" ] && return 0
+		[ "${ALWAYS_NO}" = "1" ] && return 1
 		return 3
 	fi
 
@@ -192,12 +195,30 @@ ipwmask()
 
 # parse ip4_addr, check ip, remove commas
 # detect when IP6 in list and set flags for sleep
+# export variables:
+#   ipv4_first_public
+#   ipv4_first_private
+#   ipv4_first
+#   ipv6_first_public
+#   ipv6_first_private
+#   ipv6_first
 geniplist()
 {
 	local I ST a
 	[ -z "${1}" ] && return 0
 	[ ! -f "${distdir}/tools.subr" ] && err 1 "No such tools.subr"
 	. ${distdir}/tools.subr
+
+	local private_net="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+	local pnet NC_RANGE INNET res
+
+	# init global exported variables
+	ipv4_first_public=
+	ipv4_first_private=
+	ipv4_first=
+	ipv6_first_public=
+	ipv6_first_private=
+	ipv6_first=
 
 	HAVE_IPV6=0
 	multiips=$@
@@ -208,13 +229,32 @@ geniplist()
 
 	for a in ${I}; do
 		# Identify type {inet,inet6}.
-		iptype $a
+		iptype ${a}
 		case $? in
 			0)
 				echo "IP ${a} not identified"
 				continue
 			;;
+			1)
+				[ -z "${ipv4_first}" ] && ipv4_first="${IWM}"	# IWM from iptype
+				INNET=0	# count of coincidence in private network
+				if [ -z "${ipv4_first_private}" -o -z "${ip4_first_public}" ]; then
+					for pnet in ${private_net}; do
+						NC_RANGE=$( /bin/echo ${pnet} |/usr/bin/tr "/" " " )
+						netmask ${NC_RANGE} ${IWM} > /dev/null 2>&1
+						res=$?
+						if [ ${res} -eq 1 ]; then
+							INNET=$(( INNET + 1 ))
+						fi
+					done
+				fi
+
+				[ -z "${ipv4_first_private}" -a ${INNET} -ne 0 ] && ipv4_first_private="${IWM}"
+				[ -z "${ipv4_first_public}" -a ${INNET} -eq 0 ] && ipv4_first_public="${IWM}"
+
+				;;
 			2)
+				[ -z "${ipv6_first}" ] && ipv6_first="${IWM}"	# IWM from iptype
 				HAVE_IPV6=1
 			;;
 		esac

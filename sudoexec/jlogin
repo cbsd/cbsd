@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.2
+#v11.1.2
 MYARG=""
 MYOPTARG="jname remote inter src_session"
 MYDESC="Exec login into jail"
@@ -60,12 +60,82 @@ init_tmux()
 	# no tmux here
 	tmux_login=0
 	return 0
-
 }
 
-[ -z "$jname" ] && jname=$1
-[ -z "$jname" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
-[ -z "$jname" ] && err 1 "${MAGENTA}Please specify jname as argument${NORMAL}"
+
+login_internal()
+{
+	#rctl/limits area
+	. ${workdir}/rctl.subr
+
+	nice=$( cbsdsql local SELECT nice FROM rctl WHERE jname=\"${jname}\" 2>/dev/null )
+	[ -z "${nice}" ] && nice="0"
+
+	if [ ${exec_fib} -eq 0 ]; then
+		SETFIB=""
+	else
+		SETFIB="setfib ${exec_fib}"
+	fi
+
+	if [ "${cpuset}" = "0" ]; then
+		CPUSET=""
+	else
+		CPUSET="cpuset -c -l ${cpuset}"
+	fi
+
+	case "${ver}" in
+		"empty")
+			# is linux?
+			if [ -f "${data}/bin/bash" ]; then
+				LOGIN_STR="/bin/bash"
+			elif [ -f "${data}/bin/sh" ]; then
+				LOGIN_STR="/bin/sh" ];
+			else
+				err 1 "${MAGENTA}Unknown environment, unable to login${NORMAL}"
+			fi
+			;;
+		*)
+			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
+				. ${workdir}/emulator.subr
+				init_usermode_emul
+				LOGIN_STR="/bin/${emulator} /usr/bin/login -f root"
+			else
+				LOGIN_STR="/usr/bin/login -f root"
+			fi
+			;;
+	esac
+
+	jexec="/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} /usr/sbin/jexec ${jid} ${LOGIN_STR}"
+
+	init_tmux
+
+	if [ $tmux_login -eq 1 ]; then
+		${tmuxcmd} list-sessions | ${GREP_CMD} -qwF "${session_name}:"
+		if [ $? -eq 1 ]; then
+			${tmuxcmd} new -s "${session_name}" "eval ${jexec}"
+		else
+			${tmuxcmd} attach-session -t "${session_name}"
+		fi
+	else
+		eval ${jexec}
+	fi
+}
+
+login_custom()
+{
+	# reset PATH to default
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/home/oleg/bin"
+	. ${workdir}/jcreate.subr	# for export_jail_data_for_external_hook
+	export_jail_data_for_external_hook
+	readconf jlogin.conf
+	${ECHO} "${MAGENTA}Custom login command: ${GREEN}${login_cmd}${NORMAL}"
+	exec /bin/sh -c "${login_cmd}"
+}
+
+
+[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
+[ -z "${jname}" ] && err 1 "${MAGENTA}Please specify jname as argument${NORMAL}"
 [ -z "${remote}" ] && remote=0
 
 validate_jname ${jname}
@@ -75,60 +145,16 @@ validate_jname ${jname}
 [ $? -eq 1 ] && try_remote
 [ "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}For bhyve jail use: ${GREEN}cbsd blogin=${jname} ${MAGENTA}instead${NORMAL}"
 [ "${baserw}" = "1" ] && path=${data}
-[ $jid -eq 0 ] && err 1 "Not running"
+[ ${jid} -eq 0 ] && err 1 "Not running"
 
-#rctl/limits area
-. ${workdir}/rctl.subr
+readconf jlogin.conf
 
-nice=$( cbsdsql local SELECT nice FROM rctl WHERE jname=\"${jname}\" 2>/dev/null )
-[ -z "${nice}" ] && nice="0"
-
-if [ ${exec_fib} -eq 0 ]; then
-	SETFIB=""
-else
-	SETFIB="setfib ${exec_fib}"
-fi
-
-if [ "${cpuset}" = "0" ]; then
-	CPUSET=""
-else
-	CPUSET="cpuset -c -l ${cpuset}"
-fi
-
-
-case "${ver}" in
-	"empty")
-		# is linux?
-		if [ -f "${data}/bin/bash" ]; then
-			LOGIN_STR="/bin/bash"
-		elif [ -f "${data}/bin/sh" ]; then
-			LOGIN_STR="/bin/sh" ];
-		else
-			err 1 "${MAGENTA}Unknown environment, unable to login${NORMAL}"
-		fi
+case "${login_cmd}" in
+	internal)
+		login_internal
 		;;
 	*)
-		if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
-			. ${workdir}/emulator.subr
-			init_usermode_emul
-			LOGIN_STR="/bin/${emulator} /usr/bin/login -f root"
-		else
-			LOGIN_STR="/usr/bin/login -f root"
-		fi
+		login_custom
 		;;
 esac
 
-jexec="/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} /usr/sbin/jexec ${jid} ${LOGIN_STR}"
-
-init_tmux
-
-if [ $tmux_login -eq 1 ]; then
-	${tmuxcmd} list-sessions | ${GREP_CMD} -qwF "${session_name}:"
-	if [ $? -eq 1 ]; then
-		${tmuxcmd} new -s "${session_name}" "eval ${jexec}"
-	else
-		${tmuxcmd} attach-session -t "${session_name}"
-	fi
-else
-	eval ${jexec}
-fi
