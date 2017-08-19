@@ -1,0 +1,971 @@
+#!/usr/local/bin/cbsd
+MYARG=""
+MYOPTARG="jname node full inter incr aincr incrcnt aremove"
+MYDESC="ZFS migrator for CBSD"
+CBSDMODULE="sys"
+EXTHELP="wf_zfs_migrator.html"
+ADDHELP="full=1,0 - full migration cycle - j2prepare, sync, jswmode. ( 1 -default )\n\
+inter=0 to prevent any questions and to accept answers by default\n\
+incr=0,1 - when 1, perform an incremental migration (default is 0)\n\
+aincr=0,1 - when 1, perform automatic incremental mode (default is 0)\n\
+aremove=0,1,3 - if aremove=0, don't remove source instance after migration without asking\n\
+  if aremove=1, auto remove source instance after migration without asking\n\
+  if aremove=3 (by default), and inter not 0, show yesno prompt for interactive choice\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+clear_stfile()
+{
+	if [ "x${STFILE}" != "x" ]; then
+		if [ -f ${STFILE} ]; then
+			echo "* Clearing state file: ${DC_NAME}:${STFILE}"
+			${RM} ${STFILE} > /dev/null 2>&1
+		fi
+	fi
+}
+
+inst_stop () {
+	${ECHO} "${MAGENTA}**** ${GREEN}Runtime impact and pre-migration changes to ${emulator} instance${NORMAL}"
+	${ECHO} "${MAGENTA}**** ${GREEN}${jname} (${host_hostname})${NORMAL}"
+	if [ "${jail_status}" = "running" ]; then
+		${ECHO} "${MAGENTA}* ${GREEN}Instance ${fqdn} is running; shutting it down, please wait${NORMAL}"
+		case "${emulator}" in
+			jail)
+				jstop jname=${jname}
+				;;
+			bhyve)
+				bstop jname=${jname}
+				;;
+		esac
+		INST_STATE="stopped"
+		${ECHO} "${GREEN}Done, new state is ${INST_STATE}"
+	else
+		${ECHO} "${MAGENTA}* ${GREEN}Instance ${jname} is already shutdown.  Proceeding.${NORMAL}"
+	fi
+}
+
+
+# full migration cycle
+full=1
+# interactive
+inter=1
+ALWAYS_YES=1
+
+# Incremental by default is 0
+incr=0
+
+# incrCnt not implemented yet
+#incrCnt
+
+# Automatic Incremental by default is 0
+aincr=0
+
+# Automatic remove by default: ask user's
+aremove=3
+
+init $*
+
+if [ ${inter} -eq 1 ]; then
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Empty jname=${NORMAL}"
+	[ -z "${node}" ] && err 1 "${MAGENTA}Empty node=${NORMAL}"
+fi
+
+# ZFS only
+case ${zfsfeat} in
+	1)
+		. ${zfstool}
+		;;
+	*)
+		err 1 "${MAGENTA}zfs-migrator for ZFS-based system only. Current host has zfsfeat is ${GREEN}${zfsfeat}${NORMAL}"
+esac
+
+. ${workdir}/bhyve.subr
+
+#
+# set some vars:
+BASENAME='/usr/bin/basename'
+scriptName=`${BASENAME} ${0}`
+ASver="3.2.3"
+AWK='/usr/bin/awk'
+BC='/usr/bin/bc'
+CAT='/bin/cat'
+CHOWN='/usr/sbin/chown'
+CHMOD='/bin/chmod'
+CUT='/usr/bin/cut'
+CURL='/usr/local/bin/curl'
+CURL_OPTS='--connect-timeout 10 -sS -i -H accept:application/json -H content-type:application/json'
+DATE='/bin/date'
+STTIME=`${DATE} +%s`
+BEGTIME=""
+DTIME=""
+ETIME=""
+ENDTIME=""
+TDIFF=""
+DIFFT=""
+GREP='/usr/bin/grep'
+IMGADM='/usr/sbin/imgadm'
+JSON='/usr/bin/json'
+TOUCH='/usr/bin/touch'
+TAIL='/usr/bin/tail'
+KEYGEN='/usr/bin/ssh-keygen'
+LS='/bin/ls'
+MV='/bin/mv'
+NDD='/usr/sbin/ndd'
+RM='/bin/rm'
+SCP='/usr/bin/scp'
+SED='/usr/bin/sed'
+SSH='/usr/bin/ssh'
+SVCADM='/usr/sbin/svcadm'
+UCONF='/usbkey_config'
+ZFS='/sbin/zfs'
+KEYPATH="/root/.ssh/migr-key-$$"
+LOGDIR="/var/tmp"
+LOGFILE=""
+STFILE=""
+AUTHFILEBK="/root/.ssh/authorized_keys.$$"
+KEYCHK=0	# if != 0, ssh key in place; if = 0, password prompts
+OPTSSH="-q"	# if KEYCHK != 0, sets opt '-q -i KEYPATH'
+MDSSZ=0
+OIFS=${IFS}
+IpAdDr=""
+cntIncr=0
+incrCnt=""
+cntPrev=""
+prevCnt=""
+
+
+case "${incr}" in
+	0)
+		migrType="Non-Incremental"
+		;;
+	1)
+		migrType="Incremental"
+		;;
+esac
+
+case "${aincr}" in
+	1)
+		incr=1
+		aincr=1
+		migrType="automatic-Incremental"
+		;;
+esac
+
+
+# If instance is over quota, how many GB will the quota be increased so the
+# transfer can succeed? Must be an integer.
+bump_size="1"
+
+DC_NAME="datacenter1"
+
+CBSD_MIGRNAME='1504213200_cbsd_migration_1504213200'
+IMGCHK=0		# 0:  value of DS origin = '-'; we're doing a standard dataset transfer
+			# 1:  value of DS origin = 'ZROOT/:IMGJNAME@final; test for img on dest CN,
+			#     if !exist, try to import, if import fail, zfs send img followed
+			#     by incr roll up of the instance datasets
+
+IMGSND=3		# 0:  origin DS already exists on dest, no need for import
+			# 1:  unset and irrelevant
+			# 2:  origin DS ! exists on dest, try to import
+			# 3:  origin DS relation to instance lost between src and dest, don't try to import
+
+dsCNT=1
+DSORIG=0
+
+if [ ${incr} -gt 0 -a "x${incrCnt}" != "x" ]; then
+	cntIncr=${incrCnt}
+	cntPrev=$(( incrCnt - 1 ))
+fi
+
+# Collect our initial information
+${ECHO} "\n           ${MAGENTA}-: Welcome to the CBSD ZFS Migrator :-${NORMAL}"
+
+if [ -z "${jname}" ]; then
+	while [ true ]; do
+
+		read -p "Name of Instance to Move ( ? - to list, 0 - cancel ): " jname
+
+		[ "${jname}" = "0" ] && exit 0
+
+		if [ "${jname}" = "?" ]; then
+			echo -n "jails: " && /usr/local/bin/cbsd jorder
+			echo -n "bhyve: " && /usr/local/bin/cbsd border
+			continue
+		fi
+
+		vm_status=$( /usr/local/bin/cbsd jstatus jname=${jname} )
+
+		ret=$?
+		[ ${ret} -eq 1 ] && break
+		${ECHO} "${MAGENTA}No such environment here: ${GREEN}${jname}${NORMAL}"
+	done
+fi
+
+jstatus jname=${jname} > /dev/null 2>/dev/null
+[ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+if [ -z "${node}" ]; then
+	while [ true ]; do
+		read -p "Destination Nodename ( ? - to list, 0 - cancel ): " node
+		[ "${node}" = "0" ] && exit 0
+
+		if [ "${node}" = "?" ]; then
+			echo -n "nodes: " && cbsd node mode=list display=nodename header=0 |xargs
+			continue
+		fi
+
+		test_for_node=$( sqlite3 ~cbsd/var/db/nodes.sqlite "SELECT nodename FROM nodelist WHERE nodename=\"${node}\"" )
+		[ "${test_for_node}" = "${node}" ] && break
+		${ECHO} "${MAGENTA}No such node here: ${GREEN}${node}${NORMAL}"
+	done
+	echo
+fi
+
+if [ ${incr} -gt 0 ]; then
+	if [ -d ${LOGDIR} ]; then
+		LOGFILE="${LOGDIR}/migrator-${jname}-${node}-${STTIME}.log"
+		STFILE="${LOGDIR}/migrator-${jname}-${node}-${STTIME}.st"
+		${TOUCH} ${LOGFILE} > /dev/null 2>&1
+		if [ $? -eq 0 ]; then
+			${TOUCH} ${STFILE}
+			exec 2>&1 |tee -a ${LOGFILE}
+			exec 1>&1 |tee -a ${LOGFILE}
+			if [ -f ${STFILE} ]; then
+				SFCHK=0
+				${ECHO} "${MAGENTA}* ${GREEN}Setting state file for removal by CBSD...${NORMAL}"
+				${ECHO} "${GREEN}    + chown cbsd:cbsd ${STFILE}${NORMAL}"
+				${CHOWN} cbsd:cbsd ${STFILE}
+				if [ $? -ne 0 ]; then
+					${ECHO} "${GREEN}      !! Root privileges required to remove state file: ${STFILE}${NORMAL}"
+					SFCHK=$(( SFCHK + 1 ))
+				else
+					${ECHO} "${GREEN}    + chmod 664 ${STFILE}${NORMAL}"
+					${CHMOD} 664 ${STFILE}
+					if [ $? -ne 0 ]; then
+						${ECHO} "${GREEN}      !! Root privileges required to remove state file: ${STFILE}${NORMAL}"
+						SFCHK=$(( SFCHK + 1 ))
+					fi
+				fi
+				if [ ${SFCHK} -eq 0 ]; then
+					${ECHO} "${GREEN}  - State file modified.${NORMAL}"
+				else
+					${ECHO} "${GREEN}  - State file could not be modified!${NORMAL}"
+				fi
+			else
+				err 1 "${MAGENTA}State file does not exist: ${GREEN}${STFILE}${NORMAL}"
+			fi
+		else
+			err 1 "${MAGENTA}Could not write log and write files: ${GREEN}${LOGFILE},${STFILE}${NORMAL}"
+		fi
+	fi
+fi
+
+${ECHO} "${MAGENTA}* ${GREEN}Gathering instance and nodes data....${NORMAL}"
+${ECHO} "${GREEN}    + retrieving instance date...${NORMAL}"
+
+. ${jrcconf}
+
+myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+
+case ${myjid} in
+	0)
+		jail_status="stopped"
+		;;
+	*)
+		jail_status="running"
+		;;
+esac
+
+# todo: check for IP addrs reserved
+IP_ARR="${ip4_addr}"
+
+${ECHO} "${GREEN}    + retrieving node hostname, CBSD version...${NORMAL}"
+my_nodename=$( /bin/cat ~cbsd/nodename )
+
+remote_node_ip=$( cbsd getinfo mode=quiet nodeip )
+remote_node_name="${node}"
+remote_node_rip=$( sqlite3 ~cbsd/var/db/nodes.sqlite "SELECT ip FROM nodelist WHERE nodename=\"${node}\"" 2>/dev/null )
+
+[ -z "${remote_node_rip}" ] && err 1 "${MAGENTA}Could not identify IP address for node: ${GREEN}${node}${NORMAL}"
+
+source_vm_name="${jname}"
+dest_vm_name="${jname}"
+
+# todo: check for jname on dst is not reserverved
+# todo: alternative jname on dst?
+
+${ECHO} "${GREEN}    + checking for datasets...${NORMAL}"
+
+if [ -r /tmp/.vmmigrator.$$ ]; then
+	${RM} -f /tmp/.vmmigrator.$$
+fi
+
+LOCAL_ZROOT=$( ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null )
+[ -z "${LOCAL_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine local zroot${NORMAL}"
+
+# how to obtain remote jaildatadir?
+REMOTE_ZROOT=$( ${SSH} -q ${remote_node_rip} ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null | awk '{printf $1 }' )
+[ -z "${REMOTE_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine remote zroot${NORMAL}"
+
+case "${emulator}" in
+	jail)
+		${ZFS} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP} ${LOCAL_ZROOT}/${jname} 2>/dev/null >> /tmp/.vmmigrator.$$
+		;;
+	bhyve)
+		${ZFS} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP} "${LOCAL_ZROOT}/bcbsd-${jname}-dsk[0-9].vhd" 2>/dev/null >> /tmp/.vmmigrator.$$
+		;;
+esac
+
+if [ -s /tmp/.vmmigrator.$$ ]; then
+	MDSSZ=`${AWK} 'BEGIN {tot=0}; {tot+=$2}; END {printf tot}' /tmp/.vmmigrator.$$`
+fi
+
+rise="Bytes"
+SZMDS=0
+if [ 0${MDSSZ} -lt 1024 ]; then
+	SZMDS=${MDSSZ}
+elif [ 0${MDSSZ} -lt 1048576 ]; then
+	SZMDS=`echo "scale=2; ${MDSSZ}/1024" | ${BC}`
+	rise="KBytes"
+elif [ 0${MDSSZ} -lt 1073741824 ]; then
+	SZMDS=`echo "scale=2; ${MDSSZ}/1048576" | ${BC}`
+	rise="MBytes"
+elif [ 0${MDSSZ} -lt 1099511627776 ]; then
+	SZMDS=`echo "scale=2; ${MDSSZ}/1073741824" | ${BC}`
+	rise="GBytes"
+elif [ 0${MDSSZ} -lt 1125899906842624 ]; then
+	SZMDS=`echo "scale=2; ${MDSSZ}/1099511627776" | ${BC}`
+	rise="TBytes"
+fi
+
+miti="seconds"
+mav=`echo "scale=2; ((${MDSSZ}/1048576)/20)+120" | ${BC}`
+if [ 0${MDSSZ} -gt 1048576 ]; then
+	if [ 0`echo "${mav}" | ${CUT} -d\. -f1` -gt 3600 ]; then
+		mav=`echo "scale=2; ${mav}/3600" | ${BC}`
+		miti="hours"
+	elif [ 0`echo "${mav}" | ${CUT} -d\. -f1` -gt 60 ]; then
+		mav=`echo "scale=2; ${mav}/60" | ${BC}`
+		miti="minutes"
+	fi
+fi
+
+# node key
+if [ ${KEYCHK} -ne 0 ]; then
+	OPTSSH="-q -i ${KEYPATH}"
+fi
+
+# todo: make retrinv and obtain information from SQLite directory ?
+d_cbsd_ver=$( ${SSH} -q ${remote_node_rip} /usr/local/bin/cbsd -c version 2>/dev/null |awk '{printf $1 }' )
+s_cbsd_ver=$( version )
+
+${ECHO} "${GREEN}  - Data gathering complete!${NORMAL}"
+srcpad=" "
+destpad=" "
+
+cat <<XxX1387784305xXx
+
+We will be migrating:
+     INSTANCE:
+               jname:  ${jname}
+                fqdn:  ${host_hostname}
+          IP Addr(s):  ${ip4_addr}
+          datacenter:  ${DC_NAME}
+      instance state:  ${jail_status}
+                type:  ${emulator}
+               owner:  root
+           create at:  -
+          base image:  -
+  total dataset size:  ${SZMDS} ${rise} across ${dsCNT} datasets
+        migration id:  $$
+ est. migration time:  ${mav} ${miti} (@ ~20 MB / second (~1.17 GB / minute); +2 minutes extra)
+      migration type:  ${migrType}
+XxX1387784305xXx
+if [ ${incr} -gt 0 ]; then
+	cat <<XxX1394397626xXx
+  migration log file:  ${DC_NAME}:${LOGFILE}
+migration state file:  ${DC_NAME}:${STFILE}
+XxX1394397626xXx
+fi
+
+cat <<XxX1394397713xXx
+
+                    Source                                        Destination
+----------------------------------------------  ----------------------------------------------
+XxX1394397713xXx
+printf "Host:     %-36s  Host:     %-36s\n" ${my_nodename} ${remote_node_name}
+printf "JNAME:    %-36s  JNAME:    %-36s\n" ${source_vm_name} ${dest_vm_name}
+printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
+printf "IP Addr:  %-36s  IP Addr:  %-36s\n" ${remote_node_ip} ${remote_node_rip}
+printf "Zfs:      %-36s  Zfs:      %-36s\n" ${LOCAL_ZROOT} ${REMOTE_ZROOT}
+
+echo
+
+if getyesno "Are you ready to proceed? "; then
+	echo
+else
+	${ECHO} "${MAGENTA}Exiting.${NORMAL}"
+	clear_stfile
+	exit 1
+fi
+
+BEGTIME=`${DATE}`
+STTIME=`${DATE} +%s`
+
+${ECHO} "${MAGENTA}* ${GREEN}Checking for origin instance dataset...${NORMAL}"
+
+if [ "${emulator}" = "bhyve" ]; then
+	DSORIG=`${ZFS} get -Ho value origin ${REMOTE_ZROOT}/bcbsd-${jname}-dsk1.vhd`
+else
+	DSORIG=`${ZFS} get -Ho value origin ${REMOTE_ZROOT}/${jname}`
+fi
+
+# check if origin dataset exists and is ${REMOTE_ZROOT}/...@final, ignore otherwise
+if [ "x${DSORIG}" = "x${REMOTE_ZROOT}/${jname}@final" ]; then
+	IMGCHK=1
+	echo "    + origin dataset is ${DSORIG}"
+	DSORIG=`echo "${DSORIG}" | ${SED} -e 's;^${LOCAL_ZROOT}/;;'`
+#	DSOBJ=(`echo "${DSORIG}" | ${SED} -e 's;@; ;'`)
+	DSOBJ=$( echo "${DSORIG}" | ${SED} -e 's;@; ;' )
+	echo "DSOBJ stop: [${DSOBJ}]"
+	exit 0
+	# DSOBJ:
+	#    0:  image jname derived from dataset name (${LOCAL_ZROOT}/IMG_JNAME@something)
+	#    1:  snapshot name (part that trails @)
+else
+	${ECHO} "${GREEN}    + origin dataset null or non-standard (${DSORIG})${NORMAL}"
+fi
+
+if [ ${IMGCHK} -ne 0 ]; then
+	${SSH} -q ${remote_node_rip} ${ZFS} list -Ho name ${REMOTE_ZROOT}/${DSORIG} >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		# bhyve?
+		${SSH} -q ${remote_node_rip} ${ZFS} list -Ho name ${REMOTE_ZROOT}/${jname} >/dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			IMGSND=2	# origin DS and base image of it don't exist, will try import
+			${ECHO} "${GREEN}      > origin DS doesn't exist on ${remote_node_name}, will need to try import${NORMAL}"
+			${ECHO} "${GREEN}        of origin DS (${DSORIG})${NORMAL}"
+		else
+			IMGSND=3	# origin DS base exists, but not snap the instance was
+					#   create from, since we cannot just send the snapshot
+					#   ignoring and treating the origin as lost
+			${ECHO} "${GREEN}      > origin DS base exists on ${remote_node_name}, but not the child dataset${NORMAL}"
+			${ECHO} "${GREEN}        from which our instance was created; ignoring; parent DS relation is lost.${NORMAL}"
+		fi
+	else
+		IMGSND=0	# don't need to send over the origin DS
+		${ECHO} "${GREEN}      > origin DS exists on ${remote_node_name}, no need to import it${NORMAL}"
+	fi
+else
+	IMGSND=3
+	${ECHO} "${GREEN}      > instance source origin does not reference ${jname}@final, relation to${NORMAL}"
+	${ECHO} "${GREEN}        dest. origin will be lost in the course of migrating the instance.${NORMAL}"
+fi
+
+
+if ${SSH} -q ${remote_node_rip} "${ZFS} list ${REMOTE_ZROOT}/${jname}@vmsnap-${CBSD_MIGRNAME}" > /dev/null 2>&1; then
+	${ECHO} "${MAGENTA}ERROR: Snapshot already exists on the ${remote_node_name}!  This is not${NORMAL}"
+	${ECHO} "${MAGENTA}       your first time here.  Clean it up first please.${NORMAL}"
+	${ECHO} "${MAGENTA}  To delete the snapshots on ${remote_node_name}:${NORMAL}"
+	if [ "${emulator}" = "bhyve" ]; then
+		${ECHO} "${MAGENTA}    *${GREEN}${SSH} ${remote_node_rip} \"${ZFS} destroy -r ${REMOTE_ZROOT}/bcbsd-${jname}-dsk0.vhd\"${NORMAL}"
+		${ECHO} "${MAGENTA}    *${GREEN}${SSH} ${remote_node_rip} \"${ZFS} destroy -r ${REMOTE_ZROOT}/bcbsd-${jname}-dsk1.vhd\"${NORMAL}"
+	fi
+
+	${ECHO} "${MAGENTA}    *${GREEN}${SSH} ${remote_node_rip} \"${ZFS} destroy -r ${REMOTE_ZROOT}/${jname}\"${NORMAL}"
+	clear_stfile
+	exit 1
+fi
+
+if [ ${full} -eq 1 ]; then
+	printf "${MAGENTA}*${NORMAL} "
+	jaillock="${jailsysdir}/${jname}/locked"
+	[ -r "${jaillock}" ] && ${RM} ${jaillock}
+
+	case "${emulator}" in
+		jail)
+			j2prepare node=${node} jname=${jname} mkdatadir=0
+			;;
+		bhyve)
+			# export media data
+			media mode=dump jname=${jname} > ${jailsysdir}/${jname}/media.sql
+			j2prepare node=${node} jname=${jname} mkdatadir=1
+			;;
+	esac
+
+	echo
+fi
+
+if [ ${IMGSND} -eq 2 ]; then
+	${ECHO} "${MAGENTA}* ${GREEN}Attempting import of image (${jname}) to ${remote_node_name}${NORMAL}"
+	if [ $? -ne 0 ]; then
+		echo "  - Image import failed, failing back to zfs transfer of image!"
+		echo "    + Attempting zfs transfer of image to ${remote_node_name}"
+		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${LOCAL_ZROOT}/${DSORIG} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" 2>/dev/null
+		if [ $? -eq 0 ]; then
+			echo "      > zfs transfer of image to ${remote_node_name} succeeded"
+			${SSH} -q -t ${remote_node_ip} "${LS} ${MANIPATH}/zones-${DSOBJ[0]}.json > /dev/null 2>&1"
+			if [ $? -eq 0 ]; then
+				echo "    + Attempting transfer of image manifest to ${remote_node_name}"
+				${SSH} -q -t ${remote_node_ip} "${SCP} ${OPTSSH} ${MANIPATH}/zones-${DSOBJ[0]}.json root@${remote_node_rip}:${MANIPATH}/. " 2>/dev/null
+				${SSH} -q -t ${remote_node_rip} "${LS} ${MANIPATH}/zones-${DSOBJ[0]}.json > /dev/null 2>&1"
+				if [ $? -eq 0 ]; then
+					echo "      > transfer of image manifest to ${remote_node_name} succeeded"
+					echo "  - Image imported successfully!"
+					IMGSND=0
+				else
+					printf "      > transfer of image manifest to ${remote_node_name} failed; will now\n        consider the origin dataset of our instance as lost!"
+					echo "  - Image import failed!"
+					IMGSND=3
+				fi
+			else
+				printf "      > cannot locate image manifest on ${remote_node_name}; will now\n        consider the origin dataset of our instance as lost!"
+				echo "  - Image import failed!"
+				IMGSND=3
+			fi
+		else
+			printf "      > zfs transfer of image to ${remote_node_name} failed; will now\n        consider the origin dataset of our instance as lost!"
+			echo "  - Image import failed!"
+			IMGSND=3
+		fi
+	else
+		echo "  - Image imported successfully!"
+		IMGSND=0
+	fi
+fi
+
+# function
+fsNotExist() {
+	local dset=$1
+	${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} list ${dset%@*} 2>/dev/null >/dev/null
+	return $?
+}
+
+# function
+transferError() {
+	echo
+	echo "      > transfer failed!"
+	printf "\n  - Clearing migration SSH key and exiting."
+	clear_stfile
+	exit 24
+}
+
+# function
+transferQuota() {
+    local dset=$1
+    shift
+    local dsetQuota=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o value quota ${dset}" | tr -d '[[:space:]]')
+    if [ ${dsetQuota} -eq 0 ]; then
+        return;
+    fi
+
+    local dsetSpace=$(${SSH} -q -t ${remote_node_ip} "${ZFS} list -Hp -o used ${dset}" | tr -d '[[:space:]]')
+    local freeSpace=$((${dsetQuota} - ${dsetSpace}))
+    local gigabyte=$((1024 * 1024 * 1024))
+    local quota_bump_msg=""
+
+    if [ ${freeSpace} -lt ${gigabyte} ]; then
+        dsetQuota=$((${dsetQuota} + ${gigabyte} * ${bump_size}))
+        quota_bump_msg="(+${bump_size}Gb)"
+    fi
+
+    ${SSH} -q -t ${remote_node_rip} ${ZFS} set quota=${dsetQuota} ${dset} && \
+        printf " quota${quota_bump_msg}..." || transferError
+}
+
+# function()
+transferOptions() {
+	local dset=$1
+	shift
+	local fields=$(echo $@ | sed 's/ /,/g')
+
+	local opts=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o property,value ${fields} ${dset}" | awk \
+		'{if ($2 !~ /^(none|-)/) printf $1"="$2}')
+
+	if [ ! -z ${opts} ]; then
+		printf "    + Transferring dataset options to ${dset}..."
+		for opt in ${opts};do
+		    if [ ${opt%=*} = "quota" ]; then
+		        transferQuota ${dset}
+		    else
+				${SSH} -q -t ${remote_node_rip} ${ZFS} set ${opt} ${dset} && printf " ${opt}..." || transferError
+		    fi
+		done
+		echo " done..."
+	fi
+
+}
+
+# function
+transferAll() {
+	local dset=$1
+	local origin=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get origin ${dset%@*}" | ${TAIL} -n 1 | ${AWK} '{printf $3}')
+	if [ "x${origin}" != "x-" ]; then
+		fsNotExist ${origin}
+		if [ $? -ne 0 ];then
+			transferAll ${origin}
+		fi
+		fsNotExist ${dset}
+		if [ $? -ne 0 ];then
+#			${SSH} -q -t ${remote_node_ip} \
+#				"${ZFS} send -I ${origin} ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -d zones" \
+#				2>/dev/null && echo "done" || transferError
+			${SSH} -q -t ${remote_node_ip} \
+				"${ZFS} send -I ${origin} ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" \
+				2>/dev/null && echo "done" || transferError
+		fi
+	else
+#		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -d zones" \
+#			2>/dev/null && echo "done" || transferError
+		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" \
+			2>/dev/null && echo "done" || transferError
+	fi
+
+	transferOptions ${dset%@*} quota
+}
+
+# Snapshotting and transfer
+if [ ${incr} -eq 0 ]; then
+	# NO incrEMENTAL MIGRATION
+	DTIME=`${DATE} +%s`
+	inst_stop
+	# todo: remote modification
+	${ECHO} "${MAGENTA}* ${GREEN}Creating dataset snapshots on ${my_nodename}${NORMAL}"
+	for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$`; do
+		${ECHO} "${GREEN}    + Creating ${dset} snapshot...${NORMAL}"
+		${ZFS} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME} > /dev/null
+		echo "${dset}" | ${GREP} disk >/dev/null 2>&1
+	done
+
+	echo
+
+	${ECHO} "${MAGENTA}* ${GREEN}Transferring dataset snapshots to ${remote_node_name}${NORMAL}"
+	if [ ${IMGSND} -eq 3 ]; then
+		# origin DS ! exists on DEST, send over the instance breaking any parent DS relation
+		for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+			${ECHO} "${GREEN}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME} ...${NORMAL}"
+			${ZFS} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null
+			if [ $? -ne 0 ]; then
+				${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+				clear_stfile
+				exit 1
+			fi
+		done
+	elif [ ${IMGSND} -eq 0 ]; then
+		# origin DS exists on DEST, perform an incremental replication stream of instance dataset
+		#   between the origin DS and the instance migration snapshot and send that to DEST
+		for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+			${ECHO} "${GREEN}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME} ...${NORMAL}"
+			if [ "${emulator}" = "bhyve" ]; then
+				echo "${dset}" | ${GREP} dsk0.vhd >/dev/null 2>&1
+				if [ $? -eq 0 ]; then
+					# for KVMs, send the incremental replication stream only for dsk0
+					#   since dsk0 is tied to the origin dataset, otherwise just send
+					#   over the datasets
+					${SSH} -q -t ${remote_node_ip} "${ZFS} send -RI ${LOCAL_ZROOT}/${DSORIG} ${dset}@vmsnap-${CBSD_MIGRNAME} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" 2>/dev/null
+					if [ $? -ne 0 ]; then
+						${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+						clear_stfile
+						exit 1
+					fi
+				else
+					${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" 2>/dev/null
+					if [ $? -ne 0 ]; then
+						${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+						clear_stfile
+						exit 1
+					fi
+				fi
+			else
+				# for jails, only the root dataset exists, send an incremental replication stream
+				transferAll ${dset}@vmsnap-${CBSD_MIGRNAME}
+			fi
+		done
+	fi
+else
+	# incrEMENTAL MIGRATION
+	USR1=0
+	trap 'USR1=1' USR1
+	BACKOFF=30
+	while [ -f ${STFILE} ]; do
+		${ECHO} "${MAGENTA}* ${GREEN}Creating dataset snapshots on ${my_nodename}${NORMAL}"
+		for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$`; do
+			${ECHO} "${GREEN}    + Creating ${dset} snapshot ${cntIncr}...${NORMAL}"
+			${ZFS} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} > /dev/null
+			echo "${dset}" | ${GREP} disk >/dev/null 2>&1
+		done
+
+		echo
+
+		echo "* Transferring incremental dataset snapshot ${cntIncr} to ${remote_node_name}"
+		if [ ${IMGSND} -eq 3 ]; then
+			# origin DS ! exists on DEST, send over the instance breaking any parent DS relation
+			if [ ${cntIncr} -eq 0 ]; then
+				for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+					printf "    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ..."
+					${ZFS} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null
+					if [ $? -ne 0 ]; then
+						${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+						clear_stfile
+						exit 1
+					fi
+				done
+			else
+				for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+					${ECHO} "    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${NORMAL}"
+					${ZFS} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -F ${dset} 2>/dev/null
+					if [ $? -ne 0 ]; then
+						${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+						clear_stfile
+						exit 1
+					fi
+				done
+			fi
+		elif [ ${IMGSND} -eq 0 ]; then
+			# origin DS exists on DEST, perform an incremental replication stream of instance dataset
+			#   between the origin DS and the instance migration snapshot and send that to DEST
+			if [ ${cntIncr} -eq 0 ]; then
+				for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+					${ECHO} "${GREEN}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${NORMAL}"
+					if [ "${emulator}" = "bhyve" ]; then
+						echo "${dset}" | ${GREP} dsk0.vhd >/dev/null 2>&1
+						if [ $? -eq 0 ]; then
+							# for KVMs, send the incremental replication stream only for dsk0
+							#   since dsk0 is tied to the origin dataset, otherwise just send
+							#   over the datasets
+							${ZFS} send -RI ${LOCAL_ZROOT}/${DSORIG} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null
+							if [ $? -ne 0 ]; then
+								${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+								clear_stfile
+								exit 1
+							fi
+						else
+							${ZFS} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null
+							if [ $? -ne 0 ]; then
+								${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+								clear_stfile
+								exit 1
+							fi
+						fi
+					else
+						# for jails, only the root dataset exists, send an incremental replication stream
+						transferAll ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr}
+					fi
+				done
+			else
+				for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+					${ECHO} "${GREEN}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${NORMAL}"
+					${ZFS} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -F ${dset} 2>/dev/null
+					if [ $? -ne 0 ]; then
+						${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+						clear_stfile
+						exit 1
+					fi
+				done
+			fi
+		fi
+		cntPrev=${cntIncr}
+		cntIncr=$(( cntIncr + 1 ))
+		echo
+		if [ ${aincr} -eq 0 ]; then
+			${ECHO} "${GREEN}    + Sleeping for ${BACKOFF} seconds before next snapshot (run 'kill -USR1 $$' to force a snapshot).${NORMAL}"
+			for i in $( /usr/bin/seq 1 ${BACKOFF} ); do
+				[ -f $STFILE ] || break
+				if [ "$USR1" = 1 ]; then
+					USR1=0
+					break
+				fi
+				sleep 1
+			done
+			[ $BACKOFF -lt 480 ] && BACKOFF=$(( 2 * BACKOFF ))
+	else
+		clear_stfile
+	fi
+	done
+	DTIME=`${DATE} +%s`
+	inst_stop
+	echo
+	${ECHO} "${MAGENTA}* ${GREEN}Creating final incrmental dataset snapshot on ${my_nodename}${NORMAL}"
+	for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$`; do
+		${ECHO} "${GREEN}    + Creating ${dset} snapshot ${cntIncr}...${NORMAL}"
+		${ZFS} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} > /dev/null
+		echo "${dset}" | ${GREP} disk >/dev/null 2>&1
+	done
+
+	for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$` ; do
+		${ECHO} "${GREEN}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${NORMAL}"
+		${ZFS} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -F ${dset} 2>/dev/null
+		if [ $? -ne 0 ]; then
+			${ECHO} "${MAGENTA}      > transfer failed!${NORMAL}"
+			clear_stfile
+			exit 1
+		fi
+	done
+fi
+
+${ECHO} "${MAGENTA}* ${GREEN}Deleting migration snapshots on ${remote_node_name}...${NORMAL}"
+# Also necessary remove on local, because at the end of script, user can anser 'no' on 'remove vm?' question
+for dset in `${AWK} '{printf $1}' /tmp/.vmmigrator.$$`; do
+	if [ ${incr} -eq 0 ]; then
+		${SSH} -q ${remote_node_rip} "${ZFS} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}" 2>/dev/null
+		${ZFS} destroy ${dset}@vmsnap-${CBSD_MIGRNAME} 2>/dev/null
+	else
+		prevCnt=${cntIncr}
+		while [ ${prevCnt} -ge 0 ]; do
+			${SSH} -q ${remote_node_rip} "${ZFS} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}-${prevCnt}" 2>/dev/null
+			${ZFS} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}-${prevCnt} 2>/dev/null
+			#let prevCnt=prevCnt-1
+			prevCnt=$(( prevCnt - 1 ))
+		done
+	fi
+done
+
+${RM} -f /tmp/.vmmigrator.$$
+
+# Disable VM on SRC
+${ECHO} "${MAGENTA}* ${GREEN}Disabling instance on ${my_nodename}...${NORMAL}"
+
+case "${emulator}" in
+	jail)
+		jset jname=${jname} astart=0
+		;;
+	bhyve)
+		bset jname=${jname} astart=0
+		;;
+esac
+
+${ECHO} "${MAGENTA}* ${GREEN}Register instance on ${remote_node_name}...${NORMAL}"
+
+if [ ${full} -eq 1 ]; then
+
+	rexe node=${node} cbsd jregister jname=${jname}
+
+	if [ "${jail_status}" = "running" ]; then
+		${ECHO} "${MAGENTA}* ${GREEN}Run jail on ${node}${NORMAL}"
+		case "${emulator}" in
+			jail)
+				rexe node=${node} /usr/local/bin/cbsd jstart jname=${jname} inter=0
+				;;
+			bhyve)
+				rexe node=${node} /usr/local/bin/cbsd bstart jname=${jname} inter=0
+				;;
+		esac
+	fi
+fi
+
+
+ETIME=`${DATE} +%s`
+ENDTIME=`${DATE}`
+
+clear_stfile
+echo ""
+printf "\n                    ===   Done! ===\n"
+printf "\n   >> ${emulator} instance:  ${jname} (${host_hostname})"
+printf "\n          is now installed on\n"
+echo "   >> dest node:  ${remote_node_name} (${dest_vm_name})"
+echo ""
+echo "    Migration started:  ${BEGTIME}"
+echo "      Migration ended:  ${ENDTIME}"
+
+TDIFF=`expr ${ETIME} - ${STTIME}`
+if [ ${TDIFF} -gt 3600 ]; then
+	TDIFF=`echo "scale=2; ${TDIFF}/3600" | ${BC}`
+	TDIFF="${TDIFF} hours"
+elif [ ${TDIFF} -gt 60 ]; then
+	TDIFF=`echo "scale=2; ${TDIFF}/60" | ${BC}`
+	TDIFF="${TDIFF} minutes"
+else
+	TDIFF="${TDIFF} seconds"
+fi
+DIFFT=`expr ${ETIME} - ${DTIME}`
+if [ ${DIFFT} -gt 3600 ]; then
+	DIFFT=`echo "scale=2; ${DIFFT}/3600" | ${BC}`
+	DIFFT="${DIFFT} hours"
+elif [ ${DIFFT} -gt 60 ]; then
+	DIFFT=`echo "scale=2; ${DIFFT}/60" | ${BC}`
+	DIFFT="${DIFFT} minutes"
+else
+	DIFFT="${DIFFT} seconds"
+fi
+
+echo "Duration of migration:  ${TDIFF}"
+echo "    Instance downtime:  ${DIFFT}"
+echo "       Migration type:  ${migrType}"
+
+cntIncr=$(( cntIncr + 1 ))
+echo "   Dataset increments:  ${cntIncr}"
+if [ ${incr} -gt 0 ]; then
+	echo "   migration log file:  ${DC_NAME}:${LOGFILE}"
+fi
+
+#
+# Migration Summary - Originating node
+#
+
+echo "          Source node:  ${my_nodename} (${source_vm_name})"
+echo
+
+if [ ${aremove} -eq 0 -o ${aremove} -eq 1 ]; then
+	# store original ALWAYS_ and inter settings
+	OALWAYS_YES=${ALWAYS_YES}
+	OALWAYS_NO=${ALWAYS_NO}
+	ointer=${inter}
+	inter=0
+	unset ALWAYS_YES
+	unset ALWAYS_NO
+
+	case ${aremove} in
+		0)
+			ALWAYS_NO=1
+			;;
+		1)
+			ALWAYS_YES=1
+			;;
+	esac
+fi
+
+# Ask user if they would like to cleanup now...
+if getyesno "Would you like to remove this instance from ${my_nodename} now? "; then
+	if [ "${emulator}" = "bhyve" ]; then
+		bremove jname=${jname}
+		#echo "* ${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk1.vhd"
+		#(${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk1.vhd && echo "  ...success") || echo "  ...FAILED."
+		#echo "* ${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk2.vhd\""
+		#(${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk2.vhd && echo "  ...success") || echo "  ...FAILED."
+	else
+		jremove jname=${jname}
+		#echo "* ${ZFS} destroy -r ${LOCAL_ZROOT}/${jname}"
+		#(${ZFS} destroy -r ${LOCAL_ZROOT}/${jname} && echo "  ...success") || echo "  ...FAILED."
+	fi
+else
+	echo "    The source node should be cleaned of this VM.              "
+	echo ""
+	echo "    - To finish removing the VM from the source (${my_nodename}):      "
+	echo ""
+	if [ "${emulator}" = "bhyve" ]; then
+		echo "      bremove jname=${jname}"
+		echo "    or"
+		echo "      ${SSH} ${remote_node_ip} \"${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk0.vhd\" &&"
+		echo "      ${SSH} ${remote_node_ip} \"${ZFS} destroy -r ${LOCAL_ZROOT}/bcbsd-${jname}-dsk1.vhd\" &&"
+	else
+		echo "      jremove jname=${jname}"
+		echo "    or"
+		echo "      ${ZFS} destroy -r ${LOCAL_ZROOT}/${jname}"
+	fi
+	echo
+fi
+
+# restore original settings
+if [ ${aremove} -eq 0 -o ${aremove} -eq 1 ]; then
+	# store original ALWAYS_ and inter settings
+	ALWAYS_YES=${OALWAYS_YES}
+	ALWAYS_NO=${OALWAYS_NO}
+	inter=${ointer}
+fi
+
+
+echo
+exit 0

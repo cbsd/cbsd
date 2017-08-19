@@ -63,6 +63,7 @@ GET_HOSTBRIDGE_MSG="Hostbridge for VMs, eg: hostbridge or amd_hostbridge"
 GET_ALLOW_SYSVIPC_MSG="Select SYSVIPC behaviour"
 GET_GUESTFS_MSG="Choose FS for boot image"
 GET_EFI_MSG="Choose UEFI firmware"
+GET_VM_PACKAGE_MSG="Choose package name"
 GET_CONSOLE_MSG="Choose default console"
 GET_ISOPATH_MSG="Path to ISO image in srcdir/iso, eg: release.iso. 0 - for default img_iso"
 GET_VM_ISOPATH_MSG="Select available/registered ISO"
@@ -1377,6 +1378,53 @@ get_construct_vm_efi()
 	return ${retval}
 }
 
+# update vm_\* values according to $vm_package data
+# if $1 - "force", all variables will be overwrited
+#  otherwise, assign variables only vm_\* is empty
+# $vm_package variables must be set
+apply_vm_package()
+{
+	[ -z "${vm_package}" ] && return 0
+	[ "${1}" = "force" ] && unset vm_cpus vm_ram imgsize
+
+	[ -z "${vm_cpus}" ] && vm_cpus=$( cbsdsql local SELECT pkg_vm_cpus FROM vmpackages WHERE name=\"${vm_package}\" )
+	[ -z "${vm_ram}" ] && vm_ram=$( cbsdsql local SELECT pkg_vm_ram FROM vmpackages WHERE name=\"${vm_package}\" )
+	[ -z "${imgsize}" ] && imgsize=$( cbsdsql local SELECT pkg_vm_disk FROM vmpackages WHERE name=\"${vm_package}\" )
+
+	return 0
+}
+
+# form for $vm_package
+get_construct_vm_package()
+{
+	local _input _res
+
+	local title="${GET_VM_PACKAGE_MSG}"
+	local defaultitem="${vm_package}"
+
+	local sqldelimer=" "
+
+	local menu_list=$( cbsdsql local SELECT name,pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages | while read name pkg_vm_cpus pkg_vm_ram pkg_vm_disk; do
+		echo "'${name}' '[${mark}] name=${name} CPU=${pkg_vm_cpus} RAM=${pkg_vm_ram} DISK=${pkg_vm_disk}'  'description'"
+	done ) || err 1 "${MAGENTA}Error while create packages map${NORMAL}"
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_package="${mtag}"
+			apply_vm_package force
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+
 # form for $vm_console
 get_construct_vm_console()
 {
@@ -1427,7 +1475,8 @@ get_construct_vm_os_type()
 	case $retval in
 		${DIALOG_OK})
 			[ -n "${mtag}" ] && vm_os_type="${mtag}"
-			unset vm_os_profile jname imgsize
+			unset vm_os_profile jname imgsize vm_ram vm_cpus
+			apply_vm_package
 			;;
 		*)
 			;;
@@ -1535,8 +1584,10 @@ get_construct_vm_os_profile()
 			[ -z "${_myfile}" ] && return 0
 
 			if [ -f "${_myfile}" ]; then
+				unset imgsize vm_ram vm_cpus
 				. ${_myfile}
 				global_profile_file="${_myfile}"
+				apply_vm_package
 			fi
 			;;
 		*)

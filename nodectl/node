@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v11.1.3
 CBSDMODULE="node"
 MYARG="mode"
-MYOPTARG="node port rootkeyfile pw header allinfo"
+MYOPTARG="node port rootkeyfile pw header allinfo display"
 MYDESC="Manipulate or show information for remote nodes"
 ADDHELP="mode = add, remove, list, status\n\
 node = remote node ip or fqdn\n\
@@ -11,6 +11,7 @@ rootkeyfile = path to id_rsa for root access\n\
 pw = password of cbsd user from remote node\n\
 header = print header in node list\n\
 allinfo = 1 (default) show all info for nodelist, 0 - only nodename\n\
+display= list by comma for column. Default: nodename,ip,port,keyfile,status,idle\n\
 mode=show - show details about node\n"
 
 EXTHELP="wf_node.html"
@@ -21,6 +22,20 @@ EXTHELP="wf_node.html"
 
 readconf node.conf
 init $*
+
+[ -z "${display}" ] && display="nodename,ip,port,keyfile,status,idle"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && $ECHO ${_header}
+}
 
 getpw()
 {
@@ -177,21 +192,36 @@ nodedel()
 
 show_nodes()
 {
+	OIFS=${IFS}
 	local sqldelimer IFS
 
 	if [ ${allinfo} -eq 0 ]; then
 		cbsdsql nodes SELECT nodename FROM nodelist
 	else
-		[ ${header} -eq 1 ] && ${ECHO} "${BOLD}NODENAME IP PORT KEYFILE STATUS IDLE${NORMAL}"
+		show_header
 		sqldelimer="|"
 		IFS="|"
-		cbsdsql nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist |while read _nodename _ip _port _keyfile _idle; do
-			local IFS=" "
-			conv_idle
-			printf "${NORMAL}" # for column sort
-			printf "${_nodename} ${_ip} ${_port} ${_keyfile} ${_nodestatus} ${_idle}"
-			printf "\n"
-			local IFS="|"
+		cbsdsql nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist |while read nodename ip port keyfile idle; do
+			IFS=${OIFS}
+
+			conv_idle "${idle}"
+
+			for _i in ${mydisplay}; do
+				_val=""
+
+				eval _val="\$$_i"
+				[ -z "${_val}" ] && _val="-"
+
+				if [ -z "${_status}" ]; then
+					_status="${NORMAL}${_val}"
+				else
+					_status="${_status} ${_val}"
+				fi
+			done
+
+			${ECHO} ${_status}
+			IFS="|"
+			_status=
 		done
 	fi
 	unset sqldelimer

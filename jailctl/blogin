@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.4
+#v11.1.2
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname remote inter"
@@ -35,12 +35,50 @@ try_remote()
 	exit 0
 }
 
+login_internal()
+{
+
+	if [ "${vm_efi}" != "none" ]; then
+		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
+			echo " *** VM booted in VNC mode. ***"
+			${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer ${vnc_bind}:${vm_port}${NORMAL}"
+			if ! getyesno "Do you want to attach into UEFI console anyway?"; then
+				exit 0
+			fi
+		else
+			echo " *** VM booted in VNC mode. ***"
+			echo "But no ${jailsysdir}/${jname}/vnc_port file"
+			if ! getyesno "Do you want to attach into UEFI console anyway?"; then
+				exit 0
+			fi
+		fi
+	fi
+
+	export TERM=xterm
+	/usr/local/bin/tmux attach-session -t cbsdb-${jname} 2>/dev/null || /usr/local/bin/tmux attach-session -t cbsd-${jname}
+}
+
+
+login_custom()
+{
+	# reset PATH to default
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/home/oleg/bin"
+	. ${workdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	export_bhyve_data_for_external_hook
+	readconf blogin.conf
+	${ECHO} "${MAGENTA}Custom login command: ${GREEN}${login_cmd}${NORMAL}"
+	exec /bin/sh -c "${login_cmd}"
+}
+
+
 . ${jrcconf}
+readconf blogin.conf
+
 [ $? -eq 1 ] && try_remote
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
-[ "$baserw" = "1" ] && path=$data
+[ "${baserw}" = "1" ] && path=${data}
 
-[ $jid -eq 0 ] && err 1 "Not running"
+[ ${jid} -eq 0 ] && err 1 "Not running"
 
 vm_efi=$( cbsdsql local "SELECT vm_efi FROM bhyve WHERE jname=\"${jname}\"" )
 vnc_bind=$( cbsdsql local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname=\"${jname}\"" )
@@ -48,19 +86,16 @@ vnc_bind=$( cbsdsql local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname=\"${
 if [ "${vm_efi}" != "none" ]; then
 	if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
 		vm_port=$( /bin/cat ${jailsysdir}/${jname}/vnc_port )
-		echo " *** VM booted in VNC mode. ***"
-		${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer ${vnc_bind}:${vm_port}${NORMAL}"
-		if ! getyesno "Do you want to attach into UEFI console anyway?"; then
-			exit 0
-		fi
 	else
-		echo " *** VM booted in VNC mode. ***"
-		echo "But no ${jailsysdir}/${jname}/vnc_port file"
-		if ! getyesno "Do you want to attach into UEFI console anyway?"; then
-			exit 0
-		fi
+		vm_port="0"
 	fi
 fi
 
-export TERM=xterm
-/usr/local/bin/tmux attach-session -t cbsdb-${jname} 2>/dev/null || /usr/local/bin/tmux attach-session -t cbsd-${jname}
+case "${login_cmd}" in
+	internal)
+		login_internal
+		;;
+	*)
+		login_custom
+		;;
+esac
