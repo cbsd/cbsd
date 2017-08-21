@@ -1,6 +1,6 @@
 #!/usr/local/bin/cbsd
 MYARG=""
-MYOPTARG="jname node full inter incr aincr incrcnt aremove"
+MYOPTARG="jname node full inter incr aincr incrcnt aremove version checkonly"
 MYDESC="ZFS migrator for CBSD"
 CBSDMODULE="sys"
 EXTHELP="wf_zfs_migrator.html"
@@ -10,7 +10,9 @@ incr=0,1 - when 1, perform an incremental migration (default is 0)\n\
 aincr=0,1 - when 1, perform automatic incremental mode (default is 0)\n\
 aremove=0,1,3 - if aremove=0, don't remove source instance after migration without asking\n\
   if aremove=1, auto remove source instance after migration without asking\n\
-  if aremove=3 (by default), and inter not 0, show yesno prompt for interactive choice\n"
+  if aremove=3 (by default), and inter not 0, show yesno prompt for interactive choice\n\
+version=1 - show zfs-migrator version only\n\
+checkonly=1 - test node for zfs-migrator compatible, errcode=1 when not and errcode=0 when ok\n"
 
 . ${subr}
 . ${system}
@@ -21,7 +23,7 @@ clear_stfile()
 {
 	if [ "x${STFILE}" != "x" ]; then
 		if [ -f ${STFILE} ]; then
-			echo "* Clearing state file: ${DC_NAME}:${STFILE}"
+			${ECHO} "${MAGENTA}* ${GREEN}Clearing state file: ${DC_NAME}:${STFILE}${NORMAL}"
 			${RM} ${STFILE} > /dev/null 2>&1
 		fi
 	fi
@@ -34,10 +36,10 @@ inst_stop () {
 		${ECHO} "${MAGENTA}* ${GREEN}Instance ${fqdn} is running; shutting it down, please wait${NORMAL}"
 		case "${emulator}" in
 			jail)
-				jstop jname=${jname}
+				jstop jname=${jname} > /dev/null 2>1
 				;;
 			bhyve)
-				bstop jname=${jname}
+				bstop jname=${jname} > /dev/null 2>&1
 				;;
 		esac
 		INST_STATE="stopped"
@@ -45,6 +47,85 @@ inst_stop () {
 	else
 		${ECHO} "${MAGENTA}* ${GREEN}Instance ${jname} is already shutdown.  Proceeding.${NORMAL}"
 	fi
+}
+
+# function
+fsNotExist() {
+	local dset=$1
+	${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} list ${dset%@*} 2>/dev/null >/dev/null
+	return $?
+}
+
+# function
+transferError() {
+	echo
+	echo "      > transfer failed!"
+	clear_stfile
+	exit 24
+}
+
+# function
+transferQuota() {
+	local dset=$1
+	shift
+	local dsetQuota=$( ${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o value quota ${dset}" | /usr/bin/tr -d '[[:space:]]' )
+	if [ ${dsetQuota} -eq 0 ]; then
+		return;
+	fi
+
+	local dsetSpace=$( ${SSH} -q -t ${remote_node_ip} "${ZFS} list -Hp -o used ${dset}" | /usr/bin/tr -d '[[:space:]]' )
+	local freeSpace=$((${dsetQuota} - ${dsetSpace}))
+	local gigabyte=$((1024 * 1024 * 1024))
+	local quota_bump_msg=""
+
+	if [ ${freeSpace} -lt ${gigabyte} ]; then
+		dsetQuota=$((${dsetQuota} + ${gigabyte} * ${bump_size}))
+		quota_bump_msg="(+${bump_size}Gb)"
+	fi
+
+	${SSH} -q -t ${remote_node_rip} ${ZFS} set quota=${dsetQuota} ${dset} && printf " quota${quota_bump_msg}..." || transferError
+}
+
+# function()
+transferOptions() {
+	local dset=$1
+	shift
+	local fields=$( echo $@ | sed 's/ /,/g' )
+
+	local opts=$( ${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o property,value ${fields} ${dset}" | /usr/bin/awk '{if ($2 !~ /^(none|-)/) printf $1"="$2}' )
+
+	if [ ! -z ${opts} ]; then
+		printf "    + Transferring dataset options to ${dset}..."
+		for opt in ${opts};do
+			if [ ${opt%=*} = "quota" ]; then
+				transferQuota ${dset}
+			else
+				${SSH} -q -t ${remote_node_rip} ${ZFS} set ${opt} ${dset} && printf " ${opt}..." || transferError
+			fi
+		done
+		echo " done..."
+	fi
+
+}
+
+# function
+transferAll() {
+	local dset=$1
+	local origin=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get origin ${dset%@*}" | ${TAIL} -n 1 | ${AWK} '{printf $3}')
+	if [ "x${origin}" != "x-" ]; then
+		fsNotExist ${origin}
+		if [ $? -ne 0 ];then
+			transferAll ${origin}
+		fi
+		fsNotExist ${dset}
+		if [ $? -ne 0 ];then
+			${ZFS} send -I ${origin} ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null && echo "done" || transferError
+		fi
+	else
+		${ZFS} send -p ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT} 2>/dev/null && echo "done" || transferError
+	fi
+
+	transferOptions ${dset%@*} quota
 }
 
 
@@ -66,7 +147,22 @@ aincr=0
 # Automatic remove by default: ask user's
 aremove=3
 
+# ZFS Migrator version
+ZMver="1"
+
+# Checkonly?
+checkonly=0
+
 init $*
+
+[ "${version}" = "1" ] && err 0 "${ZMver}"
+
+if [ "${checkonly}" = "1" ]; then
+	[ ${zfsfeat} -ne 1 ] && err 1 "${MAGENTA}zfsfeat disabled, zfs-migrator non-working here${NORMAL}"
+	LOCAL_ZROOT=$( ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null )
+	[ -n "${LOCAL_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine ZROOT for datadir, zfs-migrator non-working here${NORMAL}"
+	err 0 "Ready"
+fi
 
 if [ ${inter} -eq 1 ]; then
 	[ -z "${jname}" ] && err 1 "${MAGENTA}Empty jname=${NORMAL}"
@@ -88,7 +184,6 @@ esac
 # set some vars:
 BASENAME='/usr/bin/basename'
 scriptName=`${BASENAME} ${0}`
-ASver="3.2.3"
 AWK='/usr/bin/awk'
 BC='/usr/bin/bc'
 CAT='/bin/cat'
@@ -136,7 +231,6 @@ incrCnt=""
 cntPrev=""
 prevCnt=""
 
-
 case "${incr}" in
 	0)
 		migrType="Non-Incremental"
@@ -153,7 +247,6 @@ case "${aincr}" in
 		migrType="automatic-Incremental"
 		;;
 esac
-
 
 # If instance is over quota, how many GB will the quota be increased so the
 # transfer can succeed? Must be an integer.
@@ -191,21 +284,21 @@ if [ -z "${jname}" ]; then
 		[ "${jname}" = "0" ] && exit 0
 
 		if [ "${jname}" = "?" ]; then
-			echo -n "jails: " && /usr/local/bin/cbsd jorder
-			echo -n "bhyve: " && /usr/local/bin/cbsd border
+			echo -n "jails: " && jorder
+			echo -n "bhyve: " && border
 			continue
 		fi
 
-		vm_status=$( /usr/local/bin/cbsd jstatus jname=${jname} )
-
+		vm_status=$( jstatus jname=${jname} )
 		ret=$?
 		[ ${ret} -eq 1 ] && break
+
 		${ECHO} "${MAGENTA}No such environment here: ${GREEN}${jname}${NORMAL}"
 	done
 fi
 
 jstatus jname=${jname} > /dev/null 2>/dev/null
-[ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ $? -eq 0 ] && err 1 "${MAGENTA}No such environment here: ${GREEN}${jname}${NORMAL}"
 
 if [ -z "${node}" ]; then
 	while [ true ]; do
@@ -213,7 +306,7 @@ if [ -z "${node}" ]; then
 		[ "${node}" = "0" ] && exit 0
 
 		if [ "${node}" = "?" ]; then
-			echo -n "nodes: " && cbsd node mode=list display=nodename header=0 |xargs
+			echo -n "nodes: " && mode=list display=nodename header=0 |/usr/bin/xargs
 			continue
 		fi
 
@@ -294,7 +387,6 @@ remote_node_rip=$( sqlite3 ~cbsd/var/db/nodes.sqlite "SELECT ip FROM nodelist WH
 source_vm_name="${jname}"
 dest_vm_name="${jname}"
 
-# todo: check for jname on dst is not reserverved
 # todo: alternative jname on dst?
 
 ${ECHO} "${GREEN}    + checking for datasets...${NORMAL}"
@@ -307,8 +399,8 @@ LOCAL_ZROOT=$( ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null )
 [ -z "${LOCAL_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine local zroot${NORMAL}"
 
 # how to obtain remote jaildatadir?
-REMOTE_ZROOT=$( ${SSH} -q ${remote_node_rip} ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null | awk '{printf $1 }' )
-[ -z "${REMOTE_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine remote zroot${NORMAL}"
+REMOTE_ZROOT=$( ${SSH} -q ${remote_node_rip} ${ZFS} get -Ho value name ${jaildatadir} 2>/dev/null | /usr/bin/awk '{printf $1 }' )
+[ -z "${REMOTE_ZROOT}" ] && err 1 "${MAGENTA}Unable to determine remote zroot, check SSH or ZFS feature on remote host${NORMAL}"
 
 case "${emulator}" in
 	jail)
@@ -362,6 +454,21 @@ fi
 d_cbsd_ver=$( ${SSH} -q ${remote_node_rip} /usr/local/bin/cbsd -c version 2>/dev/null |awk '{printf $1 }' )
 s_cbsd_ver=$( version )
 
+# check that remote note is ZFS
+d_migrator_ready=$( ${SSH} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator checkonly=1 2>/dev/null )
+res=$?
+
+[ ${res} -ne 0 ] && err 1 "${MAGENTA}Remote node is not ready: ${d_migrator_ready}${NORMAL}"
+
+s_migrator_ver=${ZMver}
+d_migrator_ver=$( ${SSH} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator version=1 2>/dev/null |awk '{printf $1 }' )
+
+# todo: matrix for migrator compatible
+
+d_instance_exist=$( ${SSH} -q ${remote_node_rip} /usr/local/bin/cbsd jstatus jname=${jname} )
+ret=$?
+[ ${ret} -ne 0 ] && err 1 "${MAGENTA}Node ${node} already has instance named: ${GREEN}${jname}${NORMAL}"
+
 ${ECHO} "${GREEN}  - Data gathering complete!${NORMAL}"
 srcpad=" "
 destpad=" "
@@ -400,7 +507,8 @@ printf "Host:     %-36s  Host:     %-36s\n" ${my_nodename} ${remote_node_name}
 printf "JNAME:    %-36s  JNAME:    %-36s\n" ${source_vm_name} ${dest_vm_name}
 printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
 printf "IP Addr:  %-36s  IP Addr:  %-36s\n" ${remote_node_ip} ${remote_node_rip}
-printf "Zfs:      %-36s  Zfs:      %-36s\n" ${LOCAL_ZROOT} ${REMOTE_ZROOT}
+printf "ZFS:      %-36s  ZFS:      %-36s\n" ${LOCAL_ZROOT} ${REMOTE_ZROOT}
+printf "API ver:  %-36s  API ver:  %-36s\n" ${s_migrator_ver} ${d_migrator_ver}
 
 echo
 
@@ -439,6 +547,7 @@ else
 	${ECHO} "${GREEN}    + origin dataset null or non-standard (${DSORIG})${NORMAL}"
 fi
 
+# in generic node install, $DSORIG = "-"
 if [ ${IMGCHK} -ne 0 ]; then
 	${SSH} -q ${remote_node_rip} ${ZFS} list -Ho name ${REMOTE_ZROOT}/${DSORIG} >/dev/null 2>&1
 	if [ $? -ne 0 ]; then
@@ -480,6 +589,15 @@ if ${SSH} -q ${remote_node_rip} "${ZFS} list ${REMOTE_ZROOT}/${jname}@vmsnap-${C
 	exit 1
 fi
 
+fsNotExist ${REMOTE_ZROOT}/${jname} && err 1 "${MAGENTA}Error: ${node}Dataset already exist: ${GREEN}${REMOTE_ZROOT}/${jname}${NORMAL}"
+
+case "${emulator}" in
+	bhyve)
+		fsNotExist ${REMOTE_ZROOT}/bcbsd-${jname}-dsk0.vhd && err 1 "${MAGENTA}Error: ${node}Dataset already exist: ${GREEN}${REMOTE_ZROOT}/bcbsd-${jname}-dsk0.vhd${NORMAL}"
+		fsNotExist ${REMOTE_ZROOT}/bcbsd-${jname}-dsk1.vhd && err 1 "${MAGENTA}Error: ${node}Dataset already exist: ${GREEN}${REMOTE_ZROOT}/bcbsd-${jname}-dsk1.vhd${NORMAL}"
+	;;
+esac
+
 if [ ${full} -eq 1 ]; then
 	printf "${MAGENTA}*${NORMAL} "
 	jaillock="${jailsysdir}/${jname}/locked"
@@ -499,137 +617,10 @@ if [ ${full} -eq 1 ]; then
 	echo
 fi
 
-if [ ${IMGSND} -eq 2 ]; then
-	${ECHO} "${MAGENTA}* ${GREEN}Attempting import of image (${jname}) to ${remote_node_name}${NORMAL}"
-	if [ $? -ne 0 ]; then
-		echo "  - Image import failed, failing back to zfs transfer of image!"
-		echo "    + Attempting zfs transfer of image to ${remote_node_name}"
-		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${LOCAL_ZROOT}/${DSORIG} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" 2>/dev/null
-		if [ $? -eq 0 ]; then
-			echo "      > zfs transfer of image to ${remote_node_name} succeeded"
-			${SSH} -q -t ${remote_node_ip} "${LS} ${MANIPATH}/zones-${DSOBJ[0]}.json > /dev/null 2>&1"
-			if [ $? -eq 0 ]; then
-				echo "    + Attempting transfer of image manifest to ${remote_node_name}"
-				${SSH} -q -t ${remote_node_ip} "${SCP} ${OPTSSH} ${MANIPATH}/zones-${DSOBJ[0]}.json root@${remote_node_rip}:${MANIPATH}/. " 2>/dev/null
-				${SSH} -q -t ${remote_node_rip} "${LS} ${MANIPATH}/zones-${DSOBJ[0]}.json > /dev/null 2>&1"
-				if [ $? -eq 0 ]; then
-					echo "      > transfer of image manifest to ${remote_node_name} succeeded"
-					echo "  - Image imported successfully!"
-					IMGSND=0
-				else
-					printf "      > transfer of image manifest to ${remote_node_name} failed; will now\n        consider the origin dataset of our instance as lost!"
-					echo "  - Image import failed!"
-					IMGSND=3
-				fi
-			else
-				printf "      > cannot locate image manifest on ${remote_node_name}; will now\n        consider the origin dataset of our instance as lost!"
-				echo "  - Image import failed!"
-				IMGSND=3
-			fi
-		else
-			printf "      > zfs transfer of image to ${remote_node_name} failed; will now\n        consider the origin dataset of our instance as lost!"
-			echo "  - Image import failed!"
-			IMGSND=3
-		fi
-	else
-		echo "  - Image imported successfully!"
-		IMGSND=0
-	fi
-fi
-
-# function
-fsNotExist() {
-	local dset=$1
-	${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} list ${dset%@*} 2>/dev/null >/dev/null
-	return $?
-}
-
-# function
-transferError() {
-	echo
-	echo "      > transfer failed!"
-	printf "\n  - Clearing migration SSH key and exiting."
-	clear_stfile
-	exit 24
-}
-
-# function
-transferQuota() {
-    local dset=$1
-    shift
-    local dsetQuota=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o value quota ${dset}" | tr -d '[[:space:]]')
-    if [ ${dsetQuota} -eq 0 ]; then
-        return;
-    fi
-
-    local dsetSpace=$(${SSH} -q -t ${remote_node_ip} "${ZFS} list -Hp -o used ${dset}" | tr -d '[[:space:]]')
-    local freeSpace=$((${dsetQuota} - ${dsetSpace}))
-    local gigabyte=$((1024 * 1024 * 1024))
-    local quota_bump_msg=""
-
-    if [ ${freeSpace} -lt ${gigabyte} ]; then
-        dsetQuota=$((${dsetQuota} + ${gigabyte} * ${bump_size}))
-        quota_bump_msg="(+${bump_size}Gb)"
-    fi
-
-    ${SSH} -q -t ${remote_node_rip} ${ZFS} set quota=${dsetQuota} ${dset} && \
-        printf " quota${quota_bump_msg}..." || transferError
-}
-
-# function()
-transferOptions() {
-	local dset=$1
-	shift
-	local fields=$(echo $@ | sed 's/ /,/g')
-
-	local opts=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get -Hp -o property,value ${fields} ${dset}" | awk \
-		'{if ($2 !~ /^(none|-)/) printf $1"="$2}')
-
-	if [ ! -z ${opts} ]; then
-		printf "    + Transferring dataset options to ${dset}..."
-		for opt in ${opts};do
-		    if [ ${opt%=*} = "quota" ]; then
-		        transferQuota ${dset}
-		    else
-				${SSH} -q -t ${remote_node_rip} ${ZFS} set ${opt} ${dset} && printf " ${opt}..." || transferError
-		    fi
-		done
-		echo " done..."
-	fi
-
-}
-
-# function
-transferAll() {
-	local dset=$1
-	local origin=$(${SSH} -q -t ${remote_node_ip} "${ZFS} get origin ${dset%@*}" | ${TAIL} -n 1 | ${AWK} '{printf $3}')
-	if [ "x${origin}" != "x-" ]; then
-		fsNotExist ${origin}
-		if [ $? -ne 0 ];then
-			transferAll ${origin}
-		fi
-		fsNotExist ${dset}
-		if [ $? -ne 0 ];then
-#			${SSH} -q -t ${remote_node_ip} \
-#				"${ZFS} send -I ${origin} ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -d zones" \
-#				2>/dev/null && echo "done" || transferError
-			${SSH} -q -t ${remote_node_ip} \
-				"${ZFS} send -I ${origin} ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" \
-				2>/dev/null && echo "done" || transferError
-		fi
-	else
-#		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -d zones" \
-#			2>/dev/null && echo "done" || transferError
-		${SSH} -q -t ${remote_node_ip} "${ZFS} send -p ${dset} | ${SSH} ${OPTSSH} ${remote_node_rip} ${ZFS} recv -e ${REMOTE_ZROOT}" \
-			2>/dev/null && echo "done" || transferError
-	fi
-
-	transferOptions ${dset%@*} quota
-}
 
 # Snapshotting and transfer
 if [ ${incr} -eq 0 ]; then
-	# NO incrEMENTAL MIGRATION
+	# NO INCREMENTAL MIGRATION
 	DTIME=`${DATE} +%s`
 	inst_stop
 	# todo: remote modification
@@ -686,7 +677,7 @@ if [ ${incr} -eq 0 ]; then
 		done
 	fi
 else
-	# incrEMENTAL MIGRATION
+	# INCREMENTAL MIGRATION
 	USR1=0
 	trap 'USR1=1' USR1
 	BACKOFF=30
@@ -830,10 +821,10 @@ ${ECHO} "${MAGENTA}* ${GREEN}Disabling instance on ${my_nodename}...${NORMAL}"
 
 case "${emulator}" in
 	jail)
-		jset jname=${jname} astart=0
+		jset jname=${jname} astart=0 > /dev/null 2>&1
 		;;
 	bhyve)
-		bset jname=${jname} astart=0
+		bset jname=${jname} astart=0 > /dev/null 2>&1
 		;;
 esac
 
@@ -965,7 +956,6 @@ if [ ${aremove} -eq 0 -o ${aremove} -eq 1 ]; then
 	ALWAYS_NO=${OALWAYS_NO}
 	inter=${ointer}
 fi
-
 
 echo
 exit 0
