@@ -798,12 +798,26 @@ get_construct_cpuset()
 get_construct_vm_cpus()
 {
 	local _input
+	local _ret=1
 
 	f_dialog_title " cpu "
 
-	f_dialog_input _input "${GET_CPUS_MSG}" "${vm_cpus}" \
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_CPUS_MSG}" "${vm_cpus}" \
 			"${_message}" || return $?
 
+		if is_number ${_input}; then
+			f_show_msg "Only number is valid input for cpu"
+			continue
+		fi
+
+		if [ ${_input} -lt 1 -o ${_input} -gt 16 ]; then
+			f_show_msg "Valid number of guest CPUs within 1 - 16 range"
+			continue
+		fi
+		_ret=0
+	done
 	vm_cpus="${_input}"
 }
 
@@ -1494,6 +1508,7 @@ get_construct_vm_iso_path()
 
 	local title=" Select ISO "
 	local prompt="${GET_VM_ISOPATH_MSG}"
+	local iso_path
 
 	vm_res=$( cbsdsql storage_media SELECT name FROM media WHERE type=\"iso\" )
 
@@ -1503,6 +1518,8 @@ get_construct_vm_iso_path()
 		menu_list="${menu_list} '${i}' '${i}' '${i}'"
 	done
 
+	menu_list="${menu_list} 'Detach' 'Detach' 'Detach any CD ISO'"
+
 	defaultitem="${vm_iso_path}"
 
 	mtag=
@@ -1511,9 +1528,22 @@ get_construct_vm_iso_path()
 	case $retval in
 		${DIALOG_OK})
 			if [ -n "${mtag}" ]; then
-				register_iso_as="${mtag}"
-				vm_iso_path="${mtag}"
-				alt_iso="${mtag}"
+				case "${mtag}" in
+					Detach)
+						cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
+						register_iso_as=
+						vm_iso_path=
+						alt_iso=
+						;;
+					*)
+						register_iso_as="${mtag}"
+						vm_iso_path="${mtag}"
+						alt_iso="${mtag}"
+						iso_path=$( cbsdsql storage_media SELECT path FROM media WHERE type=\"iso\" AND name=\"${mtag}\" )
+						echo "media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}"
+						media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}
+						;;
+				esac
 			fi
 			;;
 		*)
@@ -1536,29 +1566,22 @@ get_construct_vm_os_profile()
 	local title=" profile "
 	local prompt="${GET_VMPROFILE_MSG}"
 
-	_res=$( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} display=path header=0 )
-
 	_all=0
 
-	for i in ${_res}; do
-		unset vm_profile
-		eval $( ${GREP_CMD} ^vm_profile= ${i} )
-		eval $( ${GREP_CMD} ^active= ${i} )
-
-		[ -z "${vm_profile}" -o ${active} -eq 0 ] && continue
-
+	eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} only_active=1 uniq=1 display=path,name,contrib header=0 |while read path vm_profile contrib; do
 		unset long_description
-		eval $( ${GREP_CMD} ^long_description= ${i} )
-
+		eval $( ${GREP_CMD} ^long_description= ${path} )
 		[ -z "${long_description}" ] && long_description="${vm_profile}"
-
-		_mypath=$( echo $i | /usr/bin/sed s:^${workdir}/::g )
+		[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
+		_mypath=$( echo ${path} | /usr/bin/sed s:^${workdir}/::g )
 		menu_list="${menu_list} '${vm_profile}' '${_mypath}' '${long_description}'"
+		echo "menu_list=\"${menu_list}\""
 		# store filename
-		local profile${_all}="${vm_profile}"
-		local file${_all}="${i}"
+		echo "profile${_all}=\"${vm_profile}\""
+		echo "file${_all}=\"${path}\""
 		_all=$(( _all + 1 ))
-	done
+		echo "_all=${_all}"
+	done )
 
 	[ -z "${menu_list}" ] && unset vm_os_profile && return 0
 

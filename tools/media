@@ -256,6 +256,148 @@ check_protected()
 }
 
 
+storage_attach()
+{
+	[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${NORMAL}"
+	[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${NORMAL}"
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Give me ${GREEN}jname=${NORMAL}"
+
+	local attached_to_name dsk_path dsk_name
+	local mydb virtio_type already_attached_to_me
+
+	attached_to_jname=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${path}\" AND name=\"${name}\" AND jname!=\"${jname}\" LIMIT 1 )
+
+	# not attached?
+	if [ "${attached_to_jname}" = "-" ]; then
+		by_path="-"
+		by_name="-"
+		attached_to_jname=
+	else
+		by_path="${path}"
+		by_name="${name}"
+	fi
+
+	# todo: shared disk
+	if [ "${type}" = "hdd" ]; then
+		[ -n "${attached_to_jname}" ] && err 1 "${MAGENTA}disk ${name} with path ${path} already attached to: ${GREEN}${test_jname}${NORMAL}"
+		select_by_path "${by_path}"
+		[ $? -ne 0 ] && err 1 "${MAGENTA}Path not exist for jname by path ${by_path}: ${GREEN}${path}${NORMAL}"
+		select_by_name "${by_name}"
+		[ $? -ne 0 ] && err 1 "${MAGENTA}Name not exist for jname by name ${by_name}: ${GREEN}${name}${NORMAL}"
+	fi
+
+	# save variables before rcconf init
+	dsk_path="${path}"
+	dsk_name="${name}"
+
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}attachzfs: no such jail: ${GREEN}${jname}${NORMAL}"
+
+	case "${type}" in
+		iso)
+			;;
+		hdd)
+			mydb="${jailsysdir}/${jname}/local.sqlite"
+			virtio_type="virtio-blk"
+			cbsdsql ${mydb} "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
+			;;
+	esac
+
+	# test for already attached
+	already_attached_to_me=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${dsk_path}\" AND name=\"${dsk_name}\" AND jname=\"${jname}\" LIMIT 1 )
+
+	[ -n "${already_attached_to_me}" ] && err 1 "${MAGENTA}storage with name:${name} and path:${path} already attached for instance: ${GREEN}${jname}${NORMAL}"
+
+	if [ -n "${attached_to_jname}" ]; then
+		#shared disk: INSERT
+		sql="INSERT INTO media ( name, path, type, jname ) VALUES ( \"${dsk_name}\", \"${dsk_path}\", \"${type}\", \"${jname}\" )"
+	else
+		sql="UPDATE media SET jname=\"${jname}\" WHERE name=\"${dsk_name}\" AND path=\"${dsk_path}\""
+	fi
+
+	echo "${sql}"
+	cbsdsql ${dbdir}/storage_media.sqlite "${sql}"
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+	fi
+
+	return 0
+}
+
+
+storage_detach()
+{
+	[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${NORMAL}"
+	[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${NORMAL}"
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Give me ${GREEN}jname=${NORMAL}"
+
+	local dsk_path dsk_name
+	local mydb virtio_type already_attached_to_me
+
+	attached_to_me=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${path}\" AND name=\"${name}\" AND jname=\"${jname}\" LIMIT 1 )
+	[ "${attached_to_me}" != "${jname}" ] && err 1 "${MAGENTA}disk ${name} with name:${name} and path:${path} is not attached to: ${GREEN}${jname}${NORMAL}"
+
+	attached_to_jname=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${path}\" AND name=\"${name}\" AND jname!=\"${jname}\" LIMIT 1 )
+
+	# not attached?
+	if [ "${attached_to_jname}" = "-" ]; then
+		by_path="-"
+		by_name="-"
+		attached_to_jname=
+	else
+		by_path="${path}"
+		by_name="${name}"
+	fi
+
+	# save variables before rcconf init
+	dsk_path="${path}"
+	dsk_name="${name}"
+
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}attachzfs: no such jail: ${GREEN}${jname}${NORMAL}"
+
+	case "${type}" in
+		iso)
+			;;
+		hdd)
+			mydb="${jailsysdir}/${jname}/local.sqlite"
+			cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" AND name=\"${dsk_name}\""
+			;;
+	esac
+
+	if [ -n "${attached_to_jname}" ]; then
+		# shared disk: delete record with my jname
+		sql="DELETE FROM media WHERE name=\"${dsk_name}\" AND path=\"${dsk_path}\" AND jname=\"${jname}\""
+	else
+		# disk is orphaned now: drop to '-' jname
+		sql="UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND name=\"${dsk_name}\" AND path=\"${dsk_path}\""
+	fi
+
+	echo "${sql}"
+	cbsdsql ${dbdir}/storage_media.sqlite "${sql}"
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
+	fi
+
+	case "${type}" in
+		hdd)
+			mydb="${jailsysdir}/${jname}/local.sqlite"
+			cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\""
+			;;
+		iso)
+			bset mode=quiet jname=${jname} vm_iso_path=''
+			;;
+	esac
+
+	return 0
+}
+
+
+
 #### MAIN
 [ -z "${header}" ] && header=1
 sqldelimer=" "
@@ -263,36 +405,12 @@ vm_res=
 
 case "${mode}" in
 	attach)
-		[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${NORMAL}"
-		[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${NORMAL}"
-		[ -z "${jname}" ] && err 1 "${MAGENTA}Give me ${GREEN}jname=${NORMAL}"
-
-		test_jname=$( cbsdsql storage_media SELECT jname FROM media WHERE path=\"${path}\" AND name=\"${name}\" )
-		[ -n "${test_jname}" -a "${test_jname}" != "-" ] && err 1 "${MAGENTA}disk ${name} with path ${path} already attached to: ${GREEN}${test_jname}${NORMAL}"
-
-		select_by_path "-"
-		[ $? -ne 0 ] && err 1 "${MAGENTA}Path not exist for jname '-': ${GREEN}${path}${NORMAL}"
-		select_by_name "-"
-		[ $? -ne 0 ] && err 1 "${MAGENTA}Name not exist for jname '-': ${GREEN}${name}${NORMAL}"
-
-		dsk_path="${path}"
-
-		. ${jrcconf}
-		[ $? -eq 1 ] && err 1 "${MAGENTA}attachzfs: no such jail: ${GREEN}${jname}${NORMAL}"
-		# [ ${status} -ne 1 ] && err 1 "${MAGENTA}attachzfs: jail is not running: ${GREEN}${jname}${NORMAL}"
-		mydb="${jailsysdir}/${jname}/local.sqlite"
-		virtio_type="virtio-blk"
-		cbsdsql ${mydb} "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
-
-		sql="UPDATE media SET jname=\"${jname}\" WHERE name=\"${name}\" AND path=\"${dsk_path}\""
-		cbsdsql ${dbdir}/storage_media.sqlite "${sql}"
-
-		# CBSD QUEUE
-		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
-		fi
-
+		storage_attach
 		err 0 "${MAGENTA}Attached to: ${GREEN}${jname}${NORMAL}"
+		;;
+	detach)
+		storage_detach
+		err 0 "${MAGENTA}Detach to: ${GREEN}${jname}${NORMAL}"
 		;;
 	list)
 		show_local | /usr/bin/column -t
@@ -381,12 +499,17 @@ case "${mode}" in
 
 		[ -z "${path}" ] && err 1 "${MAGENTA}media delete: empty path variable${NORMAL}"
 
+		short_dsk_path=$( /usr/bin/basename ${path} )
+
 		case "${type}" in
 			iso)
 				/bin/rm -f ${path}
 				;;
-			vhd)
-				bhyve_remove_dsk ${path}
+			vhd|hdd)
+				mydb="${jailsysdir}/${jname}/local.sqlite"
+				#echo "cbsdsql ${mydb} \"DELETE FROM bhyvedsk WHERE dsk_path=\"${short_dsk_path}\"\""
+				cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${short_dsk_path}\""
+				bhyve_remove_dsk ${short_dsk_path}
 				;;
 		esac
 
