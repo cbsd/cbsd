@@ -9,44 +9,48 @@ CBSDMODULE="jail"
 
 . ${subr}
 . ${strings}
+. ${tools}
 
 init $*
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-[ ${jid} -ne 0 ] && err 1 "${MAGENTA}Jail is active. Please stop them first${NORMAL}"
-[ -z "${dbfile}" ] && dbfile="${dbdir}/local.sqlite"
-[ ! -f "${dbfile}" ] && err 1 "${MAGENTA}inventorydb not found. You must create them first via misc/updatesql: ${GREEN}${dbfile}${NORMAL}"
+. ${workdir}/env_register.subr
 
-delete_full()
-{
-	local LIMITS="${jailsysdir}/${jname}/jail.limits"
-	local MEDIASQL="${jailsysdir}/${jname}/media.sql"
+emulator="jail" # for jname_is_multiple
+jname_is_multiple
 
-	[ -z "${jname}" ] && return 0
-
-	# export media data to ascii file
-	media mode=dump jname=${jname} > ${MEDIASQL}
-	cbsdsql storage_media DELETE FROM media WHERE jname=\"${jname}\" 2>/dev/null
-
-	jmkrctlconf jname=${jname} type=rctl mode=tofile file=${LIMITS}
-	jmkrctlconf jname=${jname} type=extra mode=tofile file=${LIMITS}.extra
-
-	cbsdsql local DELETE FROM jails WHERE jname=\"${jname}\"
-	cbsdsql local DELETE FROM rctl WHERE jname=\"${jname}\" 2>/dev/null
-	cbsdsql local DELETE FROM bhyve WHERE jname=\"${jname}\" 2>/dev/null
-	cbsdsql local DELETE FROM virtualbox WHERE jname=\"${jname}\" 2>/dev/null
-
-	cbsdsql local DELETE FROM virtualboxdsk WHERE jname=\"${jname}\" 2>/dev/null
-	cbsdsql local DELETE FROM virtualboxnic WHERE jname=\"${jname}\" 2>/dev/null
-}
-
-#main
-if [ -z "${rcfile}" ]; then
-	JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+if [ -n "${jail_list}" ]; then
+	JLIST="${jail_list}"
 else
-	JAILRCCONF="${rcfile}"
+	JLIST="${jname}"
 fi
 
-jmkrcconf jname=${jname} > ${JAILRCCONF}
-delete_full
+
+for jname in ${JLIST}; do
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+		continue
+	fi
+
+	if [ ${jid} -ne 0 ]; then
+		${ECHO} "${MAGENTA}Jail is active. Please stop them first: ${GREEN}${jname}${NORMAL}"
+		continue
+	fi
+
+	[ -z "${dbfile}" ] && dbfile="${dbdir}/local.sqlite"
+	if [ ! -f "${dbfile}" ]; then
+		${ECHO} "${MAGENTA}inventorydb not found. You must create them first via misc/updatesql: ${GREEN}${dbfile}${NORMAL}"
+		continue
+	fi
+
+	if [ -z "${rcfile}" ]; then
+		JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+	else
+		JAILRCCONF="${rcfile}"
+	fi
+
+	jmkrcconf jname=${jname} > ${JAILRCCONF}
+	register_delete_full
+done
+
+

@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v11.1.3
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname compress imgname ls"
@@ -18,34 +18,19 @@ set +e
 
 init $*
 
-if [ -z "${ls}" ]; then
-	ls="jls"
-else
-	shift
-fi
+jexport_me()
+{
+	${ECHO} "${MAGENTA}Exporting (with compress level:${GREEN}${compress}${MAGENTA}), please stand by: ${GREEN}${jname}${NORMAL}"
+	local DEST="${exportdir}/${imgname}"
+	local JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
 
-[ -z "${jname}" ] && select_jail_by_list -s "List of all jails" -e ${ls}
-[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
+	jmkrcconf jname=${jname} > ${JAILRCCONF}
 
-if [ -z "${imgname}" ]; then
-	imgname="${jname}.img"
-else
-	imgname="${imgname}.img"
-fi
-
-[ -z "${compress}" ] && compress=6
-
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-[ ${jid} -ne 0 -a "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}VM is online${NORMAL}"
-
-DEST="${exportdir}/${imgname}"
-JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
-
-jmkrcconf jname=${jname} > ${JAILRCCONF}
-
-# check for already existance and offline
-[ ! -d "${data}" ] && err 1 "${MAGENTA}No jail data for ${jname}: ${GREEN}${data}${NORMAL}"
+	# check for already existance and offline
+	if [ ! -d "${data}" ]; then
+		${ECHO} "${MAGENTA}No jail data for ${jname}: ${GREEN}${data}${NORMAL}"
+		return 1
+	fi
 
 SPACER="___NCSTART_HEADER=1_ \
 ___NCSTART_RCCONF=1 \
@@ -57,78 +42,133 @@ ___NCSTART_LOCALFSTAB=1
 ___NCSTART_SYSDATA=1 \
 ___NCSTART_DATA=1"
 
-for _part in ${SPACER}; do
-	case ${_part} in
-		___NCSTART_HEADER*)
-			res=$( imgpart mode=pack jname=${jname} part=header out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+	for _part in ${SPACER}; do
+		case ${_part} in
+			___NCSTART_HEADER*)
+				res=$( imgpart mode=pack jname=${jname} part=header out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_RCCONF*)
+				#currenlty we import/export operation for rc.conf via ascii format
+				#cause diffrence node can have version of cbsd with incompattible jail schema
+				#so create rc.conf for pack operation
+				res=$( imgpart mode=pack jname=${jname} part=rcconf out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_PKGINFO*)
+				res=$( imgpart mode=pack jname=${jname} part=pkginfo out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_DESCR*)
+				res=$( imgpart mode=pack jname=${jname} part=descr out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_INFO*)
+				imgpart mode=pack jname=${jname} part=info out=${DEST}
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_FSTAB*)
+				TMPFSTAB="${ftmpdir}/fstab.$$"
+				[ ! -f "${mount_fstab}" ] && /usr/bin/touch ${mount_fstab}
+				/bin/cp ${mount_fstab} ${TMPFSTAB}
+				res=$( replacewdir file0="${mount_fstab}" old=${workdir} new="CBSDROOT" )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part} replacewdir: ${res}${NORMAL}"
+				res=$( imgpart mode=pack jname=${jname} part=fstab out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				/bin/mv ${TMPFSTAB} ${mount_fstab}
+				;;
+			___NCSTART_LOCALFSTAB*)
+				# localfstab is not mandatory file. Errcode is always 0
+				res=$( imgpart mode=pack jname=${jname} part=localfstab out=${DEST} || true )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_SYSDATA*)
+				res=$( imgpart mode=pack jname=${jname} part=sysdata out=${DEST} )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				;;
+			___NCSTART_DATA*)
+				#test for zfs mounted & mount if not
+				case $zfsfeat in
+					1)
+						. $zfstool
+						zfsmnt ${data}
+						if [ $? -eq 2 ]; then
+							WASNOMOUNT=1
+						else
+							WASNOMOUNT=0
+						fi
+						[ ${WASNOMOUNT} -eq 1 ] && /sbin/zfs mount "${ZPOOL}"
+						;;
+				esac
+				res=$( imgpart mode=pack jname=${jname} compress=${compress} part=data out=${DEST} 2>&1 )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				[ "${WASNOMOUNT}" = "1" ] && /sbin/zfs unmount "${ZPOOL}"
+				;;
+		esac
+	done
+
+	# Summary stat size
+	if [ -s "${DEST}" ]; then
+		imgfile=$( /usr/bin/basename ${DEST} )
+		img_size=$( /usr/bin/stat -f "%z" ${DEST} 2>/dev/null )
+		if conv2human "${img_size}"; then
+			img_size=$convval
+		fi
+		${ECHO} "${MAGENTA}Images size for ${imgfile}: ${GREEN}${img_size}${NORMAL}"
+		return 0
+	else
+		${ECHO} "${MAGENTA}Unknown error in jexport${NORMAL}"
+		return 1
+	fi
+}
+
+[ -z "${compress}" ] && compress=6
+
+if [ -z "${ls}" ]; then
+	ls="jls"
+else
+	shift
+fi
+
+if [ -n "${jname}" ]; then
+
+	case "${ls}" in
+		bls)
+			emulator="bhyve"	# for jname_is_multiple
 			;;
-		___NCSTART_RCCONF*)
-			#currenlty we import/export operation for rc.conf via ascii format
-			#cause diffrence node can have version of cbsd with incompattible jail schema
-			#so create rc.conf for pack operation
-			res=$( imgpart mode=pack jname=${jname} part=rcconf out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_PKGINFO*)
-			res=$( imgpart mode=pack jname=${jname} part=pkginfo out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_DESCR*)
-			res=$( imgpart mode=pack jname=${jname} part=descr out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_INFO*)
-			imgpart mode=pack jname=${jname} part=info out=${DEST}
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_FSTAB*)
-			TMPFSTAB="${ftmpdir}/fstab.$$"
-			[ ! -f "${mount_fstab}" ] && /usr/bin/touch ${mount_fstab}
-			/bin/cp ${mount_fstab} ${TMPFSTAB}
-			res=$( replacewdir file0="${mount_fstab}" old=${workdir} new="CBSDROOT" )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part} replacewdir: ${res}${NORMAL}"
-			res=$( imgpart mode=pack jname=${jname} part=fstab out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			/bin/mv ${TMPFSTAB} ${mount_fstab}
-			;;
-		___NCSTART_LOCALFSTAB*)
-			# localfstab is not mandatory file. Errcode is always 0
-			res=$( imgpart mode=pack jname=${jname} part=localfstab out=${DEST} || true )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_SYSDATA*)
-			res=$( imgpart mode=pack jname=${jname} part=sysdata out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			;;
-		___NCSTART_DATA*)
-			#test for zfs mounted & mount if not
-			case $zfsfeat in
-				1)
-					. $zfstool
-					zfsmnt ${data}
-					if [ $? -eq 2 ]; then
-						WASNOMOUNT=1
-					else
-						WASNOMOUNT=0
-					fi
-					[ $WASNOMOUNT -eq 1 ] && /sbin/zfs mount "${ZPOOL}"
-					;;
-			esac
-			res=$( imgpart mode=pack jname=${jname} compress=${compress} part=data out=${DEST} )
-			[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
-			[ "$WASNOMOUNT" = "1" ] && /sbin/zfs unmount "${ZPOOL}"
+		*)
+			emulator="jail"		# for jname_is_multiple
 			;;
 	esac
-done
+	jname_is_multiple
 
-if [ -s "${DEST}" ]; then
-	imgfile=$( /usr/bin/basename ${DEST} )
-	img_size=$( /usr/bin/stat -f "%z" ${DEST} 2>/dev/null )
-	if conv2human "${img_size}"; then
-		img_size=$convval
+	if [ -n "${jail_list}" ]; then
+		# recursion for masked jails
+		for i in ${jail_list}; do
+			jexport jname=${i} compress=${compress}
+		done
+		exit 0
 	fi
-	err 0 "${MAGENTA}Images size for ${imgfile}: ${GREEN}${img_size}${NORMAL}"
 else
-	err 1 "${MAGENTA}Unknown error in jexport${NORMAL}"
+	select_jail_by_list -s "List of all jails" -e ${ls}
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
 fi
+
+if [ -z "${imgname}" ]; then
+	imgname="${jname}.img"
+else
+	imgname="${imgname}.img"
+fi
+
+. ${jrcconf}
+
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+if [ ${jid} -ne 0 -a "${emulator}" = "bhyve" ]; then
+	err 1 "${MAGENTA}VM is online${NORMAL}"
+fi
+
+jexport_me
+ret=$?
+
+exit ${ret}

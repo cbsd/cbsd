@@ -97,15 +97,16 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
 			xhci_args="-s 30,xhci,tablet"
+
+			# VNC password support introduced in FreeBSD 11.1+
+			if [ ${freebsdhostversion} -gt 1101500 ]; then
+				if [ -n "${vnc_password}" ]; then
+					vnc_args="${vnc_args},password=${vnc_password}"
+				fi
+			fi
+
 		else
 			xhci_args=""
-		fi
-	fi
-
-	# VNC password support introduced in FreeBSD 11.1+
-	if [ ${freebsdhostversion} -gt 1101500 ]; then
-		if [ -n "${vnc_password}" ]; then
-			vnc_args="${vnc_args},password=${vnc_password}"
 		fi
 	fi
 
