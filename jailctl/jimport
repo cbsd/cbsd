@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v11.1.0
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname list new_jname new_ip4_addr new_host_hostname"
@@ -24,19 +24,62 @@ init $*
 
 readconf zfs.conf
 
-list_img()
+# return $list_img
+get_list_img()
 {
-	/bin/ls -1 ${importdir} |/usr/bin/grep .img$ |/usr/bin/sed 's/\.img//g'
-	exit 0
+	list_img=$( /bin/ls -1 ${importdir} |/usr/bin/grep \.img$ |/usr/bin/sed 's/\.img//g' |/usr/bin/xargs )
 }
 
-[ -n "$list" ] && list_img
-[ -z "${jname}" ] && jname=$1
+if [ -n "${list}" ]; then
+	get_list_img
+	for i in ${list_img}; do
+		echo "${i}"
+	done
+	exit 0
+fi
+
+if [ -n "${jname}" ]; then
+
+	# We accept jname with wildcard '*' e.g.: jail*, *vnet*
+	# Also we need personal jname_is_multiple()
+	# since jname_is_multiple from tools operate only with SQLite3
+	# while jregister works only with ascii-based rc.conf files
+
+	# jail as mask?
+	is_mask=0
+
+	jail_pref=$( substr --pos=0 --len=1 --str=${jname} )
+
+	if [ "${jail_pref}" = "*" ]; then
+		is_mask=1
+	else
+		strpos --str="${jname}" --search="*"
+		is_mask=$?
+	fi
+
+	if [ ${is_mask} -ne 0 ]; then
+		get_list_img
+		if [ -n "${list_img}" ]; then
+			for i in ${list_img}; do
+				jimport jname=${i}
+			done
+		else
+			err 1 "${MAGENTA}No such jails by mask: ${GREEN}${jname}${NORMAL}"
+		fi
+		exit 0
+	fi
+else
+	jname=$1
+fi
 
 if [ -z "${jname}" ]; then
 	${ECHO} "${MAGENTA}Give me jname or full path${NORMAL}"
 	${ECHO} "${MAGENTA}Content of ${GREEN}${importdir}${MAGENTA}:${NORMAL}"
-	list_img
+	get_list_img
+	for i in ${list_img}; do
+		echo "${i}"
+	done
+	exit 0
 fi
 
 DATA="${importdir}"
@@ -52,8 +95,10 @@ imgpart mode=extract jname=${SRC} part=header out=${TMPDIR} >/dev/null 2>&1 || i
 
 [ ! -f "${TMPDIR}" ] && err 1 "${MAGENTA}No header info extracted${NORMAL}"
 
-. "$TMPDIR"
+. "${TMPDIR}"
 [ -z "${hdrver}" ] && hdrver=0
+
+${ECHO} "${MAGENTA}Importing image, please stand by: ${GREEN}${jname}${NORMAL}"
 
 if [ ${hdrver} -ne 3 ]; then
 	${ECHO} "${MAGENTA}Legacy image version detected. Using imgpart2 for extract${NORMAL}"
@@ -189,7 +234,6 @@ if [ -n "${vm_zvol_list}" ]; then
 		# ___NCSTART_ZVOL_dsk1=1
 		# ___NCNCSTOP_ZVOL_dsk1=1
 
-#		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} > /usr/${i}.gz
 		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} | /usr/bin/gunzip -c > ${dsk}
 
 		# /bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
