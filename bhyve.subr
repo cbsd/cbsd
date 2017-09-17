@@ -207,10 +207,12 @@ compile_nic_args()
 	local sqldelimer=" "
 	local mybridge
 	local net_emul=
+	local _parent_mtu
+	local _ret=
 
 	local errmsg=
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -305,6 +307,26 @@ compile_nic_args()
 			echo "export nic${_id}=\"-s ${pcislot}:0,${net_emul},${mytap}\" ;"
 		fi
 
+		# MTU management
+		[ -z "${nic_mtu}" ] && nic_mtu="0"	# AUTO
+		if [ ${nic_mtu} -eq 0 ]; then
+			# Get parent MTU size
+			_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --quiet 2>/dev/null )
+			_ret=$?
+			if [ ${_ret} -eq 0 ]; then
+				[ -n "${_parent_mtu}" ] && _ret=$( /sbin/ifconfig ${mytap} mtu ${_parent_mtu} )
+			fi
+		else
+			# Get parent MTU size
+			# compare MTU with parent
+			#_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --quiet 2>/dev/null )
+			#_ret=$?
+			#if [ ${_ret} -eq 0 ]; then
+			#	[ ${nic_mtu} -gt ${_parent_mtu} ] 
+			#fi
+			_ret=$( /sbin/ifconfig ${mytap} mtu ${nic_mtu} )
+		fi
+
 		echo "export mytap${_id}=\"${mytap}\";"
 
 		_id=$(( _id + 1 ))
@@ -356,7 +378,7 @@ compile_lpc_args()
 # export arguments for bhyve pci_passthru_args
 compile_pci_passthru_args()
 {
-	local ppt
+	local ppt _i
 
 	ppt=$( cbsdsql local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 
@@ -375,11 +397,15 @@ compile_pci_passthru_args()
 		pci_passthru_args="${pci_passthru_args} -s ${bhyve_pci_index},passthru,${_i}"
 	done
 
-	pci_passthru_args="${pci_passthru_args} -S"
+	pci_passthru_args="${pci_passthru_args}"
 
-	local _dmar_test=$( /usr/sbin/acpidump -t | /usr/bin/grep DMAR )
-	[ -z "${_dmar_test}" ] && err 1 "${MAGENTA}I/O MMU / VT-d not enabled. Check you hardware or BIOS setting${NORMAL}"
+	. ${workdir}/virtual.subr
 
+	if check_dmar; then
+		err 1 "${MAGENTA}I/O MMU / VT-d not enabled. Check you hardware or BIOS setting${NORMAL}"
+	fi
+
+	return 0
 }
 
 
