@@ -35,6 +35,7 @@ clean:
 	${RM} -f tools/imghelper
 	${RM} -f tools/xo
 	${RM} -f tools/vale-ctl
+	${RM} -f tools/nic_info
 	${RM} -f tools/bridge
 
 cbsd:
@@ -58,6 +59,7 @@ cbsd:
 	${CC} tools/src/imghelper.c -o tools/imghelper && ${STRIP} tools/imghelper
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
+	${CC} tools/src/nic_info.c -o tools/nic_info && ${STRIP} tools/nic_info
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
 
