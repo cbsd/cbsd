@@ -89,7 +89,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	for i in ${mytap}; do
 		/sbin/ifconfig ${i} up
-		/sbin/ifconfig ${i} mtu 1500
 	done
 
 	[ ${freebsdhostversion} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
@@ -113,7 +112,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	add_bhyve_opts="-H"  # Yield the virtual CPU thread when a HLT instruction is detected.
 
 	[ "${bhyve_generate_acpi}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -A"
-	[ "$bhyve_wire_memory}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -S"
+
+	[ "${bhyve_wire_memory}" = "1" -o -n "${pci_passthru_args}" ] && add_bhyve_opts="${add_bhyve_opts} -S"
+
 	[ "${bhyve_rts_keeps_utc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -u"
 	[ "${bhyve_force_msi_irq}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -W"
 	[ "${bhyve_x2apic_mode}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -x"
