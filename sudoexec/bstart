@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.1.7
 MYARG=""
 MYOPTARG="jname inter debug"
 MYDESC="Start jail"
@@ -174,8 +174,6 @@ start_bhyve()
 							fi
 							;;
 					esac
-#					echo "DEBUG: $bhyveload_cmd"
-#					${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval $bhyveload_cmd"
 				fi
 			fi
 			;;
@@ -343,12 +341,17 @@ start_bhyve()
 		unset lpc_args
 	fi
 
+	# init VirtFS compile_virtio_9p_args
+	if ! compile_virtio_9p_args; then
+		${ECHO} "${MAGENTA}No such 9p for VMs: ${GREEN}${jname}${NORMAL}"
+		unset virtio_9p_args
+	fi
+
 	# init efi_args
 	if ! compile_efi_args; then
 		${ECHO} "${MAGENTA}No such efi for VMs: ${GREEN}${jname}${NORMAL}"
 		unset efi_args
 	fi
-
 
 	# init lpc_args
 	if ! compile_lpc_args; then
@@ -364,9 +367,6 @@ start_bhyve()
 
 	# Poehali!
 	passthr=""
-#	passthr="-s 1:0,hcd-uhci"
-#	passthr="-s 3:0,ehci"
-#	passthr="-s 3:0,ehci,1"
 
 	export_bhyve_data_for_external_hook
 	external_exec_master_script "master_prestart.d"
@@ -421,10 +421,10 @@ bhyve_vnc_resolution="${bhyve_vnc_resolution}"
 bhyve_vnc_tcp_bind="${bhyve_vnc_tcp_bind}"
 
 vnc_password="${vnc_password}"
+virtio_9p_args="${virtio_9p_args}"
 
 EOF
 
-#	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf > /tmp/bhyve.${jname}.log"
 	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf"
 
 	if [ -n "${console_nmdm}" ]; then
@@ -439,15 +439,12 @@ EOF
 		for i in ${console_nmdm}; do
 			if [ $con -eq 0 ]; then
 				${tmuxcmd} split-window -v -p 96 -t 0 "cu -l ${i} -s 9600" # DEBUG string
-#				${tmuxcmd} split-window -v -p 100 -t 0 "cu -l ${i} -s 9600"
 			else
 				${tmuxcmd} new-window -t 1 "cu -l ${i} -s 9600"
 			fi
-#			con=$(( con + 1 ))
-
 			con=$(( con + 1 ))
-
 		done
+
 		${tmuxcmd} select-window -t cbsd-${jname}:0
 	fi
 
@@ -488,6 +485,9 @@ EOF
 
 	${ECHO} "${MAGENTA}PID: ${GREEN}${vm_pid}${NORMAL}"
 	cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
+
+	# update state_time
+	cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
 
 	if [ "${vm_efi}" = "none" ]; then
 		err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
@@ -549,6 +549,8 @@ init_systap
 
 default_profile="bhyve-default-default.conf"
 readconf vnc.conf
+readconf bstart.conf
+
 readconf ${default_profile}
 
 . ${jrcconf}
@@ -559,8 +561,10 @@ readconf ${default_profile}
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ "${vm_os_type}" != "freebsd" ] && init_grubcheck
-# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+[ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
+[ -z "${debug}" ] && debug=0
 
+# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
 MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 
 [ -z "${MDFILE}" ] && ${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"
@@ -606,5 +610,6 @@ if [ ${status} -eq 3 ]; then
 		err 1 "${MAGENTA}Please finish maintenance and switch mode via: ${GREEN}jswmode jname=${jname} mode=master comment='0'${NORMAL}"
 	fi
 fi
+
 start_bhyve
 exit 0
