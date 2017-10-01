@@ -455,8 +455,6 @@ compile_console_args()
 	return 0
 }
 
-
-
 # export arguments for bhyve virtio-rnd
 compile_virtiornd_args()
 {
@@ -468,6 +466,51 @@ compile_virtiornd_args()
 	fi
 
 	virtiornd_args="-s ${bhyve_pci_index}:0,virtio-rnd"
+}
+
+# export arguments for bhyve virtio-9p
+compile_virtio_9p_args()
+{
+	# this is feature of FreeBSD 12.+
+	[ ${freebsdhostversion} -lt 1000730 ] && return 0
+	local shares_num
+	local mydb
+	local last_share
+
+	shares_num=1
+	mydb="${jailsysdir}/${jname}/local.sqlite"
+
+	sqldelimer=" "
+
+	eval $( cbsdsql ${mydb} SELECT p9path,p9device FROM p9shares 2>/dev/null | while read _p9path _p9device; do
+		echo "p9path${shares_num}=\"${_p9path}\""
+		echo "p9device${shares_num}=\"${_p9device}\""
+		shares_num=$(( shares_num + 1 ))
+	done )
+
+	for last_share in $( /usr/bin/seq 1 24 ); do
+		unset p9path p9device
+		eval p9path="\$p9path$last_share"
+		[ -z "${p9path}" ] && break
+		eval p9device="\$p9device$last_share"
+
+		unset \$p9path$last_share
+		unset \$p9device$last_share
+
+		if ! next_pci_id; then
+			return 1
+		fi
+
+		if [ -d ${p9path} ]; then
+			${ECHO} "${MAGENTA}virtio_p9_shares: shared directory enabled: ${LYELLOW}${p9device} ${MAGENTA} ${MAGENTA}-> ${p9path}${NORMAL}"
+			${ECHO} "  ${MAGENTA}Use to mount: mount -t 9p -o trans=virtio ${p9device} /mnt"
+			virtio_9p_args="${virtio_9p_args} -s ${bhyve_pci_index},virtio-9p,${p9device}=${p9path}"
+		else
+			${ECHO} "${MAGENTA}virtio_p9_shares error: directory doesn't exist, skipp for share: ${GREEN}${p9path}${NORMAL}"
+		fi
+	done
+
+	return 0
 }
 
 # export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)

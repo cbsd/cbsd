@@ -1,0 +1,150 @@
+#!/usr/local/bin/cbsd
+#v11.1.7
+MYARG="mode"
+MYOPTARG="jname header display p9device p9path"
+MYDESC="Manage bhyve p9 shared folders"
+CBSDMODULE="bhyve"
+ADDHELP="mode=list - show ppt\n\
+mode=attach - attach shared folder to jname, p9device= and p9path= required\n\
+mode=detach - detach shared folder from jname, p9device= required\n\
+p9device - share name, one-word\n\
+p9path - shared folders path\n
+header=0 don't print header\n\
+display= list by comma for column. Default: jname,p9path,p9device\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+. ${workdir}/virtual.subr
+
+init $*
+
+[ -z "${display}" ] && display="jname,p9path,p9device"
+
+#remove commas for loop action on header
+mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+
+# upper for header
+myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+
+show_header()
+{
+	local _header="${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && $ECHO ${_header}
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && return 0
+
+		if [ -z "${_status}" ]; then
+			_status="${NORMAL}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	[ -n "${2}" ] && local jname="${2}"
+
+	_status=
+	_sql="SELECT p9path,p9device FROM p9shares"
+	cbsdsql ${sqlfile} ${_sql}| while read p9path p9device; do
+		populate_output_data
+		${ECHO} ${_status}
+	done
+}
+
+
+# return 1 if p9device record exist
+#  $p9device, $mydb must be set
+share_exist()
+{
+	local _tmp
+
+	_tmp=$( cbsdsql ${mydb} SELECT p9path FROM p9shares WHERE p9device=\"${p9device}\" 2>/dev/null )
+
+	if [ -n "${_tmp}" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+show_shares()
+{
+	show_header
+
+	for i in ${jname}; do
+		mydb="${jailsysdir}/${i}/local.sqlite"
+		show_jaildata_from_sql ${mydb} ${i}
+	done
+
+	return 0
+}
+
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+
+case "${mode}" in
+	list)
+		[ -z "${jname}" ] && jname=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+
+		show_shares | /usr/bin/column -t
+
+		err 0 ""
+		;;
+	attach)
+		[ -z "${jname}" ] && err 1 "${MAGENTA}Please set ${GREEN}jname=${NORMAL}"
+		[ -z "${p9path}" -o -z "${p9device}" ] && err 1 "${GREEN}p9path= ${MAGENTA}and ${GREEN}p9device=${MAGENTA} must be set${NORMAL}"
+		mydb="${jailsysdir}/${jname}/local.sqlite"
+
+		if share_exist; then
+			err 1 "${MAGENTA}Share with p9device=${GREEN}${p9device}${MAGENTA} already exist${NORMAL}"
+		fi
+
+		[ ! -d ${p9path} ] && err 1 "${MAGENTA}Path not exist: ${GREEN}${p9path}${NORMAL}"
+
+		cbsdsql ${mydb} "INSERT INTO p9shares ( p9path, p9device ) VALUES ( \"${p9path}\", \"${p9device}\" )"
+		err 0 "${MAGENTA}Attached${NORMAL}"
+		;;
+	detach)
+		[ -z "${jname}" ] && err 1 "${MAGENTA}Please set ${GREEN}jname=${NORMAL}"
+		[ -z "${p9device}" ] && err 1 "${GREEN}${GREEN}p9device=${MAGENTA} must be set${NORMAL}"
+		mydb="${jailsysdir}/${jname}/local.sqlite"
+
+		if share_exist; then
+			cbsdsql ${mydb} "DELETE FROM p9shares WHERE p9device=\"${p9device}\""
+		else
+			err 1 "${MAGENTA}Share with p9device=${GREEN}${p9device}${MAGENTA} not exist${NORMAL}"
+		fi
+		cbsdsql ${mydb} "DELETE FROM p9shares WHERE p9device=\"${p9device}\""
+		err 0 "${MAGENTA}Dettached${NORMAL}"
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+esac
