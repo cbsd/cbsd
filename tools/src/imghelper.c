@@ -12,7 +12,7 @@
 #define FALSE 0
 #define TRUE 1
 
-/* List of all nodesql */
+/* List of opts */
 enum {
 	C_START_SIGN,
 	C_END_SIGN,
@@ -27,7 +27,6 @@ usage(void)
 	printf("[sys] Extract info from image file\n");
 	printf("require: start end infile\n");
 	printf("opt: outfile\n");
-//	printf("usage: imgpart --start start_sign --end stop_sign --infile infile --outfile outfile\n");
 	exit(0);
 }
 
@@ -124,7 +123,6 @@ int main(int argc, char *argv[])
 
 				if (i == len_st) {
 					start_pos=ftello(fp) + 1;
-					//printf("start sign found here: %ld!!!\n",start_pos);
 					hammer++;
 				}
 				break;
@@ -138,7 +136,6 @@ int main(int argc, char *argv[])
 
 				if (i == len_end) {
 					stop_pos=ftello(fp) - len_end;
-					//printf("stop sign found here: %ld!!!\n",stop_pos);
 					hammer++;
 				}
 				break;
@@ -163,11 +160,7 @@ int main(int argc, char *argv[])
 			break;
 	}
 
-	//empty
 	if ( start_pos == stop_pos ) exit(0);
-
-//	printf("%d, from %ld to %ld\n",hammer,start_pos,stop_pos);
-//	exit(0);
 
 	// second pass
 	if ((fp = fopen(infile, "r")) == NULL) {
