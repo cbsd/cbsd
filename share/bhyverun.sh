@@ -70,6 +70,8 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			eval "${bhyveload_cmd}"
 		fi
 	fi
+	
+	echo "FFF ${bhyve_vnc_vgaconf}" >> /a.txt
 
 	case "${vm_boot}" in
 		"cd")
