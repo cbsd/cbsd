@@ -70,12 +70,19 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			eval "${bhyveload_cmd}"
 		fi
 	fi
+	
+	echo "FFF ${bhyve_vnc_vgaconf}" >> /a.txt
 
 	case "${vm_boot}" in
 		"cd")
 			# add ,wait args when boot from CD
 			if [ "${vm_efi}" != "none" ]; then
 				if [ -n "${vnc_args}" -a "${vm_vnc_port}" != "1" ]; then
+					orig_vnc_args="${vnc_args}"
+					# bhyve_vnc_vgaconf before wait
+					if [ "${bhyve_vnc_vgaconf}" != "io" ]; then
+						[ -n "${bhyve_vnc_vgaconf}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
+					fi
 					orig_vnc_args="${vnc_args}"
 					if [ "${cd_vnc_wait}" = "1" ]; then
 						echo "Waiting for first connection via VNC to starting VMs..."
@@ -85,6 +92,10 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			fi
 			;;
 		*)
+			# bhyve_vnc_vgaconf before wait
+			if [ "${bhyve_vnc_vgaconf}" != "io" ]; then
+				[ -n "${bhyve_vnc_vgaconf}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
+			fi
 	esac
 
 	for i in ${mytap}; do
@@ -171,6 +182,8 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	clear
 done
 
+# extra destroy
+/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1 || true
 /bin/rm -f /tmp/bhyvestop.${jname}.lock
 # extra stop
 /usr/local/bin/cbsd bstop cbsd_queue_name=none jname=${jname}
