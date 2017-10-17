@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.1.9
 CBSDMODULE="bhyve"
 MYARG=""
 MYOPTARG="alljails shownode display node header"
@@ -8,7 +8,10 @@ ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,jid,vm_ram,vm_cpus,vm_os_type,path,ip4_addr,status,vnc_port\n"
+display= list by comma for column.\n\
+         Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port\n\
+         If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+         additional field: path\n"
 EXTHELP="wf_bls.html"
 
 . ${subr}
@@ -17,7 +20,17 @@ EXTHELP="wf_bls.html"
 readconf bls.conf
 init $*
 
-[ -z "${display}" ] && display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,path,status,vnc_port"
+if [ -z "${display}" ]; then
+	case "${racct}" in
+		1)
+			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port"
+			;;
+		*)
+			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
+			;;
+	esac
+fi
+
 [ "${shownode}" = "1" ] && display="nodename,${display}"
 
 #remove commas for loop action on header
@@ -63,12 +76,21 @@ show_header()
 	[ ${header} -eq 1 ] && $ECHO ${_header}
 }
 
+# $1 - pid
+get_rctl()
+{
+	local _val
+
+	get_rctl_values -m process -p ${1} -j ${jname}
+}
+
 # -j $jname
 # -u 1 - always show status as "Unregister"
 populate_output_data()
 {
 	local unregister="0"
 	local _tmpport _tmpbind
+	local _pid=0
 
 	printf "${NORMAL}" # for column sort
 
@@ -80,8 +102,22 @@ populate_output_data()
 		shift $(($OPTIND - 1))
 	done
 
+	_pid="0"
+
 	if [ -e "/dev/vmm/${jname}" ]; then
+		# bhyve is active
 		printf "${GREEN}"
+
+		if [ "${racct}" = "1" ]; then
+			memoryuse=0
+			pcpu=0
+			_pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
+			if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
+				_val="0"
+			else
+				get_rctl ${_pid}
+			fi
+		fi
 	else
 		printf "${CYAN}"
 	fi
@@ -95,6 +131,23 @@ populate_output_data()
 			vm_ram)
 				# convert to MB
 				_val=$(( _val / 1024 / 1024 ))
+				;;
+			vm_curmem)
+				# convert to MB
+				if [ "${_pid}" != "0" ]; then
+					_val=$(( memoryuse / 1024 / 1024 ))
+					[ -z "${_val}" ] && _val=0
+				else
+					_val="0"
+				fi
+				;;
+			pcpu)
+				if [ "${_pid}" != "0" ]; then
+					_val="${pcpu}"
+					[ -z "${_val}" ] && _val=0
+				else
+					_val="0"
+				fi
 				;;
 			vnc_port)
 				if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
@@ -205,7 +258,7 @@ show_jails()
 	fi
 }
 
-
+. ${workdir}/jrctl.subr
 
 #### MAIN
 [ -z "${header}" ] && header=1
