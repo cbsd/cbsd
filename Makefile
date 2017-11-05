@@ -45,7 +45,7 @@ cbsd:
 	${CC} bin/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
 	${CC} bin/cfetch.c -o bin/cfetch -lfetch -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
 	${CC} sbin/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
-	${CC} misc/src/sqlcli.c -static -pthread -lsqlite3 -L/usr/local/lib -I/usr/local/include -o misc/sqlcli && ${STRIP} misc/sqlcli
+	${CC} misc/src/sqlcli.c -static -pthread -lsqlite3 -lm -L/usr/local/lib -I/usr/local/include -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt
 	${CC} misc/src/chk_arp_byip.c -o misc/chk_arp_byip && ${STRIP} misc/chk_arp_byip
