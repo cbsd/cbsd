@@ -1,10 +1,11 @@
 #!/usr/local/bin/cbsd
 #v11.1.2
 MYARG=""
-MYOPTARG="jname remote inter src_session"
+MYOPTARG="jname remote inter src_session user"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
-ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n"
+ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
+user= login from the specified user. Default is: root"
 EXTHELP="wf_jlogin.html"
 
 # Login by jid not supported yet
@@ -14,13 +15,12 @@ EXTHELP="wf_jlogin.html"
 . ${tools}
 
 init $*
-
 readconf jlogin.conf
 
 try_remote()
 {
 	[ "${remote}" = "1" ] && err 1 "${MAGENTA}No such jail${NORMAL}"
-	RHST=$( jwhereis ${jname}|head -n1 )
+	RHST=$( jwhereis ${jname}| /usr/bin/head -n1 )
 	[ -z "${RHST}" ] && err 1 "No such jail for login"
 
 	# we don't need for interactive when come with remote=2 from select_jail_by_list
@@ -29,7 +29,7 @@ try_remote()
 		[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such jail for login"
 	fi
 
-	rexe node=${RHST} cbsd jlogin src_session=${nodename} jname=$jname remote=1
+	rexe node=${RHST} /usr/local/bin/cbsd jlogin src_session=${nodename} jname=${jname} remote=1
 	err 0 ""
 }
 
@@ -42,20 +42,13 @@ init_tmux()
 
 	tmuxcmd=$( which tmux 2>/dev/null )
 
-	src_session="$( whoami )-nodename"
+	src_session="$( /usr/bin/whoami )-nodename"
 	session_name="${src_session}-${jname}"
 
 	if [ -n "${tmuxcmd}" ]; then
 		# tmux here and we preferred them
 		return 0
 	fi
-
-#	tmuxcmd=$( which screen  2>/dev/null )
-
-#	if [ -n "${tmuxcmd}" ]; then
-#		# screen here
-#		return 0
-#	fi
 
 	# no tmux here
 	tmux_login=0
@@ -65,6 +58,8 @@ init_tmux()
 
 login_internal()
 {
+	local _res
+
 	#rctl/limits area
 	. ${workdir}/rctl.subr
 
@@ -74,13 +69,13 @@ login_internal()
 	if [ ${exec_fib} -eq 0 ]; then
 		SETFIB=""
 	else
-		SETFIB="setfib ${exec_fib}"
+		SETFIB="/usr/sbin/setfib ${exec_fib}"
 	fi
 
 	if [ "${cpuset}" = "0" ]; then
 		CPUSET=""
 	else
-		CPUSET="cpuset -c -l ${cpuset}"
+		CPUSET="/usr/bin/cpuset -c -l ${cpuset}"
 	fi
 
 	case "${ver}" in
@@ -95,12 +90,18 @@ login_internal()
 			fi
 			;;
 		*)
+			if [ "${user}" != "root" ]; then
+				# additional check for user existance
+				_res=$( /usr/sbin/pw -R ${path} usershow ${user} 2>&1 )
+				[ $? -ne 0 ] && err 1 "${MAGENTA}Unable to find user: ${_res}${NORMAL}"
+			fi
+
 			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
 				. ${workdir}/emulator.subr
 				init_usermode_emul
-				LOGIN_STR="/bin/${emulator} /usr/bin/login -f root"
+				LOGIN_STR="/bin/${emulator} /usr/bin/login -f ${user}"
 			else
-				LOGIN_STR="/usr/bin/login -f root"
+				LOGIN_STR="/usr/bin/login -f ${user}"
 			fi
 			;;
 	esac
@@ -135,6 +136,12 @@ login_custom()
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
 }
+
+if [ -z "${user}" ]; then
+	user="root"
+else
+	shift
+fi
 
 [ -z "${jname}" ] && jname=$1
 [ -z "${jname}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
