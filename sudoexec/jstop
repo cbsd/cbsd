@@ -105,8 +105,7 @@ fi
 
 makejconf jname=${jname} out=${ftmpdir}/${jname}.conf epair=${myepair}b fbsd=${is_freebsd} is_stop=1
 
-eval multiips4=\"\$ip\"
-[ $baserw -eq 1 ] && path=$data
+[ ${baserw} -eq 1 ] && path=${data}
 
 fwcounters jname=${jname} mode=remove
 expose jname=${jname} mode=clear
@@ -124,7 +123,17 @@ sleep 2
 
 external_exec_script "stop.d"
 
-/usr/sbin/jail -f ${ftmpdir}/${jname}.conf -r ${jname}
+# there is some problem with stopping cron:
+# Stopping cron.
+# Waiting for PIDS: 71597
+# 90 second watchdog timeout expired. Shutdown terminated.
+# jail: jail17: /bin/sh /etc/rc.shutdown: exited on signal 9
+# always reproduced when the jail has zfs attached fs
+# try to defend and kill the cron preventively
+
+[ -r ${path}/var/run/cron.pid ] && /bin/pkill -9 -F ${path}/var/run/cron.pid
+
+/usr/sbin/jail -f ${ftmpdir}/${jname}.conf -r ${jname} || true
 
 for i in $( /bin/ps -J ${jid} -o pid |/usr/bin/grep -v PID ); do
 	/bin/kill -9 ${i} > /dev/null 2>&1
@@ -139,7 +148,6 @@ exec_poststop
 # waiting for fixed kqueue in upstream
 /usr/sbin/jail -r ${ST} > /dev/null 2>&1
 /usr/sbin/jail -r ${ST} > /dev/null 2>&1
-
 cbsdsql local UPDATE jails SET jid=0,status=0 WHERE jname=\"${jname}\"
 cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
 
@@ -155,16 +163,16 @@ fi
 [ -n "${mdsize}" -a "${mdsize}" != "0" ] && MDFILE=$( eval find_md_by_mountpath ${data} )
 
 jcleanup jname=${jname} > /dev/null
-geniplist ${multiips4}
+geniplist ${ip4_addr}
 
 for pureip in ${IPS}; do
-	iptype $pureip
+	iptype ${pureip}
 	[ -n "${VHID}" ] && continue
 	_inet=$?
 	if [ -n "${interface}" -a "${interface}" != "0" ]; then
 		iface=$( getnics-by-ip ip=${pureip} )
 		ipwmask ${pureip}
-		if [ -z "$IWM" ]; then
+		if [ -n "${IWM}" ]; then
 			case ${_inet} in
 				1)
 					MODIF="inet"
@@ -172,7 +180,7 @@ for pureip in ${IPS}; do
 				2)
 					MODIF="inet6" ;;
 			esac
-			/sbin/ifconfig ${iface} ${MODIF} ${pureip} -alias
+			/sbin/ifconfig ${iface} ${MODIF} ${pureip} -alias > /dev/null 2>&1 ||true
 		fi
 	fi
 done
@@ -180,7 +188,7 @@ done
 # make id file
 UNDhost_hostname=$( ${ECHO} ${host_hostname} |/usr/bin/tr  "." "_" )
 FID="/var/run/jail_${UNDhost_hostname}.id"
-[ ! -f "${FID}" ] || rm -f ${FID}
+[ ! -f "${FID}" ] || /bin/rm -f ${FID}
 
 [ -n "${mdsize}" -a "${mdsize}" != "0" -a -n "${MDFILE}" ] && unmountmd md=${MDFILE}
 /bin/rm -f ${ftmpdir}/${jname}.conf
