@@ -449,7 +449,6 @@ if [ "${mount_obj}" = "1" ]; then
 fi
 
 if [ "${mount_kernel}" = "1" ]; then
-
 	if [ -d ${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel ]; then
 		SRCDIR="${basejaildir}/kernel_GENERIC_${arch}_${ver}/boot/kernel"
 		MOUNTOPT="${MOUNTOPT} -k ${SRCDIR}"
@@ -461,6 +460,11 @@ if [ "${mount_ports}" = "1" ]; then
 fi
 
 [ "${ver}" != "empty" ] && mountbase -v ${ver} -a ${arch} ${MOUNTOPT}
+
+# sign of zfs attach inside jail: we need special route for this case
+# remove orphaned sign if exist: then touched it by mountfstab script
+with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
+[ -r ${with_zfs_attach} ] && /bin/rm -f ${with_zfs_attach}
 
 mount_jail_fstab
 export_jail_data_for_external_hook
@@ -533,6 +537,16 @@ trap "" HUP INT ABRT BUS TERM EXIT
 
 [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
 
+# sign of zfs attach inside jail: we need special route for this case
+# remove orphaned sign if exist: then touched it by mountfstab script
+if [ -r ${with_zfs_attach} -a ${is_freebsd} -eq 1 ]; then
+	[ -r ${mount_fstab} ] && attachzfs fstab=${mount_fstab} jname=${jname}
+	[ -r ${mount_fstab}.local ] && attachzfs fstab=${mount_fstab}.local jname=${jname}
+	# real exec_start for zfs attached jail
+	/usr/sbin/jexec ${jname} /sbin/zfs mount -a
+	/usr/sbin/jexec ${jname} ${exec_start}
+fi
+
 # update state_time
 cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
 
@@ -547,7 +561,7 @@ external_exec_master_script "master_poststart.d"
 
 get_jid
 
-if [ $myjid -gt 0 ]; then
+if [ ${myjid} -gt 0 ]; then
 	status="1"
 	# make shared lock
 	echo "${nodename}" > ${jaillock}
@@ -561,7 +575,7 @@ else
 	jcleanup jname=${jname}
 fi
 
-cbsdsql local UPDATE jails SET jid=$myjid,status=$status where jname=\"${jname}\"
+cbsdsql local UPDATE jails SET jid=${myjid},status=${status} where jname=\"${jname}\"
 /bin/rm -f ${ftmpdir}/${jname}.conf
 fwcounter
 expose jname=${jname} mode=apply
