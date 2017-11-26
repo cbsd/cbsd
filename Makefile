@@ -40,7 +40,7 @@ clean:
 
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
-	${CC} bin/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
+	${CC} bin/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp6
 	${CC} bin/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh
 	${CC} bin/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
 	${CC} bin/cfetch.c -o bin/cfetch -lfetch -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
@@ -49,7 +49,7 @@ cbsd:
 	# ICU?
 	#${CC} misc/src/sqlcli.c -static -pthread -lsqlite3 -lpthread -licui18n -licuuc -licudata -lm -L/usr/local/lib -I/usr/local/include -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
-	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt
+	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
 	${CC} misc/src/chk_arp_byip.c -o misc/chk_arp_byip && ${STRIP} misc/chk_arp_byip
 	${CC} misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/elf_tables && ${STRIP} misc/elf_tables
 	${CC} misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && ${STRIP} misc/conv2human
