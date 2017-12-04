@@ -62,6 +62,7 @@ cbsd:
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
 	${CC} tools/src/nic_info.c -o tools/nic_info && ${STRIP} tools/nic_info
+	${CC} tools/src/racct-statsd.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -L/usr/local/lib -o tools/racct-statsd && ${STRIP} tools/racct-statsd
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
 
