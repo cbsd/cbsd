@@ -1,8 +1,11 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.1.11
 globalconf="${workdir}/cbsd.conf";
 MYARG="jname"
+MYOPTARG="file nameserver"
 MYDESC="Prepare resolv.conf in jail"
+ADDHELP="file - path to resolv.conf to put him into jail\n\
+nameserver - IP address(es), comma-separated if multiple, e.g: nameserver=8.8.8.8,8.8.4.4\n"
 
 set -e
 . ${globalconf}
@@ -18,16 +21,23 @@ set_resolvconf()
 	local _i
 	local _tpl="CBSD makeresolv function"
 
-	local IFS=","
+	local IFS
 
-	for _i in ${jnameserver}; do
-		IFS=" "
-		iptype ${_i}
-		[ $? -eq 0 ] && continue
-		echo "nameserver ${_i}   # ${_tpl}" >> ${data}/etc/resolv.conf
+	if [ -n "${nameserver}" -o -z "${file}" ]; then
 		IFS=","
-	done
-	IFS=" "
+		for _i in ${jnameserver}; do
+			IFS=" "
+			iptype ${_i}
+			[ $? -eq 0 ] && continue
+			echo "nameserver ${_i}   # ${_tpl}" >> ${data}/etc/resolv.conf
+			IFS=","
+		done
+		IFS=" "
+	else
+		# just copy file
+		[ ! -r "${file}" ] && err 1 "${MAGENTA}makeresolv: unable to read ${GREEN}${file}${NORMAL}"
+		/bin/cp -a ${file} ${data}/etc/resolv.conf
+	fi
 }
 
 
@@ -35,15 +45,23 @@ unset_resolvconf()
 {
 	local _tpl="CBSD makeresolv function"
 
-	if ${GREP_CMD} "${_tpl}" ${data}/etc/resolv.conf >/dev/null 2>&1; then
+	if [ -n "${nameserver}" -o -z "${file}" ]; then
+		# nameserver if preferr to file
+		if ${GREP_CMD} "${_tpl}" ${data}/etc/resolv.conf >/dev/null 2>&1; then
+			/bin/cp -a ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
+			${GREP_CMD} -v "${_tpl}" ${data}/etc/resolv.conf.bak |${GREP_CMD} "." > ${data}/etc/resolv.conf
+		fi
+	else
+		# just copy file
 		/bin/cp -a ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
-		${GREP_CMD} -v "${_tpl}" ${data}/etc/resolv.conf.bak |${GREP_CMD} "." > ${data}/etc/resolv.conf
 	fi
 }
 
 
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+[ -n "${nameserver}" ] && jnameserver="${nameserver}"
 
 unset_resolvconf
 set_resolvconf
