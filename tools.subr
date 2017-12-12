@@ -168,7 +168,8 @@ node_state()
 # -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
 select_jail_by_list()
 {
-	local _res _id i=1
+	local tmpfile
+	local _ret _id i=1
 	local sqldelimer=" "
 	local emulator="jls"
 
@@ -190,66 +191,71 @@ select_jail_by_list()
 		shift $(($OPTIND - 1))
 	done
 
-	if [ $only_local -eq 0 ]; then
-		searchstr="env NOCOLOR=1 ${emulator} shownode=1 display=jname,status header=0"
+	if [ ${only_local} -eq 0 ]; then
+		searchstr="env NOCOLOR=1 ${emulator}"
 	else
-		searchstr="env NOCOLOR=1 ${emulator} alljails=1 shownode=1 display=jname,status header=0"
+		searchstr="env NOCOLOR=1 ${emulator}"
 		. ${nodes}
 	fi
 
-	eval $( ${searchstr} |/usr/bin/egrep ${active}$ |while read nodename jname status; do
+	case "${emulator}" in
+		j*)
+			stuff="jails"
+			;;
+		b*)
+			stuff="bhyve"
+			;;
+	esac
+
+	${ECHO} "${MAGENTA}${subject}${NORMAL}"
+
+	tmpfile=$( /usr/bin/mktemp )
+	/usr/bin/truncate -s0 ${tmpfile}
+
+	local my_nodename="${nodename}"
+
+	${searchstr} shownode=1 display=jname,status header=0 order=asc | /usr/bin/egrep ${active}$ |while read nodename jname status; do
 		# continue only when any node status or when node is online (when -r 1)
 		node_state || continue
-		echo "local nodename${i}=\"${nodename}\""
-		echo "local jname${i}=\"${jname}\""
-		i=$(( i + 1 ))
-	done )
+		[ -z "${nodename}" ] && continue
+		[ "${nodename}" = "${my_nodename}" ] && nodename="local"
+		[ -z "${jname}" ] && continue
 
-	${ECHO} "${BOLD}0 .. CANCEL${NORMAL}"
-
-	for i in $( /usr/bin/seq 1 9999 ); do
-		eval _mynode="\$nodename${i}"
-		[ -z "${_mynode}" ] && break
-		[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${NORMAL}"
-		eval _myjname="\$jname${i}"
-		[ -z "${_myjname}" ] && break;
-		[ $i -eq 0 ] && ${ECHO} "${MAGENTA}${subject}${NORMAL}"
-
-		case "${emulator}" in
-			jls)
-				active=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${_myjname}\" )
+		case "${status}" in
+			On)
+				active=1
 				;;
-			bls)
-				if [ -e "/dev/vmm/${_myjname}" ]; then
-					active="1"
-				else
-					active="0"
-				fi
+			*)
+				active=0
 				;;
 		esac
 
-		if [ "${active}" != "0" ]; then
-			${ECHO} "${BOLD}${i} .. ${GREEN}${_myjname} ${NORMAL}on ${LGREEN}${_mynode}${NORMAL}"
-		else
-			${ECHO} "${BOLD}${i} .. ${CYAN}${_myjname} ${NORMAL}on ${LGREEN}${_mynode}${NORMAL}"
-		fi
+		echo "${active}:${jname}:${nodename}" >> ${tmpfile}
 	done
 
-	[ ${i} -eq 0 ] && err 1 "${MAGENTA}No jails found${NORMAL}"
-	echo
-	i=$(( i - 1 ))
-	printf "${BOLD}Enter id 0-${i} or jail name:${NORMAL} "
-	set -e
-	read _id
-	set +e
-	[ "${_id}" = "0" ] && exit 0
-	if ! is_number ${_id}; then
-		eval jname="\$jname${_id}"
-	else
-		eval jname="${_id}"
-	fi
+	_ret=$( /usr/bin/stat -f "%z" ${tmpfile} 2>/dev/null )
+	[ "${_ret}" = "0" ] && err 1 "${MAGENTA}No ${stuff} found${NORMAL}"
+
+	select_jail ${tmpfile}
+	_ret=$?
+
+	case "${_ret}" in
+		0)
+			jname=$( /bin/cat ${tmpfile} )
+			/bin/rm -f ${tmpfile}
+			;;
+		1)
+			/bin/rm -f ${tmpfile}
+			err 0 "${MAGENTA}Cancel pressed${NORMAL}"
+			;;
+		2)
+			/bin/rm -f ${tmpfile}
+			err 1 "${MAGENTA}select_jail error${NORMAL}"
+			;;
+	esac
 
 	remote=2 # for autoremote
+
 }
 
 # libchk for testing dependency of cbsd and updatesql. Exit when stuff is broken
