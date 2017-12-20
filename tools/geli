@@ -1,6 +1,5 @@
-#!/bin/sh
-#v11.0.5
-globalconf="${workdir}/cbsd.conf";
+#!/usr/local/bin/cbsd
+#v11.1.12
 MYARG="mode"
 MYOPTARG="key backupfile device file"
 MYDESC="cbsd geli helper"
@@ -11,13 +10,12 @@ mode= initmaster, init, attach, detach, info\n\
 backupfile= alternative path to backup for init for storing backup\n"
 EXTHELP="wf_geli.html"
 
-set -e
-. ${globalconf}
-set +e
-
 . ${subr}
 . ${system}
+. ${strings}
+. ${tools}
 . ${mdtools}
+
 init $*
 
 readconf geli.conf
@@ -38,7 +36,7 @@ change_passphrase()
 
 	while [ "${_pw}" != "${_npw}" ]; do
 		printf "${BOLD}New Password: ${NORMAL}"
-		stty -echo
+		/bin/stty -echo
 		read _pw
 		printf "\n${BOLD}Retype New Password: ${NORMAL}"
 		read _npw
@@ -56,7 +54,7 @@ get_key()
 {
 	local _res _md5
 	[ -z "${1}" ] && err 1 "${MAGENTA}get_key need for arguments${NORMAL}"
-	_res=$(echo $1| /usr/bin/sed s:^${workdir}/::g)
+	_res=$( echo $1 | /usr/bin/sed s:^${workdir}/::g )
 	_md5=$( /sbin/md5 -qs "${_res}" )
 	printf "${gelidir}/${_md5}"
 }
@@ -78,7 +76,7 @@ create_key()
 		else
 			_md=$( /sbin/mdconfig -a -t vnode -f ${file} )
 			[ $? -ne 0 ] && err 1 "${MAGENTA}Error for: ${GREEN}mdconfig -a -t vnode -f ${file}${NORMAL}"
-			TRAP="${TRAP} mdconfig -d -u ${_md};"
+			TRAP="${TRAP} /sbin/mdconfig -d -u ${_md};"
 			trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		fi
 		_dev="/dev/${_md}"
@@ -88,12 +86,9 @@ create_key()
 		_keypath=$(get_key "${_dev}")
 	fi
 
-	if [ ! -f "${_keypath}" ]; then
-		#    err 1 "${MAGENTA}You already have passfile for this file: ${GREEN}${_keypath}${NORMAL}"
+	if [ ! -r "${_keypath}" ]; then
 		trap "${TRAP} mountmaster_file \"ro\";" HUP INT ABRT BUS TERM EXIT
 		mountmaster_file "rw"
-		#    _res=$( dd if=/dev/random of=${key} bs=64 count=1 2>&1)
-		#    [ $? -eq 0 ] && ${ECHO} "${MAGENTA}Initializated new key file: ${GREEN}${key}${NORMAL}"
 		gelidev="${_dev}"
 		change_passphrase ${_dev} ${_keypath}
 	fi
@@ -132,16 +127,26 @@ init_device()
 attach_file()
 {
 	local _res _md _keyfile
-	_res=$( eval find_md_by_img ${file} )
 
-	if [ -n "${_res}" ]; then
-		_md="${_res}"
-	else
-		_md=$( mdconfig -a -t vnode -f ${file} )
+	# not zvol?
+	if [ -f "${file}" ]; then
+		_res=$( eval find_md_by_img ${file} )
+
+		if [ -n "${_res}" ]; then
+			_md="${_res}"
+		else
+			_md=$( mdconfig -a -t vnode -f ${file} )
+		fi
 	fi
 
 	_keyfile=$( get_key "${file}" )
-	attach_device "/dev/${_md}" "${_keyfile}"
+
+	# not zvol?
+	if [ -f "${file}" ]; then
+		attach_device "/dev/${_md}" "${_keyfile}"
+	else
+		attach_device "${file}" "${_keyfile}"
+	fi
 }
 
 info_file()
@@ -430,4 +435,3 @@ case "${mode}" in
 		err 1 "${MAGENTA}Unknown mode${NORMAL}"
 		;;
 esac
-
