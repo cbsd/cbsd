@@ -6,7 +6,7 @@
 2. [Usage - Configuration options and additional functionality](#usage)
 3. [Limitations - OS compatibility, etc.](#limitations)
 4. [Contributing - Contribute the project](#contributing)
-5. [Contact - Contacts](#contact)
+5. [Support - Maillist, Talks, Contacts](#support)
 
 ## project description
 
@@ -32,9 +32,10 @@ Tested with following OSes and distribution:
 * Push to the branch (`git push`)
 * Create new Pull Request
 
-# Contact
+# Support
 
 * For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
 * Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
-* Other: https://www.bsdstore.ru/en/feedback.html
+* Or subscribe to maillist by sending email to: cbsd+subscribe@lists.tilda.center
+* Other contact: https://www.bsdstore.ru/en/feedback.html
 
