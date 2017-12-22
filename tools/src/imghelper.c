@@ -104,13 +104,13 @@ int main(int argc, char *argv[])
 	}
 
 	int hammer=0;
-
 	int i=0;
 
 	// first pass - label scan
-	while (!feof(fp)) {
+	while ( hammer!= 2 ) {
 
 		c=getc(fp);
+		if (feof(fp)) break;
 
 		switch (hammer) {
 			case 0:
