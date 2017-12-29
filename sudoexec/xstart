@@ -1,0 +1,348 @@
+#!/usr/local/bin/cbsd
+#v11.1.12
+MYARG=""
+MYOPTARG="jname inter debug"
+MYDESC="Start jail"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
+CBSDMODULE="xen"
+EXTHELP="wf_jstop_jstart.html"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${workdir}/universe.subr
+. ${workdir}/xen.subr
+. ${tools}
+
+readconf buildworld.conf
+readconf jail-freebsd-default.conf
+
+[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e xls -r ${sqlreplica}
+init $*
+
+. ${workdir}/fetch.subr
+. ${workdir}/jcreate.subr       # for external_exec_master_script
+
+make_freebsd_part()
+{
+/bin/cat >> $1 << EOF
+# $vm_os_type specific:
+builder = "hvm"
+serial="pty"
+vncconsole=1
+EOF
+}
+
+make_linux_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder = "hvm"
+#kernel = "/mnt/iso/isolinux/vmlinuz"
+#ramdisk = "/mnt/iso/isolinux/initrd.img"
+#extra = "debian-installer/exit/always_halt=true -- console=hvc0"
+#sdl=1
+serial='pty'
+EOF
+}
+
+make_windows_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+acpi = 1
+EOF
+}
+
+make_other_part()
+{
+/bin/cat >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+EOF
+}
+
+start_xen()
+{
+	local XENCFG
+	local xvm_ram
+
+	# profile
+	readconf vm-${vm_os_type}-${vm_os_profile}.conf
+	if [ -z "${vm_profile}" ]; then
+		${ECHO} "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+		sleep 2
+	fi
+	# re-read jail params and apply personal after profile
+	. ${jrcconf}
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart status=1
+	fi
+
+	vm_boot=$( cbsdsql local SELECT vm_boot FROM xen WHERE jname=\"${jname}\" 2>/dev/null )
+
+	case "${vm_boot}" in
+		"hdd")
+			boot_arg='boot="c"'
+			;;
+		"cd")
+			boot_arg='boot="d"'
+			;;
+	esac
+
+	# for vnet we can make another action
+	. ${vimageconf}
+
+	#unset zero-value
+	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
+	[ "${vm_os_profile}" = "0" ] && unset vm_os_profile
+
+	if ! compile_dsk_args; then
+		${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
+		unset dsk_args
+	fi
+
+	if ! compile_cd_args; then
+		unset cd_args
+	fi
+
+	# init nic_args
+	#if ! compile_nic_args ; then
+	#	${ECHO} "${MAGENTA}No such nic for VMs: ${GREEN}${jname}${NORMAL}"
+	#	unset nic_args
+	#fi
+
+	# init console_args
+	#if ! compile_console_args; then
+	#	${ECHO} "${MAGENTA}No such console for VMs: ${GREEN}${jname}${NORMAL}"
+	#	unset console_args
+	#fi
+
+	# init vnc_args
+	if ! compile_vnc_args ; then
+		unset vnc_args
+	fi
+
+	xvm_ram=$(( vm_ram / 1024 / 1024  ))
+
+	# Poehali!
+
+	export_bhyve_data_for_external_hook
+	external_exec_master_script "master_prestart.d"
+
+	vm_logfile=$( /usr/bin/mktemp )
+
+	XENCFG="${jailsysdir}/${jname}/xen.cfg"
+	/usr/bin/truncate -s0 ${XENCFG}
+
+	/bin/cat >> ${XENCFG} << EOF
+name = "${jname}"
+memory = ${xvm_ram}
+vcpus = ${vm_cpus}
+
+# Network devices
+vif = [ 'bridge=bridge0' ]
+
+#disk = ['phy:/dev/zvol/zroot/debian,xvda,w','file:/usr/jails/src/iso/debian-7.8.0-amd64-CD-1.iso,hdc:cdrom,r']
+disk =  ['${dsk_args},raw,hda,rw','${iso_img},raw,hdc:cdrom,r' ]
+
+${boot_arg}
+
+vnc = 1
+vnclisten = "${bhyve_vnc_tcp_bind}"
+vncpasswd="${vnc_password}"
+vncdisplay="${vncdisplay}"
+#vm_vnc_port='${vm_vnc_port}'
+opengl=1
+vncconsole=1
+vncunused=0
+EOF
+
+
+	case "${vm_os_type}" in
+		"freebsd")
+			make_freebsd_part ${XENCFG}
+			;;
+		"linux")
+			make_linux_part ${XENCFG}
+			;;
+		"windows")
+			make_windows_part ${XENCFG}
+			;;
+		*)
+			make_other_part ${XENCFG}
+			;;
+	esac
+
+	xl_cmd="${XL_CMD} -vvv create -c ${XENCFG}"
+	echo "[debug]: $xl_cmd"
+	#${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
+
+	exit 0
+
+	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
+
+	external_exec_master_script "master_poststart.d"
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart status=2 data_status=1
+	fi
+
+	#search_cmd="bhyve: ${jname}"
+	#strlen_search_cmd=$( strlen "${search_cmd}" )
+
+#	printf "${MAGENTA}Waiting for PID"
+#	for i in $( /usr/bin/seq 10 ); do
+#			[ "${ucomm}" != "bhyve" ] && continue
+#			cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+
+#			if [ "${cmd_pref}" = "${search_cmd}" ]; then
+#				echo ${pid}
+#				break
+#			fi
+
+#			if echo "${command}" |/usr/bin/egrep -q -e " ${jname}"$ 2>/dev/null; then
+#				echo ${pid}
+#			fi
+
+#		done )
+#		[ -n "${vm_pid}" ] && break
+#		sleep 1
+#		printf "."
+#	done
+
+	[ -z "${vm_pid}" ] && vm_pid="0"
+
+	echo
+
+	${ECHO} "${MAGENTA}PID: ${GREEN}${vm_pid}${NORMAL}"
+	cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
+
+	# update state_time
+	cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
+
+	err 0 ""
+
+}
+
+
+
+# MAIN for multiple jails
+TRAP=""
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/xenvms/"
+
+emulator="xen"        # for jname_is_multiple
+jname_is_multiple
+
+if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+	# multiple astart always non interactive
+	export inter=0
+	# recursive
+
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	else
+		JLIST=$*
+	fi
+
+	for jname in ${JLIST}; do
+		[ "${jname}" = "inter=0" ] && continue
+		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/xstart.${jname}.$$;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		if [ -n "${cbsd_queue_name}" ]; then
+			/usr/sbin/daemon -p ${ftmpdir}/xstart.${jname}.$$ /usr/local/bin/cbsd xstart inter=${inter} jname=${jname} cbsd_queue_name="${cbsd_queue_name}"
+		else
+			/usr/sbin/daemon -p ${ftmpdir}/xstart.${jname}.$$ /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
+		fi
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
+		trap "" HUP INT ABRT BUS TERM EXIT
+		# Artificial delay to create a sequence (for order compliance)
+		# todo: determine VM complete starting
+		sleep 12
+	done
+
+	wait_for_fpid start ${parallel}
+
+	err 0 "${MAGENTA}Multiple bstart: ${GREEN}done${NORMAL}"
+fi
+
+# MAIN
+. ${sharedir}/xen.conf		# only for for MYCOL variables: used in exports below
+
+init_xen
+
+[ -z "$jname" ] && jname=$1
+
+default_profile="xen-default-default.conf"
+readconf vnc.conf
+readconf xstart.conf
+
+readconf ${default_profile}
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+[ ${status} -eq 2 ] && err 1 "${MAGENTA}Domain in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+
+[ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
+[ "${emulator}" != "xen" ] && err 1 "${MAGENTA}Not xen mode${NORMAL}"
+[ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
+[ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
+[ -z "${debug}" ] && debug=0
+
+# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+
+[ -z "${MDFILE}" ] && ${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"
+
+if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
+	${ECHO} "${MAGENTA}No such ${data}/${MDFILE} but mdsize flags is not null.${NORMAL}"
+
+	# if zfsfeat=1, try scan for zvol
+	[ "${zfsfeat}" != "1" ] && break
+
+	readconf zfs.conf
+	. $zfstool
+	DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
+
+	[ -z "${DATA}" ] && break
+
+	for lunname in $( /usr/bin/seq 0 10 ); do
+		if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
+			/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
+			${ECHO} "${MAGENTA}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
+		fi
+	done
+fi
+
+# export variables for external hooks
+export jname=${jname}
+
+for _i in ${JARG} ${MYCOL}; do
+	T=
+	eval T="\$$_i"
+	export ${_i}="${T}"
+done
+
+# test for incorrect state
+if [ ${status} -eq 3 ]; then
+	cbsdsql local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
+	comment="cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
+	if [ "${comment}" = "Stopping_VM" ]; then
+		jswmode jname=${jname} mode=master comment='0'
+	else
+		${ECHO} "${MAGENTA}Xen in maintenance: ${GREEN}${comment}${NORMAL}"
+		err 1 "${MAGENTA}Please finish maintenance and switch mode via: ${GREEN}jswmode jname=${jname} mode=master comment='0'${NORMAL}"
+	fi
+fi
+
+start_xen
+exit 0
