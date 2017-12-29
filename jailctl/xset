@@ -1,0 +1,88 @@
+#!/usr/local/bin/cbsd
+#v11.1.12
+MYARG="jname"
+CBSDMODULE="xen"
+
+. ${subr}
+. ${sharedir}/xen.conf
+
+#concat for xen arg
+JARG="${MYCOL}"
+
+MYOPTARG="$JARG"
+MYDESC="Modify parameter for jail"
+ADDHELP="mode=force for modification on the running jail\n"
+
+. ${tools}
+. ${strings}
+init $*
+
+emulator="xen"	# for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	new_arg=
+
+	for i in $*; do
+		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+		[ "${_is_jname}" = "jname" ] && continue
+		new_arg="${new_arg} ${i}"
+	done
+
+	for jname in ${jail_list}; do
+		xset jname=${jname} ${new_arg}
+	done
+	exit 0
+fi
+
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/xenvms/"
+
+update_jails()
+{
+	eval VAL=\$$i
+
+	case "${i}" in
+		vm_ram)
+			if is_number ${VAL}; then
+				if conv2bytes ${VAL}; then
+					VAL="${convval}"
+				fi
+			else
+				# Assume value in MB, convert it to bytes
+				VAL=$(( ${VAL} * 1024 * 1024 ))
+			fi
+		;;
+	esac
+
+	[ -z "${i}" ] && return 0
+
+	cbsdsql local UPDATE xen SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+	${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+
+#	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+#		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ${i}="${VAL}"
+#	fi
+
+}
+
+# here we get status from jstatus, not via jrcconf for non-overwriting params in args
+jid=$( jstatus jname=${jname} )
+[ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	allstr=$@
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ${allstr}
+fi
+
+for n in $@; do
+	argpart=${n%%=*}
+
+	for i in ${JARG}; do
+		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
+			update_jails
+		fi
+	done
+done
+
+# exit code 0 is nessesary for dot()
+exit 0

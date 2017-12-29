@@ -1,0 +1,70 @@
+#!/usr/local/bin/cbsd
+#v10.0.3
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname"
+MYDESC="Stop jail"
+CBSDMODULE="xen"
+EXTHELP="wf_jstop_jstart.html"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${system}
+. ${mdtools}
+. ${strings}
+. ${tools}
+
+. ${workdir}/xen.subr
+
+[ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e xls -r ${sqlreplica}
+init $*
+
+# MAIN
+if [ $# -gt 1 ]; then
+#	recursive stop
+	JLIST=$*
+	for jname in ${JLIST}; do
+		/usr/sbin/daemon -p ${ftmpdir}/xstop.${jname}.$$ /usr/local/bin/cbsd xstop jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/xstop.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/xstop.${jname}.$$ ) --timeout=${parallel}
+	done
+
+	wait_for_fpid stop
+
+	err 0 "${MAGENTA}Multiple stop: ${GREEN}done${NORMAL}"
+fi
+
+[ -z "${jname}" ] && jname=$1
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+#[ ${jid} -eq 0 ] && err 1 "${MAGENTA}Not Running: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "xen" ] && err 1 "${MAGENTA}Not in xen mode${NORMAL}"
+
+
+${XL_CMD} shutdown ${jname} > /dev/null 2>&1
+
+# wait 15 seconds until vm is shutdown. After 15 sec and while vm is still alive
+# apply hard stop
+
+${ECHO} "${GREEN}ACPI power button in progress.${NORMAL}"
+printf "Wait for 30 seconds"
+
+for i in $( /usr/bin/seq 1 30 ); do
+	_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+	if [ $? -eq 0 ]; then
+		printf "."
+		sleep 1
+	else
+		echo
+		exit 0
+	fi
+done
+
+${XL_CMD} destroy ${jname}
+echo
+exit 0

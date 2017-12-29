@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.6
+#v11.1.12
 MYARG="jconf"
 MYOPTARG="inter ver arch customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc"
 MYDESC="Create jail from config file"
@@ -16,15 +16,20 @@ EXTHELP="wf_bcreate.html"
 . ${tools}
 . ${mdtools}
 . ${jfs}
+
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/xenvms/"
+
 readconf buildworld.conf
 readconf xen-default-default.conf
 readconf zfs.conf
+
 . ${workdir}/universe.subr
 . ${workdir}/freebsd_world.subr
 . ${workdir}/xen.subr
 
 init $*
 
+[ -n "${removejconf}" ] && oremovejconf="${removejconf}"
 
 really_create_base()
 {
@@ -38,13 +43,13 @@ really_create_base()
 				nobase=1
 				;;
 			*)
-				nobase=0
+				nobase=0 # 0 for jail2iso
 				init_target_arch
 				init_basedir
 				init_kerneldir
 				get_base
-				${ECHO} "${MAGENTA}Stage1: ${GREEN}jail hier...${NORMAL}"
-				populate_freebsd_world
+				#populate_freebsd_world
+				#populate_freebsd_kernel
 				customskel
 				;;
 		esac
@@ -53,39 +58,19 @@ really_create_base()
 
 really_create_vm()
 {
-
-	if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
-		if [ -n "${pkglist}" ]; then
-			pkg mode=bootstrap jname=${jname} ||true
-			if [ ! -f "${pkglist}" ]; then
-				pkg mode=install jname=${jname} ${pkglist}
-			else
-				pkg mode=install pkglist="${pkglist}" jname=${jname}
-				[ $delpkglist -eq 1 ] && /bin/rm -f ${pkglist}
-			fi
-		fi
-
-		if [ -n "${user_pw_root}" ]; then
-			passwd jname=${jname} user="root" pw="${user_pw_root}"
-		fi
-
-		if [ -n "${sysrc_enable}" ]; then
-			for i in ${sysrc_enable}; do
-				sysrc jname=${jname} ${i}_enable="YES"
-			done
-		fi
-
-		[ -n "${user_add}" ] && adduser jname=${jname} mode=add fromfile="${jconf}"
-	fi
+	local _res _msg
 
 	if [ "${from_jail}" ]; then
 		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
 		[ -z "${swapsize}" ] && swapsize="0"
-		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=xen quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs}
+
+		mountbase -o "" -p "" -d "" -c "" -s ""
+		#echo "jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=bhyve quiet=1 prunelist=0 nobase=${nobase} vm_guestfs=${vm_guestfs} fromfile=${temprcconf}"
+		jail2iso jname=${jname} nameserver=${jnameserver} ip4_addr=${ip4_addr} gw4=${gw4} dstname=${jname}.$$.img swapsize=${swapsize} freesize=${imgsize} dstdir=/tmp host_hostname="${host_hostname}" media=xen quiet=1 vm_guestfs=${vm_guestfs}
+		# fromfile=${temprcconf} addmod=0
+
 		jremove ${jname}
-		${SYSRC_CMD} -qf ${jconf} ver="empty" > /dev/null
-		${SYSRC_CMD} -qf ${jconf} sysrc_enable="" > /dev/null
-		jcreate jconf=${jconf}
+		create_fs ${data}
 		#test for zfs mounted & mount if not
 		case $zfsfeat in
 			1)
@@ -95,30 +80,23 @@ really_create_vm()
 				;;
 		esac
 		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
+		#echo "/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}"
 		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
-		if ! xen_create_dsk ${data}/${defdsk} ${imgsize} ${swapsize}; then
-			err 1 "Error: Couldn't create the image file. ${mdimage}"
+		_msg=$( xen_create_dsk ${data}/${defdsk} ${imgsize} 1 )
+		_res=$?
+		if [ ${_res} -ne 0 ]; then
+			bremove ${jname}
+			err 1 "Error: Couldn't create the image file. ${_msg}"
 		fi
 	fi
-	if [ -n "${virtio_type}" ]; then
-		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
-	else
-		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
-	fi
-
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname ) VALUES ( \"${jname}\" )"
-
-	# store profile in jail system dir
-	[ ! -d "${jailsysdir}/${jname}/etc" ] && /bin/mkdir ${jailsysdir}/${jname}/etc && /usr/sbin/chown cbsd:cbsd ${jailsysdir}/${jname}/etc
-	storeconf xen-${vm_os_type}-${vm_os_profile}.conf ${jailsysdir}/${jname}/etc/xen-${vm_os_type}-${vm_os_profile}.conf
 }
 
 ### MAIN
 [ ! -f "$jconf" ] && err 1 "${MAGENTA}no such jconf file${NORMAL}";
 over="${ver}"
 oarch="${arch}"
-jconf=$( realpath $jconf )
+jconf=$( /bin/realpath ${jconf} )
 
 if [ -z "${delpkglist}" ]; then
 	delpkglist=0
@@ -128,7 +106,38 @@ fi
 
 temprcconf="${ftmpdir}/jcreate_jconf.$$"
 
-/bin/cp ${jconf} ${temprcconf}
+# TRIM DOS CRLF
+/bin/cat ${jconf} |/usr/bin/tr -d \\r > ${temprcconf}
+
+. ${buildconf}
+. ${temprcconf}
+
+# profile
+[ -z "${vm_os_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+
+template_profile=
+
+# Merge with default and profile settings
+[ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
+
+conf_owner=$( /usr/bin/stat -f "%u" ${jconf} )
+conf_group=$( /usr/bin/stat -f "%g" ${jconf} )
+
+/usr/bin/truncate -s0 ${jconf}
+
+for merge_me in ${etcdir}/defaults/xen-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/xen-default-default.conf ${etcdir}/${template_profile} ${temprcconf}; do
+	[ ! -r "${merge_me}" ] && continue;
+	tmp_merge=$( /usr/bin/mktemp )
+	merge from=${jconf} to=${merge_me} out=${tmp_merge}
+	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${jconf}
+done
+
+# make permission for group write
+/usr/sbin/chown ${conf_owner}:${conf_group} ${jconf}
+
+. ${jconf}
+
+[ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
 if [ ${removejconf} = "1" ]; then
 	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
@@ -136,20 +145,39 @@ else
 	trap "/bin/rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 fi
 
-. ${temprcconf}
-. ${buildconf}
-. ${temprcconf}
-
 [ -z "${jname}" ] && err 1 "${MAGENTA}No such jname variable${NORMAL}"
 
-# profile
-readconf vm-${vm_os_type}-${vm_os_profile}.conf
-[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
+if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
+	 # change emulator type for jcreate
+	${SYSRC_CMD} -qf ${jconf} emulator="jail" > /dev/null 2>&1
+
+	if [ -n "${jprofile}" ]; then
+		. ${settingstui}
+		if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
+			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/jail-freebsd-${jprofile}.conf${NORMAL}"
+			merge_apply_profiles ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf}
+		elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
+			${ECHO} "${MAGENTA}Use profile: ${GREEN}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${NORMAL}"
+			merge_apply_profiles ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf}
+		fi
+	fi
+
+	${SYSRC_CMD} -qf ${jconf} emulator="xen" > /dev/null 2>&1
+fi
+
 # re-read jail params and apply personal after profile
-. ${temprcconf}
+. ${jconf}
+
+# apply pkglist from tpl_pkglist
+[ -n "${tpl_pkglist}" ] && ${SYSRC_CMD} -qf ${jconf} pkglist="${tpl_pkglist}" > /dev/null 2>&1
 
 jstatus jname=${jname} > /dev/null 2>&1
 [ $? -eq 0 ] || err 1 "${MAGENTA}Jail with $jname already exist${NORMAL}"
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} status=1
+fi
 
 # ip validate
 if [ -n "${interface}" -a "${inteface}" != "0" ]; then
@@ -169,24 +197,35 @@ if [ -n "${interface}" -a "${inteface}" != "0" ]; then
 	esac
 fi
 
-${ECHO} "${MAGENTA}Please wait: ${GREEN}this will take a while...${NORMAL}"
+#${ECHO} "${MAGENTA}Please wait: ${GREEN}this will take a while...${NORMAL}"
 
 [ -d "${data}" ] && removedata ${data}
 
-create_fs ${data}
-
-[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
-[ ! -d ${path} -a "${baserw}" -eq 0 ] && mkdir -p ${path}
-[ ! -d ${jailfstabdir}  ] && mkdir -p ${jailfstabdir}
-[ ! -d "${jailsysdir}/${jname}" ] && mkdir -p ${jailsysdir}/${jname}
+defdsk="dsk1.vhd"
+defnic="nic1.vhd"
 
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
+	really_create_vm
+	/bin/cp ${jconf} ${rcconf}
+else
+	create_fs ${data}
 fi
 
-/bin/cp $temprcconf $rcconf
+[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
+[ ! -d ${path} -a "${baserw}" -eq 0 ] && /bin/mkdir -p ${path}
+[ ! -d ${jailfstabdir}  ] && /bin/mkdir -p ${jailfstabdir}
+[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
+
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-xendsk.schema xendsk
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-xennic.schema xennic
+#/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-xen-p9shares.schema p9shares
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-xen-settings.schema settings
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
+
+/bin/cp ${jconf} ${rcconf}
+. ${rcconf}
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new
@@ -212,16 +251,9 @@ ${ECHO} "${MAGENTA}To remove VM use: ${GREEN}cbsd xremove ${jname}${NORMAL}"
 ${ECHO} "${MAGENTA}For attach VM console use: ${GREEN}cbsd xlogin ${jname}${NORMAL}"
 echo
 ${ECHO} "${MAGENTA}Creating ${jname} complete: ${GREEN}Enjoy!${NORMAL}"
-/bin/rm -f $rcconf
+/bin/rm -f ${rcconf}
 
 [ "${mdsize}" != "0" ] && unmountmd jroot=${data}
-
-defdsk="dsk1.vhd"
-defnic="nic1.vhd"
-
-if [ -z "${zfs_snapsrc}" ]; then
-	really_create_vm
-fi
 
 if [ -n "${virtio_type}" ]; then
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
@@ -229,8 +261,56 @@ else
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
 fi
 
-${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname ) VALUES ( \"${jname}\" )"
+if [ -n "${nic_driver}" ]; then
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname,nic_driver ) VALUES ( \"${jname}\", \"${nic_driver}\" )"
+else
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname ) VALUES ( \"${jname}\" )"
+fi
+
+if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
+	cd_name="${register_iso_as}"
+	cd_path="${srcdir}/iso/${register_iso_name}"
+
+	cd_rec_num=$( cbsdsql storage_media SELECT COUNT\(path\) FROM media WHERE name=\"${cd_name}\" AND path=\"${cd_path}\" AND type=\"iso\" AND jname=\"-\" )
+
+	if [ "${cd_rec_num}" = "0" ]; then
+		# register new ISO with assignment to this VM
+		media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
+	else
+		# we have free/unassignent CD. link to this VM
+		cbsdsql storage_media "UPDATE media SET jname=\"${jname}\" WHERE jname=\"-\" AND type=\"iso\" AND name=\"${cd_name}\" AND path=\"${cd_path}\""
+	fi
+
+#       media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
+fi
+
+[ ! -d ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
+[ ! -d ${jailsysdir}/${jname}/etc ] && /bin/mkdir -p ${jailsysdir}/${jname}/etc
+
+system_dir="stop.d \
+start.d \
+master_prestop.d \
+master_prestart.d \
+master_poststop.d \
+master_poststart.d \
+remove.d"
+
+for i in ${system_dir}; do
+	if [ -n "${systemskeldir}" -a "${systemskeldir}/${i}" ]; then
+		/bin/cp -a ${systemskeldir}/${i} ${jailsysdir}/${jname}/${i}
+	else
+		[ ! -d "${i}"  ] && /bin/mkdir -m 0775 -p ${jailsysdir}/${jname}/${i}
+	fi
+	/usr/sbin/chown ${cbsduser}:${cbsduser} ${jailsysdir}/${jname}/${i}
+done
+
+# store profile in jail system dir
+storeconf vm-${vm_os_type}-${vm_os_profile}.conf ${jailsysdir}/${jname}/etc/vm-${vm_os_type}-${vm_os_profile}.conf
 
 jcleanup jname=${jname}
+
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=xcreate status=2 data_status=0
+fi
 
 exit 0

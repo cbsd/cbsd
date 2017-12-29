@@ -90,7 +90,7 @@ int print()
 	struct item_data *curdata = item_list;
 
 	while (curdata != NULL) {
-		printf ("%s\n", curdata->name);
+		printf("%s\n", curdata->name);
 		curdata = curdata->next;
 	}
 	return 0;
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
 	fp=fopen(argv[1],"r");
 
 	if (!fp) {
-		printf("Unable to open file %s\n",argv[1]);
+		fprintf(stderr,"Unable to open file %s\n",argv[1]);
 		exit(2);
 	}
 
@@ -171,7 +171,7 @@ int main(int argc, char **argv)
 		free(tofree);
 
 		if (x!=3) {
-			printf("Warning: not <active>.int:<name>.str:<node>.str format: [%s], skipp\n",argv[1]);
+			fprintf(stdout,"Warning: not <active>.int:<name>.str:<node>.str format: [%s], skipp\n",argv[1]);
 		} else {
 
 			tmp_id++;
@@ -270,26 +270,24 @@ int main(int argc, char **argv)
 			fgets( buf, BUFLEN,stdin );
 			if ( buf[0]=='0' ) {
 				// Cancel or Esc was pressed
-				printf("Cancel\n");
+				fprintf(stderr,"Cancel\n");
 				exit(1);
 			}
 			if (is_number(buf)) {
-				printf("This is jail name\n");
 				//assume got jname here
-				printf("%s\n",buf);
+				fprintf(stderr,"%s\n",buf);
 				fp=fopen(argv[1],"w");
 				fputs(buf,fp);
 				fclose(fp);
 				exit(0);
 			} else {
-				printf("This is jail ID\n");
 				// this is number, find jail by id
 				id=atoi(buf);
 				tmp_id=1;
 				for ( m_item = item_list; m_item; m_item = m_item->next)
 				{
 					if (id == tmp_id) {
-						printf("%s\n",m_item->name);
+						fprintf(stderr,"%s\n",m_item->name);
 						fp=fopen(argv[1],"w");
 						fputs(m_item->name,fp);
 						fclose(fp);
@@ -297,7 +295,7 @@ int main(int argc, char **argv)
 				}
 				tmp_id++;
 				}
-				printf("Wrong input, no such jail\n");
+				fprintf(stderr,"Wrong input, no such jail\n");
 				exit(2);
 			}
 		}
@@ -314,7 +312,7 @@ int main(int argc, char **argv)
 		printf("'\033[1K");
 		printf("\033[1000D");
 
-		printf("\033[%dA",max_choice+1);		//6A - 5 items + extra \n
+		printf("\033[%dA",max_choice+1);		// items number + 1 extra \n
 
 		if (special==1) {
 
@@ -359,20 +357,20 @@ int main(int argc, char **argv)
 	}
 
 	//make indent after last records
-	for(i=0;i<max_choice;i++) {
+	for(i=0;i<max_choice+1;i++) {
 		printf("\n");
 	}
 
 	if (cur_choice==1) {
 		// Cancel or Esc was pressed
-		printf("Cancel\n");
+		fprintf(stderr,"Cancel\n");
 		exit(1);
 	} else {
 		tmp_id=2;
 		for ( m_item = item_list; m_item; m_item = m_item->next)
 		{
 			if (cur_choice == tmp_id) {
-				printf("%s\n",m_item->name);
+				fprintf(stderr,"%s\n",m_item->name);
 				fp=fopen(argv[1],"w");
 				fputs(m_item->name,fp);
 				fclose(fp);

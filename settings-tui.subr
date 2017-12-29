@@ -1268,7 +1268,7 @@ get_construct_bhyve_options_menu()
 
 
 # Submenu for vnc options
-get_construct_vnc_options_menu()
+get_construct_bhyve_vnc_options_menu()
 {
 	local _input _res item_let=A
 
@@ -1334,6 +1334,62 @@ get_construct_vnc_options_menu()
 }
 
 
+# Submenu for vnc options
+get_construct_xen_vnc_options_menu()
+{
+	local _input _res item_let=A
+
+	local title="VNC Options"
+	local defaultitem=
+	local menu_choice=
+	local _checkbox="cd_vnc_wait"
+
+	f_dialog_default_fetch defaultitem
+
+	readconf vnc.conf
+	[ -z "${xen_vnc_resolution}" ] && xen_vnc_resolution="${default_vnc_width}x${default_vnc_height}"
+	[ -z "${xen_vnc_tcp_bind}" ] && xen_vnc_tcp_bind="${default_vnc_tcp_bind}"
+	[ -z "${xen_vnc_vgaconf}" ] && xen_vnc_vgaconf="${default_vnc_vgaconf}"
+
+	if [ "${vnc_password}" = "0" ]; then
+		unset vnc_password
+	else
+		[ -z "${vnc_password}" ] && vnc_password="${default_vnc_password}"
+	fi
+
+	# checkbox mark
+	for i in ${_checkbox}; do
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+		else
+			export ${i}_mark=" "
+		fi
+	done
+
+	local menu_list=""
+
+#	menu_list="${menu_list} '${item_let} cd_vnc_wait'		'[${cd_vnc_wait_mark}]'		'When booting from CD - wait connections on VNC before VM run'"
+#	inc_menu_index item_let
+#	menu_list="${menu_list} '${item_let} xen_vnc_resolution'	'[${xen_vnc_resolution}]'	'Default: width - ${default_vnc_width}, height - ${default_vnc_height}'"
+#	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} xen_vnc_tcp_bind'		'[${xen_vnc_tcp_bind}]'	'Default: ${default_vnc_tcp_bind}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} vnc_password'		'[${vnc_password}]'		'Default: see vnc.conf file'"
+
+	menu_list="${menu_list} 'Save'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
 
 # Submenu for bhyve options
 get_construct_bhyve_options()
@@ -1367,13 +1423,13 @@ get_construct_bhyve_options()
 
 
 # Submenu for bhyve options
-get_construct_vnc_options()
+get_construct_bhyve_vnc_options()
 {
 	local mychoice index
 	local old_defaultitem="${mtag}"
 
 	while [ 1 ]; do
-		get_construct_vnc_options_menu || break
+		get_construct_bhyve_vnc_options_menu || break
 
 		index=${mtag%% *}
 		mychoice=${mtag##* }
@@ -1409,6 +1465,51 @@ get_construct_vnc_options()
 
 	f_dialog_default_store "${old_defaultitem}"
 
+}
+
+
+# Submenu for xen vnc options
+get_construct_xen_vnc_options()
+{
+	local mychoice index
+	local old_defaultitem="${mtag}"
+
+	while [ 1 ]; do
+		get_construct_xen_vnc_options_menu || break
+
+		index=${mtag%% *}
+		mychoice=${mtag##* }
+
+		case "${mychoice}" in
+		"-")
+			continue
+			;;
+		"Save")
+			break
+			;;
+		xen_vnc_tcp_bind)
+			title=" vnc bind "
+			prompt="default via vnc.conf: ${default_vnc_tcp_bind}\nUse 0.0.0.0 for all IPs"
+			defaultitem="${xen_vnc_tcp_bind}"
+			cbsd_inputbox_simple && xen_vnc_tcp_bind="${mtag}"
+			;;
+		xen_vnc_resolution)
+			get_construct_xen_vnc_resulution_menu
+			;;
+		xen_vnc_vgaconf)
+			get_construct_xen_vnc_vgaconf_menu
+			;;
+		vnc_password)
+			get_construct_vnc_password
+			;;
+		*)
+			invert_checkbox ${mychoice}
+			continue
+			;;
+		esac
+	done
+
+	f_dialog_default_store "${old_defaultitem}"
 }
 
 
@@ -1640,6 +1741,8 @@ get_construct_vm_iso_path()
 						vm_iso_path="${mtag}"
 						alt_iso="${mtag}"
 						iso_path=$( cbsdsql storage_media SELECT path FROM media WHERE type=\"iso\" AND name=\"${mtag}\" )
+						# remove old disk if exist
+						cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
 						echo "media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}"
 						media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}
 						;;
@@ -1923,9 +2026,41 @@ EOF
 
 make_xen_part()
 {
-	make_virtualbox_part
-}
+/bin/cat >> ${TMPFILE} << EOF
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+emulator="xen";
+imgsize="${imgsize}";
+vm_cpus="${vm_cpus}";
+vm_ram="${vm_ram}";
+vm_os_type="${vm_os_type}";
+vm_efi="${vm_efi}";
 
+iso_site="${iso_site}";
+iso_img="${iso_img}";
+register_iso_name="${register_iso_name}"
+register_iso_as="${register_iso_as}"
+
+virtio_type="${virtio_type}";
+gw4="${gw4}";
+vm_os_profile="${vm_os_profile}";
+jprofile="${jprofile}";
+swapsize="${swapsize}";
+vm_iso_path="${register_iso_as}";
+vm_guestfs="${vm_guestfs}";
+vm_vnc_port="${vm_vnc_port}";
+
+cd_vnc_wait="${cd_vnc_wait}";
+xen_vnc_resolution="${bhyve_vnc_resolution}";
+xen_vnc_tcp_bind="${bhyve_vnc_tcp_bind}";
+
+with_img_helpers="";
+runasap="${runasap}";
+nic_driver="${nic_driver}";
+
+vnc_password='${vnc_password}';
+EOF
+}
 
 make_emulator_part()
 {
