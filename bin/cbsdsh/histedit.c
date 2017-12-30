@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)histedit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/histedit.c 279508 2015-03-01 22:32:23Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/histedit.c 319635 2017-06-06 21:08:05Z jilles $");
 
 #include <sys/param.h>
 #include <limits.h>
@@ -363,7 +363,7 @@ histcmd(int argc, char **argv __unused)
 					 * cursor, set it back to the current
 					 * entry.
 					 */
-					retval = history(hist, &he,
+					history(hist, &he,
 					    H_NEXT_EVENT, oldhistnum);
 				}
 			} else
@@ -380,10 +380,10 @@ histcmd(int argc, char **argv __unused)
 		char *editcmd;
 
 		fclose(efp);
+		INTON;
 		editcmd = stalloc(strlen(editor) + strlen(editfile) + 2);
 		sprintf(editcmd, "%s %s", editor, editfile);
 		evalstring(editcmd, 0);	/* XXX - should use no JC command */
-		INTON;
 		readcmdfile(editfile);	/* XXX - should read back - quick tst */
 		unlink(editfile);
 	}

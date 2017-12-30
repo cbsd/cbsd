@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -30,7 +30,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)error.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/error.h 276038 2014-12-21 23:09:59Z jilles $
+ * $FreeBSD: head/bin/sh/error.h 319591 2017-06-04 21:58:02Z jilles $
  */
 
 /*
@@ -73,7 +73,7 @@ extern volatile sig_atomic_t intpending;
 #define INTOFF suppressint++
 #define INTON { if (--suppressint == 0 && intpending) onint(); }
 #define is_int_on() suppressint
-#define SETINTON(s) suppressint = (s)
+#define SETINTON(s) do { suppressint = (s); if (suppressint == 0 && intpending) onint(); } while (0)
 #define FORCEINTON {suppressint = 0; if (intpending) onint();}
 #define SET_PENDING_INT intpending = 1
 #define CLEAR_PENDING_INT intpending = 0

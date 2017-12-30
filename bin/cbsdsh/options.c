@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -13,7 +15,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +38,7 @@ static char sccsid[] = "@(#)options.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/options.c 293392 2016-01-07 23:13:20Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/options.c 326025 2017-11-20 19:49:47Z pfg $");
 
 #include <signal.h>
 #include <unistd.h>
@@ -63,7 +65,7 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 293392 2016-01-07 23:13:20Z jilles $")
 #ifdef CBSD
 #include "exec.h"
 #include "main.h"
-#endif
+#endif 
 
 char *arg0;			/* value of $0 */
 struct shparam shellparam;	/* current positional parameters */
@@ -78,6 +80,7 @@ static void options(int);
 static void minus_o(char *, int);
 static void setoption(int, int);
 static void setoptionbyindex(int, int);
+static void setparam(int, char **);
 static int getopts(char *, char *, char **, char ***, char **);
 
 
@@ -143,7 +146,7 @@ procargs(int argc, char **argv)
 void
 optschanged(void)
 {
-	setinteractive(iflag);
+	setinteractive();
 #ifndef NO_HISTORY
 	histedit();
 #endif
@@ -153,6 +156,8 @@ optschanged(void)
 /*
  * Process shell options.  The global variable argptr contains a pointer
  * to the argument list; we advance it past the options.
+ * If cmdline is true, process the shell's argv; otherwise, process arguments
+ * to the set special builtin.
  */
 
 static void
@@ -201,16 +206,11 @@ options(int cmdline)
 		while ((c = *p++) != '\0') {
 			if (c == 'c' && cmdline) {
 				char *q;
-#ifdef NOHACK	/* removing this code allows sh -ce 'foo' for compat */
-				if (*p == '\0')
-#endif
-					q = *argptr++;
+
+				q = *argptr++;
 				if (q == NULL || minusc != NULL)
 					error("Bad -c option");
 				minusc = q;
-#ifdef NOHACK
-				break;
-#endif
 			} else if (c == 'o') {
 				minus_o(*argptr, val);
 				if (*argptr)
@@ -237,7 +237,7 @@ end_options1:
 end_options2:
 	if (!cmdline) {
 		if (*argptr == NULL)
-			setparam(argptr);
+			setparam(0, argptr);
 		return;
 	}
 
@@ -297,7 +297,7 @@ minus_o(char *name, int val)
 static void
 setoptionbyindex(int idx, int val)
 {
-	if (optletter[idx] == 'p' && !val && privileged) {
+	if (&optval[idx] == &privileged && !val && privileged) {
 		if (setgid(getgid()) == -1)
 			error("setgid");
 		if (setuid(getuid()) == -1)
@@ -306,9 +306,9 @@ setoptionbyindex(int idx, int val)
 	optval[idx] = val;
 	if (val) {
 		/* #%$ hack for ksh semantics */
-		if (optletter[idx] == 'V')
+		if (&optval[idx] == &Vflag)
 			Eflag = 0;
-		else if (optletter[idx] == 'E')
+		else if (&optval[idx] == &Eflag)
 			Vflag = 0;
 	}
 }
@@ -331,22 +331,20 @@ setoption(int flag, int val)
  * Set the shell parameters.
  */
 
-void
-setparam(char **argv)
+static void
+setparam(int argc, char **argv)
 {
 	char **newparam;
 	char **ap;
-	int nparam;
 
-	for (nparam = 0 ; argv[nparam] ; nparam++);
-	ap = newparam = ckmalloc((nparam + 1) * sizeof *ap);
+	ap = newparam = ckmalloc((argc + 1) * sizeof *ap);
 	while (*argv) {
 		*ap++ = savestr(*argv++);
 	}
 	*ap = NULL;
 	freeparam(&shellparam);
 	shellparam.malloc = 1;
-	shellparam.nparam = nparam;
+	shellparam.nparam = argc;
 	shellparam.p = newparam;
 	shellparam.optp = NULL;
 	shellparam.reset = 1;
@@ -384,8 +382,7 @@ freeparam(struct shparam *param)
 int
 shiftcmd(int argc, char **argv)
 {
-	int n;
-	char **ap1, **ap2;
+	int i, n;
 
 	n = 1;
 	if (argc > 1)
@@ -394,12 +391,11 @@ shiftcmd(int argc, char **argv)
 		return 1;
 	INTOFF;
 	shellparam.nparam -= n;
-	for (ap1 = shellparam.p ; --n >= 0 ; ap1++) {
-		if (shellparam.malloc)
-			ckfree(*ap1);
-	}
-	ap2 = shellparam.p;
-	while ((*ap2++ = *ap1++) != NULL);
+	if (shellparam.malloc)
+		for (i = 0; i < n; i++)
+			ckfree(shellparam.p[i]);
+	memmove(shellparam.p, shellparam.p + n,
+	    (shellparam.nparam + 1) * sizeof(shellparam.p[0]));
 	shellparam.reset = 1;
 	INTON;
 	return 0;
@@ -408,7 +404,7 @@ shiftcmd(int argc, char **argv)
 
 
 /*
- * The set command builtin.
+ * The set builtin command.
  */
 
 int
@@ -420,7 +416,7 @@ setcmd(int argc, char **argv)
 	options(0);
 	optschanged();
 	if (*argptr != NULL) {
-		setparam(argptr);
+		setparam(argc - (argptr - argv), argptr);
 	}
 	INTON;
 	return 0;
@@ -574,7 +570,7 @@ out:
 /*
  * Standard option processing (a la getopt) for builtin routines.  The
  * only argument that is passed to nextopt is the option string; the
- * other arguments are unnecessary.  It return the character, or '\0' on
+ * other arguments are unnecessary.  It returns the option, or '\0' on
  * end of input.
  */
 

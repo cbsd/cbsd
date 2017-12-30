@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)jobs.c	8.5 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/jobs.c 281982 2015-04-25 13:34:25Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/jobs.c 327212 2017-12-26 16:23:18Z jilles $");
 
 #include <sys/ioctl.h>
 #include <sys/param.h>
@@ -322,8 +322,8 @@ static void
 showjob(struct job *jp, int mode)
 {
 	char s[64];
-	char statestr[64];
-	const char *sigstr;
+	char statebuf[16];
+	const char *statestr, *coredump;
 	struct procstat *ps;
 	struct job *j;
 	int col, curr, i, jobno, prev, procno;
@@ -339,9 +339,10 @@ showjob(struct job *jp, int mode)
 			prev = j - jobtab + 1;
 	}
 #endif
+	coredump = "";
 	ps = jp->ps + jp->nprocs - 1;
 	if (jp->state == 0) {
-		strcpy(statestr, "Running");
+		statestr = "Running";
 #if JOBS
 	} else if (jp->state == JOBSTOPPED) {
 		while (!WIFSTOPPED(ps->status) && ps > jp->ps)
@@ -350,27 +351,25 @@ showjob(struct job *jp, int mode)
 			i = WSTOPSIG(ps->status);
 		else
 			i = -1;
-		sigstr = strsignal(i);
-		if (sigstr != NULL)
-			strcpy(statestr, sigstr);
-		else
-			strcpy(statestr, "Suspended");
+		statestr = strsignal(i);
+		if (statestr == NULL)
+			statestr = "Suspended";
 #endif
 	} else if (WIFEXITED(ps->status)) {
 		if (WEXITSTATUS(ps->status) == 0)
-			strcpy(statestr, "Done");
-		else
-			fmtstr(statestr, 64, "Done(%d)",
+			statestr = "Done";
+		else {
+			fmtstr(statebuf, sizeof(statebuf), "Done(%d)",
 			    WEXITSTATUS(ps->status));
+			statestr = statebuf;
+		}
 	} else {
 		i = WTERMSIG(ps->status);
-		sigstr = strsignal(i);
-		if (sigstr != NULL)
-			strcpy(statestr, sigstr);
-		else
-			strcpy(statestr, "Unknown signal");
+		statestr = strsignal(i);
+		if (statestr == NULL)
+			statestr = "Unknown signal";
 		if (WCOREDUMP(ps->status))
-			strcat(statestr, " (core dumped)");
+			coredump = " (core dumped)";
 	}
 
 	for (ps = jp->ps ; procno > 0 ; ps++, procno--) { /* for each process */
@@ -399,7 +398,8 @@ showjob(struct job *jp, int mode)
 		}
 		if (ps == jp->ps) {
 			out1str(statestr);
-			col += strlen(statestr);
+			out1str(coredump);
+			col += strlen(statestr) + strlen(coredump);
 		}
 		do {
 			out1c(' ');
@@ -1016,7 +1016,7 @@ vforkexecshell(struct job *jp, char **argv, char **envp, const char *path, int i
  */
 
 int
-waitforjob(struct job *jp, int *origstatus)
+waitforjob(struct job *jp, int *signaled)
 {
 #if JOBS
 	int propagate_int = jp->jobctl && jp->foreground;
@@ -1039,8 +1039,8 @@ waitforjob(struct job *jp, int *origstatus)
 		setcurjob(jp);
 #endif
 	status = jp->ps[jp->nprocs - 1].status;
-	if (origstatus != NULL)
-		*origstatus = status;
+	if (signaled != NULL)
+		*signaled = WIFSIGNALED(status);
 	/* convert to 8 bits */
 	if (WIFEXITED(status))
 		st = WEXITSTATUS(status);
