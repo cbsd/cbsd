@@ -1,0 +1,157 @@
+#!/usr/local/bin/cbsd
+#v11.1.12
+globalconf="${workdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname inter"
+MYDESC="Destroy XEN domain"
+CBSDMODULE="xen"
+EXTHELP="wf_xremove.html"
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${jfs}
+. ${strings}
+. ${tools}
+
+if [ -z "${1}" ]; then
+	select_jail_by_list -s "List of local VMs:" -r 0 -e xls
+	if getyesno "Remove VM ${jname}. Are you sure? "; then
+		echo
+	else
+		exit 0
+	fi
+fi
+
+init $*
+
+[ -n "${inter}" ] && shift
+
+if [ -n "${jname}" ]; then
+
+	emulator="xen" # for jname_is_multiple
+	jname_is_multiple
+
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	else
+		JLIST=${jname}
+	fi
+else
+	JLIST=$*
+fi
+
+[ -z "$JLIST" ] && err 1 "Give me jname"
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
+
+for jname in ${JLIST}; do
+
+	DST="${jaildatadir}/${jname}-${jaildatapref}"
+	JAILDIR="${jaildir}/${jname}"
+	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+
+	unregister=0
+
+	. ${jrcconf}
+
+	[ -z "${jid}" ] && continue
+
+	if [ "${protected}" = "1" ]; then
+		${ECHO} "${MAGENTA}Protected/locked jail. Skip for remove: ${GREEN}${jname}${NORMAL}"
+		continue
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xremove status=1
+	fi
+
+	if [ $? -eq 1 ]; then
+		if [ ! -f "${JAILRCCONF}" ]; then
+			if [ $sqlreplica -eq 0 ]; then
+				${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+				continue
+			fi
+			remotenode=$( jwhereis ${jname} )
+			if [ -z "${remotenode}" ]; then
+				${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+				continue
+			fi
+			for i in ${remotenode}; do
+				if [ "${i}" = "${nodename}" ]; then
+					${ECHO} "${MAGENTA}Remote xremove: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
+					continue
+				fi
+				${ECHO} "${MAGENTA}Remote xremove: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
+				rexe node=${i} /usr/local/bin/cbsd bremove jname=${jname}
+			done
+			exit 0
+		else
+			. ${JAILRCCONF}
+			unregister=1
+		fi
+	fi
+
+	. ${workdir}/jcreate.subr
+	export_bhyve_data_for_external_hook
+	external_exec_master_script "remove.d"
+
+	if [ ${unregister} -eq 0 ] ; then
+		if [  ${jid} -ne 0 ]; then
+			case "${emulator}" in
+				"xen")
+					xstop jname=${jname}
+					;;
+			esac
+		fi
+		jcleanup jname=${jname}
+		/sbin/umount ${path} 2>/dev/null
+		# auto-promote if we have children
+		if [ ${zfsfeat} -eq 1 ]; then
+			/sbin/zfs get -H -o name,value origin |while read _name _values; do
+				[ "${_values}" = "-" ] && continue
+				echo "${_values}" |grep -q -E "${jname}@cbsd-original\-*" 2>/dev/null
+				if [ $? -eq 0 ]; then
+					${ECHO} "${MAGENTA}Auto-promote FS: ${GREEN}${_name}${NORMAL}"
+					/sbin/zfs promote ${_name}
+				fi
+			done || true
+		fi
+	fi
+
+	[ -d "${DST}" ] && removedata ${DST} force
+	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
+	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
+	[ -f "${JAILFSTAB}" ] && /bin/rm -f ${JAILFSTAB}
+	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
+	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
+	[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && /bin/rm -f "${jailrcconfdir}/rc.conf_${jname}"
+	[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf "${jailsysdir}/${jname}"
+	[ -f "${logdir}/${jname}.log" ] && /bin/rm -f "${logdir}/${jname}.log"
+	[ -d "${jaildir}/${jname}" ] && /bin/rmdir "${jaildir}/${jname}"
+
+	if [ "${emulator}" != "jail" ]; then
+		# TODO: cbsd media unregister mode=removeall jname=jname
+		cbsdsql storage_media "DELETE FROM media WHERE jname=\"${jname}\" AND type = \"hdd\""
+
+		A=$( cbsdsql storage_media SELECT name,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" )
+		if [ -n "${A}" ]; then
+			cd_name=
+			cd_path=
+			IFS="|"
+			sqllist "${A}" cd_name cd_path
+			IFS=" "
+			media mode=unregister name="${cd_name}" path="${cd_path}" jname="${jname}" type="iso"
+		fi
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xremove status=2
+	fi
+done
+
+exit 0
