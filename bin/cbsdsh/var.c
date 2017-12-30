@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -13,7 +15,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +38,7 @@ static char sccsid[] = "@(#)var.c	8.3 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/var.c 293635 2016-01-10 16:31:28Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/var.c 326025 2017-11-20 19:49:47Z pfg $");
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -186,6 +188,7 @@ initvar(void)
 		}
 	}
 	setvareq_const("OPTIND=1", 0);
+	setvareq_const("IFS= \t\n", 0);
 }
 
 /*
@@ -348,7 +351,6 @@ setvareq(char *s, int flags)
 		vp->flags &= ~(VTEXTFIXED|VSTACK|VUNSET);
 		vp->flags |= flags;
 		vp->text = s;
-
 #ifndef CBSD
 		/*
 		 * We could roll this to a function, to handle it as
@@ -514,7 +516,7 @@ bltinunsetlocale(void)
 		if (localevar(cmdenviron->args[i])) {
 			setlocale(LC_ALL, "");
 			updatecharset();
-			return;
+			break;
 		}
 	}
 	INTON;
@@ -804,6 +806,7 @@ poplocalvars(void)
 			ckfree(lvp->text);
 			optschanged();
 		} else if ((lvp->flags & (VUNSET|VSTRFIXED)) == VUNSET) {
+			vp->flags &= ~VREADONLY;
 			(void)unsetvar(vp->text);
 		} else {
 			islocalevar = (vp->flags | lvp->flags) & VEXPORT &&

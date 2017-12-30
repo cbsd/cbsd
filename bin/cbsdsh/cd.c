@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)cd.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/cd.c 278820 2015-02-15 21:47:43Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/cd.c 320340 2017-06-25 21:53:08Z jilles $");
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -68,15 +68,13 @@ __FBSDID("$FreeBSD: head/bin/sh/cd.c 278820 2015-02-15 21:47:43Z jilles $");
 static int cdlogical(char *);
 static int cdphysical(char *);
 static int docd(char *, int, int);
-static char *getcomponent(void);
+static char *getcomponent(char **);
 static char *findcwd(char *);
 static void updatepwd(char *);
 static char *getpwd(void);
 static char *getpwd2(void);
 
 static char *curdir = NULL;	/* current working directory */
-static char *prevdir;		/* previous working directory */
-static char *cdcomppath;
 
 int
 cdcmd(int argc __unused, char **argv __unused)
@@ -112,11 +110,10 @@ cdcmd(int argc __unused, char **argv __unused)
 	if (*dest == '\0')
 		dest = ".";
 	if (dest[0] == '-' && dest[1] == '\0') {
-		dest = prevdir ? prevdir : curdir;
-		if (dest)
-			print = 1;
-		else
-			dest = ".";
+		dest = bltinlookup("OLDPWD", 1);
+		if (dest == NULL)
+			error("OLDPWD not set");
+		print = 1;
 	}
 	if (dest[0] == '/' ||
 	    (dest[0] == '.' && (dest[1] == '/' || dest[1] == '\0')) ||
@@ -167,8 +164,17 @@ docd(char *dest, int print, int phys)
 	if ((phys || (rc = cdlogical(dest)) < 0) && (rc = cdphysical(dest)) < 0)
 		return (-1);
 
-	if (print && iflag && curdir)
+	if (print && iflag && curdir) {
 		out1fmt("%s\n", curdir);
+		/*
+		 * Ignore write errors to preserve the invariant that the
+		 * current directory is changed iff the exit status is 0
+		 * (or 1 if -e was given and the full pathname could not be
+		 * determined).
+		 */
+		flushout(out1);
+		outclearerror(out1);
+	}
 
 	return (rc);
 }
@@ -179,6 +185,7 @@ cdlogical(char *dest)
 	char *p;
 	char *q;
 	char *component;
+	char *path;
 	struct stat statb;
 	int first;
 	int badstat;
@@ -189,14 +196,14 @@ cdlogical(char *dest)
 	 *  next time we get the value of the current directory.
 	 */
 	badstat = 0;
-	cdcomppath = stsavestr(dest);
+	path = stsavestr(dest);
 	STARTSTACKSTR(p);
 	if (*dest == '/') {
 		STPUTC('/', p);
-		cdcomppath++;
+		path++;
 	}
 	first = 1;
-	while ((q = getcomponent()) != NULL) {
+	while ((q = getcomponent(&path)) != NULL) {
 		if (q[0] == '\0' || (q[0] == '.' && q[1] == '\0'))
 			continue;
 		if (! first)
@@ -245,25 +252,25 @@ cdphysical(char *dest)
 }
 
 /*
- * Get the next component of the path name pointed to by cdcomppath.
- * This routine overwrites the string pointed to by cdcomppath.
+ * Get the next component of the path name pointed to by *path.
+ * This routine overwrites *path and the string pointed to by it.
  */
 static char *
-getcomponent(void)
+getcomponent(char **path)
 {
 	char *p;
 	char *start;
 
-	if ((p = cdcomppath) == NULL)
+	if ((p = *path) == NULL)
 		return NULL;
-	start = cdcomppath;
+	start = *path;
 	while (*p != '/' && *p != '\0')
 		p++;
 	if (*p == '\0') {
-		cdcomppath = NULL;
+		*path = NULL;
 	} else {
 		*p++ = '\0';
-		cdcomppath = p;
+		*path = p;
 	}
 	return start;
 }
@@ -274,6 +281,7 @@ findcwd(char *dir)
 {
 	char *new;
 	char *p;
+	char *path;
 
 	/*
 	 * If our argument is NULL, we don't know the current directory
@@ -282,14 +290,14 @@ findcwd(char *dir)
 	 */
 	if (dir == NULL || curdir == NULL)
 		return getpwd2();
-	cdcomppath = stsavestr(dir);
+	path = stsavestr(dir);
 	STARTSTACKSTR(new);
 	if (*dir != '/') {
 		STPUTS(curdir, new);
 		if (STTOPC(new) == '/')
 			STUNPUTC(new);
 	}
-	while ((p = getcomponent()) != NULL) {
+	while ((p = getcomponent(&path)) != NULL) {
 		if (equal(p, "..")) {
 			while (new > stackblock() && (STUNPUTC(new), *new) != '/');
 		} else if (*p != '\0' && ! equal(p, ".")) {
@@ -311,14 +319,15 @@ findcwd(char *dir)
 static void
 updatepwd(char *dir)
 {
+	char *prevdir;
+
 	hashcd();				/* update command hash table */
 
-	if (prevdir)
-		ckfree(prevdir);
+	setvar("PWD", dir, VEXPORT);
+	setvar("OLDPWD", curdir, VEXPORT);
 	prevdir = curdir;
 	curdir = dir ? savestr(dir) : NULL;
-	setvar("PWD", curdir, VEXPORT);
-	setvar("OLDPWD", prevdir, VEXPORT);
+	ckfree(prevdir);
 }
 
 int
