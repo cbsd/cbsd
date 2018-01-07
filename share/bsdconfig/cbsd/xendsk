@@ -1,11 +1,4 @@
 #!/usr/local/bin/cbsd
-
-. ${subr}
-. ${strings}
-. ${tools}
-
-############################################################ FUNCTIONS
-
 # dialog_menu_main
 #
 # Display the dialog(1)-based application main menu.
@@ -14,33 +7,40 @@ dialog_menu_main()
 {
 	local title="$DIALOG_TITLE"
 	local btitle="$DIALOG_BACKTITLE"
-	local prompt=""
+	local prompt=" Virtual Machine: ${jname} "
 	local menu_list="
-		'A $msg_add_new_bhyve_machine'	''	'cbsd jconstruct-tui'
+		'A $msg_add_new_img'	'${msg_add_new_img_desc}'	'Add and configure new virtual image'
+		'-'	'-'	''
 	" # END-QUOTE
 	local defaultitem=
 	local hline="$hline_arrows_tab_enter"
 
-	local f_dialog_title=" Configure VM Machine "
+	local n=1
 
-	jlist=$( cbsdsql local SELECT jname FROM jails WHERE emulator = \"bhyve\" |/usr/bin/xargs )
+	for last_disk in $( /usr/bin/seq 1 16 ); do
+		unset dsk_controller dsk_path dsk_slot dsk_type
+		eval dsk_controller="\$dsk_controller$last_disk"
+		[ -z "${dsk_controller}" ] && break
+		eval dsk_path="\$dsk_path$last_disk"
+		eval dsk_slot="\$dsk_slot$last_disk"
+		eval dsk_type="\$dsk_type$last_disk"
+		dsk_fullpath="${data}/${dsk_path}"
 
-	eval $( for jname in ${jlist}; do
-		. ${jrcconf}
-		conv_status
-#		echo "${jname}_desc=\"hostname: ${host_hostname} ; ip4_addr: ${ip4_addr} ; path: ${path}\""
-		echo "${jname}_status=\"${status}\""
-	done )
+		dsk_realsize=$( /usr/bin/du -sh ${dsk_fullpath} | /usr/bin/awk '{printf $1}' 2>/dev/null )
+		dsk_size=$( /usr/bin/stat -f "%z" ${dsk_fullpath} 2>/dev/null )
 
-	local profile n=1
+		if conv2human "${dsk_size}"; then
+			dsk_size=${convval}
+		fi
+		[ -z "${dsk_size}" ] && dsk_size="?"
+		[ -z "${dsk_realsize}" ] && dsk_realsize="?"
 
-	for jname in ${jlist}; do
-		eval desc=\$${jname}_desc
-		eval status=\$${jname}_status
-		menu_list="$menu_list '$n ${jname}'	'($status)'	'${desc}'"
+		dsk=$( echo ${dsk_path} | /usr/bin/cut -d "." -f 1 )
+		menu_list="${menu_list} '$n ${dsk}'	'${dsk_controller}'	'pci=${dsk_slot},type=${dsk_type},size=${dsk_realsize}/${dsk_size}'"
 		n=$(( $n + 1 ))
 	done
 
+	local height width rows
 	eval f_dialog_menu_with_help_size height width rows \
 		\"\$title\"  \
 		\"\$btitle\" \
@@ -60,6 +60,7 @@ dialog_menu_main()
 		--item-help                             \
 		--ok-label \"\$msg_ok\"                 \
 		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
 		${USE_XDIALOG:+--help \"\"}             \
 		--default-item \"\$defaultitem\"        \
 		--menu \"\$prompt\"                     \
@@ -74,17 +75,49 @@ dialog_menu_main()
 
 	# Only update default-item on success
 	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
-
-	return $DIALOG_OK
+	return $retval
 }
 
+find_first_free_dsk_id()
+{
+	local last_disk _res
 
+	for last_disk in $( /usr/bin/seq 1 16 ); do
+		unset _res
+		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_path=\"dsk${last_disk}.vhd\" 2>&1 )
+		[ -z "${_res}" ] && echo "${last_disk}" && break
+	done
+
+	echo "${last_disk}"
+}
 
 ############################################################ MAIN
 export NOCOLOR=1
 
+MYARG="jname"
+MYOPTARG=""
+MYDESC="xen disk image dialog"
+CBSDMODULE="xen"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
 . ${workdir}/bsdconfig.subr
-f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-xendsk.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "xen" ] && err 1 "${MAGENTA}Not in xen mode${NORMAL}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/xendsk.subr
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -102,7 +135,7 @@ shift $(( $OPTIND - 1 ))
 #
 # Initialize
 #
-f_dialog_title " $msg_configure_cbsd "
+f_dialog_title " $msg_configure_xendsk "
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
 
@@ -110,22 +143,33 @@ f_mustberoot_init
 # Loop over the main menu until we've accomplished what we came here to do
 #
 while :; do
+	load_dsk_info
 	dialog_menu_main || break
 	f_dialog_menutag_fetch mtag
 
 	[ -z "${mtag}" ] && exit $SUCCESS
 
+	command=
+
 	case "$mtag" in
 		?" $msg_exit") break ;;
-		?" $msg_add_new_bhyve_machine")
-			/usr/local/bin/cbsd bconstruct-tui
+		?" $msg_add_new_img")
+			last_disk=$( find_first_free_dsk_id )
+			dsk="dsk${last_disk}"
+			command="xendsk-newdsk jname=${jname} dsk=${dsk}"
 			;;
 		*)
+			[ "${mtag}" = "-" ] && continue
 			index=${mtag%% *}
-			jname=${mtag##* }
-			/usr/local/bin/cbsd bcontrol-tui jname=${jname}
+			dsk=${mtag##* }
+			command="xendsk-cfgdsk jname=${jname} dsk=${dsk}"
 			;;
 	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+
 done
 
 return $SUCCESS
