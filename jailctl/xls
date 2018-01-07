@@ -8,7 +8,7 @@ ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,vm_ram,vm_cpus,vm_os_type,status\n"
+display= list by comma for column. Default: jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n"
 EXTHELP="wf_xls.html"
 
 . ${subr}
@@ -17,8 +17,9 @@ EXTHELP="wf_xls.html"
 readconf xls.conf
 init $*
 
-[ -z "${display}" ] && display="jname,vm_ram,vm_cpus,vm_os_type,status"
+[ -z "${display}" ] && display="jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
 [ "${shownode}" = "1" ] && display="nodename,${display}"
+[ -z "${order}" ] && order="asc"
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
@@ -30,6 +31,8 @@ JLS=""
 
 conv_status()
 {
+	local _maintain_reason=
+
 	case "${status}" in
 		0)
 			status="Off"
@@ -40,12 +43,19 @@ conv_status()
 		2)
 			status="Slave"
 			;;
+		3)
+			_maintain_reason=$( cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+			if [ -n "${_maintain_reason}" -a "${_maintain_reason}" != "0" ]; then
+				status="Maintenance:${_maintain_reason}"
+			else
+				status="Maintenance"
+			fi
+			;;
 		*)
 			status="Unknown"
 			;;
 	esac
 }
-
 
 show_header()
 {
@@ -53,11 +63,26 @@ show_header()
 	[ ${header} -eq 1 ] && $ECHO ${_header}
 }
 
-# if $1 = "Unregister" then overwrite status to "Unregister"
+# -j $jname
+# -u 1 - always show status as "Unregister"
 populate_output_data()
 {
+	local unregister="0"
+	local _tmpport _tmpbind
+	local _pid=0
 	local _A _ALLJCOL
+
 	printf "${NORMAL}" # for column sort
+
+	while getopts "j:u:" opt; do
+		case "$opt" in
+			j) jname="${OPTARG}" ;;
+			u) unregister="1" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	_pid="0"
 
 	#_ALLJCOL=$( echo ${_JCOL}| /usr/bin/tr " " "," )
 	_ALLJCOL="vm_cpus,vm_ram,vm_os_type,vm_os_profile,ip4_addr"
@@ -75,19 +100,33 @@ populate_output_data()
 	for _i in ${mydisplay}; do
 		_val=""
 		eval _val=\$$_i
-		if [ "${_i}" = "vm_ram" ]; then
-			# convert to MB
-			_val=$(( _val / 1024 / 1024 ))
-		fi
-
+		case "${_i}" in
+			vm_ram)
+				# convert to MB
+				_val=$(( _val / 1024 / 1024 ))
+				;;
+			vnc_port)
+				if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
+					_tmpport=$( /bin/cat ${jailsysdir}/${jname}/vnc_port )
+					_tmpbind=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT xen_vnc_tcp_bind FROM settings" 2>/dev/null )
+					_val="${_tmpbind}:${_tmpport}"
+				else
+					_val="0"
+				fi
+				;;
+			ip4_addr)
+				_val=$( cbsdsql local "SELECT ip4_addr FROM bhyve WHERE jname=\"${jname}\"" 2>/dev/null )
+				[ "${_val}" = "(null)" ] && _val="DHCP"
+				;;
+		esac
 		[ "$1" = "Unregister" -a "${_i}" = "status" ] && _val="Unregister"
 
-		[ -z "${_val}" ] && _val="-"
+		[ -z "${_val}" ] && _val="\-"
 
 		printf "${_val} "
 	done
 
-	printf "\n"
+	printf "${NORMAL}\n"
 }
 
 
@@ -103,11 +142,11 @@ show_jaildata_from_sql()
 		sqlfile="local"
 	fi
 
-	cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator=\"xen\" | while read jname; do
+	cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator=\"xen\" ORDER BY jname ASC | while read jname; do
 		_status=""
 		. ${jrcconf}
 		conv_status
-		populate_output_data
+		populate_output_data -j ${jname}
 	done
 }
 
@@ -126,12 +165,20 @@ show_local()
 	host_hostname="-"
 	path="-"
 	jid="0"
+	vm_ram="-"
+	vm_cpus="-"
+	vm_os_type="-"
+	path="-"
+	status="-"
+	vnc_port="-"
 
 	for J in $( /bin/ls ${jailrcconfdir} ); do
 		jname=""
+		[ ! -r ${jailrcconfdir}/${J} ] && continue
 		. ${jailrcconfdir}/${J}
+
 		[ -z "${jname}" ] && continue
-		populate_output_data "Unregister"
+		populate_output_data -u 1 -j ${jname}
 		${ECHO} ${_status}
 	done
 }
@@ -167,7 +214,7 @@ show_jails()
 	fi
 }
 
-
+. ${workdir}/jrctl.subr
 
 #### MAIN
 [ -z "${header}" ] && header=1

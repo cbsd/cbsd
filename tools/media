@@ -1,9 +1,9 @@
 #!/usr/local/bin/cbsd
-#v11.0.15
+#v11.1.12
 MYARG="mode"
 MYOPTARG="name path display type jname"
 MYDESC="Operate with virtual storage media such as ISO"
-CBSDMODULE="bhyve"
+CBSDMODULE="sys"
 EXTHELP="wf_bhyve.html"
 ADDHELP="mode=attach - attach media to jname\n\
 mode=detach - detach media from jname\n\
@@ -27,15 +27,16 @@ display= list by comma for column. Default: name,path,type,jname,size\n"
 init $*
 
 . ${workdir}/bhyve.subr
+. ${workdir}/xen.subr
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/media/"
 [ -z "${display}" ] && display="name,path,type,jname,size"
 
 #remove commas for loop action on header
-mydisplay=$(echo ${display} |/usr/bin/tr ',' ' ')
+mydisplay=$( echo ${display} | /usr/bin/tr ',' ' ' )
 
 # upper for header
-myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
 
 show_header()
 {
@@ -72,11 +73,15 @@ unregister_or_remove()
 		# this is last one, clean ISO register and drop to unassigned stage
 		# echo "cbsdsql storage_media UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"${type}\""
 		cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"${type}\" AND name=\"${name}\" AND path=\"${path}\""
+
 	else
 		# delete iso registered when we have greater then 1 records with path= name=
 		# echo "cbsdsql storage_media DELETE FROM media WHERE jname=\"${jname}\" AND name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
 		cbsdsql storage_media "DELETE FROM media WHERE jname=\"${jname}\" AND name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
 	fi
+
+	# delete from domain local db
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "DELETE FROM ${emulator}dsk WHERE dsk_path=\"hdd-${name}\" AND dsk_type=\"${type}\""
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
@@ -118,6 +123,9 @@ register_or_add()
 		# echo "cbsdsql storage_media INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
 		cbsdsql storage_media "INSERT INTO media ( name, path, type, jname ) VALUES ( \"${name}\", \"${path}\", \"${type}\", \"${jname}\" )"
 	fi
+
+	# add to domain local db
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "DELETE FROM ${emulator}dsk WHERE dsk_path=\"hdd-${name}\" AND dsk_type=\"${type}\""
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
@@ -247,6 +255,9 @@ check_protected()
 		bhyve)
 			_table="bhyve"
 			;;
+		xen)
+			_table="xen"
+			;;
 	esac
 
 	protected=$( cbsdsql local SELECT protected FROM ${_table} WHERE jname=\"${jname}\" )
@@ -299,7 +310,7 @@ storage_attach()
 		hdd)
 			mydb="${jailsysdir}/${jname}/local.sqlite"
 			virtio_type="virtio-blk"
-			cbsdsql ${mydb} "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
+			cbsdsql ${mydb} "INSERT INTO ${emulator}dsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
 			;;
 	esac
 
@@ -363,7 +374,7 @@ storage_detach()
 			;;
 		hdd)
 			mydb="${jailsysdir}/${jname}/local.sqlite"
-			cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" AND name=\"${dsk_name}\""
+			cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${dsk_path}\" AND name=\"${dsk_name}\""
 			;;
 	esac
 
@@ -386,7 +397,7 @@ storage_detach()
 	case "${type}" in
 		hdd)
 			mydb="${jailsysdir}/${jname}/local.sqlite"
-			cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\""
+			cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${dsk_path}\""
 			;;
 		iso)
 			bset mode=quiet jname=${jname} vm_iso_path=''
@@ -507,9 +518,9 @@ case "${mode}" in
 				;;
 			vhd|hdd)
 				mydb="${jailsysdir}/${jname}/local.sqlite"
-				#echo "cbsdsql ${mydb} \"DELETE FROM bhyvedsk WHERE dsk_path=\"${short_dsk_path}\"\""
-				cbsdsql ${mydb} "DELETE FROM bhyvedsk WHERE dsk_path=\"${short_dsk_path}\""
-				bhyve_remove_dsk ${short_dsk_path}
+				#echo "cbsdsql ${mydb} \"DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\"\""
+				cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\""
+				${emulator}_remove_dsk ${short_dsk_path}
 				;;
 		esac
 

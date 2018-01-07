@@ -1,0 +1,237 @@
+load_nic_info()
+{
+	nic_last_id=1
+	local sqldelimer=" "
+
+	unset niclist
+
+	for last_nic in $( /usr/bin/seq 1 16 ); do
+		unset nic_order${last_nic}
+		unset nic_id${last_nic}
+		unset nic_order${last_nic}
+		unset nic_driver${last_nic}
+		unset nic_slot${last_nic}
+		unset nic_type${last_nic}
+		unset nic_parent${last_nic}
+		unset nic_hwaddr${last_nic}
+	done
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM xennic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+		echo "export nic_id${nic_last_id}=\"${nic_id}\""
+		echo "export nic_order${nic_last_id}=\"${nic_order}\""
+		echo "export nic_driver${nic_last_id}=\"${nic_driver}\""
+		echo "export nic_slot${nic_last_id}=\"${nic_slot}\""
+		echo "export nic_type${nic_last_id}=\"${nic_type}\""
+		echo "export nic_parent${nic_last_id}=\"${nic_parent}\""
+		echo "export nic_hwaddr${nic_last_id}=\"${nic_hwaddr}\""
+		nic_last_id=$(( nic_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+}
+
+# form for $nic_driver
+get_nic_driver()
+{
+	local _input _retval
+
+	local _par="${1}"
+	local title=" NIC driver for ${mtag} "
+	hline=
+	local menu_list=
+
+	local baseelf=$( ${miscdir}/elf_tables --ver /bin/sh 2>/dev/null )
+
+	if [ ${baseelf} -gt 1100122 ]; then
+		menu_list="
+		'e1000'		'Intel e82545 network interface'	'Intel e82545 network interface'
+		'vtnet'		'Virtio Ethernet driver'		'Virtio network device'
+		" # END-QUOTE
+	else
+		menu_list="'e1000'		'Intel e82545 network interface'	'Intel e82545 network interface'"
+	fi
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	[ -n "${nic_driver}" ] && local defaultitem="${nic_driver}"
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	[ $retval -eq $DIALOG_OK ] && nic_driver="${menu_choice}"
+
+	return $retval
+}
+
+
+# form for $nic_parent
+get_nic_parent()
+{
+	local _input _retval
+
+	. ${settingstui}
+
+	get_construct_interface -d 0 -s "tap bridge vboxnet lo" -m 1 -d 1 -v 1 -c ${nic_parent}
+
+	_retval=$?
+
+	[ ${_retval} -ne ${DIALOG_OK} ] && return ${_retval}
+	[ "${interface}" = "0" ] && interface="disable"
+	nic_parent="${interface}"
+
+	return 0
+}
+
+# form for $vale_name
+get_vale_switch()
+{
+	local _input _retval
+
+	. ${settingstui}
+
+	local menu_list=$( cbsdsql local SELECT name FROM vale | while read name; do
+		echo "'${name}' '${name}'        'Switch named ${name}'"
+	done ) || err 1 "${MAGENTA}Error while create vale map${NORMAL}"
+
+	[ -z "${menu_list}" ] && menu_list="''  'no data'       ''"
+
+	cbsd_menubox
+	retval=$?
+
+	vale_name=
+
+	case $retval in
+		${DIALOG_OK})
+			nic_parent="${mtag}"
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+# form for new nic
+# -d driver -t type -h hwaddr -a address -p nic_parent
+add_nic()
+{
+	local controller=
+	local nic=
+	local size=
+	local newnic=
+
+	while getopts "a:d:t:h:p:" opt; do
+		case "$opt" in
+			a) nic_address="${OPTARG}" ;;
+			d) nic_driver="${OPTARG}" ;;
+			t) nic_type="${OPTARG}" ;;
+			h) nic_hwaddr="${OPTARG}" ;;
+			p) nic_parent="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${nic_address}" ] && nic_address="0"
+	[ -z "${nic_parent}" ] && nic_parent="auto"
+	[ -z "${nic_driver}" ] && err 1 "${MAGENTA}Empty nic_driver${NORMAL}"
+	[ -z "${nic_type}" ] && err 1 "${MAGENTA}Empty nic_type${NORMAL}"
+	[ -z "${nic_hwaddr}" ] && err 1 "${MAGENTA}Empty nic_hwaddr${NORMAL}"
+
+	if [ -n "${driver}" ]; then
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address ) VALUES ( \"${jname}\",\"${nic_driver}\",\"${nic_type}\",\"${nic_parent}\", \"${nic_hwaddr}\", \"${nic_address}\" )"
+	else
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xennic ( jname,nic_type,nic_parent,nic_hwaddr,nic_address ) VALUES ( \"${jname}\",\"${nic_type}\",\"${nic_parent}\", \"${nic_hwaddr}\", \"${nic_address}\" )"
+	fi
+
+	return 0
+}
+
+
+# update hwaddr by nic id
+# $nic_hwaddr must be set
+update_nic_hwaddr()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_hwaddr}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE xennic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}
+
+# update nic_mtu by nic id
+# $nic_mtu must be set
+update_nic_mtu()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_mtu}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE xennic SET nic_mtu=\"${nic_mtu}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}
+
+# update nic_parent by nic id
+# $nic_parent must be set
+update_nic_parent()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_parent}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE xennic SET nic_parent=\"${nic_parent}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}
+
+# update nic_driver by nic id
+# $nic_driver must be set
+update_nic_driver()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_driver}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE xennic SET nic_driver=\"${nic_driver}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}
+
+
+# update nic_address by nic id
+# $nic_driver must be set
+update_nic_address()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_address}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE xennic SET nic_address=\"${nic_address}\" WHERE id=\"${nic}\" AND jname=\"${jname}\"
+
+	return 0
+}
+

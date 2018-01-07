@@ -13,6 +13,7 @@ EXTHELP="wf_jstop_jstart.html"
 . ${workdir}/universe.subr
 . ${workdir}/xen.subr
 . ${tools}
+. ${workdir}/virtual.subr	# for init_systap
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -85,7 +86,21 @@ start_xen()
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart status=1
 	fi
 
-	vm_boot=$( cbsdsql local SELECT vm_boot FROM xen WHERE jname=\"${jname}\" 2>/dev/null )
+	#vm_boot=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT vm_boot FROM xen WHERE jname=\"${jname}\" 2>/dev/null )
+
+	check_for_empty_hdd
+
+	if [ "${vm_boot}" = "cd" ]; then
+		init_iso
+		if [ $? -eq 1 ]; then
+			printf "${MAGENTA}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${NORMAL}"
+				for i in $( /usr/bin/jot 5 ); do
+					printf "."
+					sleep 1
+				done
+				echo
+		fi
+	fi
 
 	case "${vm_boot}" in
 		"hdd")
@@ -103,14 +118,14 @@ start_xen()
 	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
 	[ "${vm_os_profile}" = "0" ] && unset vm_os_profile
 
-	if ! compile_dsk_args; then
-		${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
-		unset dsk_args
-	fi
+#	if ! compile_dsk_args; then
+#		${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
+#		unset dsk_args
+#	fi
 
-	if ! compile_cd_args; then
-		unset cd_args
-	fi
+#	if ! compile_cd_args; then
+#		unset cd_args
+#	fi
 
 	# init nic_args
 	#if ! compile_nic_args ; then
@@ -149,21 +164,28 @@ vcpus = ${vm_cpus}
 # Network devices
 vif = [ 'bridge=bridge0' ]
 
-#disk = ['phy:/dev/zvol/zroot/debian,xvda,w','file:/usr/jails/src/iso/debian-7.8.0-amd64-CD-1.iso,hdc:cdrom,r']
-disk =  ['${dsk_args},raw,hda,rw','${iso_img},raw,hdc:cdrom,r' ]
-
+# Boot args
 ${boot_arg}
 
 vnc = 1
 vnclisten = "${bhyve_vnc_tcp_bind}"
 vncpasswd="${vnc_password}"
 vncdisplay="${vncdisplay}"
+
+# larger resolution
+stdvga=1
+videoram=16
+
 #vm_vnc_port='${vm_vnc_port}'
 opengl=1
 vncconsole=1
 vncunused=0
 EOF
 
+	if ! compile_dsk_args ${XENCFG}; then
+		${ECHO} "${MAGENTA}xstart: compile_dsk_args failed for vm: ${GREEN}${jname}${NORMAL}"
+		unset dsk_args
+	fi
 
 	case "${vm_os_type}" in
 		"freebsd")
@@ -183,8 +205,6 @@ EOF
 	xl_cmd="${XL_CMD} -vvv create -c ${XENCFG}"
 	echo "[debug]: $xl_cmd"
 	#${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
-
-	exit 0
 
 	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
 
@@ -279,6 +299,7 @@ fi
 . ${sharedir}/xen.conf		# only for for MYCOL variables: used in exports below
 
 init_xen
+init_systap
 
 [ -z "$jname" ] && jname=$1
 
@@ -297,6 +318,33 @@ readconf ${default_profile}
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
+
+# to rcconf
+A=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vm_vnc_port,xen_vnc_tcp_bind,xen_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password FROM settings" )
+
+if [ -n "${A}" ]; then
+	OIFS="${IFS}"
+	IFS="|"
+	vm_cpus=
+	vm_ram=
+	vm_os_type=
+	vm_boot=
+	vm_os_profile=
+	vm_vnc_port=
+	xen_vnc_tcp_bind=
+	xen_vnc_resolution=
+	cd_vnc_wait=
+	protected=
+	hidden=
+	maintenance=
+	ip4_addr=
+	vnc_password=
+	sqllist "${A}" vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vm_vnc_port xen_vnc_tcp_bind xen_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr vnc_password
+	IFS="${OIFS}"
+else
+	err 1 "${MAGENTA}Unable to fetch vm data from: ${GREEN}${jailsysdir}/${jname}/local.sqlite${NORMAL}"
+fi
+
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
 MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )

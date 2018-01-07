@@ -125,10 +125,40 @@ compile_dsk_args()
 	local sqldelimer=" "
 	local prefix
 	local full_dsk_path
+	local XENCFG="${1}"
+	local dsk_count=0
+	local iso_count=0
+	local iso_img2=
+	local media_count=0
+	local first_count=0
+	local _ascii _dev_letter _dev
+
+	dsk_count=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM xendsk' )
+
+	iso_img2=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
+
+	[ -r ${iso_img2} ] && iso_count=$(( iso_count + 1 ))
+
+	if [ -r ${iso_img} ]; then
+		if [ "${iso_img}" = "${iso_img2}" ]; then
+			iso_img2=
+		else
+			iso_count=$(( iso_count + 1 ))
+		fi
+	else
+		iso_img=
+	fi
+
+	media_count=$(( iso_count + dsk_count ))
+
+	[ ${media_count} -eq 0 ] && return 0
+
+	# open disk brackets
+	echo "disk = [" >> ${XENCFG}
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -140,19 +170,40 @@ compile_dsk_args()
 			full_dsk_path="${dsk_path}"
 		fi
 
-		echo "export dsk${dsk_id}=\"${full_dsk_path}\";"
-		dsk_id=$(( dsk_id + 1 ))
-	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+		# for zvol
+		# phy:${full_dsk_path} ?
 
-	dsk_args=""
+		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
+		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+		_dev="hd${_dev_letter}"
 
-	for i in $( /usr/bin/seq 0 31 ); do
-		eval T="\$dsk$i"
-		[ -z "${T}" ] && break
-		dsk_args="${dsk_args} ${T}"
-	done
+		if [ ${first_count} -eq 0 ]; then
+			# first record
+			printf "'${full_dsk_path},raw,${_dev},rw'" >> ${XENCFG}
+		else
+			printf ", '${full_dsk_path},raw,${_dev},rw'" >> ${XENCFG}
+		fi
+		first_count=$(( first_count + 1 ))
+		media_count=$(( media_count - 1 ))
 
-	[ -z "${dsk_args}" ] && return 1
+	done || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
+
+	_ascii=$(( 97 + dsk_count ))	# started by 'a' (97 ascii code), skip all hdd and set next letter for disk id
+	_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+	_dev="hd${_dev_letter}"
+
+	if [ -n "${iso_img2}" ]; then
+		printf ", '${iso_img2},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+		first_count=$(( first_count + 1 ))
+		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
+		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+		_dev="hd${_dev_letter}"
+	fi
+
+	[ -n "${iso_img}" ] && printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+
+	# close disk brackets
+	printf "\n]\n" >> ${XENCFG}
 	return 0
 }
 
@@ -162,7 +213,7 @@ normalize_nic_hwaddr()
 	local _hwaddr
 	[ -z "${1}" ] && return 0
 
-	_hwaddr=$( echo "${1}" |tr -d ":"| sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	_hwaddr=$( echo "${1}" | /usr/bin/tr -d ":"| /usr/bin/sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
 	printf ${_hwaddr}
 }
 
@@ -402,30 +453,30 @@ compile_vnc_args()
 
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
-	if [ -n "${bhyve_vnc_tcp_bind}" ]; then
-		vnc_bind="${bhyve_vnc_tcp_bind}"
+	if [ -n "${xen_vnc_tcp_bind}" ]; then
+		vnc_bind="${xen_vnc_tcp_bind}"
 	else
 		vnc_bind="${default_vnc_tcp_bind}"
 	fi
 
-	# add bhyve_vnc_tcp_ipconnect variables, used in
+	# add xen_vnc_tcp_ipconnect variables, used in
 	# vncviewer promt and exported hooks variables
 	if [ "${vnc_bind}" = "0.0.0.0" ]; then
-		bhyve_vnc_tcp_ipconnect="${nodeip}"
+		xen_vnc_tcp_ipconnect="${nodeip}"
 	else
-		bhyve_vnc_tcp_ipconnect="${vnc_bind}"
+		xen_vnc_tcp_ipconnect="${vnc_bind}"
 	fi
 
-	#if [ -n "${bhyve_vnc_resolution}" ]; then
-	#	width=${bhyve_vnc_resolution%%x*}
-	#	height=${bhyve_vnc_resolution##*x}
+	#if [ -n "${xen_vnc_resolution}" ]; then
+	#	width=${xen_vnc_resolution%%x*}
+	#	height=${xen_vnc_resolution##*x}
 	#else
 	#	width="${default_vnc_width}"
 	#	heigh="${default_vnc_height}"
 	#fi
 
-	${ECHO} "${MAGENTA}VRDP is enabled. VNC bind/port: ${GREEN}${bhyve_vnc_tcp_ipconnect}:${vm_port}${NORMAL}"
-	${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer ${bhyve_vnc_tcp_ipconnect}:${vm_port}${NORMAL}"
+	${ECHO} "${MAGENTA}VRDP is enabled. VNC bind/port: ${GREEN}${xen_vnc_tcp_ipconnect}:${vm_port}${NORMAL}"
+	${ECHO} "${MAGENTA}For attach VM console, use: ${GREEN}vncviewer ${xen_vnc_tcp_ipconnect}:${vm_port}${NORMAL}"
 	${ECHO} "${MAGENTA}Resolution: ${GREEN}${width}x${height}.${NORMAL}"
 	[ -n "${vnc_password}" ] && ${ECHO} "${MAGENTA}VNC pass: ${GREEN}${vnc_password}${NORMAL}"
 
