@@ -81,6 +81,30 @@ installne()
 	return 0
 }
 
+# sync with natcfg form if forms exist
+# for back-compatible with old settings in global/local.sqlite
+# $answ variable must be set
+sync_nat_with_forms()
+{
+	local _answ
+
+	[ ! -r "${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite" ] && return 0
+	[ -z "${answ}" ] && return 0
+
+	case "${answ}" in
+		0)
+			_answ="disable"
+			;;
+		*)
+			_answ="${answ}"
+			;;
+	esac
+
+	if [ -r "${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite" ]; then
+		framework_id=$( cbsdsql ${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite "SELECT id FROM nat_enable_select WHERE text=\"${_answ}\"" )
+		${miscdir}/sqlcli ${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite "UPDATE forms SET cur=\"${framework_id}\" WHERE param='nat_enable'"
+	fi
+}
 
 make_nat()
 {
@@ -122,6 +146,9 @@ make_nat()
 	fi
 
 	case "${ok}" in
+		"exit")
+			return 0
+			;;
 		"pf")
 			if [ $( /usr/bin/grep ^pf_load= /boot/loader.conf| /usr/bin/wc -l ) = 0 ]; then
 				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && ${SYSRC_CMD} -vf /boot/loader.conf pf_load=YES
@@ -152,61 +179,65 @@ EOF
 			answ="${ok}"
 			ok="ok"
 			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
 			return 0
 		;;
 		"ipfilter")
-		/usr/bin/truncate -s0 ${etcdir}/ipfilter.conf
+			/usr/bin/truncate -s0 ${etcdir}/ipfilter.conf
 
-		for _net in ${rfc1918}; do
-			_nm=$( echo ${_net} |/usr/bin/tr "/" " " )
-			${workdir}/sbin/netmask ${_nm} ${natip}
-			if [ $? -ne 1 ]; then
-				cat >> ${etcdir}/ipfilter.conf <<EOF
+			for _net in ${rfc1918}; do
+				_nm=$( echo ${_net} |/usr/bin/tr "/" " " )
+				${workdir}/sbin/netmask ${_nm} ${natip}
+				if [ $? -ne 1 ]; then
+					cat >> ${etcdir}/ipfilter.conf <<EOF
 map ${_extiface} ${_net} -> ${natip}/32 proxy port ftp ftp/tcp
 map ${_extiface} ${_net} -> ${natip}/32 portmap tcp/udp 10000:20000
 map ${_extiface} ${_net} -> ${natip}/32
 EOF
-			fi
-		done
-		answ="${ok}"
-		ok="ok"
-		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
-		return 0
-		;;
-	"ipfw")
-		local check_mod="net.inet.ip.fw.default_to_accept ipfw_nat_load libalias_load"
-		local fix_mod=0
-		for i in ${check_mod}; do
-			/usr/bin/grep -q ^${i} /boot/loader.conf || fix_mod=$(( fix_mod + 1 ))
-		done
+				fi
+			done
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+			;;
+		"ipfw")
+			local check_mod="net.inet.ip.fw.default_to_accept ipfw_nat_load libalias_load"
+			local fix_mod=0
+			for i in ${check_mod}; do
+				/usr/bin/grep -q ^${i} /boot/loader.conf || fix_mod=$(( fix_mod + 1 ))
+			done
 
-		if [ ${fix_mod} -ne 0 ]; then
-			# we need pass inter=0 here for initenv-tui: need for allow accept when we first init ipfw from initenv-tui
-			if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
-				${SYSRC_CMD} -vf /boot/loader.conf net.inet.ip.fw.default_to_accept=1
-				${SYSRC_CMD} -vf /boot/loader.conf ipfw_nat_load=YES
-				${SYSRC_CMD} -vf /boot/loader.conf libalias_load=YES
+			if [ ${fix_mod} -ne 0 ]; then
+				# we need pass inter=0 here for initenv-tui: need for allow accept when we first init ipfw from initenv-tui
+				if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
+					${SYSRC_CMD} -vf /boot/loader.conf net.inet.ip.fw.default_to_accept=1
+					${SYSRC_CMD} -vf /boot/loader.conf ipfw_nat_load=YES
+					${SYSRC_CMD} -vf /boot/loader.conf libalias_load=YES
+				fi
 			fi
-		fi
-		/usr/bin/truncate -s0 ${etcdir}/ipfw.conf
-		_nm=$( echo ${rfc1918} |/usr/bin/tr " " "," )
-		/bin/cat >> ${etcdir}/ipfw.conf << EOF
+			/usr/bin/truncate -s0 ${etcdir}/ipfw.conf
+			_nm=$( echo ${rfc1918} |/usr/bin/tr " " "," )
+			/bin/cat >> ${etcdir}/ipfw.conf << EOF
 /sbin/ipfw -q add ${fwcount_end} nat 123 all from ${_nm} to not ${_nm} any via ${_extiface}
 /sbin/ipfw -q nat 123 config ip ${natip}
 /sbin/ipfw -q add ${fwcount_end} nat 123 ip from any to ${natip} via ${_extiface}
 EOF
 
-		answ="${ok}"
-		ok="ok"
-		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
-		return 0
-		;;
-	0|disable)
-		# Just disable NAT
-		natoff
-		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"0\"
-		return 0
-		;;
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+			;;
+		0|disable)
+			# Just disable NAT
+			natoff
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"0\"
+			sync_nat_with_forms
+			return 0
+			;;
 	esac
 	return 1
 }
@@ -216,6 +247,40 @@ EOF
 configure_nat()
 {
 	update_netinfo
+
+	if [ -n "${nat_enable}" ]; then
+		_default="${nat_enable}"
+	else
+		_default="pf"
+	fi
+
+	answ=0
+	ok=
+
+	local nat_selected=0
+
+	while [ "${nat_selected}" != "1" ]; do
+		${ECHO} "${BOLD}Which NAT framework do you want to use: [${GREEN}${_default}${NORMAL}${BOLD}]${NORMAL}"
+		${ECHO} "${MAGENTA}(type FW name, eg pf,ipfw,ipfilter, 'disable' or '0' to CBSD NAT, \"exit\" for break)${NORMAL}"
+		read ok leftover
+		[ -z "${ok}" ] && ok="${_default}"
+
+		case "${ok}" in
+			exit)
+				return 0
+				;;
+			0|disable)
+				make_nat
+				return 0
+				;;
+			pf|ipfw|ipfilter)
+				nat_selected="1"
+				;;
+			*)
+				${ECHO} "${MAGENTA}Wrong input: ${MAGENTA}${ok}${NORMAL}"
+				;;
+		esac
+	done
 
 	if [ "${CBSD_NODE_IP6_ACTIVE}" = "1" ]; then
 		ext_iface="${CBSD_UPLINK_IFACE6}"
@@ -266,35 +331,21 @@ configure_nat()
 
 	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET natip=\"${natip}\"
 
-	if [ -n "${nat_enable}" ]; then
-		_default="${nat_enable}"
-	else
-		_default="pf"
-	fi
+	make_nat
+	_err=$?
 
-	answ=0
-	ok=
-	while [ "$ok" != "ok" ]; do
-		${ECHO} "${BOLD}Which NAT framework do you want to use: [${GREEN}${_default}${NORMAL}${BOLD}]${NORMAL}"
-		${ECHO} "${MAGENTA}(type FW name, eg pf,ipfw,ipfilter, 'disable' or '0' to CBSD NAT, \"exit\" for break)${NORMAL}"
-		read ok leftover
-		[ -z "$ok" ] && ok="${_default}"
-		make_nat
-		_err=$?
+	case ${_err} in
+		0)
+			return 0
+			;;
+		1)
+			;;
+		2) # Unable to determine first IP for NIC
+			return 2
+			;;
+	esac
 
-		case ${_err} in
-			0)
-				return 0
-				;;
-			1)
-				;;
-			2) # Unable to determine first IP for NIC
-				return 2
-				;;
-		esac
 
-		[ "${ok}" != "exit" ] || return
-	done
 }
 
 rsyncd_enable()
@@ -517,6 +568,56 @@ get_initenv_nat_enable()
 	return ${retval}
 }
 
+# form for $natip
+get_initenv_natip()
+{
+	local _input _retval
+
+	local ipv4_list=
+	local nic_list=
+
+	local title=" NAT framework "
+	local prompt="${nat_enable_desc}"
+	hline=
+
+	ipv4_list=$( /sbin/ifconfig | /usr/bin/awk '/inet [0-9]+/{print $2}' | /usr/bin/xargs )
+	nic_list=$( nics-list phyonly=1 | /usr/bin/xargs )
+
+	local menu_list=
+
+	for i in ${nic_list}; do
+		menu_list="${menu_list} '${i}'		'${i}'	'NAT on NIC'"
+	done
+
+	menu_list="${menu_list} '-'		'-'	''"
+
+	for i in ${ipv4_list}; do
+		case "${i}" in
+			127.*)
+				continue
+				;;
+			*)
+				menu_list="${menu_list} '${i}'		'${i}'	'NAT on IPv4'"
+				;;
+		esac
+	done
+
+	local defaultitem="${natip}"
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		0)
+			natip="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
 # form for $statsd_enable
 get_initenv_statsd_enable()
 {
@@ -534,19 +635,6 @@ get_initenv_statsd_enable()
 		;;
 	esac
 }
-
-# form for $natip
-get_initenv_natip()
-{
-	local _input _retval
-
-	f_dialog_title " natip "
-	f_dialog_input _input "${natip_desc}" "${natip}" \
-		"${_message}" || return $?
-
-	[ -n "${_input}" ] && natip="${_input}"
-}
-
 
 # form for $fbsdrepo
 get_initenv_fbsdrepo()

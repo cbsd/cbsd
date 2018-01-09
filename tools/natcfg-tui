@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.5
+#v11.1.12
 MYARG=""
 MYOPTARG=""
 MYDESC="Configuring NAT in text-user dialog"
@@ -8,7 +8,97 @@ MYDESC="Configuring NAT in text-user dialog"
 . ${system}
 . ${tools}
 . ${initenv}
+. ${strings}
 
 init $*
 
-forms module=natcfg jname=CBSDSYS
+# form-based version
+#forms module=natcfg jname=CBSDSYS
+
+. ${settingstui}
+. ${dialog}
+
+commit()
+{
+	local modified=0
+
+	for i in nat_enable natip; do
+		eval VAL=\$$i
+		eval OVAL=\$OLDVAL_${i}
+
+		[ "${VAL}" = "${OVAL}" ] && continue
+		${ECHO} "${i}: ${MAGENTA}changed${NORMAL}"
+		${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${i}=\"${VAL}\"
+		modified=1
+	done
+
+	[ ${modified} -eq 1 ] && env sqlcolnames="1" ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT * FROM local" > ${inventory}
+
+	exit 0
+}
+
+store_defaults()
+{
+	local i VAL
+
+	eval $( for i in nat_enable natip; do
+		eval VAL=\$$i
+		echo "OLDVAL_${i}=\"${VAL}\""
+	done )
+}
+
+dialog_menu_main()
+{
+	local title=" natcfg "
+	hline=
+	local defaultitem=
+
+	f_dialog_default_fetch defaultitem
+
+	local menu_list=
+
+	menu_list="${menu_list} 'nat_enable'	'${nat_enable}'		'Which NAT framework do you want to use: pf, ipfw, ipfilter or disabled'"
+	menu_list="${menu_list} 'natip'		'${natip}'		'Set IP address or NIC as the aliasing NAT address or interface'"
+	menu_list="${menu_list} '-'     '-' ''"
+        menu_list="${menu_list} 'COMMIT'        'Save changes and quit' 'Save!'"
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+### MAIN
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+store_defaults
+
+[ "${nat_enable}" = "0" ] && nat_enable="disable"
+
+while [ 1 ]; do
+	dialog_menu_main || f_die
+
+	index=${mtag%% *}
+	mychoice=${mtag##* }
+                
+	case "${mychoice}" in
+		"-")
+			continue
+			;;
+		nat_enable)
+			get_initenv_nat_enable
+			;;
+		natip)
+			get_initenv_natip
+			;;
+		"COMMIT")
+			commit
+			;;
+	esac
+done
