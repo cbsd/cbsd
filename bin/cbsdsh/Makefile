@@ -20,7 +20,8 @@ WITHOUT_MAN=	yes
 NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-LDADD= -ledit -ltermcap -lsqlite3 -lm -pthread -ljail
+#LDADD= -ledit -ltermcap -lsqlite3 -lm -pthread -ljail
+LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs --static` -lm -lc++
 
 #CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
 CFLAGS+=-DSHELL -static -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
