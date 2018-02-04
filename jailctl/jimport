@@ -159,15 +159,15 @@ fi
 ${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver} || err 1 "localfstab"
 
 if [ "${origjname}" = "${jname}" ]; then
-	case $zfsfeat in
+	case ${zfsfeat} in
 		0)
 			/bin/mkdir ${JAILDIR}
 			;;
 		1)
-			. $zfstool
+			. ${zfstool}
 			ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 			if [ -n "${ZPOOL}" ]; then
-				if zfsroot $jname; then
+				if zfsroot ${jname}; then
 					err 1 "ZFS with $jname in pool already exist"
 				fi
 				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
@@ -175,9 +175,18 @@ if [ "${origjname}" = "${jname}" ]; then
 			;;
 	esac
 	${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} > /dev/null || err 1 "data"
+	# remove old symlink if exist for VM
+	# due to create-bhyve|xen will create new structure ( which may not coincide with the original FS )
+	case "${emulator}" in
+		bhyve|xen)
+			[ -n "${jaildatadir}" -a -d "${jaildatadir}" ] && /usr/bin/find ${jaildatadir}/ -type l -depth 1 -maxdepth 1 -delete > /dev/null 2>&1
+			;;
+		*)
+			;;
+	esac
 else
 	# create temporary zfs file system for extract $origname data then rename it to $jname
-	case $zfsfeat in
+	case ${zfsfeat} in
 		0)
 			/bin/mkdir -p ${jaildatadir}/tmp.$$
 			${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "data"
@@ -224,19 +233,14 @@ if [ -n "${vm_zvol_list}" ]; then
 		_res=
 		_msg=
 
-		_msg=$( bhyve_create_dsk ${dsk} ${vol_size} 1 )
+		_msg=$( bhyve_create_dsk -p ${dsk} -s ${vol_size} -f 1 )
 		_res=$?
 		if [ ${_res} -ne 0 ]; then
 			bremove ${jname}
 			err 1 "Error: Couldn't create the image file. ${_msg}"
 		fi
 
-		# ___NCSTART_ZVOL_dsk1=1
-		# ___NCNCSTOP_ZVOL_dsk1=1
-
 		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} | /usr/bin/gunzip -c > ${dsk}
-
-		# /bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
 	done
 fi
 

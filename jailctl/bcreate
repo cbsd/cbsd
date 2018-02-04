@@ -67,6 +67,15 @@ really_create_vm()
 {
 	local _res _msg
 
+	#test for imgtype
+	case ${zfsfeat} in
+			1)
+				;;
+			*)
+				force switch imgtype to md when no zfsfeat
+				imgtype="md"
+	esac
+
 	if [ "${from_jail}" ]; then
 		${ECHO} "${MAGENTA}Stage2: ${GREEN}jail2iso...${NORMAL}"
 		[ -z "${swapsize}" ] && swapsize="0"
@@ -77,6 +86,7 @@ really_create_vm()
 
 		jremove ${jname}
 		create_fs ${data}
+
 		#test for zfs mounted & mount if not
 		case ${zfsfeat} in
 			1)
@@ -85,10 +95,11 @@ really_create_vm()
 				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
 				;;
 		esac
+
 		${SYSRC_CMD} -qf ${jconf} ver="${ver}" > /dev/null
 		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
-		_msg=$( bhyve_create_dsk ${data}/${defdsk} ${imgsize} 1 )
+		_msg=$( bhyve_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} )
 		_res=$?
 		if [ ${_res} -ne 0 ]; then
 			bremove ${jname}
@@ -182,7 +193,7 @@ jstatus jname=${jname} > /dev/null 2>&1
 
 # CBSD QUEUE
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} status=1
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' status=1
 fi
 
 # ip validate
@@ -242,7 +253,7 @@ if [ ${_res} -ne 0 ]; then
 	${ECHO}
 	${ECHO} "${MAGENTA}Creating ${jname} failed: ${GREEN}cbsd jregister${NORMAL}"
 	${ECHO} "${MAGENTA}Please review bad config file: ${GREEN}/tmp/rc.conf_${jname}${NORMAL}"
-	mv $rcconf /tmp
+	/bin/mv ${rcconf} /tmp
 	#cleanup
 	[ -f "${mount_fstab}" ] && /bin/rm -f ${mount_fstab}
 	removedata ${data}
@@ -274,6 +285,19 @@ else
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname ) VALUES ( \"${jname}\" )"
 fi
 
+# Check if SIZE if valid: can't be smaller then template
+if is_number ${vm_ram}; then
+	# not number, try to convert
+	if conv2bytes "${vm_ram}"; then
+		vm_ram="${convval}"
+	else
+		err 1 "${vm_ram} is not number and we can't convert int via conv2bytes"
+	fi
+fi
+
+#register_insert_bhyve
+#cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( astart, vm_cpus, vm_ram, vm_os_type, vm_boot, vm_os_profile, vm_vnc_port, bhyve_vnc_tcp_bind, bhyve_vnc_resolution, cd_vnc_wait, ip4_addr, vnc_password ) VALUES ( \"${astart}\", \"${vm_cpus}\",\"${vm_ram}\",\"${vm_os_type}\",\"cd\", \"${vm_os_profile}\", \"${vm_vnc_port}\", \"${bhyve_vnc_tcp_bind}\", \"${bhyve_vnc_resolution}\", \"${cd_vnc_wait}\",\"${ip4_addr}\",\"${vnc_password}\" )"
+#cbsdsql local "INSERT INTO bhyve ( jname, astart, vm_cpus, vm_ram ) VALUES ( \"${jname}\",\"${astart}\",\"${vm_cpus}\",\"${vm_ram}\" )"
 
 if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 	cd_name="${register_iso_as}"
