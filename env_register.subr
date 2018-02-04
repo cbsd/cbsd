@@ -82,6 +82,7 @@ register_insert_bhyve()
 
 	[ -n "${register_iso_as}" -a -z "${vm_iso_path}" ] && vm_iso_path="${register_iso_as}"
 
+	# back compatible - old schema
 	for _i in ${MYCOL}; do
 		eval _val="\$${_i}"
 
@@ -112,8 +113,53 @@ register_insert_bhyve()
 
 	cbsdsql local "INSERT INTO bhyve ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
-	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
-	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
+	# new schema:
+
+	. ${sharedir}/bhyve_settings.conf
+
+	_sqlparam=
+	_sqlvalue=
+
+	# back compatible - old schema
+	for _i in ${MYCOL}; do
+		eval _val="\$${_i}"
+
+		# workaround for CBSD < 11.1.0 with default VNC password 'cbsd'. Remove this on next release
+		# todo: hidden, protected?
+		case "${_i}" in
+			vnc_password)
+				;;
+			*)
+				[ -z "${_val}" ] && continue
+				;;
+		esac
+
+		if [ -z "${_sqlparam}" ]; then
+			_sqlparam="${_i}"
+		else
+			_sqlparam="${_sqlparam}, ${_i}"
+		fi
+
+		case "${_i}" in
+			vm_ram)
+				# if its not number, then convert
+				if is_number ${_val}; then
+					conv2bytes ${_val};
+					_val="${convval}"
+				fi
+				;;
+		esac
+
+		if [ -z "${_sqlvalue}" ]; then
+			_sqlvalue="${_val}"
+		else
+			_sqlvalue="${_sqlvalue}, '${_val}'"
+		fi
+	done
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
 }
 
 

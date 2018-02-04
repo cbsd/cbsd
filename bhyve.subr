@@ -98,7 +98,7 @@ compile_uefi_boot_args()
 	#also same string in compile_cd_args cd_args
 	case "${vm_boot}" in
 		hdd)
-			if [ "${vm_os_type}" != "openbsd" ]; then
+			if [ "${vm_os_type}" != "openbsd" -a "${vm_os_type}" != "freebsd" ]; then
 				uefi_boot_args="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
 			fi
 			;;
@@ -565,25 +565,42 @@ compile_cd_args()
 		cd_args2=""
 	else
 		cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
-		cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+		case ${vm_os_type} in
+			freebsd)
+				# Latest FreeBSD has troubles with UIEF boot via refind, use default firmware
+				cd_args2=""
+				;;
+			*)
+				cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+				;;
+		esac
 	fi
 }
 
 # create new disk image for bhyve VMs
-# $1 full path
-# $2 size (eg: 1g)
-# $3 fsfeat ( 1 or 0 ) - use of skip FS features
+# -f fsfeat ( 1 or 0 ) - use of skip FS features
+# -p full path
+# -s size (eg: 1g)
+# -t type (zvol, md)
 # require: /usr/local/bin/cbsd as shell
 # require: ${tools}
 #
-# if ! bhyve_create_dsk /tmp/olala.vhd 10g 0; then
+# if ! bhyve_create_dsk -p /tmp/olala.vhd -s 10g -f 0; then
 #    echo ";=("
 # fi
 bhyve_create_dsk()
 {
-	local newdsk="${1}"; shift
-	local imgsize="${1}"; shift
-	local fsfeat="${1}"; shift
+	local newdsk imgsize fsfeat imgtype
+
+	while getopts "f:p:s:t:" opt; do
+		case "${opt}" in
+			f) feat="${OPTARG}" ;;
+			p) newdsk="${OPTARG}" ;;
+			s) imgsize="${OPTARG}" ;;
+			t) imgtype="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	local _res
 
@@ -607,12 +624,14 @@ bhyve_create_dsk()
 		conv2bytes ${imgsize} || err 1 "${MAGENTA}conv2bytes from bhyve.subr error for: ${GREEN}${imgsize}${NORMAL}"
 		imgbytes="${convval}"
 	else
-		imgbytes=$imgsize
+		imgbytes=${imgsize}
 	fi
 
-	if [ "${zfsfeat}" = "1" ]; then
+	[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
+
+	if [ "${zfsfeat}" = "1" -a "${imgtype}" = "zvol" ]; then
 		readconf zfs.conf
-		. $zfstool
+		. ${zfstool}
 		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 #		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 #		if zfsroot $jname; then
@@ -624,15 +643,13 @@ bhyve_create_dsk()
 		_res=$?
 		[ ${_res} -ne 0 ] && return ${_res}
 
-		[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
 		/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-${lunname} ${newdsk}
 
 	elif [ "${hammerfeat}" = "1" ]; then
 		err 1 "Hammer not supported yet"
 	else
 		blockcount=$(( imgbytes  / 1048576 ))
-		[ ! -d ${datadir} ] && /bin/mkdir -p ${datadir}
-		/usr/bin/touch "${newdsk}"
+		[ ! -f "${newdsk}" -a ! -h "${newdsk}" ] && /usr/bin/touch "${newdsk}"
 		/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
 	#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
 		_res=$?
@@ -656,7 +673,7 @@ bhyve_remove_dsk()
 
 	if [ "${zfsfeat}" = "1" ]; then
 		readconf zfs.conf
-		. $zfstool
+		. ${zfstool}
 
 		if is_getzvol ${data}/${dsk}; then
 			/sbin/zfs destroy ${is_zvol}

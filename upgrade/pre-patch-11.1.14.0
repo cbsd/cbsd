@@ -1,0 +1,67 @@
+#!/bin/sh
+#v11.1.14
+# Update bhyvenic tables for nic_mtu column
+: ${distdir="/usr/local/cbsd"}
+unset workdir
+
+# MAIN
+. /etc/rc.conf
+
+[ -z "${cbsd_workdir}" ] && exit
+
+workdir="${cbsd_workdir}"
+
+[ ! -f "${workdir}/cbsd.conf" ] && exit
+
+. ${distdir}/cbsd.conf
+. ${distdir}/tools.subr
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit
+[ ! -x /usr/local/bin/cbsd ] && exit
+
+vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+
+for i in ${vms}; do
+	mydb="${jailsysdir}/${i}/local.sqlite"
+	[ ! -r "${mydb}" ] && continue
+	# alter 11.1.14 settings.schema if not exist and migrate data
+	unset _test
+	_test=$( ${miscdir}/sqlcli ${mydb} "SELECT vm_cpus FROM settings" 2>/dev/null )
+	[ -n "${_test}" ] && continue
+
+	astart=
+	vm_cpus=
+	vm_ram=
+	vm_os_type=
+	vm_boot=
+	vm_os_profile=
+	vm_vnc_port=
+	bhyve_vnc_tcp_bind=
+	bhyve_vnc_resolution=
+	cd_vnc_wait=
+	ip4_addr=
+	vnc_password=
+	vm_efi=
+
+	${ECHO} "  * ${MAGENTA}Update bhyve settings tables for ${GREEN}${i}${NORMAL}"
+	${miscdir}/sqlcli ${mydb} DROP TABLE IF EXISTS settings
+	/usr/local/bin/cbsd ${miscdir}/updatesql ${mydb} ${distdir}/share/local-bhyve-settings.schema settings
+
+	# load data from original conf
+	[ -r "${jailsysdir}/${i}/rc.conf_${i}" ] && . ${jailsysdir}/${i}/rc.conf_${i}
+
+	# load data from runtime file
+	[ -r "${jailsysdir}/${i}/bhyve.conf" ] && . ${jailsysdir}/${i}/bhyve.conf
+
+	${miscdir}/sqlcli ${mydb} "INSERT INTO settings ( astart, vm_cpus, vm_ram, vm_os_type, vm_boot, vm_os_profile, vm_vnc_port, bhyve_vnc_tcp_bind, bhyve_vnc_resolution, cd_vnc_wait, ip4_addr, vnc_password ) VALUES ( \"${astart}\", \"${vm_cpus}\",\"${vm_ram}\",\"${vm_os_type}\",\"${vm_boot}\", \"${vm_os_profile}\", \"${vm_vnc_port}\", \"${bhyve_vnc_tcp_bind}\", \"${bhyve_vnc_resolution}\", \"${cd_vnc_wait}\",\"${ip4_addr}\",\"${vnc_password}\" )"
+	OLD_PARAM="vm_cpus,vm_ram,vm_os_type,vm_boot,virtio_type,vm_hostbridge,vm_os_profile,vm_iso_path,vm_console,vm_efi,vm_vnc_port,protected,hidden,bhyve_generate_acpi,bhyve_wire_memory,bhyve_rts_keeps_utc,bhyve_force_msi_irq,bhyve_x2apic_mode,bhyve_mptable_gen,bhyve_ignore_msr_acc,cd_vnc_wait,bhyve_vnc_resolution,bhyve_vnc_tcp_bind,ip4_addr,vnc_password,bhyve_vnc_vgaconf"
+	OLD_PARAM_LIST=$( echo ${OLD_PARAM} | tr "," " " )
+	printf "   * moving: "
+	for x in ${OLD_PARAM_LIST}; do
+		printf " ${x}"
+		val=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT ${x} FROM bhyve WHERE jname = \"${i}\"" 2>/dev/null )
+		${miscdir}/sqlcli ${mydb} UPDATE settings SET ${x}=\"${val}\"
+	done
+	echo
+done
