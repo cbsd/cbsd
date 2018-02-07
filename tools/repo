@@ -139,6 +139,7 @@ register_fetched_base()
 getbase()
 {
 	local _srcmd5_found _src_found _majorver _release _rel_postfix
+	local win_mirror win_rate t_size
 
 	if [ -z "${basename}" ]; then
 		BDIR="${basejailpref}_${arch}_${ver}"
@@ -151,8 +152,6 @@ getbase()
 			err 1 "${MAGENTA}${platform} unsupported yet${NORMAL}"
 			;;
 		FreeBSD)
-			MIRROR="http://ftp.freebsd.org"
-
 			case "${ver}" in
 				12*)
 					# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
@@ -167,15 +166,14 @@ getbase()
 					FHIER="${arch}/${target_arch}/${ver}"
 					;;
 			esac
-			BSDBASE_DISTSITE="${MIRROR}/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/base.txz"
+			BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${FHIER}-${_rel_postfix}/base.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/base.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/base.txz"
 			;;
 		HardenedBSD)
 			# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
 			# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
 			_majorver=${ver%%.*}
-			MIRROR="https://pub.allbsd.org/pub"
 			FHIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
-			BSDBASE_DISTSITE="$MIRROR/HardenedBSD/releases/${FHIER}/base.txz"
+			BSDBASE_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${FHIER}/base.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${FHIER}/base.txz"
 			;;
 	esac
 
@@ -209,15 +207,50 @@ getbase()
 		base_status_is_maintenance_hard
 	fi
 
+	win_mirror=
+	win_rate=0
+	t_size=0
+
+	if [ "${fbsdrepo}" = "1" ]; then
+		${ECHO} "${MAGENTA}Scanning for fastest mirror...${NORMAL}"
+		for i in ${BSDBASE_DISTSITE}; do
+			#${ECHO} "${MAGENTA} :: ${i}"
+			printf " ${WHITE}* ${GREEN}${i}${NORMAL}: "
+			t_size=$( /usr/bin/timeout -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${i} 2>/dev/null )
+			if [ -z "${t_size}" ]; then
+				echo "failed"
+			else
+				echo "${t_size}"
+				if ! is_number ${t_size}; then
+					if [ ${t_size} -gt ${win_rate} ]; then
+						win_rate=${t_size}
+						win_mirror="${i}"
+					fi
+				else
+					echo "failed, no size"
+				fi
+			fi
+		done
+		[ -n "${win_mirror}" ] && ${ECHO} "${LYELLOW} Winner: ${GREEN}${win_mirror}${NORMAL}"
+		iso_site="${win_mirror} ${BSDBASE_DISTSITE}"
+	fi
+
 	if [ "${fbsdrepo}" = "1" -a -z "${basename}" ]; then
 		## Official fbsd repo
 		${ECHO} "${MAGENTA}Looking for official ${platform} mirror:${NORMAL}"
-		ARCHIVE="$MYDIR/base.txz"
-		fetchme -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
-		if [ $? -eq 0 ]; then
+		ARCHIVE="${MYDIR}/base.txz"
+		for i in ${iso_site}; do
+			fetchme -u ${i} -o ${ARCHIVE}
+			if [ $? -eq 0 ]; then
+				break
+			else
+				[ -r ${ARCHIVE} ] && /bin/rm -f ${ARCHIVE}
+			fi
+		done
+		if [ -r ${ARCHIVE} ]; then
 			printf "\n${MAGENTA}Extracting base...${NORMAL}\n"
-			[ ! -d "${BASE_DIR}" ] && mkdir -p $BASE_DIR
-			cd $BASE_DIR
+			[ ! -d "${BASE_DIR}" ] && mkdir -p ${BASE_DIR}
+			cd ${BASE_DIR}
 			set -e
 			/usr/bin/tar xfz ${ARCHIVE}
 			set +e
@@ -225,12 +258,21 @@ getbase()
 			# fetch lib32 only for amd64
 			if [ "${arch}" = "amd64" ]; then
 				if [ "${platform}" = "FreeBSD" ]; then
-					BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
-					ARCHIVE="$MYDIR/lib32.txz"
-					fetchme -u ${BSDBASE_DISTSITE} -o ${ARCHIVE}
-					if [ $? -eq 0 ]; then
+					BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${FHIER}-${_rel_postfix}/lib32.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/lib32.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/lib32.txz"
+
+					#BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
+					ARCHIVE="${MYDIR}/lib32.txz"
+					for i in ${BSDBASE_DISTSITE}; do
+						fetchme -u ${i} -o ${ARCHIVE}
+						if [ $? -eq 0 ]; then
+							break
+						else
+							[ -r ${ARCHIVE} ] && /bin/rm -f ${ARCHIVE}
+						fi
+					done
+					if [ -r ${ARCHIVE} ]; then
 						printf "\n${MAGENTA}Extracting lib32...${NORMAL}\n"
-						cd $BASE_DIR
+						cd ${BASE_DIR}
 						set -e
 						/usr/bin/tar xfz ${ARCHIVE}
 						set +e
