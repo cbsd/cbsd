@@ -37,6 +37,9 @@ clean:
 	${RM} -f tools/vale-ctl
 	${RM} -f tools/nic_info
 	${RM} -f tools/bridge
+	${RM} -f tools/racct-statsd
+	${RM} -f tools/select_jail
+
 
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
