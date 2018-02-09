@@ -157,6 +157,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		# Eject cd
 		cd_boot_once=0
 		vm_boot="hdd"
+
 		[ -n "${bhyveload_cmd_once}" ] && bhyveload_cmd="${bhyveload_cmd_once}"
 		# replace hdd boot in conf
 		/usr/sbin/sysrc -qf ${conf} cd_boot_once=0
