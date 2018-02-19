@@ -387,21 +387,59 @@ if [ -n "${interface}" -a "${interface}" != "0" -a "${vnet}" -eq "0" ]; then
 	done
 fi
 
+# args for makejconf
+epairb_list=
+
+# extract and export/rewrite interface variable from jailnic for vnet-based jails
 if [ "${vnet}" = "1" ]; then
 	# for vnet we can make another action
 	. ${vimageconf}
-	# when ip=0 and interface=auto we must use default interface for upstream
-	[ "${interface}" = "0" -o "${interface}" = "auto" ] && interface=$( getnics-by-ip ip=0.0.0.0 )
 
-	if ! mybridge=$( get_my_device bridge ${interface} ); then
-		err 1 "${MAGENTA}Error: Cant get_my_device for ${interface}: ${mybridge}${NORMAL}"
-	fi
-	myepair=$( get_my_epair ${mybridge} )
-	[ $? -eq 1 ] && err 1 "${MAGENTA}Error: Cant get_my_epair by: ${GREEN}${mybridge}${NORMAL}"
-	/sbin/ifconfig ${myepair}a description ${jname} up
-#	dhclient ${myepair}b
-	TRAP="${TRAP} /sbin/ifconfig ${myepair}a destroy;"
-	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	interfaces=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM jailnic | while read _int; do
+		printf "${_int} "
+	done ) || err 1 "${MAGENTA}jstart: error get interfaces name for vnet nic map${NORMAL}"
+
+	eth_seq=0
+	printf "${MAGENTA}Create epair: "
+
+	for i in ${interfaces}; do
+
+		nic_hwaddr=
+		nic_parent=
+
+		nic_parent=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT nic_parent FROM jailnic WHERE name=\"${i}\" )
+
+		# when ip=0 and interface=auto we must use default interface for upstream
+		[ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ] && nic_parent=$( getnics-by-ip ip=0.0.0.0 )
+		if ! mybridge=$( get_my_device bridge ${nic_parent} ); then
+			err 1 "${MAGENTA}Error: Cant get_my_device for ${nic_parent}: ${mybridge}${NORMAL}"
+		fi
+		myepair=$( get_my_epair ${mybridge} )
+		[ $? -eq 1 ] && err 1 "${MAGENTA}Error: Cant get_my_epair by: ${GREEN}${mybridge}${NORMAL}"
+		if [ -z "${epairb_list}" ]; then
+			epairb_list="${myepair}b"
+		else
+			epairb_list="${epairb_list},${myepair}b"
+		fi
+		printf "${LYELLOW}${myepair}:${GREEN}${nic_parent} "
+		/sbin/ifconfig ${myepair}a description ${jname}-eth${eth_seq} up
+		eth_seq=$(( eth_seq + 1 ))
+		TRAP="${TRAP} /sbin/ifconfig ${myepair}a destroy;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+
+		nic_hwaddr=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic WHERE name=\"${i}\" )
+
+		# MAC MGMT
+		if [ "${nic_hwaddr}" = "0" ]; then
+			nic_hwaddr=$( mac_gen 00:a0:98 )
+			cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE name=\"${i}\""
+		fi
+
+		/sbin/ifconfig ${myepair}b ether ${nic_hwaddr}
+	done
+
+	${ECHO} "${NORMAL}"
+
 fi	# vnet -eq 1
 
 #test for zfs mounted & mount if not
@@ -509,7 +547,7 @@ if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
 fi
 
 set -e
-makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${myepair}b fbsd=${is_freebsd}
+makejconf jname=${jname} out=${ftmpdir}/${jname}.conf ip6wa=${HAVE_IPV6} epair=${epairb_list} fbsd=${is_freebsd}
 set +e
 
 #rctl/limits area
@@ -544,6 +582,12 @@ trap "" HUP INT ABRT BUS TERM EXIT
 
 [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
 
+### late start ###
+# late exec_start: for zfsattached and vnet-based jails
+# this is necessary for any operations that must be performed after 
+# creating the jail but before running real exec_start
+late_start=
+
 # sign of zfs attach inside jail: we need special route for this case
 # remove orphaned sign if exist: then touched it by mountfstab script
 if [ -r ${with_zfs_attach} -a ${is_freebsd} -eq 1 ]; then
@@ -551,8 +595,41 @@ if [ -r ${with_zfs_attach} -a ${is_freebsd} -eq 1 ]; then
 	[ -r ${mount_fstab}.local ] && attachzfs fstab=${mount_fstab}.local jname=${jname}
 	# real exec_start for zfs attached jail
 	/usr/sbin/jexec ${jname} /sbin/zfs mount -a
+	late_start="${exec_start}"
+fi
+
+# for VNET-based jail we also need special route
+# due to jail.conf doesn't support for multiple NICs
+if [ ${vnet} -eq 1 ]; then
+	OIFS="${IFS}"
+	IFS=","
+	eth_seq=0
+	for i in ${epairb_list}; do
+		[ -z "${i}" ] && continue
+		IFS="${OIFS}"
+		/sbin/ifconfig ${i} up
+		# we need setup lock here due to ethX name possible conflict with other jail
+		while [ -r ${tmpdir}/eth${eth_seq}.locked ]; do
+			${ECHO} "${MAGENTA}jstart: eth${eth_seq} locked, waiting..${NORMAL}"
+			sleep 1
+		done
+		# make lock
+		echo "${jname}" > ${tmpdir}/eth${eth_seq}.locked
+		/sbin/ifconfig ${i} name eth${eth_seq} && /sbin/ifconfig eth${eth_seq} vnet ${jname}
+		# release lock
+		/bin/rm -f ${tmpdir}/eth${eth_seq}.locked
+		eth_seq=$(( eth_seq + 1 ))
+		IFS=","
+	done
+	IFS="${OIFS}"
+	late_start="${exec_start}"
 	/usr/sbin/jexec ${jname} ${exec_start}
 fi
+
+if [ -n "${late_start}" ]; then
+	/usr/sbin/jexec ${jname} ${late_start}
+fi
+### /late start ###
 
 # update state_time
 cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"

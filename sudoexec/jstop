@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.1.16
 MYARG=""
 MYOPTARG="jname inter"
 MYDESC="Stop jail"
@@ -84,10 +84,42 @@ if [ "${vnet}" = "1" -a "${vimage_feature}" = "0" ]; then
 	vnet=0
 fi
 
+# args for makejconf
+epairb_list=
+
 if [ ${vnet} -eq 1 ]; then
 	. ${vimageconf}
-	myepair=$( get_my_device epair ${jname} )
-	[ -z "${myepair}" ] && ${ECHO} "${MAGENTA}Warning: Cant find epair for vnet-type jail:${GREEN}${jname}${NORMAL}"
+
+	interfaces=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM jailnic | while read _int; do
+		printf "${_int} "
+	done ) || err 1 "${MAGENTA}jstart: error get interfaces name for vnet nic map${NORMAL}"
+
+	eth_seq=0
+	myepair_list=
+
+	for i in ${interfaces}; do
+
+		nic_parent=
+		nic_parent=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT nic_parent FROM jailnic WHERE name=\"${i}\" )
+
+		[ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ] && nic_parent=$( getnics-by-ip ip=0.0.0.0 )
+		myepair=
+		myepair=$( get_my_device epair ${jname}-eth${eth_seq} )
+		if [ -n "${myepair}" ]; then
+			myepair_list="${myepair_list} ${myepair}"
+			# returned epairXa, but we need epairXb, so append 'end' to the end of
+			# string and replace 'aend' to 'b'
+			if [ -z "${epairb_list}" ]; then
+				epairb_list="${myepair}end"
+			else
+				epairb_list="${epairb_list},${myepair}end"
+			fi
+			# not the best solution, but better than nothing
+			epairb_list=$( echo ${epairb_list} | /usr/bin/sed 's:aend:b:g' )
+		fi
+		eth_seq=$(( eth_seq + 1 ))
+	done
+	[ -z "${myepair_list}" ] && ${ECHO} "${MAGENTA}Warning: Cant find epair_list for vnet-type jail:${GREEN}${jname}${NORMAL}"
 fi
 
 #determine that jail is FreeBSD. Useful for vnet operation in makejconf and
@@ -95,17 +127,15 @@ is_freebsd=0
 
 if [ ${baserw} -eq 1 ]; then
 	elftest=${data}/bin/sh
+	path=${data}
 else
 	elftest="${BASE_DIR}/bin/sh"
 fi
 
 [ -f "${elftest}" ] && osname=$( ${miscdir}/elf_tables --osname ${elftest} )
-
 [ "${osname}" = "freebsd" ] && is_freebsd=1
 
-makejconf jname=${jname} out=${ftmpdir}/${jname}.conf epair=${myepair}b fbsd=${is_freebsd} is_stop=1
-
-[ ${baserw} -eq 1 ] && path=${data}
+makejconf jname=${jname} out=${ftmpdir}/${jname}.conf epair=${epairb_list} fbsd=${is_freebsd} is_stop=1
 
 fwcounters jname=${jname} mode=remove
 expose jname=${jname} mode=clear
@@ -113,8 +143,23 @@ expose jname=${jname} mode=clear
 # for external hook variables
 geniplist ${ip4_addr}
 
-export_jail_data_for_external_hook
+# there is some problem with stopping cron:
+# Stopping cron.
+# Waiting for PIDS: 71597
+# 90 second watchdog timeout expired. Shutdown terminated.
+# jail: jail17: /bin/sh /etc/rc.shutdown: exited on signal 9
+# always reproduced when the jail have persist flags:
+# e.g for CBSD whith zfs attached fs or VNET-based.
+# try to defend and kill the cron preventively
 
+#[ -r ${path}/var/run/cron.pid ] && /bin/pkill -9 -F ${path}/var/run/cron.pid
+# pid not always correct, so just kill it via jexec:
+# roughly, but what to do with FreeBSD ;(
+if [ ${is_freebsd} -eq 1 ]; then
+	/usr/sbin/jexec ${jid} pkill -9 cron
+fi
+
+export_jail_data_for_external_hook
 external_exec_master_script "master_prestop.d"
 exec_master_prestop
 exec_prestop
@@ -125,17 +170,6 @@ jrctl jname=${jname} mode=unset >/dev/null 2>&1
 sleep 2
 
 external_exec_script "stop.d"
-
-# there is some problem with stopping cron:
-# Stopping cron.
-# Waiting for PIDS: 71597
-# 90 second watchdog timeout expired. Shutdown terminated.
-# jail: jail17: /bin/sh /etc/rc.shutdown: exited on signal 9
-# always reproduced when the jail has zfs attached fs
-# try to defend and kill the cron preventively
-
-[ -r ${path}/var/run/cron.pid ] && /bin/pkill -9 -F ${path}/var/run/cron.pid
-
 /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -r ${jname} || true
 
 for i in $( /bin/ps -J ${jid} -o pid |/usr/bin/grep -v PID ); do
@@ -146,7 +180,17 @@ exec_master_poststop
 external_exec_master_script "master_poststop.d"
 exec_poststop
 
-[ ${vnet} -eq 1 -a -n "${myepair}" ] && /sbin/ifconfig ${myepair} destroy
+if [ ${vnet} -eq 1 -a -n "${myepair_list}" ]; then
+	printf "${MAGENTA}Destroy epair: ${LYELLOW}"
+
+	# how necessary to make 'ifconfig -vnet ethX' before
+	#no mem leak here and all correct?
+	for i in ${myepair_list}; do
+		printf "${i} "
+		/sbin/ifconfig ${i} destroy
+	done
+	${ECHO} "${NORMAL}"
+fi
 
 # waiting for fixed kqueue in upstream
 /usr/sbin/jail -r ${ST} > /dev/null 2>&1
@@ -162,6 +206,18 @@ if [ "${ver}" != "empty" ]; then
 	${ECHO} "${MAGENTA}Updating: ${GREEN}pkg info${NORMAL}"
 	pkg mode=info nomount=1 jname=${jname} > ${jailsysdir}/${jname}/pkg_info
 fi
+
+#determine that jail is FreeBSD. Useful for vnet operation in makejconf and
+is_freebsd=0
+
+if [ ${baserw} -eq 1 ]; then
+	elftest=${data}/bin/sh
+else
+	elftest="${BASE_DIR}/bin/sh"
+fi
+
+[ -f "${elftest}" ] && osname=$( ${miscdir}/elf_tables --osname ${elftest} )
+[ "${osname}" = "freebsd" ] && is_freebsd=1
 
 [ -n "${mdsize}" -a "${mdsize}" != "0" ] && MDFILE=$( eval find_md_by_mountpath ${data} )
 
