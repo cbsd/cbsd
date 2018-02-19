@@ -1,0 +1,163 @@
+#!/usr/local/bin/cbsd
+. ${subr}
+. ${tools}
+. ${dialog}
+. ${strings}
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+	local title=" ${jname} ${nic}: New NIC "
+	hline=
+	local defaultitem=
+
+	local prompt="${_desc}"
+
+	f_dialog_default_fetch defaultitem
+
+	[ -z "${nic_driver}" ] && nic_driver="vtnet"
+	[ -z "${nic_type}" ] && nic_type="0"
+	[ -z "${nic_parent}" ] && nic_parent="auto"
+	[ -z "${nic_hwaddr}" ] && nic_hwaddr="0"
+	[ -z "${nic_address}" ] && nic_address="0"
+
+	local menu_list="
+		'nic_name'	'${nic_name}'		'NIC name'
+		'nic_parent'	'${nic_parent}'		'NIC parent interface. 0 - auto'
+		'nic_hwaddr'	'${nic_hwaddr}'		'Mac address. 0 - auto'
+		'-'		'-'			''
+		'COMMIT'	'COMMIT'		'Create and attach new NIC'
+	" # END-QUOTE
+
+	cbsd_menubox_with_help
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return ${retval}
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname nic"
+MYOPTARG=""
+MYDESC="Add and attach new vitual NIC to VM"
+CBSDMODULE="jail"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+. ${vimagetui}
+init $*
+
+. ${workdir}/bsdconfig.subr
+. $BSDCFG_LIBE/$APP_DIR/include/messages-jailnic.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "jail" ] && err 1 "${MAGENTA}Not in jail mode${NORMAL}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/jailnic.subr
+
+. ${workdir}/jail.subr
+. ${vimageconf}
+
+#load_nic_info
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_jailnic "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+last_nic=$( find_first_free_nic_id )
+nic_name="nic${last_nic}"
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|nic_name|slot|nic_type)
+					continue
+					;;
+				"nic_hwaddr")
+					get_construct_nic_hwaddr
+					;;
+				"nic_parent")
+					interface="${nic_parent}"
+					select_local_interface && nic_parent="${interface}"
+					;;
+				"COMMIT")
+					if [ -z "${nic_name}" -o -z "${nic_hwaddr}" -o -z "${nic_parent}" ]; then
+						f_dialog_msgbox "nic_name,nic_hwaddr and nic_parent field is mandatory"
+						continue
+					fi
+					_res=$( add_nic -h "${nic_hwaddr}" -n "${nic_name}" -p "${nic_parent}" )
+					if [ $? -ne 0 ]; then
+						f_dialog_msgbox "Error: ${_res}"
+					else
+						f_die
+					fi
+					;;
+				*)
+					index=${mtag%% *}
+					nic=${mtag##* }
+					command="jailnic-cfgnic jname=${jname} nic=${nic}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################
