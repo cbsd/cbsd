@@ -124,6 +124,7 @@ compile_dsk_args()
 	local sqldelimer=" "
 	local prefix
 	local full_dsk_path
+	local _shared_devs
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
@@ -170,6 +171,16 @@ compile_dsk_args()
 			# no free pci bus
 		fi
 		dsk_args="${dsk_args} ${T}"
+	done
+
+	# shared devices
+	_shared_devs=$( cbsdsql storage_media "SELECT path FROM media WHERE type=\"shared\" AND jname=\"${jname}\"" )
+
+	for i in ${_shared_devs}; do
+		if ! next_pci_id; then
+			# no free pci bus
+		fi
+		dsk_args="${dsk_args} -s ${bhyve_pci_index}:0,virtio-blk,${i}"
 	done
 
 	if [ -r ${data}/cbsd.img ]; then
@@ -268,7 +279,10 @@ compile_nic_args()
 
 						IFS=","
 						for ip in ${nic_address}; do
-							[ "${ip}" = "DHCP" ] && ip=$( dhcpd )
+							if [ "${ip}" = "DHCP" ]; then
+								ip=$( dhcpd )
+								[ $? -eq 2 ] && err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+							fi
 							IFS=" "
 							ipwmask ${ip}
 							iptype ${IWM}
@@ -590,7 +604,7 @@ compile_cd_args()
 # fi
 bhyve_create_dsk()
 {
-	local newdsk imgsize fsfeat imgtype
+	local newdsk imgsize fsfeat imgtype _msg
 
 	while getopts "f:p:s:t:" opt; do
 		case "${opt}" in
@@ -615,7 +629,7 @@ bhyve_create_dsk()
 	local convval imgbytes blockcount
 
 	if [ -f "${newdsk}" ]; then
-		echo "Disk ${newdsk} already exist"
+		echo "disk ${newdsk} already exist"
 		return 1
 	fi
 
@@ -628,20 +642,34 @@ bhyve_create_dsk()
 	fi
 
 	[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
+	if [ -z "${imgtype}" ]; then
+		case ${zfsfeat} in
+			1)
+				imgtype="zvol"
+				;;
+			*)
+				imgtype="md"
+				;;
+		esac
+	fi
 
 	if [ "${zfsfeat}" = "1" -a "${imgtype}" = "zvol" ]; then
 		readconf zfs.conf
 		. ${zfstool}
+
 		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 #		ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 #		if zfsroot $jname; then
 #			err 1 "$ZPOOL/$jname already in use"
 #		fi
 #		/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
-		/sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname}
+		_msg=$( /sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
 
 		_res=$?
-		[ ${_res} -ne 0 ] && return ${_res}
+		if [ ${_res} -ne 0 ]; then
+			echo "${_msg}"
+			return ${_res}
+		fi
 
 		/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-${lunname} ${newdsk}
 

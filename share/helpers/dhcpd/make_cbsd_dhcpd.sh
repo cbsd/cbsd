@@ -67,6 +67,7 @@ case "${ret}" in
 	2)
 		# Fake DHCP - we need learn to get IPS from real dhcpd (tap iface + mac ?)
 		tmp_addr=$( /usr/local/bin/cbsd dhcpd )
+		[ $? -eq 2 ] && err 1 "No free IP address for DHCP in nodeippool"
 		ip4_addr=${tmp_addr%%/*}
 		# check again
 		ip_type ${ip4_addr}
