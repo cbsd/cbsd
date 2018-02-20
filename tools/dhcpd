@@ -1,84 +1,526 @@
 #!/usr/local/bin/cbsd
-#v11.1.7
-# Detect first available IP from ippool
-# This is dummy version, just increase last octet ;-). Need for rewrite into C, learn cidr/mask func etc..
+#v11.1.16
+# Detect first available IPv6 from ippool's
 MYARG=""
 MYOPTARG="ip4pool"
-MYDESC="Detect first available IP from pool"
-ADDHELP="ip4pool = alternative pool\n"
+MYDESC="Detect first available IPv4 from pools"
+ADDHELP="ip4pool = alternative pool, comma-separated if multiple\n\
+ errcode:\n\
+   0 - IP found\n\
+   1 - Unknown error\n\
+   3 - All pools are exhausted\n"
 
 . ${subr}
 . ${tools}
+. ${strings}
 
 init $*
 
-if [ -z "${ip4pool}" ]; then
-	tmpnet=$( echo ${nodeippool} |/usr/bin/awk {' printf $1 '} )
-else
-	tmpnet=$( echo ${ip4pool} |/usr/bin/awk {' printf $1 '} )
-fi
+#
+# ipv4_to_ip10 ipv4 ip10
+#	Function converts IPv4 address to decimal address. $1 must be IPv4
+#	address. $2 must be name of variable to save decimal address.
+#
+ipv4_to_ip10()
+{
+	local __ipv4 __ip10
+	local _ip1 _ip2 _ip3 _ip4 _oct
 
-if [ $( echo ${tmpnet} |/usr/bin/grep "/" ) ]; then
-	mynet=${tmpnet%%/*}
-	mycidr=${tmpnet##*/}
-else
-	mynet="${tmpnet}"
-fi
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
 
-[ -z "${mycidr}" ] && mycidr="24"
+	__ipv4="$1"
+	__ip10="$2"
 
-mymask=$( cdr2mask ${mycidr} )
+	_ip1=${__ipv4%.*.*.*}
+	_ip2=${__ipv4%.*.*}; _ip2=${_ip2#*.}
+	_ip3=${__ipv4#*.*.}; _ip3=${_ip3%.*}
+	_ip4=${__ipv4#*.*.*.}
 
-IFS="."
-first_ip=$( first_ips_w_mask ${mynet} ${mymask} )
-unset IFS
+	for _oct in "${_ip1}" "${_ip2}" "${_ip3}" "${_ip4}"; do
+		if [ -z "${_oct}" -o "${_oct}" = "${__ipv4}" ]; then
+			return 1
+		fi
 
-cnet=$( echo ${first_ip}| /usr/bin/cut -d "." -f 1,2,3 )
-st=$( echo ${first_ip}| /usr/bin/cut -d "." -f 4 )
+		if is_number "${_oct}"; then
+			return 1
+		fi
 
-existing_ipjail=$( cbsdsql local SELECT DISTINCT ip4_addr FROM bhyve WHERE ip4_addr != \'0\' AND ip4_addr != \'DHCP\' UNION SELECT DISTINCT ip4_addr FROM jails WHERE ip4_addr != \'0\' AND ip4_addr != \'DHCP\' | /usr/bin/xargs )
-
-skip_ip="${nodeip}"
-
-for i in ${existing_ipjail}; do
-	ipwmask ${i}
-	[ -z "${IWM}" ] && continue
-	iptype ${IWM}
-	[ $? -eq 1 ] && skip_ip="${skip_ip} ${IWM}"
-done
-
-for i in $( /usr/bin/seq ${st} 254 ); do
-	skip=0
-	tmpip="${cnet}.${i}"
-	iptype ${tmpip} >/dev/null 2>&1
-	[ $? -ne 1 ] && continue
-
-	for n in ${skip_ip}; do
-		[ "${n}" = "${tmpip}" ] && skip=1
+		if [ "${_oct}" -lt 0 -o "${_oct}" -gt "$(($pow8 - 1))" ]; then
+			return 1
+		fi
 	done
 
-	[ ${skip} -eq 1 ] && continue
+	eval eval \${__ip10}=$((${_ip1} << 24 | ${_ip2} << 16 | ${_ip3} << 8 | ${_ip4}))
 
-	${miscdir}/chk_arp_byip --pingnum=1 --pingtimeout=0.001 --ip=${tmpip}
-	case $? in
-		0)
-			break
-		;;
-		*)
-			continue
-		;;
-	esac
-done
+	return 0
+}
 
-[ $i -eq 254 ] && unset tmpip
+#
+# ip10_to_ipv4 ip10 ipv4
+#	Function converts decimal address to IPv4 address. $1 must be decimal
+#	address. $2 must be name of variable to save IPv4 address.
+#
+ip10_to_ipv4()
+{
+	local __ip10 __ipv4
+	local _ip1 _ip2 _ip3 _ip4
 
-if [ -n "${tmpip}" ]; then
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	__ip10="$1"
+	__ipv4="$2"
+
+	if is_number "${__ip10}"; then
+		return 1
+	fi
+
+	if [ "${__ip10}" -lt 0 -o "${__ip10}" -gt "$(($pow32 - 1))" ]; then
+		return 1
+	fi
+
+	_ip1=$((((${__ip10} >> 24)) & 0xFF))
+	_ip2=$((((${__ip10} >> 16)) & 0xFF))
+	_ip3=$((((${__ip10} >> 8)) & 0xFF))
+	_ip4=$((${__ip10} & 0xFF))
+
+	eval eval \${__ipv4}="${_ip1}.${_ip2}.${_ip3}.${_ip4}"
+
+	return 0
+}
+
+#
+# is_ipv4_belong_net ipv4 network/mask
+#	Function returns 0 if $1 address belongs $2 network, otherwise return 1.
+#	$1 must be IPv4 address. $2 must be IPv4 network in CIDR notation.
+#
+is_ipv4_belong_net()
+{
+	local _ipv4 _network _mask _ip_net
+	local _ip10 _mask10 _ip_net10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_ipv4="$1"
+	_net="$2"
+
+	_network="${_net%/*}"
+	_mask="${_net#*/}"
+
+	if is_number "${_mask}"; then
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	if ! ipv4_to_ip10 "${_ipv4}" "_ip10"; then
+		return 1
+	fi
+
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	_ip_net10=$((${_ip10} & ${_mask10}))
+	if ! ip10_to_ipv4 "${_ip_net10}" "_ip_net"; then
+		return 1
+	fi
+
+	if [ "${_ip_net}" != "${_network}" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+#
+# get_netmask network/mask netmask
+#	Function generates IPv4 netmask from IPv4 network in CIDR notation.
+#	$1 must be IPv4 network in CIDR notation. $2 must be name of variable
+#	to save netmask.
+#
+get_netmask()
+{
+	local _net _netmask _network _mask _hosts _mask_tmp
+	local _mask10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_net="$1"
+	_netmask="$2"
+
+	_network="${_net%/*}"
+	_mask="${_net#*/}"
+
+	if is_number "${_mask}"; then
+		echo "NOT NUMBER: ${_mask}"
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	if ! ip10_to_ipv4 "${_mask10}" "_mask_tmp"; then
+		return 1
+	fi
+
+	eval eval \${_netmask}="${_mask_tmp}"
+
+	return 0
+}
+
+#
+# get_network ipv4/mask network/mask
+#	Function generates IPv4 network in CIDR notation from IPv4 address
+#	with mask in CIDR notation. $1 must be IPv4 address with mask in CIDR
+#	notation. $2 must be name of variable to save network.
+#
+get_network()
+{
+	local _ipv4mask _network _ipv4 _mask _hosts _network_tmp
+	local _ip10 _mask10 _network10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_ipv4mask="$1"
+	_network="$2"
+
+	_ipv4="${_ipv4mask%/*}"
+	_mask="${_ipv4mask#*/}"
+
+	if is_number "${_mask}"; then
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	if ! ipv4_to_ip10 "${_ipv4}" "_ip10"; then
+		return 1
+	fi
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	_network10=$((${_ip10} & ${_mask10}))
+	if ! ip10_to_ipv4 "${_network10}" "_network_tmp"; then
+		return 1
+	fi
+
+	eval eval \${_network}="${_network_tmp}/${_mask}"
+
+	return 0
+}
+
+#
+# get_minhost network/mask minhost
+#	Function generates minimum host for network. $1 must be IPv4 network
+#	in CIDR notation. $2 must be name of variable to save minimum host.
+#
+get_minhost()
+{
+	local _net _minhost _network _mask _hosts _minhost_tmp
+	local _network10 _mask10 _minhost10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_net="$1"
+	_minhost="$2"
+
+	_network="${_net%/*}"
+	_mask="${_net#*/}"
+
+	if is_number "${_mask}"; then
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	# Network with /31 mask has minimum host equal to network
+	if [ "${_mask}" -eq 31 ]; then
+		eval eval \${_minhost}="${_network}"
+		return 0
+	fi
+
+	# Network with /32 mask has no minimum host
+	if [ "${_mask}" -eq 32 ]; then
+		return 0
+	fi
+
+	if ! ipv4_to_ip10 "${_network}" "_network10"; then
+		return 1
+	fi
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	_minhost10=$((${_network10} + 1))
+
+	if ! ip10_to_ipv4 "${_minhost10}" "_minhost_tmp"; then
+		return 1
+	fi
+
+	eval eval \${_minhost}="${_minhost_tmp}"
+
+	return 0
+}
+
+#
+# get_maxhost network/mask maxhost
+#	Function generates maximum host for network. $1 must be IPv4 network
+#	in CIDR notation. $2 must be name of variable to save maximum host.
+#
+get_maxhost()
+{
+	local _reserve _net _maxhost _network _mask _hosts _maxhost_tmp
+	local _network10 _mask10 _maxhost10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_reserve=2
+
+	_net="$1"
+	_maxhost="$2"
+
+	_network="${_net%/*}"
+	_mask="${_net#*/}"
+
+	if is_number "${_mask}"; then
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	if [ "${_mask}" -ge 31 ]; then
+		_reserve=1
+	fi
+
+	if ! ipv4_to_ip10 "${_network}" "_network10"; then
+		return 1
+	fi
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	_maxhost10=$((${_network10} + ${_hosts} - ${_reserve}))
+
+	if ! ip10_to_ipv4 "${_maxhost10}" "_maxhost_tmp"; then
+		return 1
+	fi
+
+	eval eval \${_maxhost}="${_maxhost_tmp}"
+
+	return 0
+}
+
+#
+# get_broadcast network/mask broadcast
+#	Function generates broadcast address for network. $1 must be IPv4
+#	network in CIDR notation. $2 must be name of variable to save
+#	broadcast address.
+#
+get_broadcast()
+{
+	local _net _broadcast _network _mask _hosts _broadcast_tmp
+	local _network10 _mask10 _broadcast10
+
+	if [ $# -ne 2 -o -z "$1" -o -z "$2" ]; then
+		return 1
+	fi
+
+	_net="$1"
+	_broadcast="$2"
+
+	_network="${_net%/*}"
+	_mask="${_net#*/}"
+
+	if is_number "${_mask}"; then
+		return 1
+	fi
+
+	if [ "${_mask}" -lt 0 -o "${_mask}" -gt 32 ]; then
+		return 1
+	fi
+
+	# Network with /31 or /32 mask has no broadcast address
+	if [ "${_mask}" -ge 31 ]; then
+		return 0
+	fi
+
+	if ! ipv4_to_ip10 "${_network}" "_network10"; then
+		return 1
+	fi
+	_hosts=$((1 << $((32 - ${_mask}))))
+	_mask10=$(($pow32 - ${_hosts}))
+	_broadcast10=$((${_network10} + ${_hosts} - 1))
+
+	if ! ip10_to_ipv4 "${_broadcast10}" "_broadcast_tmp"; then
+		return 1
+	fi
+
+	eval eval \${_broadcast}="${_broadcast_tmp}"
+
+	return 0
+}
+
+# Export network calc result
+# $netmask ( 255.255.255.0 )
+# $cidr_mask ( 24 )
+# $network ( 10.0.0.0/24 )
+# $minhost ( 10.0.0.1 )
+# $maxhost (  10.0.0.254 )
+# $broadcast ( 10.0.0.255 )
+# $numhosts ( 254 )
+init_network()
+{
+	local ip hosts reserve
+
+	netmask=
+	cidr_mask=
+	network=
+	minhost=
+	maxhost=
+	broadcast=
+	
+	[ $# -ne 1 ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask"
+
+	ip=${1%/*}
+	cidr_mask=${1#*/}
+
+	[ "$ip" = "$1" -o "$cidr_mask" = "$1" ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask"
+
+	if ! get_netmask "$ip/$cidr_mask" "netmask"; then
+		err 1 "dhcpd: init_network: bad netmask $ip/$cidr_mask"
+	fi
+
+	if ! get_network "$ip/$cidr_mask" "network"; then
+		err 1 "dhcpd: init_network: bad IP $ip/$cidr_mask"
+	fi
+	get_minhost "$network" "minhost"
+	get_maxhost "$network" "maxhost"
+	get_broadcast "$network" "broadcast"
+	hosts=$((1 << $((32 - $cidr_mask))))
+	reserve=2
+	if [ "$cidr_mask" -ge 31 ]; then
+		reserve=0
+	fi
+
+	numhosts=$(($hosts-$reserve))
+}
+
+
+### MAIN
+pow32=$((1 << 32))
+pow24=$((1 << 24))
+pow16=$((1 << 16))
+pow8=$((1 << 8))
+
+# use args network instead of global CBSD settings/variable
+if [ -n "${ip4pool}" ]; then
+	nodeippool=$( echo ${ip4pool} |/usr/bin/tr "," " " )
+fi
+
+# Multiple network loop
+for tmpnet in ${nodeippool}; do
+
+	init_network "${tmpnet}"
+
+	# start octets
+	s1=
+	s2=
+	s3=
+	s4=
+
+	# end octets
+	e1=
+	e2=
+	e3=
+	e4=
+
+	sqllistdelimer="."
+	sqllist "${minhost}" s1 s2 s3 s4
+	sqllist "${maxhost}" e1 e2 e3 e4
+	sqllistdelimer=
+
+	# bhyve doesn't have ip4_addr anymore, selectom from jails only
+	#existing_ipjail=$( cbsdsql local SELECT DISTINCT ip4_addr FROM bhyve WHERE ip4_addr != \'0\' AND ip4_addr != \'DHCP\' UNION SELECT DISTINCT ip4_addr FROM jails WHERE ip4_addr != \'0\' AND ip4_addr != \'DHCP\' | /usr/bin/xargs )
+	existing_ipjail=$( cbsdsql local SELECT DISTINCT ip4_addr FROM jails WHERE ip4_addr != \'0\' AND ip4_addr != \'DHCP\' | /usr/bin/xargs )
+
+	skip_ip="${nodeip}"
+
+	# prepare skip ip list
+	for i in ${existing_ipjail}; do
+		ipwmask ${i}
+		[ -z "${IWM}" ] && continue
+		iptype ${IWM}
+		[ $? -eq 1 ] && skip_ip="${skip_ip} ${IWM}"
+	done
+
+	found=0
+
+	# assign wanted octet by starting octet
+	for w1 in $( /usr/bin/seq ${s1} ${e1} ); do
+		for w2 in $( /usr/bin/seq ${s2} ${e2} ); do
+			for w3 in $( /usr/bin/seq ${s3} ${e3} ); do
+				# last wanted octet loop
+				for w4 in $( /usr/bin/seq ${s4} ${e4} ); do
+					skip=0
+					tmpip="${w1}.${w2}.${w3}.${w4}"
+					iptype ${tmpip} >/dev/null 2>&1
+					[ $? -ne 1 ] && continue
+
+					for n in ${skip_ip}; do
+						[ "${n}" = "${tmpip}" ] && skip=1
+					done
+
+					[ ${skip} -eq 1 ] && continue
+
+					${miscdir}/chk_arp_byip --pingnum=1 --pingtimeout=0.001 --ip=${tmpip}
+					case $? in
+					0)
+						found=1
+						#break 4
+						break
+						;;
+					*)
+						continue
+						;;
+					esac
+				done # w4
+				[ ${found} -eq 1 ] && break
+			done # w3
+			[ ${found} -eq 1 ] && break
+		[ ${found} -eq 1 ] && break
+		done # w2
+	[ ${found} -eq 1 ] && break
+	done # w1
+[ ${found} -eq 1 ] && break
+done # multiple network
+
+if [ -n "${tmpip}" -a ${found} -eq 1 ]; then
 	if [ -n "${mycidr}" ]; then
 		echo "${tmpip}/${mycidr}"
 		exit 0
 	else
 		echo ${tmpip}
+		exit 0
 	fi
 else
-	return 1
+	# looks like all pools are exhausted
+	exit 2
 fi
