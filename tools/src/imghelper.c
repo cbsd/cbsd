@@ -46,6 +46,8 @@ int main(int argc, char *argv[])
 	int win = FALSE;
 	int optcode = 0;
 	int option_index = 0, ret = 0;
+	int is_header=0;		//search for first MByte only
+	off_t total_bytes;		//bytes processed
 
 	static struct option long_options[] = {
 		{"start", required_argument, 0, C_START_SIGN},
@@ -81,6 +83,8 @@ int main(int argc, char *argv[])
 				st = malloc(strlen(optarg) + 1);
 				memset(st, 0, strlen(optarg) + 1);
 				strcpy(st, optarg);
+				if (!strcmp(st,"___NCSTART_HEADER=1"))
+					is_header=1;		// we are looking header only at the beginning
 				break;
 			case C_HELP:
 				usage();
@@ -110,7 +114,14 @@ int main(int argc, char *argv[])
 	while ( hammer!= 2 ) {
 
 		c=getc(fp);
+		total_bytes++;
 		if (feof(fp)) break;
+
+		if ((is_header==1)&&(total_bytes > 1048576)) {
+			fclose(fp);
+			printf("no header in first 1048576 bytes. Not CBSD image?\n");
+			exit(1);
+		}
 
 		switch (hammer) {
 			case 0:

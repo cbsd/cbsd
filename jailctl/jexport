@@ -2,15 +2,13 @@
 #v11.1.6
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="jname compress imgname ls"
+MYOPTARG="jname compress imgname ls dstdir"
 MYDESC="Export jail into image"
 CBSDMODULE="jail"
 ADDHELP="ls - filter for list: bls or jls\n\
-compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n"
-
-set -e
-. ${globalconf}
-set +e
+compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
+imgname - alternative image dir ( by default - $jname.img\n\
+dstdir - alternative export dir ( by default - $workdir/exports )\n"
 
 . ${subr}
 . ${strings}
@@ -18,10 +16,14 @@ set +e
 
 init $*
 
+# ClonOS ws channel
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
+[ -z "${cbsd_queue_name2}" ] && cbsd_queue_name2="/clonos/imported/"
+
 jexport_me()
 {
 	${ECHO} "${MAGENTA}Exporting (with compress level:${GREEN}${compress}${MAGENTA}), please stand by: ${GREEN}${jname}${NORMAL}"
-	local DEST="${exportdir}/${imgname}"
+	local DEST="${dstdir}/${imgname}"
 	local JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
 
 	jmkrcconf jname=${jname} > ${JAILRCCONF}
@@ -123,6 +125,8 @@ ___NCSTART_DATA=1"
 }
 
 [ -z "${compress}" ] && compress=6
+[ -z "${dstdir}" ] && dstdir="${exportdir}"
+[ ! -d "${dstdir}" ] && /bin/mkdir -p ${dstdir}
 
 if [ -z "${ls}" ]; then
 	ls="jls"
@@ -170,7 +174,38 @@ if [ ${jid} -ne 0 -a "${emulator}" = "bhyve" ]; then
 	err 1 "${MAGENTA}VM is online${NORMAL}"
 fi
 
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+
+	case "${emulator}" in
+		jail)
+			cbsd_queue_name="/clonos/jailscontainers/"
+			;;
+		bhyve)
+			cbsd_queue_name="/clonos/bhyvevms/"
+			;;
+	esac
+
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jexport status=1
+
+	if [ "${cbsd_queue_name2}" != "none" ]; then
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"id\":\"${jname}.img\",\"cmd\":\"jexport\",\"status\":\"1\",\"data\":{\"node\":\"local\",\"jname\":\"${jname}.img\",\"imptype\":\"${emulator}\"}}"
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"information\",\"timeout\":10000,\"author\":\"Export\",\"msg\":\"${jname}#export#started...\"}"
+	fi
+fi
+
 jexport_me
 ret=$?
+
+# CBSD QUEUE
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+
+	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jexport status=2
+
+	if [ "${cbsd_queue_name2}" != "none" ]; then
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"id\":\"${jname}.img\",\"cmd\":\"jexport\",\"status\":\"2\",\"data\":{\"node\":\"local\",\"jname\":\"${jname}.img\",\"imptype\":\"${emulator}\"}}"
+		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"success\",\"timeout\":10000,\"author\":\"Export\",\"msg\":\"${jname}#export#completed\"}"
+	fi
+fi
 
 exit ${ret}
