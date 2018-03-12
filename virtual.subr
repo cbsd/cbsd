@@ -2,11 +2,44 @@ if [ ! "$_CBSD_VIRTUAL_SUBR" ]; then
 _CBSD_VIRTUAL_SUBR=1
 ###
 
+check_iso_md5sum()
+{
+	local _md5sum_new _md5sum
+	local _file _md5sum_passed
+
+	while getopts "f:m:" opt; do
+		case "$opt" in
+			f) _file="${OPTARG}" ;;
+			m) _md5sum="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -n "${_md5sum}" -a "${_md5sum}" != "0" ]; then
+		printf "${MAGENTA}Checking checksum: ${GREEN}${_md5sum}${MAGENTA}...${NORMAL}"
+		_md5sum_new=$( /sbin/md5 -q ${_file} )
+		if [ "${_md5sum}" = "${_md5sum_new}" ]; then
+			${ECHO} "${GREEN}Passed${NORMAL}"
+			_md5sum_passed=1
+		else
+			${ECHO} "${GREEN}Invalid: ${_md5sum_new}${NORMAL}"
+			_md5sum_passed=0
+		fi
+	else
+		_md5sum_passed=1
+	fi
+
+	return ${_md5sum_passed}
+}
+
 
 # generic/shared func for custom virtuals
-
+# $md5sum - optional - check for md5sum
 init_iso()
 {
+	local md5sum_new
+	local md5sum_passed
+
 	if [ -z "${iso_img}" ]; then
 		${ECHO} "no cd: iso_img and register_iso_as is empty"
 		return 1
@@ -15,10 +48,17 @@ init_iso()
 	# test for media database
 	local media_db
 
+	if [ "${CBSD_ISO_SKIP_MD5}" = "yes" -o "${md5sum}" = "0" ]; then
+		md5sum_passed=1
+		md5sum=0
+	else
+		md5sum_passed=0
+	fi
+
 	if [ -n "${vm_iso_path}" ]; then
 		${ECHO} "${MAGENTA}vm_iso_path: ${GREEN}${vm_iso_path}${NORMAL}"
 
-		media_db=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${vm_iso_path}\" LIMIT 1 )
+		media_db=$( cbsdsql storage_media SELECT path FROM media WHERE name=\"${vm_iso_path}\" AND path LIKE \"%${register_iso_name}%\" LIMIT 1 )
 
 		if [ -n "${media_db}" -a -r "${media_db}" ]; then
 			${ECHO} "${MAGENTA}media found: ${GREEN}${vm_iso_path}${MAGENTA} --> ${GREEN}${media_db}${NORMAL}"
@@ -99,13 +139,22 @@ init_iso()
 			iso_site="${win_mirror} ${iso_site} ${cbsd_iso_mirrors}"
 
 			for i in ${iso_site}; do
+				md5sum_passed=0
 				${ECHO} "${MAGENTA}Processing: ${GREEN}${i}${NORMAL}"
 				[ -s "${_myfile}" ] && continue # skip all other mirror when file exist
 				jswmode jname=${jname} mode=maintenance comment='Fetching_ISO'
 				fetchme -o ${outfile} -u ${i}${iso_img_dist}
 				jswmode jname=${jname} mode=master comment='Starting'
-				[ -r ${outfile} ] && break
+				check_iso_md5sum -f ${outfile} -m ${md5sum}
+				md5sum_passed=$?
+				[ -r ${outfile} -a ${md5sum_passed} -eq 1 ] && break
 			done
+
+			if [ ${md5sum_passed} -ne 1 ]; then
+				${ECHO} "${MAGENTA}MD5sum wrong. Please update profiles or use ${GREEN}CBSD_ISO_SKIP_MD5=yes${MAGENTA} variable"
+				${ECHO} "via env(1) or ${emulator}-default-default.conf config file to disable md5sum validating${NORMAL}"
+			
+			fi
 
 		fi
 		ALWAYS_YES=0
