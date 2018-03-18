@@ -113,3 +113,6 @@ void optschanged(void);
 void freeparam(struct shparam *);
 int nextopt(const char *);
 void getoptsreset(const char *);
+#ifdef CBSD
+extern int historycmd(int argc, char *argv[]);
+#endif

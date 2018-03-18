@@ -8,8 +8,11 @@ MAKE="/usr/bin/make"
 ENV="/usr/bin/env"
 INSTALL="/usr/bin/install"
 MKDIR="/bin/mkdir"
+SIMPLEXMLOBJECT = /usr/local/cbsd/lib/simplexml/simplexml.o
+SIMPLEXMLHEADER = /usr/local/cbsd/lib/simplexml/simplexml.h
+DUMPCPUTOPOLOGYOBJECT = /usr/local/cbsd/misc/src/dump_cpu_topology.o
 
-all:	cbsd
+all:	cbsd dump_cpu_topology
 
 clean:
 	${MAKE} -C bin/cbsdsh clean
@@ -39,7 +42,16 @@ clean:
 	${RM} -f tools/bridge
 	${RM} -f tools/racct-statsd
 	${RM} -f tools/select_jail
+	# clean object files
+	${RM} -f misc/dump_cpu_topology
+	${RM} -f ${SIMPLEXMLOBJECT}
+	${RM} -f ${DUMPCPUTOPOLOGYOBJECT}
 
+dump_cpu_topology:
+	${CC} -g -c -Wall -I/usr/local/cbsd/lib/simplexml /usr/local/cbsd/misc/src/dump_cpu_topology.c -o ${DUMPCPUTOPOLOGYOBJECT}
+	${CC} -g -c -Wall -I/usr/local/cbsd/lib/simplexml /usr/local/cbsd/lib/simplexml/simplexml.c -o ${SIMPLEXMLOBJECT}
+	${CC} -g -o misc/dump_cpu_topology ${DUMPCPUTOPOLOGYOBJECT} ${SIMPLEXMLOBJECT}
+	${STRIP} misc/dump_cpu_topology
 
 cbsd:
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
@@ -70,6 +82,7 @@ cbsd:
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
+
 
 install:
 	${MKDIR} -p ${DESTDIR}${PREFIX}/cbsd
