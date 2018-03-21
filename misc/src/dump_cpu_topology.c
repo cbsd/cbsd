@@ -22,6 +22,7 @@ struct core_data {
 	unsigned int parent;
 	unsigned int id;
 	unsigned int num;
+	unsigned int socket;
 	struct core_data *next;
 };
 
@@ -29,6 +30,7 @@ struct thread_data {
 	unsigned int parent;
 	unsigned int id;
 	unsigned int num;
+	unsigned int socket;
 	struct thread_data *next;
 };
 
@@ -46,6 +48,8 @@ int sid=0;
 int cid=0;
 int tid=0;
 int level=0;
+
+int last_sid=0;
 
 struct socket_data *sockets_list = NULL;
 struct core_data *cores_list = NULL;
@@ -115,6 +119,44 @@ int list_sockets()
 	return 0;
 }
 
+int print_cores_by_sock(int socket)
+{
+	struct core_data *cch;
+	char tmp[256];
+	char buffer[10];
+
+	memset(tmp,0,sizeof(tmp));
+
+	for (cch = cores_list; cch; cch = cch->next) {
+		if (cch->socket != socket) continue;
+		memset(buffer,0,sizeof(buffer));
+		sprintf(buffer, "%d ", cch->id);
+		strcat(tmp,buffer);
+	}
+
+	printf("cores_by_socket%d=\"%s\"\n",socket,tmp);
+	return 0;
+}
+
+int print_threads_by_sock(int socket)
+{
+	struct thread_data *tch;
+	char tmp[256];
+	char buffer[10];
+
+	memset(tmp,0,sizeof(tmp));
+
+	for (tch = threads_list; tch; tch = tch->next) {
+		if (tch->socket != socket) continue;
+		memset(buffer,0,sizeof(buffer));
+		sprintf(buffer, "%d ", tch->id);
+		strcat(tmp,buffer);
+	}
+
+	printf("threads_by_socket%d=\"%s\"\n",socket,tmp);
+	return 0;
+}
+
 int topology_status()
 {
 	struct socket_data *sch;
@@ -124,6 +166,7 @@ int topology_status()
 	int c_max=0;
 	int t_max=0;
 	int core_max=0;
+	int i;
 
 	for (sch = sockets_list; sch; sch = sch->next) {
 		fprintf(stderr,"Socket ID: %d\n",sch->id);
@@ -131,28 +174,31 @@ int topology_status()
 	}
 
 	for (cch = cores_list; cch; cch = cch->next) {
-		fprintf(stderr,"Core ID: %d\n",cch->id);
+		fprintf(stderr,"Core ID: %d (socket %d)\n",cch->id,cch->socket);
 		c_max++;
 		core_max++;
 	}
 
 	for (tch = threads_list; tch; tch = tch->next) {
-		fprintf(stderr,"Threads ID: %d\n",tch->id);
+		fprintf(stderr,"Threads ID: %d (socket %d)\n",tch->id,tch->socket);
 		t_max++;
 		core_max++;
 	}
 
+	printf("sockets_num=\"%d\"\n",s_max);
+	printf("cores_num=\"%d\"\n",c_max);
+	printf("threads_num=\"%d\"\n",t_max);
+	printf("cores_max=\"%d\"\n",core_max);
 
-	printf("Sockets sum: %d\n",s_max);
-	printf("Cores sum: %d\n",c_max);
-	printf("Threads sum: %d\n",t_max);
-	printf("--\n");
-	printf("Core Max: %d\n",core_max);
+	for (i=0;i<s_max;i++) {
+		print_cores_by_sock(i);
+		print_threads_by_sock(i);
+	}
 
 	return 0;
 }
 
-int new_core(int parent,int id)
+int new_core(int parent,int id, int socket)
 {
 	struct core_data *newc;
 
@@ -160,6 +206,7 @@ int new_core(int parent,int id)
 	CREATE(newc, struct core_data, 1);
 	newc->parent=parent;
 	newc->id=id;
+	newc->socket=socket;
 	newc->next = cores_list;
 	cores_list = newc;
 	fprintf(stderr,"[core] %d has beed added\n",id);
@@ -167,7 +214,7 @@ int new_core(int parent,int id)
 	return cid-1;
 }
 
-int new_thread(int parent,int id)
+int new_thread(int parent,int id, int socket)
 {
 	struct thread_data *newt;
 
@@ -175,6 +222,7 @@ int new_thread(int parent,int id)
 	CREATE(newt, struct thread_data, 1);
 	newt->parent=parent;
 	newt->id=id;
+	newt->socket=socket;
 	newt->next = threads_list;
 	threads_list = newt;
 	fprintf(stderr,"[thread] %d has beed added\n",id);
@@ -269,7 +317,6 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 	//struct core_data *newc;
 	//struct thread_data *newt;
 	int last_cid=0;
-	int last_sid=0;
 
 	szHandlerValue=malloc(32);
 	memset(szHandlerValue,0,32);
@@ -312,15 +359,15 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 		}
 		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"THREAD")) ) {
 			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* NEW THREAD *\n");
+			fprintf(stderr,"\n* NEW THREAD, Sock %d *\n", last_sid - 1);
 			last_cid=pop_core_id();
- 			new_thread(0,last_cid);
+ 			new_thread(0,last_cid,last_sid - 1);
 		}
 		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"SMT")) ) {
 			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* NEW CORE *\n");
+			fprintf(stderr,"\n* NEW CORE, Sock %d *\n", last_sid - 1);
 			last_cid=pop_core_id();
-			new_core(0,last_cid);
+			new_core(0,last_cid,last_sid - 1);
 		}
 
 	} else if (event == ADD_CONTENT) {
