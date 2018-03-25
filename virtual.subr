@@ -22,7 +22,8 @@ check_iso_sha256sum()
 			${ECHO} "${GREEN}Passed${NORMAL}"
 			_sha256sum_passed=1
 		else
-			${ECHO} "${GREEN}Invalid: ${_sha256sum_new}${NORMAL}"
+			${ECHO} "${MAGENTA}Invalid CRC: ${GREEN}${_sha256sum_new}${NORMAL}"
+			${ECHO} "${MAGENTA}See more details about CRC: ${GREEN}https://www.bsdstore.ru/en/cbsd_fetch.html${NORMAL}"
 			_sha256sum_passed=0
 		fi
 	else
@@ -39,8 +40,11 @@ init_iso()
 {
 	local sha256sum_new
 	local sha256sum_passed
-	local _sorted_mirror_list
+	local _sorted_mirror_list _sorted_mirror_list2
 	local _sorted_mirror_list_rate
+	local _fetch_attempt=0
+
+	readconf fetch.conf
 
 	if [ -z "${iso_img}" ]; then
 		${ECHO} "no cd: iso_img and register_iso_as is empty"
@@ -121,6 +125,8 @@ init_iso()
 
 			_sorted_mirror_list=$( for i in ${iso_site} ${cbsd_iso_mirrors}; do echo $i; done | /usr/bin/sort -u )
 			_sorted_mirror_list_rate=
+			# for broken_crc_fetch_order="cbsd_mirror"
+			_sorted_mirror_list2=$( for i in ${cbsd_iso_mirrors} ${iso_site}; do echo $i; done | /usr/bin/sort -u )
 
 			for i in ${_sorted_mirror_list}; do
 				url="${i}${iso_img_dist}"
@@ -163,6 +169,18 @@ init_iso()
 				sha256sum_passed=$?
 				[ -r ${outfile} -a ${sha256sum_passed} -eq 1 ] && break
 				[ -r ${outfile} ] && /bin/rm -f ${outfile}
+				_fetch_attempt=$(( _fetch_attempt + 1 ))
+				if [ "${broken_crc_fetch_order}" = "cbsd_mirror" -a ${_fetch_attempt} -eq 1 ]; then
+					# reset mirror list
+					for x in ${_sorted_mirror_list2}; do
+						${ECHO} "${MAGENTA}Processing from CBSD Mirrors: ${GREEN}${x}${NORMAL}"
+						fetchme -o ${outfile} -u ${x}${iso_img_dist}
+						check_iso_sha256sum -f ${outfile} -m ${sha256sum}
+						sha256sum_passed=$?
+						[ -r ${outfile} -a ${sha256sum_passed} -eq 1 ] && break
+					done
+					break
+				fi
 			done
 
 			if [ ${sha256sum_passed} -ne 1 ]; then
