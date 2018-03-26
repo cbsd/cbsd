@@ -8,9 +8,9 @@ MAKE="/usr/bin/make"
 ENV="/usr/bin/env"
 INSTALL="/usr/bin/install"
 MKDIR="/bin/mkdir"
-SIMPLEXMLOBJECT = /usr/local/cbsd/lib/simplexml/simplexml.o
-SIMPLEXMLHEADER = /usr/local/cbsd/lib/simplexml/simplexml.h
-DUMPCPUTOPOLOGYOBJECT = /usr/local/cbsd/misc/src/dump_cpu_topology.o
+SIMPLEXMLOBJECT = lib/simplexml/simplexml.o
+SIMPLEXMLHEADER = lib/simplexml/simplexml.h
+DUMPCPUTOPOLOGYOBJECT = misc/src/dump_cpu_topology.o
 
 all:	cbsd dump_cpu_topology
 
@@ -48,8 +48,8 @@ clean:
 	${RM} -f ${DUMPCPUTOPOLOGYOBJECT}
 
 dump_cpu_topology:
-	${CC} -g -c -Wall -I/usr/local/cbsd/lib/simplexml /usr/local/cbsd/misc/src/dump_cpu_topology.c -o ${DUMPCPUTOPOLOGYOBJECT}
-	${CC} -g -c -Wall -I/usr/local/cbsd/lib/simplexml /usr/local/cbsd/lib/simplexml/simplexml.c -o ${SIMPLEXMLOBJECT}
+	${CC} -g -c -Wall -Ilib/simplexml misc/src/dump_cpu_topology.c -o ${DUMPCPUTOPOLOGYOBJECT}
+	${CC} -g -c -Wall -Ilib/simplexml lib/simplexml/simplexml.c -o ${SIMPLEXMLOBJECT}
 	${CC} -g -o misc/dump_cpu_topology ${DUMPCPUTOPOLOGYOBJECT} ${SIMPLEXMLOBJECT}
 	${STRIP} misc/dump_cpu_topology
 
