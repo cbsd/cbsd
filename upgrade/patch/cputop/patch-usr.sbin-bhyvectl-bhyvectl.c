@@ -1,12 +1,12 @@
---- bhyvectl.c.bak	2018-03-16 17:41:09.326261000 +0300
-+++ bhyvectl.c	2018-03-16 18:31:37.994047000 +0300
+--- bhyvectl.c.orig	2018-03-30 16:12:22.899030000 +0300
++++ bhyvectl.c	2018-03-30 18:19:26.023005000 +0300
 @@ -191,7 +191,8 @@
  	"       [--get-msr-bitmap]\n"
  	"       [--get-msr-bitmap-address]\n"
  	"       [--get-guest-sysenter]\n"
 -	"       [--get-exit-reason]\n",
 +	"       [--get-exit-reason]\n"
-+	"       [--get-cpu-topology]\n",
++	"	[--get-cpu-topology]\n",
  	progname);
  
  	if (cpu_intel) {
@@ -37,7 +37,7 @@
 +
 +		vm_get_topology(ctx, &sockets, &cores, &threads, &maxcpus);
 +		printf("cpu_topology:\tsockets=%hu, cores=%hu, threads=%hu, "
-+			"maxcpus=%hu\n", sockets, cores, threads, maxcpus);
++		    "maxcpus=%hu\n", sockets, cores, threads, maxcpus);
  	}
  
  	if (!error && run) {
