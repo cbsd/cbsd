@@ -37,38 +37,12 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	/usr/bin/truncate -s0 ${vm_logfile}
 
 	if [ ${cd_boot_once} -eq 0 ]; then
-		if [ "${boot_from_grub}" = "1" ]; then
-			echo "Booting from: ${vm_boot}" | /usr/bin/tee -a ${vm_logfile}
-			# Bhyveload
-			case "${vm_boot}" in
-				"cd")
-					echo "Boot from CD" | /usr/bin/tee -a ${vm_logfile}
-					echo "DEBUG: $grub_iso_cmd" | /usr/bin/tee -a ${vm_logfile}
-					eval "$grub_iso_cmd"
-					;;
-				"hdd")
-					echo "Boot from HDD" | /usr/bin/tee -a ${vm_logfile}
-					echo "DEBUG: ${grub_boot_cmd}" | /usr/bin/tee -a ${vm_logfile}
-					eval "$grub_boot_cmd"
-					;;
-				*)
-					echo "Booting from HDD" | /usr/bin/tee -a ${vm_logfile}
-					eval "$grub_boot_cmd"
-					;;
-			esac
-		else
-			echo "DEBUG: $bhyveload_cmd" | /usr/bin/tee -a ${vm_logfile}
-			eval "$bhyveload_cmd"
-		fi
+		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}"
 	else
 		echo "Boot from CD" | /usr/bin/tee -a ${vm_logfile}
-		if [ "${boot_from_grub}" = "1" ]; then
-			echo "DEBUG: ${grub_iso_cmd}" | /usr/bin/tee -a ${vm_logfile}
-			eval "${grub_iso_cmd}"
-		else
-			echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
-			eval "${bhyveload_cmd}"
-		fi
+		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}"
 	fi
 
 	case "${vm_boot}" in
