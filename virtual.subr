@@ -27,6 +27,7 @@ check_iso_sha256sum()
 			_sha256sum_passed=0
 		fi
 	else
+		${ECHO} "${LRED}Check CRC sum skipped due to settings. ${MAGENTA}See more: ${GREEN}https://www.bsdstore.ru/en/cbsd_fetch.html${NORMAL}"
 		_sha256sum_passed=1
 	fi
 
@@ -43,6 +44,7 @@ init_iso()
 	local _sorted_mirror_list _sorted_mirror_list2
 	local _sorted_mirror_list_rate
 	local _fetch_attempt=0
+	local _mirror_num=0 _mirror_cur=0
 
 	readconf fetch.conf
 
@@ -97,6 +99,8 @@ init_iso()
 		return 0
 	fi
 
+	_mirror_num=$( echo "${iso_site} ${cbsd_iso_mirrors}" | /usr/bin/wc -w | /usr/bin/awk {'printf $1'} )
+
 	if [ ! -f "${_myfile}" -a "${fetch}" = "1" ]; then
 		[ -z "${iso_site}" -a -z "${cbsd_iso_mirrors}" ] && ${ECHO} "${MAGENTA}No such iso: ${GREEN}${_myfile}${MAGENTA} and ${GREEN}iso_site/cbsd_iso_mirrors${MAGENTA} variable not found" && return 1
 		${ECHO} "${MAGENTA}No such media: ${GREEN}${_myfile}${MAGENTA} in ${GREEN}${_mydir}${NORMAL}"
@@ -121,46 +125,50 @@ init_iso()
 			local t_size=0
 			local url=
 
-			${ECHO} "${MAGENTA}Scanning for fastest mirror...${NORMAL}"
+			if [ ${_mirror_num} -gt 1 ]; then
+				${ECHO} "${MAGENTA}Scanning for fastest mirror...${NORMAL}"
+				_sorted_mirror_list=$( for i in ${iso_site} ${cbsd_iso_mirrors}; do echo ${i}; done | /usr/bin/sort -u )
+				_sorted_mirror_list_rate=
+				# for broken_crc_fetch_order="cbsd_mirror"
+				_sorted_mirror_list2=$( for i in ${cbsd_iso_mirrors} ${iso_site}; do echo ${i}; done | /usr/bin/sort -u )
 
-			_sorted_mirror_list=$( for i in ${iso_site} ${cbsd_iso_mirrors}; do echo $i; done | /usr/bin/sort -u )
-			_sorted_mirror_list_rate=
-			# for broken_crc_fetch_order="cbsd_mirror"
-			_sorted_mirror_list2=$( for i in ${cbsd_iso_mirrors} ${iso_site}; do echo $i; done | /usr/bin/sort -u )
-
-			for i in ${_sorted_mirror_list}; do
-				url="${i}${iso_img_dist}"
-				printf " ${WHITE}* ${GREEN}${i}${NORMAL}: "
-				t_size=$( /usr/bin/timeout -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${url} 2>/dev/null )
-				if [ -z "${t_size}" ]; then
-					echo "failed"
-					t_size=0
-				else
-					echo "${t_size}"
-					if ! is_number ${t_size}; then
-						if [ ${t_size} -gt ${win_rate} ]; then
-							win_rate=${t_size}
-							win_mirror="${i}"
-						fi
-					else
+				for i in ${_sorted_mirror_list}; do
+					_mirror_cur=$(( _mirror_cur + 1 ))
+					url="${i}${iso_img_dist}"
+					printf " ${WHITE}* ${LCYAN}[${_mirror_cur}/${_mirror_num}] ${GREEN}${i}${NORMAL}: "
+					t_size=$( /usr/bin/timeout -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${url} 2>/dev/null )
+					if [ -z "${t_size}" ]; then
+						echo "failed"
 						t_size=0
-						echo "failed, no size"
+					else
+						echo "${t_size}"
+						if ! is_number ${t_size}; then
+							if [ ${t_size} -gt ${win_rate} ]; then
+								win_rate=${t_size}
+								win_mirror="${i}"
+							fi
+						else
+							t_size=0
+							echo "failed, no size"
+						fi
 					fi
-				fi
-				_sorted_mirror_list_rate="${_sorted_mirror_list_rate}${t_size} ${i}\n"
-			done
+					_sorted_mirror_list_rate="${_sorted_mirror_list_rate}${t_size} ${i}\n"
+				done
 
-			_sorted_mirror_list_rate=$( printf "${_sorted_mirror_list_rate}" |/usr/bin/sort -k1 -n -r )
-			_sorted_mirror_list=$( printf "${_sorted_mirror_list_rate}" |/usr/bin/awk {'printf $2" "'} )
-			# sorted list "<rate> <mirror>":
-			#echo "${_sorted_mirror_list_rate}"
+				_sorted_mirror_list_rate=$( printf "${_sorted_mirror_list_rate}" |/usr/bin/sort -k1 -n -r )
+				_sorted_mirror_list=$( printf "${_sorted_mirror_list_rate}" |/usr/bin/awk {'printf $2" "'} )
+				# sorted list "<rate> <mirror>":
+				#echo "${_sorted_mirror_list_rate}"
 
-			[ -n "${win_mirror}" ] && ${ECHO} "${LYELLOW} Winner: ${GREEN}${win_mirror}${NORMAL}"
-			iso_site="${_sorted_mirror_list}"
-
+				[ -n "${win_mirror}" ] && ${ECHO} "${LYELLOW} Winner: ${GREEN}${win_mirror}${NORMAL}"
+				iso_site="${_sorted_mirror_list}"
+			else
+				# single site without mirrors
+				_sorted_mirror_list2=
+			fi
 			for i in ${iso_site}; do
 				sha256sum_passed=0
-				${ECHO} "${MAGENTA}Processing: ${GREEN}${i}${NORMAL}"
+				${ECHO} "${MAGENTA}Processing: ${GREEN}${i}${LGREEN}${iso_img_dist}${NORMAL}"
 				[ -s "${_myfile}" ] && continue # skip all other mirror when file exist
 				jswmode jname=${jname} mode=maintenance comment='Fetching_ISO'
 				fetchme -o ${outfile} -u ${i}${iso_img_dist}
