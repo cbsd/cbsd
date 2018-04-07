@@ -1,14 +1,14 @@
---- vmm_dev.h.bak	2018-03-16 17:40:37.874613000 +0300
-+++ vmm_dev.h	2018-03-16 17:55:27.940416000 +0300
+--- vmm_dev.h.orig	2018-03-30 16:11:58.342528000 +0300
++++ vmm_dev.h	2018-03-30 18:19:26.020042000 +0300
 @@ -225,6 +225,13 @@
  	uint8_t		value;
  };
  
 +struct vm_cpu_topology {
-+	uint16_t        sockets;
-+	uint16_t        cores;
-+	uint16_t        threads;
-+	uint16_t        maxcpus;
++	uint16_t	sockets;
++	uint16_t	cores;
++	uint16_t	threads;
++	uint16_t	maxcpus;
 +};
 +
  enum {

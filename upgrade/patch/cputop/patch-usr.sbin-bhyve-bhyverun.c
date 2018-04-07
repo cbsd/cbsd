@@ -1,5 +1,5 @@
---- bhyverun.c.bak	2018-03-16 17:41:10.550978000 +0300
-+++ bhyverun.c	2018-03-16 18:28:09.112720000 +0300
+--- bhyverun.c.orig	2018-03-30 16:12:24.519965000 +0300
++++ bhyverun.c	2018-03-30 18:19:26.022475000 +0300
 @@ -93,6 +93,8 @@
  char *vmname;
  
@@ -112,7 +112,7 @@
                  case 'c':
 -			guest_ncpus = atoi(optarg);
 +			if (topology_parse(optarg) !=0) {
-+				errx(EX_USAGE, "invalid cpu topology "
++			    errx(EX_USAGE, "invalid cpu topology "
 +				"'%s'", optarg);
 +			}
  			break;
