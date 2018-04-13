@@ -1,0 +1,47 @@
+#!/bin/sh
+#v11.1.19
+# Remove UNIQ pin in expose table
+: ${distdir="/usr/local/cbsd"}
+unset workdir
+
+# MAIN
+. /etc/rc.conf
+
+[ -z "${cbsd_workdir}" ] && exit 1
+
+workdir="${cbsd_workdir}"
+
+[ ! -f "${workdir}/cbsd.conf" ] && exit 1
+
+. ${distdir}/cbsd.conf
+. ${distdir}/tools.subr
+
+test_sql_stuff
+
+vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails" )
+
+for i in ${vms}; do
+	mydb="${jailsysdir}/${i}/expose.sqlite"
+	[ ! -r "${mydb}" ] && continue
+	# test for UNIQ pin
+	unset _test
+	 _test=$( /usr/local/bin/sqlite3 ${mydb} ".schema expose" | grep 'pin INTEGER UNIQUE' 2>/dev/null )
+	[ -z "${_test}" ] && continue
+	${ECHO} "  * ${MAGENTA}expose tables: remove UNIQUE pin for: ${GREEN}${i}${NORMAL}"
+	${ECHO} "  * ${MAGENTA}create backup of original base to: ${GREEN}/tmp/expose.${i}.sqlite.$$${NORMAL}"
+	cp ${mydb} /tmp/expose.${i}.sqlite.$$
+	/usr/local/bin/sqlite3 ${mydb} ".dump expose" > /tmp/expose_pin_${i}.$$
+	sed -i '' -e 's:pin INTEGER UNIQUE PRIMARY KEY:pin INTEGER:g' -e 's:pout TEXT:pout INTEGER:g' /tmp/expose_pin_${i}.$$
+	/usr/local/bin/sqlite3 ${mydb} "DROP TABLE expose"
+	/usr/local/bin/sqlite3 ${mydb} < /tmp/expose_pin_${i}.$$
+	case $? in
+		0)
+		rm -f /tmp/expose_pin_${i}.$$
+		;;
+		1)
+			echo "   Restore old database due to SQLite error"
+			cp /tmp/expose.${i}.sqlite.$$ ${mydb}
+		;;
+	esac
+done
+
