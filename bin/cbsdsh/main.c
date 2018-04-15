@@ -230,6 +230,8 @@ main(int argc, char *argv[])
 	ckfree(cbsdpath);
 
 	read_profile("${workdir}/cbsd.conf");
+	read_profile("${workdir}/etc/defaults/logger.conf");
+	read_profile("${workdir}/etc/logger.conf");
 
 	if (cbsd_enable_history==1) {
 		cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));

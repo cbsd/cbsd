@@ -133,18 +133,18 @@ int
 is_numbercmd(int argc, char **argv)
 {
 	if (argv[1])
-	    return is_number(argv[1]);
+		return is_number(argv[1]);
 	else
-	    return 1;
+		return 1;
 }
 
 int
 strlencmd(int argc, char **argv)
 {
 	if (argv[1])
-	    out1fmt("%u",(unsigned int)strlen(argv[1]));
+		out1fmt("%u",(unsigned int)strlen(argv[1]));
 	else
-	    out1fmt("0");
+		out1fmt("0");
 	return 0;
 }
 
