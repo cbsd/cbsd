@@ -19,3 +19,5 @@ int syslog_enabled=1;			/* Is syslog enabled? */
 
 char *cbsd_logfile=NULL;		/* CBSD logfile */
 
+int cbsdloggercmd(int, char **);
+void cbsdlog(int level, const char *fmt, ...);

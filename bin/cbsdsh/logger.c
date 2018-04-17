@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <syslog.h>
 #include <sys/time.h>
-#include "logger.h"
 #include "var.h"
 #include "input.h"
+#include "logger.h"
 
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer.
@@ -22,10 +22,10 @@ void serverLogRaw(int level, const char *msg) {
 	int rawmode = (level & LL_RAW);
 
 	level &= 0xff; /* clear flags */
-	//out1fmt("ServerLog. L:%d, verbose:%d\n",level,verbosity);
+
 	if (level < verbosity) return;
 
-	if ((strlen(cbsd_logfile)>1)) {
+	if ((cbsd_logfile!=NULL)&&(strlen(cbsd_logfile)>1)) {
 		fp = fopen(cbsd_logfile,"a");
 		if (!fp) return;
 
@@ -51,16 +51,9 @@ void serverLogRaw(int level, const char *msg) {
 	}
 }
 
-/* Like serverLogRaw() but with printf-alike support. This is the function that
- * is used across the code. The raw version is only used in order to dump
- * the INFO output on crash.
- */
-void cbsdloggercmd(int argc, char **argv) {
-	va_list ap;
-	int level=0;
-	char msg[LOG_MAX_LEN];
-	int i;
-	int res = 0;
+
+int init_logvars()
+{
 	char *cbsd_syslog_enabled = NULL;
 	char *cbsd_syslog_verbosity = NULL;
 
@@ -82,18 +75,35 @@ void cbsdloggercmd(int argc, char **argv) {
 			verbosity=LL_WARNING;
 		else {
 			out1fmt("Unknown verbosity: %s. Should be: [DEBUG|VERBOSE|NOTICE|WARNING]\n",cbsd_syslog_verbosity);
-			return;
+			return 1;
 		}
 	}
 
 	cbsd_logfile=lookupvar("CBSD_LOGFILE");
 
 	if ((!syslog_enabled)&&(strlen(cbsd_logfile)<2))
-		return;
+		return 1;
+
+	return 0;
+}
+
+/* Like serverLogRaw() but with printf-alike support. This is the function that
+ * is used across the code. The raw version is only used in order to dump
+ * the INFO output on crash.
+ */
+int cbsdloggercmd(int argc, char **argv) {
+	va_list ap;
+	int level=0;
+	char msg[LOG_MAX_LEN];
+	int i;
+	int res = 0;
+
+	i = init_logvars();
+	if (i!=0) return 1;
 
 	if (argc<3) {
 		out1fmt("cbsdlogger [DEBUG|VERBOSE|NOTICE|WARNING] msg\n");
-		return;
+		return 1;
 	}
 
 	if (!strcmp("DEBUG",argv[1]))
@@ -106,10 +116,10 @@ void cbsdloggercmd(int argc, char **argv) {
 		level=LL_WARNING;
 	else {
 		out1fmt("cbsdlogger [DEBUG|VERBOSE|NOTICE|WARNING] msg\n");
-		return;
+		return 1;
 	}
 
-	if ((level&0xff) < verbosity) return;
+	if ((level&0xff) < verbosity) return 0;
 
 	for (i = 2; i < argc; i++)
 		res += strlen(argv[i]) + 1;
@@ -121,5 +131,21 @@ void cbsdloggercmd(int argc, char **argv) {
 		}
 	}
 
+	serverLogRaw(level,msg);
+	return 0;
+}
+
+
+void cbsdlog(int level, const char *fmt, ...) {
+	va_list ap;
+	char msg[LOG_MAX_LEN];
+	int i;
+
+	i = init_logvars();
+	if(i!=0) return;
+
+	va_start(ap, fmt);
+	vsnprintf(msg, sizeof(msg), fmt, ap);
+	va_end(ap);
 	serverLogRaw(level,msg);
 }

@@ -62,6 +62,10 @@ __FBSDID("$FreeBSD: head/bin/sh/input.c 314436 2017-02-28 23:42:47Z imp $");
 #include "myhistedit.h"
 #include "trap.h"
 
+#ifdef CBSD
+extern void cbsdlog(int level, const char *fmt, ...);
+#endif
+
 #define EOF_NLEFT -99		/* value of parsenleft when EOF pushed back */
 
 struct strpush {
@@ -360,6 +364,7 @@ popstring(void)
 int
 setinputfile(const char *fname, int push)
 {
+cbsdlog(0,"Input processing: %s",fname);
 #else
 void
 setinputfile(const char *fname, int push)
