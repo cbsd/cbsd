@@ -58,6 +58,7 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include <sys/param.h> //MAXPATHLEN
 #include <stdlib.h> //setenv
 #include "about.h" //VERSION
+#include <libgen.h> //basename
 #ifdef LUA
 #include "lua.h"
 #include "lauxlib.h"
@@ -121,6 +122,7 @@ main(int argc, char *argv[])
 	char *shinit;
 
 #ifdef CBSD
+	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv
@@ -212,6 +214,10 @@ main(int argc, char *argv[])
 	workdir=lookupvar("workdir"); //  ^^ after "setsave*" original is free
 	cbsdpath = calloc(MAXPATHLEN, sizeof(char *));
 
+	if (argv[1]) {
+		setvarsafe("CBSD_APP",basename(argv[1]),1);
+	}
+
 	if (cbsdpath == NULL) {
 		out2fmt_flush("cbsd: out of memory for cbsdpath\n");
 		exitshell(1);
@@ -221,14 +227,17 @@ main(int argc, char *argv[])
 	// This makes it possible to write a 3rd party modules with altered functionality of the original code.
 	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir,workdir);
 	setvarsafe("PATH",cbsdpath,1);
+	ckfree(cbsdpath);
+
 	read_profile("${workdir}/cbsd.conf");
+	read_profile("${workdir}/etc/defaults/logger.conf");
+	read_profile("${workdir}/etc/logger.conf");
 
 	if (cbsd_enable_history==1) {
 		cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
 		sprintf(cbsd_history_file,"%s/%s",workdir,CBSD_HISTORYFILE);
 	}
 
-	ckfree(cbsdpath);
 #ifdef LUA
 	L = luaL_newstate();
 	luaL_openlibs(L);

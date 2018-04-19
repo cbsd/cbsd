@@ -52,6 +52,7 @@ modify_ipaddr()
 
 	if [ "${_interface}" = "0" ]; then
 		${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently disabled because option interface is "0"${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: on-the-fly currently disabled because option interface is 0
 		return 0
 	fi
 
@@ -73,6 +74,7 @@ modify_ipaddr()
 			esac
 			IFS=" "
 			${ECHO} "${MAGENTA}Remove old IP: ${GREEN}/sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias${NORMAL}"
+			cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: remove old IP: /sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias
 			/sbin/ifconfig ${_iface} ${_MODIF} ${IWM} -alias >/dev/null 2>/dev/null
 			IFS=","
 		fi
@@ -84,7 +86,10 @@ modify_ipaddr()
 	for _pureip in ${ip4_addr}; do
 		if [ "${_pureip}" = "DHCP" ]; then
 			_dhcp=$( dhcpd )
-			[ $? -eq 2 ] && err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+			if [ $? -eq 2 ]; then
+				cbsdlogger WARNING ${CBSD_APP}: modify_ipaddr: No free IP address for DHCP in nodeippool
+				err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+			fi
 			_pureip="${_dhcp}"
 		fi
 		iptype ${_pureip}
@@ -113,6 +118,7 @@ modify_ipaddr()
 			[ "${mkhostsfile}" != "0" ] && mkjhosts ips="${IWM}" file="${data}/etc/hosts" hosts="${host_hostname}"
 			IFS=" "
 			${ECHO} "${MAGENTA}Setup new IP: ${GREEN}/sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias${NORMAL}"
+			cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: setup new IP: /sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias
 			/sbin/ifconfig ${_iface} ${_MODIF} ${_pureip} alias
 			IFS=","
 		fi
@@ -120,12 +126,14 @@ modify_ipaddr()
 
 	IFS=" "
 
-	[ -n "${_dhcp}" ] && ip4_addr=$( echo $ip4_addr | /usr/bin/sed s:DHCP:${_dhcp}:g )
+	[ -n "${_dhcp}" ] && ip4_addr=$( echo ${ip4_addr} | /usr/bin/sed s:DHCP:${_dhcp}:g )
 
 	#construct ipX.addr string 
 	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
 
+	cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: /usr/sbin/jail -m ${_nIPs} jid=${jid}
 	/usr/sbin/jail -m ${_nIPs} jid=${jid}
+
 	cbsdsql local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
 	${ECHO} "${argpart}: ${MAGENTA}${ip4_addr}${NORMAL}"
 
@@ -399,6 +407,7 @@ update_jails()
 
 	if ! need_action; then
 		cbsdsql local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+		cbsdlogger NOTICE ${CBSD_APP}: ${argpart}: ${VAL}
 		${ECHO} "${argpart}: ${MAGENTA}${VAL}${NORMAL}"
 
 		# Update realtime info
@@ -423,9 +432,6 @@ if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${MAGENTA}No such jconf file: ${GREEN}${jconf}${NORMAL}"
 	#jset jname=${jname} `/usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"`
 	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"| /usr/bin/sed 's/"/\\"/g'| /usr/bin/xargs )
-#	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr ";\n" " " )
-
-#	echo "[$my_arg]"
 	exec /bin/sh << EOF
 /usr/local/bin/cbsd jset "$my_arg" autorestart=$autorestart
 EOF
@@ -458,40 +464,51 @@ for n in ${my_arg}; do
 			if [ ${jid} -ne 0  ]; then
 				case "${argpart}" in
 					"ip4_addr")
+						cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr for ${jname}
 						modify_ipaddr
 						;;
 					"cpuset")
+						cbsdlogger NOTICE ${CBSD_APP}: modify_cpuset for ${jname}
 						modify_cpuset
 						;;
 					astart|applytpl|floatresolv|exec_consolelog|devfs_ruleset|protected|hidden)
 						update_jails
 						;;
 					mount_src)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_src for ${jname}
 						modify_mount_src
 						;;
 					mount_ports)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_ports for ${jname}
 						modify_mount_ports
 						;;
 					mount_kernel)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_kernel for ${jname}
 						modify_mount_kernel
 						;;
 					allow_mount)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_mount for ${jname}
 						modify_allow_mount
 						;;
 					allow_nullfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_nullfs for ${jname}
 						modify_allow_nullfs
 						;;
 					allow_tmpfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_tmpfs for ${jname}
 						modify_allow_tmpfs
 						;;
 					allow_procfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_procfs
 						modify_allow_procfs
 						;;
 					allow_fdescfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_fdescfs
 						modify_allow_fdescfs
 						;;
 					*)
 						if [ ${autorestart} -eq 0 ]; then
+							cbsdlogger NOTICE ${CBSD_APP}: on-the-fly currently unimplemented for ${argpart} for ${jname}
 							${ECHO} "${argpart}: ${MAGENTA}on-the-fly currently unimplemented${NORMAL}"
 						else
 							update_jails
@@ -505,7 +522,10 @@ for n in ${my_arg}; do
 	done
 done
 
-[ ${need_for_restart} -eq 1 -a ${autorestart} -eq 1 ] && jrestart ${jname}
+if [ ${need_for_restart} -eq 1 -a ${autorestart} -eq 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: restart jail from jset via need_for_restart/autorestart flags for ${jname}
+	jrestart ${jname}
+fi
 
 # exit code 0 is nessesary for dot()
 exit 0
