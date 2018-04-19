@@ -1,0 +1,64 @@
+#!/usr/local/bin/cbsd
+#v11.1.19
+CBSDMODULE="jail"
+MYARG="jname"
+MYOPTARG="mode"
+MYDESC="Pause and resume for jail (send STOP/CONT signal to jail processes)"
+ADDHELP="mode=[auto|on|off]\n\
+  mode=auto (by default) triggering - e.g, if jail active then pause\n\
+  mode=on - pause, stop\n\
+  mode=off - unpause, continue\n"
+
+. ${subr}
+. ${strings}
+
+init $*
+
+[ -z "${mode}" ] && mode="auto"
+
+. ${jrcconf}
+if [ $? -eq 1 ]; then
+	# try_remote
+	err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+fi
+[ "${emulator}" = "bhyve" ] && err 1 "${MAGENTA}For bhyve jail use: ${GREEN}cbsd bpause=${jname} ${MAGENTA}instead${NORMAL}"
+[ ${jid} -eq 0 ] && err 1 "Not running"
+
+
+pid_count=0
+jpid=
+jpid_list=
+
+eval $( /bin/ps -axfw -w -o pid,jid,state | while read _pid _jid _state; do
+	[ "${jid}" != "${_jid}" ] && continue
+	pid_count=$(( pid_count + 1 ))
+	if $( echo "${_state}" |/usr/bin/grep -q "T" ); then
+		pid_count=$(( pid_count - 1 ))
+	fi
+	jpid_list="${jpid_list} ${_pid}"
+	echo jpid_list=\"${jpid_list}\"
+	echo jpid_count=\"${pid_count}\"
+done )
+
+case "${mode}" in
+	auto)
+		if [ ${jpid_count} -gt 0 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: jail is active, triggering to sleep: ${jname}
+			${ECHO} "${MAGENTA}jail is active, triggering to sleep${NORMAL}"
+			SIGNAL="STOP"
+		else
+			cbsdlogger NOTICE ${CBSD_APP}: jail is sleeping, triggering to continue: ${jname}
+			${ECHO} "${MAGENTA}jail is sleeping, triggering to continue${NORMAL}"
+			SIGNAL="CONT"
+		fi
+		;;
+	on)
+		SIGNAL="STOP"
+		;;
+	off)
+		SIGNAL="CONT"
+		;;
+esac
+
+cbsdlogger NOTICE ${CBSD_APP}: send ${SIGNAL} signal to pid list \(${jname}\): ${jpid_list}
+kill -${SIGNAL} ${jpid_list}
