@@ -1,0 +1,66 @@
+#!/usr/local/bin/cbsd
+#v11.2.0
+MYARG="jname"
+MYOPTARG="name poweroff"
+MYDESC="bhyve checkpoint"
+CBSDMODULE="bhyve"
+ADDHELP="name= name of checkpoint. by default: checkpoint\n\
+poweroff=  - 1 - turn off the domain immediately after checkpoint, by default - 0\n"
+
+. ${subr}
+. ${tools}
+. ${strings}
+
+poweroff=0
+name="checkpoint"
+
+init $*
+
+# store original name before rcconf init
+oname="${name}"
+
+. ${jrcconf}
+#[ $? -eq 1 ] && try_remote
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+[ ${jid} -eq 0 ] && err 1 "Not running"
+
+# restore original name
+name="${oname}"
+
+[ -z "${name}" ] && err 1 "${MAGENTA}Empty checkpoint name${NORMAL}"
+
+CHECKPOINT="${jailsysdir}/${jname}/${name}.ckp"
+
+# todo: check for .ckp extenions
+
+if [ -r ${CHECKPOINT} ]; then
+	${ECHO} "${MAGENTA}Prune old checkpoint...${NORMAL}"
+	/bin/rm -f ${CHECKPOINT} ${CHECKPOINT}.kern ${CHECKPOINT}.meta
+fi
+
+if [ ${poweroff} -eq 1 ]; then
+	# we must shutdown VM after the checkpoint is created.
+	# We guarantee that it will not work any more, freezing its condition before snapshot.
+	# In this life, VM will never wake up and we can kill VM hard
+	#bpause jname=${jname} mode=on
+	/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
+	sync
+	# todo: rewrite to file modification test
+	for i in $( /usr/bin/seq 1 5 ); do
+		${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
+		sleep 1
+	done
+	# kill the virtual machine immediately
+	bstop jname=${jname} noacpi=1
+else
+	/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
+	sync
+	# todo: rewrite to file modification test
+	for i in $( /usr/bin/seq 1 5 ); do
+		${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
+		sleep 1
+	done
+fi
+
+sync
+err 0 "${MAGENTA}Checkpoint was created!: ${GREEN}${CHECKPOINT}${NORMAL}"
