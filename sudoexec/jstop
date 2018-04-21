@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.16
+#v11.1.19
 MYARG=""
 MYOPTARG="jname inter"
 MYDESC="Stop jail"
@@ -24,14 +24,30 @@ emulator="jail"		# for jname_is_multiple
 jname_is_multiple
 
 # MAIN
-if [ $# -gt 1 -o -n "${jail_list}" ]; then
 
-	# recursive stop
-	if [ -n "${jail_list}" ]; then
-		JLIST="${jail_list}"
-	else
-		JLIST=$*
+if [ -n "${jail_list}" ]; then
+	TMP_JLIST="${jail_list}"
+else
+	TMP_JLIST=$*
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsql local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		jail_num=$(( jail_num + 1 ))
 	fi
+done
+
+
+# this is multiple list, split it by parallel bstop execution
+if [ ${jail_num} -gt 1 ]; then
+	st_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple stopping: ${JLIST}
 
 	for jname in ${JLIST}; do
 		/usr/sbin/daemon -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
@@ -42,11 +58,13 @@ if [ $# -gt 1 -o -n "${jail_list}" ]; then
 
 	wait_for_fpid stop
 
+	end_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple done in $(( end_time - st_time ))s: ${JLIST}
 	err 0 "${MAGENTA}Multiple stop: ${GREEN}done${NORMAL}"
 fi
 
 st_time=$( /bin/date +%s )
-[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && jname=$( echo ${JLIST} | /usr/bin/awk '{printf $1}' )
 
 . ${jrcconf}
 if [ $? -eq 1 ]; then
