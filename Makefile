@@ -53,7 +53,11 @@ dump_cpu_topology:
 	${CC} -g -o misc/dump_cpu_topology ${DUMPCPUTOPOLOGYOBJECT} ${SIMPLEXMLOBJECT}
 	${STRIP} misc/dump_cpu_topology
 
-cbsd:
+pkg-config-check:
+	@/usr/bin/which -s pkg-config || \
+		(echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf"; /usr/bin/false)
+
+cbsd: pkg-config-check
 	${CC} bin/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp
 	${CC} bin/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp6
 	${CC} bin/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh
