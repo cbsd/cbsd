@@ -29,11 +29,11 @@ init $*
 
 jexport_me()
 {
+	local _ret
+
 	${ECHO} "${MAGENTA}Exporting (with compress level:${GREEN}${compress}${MAGENTA}), please stand by: ${GREEN}${jname}${NORMAL}"
 	local DEST="${dstdir}/${imgname}"
 	local JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
-
-	jmkrcconf jname=${jname} > ${JAILRCCONF}
 
 	# check for already existance and offline
 	if [ ! -d "${data}" ]; then
@@ -54,15 +54,27 @@ ___NCSTART_DATA=1"
 	for _part in ${SPACER}; do
 		case ${_part} in
 			___NCSTART_HEADER*)
+				jmkrcconf jname=${jname} > ${JAILRCCONF}
 				res=$( imgpart mode=pack jname=${jname} part=header emulator=${emulator} out=${DEST} )
-				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				_ret=$?
+				/bin/rm -f ${JAILRCCONF}
+				[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 				;;
 			___NCSTART_RCCONF*)
 				#currenlty we import/export operation for rc.conf via ascii format
 				#cause diffrence node can have version of cbsd with incompattible jail schema
 				#so create rc.conf for pack operation
+				jmkrcconf jname=${jname} > ${JAILRCCONF}
+				res=$( replacewdir file0="${JAILRCCONF}" old=${workdir} new="CBSDROOT" )
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					/bin/rm -f ${JAILRCCONF}
+					err 1 "${MAGENTA}Error in ${_part} replacewdir: ${res}${NORMAL}"
+				fi
 				res=$( imgpart mode=pack jname=${jname} part=rcconf out=${DEST} )
-				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				_ret=$?
+				/bin/rm -f ${JAILRCCONF}
+				[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 				;;
 			___NCSTART_PKGINFO*)
 				res=$( imgpart mode=pack jname=${jname} part=pkginfo out=${DEST} )
@@ -88,6 +100,10 @@ ___NCSTART_DATA=1"
 				;;
 			___NCSTART_LOCALFSTAB*)
 				# localfstab is not mandatory file. Errcode is always 0
+				if [ -r ${mount_fstab}.local ]; then
+					res=$( replacewdir file0="${mount_fstab}.local" old=${workdir} new="CBSDROOT" )
+					[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part} replacewdir: ${res}${NORMAL}"
+				fi
 				res=$( imgpart mode=pack jname=${jname} part=localfstab out=${DEST} || true )
 				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
 				;;
@@ -97,9 +113,9 @@ ___NCSTART_DATA=1"
 				;;
 			___NCSTART_DATA*)
 				#test for zfs mounted & mount if not
-				case $zfsfeat in
+				case ${zfsfeat} in
 					1)
-						. $zfstool
+						. ${zfstool}
 						zfsmnt ${data}
 						if [ $? -eq 2 ]; then
 							WASNOMOUNT=1
@@ -109,8 +125,10 @@ ___NCSTART_DATA=1"
 						[ ${WASNOMOUNT} -eq 1 ] && /sbin/zfs mount "${ZPOOL}"
 						;;
 				esac
+				jmkrcconf jname=${jname} > ${JAILRCCONF}
 				res=$( imgpart mode=pack jname=${jname} compress=${compress} part=data out=${DEST} 2>&1 )
 				[ $? -ne 0 ] && err 1 "${MAGENTA}Error in ${_part}: ${res}${NORMAL}"
+				/bin/rm -f ${JAILRCCONF}
 				[ "${WASNOMOUNT}" = "1" ] && /sbin/zfs unmount "${ZPOOL}"
 				;;
 		esac
