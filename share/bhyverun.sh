@@ -1,10 +1,11 @@
 #!/bin/sh
 
-while getopts "c:l:d:" opt; do
+while getopts "c:d:l:r:" opt; do
 	case "$opt" in
 		c) conf="${OPTARG}" ;;
-		l) orig_logfile="${OPTARG}" ;;
 		d) debug="${OPTARG}" ;;
+		l) orig_logfile="${OPTARG}" ;;
+		r) restore_checkpoint="${OPTARG}" ;;
 	esac
 	shift $(($OPTIND - 1))
 done
@@ -13,6 +14,13 @@ done
 . ${conf}
 
 [ -n "${orig_logfile}" ] && vm_logfile="${orig_logfile}"
+
+if [ -n "${restore_checkpoint}" ]; then
+	if [ ! -r ${restore_checkpoint} ]; then
+		echo "No checkpoint here: ${restore_checkpoint}"
+		exit 1
+	fi
+fi
 
 detach=
 [ "${2}" = "-d" ] && detach="-d"
@@ -104,7 +112,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
 
-	bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${jname}"
+	checkpoint_args=
+
+	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
+
+	bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t CBSD "[debug] ${bhyve_cmd}"
