@@ -64,6 +64,7 @@ mvdata()
 clonedata()
 {
 	local _src _dst _mode _go _force _zpool _name _res _jname _orig_mode
+	local _dskname
 
 	_force=0
 
@@ -79,31 +80,32 @@ clonedata()
 		shift $(($OPTIND - 1))
 	done
 
-	[ -z "${_dst}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}dst${NORMAL}"
-	[ -z "${_mode}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}mode${NORMAL}"
-	[ -z "${_src}" ] && err 1 "${MAGENTA}clonedata: empty ${GREEN}src${NORMAL}"
-	[ -z "${jname}" ] && err 1 "${MAGENTA}clonedata: no jname${NORMAL}"
+	[ -z "${_dst}" ] && log_err 1 "${MAGENTA}clonedata: empty ${GREEN}dst${NORMAL}"
+	[ -z "${_mode}" ] && log_err 1 "${MAGENTA}clonedata: empty ${GREEN}mode${NORMAL}"
+	[ -z "${_src}" ] && log_err 1 "${MAGENTA}clonedata: empty ${GREEN}src${NORMAL}"
+	[ -z "${jname}" ] && log_err 1 "${MAGENTA}clonedata: no jname${NORMAL}"
 	[ -z "${_new_name}" ] && _new_name="${jname}"
 	[ -z "${_promote}" ] && _promote="0"
 
 	# save original clone method
 	_orig_mode="${_mode}"
 
-	[ -d "${_dst}" -a ${_force} -eq 0 ] && err 1 "${MAGENTA}clonedata: ${GREEN}${_dst}${MAGENTA} directory exist. Please remove them${NORMAL}"
+	[ -d "${_dst}" -a ${_force} -eq 0 ] && log_err 1 "${MAGENTA}clonedata: ${GREEN}${_dst}${MAGENTA} directory exist. Please remove them${NORMAL}"
 
 	readconf zfs.conf
 
 	# check for ZFS clone possibility and create snapshot
 	case "${_mode}" in
 		zfs|zfspromote)
-			[ ${zfsfeat} -ne 1 ] && err 1 "${MAGENTA}clonedata: zfs clone method but zfsfeat=0${NORMAL}"
-			[ -z "${_new_name}" ] && err 1 "${MAGENTA}clonedata: empty -n new_name of the snapshot${NORMAL}"
+			[ ${zfsfeat} -ne 1 ] && log_err 1 "${MAGENTA}clonedata: zfs clone method but zfsfeat=0${NORMAL}"
+			[ -z "${_new_name}" ] && log_err 1 "${MAGENTA}clonedata: empty -n new_name of the snapshot${NORMAL}"
 
 			zfsmnt "${_src}"
 			_res=$?
 			case "${_res}" in
 				0)
 					# not valid ZFS mp, force non-zfs clone method
+					cbsdlogger NOTICE ${CBSD_APP}: force to rsync clone method, not ZFS mount point: ${_src}
 					${ECHO} "${MAGENTA}Force to rsync clone method, not ZFS mount point: ${GREEN}${_src}${NORMAL}"
 					_mode="rsync"
 					;;
@@ -111,9 +113,11 @@ clonedata()
 					local _origdata=$( /sbin/zfs get -Ho value name ${_src} 2>/dev/null )
 					if [ -z "${_origdata}" ]; then
 						${ECHO} "${MAGENTA}${_src} is not ZFS dataset, force to rsync clone method${NORMAL}"
+						cbsdlogger NOTICE ${CBSD_APP}: ${_src} is not ZFS dataset, force to rsync clone method
 						_mode="rsync"
 					else
 						local _createtime=$( /bin/date "+%Y%m%d%H%M%S" )
+						cbsdlogger NOTICE ${CBSD_APP}: clonedata: zfs snapshot ${_origdata}@cbsd-original-${_new_name}
 						/sbin/zfs snapshot ${_origdata}@cbsd-original-${_new_name}
 						/sbin/zfs set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
 						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
@@ -121,7 +125,7 @@ clonedata()
 					fi
 					;;
 				*)
-					err 1 "${MAGENTA}clonedata: unknown code for: zfsmnt ${_src}${NORMAL}"
+					log_err 1 "${MAGENTA}clonedata: unknown code for: zfsmnt ${_src}${NORMAL}"
 					;;
 			esac
 	esac
@@ -138,21 +142,25 @@ clonedata()
 			_force=1
 			;;
 		zfs|zfspromote)
-			[ -n "${_name}" ] && err 1 "${MAGENTA}clonedata: empty -n name of the snapshot${NORMAL}"
+			[ -n "${_name}" ] && log_err 1 "${MAGENTA}clonedata: empty -n name of the snapshot${NORMAL}"
 			unset _go
 			;;
 		*)
-			err 1 "clonedata: unsupported mode: ${_mode}"
+			log_err 1 "clonedata: unsupported mode: ${_mode}"
 			;;
 	esac
+
+	cbsdlogger NOTICE ${CBSD_APP}: clonedata mode selected: ${_mode}
 
 	# create directory and copy data via rsync/copy method
 	if [ -n "${_go}" ]; then
 		if [ ! -d "${_dst}" ]; then
 			if [ ${zfsfeat} -eq 1 ]; then
-				_zpool=$( /sbin/zfs list ${jaildatadir} |/usr/bin/tail +2 |/usr/bin/awk '{printf $1}' )
+				_zpool=$( /sbin/zfs list ${jaildatadir} | /usr/bin/tail +2 | /usr/bin/awk '{printf $1}' )
 				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
+				. ${system}	# for is_mounted
 				if ! is_mounted ${_zpool}/${jname}; then
+					cbsdlogger NOTICE ${CBSD_APP}: zfs not mounted, mount: ${_zpool}/${jname}
 					/sbin/zfs mount ${_zpool}/${jname}
 				fi
 			else
@@ -160,6 +168,7 @@ clonedata()
 			fi
 		fi
 
+		cbsdlogger NOTICE ${CBSD_APP}: clonedata: ${_go} ${_src}/* ${_dst}/
 		${_go} ${_src}/* ${_dst}/
 	fi
 
@@ -167,26 +176,30 @@ clonedata()
 	if [ ${zfsfeat} -eq 1 ]; then
 		for i in $( /usr/bin/find ${_dst}/ -type l -depth 1 -maxdepth 1 ); do
 			if is_getzvol ${i}; then
+				_dskname=$( /usr/bin/basename ${i} )
 				imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
 				# create_bhyvedsk ?
 #				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-				new_zvol=$( echo ${is_zvol} |/usr/bin/sed s:${old}:${new}:g )
+				new_zvol=$( echo ${is_zvol} | /usr/bin/sed s:${old}:${new}:g )
 
 				case "${_orig_mode}" in
 					zfs|zfspromote)
 						local _createtime=$( /bin/date "+%Y%m%d%H%M%S" )
-						/sbin/zfs snapshot ${is_zvol}@cbsd-original-${_new_name}
-						/sbin/zfs set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}
-						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}
-						/sbin/zfs clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name} ${new_zvol}
-#						create_zfs_fs -d "${_src}" -n "${_new_name}" -p ${_promote} -z "${is_zvol}@cbsd-original-${_new_name}"
+						cbsdlogger NOTICE ${CBSD_APP}: clonedata: create zfs snapshot: ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						# this command produces ZFS WARNING: Unable to create ZVOL in syslog messages
+						/sbin/zfs snapshot ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						/sbin/zfs set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						cbsdlogger NOTICE ${CBSD_APP}: clonedata: clone zfs snapshot: ${is_zvol}@cbsd-original-${_new_name}-${_dskname} to ${new_zvol}
+						/sbin/zfs clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name}-${_dskname} ${new_zvol}
+#						create_zfs_fs -d "${_src}" -n "${_new_name}" -p ${_promote} -z "${is_zvol}@cbsd-original-${_new_name}-${_dskname}"
 						;;
 					*)
 						/sbin/zfs create -V ${imgbytes} -o volmode=dev ${new_zvol}
 						/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
 						;;
 				esac
-
+				cbsdlogger NOTICE ${CBSD_APP}: clonedata: create ${i} symlink to ZVOL: /dev/zvol/${new_zvol}
 				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
 			fi
 		done
@@ -308,7 +321,7 @@ create_zfs_fs()
 	local _data _mount_point _name _promote _zfs_snapsrc
 
 	while getopts "d:m:n:p:z:" opt; do
-		case "$opt" in
+		case "${opt}" in
 			d) _data="${OPTARG}" ;;
 			m) _mount_point="${OPTARG}" ;;
 			n) _name="${OPTARG}" ;;
@@ -330,16 +343,17 @@ create_zfs_fs()
 	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 
 	if zfsroot ${_name}; then
-		err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
+		log_err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
 	fi
 
 	if [ -z "${_zfs_snapsrc}" ]; then
 		res=$( /sbin/zfs create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
-		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${NORMAL}"
+		[ $? -ne 0 ] && log_err 1 "${MAGENTA}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs: ZFS ${ZPOOL}/${_name} has been created with mountpoint: ${_data}, opt: ${zfs_create_flags}
 	else
-		# ${ECHO} "${MAGENTA}create_zfs_fs: create ${ZPOOL}${_data} from original: ${GREEN}${_zfs_snapsrc}${NORMAL}"
 		/sbin/zfs clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
-		[ $? -ne 0 ] && err 1 "${MAGENTA}create_zfs_fs: zfs clone failed: ${res}${NORMAL}"
+		[ $? -ne 0 ] && log_err 1 "${MAGENTA}create_zfs_fs: zfs clone failed: ${res}${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: ZFS cloned: ${_zfs_snapsrc} to ${ZPOOL}/${_name}
 
 		if [ "${_mount_point}" != "none" ]; then
 			if [ -n "${_mount_point}" ]; then
@@ -351,10 +365,12 @@ create_zfs_fs()
 	fi
 
 	if [ ${_promote} -eq 1 ]; then
-		echo "zfs promote ${ZPOOL}/${_name}"
-		zfs promote ${ZPOOL}/${_name}
+		${ECHO} "${MAGENTA}ZFS promoting for: ${GREEN}${ZPOOL}/${_name}${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: zfs promoting for: ${ZPOOL}/${_name}
+		/sbin/zfs promote ${ZPOOL}/${_name}
 	fi
 
+	return 0
 }
 
 

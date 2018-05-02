@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.1.19
 MYARG="old new"
 MYOPTARG="verbose ip4_addr host_hostname promote"
-MYDESC="Jail cloning"
+MYDESC="Bhyve VM cloning"
 CBSDMODULE="bhyve"
 ADDHELP="promote - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote)\n\
 clone_method - can be 'auto' or 'rsync'. Default is: auto\n"
@@ -22,21 +22,17 @@ readconf bclone.conf		# read users promote and clone_method settings
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
 
-myjid=$( cbsdsql local SELECT status FROM jails WHERE jname=\"${old}\" 2>/dev/null)
-[ -z "${myjid}" ] && err 1 "${MAGENTA}No such jail: ${GREEN}${old}${NORMAL}"
-[ "${myjid}" != "0" ] && err 1 "${MAGENTA}Jail is online. Please stop them: ${GREEN}${old}${NORMAL}"
-
-bhyve=$( cbsdsql local SELECT jname FROM bhyve WHERE jname=\"${old}\" 2>/dev/null)
-[ -z "${bhyve}" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
-
-myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
-[ -n "${myjid}" ] && err 1 "${MAGENTA}Jail already exist: ${GREEN}${new}${NORMAL}"
-
+jname="${old}"
 host_hostname_new="${host_hostname}"
 ip4_addr_new="${ip4_addr}"
 
-jname="${old}"
 . ${jrcconf}
+[ $? -eq 1 ] && err_log 1 "${MAGENTA}No such bhyve: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && log_err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+[ ${jid} -ne 0 ] && log_err 1 "${MAGENTA}Bhyve is online. Please stop them: ${GREEN}${old}${NORMAL}"
+
+myjid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
+[ -n "${myjid}" ] && log_err 1 "${MAGENTA}Bhyve already exist: ${GREEN}${new}${NORMAL}"
 
 protected=$( cbsdsql local SELECT protected FROM bhyve WHERE jname=\"${old}\" )
 hidden=$( cbsdsql local SELECT hidden FROM bhyve WHERE jname=\"${old}\" )
@@ -61,9 +57,10 @@ SYSDIROLD="${jailsysdir}/${old}"
 SYSDIRNEW="${jailsysdir}/${new}"
 
 printf "${MAGENTA}Cloning.${NORMAL}"
+cbsdlogger NOTICE ${CBSD_APP}: start cloning ${old} to ${new}
 st_time=$( /bin/date +%s )
 
-if [ -d "$SYSDIROLD" ]; then
+if [ -d "${SYSDIROLD}" ]; then
 	[ -d "${SYSDIRNEW}" ] && /bin/rm -rf ${SYSDIRNEW}
 	/bin/cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
 	dot "cp sysdir"
@@ -78,11 +75,11 @@ case ${zfsfeat} in
 	;;
 esac
 
-[ ! -d "${SRC}" ] && err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
+[ ! -d "${SRC}" ] && log_err 1 "${MAGENTA}No jail data: ${GREEN}${SRC}${NORMAL}"
 
 if [ -d "${DST}" ]; then
 	/bin/rmdir ${DST} >/dev/null 2>&1
-	[ -d "${DST}" ] && err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
+	[ -d "${DST}" ] && log_err 1 "${MAGENTA}Jail data already exist and it not empty: ${GREEN}${DST}${NORMAL}"
 fi
 
 for i in ${JAILDIR} ${jailfstab} ${jailrcconf}; do
@@ -114,7 +111,11 @@ fi
 
 jname=${new}
 
-[ "${zfsfeat}" != "1" ] && clone_method="rsync"
+if [ "${zfsfeat}" != "1" ]; then
+	clone_method="rsync"
+fi
+
+cbsdlogger NOTICE ${CBSD_APP}: copying method will be used for cloning: ${clone_method}
 
 case ${clone_method} in
 	auto)
