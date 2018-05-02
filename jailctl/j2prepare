@@ -14,13 +14,13 @@ mkdatadir=1
 
 init $*
 
-[ -z "${node}" ] && err 1 "${MAGENTA}Give me node${NORMAL}"
-[ -z "${jname}" ] && err 1 "${MAGENTA}Give me jname${NORMAL}"
+[ -z "${node}" ] && log_err 1 "${MAGENTA}Give me node${NORMAL}"
+[ -z "${jname}" ] && log_err 1 "${MAGENTA}Give me jname${NORMAL}"
 
 SECFILE="${workdir}/etc/${jname}.secrets"
 
 . ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ $? -eq 1 ] && log_err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 
 printf "${MAGENTA}Preparing.${NORMAL}"
 
@@ -37,56 +37,69 @@ RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}"
 
 not_sharedfs_action()
 {
+	cbsdlogger NOTICE ${CBSD_APP}: generate secrets for ${jname}
 	jgensecrets jname=${jname} mode=force > ${DEBLOG} 2>&1
 	dot "jgensecrets"
 
-	[ ! -f "${SECFILE}" ] && err 1 "${MAGENTA}No such secrets${NORMAL}"
+	[ ! -f "${SECFILE}" ] && log_err 1 "${MAGENTA}No such secrets${NORMAL}"
 
 	NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${node}\" )
 
-	[ -z "${NODEDATA}" ] && err 1 "${MAGENTA}: No such node. Please execute ${GREEN}cbsd add node=${node} ${MAGENTA}first${NORMAL}"
+	[ -z "${NODEDATA}" ] && log_err 1 "${MAGENTA}: No such node. Please execute ${GREEN}cbsd add node=${node} ${MAGENTA}first${NORMAL}"
 	sqllist "${NODEDATA}" myip myport mykey
 
 	SSHOP="-oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${myip}"
 
+	cbsdlogger NOTICE ${CBSD_APP}: register secrets for ${jname} on remote node: ${node}
 	rexe node=${node} cbsd secretsfile jname=${jname} mode=off > ${DEBLOG} 2>&1
 	dot "rexe"
+	cbsdlogger NOTICE ${CBSD_APP}: copy secrets for ${jname} to remote node: ${node}
 	nodescp ${SECFILE} ${node}:etc > ${DEBLOG} 2>&1
 	dot "scp_secfile"
 	imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
-	trap "rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+	trap "/bin/rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+	cbsdlogger NOTICE ${CBSD_APP}: copy sysdata for ${jname} to ${node}
 	nodescp ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > ${DEBLOG} 2>&1
 	dot "scp_sysdata"
 	rexe node=${node} cbsd secretsfile jname=${jname} mode=on > ${DEBLOG} 2>&1
 	dot "rexe_2"
 	RDIR="${jname}-data"
 	if [ "${mkdatadir}" = "1" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: create datadir for ${jname} on ${node}
 		rexe node=${node} cbsd mkdatadir jname=${jname} > ${DEBLOG} 2>&1
 		dot "rexe_3"
 	fi
 
 	if [ -f ${JAILFSTAB} ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy fstabs for ${jname} to ${node}
 		nodescp ${JAILFSTAB} ${node}:${RJAILFSTAB} > ${DEBLOG} 2>&1
 		dot "scp fstab"
 	fi
 
-	cbsd rexe node=${node} cbsd imgpart mode=extract jname=jails-system/${jname}-sysdata.tgz part=sysdata out=jails-system > ${DEBLOG} 2>&1
+	cbsdlogger NOTICE ${CBSD_APP}: extract sysdata for ${jname} on ${node}
+	rexe node=${node} cbsd imgpart mode=extract jname=jails-system/${jname}-sysdata.tgz part=sysdata out=jails-system > ${DEBLOG} 2>&1
 	dot "rexe_img_extract_sysdata"
 
 	rexe node=${node} rm -f jails-system/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
 	dot "rexe_rm-f-sysdata"
 }
 
-[ ${sharedfs} -eq 0 ] && not_sharedfs_action
+if [ ${sharedfs} -eq 0 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: not shared fs with ${node}, perform not_sharedfs_action
+	not_sharedfs_action
+fi
 
 jmkrcconf jname=${jname} > ${JAILRCCONF}
+cbsdlogger NOTICE ${CBSD_APP}: copy rcconf for ${jname} to ${node}
 nodescp ${JAILRCCONF} ${node}:${RJAILRCCONF} > ${DEBLOG} 2>&1
 dot "scp rcconf"
 /bin/rm -f ${JAILRCCONF}
 
+cbsdlogger NOTICE ${CBSD_APP}: jrsyncconf for ${jname} on ${node}
 rexe node=${node} /usr/local/bin/cbsd jrsyncconf jname=${jname} > ${DEBLOG} 2>&1
 dot "rexe_jrsyncconf"
 
+cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} on ${node}
 rexe node=${node} cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > ${DEBLOG} 2>&1
 dot "rexe_4"
 err 0 "${GREEN}ok${NORMAL}"

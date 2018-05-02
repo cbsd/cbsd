@@ -127,7 +127,10 @@ int print_cores_by_sock(int socket)
 
 	memset(tmp,0,sizeof(tmp));
 
+	fprintf(stderr,"\nHERE CORE\n");
+
 	for (cch = cores_list; cch; cch = cch->next) {
+		fprintf(stderr,"\nCORE::%d\n",cch->socket);
 		if (cch->socket != socket) continue;
 		memset(buffer,0,sizeof(buffer));
 		sprintf(buffer, "%d ", cch->id);
@@ -146,7 +149,10 @@ int print_threads_by_sock(int socket)
 
 	memset(tmp,0,sizeof(tmp));
 
+	fprintf(stderr,"\nHERE\n");
+
 	for (tch = threads_list; tch; tch = tch->next) {
+		fprintf(stderr,"\n::%d\n",tch->socket);
 		if (tch->socket != socket) continue;
 		memset(buffer,0,sizeof(buffer));
 		sprintf(buffer, "%d ", tch->id);
@@ -207,6 +213,7 @@ int new_core(int parent,int id, int socket)
 	newc->parent=parent;
 	newc->id=id;
 	newc->socket=socket;
+//	newc->socket=last_sid;
 	newc->next = cores_list;
 	cores_list = newc;
 	fprintf(stderr,"[core] %d has beed added\n",id);
@@ -253,7 +260,7 @@ int push_core_id(int id)
 	new_core_id->id=id;
 	new_core_id->next = core_id_list;
 	core_id_list = new_core_id;
-	fprintf(stderr,"PUSH CORE ID: %d\n",id);
+	fprintf(stderr,"PUSH CORE ID for SOCKET %d: %d\n",last_sid,id);
 	return 0;
 }
 
@@ -332,7 +339,6 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 	}
 
 	if (event == ADD_SUBTAG) {
-	  
 		fprintf(stderr,"depth: %d, val: %s\n",nDepth,szHandlerName);
 		fprintf(stderr, "%6li: %s add subtag (%s)\n", 
 			simpleXmlGetLineNumber(parser), getIndent(nDepth), szHandlerName);
@@ -351,11 +357,14 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 		}
 		if ( (!strcmp(szHandlerAttribute,"cache-level")) && (!strcmp(szHandlerValue,"2")) ) {
 			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* NEW LOGICAL CORE *\n");
+			fprintf(stderr,"\n* !NEW LOGICAL CORE %d!, Sock: %d *\n", last_cid,last_sid - 1);
+//			last_cid=pop_core_id();
+//			new_core(0,last_cid,last_sid - 1);
 			//new_socket(last_sid,last_sid);
 			//push_socket_id(last_sid);
 			//last_sid++;
 			level=10;
+			//elif ?
 		}
 		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"THREAD")) ) {
 			//attribute cache-level=2 detected: new L2 domain
@@ -365,7 +374,7 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 		}
 		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"SMT")) ) {
 			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* NEW CORE, Sock %d *\n", last_sid - 1);
+			fprintf(stderr,"\n       * NEW CORE, Sock %d *     \n", last_sid - 1);
 			last_cid=pop_core_id();
 			new_core(0,last_cid,last_sid - 1);
 		}
@@ -375,12 +384,15 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 
 		if (level==10) {
 			if (!strcmp(szHandlerName,"cpu"))
-				fprintf(stderr,"Cores ID processed: %s\n",szHandlerValue);
+				fprintf(stderr,"  !ROUTE LEVEL 10: Cores ID processed: %s, SOCKET: %d\n",szHandlerValue, last_sid - 1 );
 				while ((tmp = strsep(&szHandlerValue, ",")) != NULL) {
 					if (tmp[0] == '\0')
 						break; /* XXX */
 					trim_spaces(tmp);
 					push_core_id(atoi(tmp));
+					fprintf(stderr,"\n\n\nHA:  %d\n\n\n",atoi(tmp));
+//					last_cid=pop_core_id();
+//					new_core(0,last_cid,last_sid - 1);
 				}
 		}
 
