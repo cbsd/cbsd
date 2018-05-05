@@ -5,11 +5,16 @@ help all:
 	@echo "Makefile help:"
 	@echo
 .if exists(${.CURDIR}/.git)
-	@printf ${LPATT} "profiles-update"         "Update vm-config files from the net"
+	@printf ${LPATT} "git-clean"		"remove .git dir"
+	@printf ${LPATT} "profiles-update"	"Update vm-config files from the net"
 .else
 	@printf ${LPATT} "profiles-create"         "fetch initial vm-config files from the net"
 .endif
 	@echo
+
+git-clean:
+	@/bin/test ! -d ${.CURDIR}/.git || \
+		(rm -rf ${.CURDIR}/.git; /usr/bin/true)
 
 git-check:
 	@/usr/bin/which -s git || \
@@ -22,8 +27,6 @@ profiles-check: git-check
 		(echo "Error: ${.CURDIR}/.git already exists"; /usr/bin/false)
 
 profiles-create-repo: profiles-check
-	@echo "If problems occur you may have to rm -rf .git and try again."
-	@echo
 	@mkdir -p ${.CURDIR}/tmp-Makefile-config
 	@cd ${.CURDIR}/tmp-Makefile-config && git init
 	@cd ${.CURDIR}/tmp-Makefile-config && \
@@ -37,6 +40,17 @@ profiles-create-repo: profiles-check
 
 profiles-create: profiles-create-repo
 
-profiles-update:
+remove-dup-profiles:
+	@/usr/bin/find ${.CURDIR} -type f -depth 1 -maxdepth 1 -name vm-\* |while read _d; do \
+		basename=$$(basename $${_d}) ; \
+		[ -f ${.CURDIR}/defaults/$$basename ] || continue ; \
+		cmp ${.CURDIR}/$$basename ${.CURDIR}/defaults/$$basename && rm -f ${.CURDIR}/$$basename; \
+	done
+
+git-pull:
 	git reset --hard
 	git pull
+
+profiles-update: git-pull remove-dup-profiles
+
+profiles-upgrade: git-clean profiles-create remove-dup-profiles
