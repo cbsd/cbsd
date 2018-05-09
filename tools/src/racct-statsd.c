@@ -551,8 +551,12 @@ int update_racct_jail(char *jname, int jid)
 						if (ncpu>1) {
 							ch->pcpu=( atoi(var) / ncpu );
 						} else {
-						  	ch->pcpu=atoi(var);
+							ch->pcpu=atoi(var);
 						}
+						if (ch->pcpu<0)
+							ch->pcpu=0;
+						if (ch->pcpu>100)
+							ch->pcpu=100;
 					} else if (!strcmp(param_name,"readbps")) {
 						ch->readbps=atoi(var);
 					} else if (!strcmp(param_name,"writebps")) {
