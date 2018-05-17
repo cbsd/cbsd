@@ -2,6 +2,7 @@
 // Oleg Ginzburg <olevole@olevole.ru>
 // 0.1
 // Obtain CPU topology from kern.sched.topology_spec sysctl MIB
+// TODO: DEEP REFACTORING WITH DYNAMIC 'cpu count="2"' PARSER, NO MAGIC IN CODE!
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -69,23 +70,23 @@ int readFileData (char* sFileName, char** sData, long *pnDataLen);
 
 /* memory utils **********************************************************/
 
-#define CREATE(result, type, number)  do {\
-	if (!((result) = (type *) calloc ((number), sizeof(type))))\
+#define CREATE(result, type, number)  do {				\
+	if (!((result) = (type *) calloc ((number), sizeof(type))))	\
 	{ perror("malloc failure"); abort(); } } while(0)
 
-#define RECREATE(result,type,number) do {\
-	if (!((result) = (type *) realloc ((result), sizeof(type) * (number))))\
+#define RECREATE(result,type,number) do {					\
+	if (!((result) = (type *) realloc ((result), sizeof(type) * (number))))	\
 	{ perror("realloc failure"); abort(); } } while(0)
 
-#define REMOVE_FROM_LIST(item, head, next)      \
-	if ((item) == (head))                \
-		head = (item)->next;              \
-	else {                               \
-		temp = head;                      \
-		while (temp && (temp->next != (item))) \
-			temp = temp->next;             \
-		if (temp)                         \
-			temp->next = (item)->next;     \
+#define REMOVE_FROM_LIST(item, head, next)					\
+	if ((item) == (head))							\
+		head = (item)->next;						\
+	else {									\
+		temp = head;							\
+		while (temp && (temp->next != (item)))				\
+			temp = temp->next;					\
+		if (temp)							\
+			temp->next = (item)->next;				\
 	}
 void trim_spaces(char *input)
 {
@@ -345,8 +346,9 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 		nDepth++;
 	} else if (event == ADD_ATTRIBUTE) {
 //		printf("attribute tag:%s %s=%s\n",szHandlerName, szHandlerAttribute, szHandlerValue);
-		fprintf(stderr, "%6li: %s add attribute to tag %s (%s=%s)\n", 
+		fprintf(stderr, "%6li: %s ///add attribute to tag %s ([%s]=[%s])\n", 
 			simpleXmlGetLineNumber(parser), getIndent(nDepth), szHandlerName, szHandlerAttribute, szHandlerValue);
+
 		if ( (!strcmp(szHandlerAttribute,"cache-level")) && (!strcmp(szHandlerValue,"3")) ) {
 			//attribute cache-level=3 detected: new L3 domain
 			fprintf(stderr,"\n* NEW SOCKET *\n");
@@ -355,45 +357,71 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 			last_sid++;
 			level=3;
 		}
-		if ( (!strcmp(szHandlerAttribute,"cache-level")) && (!strcmp(szHandlerValue,"2")) ) {
-			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* !NEW LOGICAL CORE %d!, Sock: %d *\n", last_cid,last_sid - 1);
-//			last_cid=pop_core_id();
-//			new_core(0,last_cid,last_sid - 1);
-			//new_socket(last_sid,last_sid);
-			//push_socket_id(last_sid);
-			//last_sid++;
-			level=10;
-			//elif ?
-		}
-		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"THREAD")) ) {
-			//attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr,"\n* NEW THREAD, Sock %d *\n", last_sid - 1);
-			last_cid=pop_core_id();
- 			new_thread(0,last_cid,last_sid - 1);
-		}
+
 		if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"SMT")) ) {
 			//attribute cache-level=2 detected: new L2 domain
 			fprintf(stderr,"\n       * NEW CORE, Sock %d *     \n", last_sid - 1);
+			//uncomment for noSMP:
+			//level=10;
+
+			//ucomment for SMP:
 			last_cid=pop_core_id();
 			new_core(0,last_cid,last_sid - 1);
+		} else if ( (!strcmp(szHandlerAttribute,"name")) && (!strcmp(szHandlerValue,"THREAD")) ) {
+			//attribute cache-level=2 detected: new L2 domain
+			fprintf(stderr,"\n* NEW THREAD, Sock %d *\n", last_sid - 1);
+			last_cid=pop_core_id();
+			new_thread(0,last_cid,last_sid - 1);
+		}
+
+		if ( (!strcmp(szHandlerAttribute,"level")) && (!strcmp(szHandlerValue,"3")) ) {
+			//no cpu count="2"/SMT/THREAD Routing!
+			level=300;
+		} else if ( (!strcmp(szHandlerAttribute,"level")) && (!strcmp(szHandlerValue,"2")) ) {
+			//attribute cache-level=2 detected: new L2 domain
+			fprintf(stderr,"\n* !NEW LOGICAL CORE %d!, Sock: %d*\n", last_cid,last_sid - 1);
+			//We have "cpu count="2" and SMT/THREAD flag name
+			level=200;
 		}
 
 	} else if (event == ADD_CONTENT) {
 		fprintf(stderr,"depth: %d, LEVEL %d, context for:[%s] [%s]\n",nDepth,level,szHandlerName, szHandlerValue);
 
-		if (level==10) {
-			if (!strcmp(szHandlerName,"cpu"))
+		if (level==200) {
+			if (!strcmp(szHandlerName,"cpu")) {
 				fprintf(stderr,"  !ROUTE LEVEL 10: Cores ID processed: %s, SOCKET: %d\n",szHandlerValue, last_sid - 1 );
 				while ((tmp = strsep(&szHandlerValue, ",")) != NULL) {
 					if (tmp[0] == '\0')
 						break; /* XXX */
 					trim_spaces(tmp);
+// comment for no SMP?
 					push_core_id(atoi(tmp));
-					fprintf(stderr,"\n\n\nHA:  %d\n\n\n",atoi(tmp));
+					fprintf(stderr,"\n\n\nHA: [%d]\n\n\n",atoi(tmp));
+// uncomment for no SMP:
 //					last_cid=pop_core_id();
-//					new_core(0,last_cid,last_sid - 1);
+//					new_core(0,atoi(tmp),last_sid - 1);
 				}
+			// drop level
+//			level=9;
+			}
+		} else if (level==300) {
+		//no cpu count="2"/SMT/THREAD Routing!
+			if (!strcmp(szHandlerName,"cpu")) {
+				fprintf(stderr,"  !ROUTE LEVEL 10: Cores ID processed: %s, SOCKET: %d\n",szHandlerValue, last_sid - 1 );
+				while ((tmp = strsep(&szHandlerValue, ",")) != NULL) {
+					if (tmp[0] == '\0')
+						break; /* XXX */
+					trim_spaces(tmp);
+// comment for no SMP?
+					push_core_id(atoi(tmp));
+					fprintf(stderr,"\n\n\nHA: [%d]\n\n\n",atoi(tmp));
+// uncomment for no SMP:
+					last_cid=pop_core_id();
+					new_core(0,atoi(tmp),last_sid - 1);
+				}
+			// drop level
+//			level=9;
+			}
 		}
 
 		fprintf(stderr, "%6li: %s add content to tag %s (%s)\n", 
