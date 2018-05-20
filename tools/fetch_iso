@@ -1,15 +1,17 @@
 #!/usr/local/bin/cbsd
-#v11.1.17
+#v11.2.0
 MYARG="dstdir"
-MYOPTARG="gensha256 name path keepname"
+MYOPTARG="gensha256 keepname name path purge purgeonly"
 MYDESC="Fetch ISO images from mirror sites"
 CBSDMODULE="sys"
-ADDHELP="dstdir - destination directory\n\
+ADDHELP="dstdir - destination directory. Use dstdir=default for using default iso dir: \$cbsd_workdir/src/iso\n\
 gensha256 - re-generate sha256sum files\n\
-name - fetch by profile name, e.g: FreeBSD-x64-11.1, Debian-x86-9\n\
-path - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf\n\
 keepname - when 0, save ISO as register_iso_name variable, e.g cbsd-iso-${iso_img}\n\
            when 1, save ISO as original name on remote site (for mirroring)\n\
+name - fetch by profile name, e.g: FreeBSD-x64-11.1, Debian-x86-9\n\
+path - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf\n\
+purge - when 1, purge ISO which are not referenced by any profiles\n\
+purgeonly - when 1, no download, just purge ISO which are not referenced by any profiles\n\
 "
 
 . ${subr}
@@ -21,9 +23,15 @@ keepname=0
 gensha256=0
 name=
 path=
+purge=0
+purgeonly=0
+dstdir=
+
+readconf fetch_iso
 
 init $*
 
+[ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
 [ ! -d ${dstdir} ] && /bin/mkdir -p ${dstdir}
 
 # gensha256
@@ -59,9 +67,145 @@ obtain_iso()
 	fi
 }
 
+get_active_profiles_num()
+{
+	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+		[ ! -r ${i} ] && continue
+
+		iso_site=
+		fetch=0
+		sha256sum=0
+
+		. ${i}
+
+		[ ${fetch} -eq 0 ] && continue
+		[ -z "${iso_site}"  ] && continue
+		[ "${sha256sum}" = "0" ] && continue
+		profile_num=$(( profile_num + 1 ))
+	done
+
+	printf "${profile_num}"
+}
+
+fetch_iso_by_path()
+{
+	[ -n "${1}" ] && path="${1}"
+
+	if [ -z "${path}" ]; then
+		${ECHO} "${MAGENTA}fetch_iso_by_path: empty path${NORMAL}"
+		return 1
+	fi
+
+	# protect from long loop
+	trap 'exit 0' SIGINT
+
+	iso_img=
+	iso_img_dist=
+	iso_site=
+	fetch=0
+	vm_profile=
+	register_iso_name=
+	sha256sum=0
+
+	if [ ! -r ${path} ]; then
+		${ECHO} "${MAGENTA}Unreadable profile: ${GREEN}${path}${NORMAL}"
+		return 1
+	fi
+
+	. ${path}
+
+	if [ ${fetch} -eq 0 ]; then
+		${ECHO} "${MAGENTA}${path} fetch=0, skipp${NORMAL}"
+		return 1
+	fi
+
+	if [ -z "${iso_site}"  ]; then
+		${ECHO} "${MAGENTA}${path} no iso_site, skipp${NORMAL}"
+		return 1
+	fi
+
+	if [ -n "${iso_img_dist}" ]; then
+		rfile="${iso_img_dist}"
+	else
+		rfile="${iso_img}"
+	fi
+
+	if [ ${keepname} -eq 1 ]; then
+		fout="${rfile}"
+	else
+		fout="${register_iso_name}"
+	fi
+
+	${ECHO} " ${WHITE}* ${LCYAN}[${profile_cur}/${profile_num}] ${GREEN}== ${MAGENTA}Processing ${GREEN}${vm_profile}${MAGENTA} from ${GREEN}${path}${NORMAL} =="
+
+	if [ -z "${fout}" ]; then
+		${ECHO} "fetch_iso_by_path: empty fout file"
+		return 1
+	fi
+
+	obtain_iso
+	ret=$?
+
+	# check size
+
+	# gensha256?
+	if [ ${gensha256} -eq 1 ]; then
+		profile_name=$( /usr/bin/basename ${i} )
+		gensha256_sum /usr/local/cbsd/etc/defaults/${profile_name} ${dstdir}/${fout}
+	else
+		${ECHO} "${MAGENTA}${path} sha256sum=0, skipp${NORMAL}"
+	fi
+	echo
+}
+
+# create array: (separated by spaces)
+#   "profile_name|profile_path "
+# in $profile_map variable
+get_profile_name_path_map()
+{
+	# global
+	profile_map=
+	local profile_num=0 profile_cur=0
+
+	profile_num=$( get_active_profiles_num )
+
+	${ECHO} "${MAGENTA}Active bhyve profiles here: ${GREEN}${profile_num}${NORMAL}"
+
+	# protect from long loop
+	trap 'exit 0' SIGINT
+
+	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+		iso_img=
+		iso_img_dist=
+		iso_site=
+		fetch=0
+		vm_profile=
+		register_iso_name=
+		sha256sum=0
+
+		[ ! -r ${i} ] && continue
+		. ${i}
+
+		[ ${fetch} -eq 0 ] && continue
+		[ -z "${iso_site}"  ] && continue
+		[ "${sha256sum}" = "0" ] && continue
+		[ -z "${vm_profile}" ] && continue
+		profile_map="${profile_map}${vm_profile}|${i} "
+		profile_cur=$(( profile_cur + 1 ))
+	done
+}
 
 fetch_iso_all()
 {
+	profile_num=0 profile_cur=0
+
+	profile_num=$( get_active_profiles_num )
+
+	${ECHO} "${MAGENTA}Active bhyve profiles here: ${GREEN}${profile_num}${NORMAL}"
+
+	# protect from long loop
+	trap 'exit 0' SIGINT
+
 	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
 		iso_img=
 		iso_img_dist=
@@ -79,7 +223,58 @@ fetch_iso_all()
 		[ -z "${iso_site}"  ] && continue
 		[ "${sha256sum}" = "0" ] && continue
 
-		${ECHO} " == ${MAGENTA}Processing ${GREEN}${vm_profile}${MAGENTA} from ${GREEN}${i}${NORMAL} =="
+		profile_cur=$(( profile_cur + 1 ))
+		fetch_iso_by_path ${i}
+	done
+}
+
+
+# ${active_iso_list} variable must be filled
+exist_in_list()
+{
+	local _i
+
+	[ -z "${active_iso_list}" ] && err 1 "${MAGENTA}\$active_iso_list variables is empty${NORMAL}"
+	[ -z "${1}" ] && err 1 "${MAGENTA}exist_in_list <args>${NORMAL}"
+
+	for _i in ${active_iso_list}; do
+		[ "${_i}" = "${1}" ] && return 0
+	done
+
+	return 1
+}
+
+purge_iso_all()
+{
+	# global, used by fetch_iso_by_path func
+	profile_num=0
+	profile_cur=1
+
+	profile_num=$( get_active_profiles_num )
+
+	${ECHO} "${MAGENTA}Active bhyve profiles here: ${GREEN}${profile_num}${NORMAL}"
+	${ECHO} "${MAGENTA}Scan dir for purge/obsolete ISO's: ${GREEN}${dstdir}${NORMAL}"
+
+	active_iso_list=
+
+	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+		iso_img=
+		iso_img_dist=
+		iso_site=
+		fetch=0
+		vm_profile=
+		register_iso_name=
+		sha256sum=0
+
+		[ ! -r ${i} ] && continue
+
+		. ${i}
+
+		[ ${fetch} -eq 0 ] && continue
+		[ -z "${iso_site}"  ] && continue
+		[ "${sha256sum}" = "0" ] && continue
+
+		profile_cur=$(( profile_cur + 1 ))
 
 		if [ -n "${iso_img_dist}" ]; then
 			rfile="${iso_img_dist}"
@@ -93,27 +288,96 @@ fetch_iso_all()
 			fout="${register_iso_name}"
 		fi
 
-		obtain_iso
-		ret=$?
-
-		# check size
-
-		# gensha256?
-		if [ ${gensha256} -eq 1 ]; then
-			profile_name=$( /usr/bin/basename ${i} )
-			gensha256_sum /usr/local/cbsd/etc/defaults/${profile_name} ${dstdir}/${fout}
+		if [ -z "${fout}" ]; then
+			echo "Empty fout file"
+			continue
+		else
+			printf " ${WHITE}* ${LCYAN}[${profile_cur}/${profile_num}] ${MAGENTA}Active ISO: ${GREEN}${fout}${MAGENTA} from ${GREEN}${i}: ${NORMAL}"
 		fi
-		echo
+
+		active_iso_list="${active_iso_list} ${fout}"
+
+		if [ -r "${dstdir}/${fout}" ]; then
+			${ECHO} "${LYELLOW}Found${NORMAL}"
+		else
+			${ECHO} "${MAGENTA}Not Found${NORMAL}"
+		fi
+	done
+
+	if [ -z "${active_iso_list}" ]; then
+		${ECHO} "${MAGENTA}No active iso here${NORMAL}"
+		return 0
+	fi
+
+	current_iso_list=$( /usr/bin/find ${dstdir}/ -depth 1 -maxdepth 1 -type f -exec basename {} \; | /usr/bin/xargs );
+
+	for i in ${current_iso_list}; do
+		if exist_in_list ${i}; then
+			continue
+		else
+			${ECHO} "${MAGENTA}Prune for: ${LCYAN}${i}${NORMAL}"
+			/bin/rm -f ${dstdir}/${i}
+		fi
 	done
 }
 
 [ -n "${name}" -a -n "${path}" ] && err 1 "${MAGENTA}Please use ${GREEN}name= ${MAGENTA}OR ${GREEN}path=${NORMAL}"
 
-if [ -z "${name}" -a -z "${path}" ]; then
-	fetch_iso_all
+if [ ${purgeonly} -eq 1 ]; then
+	purge_iso_all
 	exit 0
 fi
 
-[ -n "${name}" ] && err 1 "${MAGENTA}Not supported yet${NORMAL}"
-[ -n "${path}" ] && err 1 "${MAGENTA}Not supported yet${NORMAL}"
+if [ -z "${name}" -a -z "${path}" ]; then
+	fetch_iso_all
+	[ ${purge} -eq 1 ] && purge_iso_all
+	exit 0
+fi
+
+if [ -n "${path}" ]; then
+	# global, used by fetch_iso_by_path func
+	profile_num=1
+	profile_cur=1
+
+	fetch_iso_by_path ${path}
+	exit 0
+fi
+
+get_profile_path_by_name()
+{
+	[ -n "${1}" ] && name="${1}"
+
+	if [ -z "${name}" ]; then
+		${ECHO} "${MAGENTA}get_profile_path_by_name: empty name${NORMAL}"
+		return 1
+	fi
+
+	local p1 p2
+
+	for i in ${profile_map}; do
+		p1=${i%%|*}
+		p2=${i##*|}
+		if [ "${p1}" = "${name}" ]; then
+			printf "${p2}"
+			return 0
+		fi
+	done
+}
+
+
+if [ -n "${name}" ]; then
+
+	get_profile_name_path_map
+	profile_path=$( get_profile_path_by_name ${name} )
+	if [ -n "${profile_path}" ]; then
+		${ECHO} "${MAGENTA}Profile name ${GREEN}${name}${MAGENTA} belongs to ${GREEN}${profile_path}${MAGENTA} profile.${NORMAL}"
+		# global, used by fetch_iso_by_path func
+		profile_num=1
+		profile_cur=1
+		fetch_iso_by_path ${profile_path}
+	else
+		${ECHO} "${MAGENTA}No profile found with name: ${GREEN}${name}${NORMAL}"
+	fi
+	exit 0
+fi
 
