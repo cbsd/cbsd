@@ -1,18 +1,18 @@
 #!/usr/local/bin/cbsd
 # fetch http://pkgmir.pkg.freebsd.org/freebsd:11:x86:64/latest/packagesite.txz
-#v10.0.3
+#v11.2.0
 globalconf="${workdir}/cbsd.conf"
 CBSDMODULE="helpers"
 MYARG="mode"
 MYOPTARG="jname pkglist name repodir pkgconf chroot nomount"
 MYDESC="cbsd pkg wrapper"
-ADDHELP="jname= work in with jail\n\
+ADDHELP="jname= work in with jail, can be mask, e.g: '*', 'jail*'\n\
 pkglist= use package list from file\n\
 name= name of pkg\n\
 repodir= repository configuration directory\n\
 pkgconf= specify pkg.conf to use for pkg\n\
 nomount=1 do not mount/unmount jail fs\n\
-mode=add,bootstrap,install,info,query,remove,update,upgrade\n"
+mode=add,bootstrap,install,info,query,remove,update,upgrade,clean\n"
 EXTHELP="modules/pkg.d.html"
 
 set -e
@@ -26,7 +26,7 @@ set +e
 init $*
 
 #defines
-_MYDIR=$( dirname `realpath $0` )
+_MYDIR=$( /usr/bin/dirname `/bin/realpath $0` )
 noname=0
 
 set -e
@@ -45,6 +45,35 @@ PKGARGS=""
 TRAP=""
 # for chroot/jail env
 PKG_PRE=""
+
+emulator="jail" # for jname_is_multiple
+jail_list=
+jname_is_multiple
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple jailsastart always non interactive
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	fi
+
+	case "${mode}" in
+		clean)
+				jexec jname="${jname}" pkg-static clean -ya
+				;;
+		update)
+				/usr/bin/timeout 360 jexec jname="${jname}" env IGNORE_OSVERSION=yes pkg-static update -f
+				;;
+		upgrade)
+				/usr/bin/timeout 360 jexec jname="${jname}" pkg-static upgrade -g -U -y
+				;;
+		*)
+				echo "Multime unsupported yet for ${mode}"
+				;;
+	esac
+
+	err 0 "${MAGENTA}Multiple pkg: ${GREEN}done${NORMAL}"
+fi
 
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
@@ -65,7 +94,7 @@ if [ -n "${jname}" ]; then
 		ostable=0
 	fi
 
-	[ $baserw -eq 1 ] && path=$data
+	[ ${baserw} -eq 1 ] && path=${data}
 
 	if [ ${jid} -eq 0 ]; then
 		. ${workdir}/universe.subr
@@ -94,7 +123,7 @@ fi
 
 if [ -n "${pkglist}" ]; then
 	[ ! -s "${pkglist}" ] && err 1 "${MAGENTA}No such file or file is empty: ${GREEN}${pkglist}${NORMAL}"
-	pkgtarget=$( /bin/cat ${pkglist} |/usr/bin/xargs )
+	pkgtarget=$( /bin/cat ${pkglist} | /usr/bin/xargs )
 else
 	pkgtarget="$*"
 fi
@@ -111,6 +140,10 @@ case "${mode}" in
 	bootstrap)
 		[ -z "${jname}" ] && err 1 "${MAGENTA}bootstrap for jail only${NORMAL}"
 		pkg_bootstrap
+		res=$?
+		;;
+	clean)
+		pkg_clean "${pkgtarget}"
 		res=$?
 		;;
 	install|add)

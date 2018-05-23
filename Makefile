@@ -11,8 +11,9 @@ MKDIR="/bin/mkdir"
 SIMPLEXMLOBJECT = lib/simplexml/simplexml.o
 SIMPLEXMLHEADER = lib/simplexml/simplexml.h
 DUMPCPUTOPOLOGYOBJECT = misc/src/dump_cpu_topology.o
+DUMPISCSIDISCOVERYOBJECT = misc/src/dump_iscsi_discovery.o
 
-all:	cbsd dump_cpu_topology
+all:	cbsd dump_cpu_topology dump_iscsi_discovery
 
 clean:
 	${MAKE} -C bin/cbsdsh clean
@@ -44,14 +45,22 @@ clean:
 	${RM} -f tools/select_jail
 	# clean object files
 	${RM} -f misc/dump_cpu_topology
+	${RM} -f misc/dump_iscsi_discovery
 	${RM} -f ${SIMPLEXMLOBJECT}
 	${RM} -f ${DUMPCPUTOPOLOGYOBJECT}
+	${RM} -f ${DUMPISCSIDISCOVERYOBJECT}
 
 dump_cpu_topology:
 	${CC} -g -c -Wall -Ilib/simplexml misc/src/dump_cpu_topology.c -o ${DUMPCPUTOPOLOGYOBJECT}
 	${CC} -g -c -Wall -Ilib/simplexml lib/simplexml/simplexml.c -o ${SIMPLEXMLOBJECT}
 	${CC} -g -o misc/dump_cpu_topology ${DUMPCPUTOPOLOGYOBJECT} ${SIMPLEXMLOBJECT}
 	${STRIP} misc/dump_cpu_topology
+
+dump_iscsi_discovery:
+	${CC} -g -c -Wall -Ilib/simplexml misc/src/dump_iscsi_discovery.c -o ${DUMPISCSIDISCOVERYOBJECT}
+	${CC} -g -c -Wall -Ilib/simplexml lib/simplexml/simplexml.c -o ${SIMPLEXMLOBJECT}
+	${CC} -g -o misc/dump_iscsi_discovery ${DUMPISCSIDISCOVERYOBJECT} ${SIMPLEXMLOBJECT}
+	${STRIP} misc/dump_iscsi_discovery
 
 pkg-config-check:
 	@/usr/bin/which -s pkg-config || \
