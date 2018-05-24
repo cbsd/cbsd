@@ -76,13 +76,11 @@ get_first_available_fwcount()
 
 fwcounter()
 {
-	[ ${myjid} -eq 0 ] && return 0
-	[ "${ipfw_enable}" = "0" -a -z "`sysctl -n net.inet.ip.fw.enable 2>/dev/null`" ] && return 0
-	#FWIN
-	get_first_available_fwcount
+	local _in _out
 
-	if [ $FWNUM -eq 0 ]; then
-		${ECHO} "${MAGENTA}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${NORMAL}"
+	[ ${myjid} -eq 0 ] && return 0
+	if [ "${ipfw_enable}" = "0" -a -z "`sysctl -n net.inet.ip.fw.enable 2>/dev/null`" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: skip for fwcounter setup: ipfw is not enabled
 		return 0
 	fi
 
@@ -94,17 +92,29 @@ fwcounter()
 
 	${ECHO} "${MAGENTA}Setup: ${GREEN}FW counter${NORMAL}"
 
-	/sbin/ipfw -q add ${FWNUM} count ip from any to me jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwin
+	# FWIN
+	get_first_available_fwcount
+	if [ ${FWNUM} -eq 0 ]; then
+		cbsdlogger WARNING ${CBSD_APP}: jail ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
+		${ECHO} "${MAGENTA}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${NORMAL}"
+		_in=
+	else
+		_in=${FWNUM}
+		/sbin/ipfw -q add ${FWNUM} count ip from any to me jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwin
+	fi
 
 	#FWOUT
 	get_first_available_fwcount
-
-	if [ $FWNUM -eq 0 ]; then
+	if [ ${FWNUM} -eq 0 ]; then
+		cbsdlogger WARNING ${CBSD_APP}: jail ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
 		${ECHO} "${MAGENTA}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${NORMAL}"
-		return 0
+		_out=
+	else
+		_out=${FWNUM}
+		/sbin/ipfw -q add ${FWNUM} count ip from me to any jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwout
 	fi
 
-	/sbin/ipfw -q add ${FWNUM} count ip from me to any jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwout
+	[ -n "${_in}" -o -n "${_out}" ] && cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: setup IPFW rule counter for in/out with follow ipfw rule number: ${_in}/${_out}
 }
 
 # prepare symlink for emulator and
@@ -119,7 +129,6 @@ emulator_exec_check()
 	[ "${emulator}" = "0" ] && return 0
 
 	preparebase dst=${BASE_DIR} emulator=${emulator}
-	# >/dev/null 2>/dev/null
 
 	_res=$( /usr/sbin/chroot ${path} /usr/local/bin/${emulator} /bin/sh -c "echo ping" 2>&1 )
 	_ret=$?
@@ -303,6 +312,7 @@ jaillock="${jailsysdir}/${jname}/locked"
 if [ -f "${jaillock}" ]; then
 	masterhost=$( /bin/cat ${jaillock} )
 	if [ "${masterhost}" = "${nodename}" -o -z "${masterhost}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: remove my stale lock file: ${jaillock}
 		${ECHO} "${MAGENTA}Remove my stale lock file: ${GREEN}${jaillock}${NORMAL}"
 		/bin/rm -f ${jaillock}
 	else
@@ -312,13 +322,15 @@ if [ -f "${jaillock}" ]; then
 
 		# 30 minutes outdated lock
 		if [ ${difftime} -gt 30 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: locked by ${masterhost} node via ${jaillock} file but lock file age is too old: ${difftime}. Removing!
 			${ECHO} "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} locked by ${GREEN}${masterhost}${MAGENTA} node${NORMAL}"
 			${ECHO} "${MAGENTA}But lock age is too old: ${difftime} min. Removing!!!${NORMAL}"
 			/bin/rm -f ${jaillock}
 		else
 			# still fresh
-			$ECHO "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} locked by ${GREEN}${masterhost}${MAGENTA} node, lock age: ${difftime} min.${NORMAL}"
-			err 1 "${MAGENTA}You may remove the lockfile if you believe that jail is not running on this node: ${GREEN}rm -f ${jaillock}${NORMAL}"
+			cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: locked by ${masterhost} node via ${jaillock} file and lock file age time is fresh: ${difftime}.
+			${ECHO} "${MAGENTA}Jail ${GREEN}${jname}${MAGENTA} locked by ${GREEN}${masterhost}${MAGENTA} node, lock age: ${difftime} min.${NORMAL}"
+			log_err 1 "${MAGENTA}You may remove the lockfile if you believe that jail is not running on this node: ${GREEN}rm -f ${jaillock}${NORMAL}"
 		fi
 	fi
 fi
@@ -329,7 +341,10 @@ trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 #Check for md vnode backend
 if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	MDFILE="${jailsysdir}/${jname}/image.dat"
-	[ ! -f "${MDFILE}" -a ! -h "${MDFILE}" ] && ${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
+	if [ ! -f "${MDFILE}" -a ! -h "${MDFILE}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: jail: ${jname}: no such ${MDFILE} but mdsize flags is not null, skip
+		${ECHO} "${MAGENTA}No such ${MDFILE} but mdsize flags is not null. Skip${NORMAL}" && continue
+	fi
 fi
 
 # CBSD QUEUE
@@ -345,7 +360,7 @@ init_basedir
 if [ ${baserw} -eq 0 ]; then
 	if [ -r "${BASE_DIR_LOCKFILE}" ]; then
 		locked_by=$( /bin/cat ${BASE_DIR_LOCKFILE} )
-		err 1 "${MAGENTA}basedir locked: ${GREEN}${BASE_DIR}${MAGENTA}, by pid: ${GREEN}${locked_by}${MAGENTA}. Please try later${NORMAL}"
+		log_err 1 "${MAGENTA}basedir locked: ${GREEN}${BASE_DIR}${MAGENTA}, by pid: ${GREEN}${locked_by}${MAGENTA}. Please try later${NORMAL}"
 	fi
 fi
 
@@ -359,7 +374,8 @@ check_environment_script "tests"
 case ${ip4_addr} in
 	[Dd][Hh][Cc][PP])
 		ip4_addr=$( dhcpd )
-		[ $? -eq 2 ] && err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+		[ $? -eq 2 ] && log_err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: set ip4_addr for ${jname} via DHCP: ${ip4_addr}
 		jset jname=${jname} ip4_addr="${ip4_addr}"
 		;;
 esac
@@ -437,6 +453,7 @@ if [ "${vnet}" = "1" ]; then
 			cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE name=\"${i}\""
 		fi
 
+		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: set hwaddr for vnet interface ${myepair}b: ${nic_hwaddr}
 		/sbin/ifconfig ${myepair}b ether ${nic_hwaddr}
 	done
 
