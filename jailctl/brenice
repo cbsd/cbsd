@@ -1,0 +1,67 @@
+#!/usr/local/bin/cbsd
+#v11.2.1
+CBSDMODULE="bhyve"
+MYARG="jname"
+MYOPTARG="nice"
+MYDESC="Re-nice bhyve processes on-the-fly"
+ADDHELP="nice=[new value]\n\
+  or skip nice= to apply values from RCTL databases\n\"
+"
+
+. ${subr}
+. ${tools}
+. ${strings}
+
+init $*
+
+. ${jrcconf}
+[ "${emulator}" != "bhyve" ] && log_err 1 "${MAGENTA}Not in bhyve emulator: ${GREEN}${emulator}{NORMAL}"
+[ ${jid} -eq 0 ] && exit 0
+
+if [ -z "${nice}" ]; then
+	_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
+	[ -r "${_formfile}" ] && nice=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
+	# just reset
+	[ -z "${nice}" ] && nice="0"
+fi
+
+search_cmd="bhyve: ${jname}"
+strlen_search_cmd=$( strlen "${search_cmd}" )
+
+vm_pid=
+
+eval $( /bin/ps axopid,state,ucomm,command|while read pid state ucomm command; do
+	[ "${ucomm}" != "bhyve" ] && continue
+	cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+	pid_count=$(( pid_count + 1 ))
+
+	if $( echo "${state}" |/usr/bin/grep -q "T" ); then
+		pid_count=$(( pid_count - 1 ))
+	fi
+
+	if [ "${cmd_pref}" = "${search_cmd}" ]; then
+		echo pid_count=\"${pid_count}\"
+		echo vm_pid=\"${pid}\"
+		break
+	fi
+
+	if echo "${command}" |/usr/bin/egrep -q -e " ${jname}"$ 2>/dev/null; then
+		echo pid_count=\"${pid_count}\"
+		echo vm_pid=\"${pid}\"
+		break
+	fi
+
+done )
+
+if [ -z "${vm_pid}" -o "${vm_pid}" = "0" ]; then
+	cbsdlogger WARNING ${CBSD_APP}: unable to determine pid for: ${jname}
+	log_err 1 "${MAGENTA}Unable to determine pid for: ${GREEN}${jname}${NORMAL}"
+fi
+
+if [ -z "${pid_count}" ]; then
+	cbsdlogger WARNING ${CBSD_APP}: unable to determine pid_count for: ${jname}
+	log_err 1 "${MAGENTA}Unable to determine pid_count for: ${GREEN}${jname}${NORMAL}"
+fi
+
+cbsdlogger NOTICE ${CBSD_APP}: re-nice ${nice} to bhyve ${jname} pid: ${vm_pid}
+/usr/bin/renice ${nice} -p ${vm_pid}
