@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.3
+#v11.2.1
 MYARG="jname"
 CBSDMODULE="jail"
 ADDHELP="jconf=<path_to_file> - load and set settings from jconf\n"
@@ -10,7 +10,7 @@ EXTHELP="wf_jset.html"
 [ ! -f ${sharedir}/jail-arg ] && err 1 "${GREEN}no jail-arg file${NORMAL}";
 . ${sharedir}/jail-arg
 
-MYOPTARG="autorestart jconf $JARG"
+MYOPTARG="autorestart jconf ${JARG} nice"
 MYDESC="Modify parameter for jail"
 ADDHELP="mode=force for modification on the running jail\n"
 
@@ -140,9 +140,7 @@ modify_ipaddr()
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" status=1
 	fi
-
 }
-
 
 # jid must be set
 modify_allow_mount()
@@ -230,8 +228,20 @@ modify_allow_fdescfs()
 	fi
 }
 
+# jid, nice must be set
+modify_nice()
+{
 
+	local _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
 
+	if [ ! -r ${_formfile} ]; then
+		${ECHO} "${MAGENTA}No such rctl file: ${GREEN}${_formfile}${NORMAL}"
+		return 1
+	fi
+
+	cbsdsql ${_formfile} UPDATE forms set cur=\"${VAL}\" WHERE param=\"nice\"
+	jrenice jname=${jname}
+}
 
 # jid, interface, ip4_addr and jname must be set
 modify_cpuset()
@@ -431,7 +441,7 @@ jid=$( jstatus jname=${jname} )
 if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${MAGENTA}No such jconf file: ${GREEN}${jconf}${NORMAL}"
 	#jset jname=${jname} `/usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"`
-	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep .| /usr/bin/tr -d ";"| /usr/bin/sed 's/"/\\"/g'| /usr/bin/xargs )
+	my_arg=$( /usr/bin/grep -v '#' ${jconf} | /usr/bin/grep . | /usr/bin/tr -d ";" | /usr/bin/sed 's/"/\\"/g' | /usr/bin/xargs )
 	exec /bin/sh << EOF
 /usr/local/bin/cbsd jset "$my_arg" autorestart=$autorestart
 EOF
@@ -452,7 +462,7 @@ for n in ${my_arg}; do
 	[ "${argpart}" = "exec_poststop" ] && continue
 	[ "${argpart}" = "exec_poststart" ] && continue
 
-	for i in ${JARG}; do
+	for i in ${JARG} nice; do
 		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
 
 			if need_action; then
@@ -469,6 +479,10 @@ for n in ${my_arg}; do
 					"cpuset")
 						cbsdlogger NOTICE ${CBSD_APP}: modify_cpuset for ${jname}
 						modify_cpuset
+						;;
+					"nice")
+						cbsdlogger NOTICE ${CBSD_APP}: modify_nicee for ${jname}
+						modify_nice
 						;;
 					astart|applytpl|floatresolv|exec_consolelog|devfs_ruleset|protected|hidden)
 						update_jails
