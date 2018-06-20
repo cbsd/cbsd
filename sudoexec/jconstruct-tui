@@ -1,0 +1,226 @@
+#!/usr/local/bin/cbsd
+#v11.1.5
+MYARG=""
+MYOPTARG="mode"
+MYDESC="Ncurses based jail creation wizard"
+EXTHELP="wf_jcreate.html"
+ADDHELP="mode=full for all atributes\n"
+
+. ${subr}
+. ${tools}
+
+init $*
+
+. ${settingstui}
+. ${dialog}
+
+gen_newjail_conf()
+{
+	local _i _required _mytest _ret
+
+	_required="jname host_hostname ip4_addr ver arch"
+
+	msg_ok="ok"
+
+	for _i in ${_required}; do
+		eval _mytest=\$$_i
+		if [ -z "${_mytest}" ]; then
+			f_dialog_msgbox "${_i} must be not non-empty" "Error"
+			return 0
+		fi
+	done
+
+	# init emulator by arch
+	init_target_arch
+	gen_jconf
+	_ret=$?
+
+	[ ${_ret} -eq 0 ] || err 1 "${MAGENTA}Bad conf${NORMAL}"
+	${ECHO} ${A}
+}
+
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu for construct jail create config file"
+	local defaultitem=
+	local hline=
+	local mark
+	local i _mytest
+
+	f_dialog_default_fetch defaultitem
+
+	# checkbox mark
+	for i in baserw astart mount_ports applytpl floatresolv vnet pkg_bootstrap; do
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+		else
+			export ${i}_mark=" "
+		fi
+	done
+
+	local menu_list="
+		'A profile'		'$(curval profile)'		'Select jail profile for jcreate'
+		'B pkglist'		'$(curval pkgnum)'		'mark pkg for install from repo'
+		'C jname'		'$(curval jname)'		'A short jail name'
+		'D host_hostname'	'$(curval host_hostname)'	'Full (FQDN) jail hostname'
+		'E ip4_addr'		'$(curval ip4_addr)'		'Assing IP address'
+		'F ver'			'$(curval ver)'			'choose code base version'
+		'G baserw'		'[${baserw_mark}]'		'Jail base is not read-only'
+		'H mount_ports'		'[${mount_ports_mark}]'		'Mount for /usr/ports'
+		'I astart'		'[${astart_mark}]'		'Autostart with system'
+		'J interface'		'$(curval interface)'		'Interface selection and aliasing mode'
+		'K applytpl'		'[${applytpl_mark}]'		'Apply cbsd templates'
+		'L floatresolv'		'[${floatresolv_mark}]'		'Auto correct for jail resolv.conf'
+		'M arch'		'$(curval arch)'		'target arch'
+	" # END-QUOTE
+
+	item_let="M"
+	item_num=0
+
+	inc_menu_index item_let
+
+	#dynamic menu
+	if [ "${vimage_feature}" = "1" ]; then
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} vnet'	'[${vnet_mark}]'	'Enable virtual stack for jail?'"
+	fi
+
+	if [ ${vnet} -eq 1 ]; then
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} nic_hwaddr'	'[${nic_hwaddr}]'	'Custom vnet MAC address'"
+	fi
+
+	if [ "${zfsfeat}" = "1" ]; then
+		menu_list="${menu_list} '-'		'-'	''"
+		inc_menu_index item_let
+#		menu_list="${menu_list} 'zfsfeature'	'ZFS-features >>' 'Additional ZFS-based features'"
+		menu_list="${menu_list} '${item_let} zfs_snapsrc'	'$(curval zfs_snapsrc)'	'Enable virtual stack for jail?'"
+	fi
+
+
+	if [ "${mode}" = "full" ]; then
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} path'		'$(curval path)'	'Path to jail mountpoint'"
+		inc_menu_index item_let
+		# menu_list="${menu_list} '${item_let} mount_fstab'	'$(curval mount_fsab)'	'fstab file for local mount'"
+		# inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} basename'		'$(curval basename)'	'alternative base name'"
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} data'		'$(cutval data)'	'alternative path to data directory'"
+	fi
+
+	menu_list="${menu_list} '-'	'-'	''"
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} user_pw_root'	'Root Password'	'Change jail root password'"
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} add_user'	'$(curval user_add)'	'Create additional account within jail'"
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} services'		'Services >>'	'Toggle Startup Services'"
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} pkg_bootstrap'	'[${pkg_bootstrap_mark}] Toggle pkg bootstrap'	'For overwrite default profile behaviour'"
+
+	inc_menu_index item_num
+	menu_list="${menu_list} '${item_num} GO'	'PROCEED!'	'PROCEED!'"
+
+	cbsd_menubox_with_help
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return $retval
+}
+
+
+#### [ MAIN AREA ] ####
+[ ! -f ${localcbsdconf} ] && err 1 "${MAGENTA}no such conf file${NORMAL}"
+. ${localcbsdconf}
+. ${inventory}
+
+zero_profile="jail-freebsd-default.conf"
+#defaults
+. ${buildconf}
+
+readconf ${zero_profile}
+
+# re-read profile for init global_profile_file variable
+get_construct_profile ${default_profile}
+[ -z "${profile}" -a -n "${jail_profile}" ] && profile="${jail_profile}"
+
+f_dialog_title "$msg_system_console_configuration"
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+. ${workdir}/universe.subr
+
+if [ "${default_profile}" = "default" -a -r ${tmpdir}/jconstruct.conf ]; then
+	. ${tmpdir}/jconstruct.conf
+	if [ -n "${last_profile}" ]; then
+		profile="${last_profile}"
+		get_construct_profile ${profile}
+	fi
+fi
+
+adduser=
+zfs_snapsrc=
+nic_hwaddr=0
+
+st_time=$( /bin/date +%s )
+cbsdlogger NOTICE ${CBSD_APP}: launched
+
+while [ 1 ]; do
+	pkgnum=0
+	[ "${pkglist}" != "NO" -a -r "${pkglist}" ] && pkgnum=$( /usr/bin/wc -w ${pkglist}|/usr/bin/awk '{printf $1}' )
+	[ -n "${adduser}" -a -r "${adduser}" ] && . ${adduser}
+
+	dialog_menu_main
+	retval=$?
+
+	if [ $retval -eq $DIALOG_HELP ]; then
+		get_help
+		continue
+	elif [ $retval -ne $DIALOG_OK ]; then
+		end_time=$( /bin/date +%s )
+		cbsdlogger NOTICE ${CBSD_APP}: finished with cancel in $(( end_time - st_time ))s
+		f_die
+	fi
+
+	index=${mtag%% *}
+	mychoice=${mtag##* }
+
+	unset mtag
+
+	case "${mychoice}" in
+		"EXIT")
+			end_time=$( /bin/date +%s )
+			cbsdlogger NOTICE ${CBSD_APP}: finished in $(( end_time - st_time ))s
+			exit 0
+			;;
+		"GO")
+			# store last choices
+			sysrc -qf ${tmpdir}/jconstruct.conf last_profile="${profile}" > /dev/null 2>&1
+			gen_newjail_conf
+			end_time=$( /bin/date +%s )
+			cbsdlogger NOTICE ${CBSD_APP}: finished in $(( end_time - st_time ))s
+			exit 0
+			;;
+		baserw|astart|applytpl|floatresolv|mount_ports|vnet|pkg_bootstrap)
+			invert_checkbox ${mychoice}
+			continue
+			;;
+		interface)
+			get_construct_interface -d 1 -s "tap bridge vboxnet"
+			;;
+		"-")
+			continue
+			;;
+		*)
+			get_construct_${mychoice}
+			;;
+	esac
+done
+
