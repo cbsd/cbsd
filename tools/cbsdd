@@ -60,6 +60,7 @@ update_fw_counters()
 
 update_inventory()
 {
+	cbsdlogger NOTICE ${CBSD_APP}: update remote inventory via loop_per_retrinv [${loop_per_retrinv}]
 	[ ! -s "${tmpdir}/inv.${_ip}.updated" ] && return 0
 	/usr/bin/truncate -s0 ${tmpdir}/inv.${_ip}.updated
 	task mode=new exclusive=1 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename}
@@ -70,6 +71,9 @@ readconf task.conf
 [ ! -f "${dbdir}/cbsdtaskd.sqlite" ] && err 1 "No such ${dbdir}/cbsdtaskd.sqlite"
 [ -z "${max_simul_jobs}" ] && max_simul_jobs="30"
 [ -z "${loop_timeout}" ] && loop_timeout="30"
+
+loop_per_retrinv=10	# one retrinv per 5 loop cycle's ( def: 10*30sec = once per <= 5 min )
+retrinv_loop=0
 
 # first of all, checks for orphaned tasks in status 1 (running) and back to status 0,
 # due to next iteration take this job again
@@ -84,7 +88,7 @@ cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 /usr/bin/find ${ftmpdir} -depth 1 -maxdepth 1 -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf -and -mtime +1d -delete > /dev/null 2>&1
 
 # retrinv
-[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon -f /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
 
 while [ 1 ]; do
 	# internal tasks:
@@ -97,12 +101,17 @@ while [ 1 ]; do
 	if [ ${sqlreplica} -eq 1 ]; then
 		sqldelimer=" "
 		cbsdsql nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
-			if [ -n "${_ip}" ]; then
-				shmux
-				update_inventory
-			fi
+			[ -n "${_ip}" ] && shmux
+			[ ${retrinv_loop} -gt ${loop_per_retrinv} ] && update_inventory
 		done
 		unset sqldelimer
+
+		if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
+			# reset loop
+			retrinv_loop=0
+		else
+			retrinv_loop=$(( retrinv_loop + 1 ))
+		fi
 	fi
 
 	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
@@ -119,7 +128,7 @@ while [ 1 ]; do
 	fi
 
 	for i in $( /usr/bin/seq 1 ${max} ); do
-		echo "cbsd runtask ${i}/${max} ($max_simul_jobs max)"
+		cbsdlogger NOTICE ${CBSD_APP}: runtask ${i}/${max} [$max_simul_jobs max]
 		/usr/sbin/daemon -f nexttask
 		# wait for pid of daemon here!!!
 		sleep 1

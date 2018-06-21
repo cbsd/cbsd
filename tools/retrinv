@@ -1,11 +1,11 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v11.2.1
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="node data jname tryoffline"
 MYDESC="Fetch sqldb from remote node"
 ADDHELP="when node argument is empty - retrieve db from all nodes from node lists\n\
-data can be - jdescr,nodedescr,db,rctl,fwcnt. If not specify - retrieive all of them\n\
+data can be - jdescr,nodedescr,db,rctl,fwcnt,bhyve,jail. If not specify - retrieive all of them\n\
 jname - fetch data only for specified jail\n\
 tryoffline=1 - try to fetch inventory when node is offline\n"
 
@@ -21,26 +21,26 @@ init $*
 
 retr_db()
 {
-	local _rnode=$1
+	local _rnode=${1}
 
 	[ -z "${_rnode}" ] && return 0
 
 	nodescp ${checkforonline} ${_rnode}:var/db/inv.${_rnode}.sqlite ${dbdir}/${_rnode}.sqlite && /bin/chmod 0640 "${dbdir}/${_rnode}.sqlite" && /usr/sbin/chown ${cbsduser} "${dbdir}/${_rnode}.sqlite"
 	if [ $? -eq 0 ]; then
-		$ECHO "${MAGENTA}CBSD: Fetching inventory done: ${GREEN}${_rnode}${NORMAL}"
+		${ECHO} "${MAGENTA}CBSD: Fetching inventory done: ${GREEN}${_rnode}${NORMAL}"
 		idle_update ${_rnode}
 	else
-		$ECHO "${MAGENTA}CBSD: Fetching inventory failed: ${GREEN}${_rnode}${NORMAL}"
+		${ECHO} "${MAGENTA}CBSD: Fetching inventory failed: ${GREEN}${_rnode}${NORMAL}"
 	fi
 }
 
 retr_nodedescr()
 {
-	local _rnode=$1 _files _i
+	local _rnode=${1} _files _i
 
 	[ -z "${_rnode}" ] && return 0
 
-	[ ! -d "${dbdir}/nodedescr" ] && mkdir -m 0700 -p "${dbdir}/nodedescr" && /bin/chmod 0640 "${dbdir}/nodedescr" && ${cbsduser} "${dbdir}/nodedescr"
+	[ ! -d "${dbdir}/nodedescr" ] && /bin/mkdir -m 0700 -p "${dbdir}/nodedescr" && /bin/chmod 0640 "${dbdir}/nodedescr" && ${cbsduser} "${dbdir}/nodedescr"
 
 	_files="descr role domain notes location"
 
@@ -49,15 +49,48 @@ retr_nodedescr()
 	done
 }
 
+# todo: check for shared FS
+retr_bhyve()
+{
+	local _rnode=${1} _files _i _sqlfile
+	local _tmpdir
+
+	[ -z "${_rnode}" ] && return 0
+
+	_tmpdir="${tmpdir}/${_rnode}"
+
+	[ ! -d ${_tmpdir} ] && /bin/mkdir -p ${_tmpdir}
+
+	cbsdsql ${_rnode} SELECT jname FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname; do
+		[ ! -d ${_tmpdir}/${jname} ] && /bin/mkdir -p ${_tmpdir}/${jname}
+
+		_files="jails-system/${jname}"
+		nodescp ${checkforonline} ${_rnode}:${_files}/local.sqlite ${_tmpdir}/${jname}/local.sqlite 2>/dev/null
+		nodescp ${checkforonline} ${_rnode}:${_files}/vnc_port ${_tmpdir}/${jname}/vnc_port 2>/dev/null
+	done
+}
+
+retr_jail()
+{
+	local _rnode=${1} _files _i _sqlfile
+	local _tmpdir
+
+	[ -z "${_rnode}" ] && return 0
+	_tmpdir="${tmpdir}/${_rnode}"
+
+	[ ! -d ${_tmpdir} ] && /bin/mkdir -p ${_tmpdir}
+
+}
+
 
 retr_jdescr()
 {
-	local _rnode=$1 _jname
+	local _rnode=${1} _jname
 
 	[ -z "${_rnode}" ] && return 0
 
 	[ ! -f "${dbdir}/${_rnode}.sqlite" ] && return 0
-	[ ! -d "${dbdir}/nodedescr" ] && mkdir -p "${dbdir}/nodedescr"
+	[ ! -d "${dbdir}/nodedescr" ] && /bin/mkdir -p "${dbdir}/nodedescr"
 
 	if [ -z "$jname" ]; then
 		_jname=$( cbsd -c "cbsdsql ${_rnode} SELECT jname FROM jails WHERE status\<2" )
@@ -74,7 +107,7 @@ retr_jdescr()
 
 retr_rctl()
 {
-	local _rnode=$1 _jname
+	local _rnode=${1} _jname
 
 	[ -z "${_rnode}" ] && return 0
 
@@ -89,14 +122,14 @@ retr_rctl()
 	[ -z "${_jname}" ] && return 0
 
 	for _i in ${_jname}; do
-		[ ! -d "${dbdir}/rctl/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/rctl/${_rnode}-${_i}"
+		[ ! -d "${dbdir}/rctl/${_rnode}-${_i}" ] && /bin/mkdir -p "${dbdir}/rctl/${_rnode}-${_i}"
 		nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null && /bin/chmod 0640 ${dbdir}/rctl/${_rnode}-${_i}/* && /usr/bin/chown ${cbsduser} ${dbdir}/rctl/${_rnode}-${_i}/* 2>/dev/null
 	done
 }
 
 retr_fwcnt()
 {
-	local _rnode=$1 _jname
+	local _rnode=${1} _jname
 
 	[ -z "${_rnode}" ] && return 0
 
@@ -111,14 +144,14 @@ retr_fwcnt()
 	[ -z "${_jname}" ] && return 0
 
 	for _i in ${_jname}; do
-		[ ! -d "${dbdir}/fwcnt/${_rnode}-${_i}" ] && mkdir -p "${dbdir}/fwcnt/${_rnode}-${_i}"
+		[ ! -d "${dbdir}/fwcnt/${_rnode}-${_i}" ] && /bin/mkdir -p "${dbdir}/fwcnt/${_rnode}-${_i}"
 		nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null && /bin/chmod 0640 ${dbdir}/fwcnt/${_rnode}-${_i}/* && /usr/bin/chown ${cbsduser} ${dbdir}/fwcnt/${_rnode}-${_i}/* 2>/dev/null
 	done
 }
 
 
 # MAIN #
-[ -z "${data}" ] && data="db jdescr nodedescr rctl fwcnt"
+[ -z "${data}" ] && data="db jdescr nodedescr rctl fwcnt bhyve jail"
 if [ -z "${tryoffline}" ]; then
 	tryoffline=0
 	checkforonline="tryoffline=0"
@@ -138,7 +171,7 @@ if [ ${sqlreplica} -eq 1 -a ${tryoffline} -eq 0 ]; then
 	node=""
 	for i in ${testnode}; do
 		NODEDATA=$( cbsdsql nodes select ip,port,keyfile from nodelist where nodename=\"${i}\" )
-		sqllist "$NODEDATA" myip myport mykey
+		sqllist "${NODEDATA}" myip myport mykey
 
 		if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
 			${ECHO} "${MAGENTA}Node is offline: ${GREEN}${i}${NORMAL}"
@@ -166,6 +199,12 @@ for i in ${node}; do
 			# ;;
 			fwcnt)
 				retr_fwcnt ${i}
+				;;
+			bhyve)
+				retr_bhyve ${i}
+				;;
+			jail)
+				retr_jail ${i}
 				;;
 		esac
 	done
