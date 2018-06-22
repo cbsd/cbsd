@@ -1,25 +1,44 @@
 #!/usr/local/bin/cbsd
-#v11.1.9
+#v11.2.0
 CBSDMODULE="bhyve"
 MYARG=""
 MYOPTARG="alljails shownode display node header order"
 MYDESC="List jail and status"
-ADDHELP="alljails=1 - get jaillist from remote node\n\
+ADDHELP="alljails=1 - (0 or 1): force to display foreign/remote resources\n\
+  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
 display= list by comma for column.\n\
     Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port\n\
     If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+    If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
      additional field: path\n\
 order= asc (default) or desc\n"
 EXTHELP="wf_bls.html"
 
 . ${subr}
 . ${strings}
+. ${nodes}
 
 readconf bls.conf
 init $*
+
+oalljails="${alljails}"		# store original settings, they have more weight vs auto
+oshownode="${shownode}"		# store original settings, they have more weight vs auto
+
+# autosettings for alljails and shownode
+is_cluster_mode
+cluster_mode=$?		# cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+	alljails=1
+	shownode=1
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
 
 if [ -z "${display}" ]; then
 	case "${racct}" in
@@ -93,7 +112,7 @@ populate_output_data()
 {
 	local unregister="0"
 	local _tmpport _tmpbind
-	local _pid=0
+	local _pid=0 _node_is_online=0 _md5_node_name
 
 	printf "${NORMAL}" # for column sort
 
@@ -129,15 +148,22 @@ populate_output_data()
 			printf "${CYAN}"
 		fi
 	else
-		# retr from sql
-		case ${jid} in
-			0)
-				printf "${CYAN}"
-				;;
-			*)
-				printf "${GREEN}"
-				;;
-		esac
+		# pop status variable from node_is_online()
+		_md5_node_name=$( /sbin/md5 -q -s ${sqlfile} )
+		eval _node_is_online=\$node_${_md5_node_name}_online
+		if [ "${_node_is_online}" = "1" ]; then
+			# retr from sql
+			case ${jid} in
+				0)
+					printf "${CYAN}"
+					;;
+				*)
+					printf "${GREEN}"
+					;;
+			esac
+		else
+			printf "${DGRAY}"
+		fi
 	fi
 
 	#populate values for in output string
@@ -277,12 +303,12 @@ show_remote()
 {
 	show_header
 
-	if [ -z "${node}" ]; then
-		node=$( node mode=list header=0 allinfo=0 )
-	fi
+	[ -z "${node}" ] && node=$( cbsdsql nodes SELECT nodename FROM nodelist 2>/dev/null | /usr/bin/xargs )
 
-	for _n in $node; do
+	for _n in ${node}; do
 		nodename="${_n}"
+		# init and export into $node_${md5_node_name}_online node status
+		node_is_online -n ${nodename} -e 1
 		show_jaildata_from_sql ${_n}
 	done
 }

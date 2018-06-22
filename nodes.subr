@@ -29,10 +29,10 @@ check_locktime()
 	eval $( /usr/bin/stat -s ${1} )
 	difftime=$(( ( cur_time - st_mtime ) / 60 ))
 
-	if [ $difftime -lt 1 ]; then
+	if [ ${difftime} -lt 1 ]; then
 		return 1
 	else
-		echo "$difftime"
+		echo "${difftime}"
 		return 0
 	fi
 }
@@ -121,6 +121,75 @@ select_node_by_list()
 	fi
 
 	remote=2 # for autoremote
+}
+
+# return 1 when there is no sqlreplica enabled and/or
+# no any nodes added
+# return 0 when sqlreplica on AND 
+# and at least one node has been added.
+# e.g:
+#   if is_cluster_mode; then
+#        echo "is cluster mode"
+#   fi
+is_cluster_mode()
+{
+	# autosettings for alljails and shownode
+	if [ ${sqlreplica} -ne 0 ]; then
+		nodes_exist=$( cbsdsql nodes SELECT ip FROM nodelist LIMIT 1 )
+		[ -n "${nodes_exist}" ] && return 0
+	fi
+	return 1
+}
+
+
+# return node status by nodename
+# return 0 when node added and active/online
+# return 1 when no node or node is offline
+# -n "must be nodename"
+# -e 1 - also export status in $node_<md5sum of nodename>_online
+# e.g:
+#   if node_is_online -n ${rnodename}; then
+#      echo "Online"
+#   fi
+# or via vars:
+#   node_is_online -n ${rnodename} -e 1 ||true
+#   md5_node_name=$( /sbin/md5 -q -s ${rnodename} )
+#   eval online=\$node_${md5_node_name}_online
+#   echo ${online}
+node_is_online()
+{
+	local _res _ret _node _ip _md5_export _md5_node_name
+
+	while getopts "e:n:" opt; do
+		case "${opt}" in
+			e) _md5_export="${OPTARG}" ;;
+			n) _node="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_node}" ] && return 1
+	[ -z "${_md5_export}" ] && _md5_export=0
+
+	_ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${_node}\" LIMIT 1 )
+	[ -z "${_ip}" ] && return 1
+
+	_res=$( check_locktime ${ftmpdir}/shmux_${_ip}.lock )
+	_ret=$?
+	[ ${_md5_export} -eq 0 ] && return ${_ret}
+
+	_md5_node_name=$( /sbin/md5 -q -s ${_node} )
+
+	case ${_ret} in
+		0)
+			# is online
+			eval node_${_md5_node_name}_online=1
+			;;
+		*)
+			# is offline
+			eval node_${_md5_node_name}_online=0
+			;;
+	esac
 }
 
 ###
