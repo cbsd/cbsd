@@ -1,45 +1,30 @@
 #!/usr/local/bin/cbsd
+. ${subr}
+. ${strings}
+. ${tools}
+
 # dialog_menu_main
 #
 # Display the dialog(1)-based application main menu.
 #
 dialog_menu_main()
 {
-	local title="$DIALOG_TITLE"
+	local _input _retval
+
 	local btitle="$DIALOG_BACKTITLE"
-	local prompt=" Virtual Machine: ${jname} "
+	local title=" ${jname} ${ctr}: New Controller "
+	hline=
+
+	local prompt="${_desc}"
+
 	local menu_list="
-		'A $msg_add_new_img'	'${msg_add_new_img_desc}'	'Add and configure new virtual image'
-		'-'	'-'	''
+		'type'		'${new_ctr_type}'	'Select controller type'
+		'name'		'${new_ctr_name}'	'Name of controller'
+		'count'		'${new_ctr_count}'	'Max Port Count'
+		'cache'		'${new_ctr_cache}'	'Use Host I/O Cache'
+		'-'		'-'			''
+		'COMMIT'	'COMMIT'		'Create and attach new disk'
 	" # END-QUOTE
-	local defaultitem=
-	local hline="$hline_arrows_tab_enter"
-
-	local n=1
-
-	for last_disk in $( /usr/bin/seq 1 16 ); do
-		unset dsk_controller dsk_path dsk_slot dsk_type controller_id
-		eval dsk_controller="\$dsk_controller$last_disk"
-		[ -z "${dsk_controller}" ] && break
-		eval dsk_path="\$dsk_path$last_disk"
-		eval dsk_slot="\$dsk_slot$last_disk"
-		eval dsk_type="\$dsk_type$last_disk"
-		eval controller_id="\$controller_id$last_disk"
-		dsk_fullpath="${data}/${dsk_path}"
-
-		dsk_realsize=$( /usr/bin/du -sh ${dsk_fullpath} | /usr/bin/awk '{printf $1}' 2>/dev/null )
-		dsk_size=$( /usr/bin/stat -f "%z" ${dsk_fullpath} 2>/dev/null )
-
-		if conv2human "${dsk_size}"; then
-			dsk_size=${convval}
-		fi
-		[ -z "${dsk_size}" ] && dsk_size="?"
-		[ -z "${dsk_realsize}" ] && dsk_realsize="?"
-
-		dsk=$( echo ${dsk_path} | /usr/bin/cut -d "." -f 1 )
-		menu_list="${menu_list} '${n} ${dsk}'	'${dsk_controller}'	'pci=${dsk_slot},type=${dsk_type},size=${dsk_realsize}/${dsk_size},ctr_id=${controller_id}'"
-		n=$(( $n + 1 ))
-	done
 
 	local height width rows
 	eval f_dialog_menu_with_help_size height width rows \
@@ -61,7 +46,6 @@ dialog_menu_main()
 		--item-help                             \
 		--ok-label \"\$msg_ok\"                 \
 		--cancel-label \"Exit\"                 \
-		${cbsd_help}                            \
 		${USE_XDIALOG:+--help \"\"}             \
 		--default-item \"\$defaultitem\"        \
 		--menu \"\$prompt\"                     \
@@ -79,25 +63,13 @@ dialog_menu_main()
 	return $retval
 }
 
-find_first_free_dsk_id()
-{
-	local last_disk _res
-
-	for last_disk in $( /usr/bin/seq 1 16 ); do
-		unset _res
-		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"dsk${last_disk}.vhd\" 2>&1 )
-		[ -z "${_res}" ] && echo "${last_disk}" && break
-	done
-
-	echo "${last_disk}"
-}
 
 ############################################################ MAIN
 export NOCOLOR=1
 
-MYARG="jname"
+MYARG="jname ctr"
 MYOPTARG=""
-MYDESC="Bhyve disk image dialog"
+MYDESC="Add and attach new vitual image to VM"
 CBSDMODULE="bhyve"
 
 globalconf="${workdir}/cbsd.conf";
@@ -111,14 +83,18 @@ set +e
 . ${tools}
 init $*
 
+. ${dialog}
 . ${workdir}/bsdconfig.subr
-f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyvedsk.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-dskcontroller.subr
 
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
-. $BSDCFG_LIBE/$APP_DIR/include/bhyvedsk.subr
+. $BSDCFG_LIBE/$APP_DIR/include/bhyve-dskcontroller.subr
+. ${workdir}/bhyve.subr
+
+#load_ctr_info
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -136,7 +112,7 @@ shift $(( $OPTIND - 1 ))
 #
 # Initialize
 #
-f_dialog_title " $msg_configure_bhyvedsk "
+f_dialog_title " $msg_add_bhyvectr "
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
 
@@ -144,33 +120,66 @@ f_mustberoot_init
 # Loop over the main menu until we've accomplished what we came here to do
 #
 while :; do
-	load_dsk_info
-	dialog_menu_main || break
-	f_dialog_menutag_fetch mtag
 
-	[ -z "${mtag}" ] && exit $SUCCESS
+	if [ -z "${new_ctr_name}" -a -n "${new_ctr_type}" ]; then
+		new_ctr_name="${ctr}_${new_ctr_type}"
+	fi
+	[ -z "${new_ctr_count}" ] && new_ctr_count="8"
+	[ -z "${new_ctr_cache}" ] && new_ctr_cache="nocache"
+
+	dialog_menu_main
+	ret=$?
 
 	command=
-
-	case "$mtag" in
-		?" $msg_exit") break ;;
-		?" $msg_add_new_img")
-			last_disk=$( find_first_free_dsk_id )
-			dsk="dsk${last_disk}"
-			command="bhyvedsk-newdsk jname=${jname} dsk=${dsk}"
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|slot|ctr_type)
+					continue
+					;;
+				"name")
+					get_ctr_name
+					;;
+				"type")
+					get_ctr_type
+					;;
+				"count")
+					get_ctr_count
+					;;
+				"cache")
+					get_ctr_cache
+					;;
+				"COMMIT")
+					if [ -z "${new_ctr_name}" -o -z "${new_ctr_type}" -o -z "${new_ctr_count}" -o -z "${new_ctr_cache}" ]; then
+						f_dialog_msgbox "all field is mandatory"
+						continue
+					fi
+					_res=$( add_ctr -c ${new_ctr_count} -n "${new_ctr_name}" -t ${new_ctr_type} -z ${new_ctr_cache} )
+					if [ $? -ne 0 ]; then
+						f_dialog_msgbox "Error: ${_res}"
+					else
+						f_die
+					fi
+					;;
+				*)
+					index=${mtag%% *}
+					ctr=${mtag##* }
+					command="bhyvectr-cfgctr jname=${jname} ctr=${ctr}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
 			;;
 		*)
-			[ "${mtag}" = "-" ] && continue
-			index=${mtag%% *}
-			dsk=${mtag##* }
-			command="bhyvedsk-cfgdsk jname=${jname} dsk=${dsk}"
+			f_die
 			;;
 	esac
-
-	if [ "$command" ]; then
-		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
-	fi
-
 done
 
 return $SUCCESS

@@ -9,7 +9,7 @@ dialog_menu_main()
 	local btitle="$DIALOG_BACKTITLE"
 	local prompt=" Virtual Machine: ${jname} "
 	local menu_list="
-		'A $msg_add_new_img'	'${msg_add_new_img_desc}'	'Add and configure new virtual image'
+		'A $msg_add_new_ctr'	'${msg_add_new_ctr_desc}'	'Add and configure new virtual controller'
 		'-'	'-'	''
 	" # END-QUOTE
 	local defaultitem=
@@ -17,27 +17,16 @@ dialog_menu_main()
 
 	local n=1
 
-	for last_disk in $( /usr/bin/seq 1 16 ); do
-		unset dsk_controller dsk_path dsk_slot dsk_type controller_id
-		eval dsk_controller="\$dsk_controller$last_disk"
-		[ -z "${dsk_controller}" ] && break
-		eval dsk_path="\$dsk_path$last_disk"
-		eval dsk_slot="\$dsk_slot$last_disk"
-		eval dsk_type="\$dsk_type$last_disk"
-		eval controller_id="\$controller_id$last_disk"
-		dsk_fullpath="${data}/${dsk_path}"
+	for last_ctr in $( /usr/bin/seq 1 16 ); do
+		unset id name type count cache
+		eval id="\$ctr_id$last_ctr"
+		[ -z "${id}" ] && break
+		eval ctr_name="\$ctr_name$last_ctr"
+		eval ctr_type="\$ctr_type$last_ctr"
+		eval ctr_count="\$ctr_count$last_ctr"
+		eval ctr_cache="\$ctr_cache$last_ctr"
 
-		dsk_realsize=$( /usr/bin/du -sh ${dsk_fullpath} | /usr/bin/awk '{printf $1}' 2>/dev/null )
-		dsk_size=$( /usr/bin/stat -f "%z" ${dsk_fullpath} 2>/dev/null )
-
-		if conv2human "${dsk_size}"; then
-			dsk_size=${convval}
-		fi
-		[ -z "${dsk_size}" ] && dsk_size="?"
-		[ -z "${dsk_realsize}" ] && dsk_realsize="?"
-
-		dsk=$( echo ${dsk_path} | /usr/bin/cut -d "." -f 1 )
-		menu_list="${menu_list} '${n} ${dsk}'	'${dsk_controller}'	'pci=${dsk_slot},type=${dsk_type},size=${dsk_realsize}/${dsk_size},ctr_id=${controller_id}'"
+		menu_list="${menu_list} '${n} ${ctr_name}'	'${ctr_type}'	'count=${ctr_count},cache=${ctr_cache}'"
 		n=$(( $n + 1 ))
 	done
 
@@ -79,17 +68,14 @@ dialog_menu_main()
 	return $retval
 }
 
-find_first_free_dsk_id()
+find_first_free_ctr_id()
 {
-	local last_disk _res
+	local last_ctr _res
 
-	for last_disk in $( /usr/bin/seq 1 16 ); do
-		unset _res
-		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"dsk${last_disk}.vhd\" 2>&1 )
-		[ -z "${_res}" ] && echo "${last_disk}" && break
-	done
-
-	echo "${last_disk}"
+	last_ctr=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_dskcontroller' )
+	[ -z "${last_ctr}" ] && last_ctr="0"
+	last_ctr=$(( last_ctr + 1 ))
+	echo "${last_ctr}"
 }
 
 ############################################################ MAIN
@@ -97,7 +83,7 @@ export NOCOLOR=1
 
 MYARG="jname"
 MYOPTARG=""
-MYDESC="Bhyve disk image dialog"
+MYDESC="Bhyve constroller dialog"
 CBSDMODULE="bhyve"
 
 globalconf="${workdir}/cbsd.conf";
@@ -112,13 +98,13 @@ set +e
 init $*
 
 . ${workdir}/bsdconfig.subr
-f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyvedsk.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-dskcontroller.subr
 
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
-. $BSDCFG_LIBE/$APP_DIR/include/bhyvedsk.subr
+. $BSDCFG_LIBE/$APP_DIR/include/bhyve-dskcontroller.subr
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -136,7 +122,7 @@ shift $(( $OPTIND - 1 ))
 #
 # Initialize
 #
-f_dialog_title " $msg_configure_bhyvedsk "
+f_dialog_title " $msg_configure_bhyvecontroller "
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
 
@@ -144,7 +130,7 @@ f_mustberoot_init
 # Loop over the main menu until we've accomplished what we came here to do
 #
 while :; do
-	load_dsk_info
+	load_ctr_info
 	dialog_menu_main || break
 	f_dialog_menutag_fetch mtag
 
@@ -154,20 +140,20 @@ while :; do
 
 	case "$mtag" in
 		?" $msg_exit") break ;;
-		?" $msg_add_new_img")
-			last_disk=$( find_first_free_dsk_id )
-			dsk="dsk${last_disk}"
-			command="bhyvedsk-newdsk jname=${jname} dsk=${dsk}"
+		?" $msg_add_new_ctr")
+			last_ctr=$( find_first_free_ctr_id )
+			ctr="ctr${last_ctr}"
+			command="bhyve-newcontroller jname=${jname} ctr=${ctr}"
 			;;
 		*)
 			[ "${mtag}" = "-" ] && continue
 			index=${mtag%% *}
-			dsk=${mtag##* }
-			command="bhyvedsk-cfgdsk jname=${jname} dsk=${dsk}"
+			ctr=${mtag##* }
+			command="bhyvedsk-cfgcontroller jname=${jname} ctr=${ctr}"
 			;;
 	esac
 
-	if [ "$command" ]; then
+	if [ "${command}" ]; then
 		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
 	fi
 

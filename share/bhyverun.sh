@@ -116,7 +116,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
 
-	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${jname}"
+	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t CBSD "[debug] ${bhyve_cmd}"

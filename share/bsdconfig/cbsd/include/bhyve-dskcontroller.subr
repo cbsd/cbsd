@@ -1,0 +1,141 @@
+# load ctr info
+load_ctr_info()
+{
+	ctr_last_id=1
+	local sqldelimer=" "
+
+	unset ctrlist
+
+	for last_disk in $( /usr/bin/seq 1 16 ); do
+		unset ctr_id${last_disk}
+	done
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,name,type,count,cache FROM bhyve_dskcontroller" | while read id name type count cache; do
+		[ -z "${id}" ] && return 0
+		echo "export ctr_id${ctr_last_id}=\"${id}\""
+		echo "export ctr_name${ctr_last_id}=\"${name}\""
+		echo "export ctr_type${ctr_last_id}=\"${type}\""
+		echo "export ctr_count${ctr_last_id}=\"${count}\""
+		echo "export ctr_cache${ctr_last_id}=\"${cache}\""
+		ctr_last_id=$(( ctr_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create controller map${NORMAL}"
+}
+
+# form for $new_ctr_type
+get_ctr_type()
+{
+	local _input _retval
+	local title=" Controller type for ${mtag} "
+	hline=
+
+	local menu_list="
+		'ahci'	'AHCI controller'	''
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	new_ctr_type=
+
+	case $retval in
+		${DIALOG_OK})
+			new_ctr_type="${mtag}"
+			return 0
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for $new_ctr_name
+get_ctr_name()
+{
+	local _input _defname="${ctr}_${new_ctr_type}"
+
+	f_dialog_title " controller name "
+
+	[ -n "${new_ctr_name}" ] && _defname="${new_ctr_name}"
+
+	f_dialog_input _input "Input name, eg: ahci2" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_ctr_name="${_input}"
+}
+
+# form for $new_ctr_count
+get_ctr_count()
+{
+	local _input _defname="8"
+
+	f_dialog_title " Select the port count of the controller "
+
+	[ -n "${new_ctr_count}" ] && _defname="${new_ctr_count}"
+
+	f_dialog_input _input "Input count, eg: 8" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_ctr_count="${_input}"
+}
+
+# form for $new_ctr_cache
+get_ctr_cache()
+{
+	local _input _retval
+
+	local title=" Controller cache for ${mtag} "
+	hline=
+
+	[ -n "${new_ctr_cache}" ] && local defaultitem="${new_ctr_cache}"
+
+	local menu_list="
+		'nocache'	'Open the file with O_DIRECT'	'Open the file with O_DIRECT'
+		'direct'	'Open the file using O_SYNC'	'Open the file using O_SYNC'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	new_ctr_cache=
+
+	case ${retval} in
+		${DIALOG_OK})
+			new_ctr_cache="${mtag}"
+			return 0
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+
+# form for new ctr
+# -c ${new_ctr_count} -n "${new_ctr_name}" -t "${new_ctr_type} -z ${new_ctr_cache} )
+# e.g: add_ctr -c 8 -n "controller name" -t ahci -z nocache
+add_ctr()
+{
+	local count=
+	local name=
+	local type=
+	local cache=
+	local _res _msg
+
+	while getopts "c:n:t:z:" opt; do
+		case "${opt}" in
+			c) count="${OPTARG}" ;;
+			n) name="${OPTARG}" ;;
+			t) type="${OPTARG}" ;;
+			z) cache="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${count}" ] && err 1 "${MAGENTA}Empty count${NORMAL}"
+	[ -z "${name}" ] && err 1 "${MAGENTA}Empty name${NORMAL}"
+	[ -z "${type}" ] && err 1 "${MAGENTA}Empty type${NORMAL}"
+	[ -z "${cache}" ] && err 1 "${MAGENTA}Empty cache${NORMAL}"
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyve_dskcontroller ( name,type,count,cache ) VALUES ( \"${name}\",\"${type}\",\"${count}\",\"${cache}\" )"
+
+	return 0
+}
