@@ -108,7 +108,6 @@ compile_uefi_boot_args()
 	esac
 }
 
-
 # export arguments for bhyve about dsk vms in $dsk_args variable
 # $jname must be set's
 # sample:
@@ -128,7 +127,8 @@ compile_dsk_args()
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
+	# select only direct-bus attached
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id='0'| while read dsk_controller dsk_path dsk_slot; do
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -193,6 +193,58 @@ compile_dsk_args()
 	[ -z "${dsk_args}" ] && return 1
 	return 0
 }
+
+
+# export arguments for bhyve about dsk vms attached to controller_id in $dsk_controller_args variable
+# $jname must be set's
+# sample:
+# jname="debian"
+# if compile_dsk_controller_args; then
+# 	echo $dsk_controller_args
+# else
+#	echo "No disks"
+# fi
+compile_dsk_controller_args()
+{
+	local prefix
+	local full_dsk_path
+
+	dsk_controller_args=
+
+	if ! next_pci_id; then
+		# no free pci bus
+		exit 0
+	fi
+
+	pcislot=${bhyve_pci_index}
+
+	local _dsk_path=
+	local _i
+
+	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id!='0'| /usr/bin/xargs )
+
+	[ -z "${_dsk_path}" ] && return 0
+
+	dsk_controller_args="-s ${pcislot}:0,ahci"
+
+	for _i in ${_dsk_path}; do
+	# test for full path. If path not started from '/' - append $data dir
+		full_dsk_path=
+		prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
+
+		if [ "${prefix}" != "/" ]; then
+			full_dsk_path="${data}/${_i}"
+		else
+			full_dsk_path="${_i}"
+		fi
+	done
+
+	dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+
+	[ -z "${dsk_controller_args}" ] && return 1
+	return 0
+}
+
 
 # print 5c:f9:dd:76:d5:c4 from 5cf9dd76d5c4
 normalize_nic_hwaddr()
@@ -421,17 +473,17 @@ compile_bhyve_cpus_args()
 	local _sockets _cores _threads _query
 	bhyve_cpus="${vm_cpus}"
 
-	# based on work https://reviews.freebsd.org/D9930
-	# available after r332298:
 	# https://svnweb.freebsd.org/base?view=revision&revision=332298
 	[ ${freebsdhostversion} -lt 1200061 ] && return 0
 
 	# no topology when single core or vm_cpu_topology empty
 	[ "${vm_cpus}" = "1" -o -z "${vm_cpu_topology}" ] && return 0
 
-	# not configured
+	# topology not configured
 	case "${vm_cpu_topology}" in
 		0|default)
+			# set CBSD default
+			bhyve_cpus="cpus=${vm_cpus},sockets=${vm_cpus},cores=1,threads=1"
 			return 0
 			;;
 	esac

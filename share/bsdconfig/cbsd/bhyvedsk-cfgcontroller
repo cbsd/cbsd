@@ -1,0 +1,200 @@
+#!/usr/local/bin/cbsd
+
+. ${subr}
+. ${strings}
+. ${tools}
+. ${workdir}/virtual.subr
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+
+	local title=" Controller Properties ${jname}:${ctr} "
+	hline=
+
+	local prompt="${_desc}"
+	local sqldelimer=" "
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,name,type,count,cache FROM bhyve_dskcontroller WHERE name=\"${ctr}\" | while read id name type count cache; do
+		echo "export ctr_id=\"${id}\""
+		echo "export new_ctr_name=\"${name}\""
+		echo "export new_ctr_type=\"${type}\""
+		echo "export new_ctr_count=\"${count}\""
+		echo "export new_ctr_cache=\"${cache}\""
+	done ) || err 1 "${MAGENTA}Error while create controller map${NORMAL}"
+
+	local menu_list="
+		'type'		'${new_ctr_type}'	'Select controller type'
+		'name'		'${new_ctr_name}'	'Name of controller'
+		'count'		'${new_ctr_count}'	'Max Port Count'
+		'cache'		'${new_ctr_cache}'	'Use Host I/O Cache'
+		'-'		'-'			''
+		'remove'	'remove'	'Remove controller'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname ctr"
+MYOPTARG=""
+MYDESC="Edit properties for vitual image of VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
+. ${dialog}
+
+. ${workdir}/bsdconfig.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-dskcontroller.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+. ${workdir}/bhyve.subr
+. $BSDCFG_LIBE/$APP_DIR/include/bhyve-dskcontroller.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_bhyvectr "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+. ${workdir}/bhyve.subr
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-")
+					continue
+					;;
+				cache)
+					get_ctr_cache
+					if [ -n "${new_ctr_cache}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_dskcontroller SET cache=\"${new_ctr_cache}\" WHERE name=\"${ctr}\"
+					fi
+					;;
+				count)
+					get_ctr_count
+					if [ -n "${new_ctr_count}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_dskcontroller SET count=\"${new_ctr_count}\" WHERE name=\"${ctr}\"
+					fi
+					;;
+				name)
+					get_ctr_name
+					if [ -n "${new_ctr_name}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_dskcontroller SET name=\"${new_ctr_name}\" WHERE name=\"${ctr}\"
+					fi
+					;;
+				type)
+					get_ctr_type
+					if [ -n "${new_ctr_type}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_dskcontroller SET type=\"${new_ctr_type}\" WHERE name=\"${ctr}\"
+					fi
+					;;
+				remove)
+					if getyesno "Detach and remove ${ctr} from ${jname} VM?"; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyve_dskcontroller WHERE name=\"${ctr}\"
+						f_die
+					fi
+					;;
+				*)
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

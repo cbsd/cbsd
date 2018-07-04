@@ -36,7 +36,7 @@ shmux()
 	fi
 
 	SSH_ARGS="-oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
-	[ ! -f "${_locallockfile}" ] && ${miscdir}/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated
+	[ ! -f "${_locallockfile}" ] && ${miscdir}/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated 2>/dev/null
 }
 
 update_jaillock()
@@ -58,11 +58,17 @@ update_fw_counters()
 	/usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
 }
 
+# if $1 = "force" skip for cbsd_dot check
 update_inventory()
 {
-	[ ! -s "${tmpdir}/inv.${_ip}.updated" ] && return 0
+	[ -z "${_ip}" ] && return 0
+	if [ "${1}" != "force" ]; then
+		[ ! -s "${tmpdir}/inv.${_ip}.updated" ] && return 0
+		cbsdlogger NOTICE ${CBSD_APP}: update remote inventory for ${_ip}: new changes
+	fi
 	/usr/bin/truncate -s0 ${tmpdir}/inv.${_ip}.updated
-	task mode=new exclusive=1 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename}
+	task mode=new exclusive=1 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename} >/dev/null 2>&1
+	/usr/sbin/daemon -f nexttask
 }
 
 readconf task.conf
@@ -70,6 +76,9 @@ readconf task.conf
 [ ! -f "${dbdir}/cbsdtaskd.sqlite" ] && err 1 "No such ${dbdir}/cbsdtaskd.sqlite"
 [ -z "${max_simul_jobs}" ] && max_simul_jobs="30"
 [ -z "${loop_timeout}" ] && loop_timeout="30"
+
+loop_per_retrinv=10	# one retrinv per 5 loop cycle's ( def: 10*30sec = once per <= 5 min )
+retrinv_loop=0
 
 # first of all, checks for orphaned tasks in status 1 (running) and back to status 0,
 # due to next iteration take this job again
@@ -81,10 +90,11 @@ trap "/bin/rm -f /var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 
 # remove stale lock and trash files
-/usr/bin/find ${ftmpdir} -depth 1 -maxdepth 1 -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf -and -mtime +1d -delete > /dev/null 2>&1
+/usr/bin/find -E ${ftmpdir} -depth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
+/usr/bin/find ${tmpdir} -depth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
 
 # retrinv
-[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon -f /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
 
 while [ 1 ]; do
 	# internal tasks:
@@ -97,12 +107,22 @@ while [ 1 ]; do
 	if [ ${sqlreplica} -eq 1 ]; then
 		sqldelimer=" "
 		cbsdsql nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
-			if [ -n "${_ip}" ]; then
-				shmux
+			[ -n "${_ip}" ] && shmux
+			if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: update remote inventory for ${_ip} via loop_per_retrinv [${loop_per_retrinv}]
+				update_inventory force
+			else
 				update_inventory
 			fi
 		done
 		unset sqldelimer
+
+		if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
+			# reset loop
+			retrinv_loop=0
+		else
+			retrinv_loop=$(( retrinv_loop + 1 ))
+		fi
 	fi
 
 	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
@@ -119,7 +139,7 @@ while [ 1 ]; do
 	fi
 
 	for i in $( /usr/bin/seq 1 ${max} ); do
-		echo "cbsd runtask ${i}/${max} ($max_simul_jobs max)"
+		cbsdlogger NOTICE ${CBSD_APP}: runtask ${i}/${max} [$max_simul_jobs max]
 		/usr/sbin/daemon -f nexttask
 		# wait for pid of daemon here!!!
 		sleep 1

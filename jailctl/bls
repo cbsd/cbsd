@@ -1,25 +1,44 @@
 #!/usr/local/bin/cbsd
-#v11.1.9
+#v11.2.0
 CBSDMODULE="bhyve"
 MYARG=""
 MYOPTARG="alljails shownode display node header order"
 MYDESC="List jail and status"
-ADDHELP="alljails=1 - get jaillist from remote node\n\
+ADDHELP="alljails=1 - (0 or 1): force to display foreign/remote resources\n\
+  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
 display= list by comma for column.\n\
     Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port\n\
     If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+    If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
      additional field: path\n\
 order= asc (default) or desc\n"
 EXTHELP="wf_bls.html"
 
 . ${subr}
 . ${strings}
+. ${nodes}
 
 readconf bls.conf
 init $*
+
+oalljails="${alljails}"		# store original settings, they have more weight vs auto
+oshownode="${shownode}"		# store original settings, they have more weight vs auto
+
+# autosettings for alljails and shownode
+is_cluster_mode
+cluster_mode=$?		# cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+	alljails=1
+	shownode=1
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
 
 if [ -z "${display}" ]; then
 	case "${racct}" in
@@ -87,47 +106,78 @@ get_rctl()
 }
 
 # -j $jname
+# -s alternative SQL file
 # -u 1 - always show status as "Unregister"
 populate_output_data()
 {
 	local unregister="0"
 	local _tmpport _tmpbind
-	local _pid=0
+	local _pid=0 _node_is_online=0 _md5_node_name
 
 	printf "${NORMAL}" # for column sort
 
-	while getopts "j:u:" opt; do
-		case "$opt" in
+	while getopts "j:s:u:" opt; do
+		case "${opt}" in
 			j) jname="${OPTARG}" ;;
+			s) sqlfile="${OPTARG}" ;;
 			u) unregister="1" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
 
+	[ -z "${sqlfile}" ] && sqlfile="local"
+
 	_pid="0"
 
-	if [ -e "/dev/vmm/${jname}" ]; then
-		# bhyve is active
-		printf "${GREEN}"
+	if [ "${sqlfile}" = "local" ]; then
+		if [ -e "/dev/vmm/${jname}" ]; then
+			# bhyve is active
+			printf "${GREEN}"
 
-		if [ "${racct}" = "1" ]; then
-			memoryuse=0
-			pcpu=0
-			_pid=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
-			if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
-				_val="0"
-			else
-				get_rctl ${_pid}
+			if [ "${racct}" = "1" ]; then
+				memoryuse=0
+				pcpu=0
+				_pid=$( cbsdsql ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+				if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
+					_val="0"
+				else
+					get_rctl ${_pid}
+				fi
 			fi
+		else
+			printf "${CYAN}"
 		fi
 	else
-		printf "${CYAN}"
+		# pop status variable from node_is_online()
+		_md5_node_name=$( /sbin/md5 -q -s ${sqlfile} )
+		eval _node_is_online=\$node_${_md5_node_name}_online
+		if [ "${_node_is_online}" = "1" ]; then
+			# retr from sql
+			case ${jid} in
+				0)
+					printf "${CYAN}"
+					;;
+				*)
+					printf "${GREEN}"
+					;;
+			esac
+		else
+			printf "${DGRAY}"
+		fi
 	fi
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
 		_val=""
 		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="0"
+
+		# todo: remote sql fetch via retrinv
+		#if [ "${sqlfile}" != "local" ]; then
+		#	[ "${_i}" != "jname" ] && _val="x"
+		#	printf "${_val} "
+		#	continue
+		#fi
 
 		case "${_i}" in
 			vm_ram)
@@ -152,16 +202,28 @@ populate_output_data()
 				fi
 				;;
 			vnc_port)
-				if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
-					_tmpport=$( /bin/cat ${jailsysdir}/${jname}/vnc_port )
-					_tmpbind=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT bhyve_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
-					_val="${_tmpbind}:${_tmpport}"
+				if [ -r "${sqlfile_sysdir}/${jname}/vnc_port" ]; then
+					_tmpport=$( /bin/cat ${sqlfile_sysdir}/${jname}/vnc_port )
+					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+						_tmpbind=$( cbsdsql ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT bhyve_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+						# we need for special route of tcpbind presentation for foreign bhyve. replace 0.0.0.0 by nodeip
+						if [ "${sqlfile}" != "local" ]; then
+							_tmpbind=$( cbsdsql ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+						fi
+						_val="${_tmpbind}:${_tmpport}"
+					else
+						_val="Unk"
+					fi
 				else
 					_val="0"
 				fi
 				;;
 			ip4_addr)
-				_val=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+				if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+					_val=$( cbsdsql ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+				else
+					_val="Unk"
+				fi
 				[ "${_val}" = "(null)" ] && _val="DHCP"
 				;;
 		esac
@@ -188,11 +250,17 @@ show_jaildata_from_sql()
 		sqlfile="local"
 	fi
 
+	if [ "${sqlfile}" = "local" ]; then
+		sqlfile_sysdir="${jailsysdir}"
+	else
+		sqlfile_sysdir="${tmpdir}/${1}"
+	fi
+
 	cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname; do
 		_status=""
 		. ${jrcconf}
 		conv_status
-		populate_output_data -j ${jname}
+		populate_output_data -j ${jname} -s ${sqlfile}
 	done
 }
 
@@ -219,6 +287,7 @@ show_local()
 	vnc_port="-"
 
 	for J in $( /bin/ls ${jailrcconfdir} ); do
+		[ "${J}" = "dir.id" ] && continue
 		jname=""
 		[ ! -r ${jailrcconfdir}/${J} ] && continue
 		. ${jailrcconfdir}/${J}
@@ -234,12 +303,12 @@ show_remote()
 {
 	show_header
 
-	if [ -z "${node}" ]; then
-		node=$( node mode=list header=0 allinfo=0 )
-	fi
+	[ -z "${node}" ] && node=$( cbsdsql nodes SELECT nodename FROM nodelist 2>/dev/null | /usr/bin/xargs )
 
-	for _n in $node; do
+	for _n in ${node}; do
 		nodename="${_n}"
+		# init and export into $node_${md5_node_name}_online node status
+		node_is_online -n ${nodename} -e 1
 		show_jaildata_from_sql ${_n}
 	done
 }

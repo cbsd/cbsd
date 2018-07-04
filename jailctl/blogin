@@ -1,42 +1,57 @@
 #!/usr/local/bin/cbsd
-#v11.1.2
+#v11.2.1
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname remote inter"
 MYDESC="Exec login into jail"
 CBSDMODULE="bhyve"
 
-# Login by jid not supported yet
-set -e
-. ${globalconf}
-set +e
-
 . ${subr}
 . ${strings}
 . ${tools}
 init $*
-
-[ -z "$jname" ] && jname=$1
-[ -z "$jname" ] && select_jail_by_list -s "List of online VMs" -a "On" -e bls -r ${sqlreplica}
-[ -z "$jname" ] && err 1 "Please specify jname"
-[ -z "${remote}" ] && remote=0
+readconf blogin.conf
 
 try_remote()
 {
-	[ -f "${jailmapdb}" -a "${remote}" != "1" ] || err 1 "No such rc.conf for jail found"
+	local RHST
 
-	. ${jailmapdb} 2>/dev/null
-	eval VAL=\$$jname
-	[ -z "${VAL}" ] && err 1 "No such jail for login"
-	RHST=$( echo $VAL|/usr/bin/awk '{printf $1"\n"}' )
-	getyesno "Found jail on remote node: ${RHST}. Try to login?"
-	[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such jail for login"
-	rexe node=${RHST} cbsd blogin jname=$jname remote=1
-	exit 0
+	. ${rjrcconf}
+	. ${workdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	export_bhyve_data_for_external_hook
+
+	[ "${remote}" = "1" ] && err 1 "${MAGENTA}No such domain${NORMAL}"
+	RHST=$( bwhereis ${jname}| /usr/bin/head -n1 )
+	[ -z "${RHST}" ] && err 1 "No such domain for login"
+
+	# we don't need for interactive when come with remote=2 from select_jail_by_list
+	if [ "${remote}" != "2" -a "${always_rlogin}" = "0" ]; then
+		getyesno "Found domain on remote node: ${RHST}. Try to login?"
+		[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such domains for login"
+	fi
+
+	case "${login_cmd}" in
+		internal)
+			${ECHO} "${MAGENTA}Exec blogin internal on remote node: ${GREEN}${RHST}${NORMAL}"
+			cbsdlogger NOTICE ${CBSD_APP}: executing internal blogin: rexe node=${RHST} /usr/local/bin/cbsd blogin src_session=${nodename} jname=${jname} remote=1
+			rexe node=${RHST} /usr/local/bin/cbsd blogin src_session=${nodename} jname=${jname} remote=1
+			;;
+		*)
+			# re-read custom
+			readconf blogin.conf
+			cbsdlogger NOTICE ${CBSD_APP}: executing custom blogin: ${login_cmd}
+			login_custom
+			;;
+	esac
+	err 0 ""
 }
 
 login_internal()
 {
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
 			echo " *** VM booted in VNC mode. ***"
@@ -65,21 +80,38 @@ login_custom()
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 	. ${workdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
 	export_bhyve_data_for_external_hook
+
+	# re-read custom
 	readconf blogin.conf
+
 	${ECHO} "${MAGENTA}Custom login command: ${GREEN}${login_cmd}${NORMAL}"
 	exec /bin/sh -c "${login_cmd}"
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
 }
 
+emulator="bhyve"	# for jname_is_multiple
+jname_is_multiple	# import jail_list if jname is mask
+
+if [ -n "${jail_list}" ]; then
+	${ECHO} "${MAGENTA}Found domains by mask: ${GREEN}${jail_list}${NORMAL}"
+	for jname in ${jail_list}; do
+		${ECHO} "${MAGENTA}exec blogin to: ${GREEN}${jname}${NORMAL}"
+		blogin jname=${jname}
+	done
+	exit 0
+fi
+
+[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && select_jail_by_list -s "List of online domains" -a "On" -e bls -r ${sqlreplica}
+[ -z "${jname}" ] && err 1 "${MAGENTA}Please specify jname as argument${NORMAL}"
+[ -z "${remote}" ] && remote=0
 
 . ${jrcconf}
-readconf blogin.conf
-
 [ $? -eq 1 ] && try_remote
+
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 [ "${baserw}" = "1" ] && path=${data}
-
 [ ${jid} -eq 0 ] && err 1 "Not running"
 
 vm_efi=$( cbsdsql local "SELECT vm_efi FROM bhyve WHERE jname=\"${jname}\"" )

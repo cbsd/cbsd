@@ -78,11 +78,28 @@ fi
 st_time=$( /bin/date +%s )
 
 [ -z "${jname}" ] && jname=$( echo ${JLIST} | /usr/bin/awk '{printf $1}' )
+[ -z "${jname}" ] && jname="$1"
+[ -z "${jname}" ] && err 1 "${MAGENTA}Give me domain name${NORMAL}"
+
 . ${sharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 
 . ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-#[ ${jid} -eq 0 ] && err 1 "${MAGENTA}Not Running: ${GREEN}${jname}${NORMAL}"
+if [ $? -eq 1 ]; then
+	[ ${sqlreplica} -eq 0 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+	remotenode=$( bwhereis ${jname} )
+	[ -z "${remotenode}" ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+	for i in ${remotenode}; do
+		${ECHO} "${MAGENTA}Remote bstop: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
+		rexe node=${i} cbsd bstop jname=${jname}
+		if [ $? -eq 0 ]; then
+			# update inventory
+			${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
+			task mode=new cbsd retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+		fi
+	done
+	exit 0
+fi
+
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
 # CBSD QUEUE
@@ -172,8 +189,8 @@ done
 # clean ARP cache
 /usr/sbin/arp -nda > /dev/null 2>&1
 
-# update state_time
-cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
+# update state_time and pid
+cbsdsql local UPDATE jails SET jid=0,state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
 
 external_exec_master_script "master_poststop.d"
 

@@ -1,17 +1,21 @@
 #!/usr/local/bin/cbsd
-#v11.0.10
+#v11.2.1
 CBSDMODULE="jail"
 MYARG=""
-MYOPTARG="mode jname alljails shownode display node header human prometheus"
+MYOPTARG="alljails display emulator header human jname mode node prometheus shownode"
 MYDESC="Set or flush resource limit for jail"
-ADDHELP="mode= set (apply), unset, show (show current state) or get (show limits)\n\
+ADDHELP="\
 alljails=1 - get jaillist from remote node\n\
-shownode=1 - show nodename for jails\n\
-node= only for current node\n\
+display= list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw\n\
+emulator=[jail,bhyve,xen] - show only emulator engine, default - all\n\
 header=0 don't print header\n\
 human=0 don't convert bytes to human readable form\n\
-display= list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw\n\
-prometheus=0 or 1 = prometheus metric mode output\n"
+jname= show only specified jail\n\
+mode= set (apply), unset, show (show current state) or get (show limits)\n\
+node= only for current node\n\
+prometheus=0 or 1 = prometheus metric mode output\n\
+shownode=1 - show nodename for jails\n\
+"
 EXTHELP="wf_jrctl.html"
 
 . ${subr}
@@ -20,24 +24,12 @@ EXTHELP="wf_jrctl.html"
 . ${sharedir}/rctl.conf
 . ${workdir}/jrctl.subr
 
-readconf jrctl.conf
 init $*
-
-[ -z "${display}" ] && display="jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw"
-[ "${shownode}" = "1" ] && display="nodename,${display}"
-[ -z "${prometheus}" ] && prometheus=0
-
-#remove commas for loop action on header
-mydisplay=$( echo ${display} |/usr/bin/tr ',' '  ' )
-
-# upper for header
-myheader=$( echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]' )
-JLS=""
 
 show_header()
 {
-	local _header="${BOLD}${myheader}${NORMAL}"
-	[ ${header} -ne 0 ] && $ECHO ${_header}
+	local _header="${WHITE}${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
 }
 
 # if $1 = "Unregister" then overwrite status to "Unregister"
@@ -45,7 +37,18 @@ populate_output_data()
 {
 	local _formfile
 
-	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+	local _emulator
+
+	_emulator=$( cbsdsql local SELECT emulator FROM jails WHERE jname=\"${jname}\" )
+
+	case "${_emulator}" in
+		jail)
+			_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+			;;
+		bhyve)
+			_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
+			;;
+	esac
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
@@ -68,7 +71,7 @@ populate_output_data()
 		fi
 
 		if [ -z "${_status}" ]; then
-			_status="${NORMAL}${_val}"
+			_status="${_val}"
 		else
 			_status="${_status} ${_val}"
 		fi
@@ -83,7 +86,7 @@ show_jaildata_from_sql()
 
 	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
-		sqlfile="$1"
+		sqlfile="${1}"
 	else
 		sqlfile="local"
 	fi
@@ -91,14 +94,30 @@ show_jaildata_from_sql()
 	if [ -n "${jname}" ]; then
 		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator = \"bhyve\" OR emulator = \"jail\""
 	else
-		_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator = \"bhyve\" OR emulator = \"jail\""
+		if [ -n "${emulator}" ]; then
+			_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator = \"${emulator}\""
+		else
+			_sqlq="cbsdsql ${sqlfile} SELECT jname FROM jails WHERE emulator = \"bhyve\" OR emulator = \"jail\""
+		fi
 	fi
 
 	${_sqlq}| while read jname; do
 		_status=""
 		. ${workdir}/rctl.subr
+		. ${jrcconf}
 		populate_output_data
-		$ECHO "${_status}${NORMAL}"
+
+#		active=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
+
+		printf "${NORMAL}" # for column sort
+
+		if [ "${jid}" != "0" ]; then
+			printf "${GREEN}"
+		else
+			printf "${CYAN}"
+		fi
+		printf "${_status}"
+		printf "${NORMAL}\n"
 	done
 }
 
@@ -149,7 +168,14 @@ set_limit()
 	local _val _valnew
 	local i DATA
 
-	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+	case "${emulator}" in
+		jail)
+			_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+			;;
+		bhyve)
+			_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
+			;;
+	esac
 
 	[ ! -r "${_formfile}" ] && return 0
 
@@ -170,7 +196,6 @@ set_limit()
 	done
 
 	for i in ${RCTL_EXTRA}; do
-
 		_valnew=$( cbsdsql ${_formfile} "SELECT new FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
 		if [ -z "${_valnew}" -o "${_valnew}" ]; then
 			_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
@@ -183,6 +208,16 @@ set_limit()
 		[ "${_val}" = "0" ] && continue
 
 		case "${i}" in
+			nice)
+				case "${emulator}" in
+					jail)
+						jrenice jname=${jname}
+						;;
+					bhyve)
+						brenice jname=${jname}
+						;;
+				esac
+				;;
 			fsquota)
 				. ${zfstool}
 				if [ ${zfsfeat} -ne 1 ]; then
@@ -212,7 +247,7 @@ set_limit()
 
 	if [ -f "${LIMITS}"  ]; then
 		printf "${MAGENTA}${mode} resource limit: [ ${GREEN}"
-		cat ${LIMITS} |while read _p; do
+		/bin/cat ${LIMITS} | while read _p; do
 			case ":${_p}" in
 				:#* | :)
 					continue
@@ -356,6 +391,26 @@ if [ -n "${jname}" ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 fi
+
+case "${emulator}" in
+	jail)
+		readconf jrctl.conf
+		;;
+	bhyve)
+		readconf brctl.conf
+		;;
+esac
+
+[ -z "${display}" ] && display="jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw"
+[ "${shownode}" = "1" ] && display="nodename,${display}"
+[ -z "${prometheus}" ] && prometheus=0
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
+JLS=""
 
 [ -z "${header}" ] && header=1
 [ -z "${human}" ] && human=1

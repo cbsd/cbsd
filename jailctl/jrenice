@@ -1,0 +1,43 @@
+#!/usr/local/bin/cbsd
+#v11.2.1
+CBSDMODULE="jail"
+MYARG="jname"
+MYOPTARG="nice"
+MYDESC="Re-nice jail processes on-the-fly"
+ADDHELP="nice=[new value]\n\
+  or skip nice= to apply values from RCTL databases\n\"
+"
+
+. ${subr}
+. ${strings}
+
+init $*
+
+. ${jrcconf}
+[ "${emulator}" != "jail" ] && log_err 1 "${MAGENTA}Not in jail emulator: ${GREEN}${emulator}{NORMAL}"
+[ ${jid} -eq 0 ] && exit 0
+
+if [ -z "${nice}" ]; then
+	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+	[ -r "${_formfile}" ] && nice=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
+	# just reset
+	[ -z "${nice}" ] && nice="0"
+fi
+
+pid_count=0
+jpid=
+jpid_list=
+
+eval $( /bin/ps -axfw -w -o pid,jid,state | while read _pid _jid _state; do
+	[ "${jid}" != "${_jid}" ] && continue
+	pid_count=$(( pid_count + 1 ))
+	if $( echo "${_state}" |/usr/bin/grep -q "T" ); then
+		pid_count=$(( pid_count - 1 ))
+	fi
+	jpid_list="${jpid_list} ${_pid}"
+	echo jpid_list=\"${jpid_list}\"
+	echo jpid_count=\"${pid_count}\"
+done )
+
+cbsdlogger NOTICE ${CBSD_APP}: re-nice ${nice} to jail ${jname} pids: ${jpid_list}
+/usr/bin/renice ${nice} -p ${jpid_list}

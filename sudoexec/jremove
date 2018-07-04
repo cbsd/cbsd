@@ -17,7 +17,7 @@ set +e
 . ${tools}
 
 if [ -z "${1}" ]; then
-	select_jail_by_list -s "List of local jails:" -r 0
+	select_jail_by_list -s "List of local jails:" -r ${sqlreplica}
 	if getyesno "Remove jail ${jname}. Are you sure? "; then
 		echo
 	else
@@ -41,7 +41,7 @@ else
 	JLIST=$*
 fi
 
-[ -z "$JLIST" ] && err 1 "Give me jname"
+[ -z "${JLIST}" ] && err 1 "Give me jname"
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
 
 for jname in ${JLIST}; do
@@ -55,22 +55,10 @@ for jname in ${JLIST}; do
 	unregister=0
 
 	. ${jrcconf}
-
-	[ -z "${jid}" ] && continue
-
-	if [ "${protected}" = "1" ]; then
-		${ECHO} "${MAGENTA}Protected/locked jail. Skip for remove: ${GREEN}${jname}${NORMAL}"
-		continue
-	fi
-
-	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jremove status=1
-	fi
-
 	if [ $? -eq 1 ]; then
 		if [ ! -f "${JAILRCCONF}" ]; then
-			if [ $sqlreplica -eq 0 ]; then
+			# remote?
+			if [ ${sqlreplica} -eq 0 ]; then
 				${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 				continue
 			fi
@@ -86,12 +74,27 @@ for jname in ${JLIST}; do
 				fi
 				${ECHO} "${MAGENTA}Remote jremove: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
 				rexe node=${i} cbsd jremove jname=${jname}
+				if [ $? -eq 0 ]; then
+					# updating state and put task for retrinv inventory
+					${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
+					task mode=new retrinv node=${i} data=db tryoffline=1 > /dev/null 2>&1
+				fi
 			done
-			exit 0
+			continue
 		else
 			. ${JAILRCCONF}
 			unregister=1
 		fi
+	fi
+
+	if [ "${protected}" = "1" ]; then
+		${ECHO} "${MAGENTA}Protected/locked jail. Skip for remove: ${GREEN}${jname}${NORMAL}"
+		continue
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jremove status=1
 	fi
 
 	. ${workdir}/jcreate.subr
@@ -134,6 +137,7 @@ for jname in ${JLIST}; do
 	[ -d "${DST}" ] && removedata ${DST} force
 	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
 	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
+
 	[ -f "${JAILFSTAB}" ] && /bin/rm -f ${JAILFSTAB}
 	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
 	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}

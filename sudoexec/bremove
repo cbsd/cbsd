@@ -17,7 +17,7 @@ set +e
 . ${tools}
 
 if [ -z "${1}" ]; then
-	select_jail_by_list -s "List of local VMs:" -r 0 -e bls
+	select_jail_by_list -s "List of local VMs:" -e bls -r ${sqlreplica}
 	if getyesno "Remove VM ${jname}. Are you sure? "; then
 		echo
 	else
@@ -43,7 +43,7 @@ else
 	JLIST=$*
 fi
 
-[ -z "$JLIST" ] && err 1 "Give me jname"
+[ -z "${JLIST}" ] && err 1 "Give me jname"
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
 
 for jname in ${JLIST}; do
@@ -57,8 +57,37 @@ for jname in ${JLIST}; do
 	unregister=0
 
 	. ${jrcconf}
-
-	[ -z "${jid}" ] && continue
+	if [ $? -eq 1 ]; then
+		if [ ! -f "${JAILRCCONF}" ]; then
+			# remote?
+			if [ ${sqlreplica} -eq 0 ]; then
+				${ECHO} "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+				continue
+			fi
+			remotenode=$( bwhereis ${jname} )
+			if [ -z "${remotenode}" ]; then
+				${ECHO} "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+				continue
+			fi
+			for i in ${remotenode}; do
+				if [ "${i}" = "${nodename}" ]; then
+					${ECHO} "${MAGENTA}Remote bremove: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
+					continue
+			fi
+			${ECHO} "${MAGENTA}Remote jremove: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
+			rexe node=${i} cbsd bremove jname=${jname}
+			if [ $? -eq 0 ]; then
+				# updating state and put task for retrinv inventory
+				${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
+				task mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+			fi
+			done
+			continue
+		else
+			. ${JAILRCCONF}
+			unregister=1
+		fi
+	fi
 
 	if [ "${protected}" = "1" ]; then
 		${ECHO} "${MAGENTA}Protected/locked jail. Skip for remove: ${GREEN}${jname}${NORMAL}"

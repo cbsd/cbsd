@@ -4,20 +4,38 @@ CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="alljails shownode display node header order"
 MYDESC="List and show status of jails"
-ADDHELP="alljails=1 - List all jails from all nodes in the cluster.\n\
+ADDHELP="alljails=1 - (0 or 1): force to display foreign/remote resources\n\
+  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
 shownode=1 - Show node name(s) for listed jails.\n\
 node= List only jails of the specified node.\n\
 header=0 Don't print header information.\n\
 display= Comma separated list of columns to display. Default: jid,jname,ip4_addr,host_hostname,path,status\n\
+  If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
 order= asc (default) or desc\n"
 EXTHELP="wf_jls.html"
 MANPAGE="man cbsd-jls"
 
 . ${subr}
 . ${strings}
+. ${nodes}
 
 readconf jls.conf
 init $*
+
+oalljails="${alljails}"		# store original settings, they have more weight vs auto
+oshownode="${shownode}"		# store original settings, they have more weight vs auto
+
+is_cluster_mode
+cluster_mode=$?		# cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+	alljails=1
+	shownode=1
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
 
 [ -z "${display}" ] && display="jname,jid,ip4_addr,host_hostname,path,status"
 [ "${shownode}" = "1" ] && display="nodename,${display}"
@@ -25,10 +43,10 @@ init $*
 [ -z "${order}" ] && order="asc"
 
 #remove commas for loop action on header
-mydisplay=$( echo ${display} |/usr/bin/tr ',' '  ' )
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
 
 # upper for header
-myheader=$( echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]' )
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
 
 JLS=""
 
@@ -39,27 +57,47 @@ show_header()
 }
 
 # -j $jname
+# -s alternative SQL file
 # -u 1 - always show status as "Unregister"
 populate_output_data()
 {
 	local active
 	local unregister="0"
+	local _node_is_online=0 _md5_node_name
+
 	printf "${NORMAL}" # for column sort
 
-	while getopts "j:u:" opt; do
+	while getopts "j:s:u:" opt; do
 		case "${opt}" in
 			j) jname="${OPTARG}" ;;
+			s) sqlfile="${OPTARG}" ;;
 			u) unregister="1" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
 
-	active=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
+	[ -z "${sqlfile}" ] && sqlfile="local"
+	active=$( cbsdsql ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
 
-	if [ "${active}" != "0" ]; then
-		printf "${GREEN}"
+	if [ "${sqlfile}" != "local" ]; then
+		# pop status variable from node_is_online()
+		_md5_node_name=$( /sbin/md5 -q -s ${sqlfile} )
+		eval _node_is_online=\$node_${_md5_node_name}_online
+		if [ "${_node_is_online}" = "1" ]; then
+			if [ "${active}" != "0" ]; then
+				printf "${GREEN}"
+			else
+				printf "${CYAN}"
+			fi
+		else
+			printf "${DGRAY}"
+		fi
 	else
-		printf "${CYAN}"
+		if [ "${active}" != "0" ]; then
+			printf "${GREEN}"
+		else
+			printf "${CYAN}"
+		fi
 	fi
 
 	#populate values for in output string
@@ -96,7 +134,7 @@ show_jaildata_from_sql()
 		[ "${emulator}" = "virtualbox" ] && continue
 
 		conv_status
-		populate_output_data -j ${jname}
+		populate_output_data -j ${jname} -s ${sqlfile}
 
 	done
 }
@@ -116,6 +154,7 @@ show_local()
 	jid="0"
 
 	for J in $( /bin/ls ${jailrcconfdir} ); do
+		[ "${J}" = "dir.id" ] && continue
 		jname=""
 		[ ! -r ${jailrcconfdir}/${J} ] && continue
 		. ${jailrcconfdir}/${J}
@@ -129,10 +168,12 @@ show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$( cbsdsql nodes SELECT nodename FROM nodelist 2>/dev/null )
+	[ -z "${node}" ] && node=$( cbsdsql nodes SELECT nodename FROM nodelist 2>/dev/null | /usr/bin/xargs )
 
-	for _n in $node; do
+	for _n in ${node}; do
 		nodename="${_n}"
+		# init and export into $node_${md5_node_name}_online node status
+		node_is_online -n ${nodename} -e 1
 		show_jaildata_from_sql ${_n}
 	done
 }
@@ -152,7 +193,6 @@ show_jails()
 		show_local
 	fi
 }
-
 
 #### MAIN
 [ -z "${header}" ] && header=1

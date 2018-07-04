@@ -1,0 +1,165 @@
+#!/usr/local/bin/cbsd
+#v11.2.1
+MYARG=""
+MYOPTARG="alljails shownode display node header mode jname"
+MYDESC="Operate with bhyve storage controller"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve.html"
+ADDHELP="alljails=1 - get jaillist from remote node\n\
+shownode=1 - show nodename for jails\n\
+node= only for current node\n\
+header=0 don't print header\n\
+display= list by comma for column. Default: name,type,count,cache\n\
+mode=rescan - rescan vhd and sync info in sql base\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+. ${workdir}/bhyve.subr
+. ${workdir}/virtual.subr
+
+[ -z "${display}" ] && display="jname,name,type,count,cache"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${WHITE}${BOLD}${myheader}${NORMAL}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val dsk_size
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ -z "${_status}" ]; then
+			_status="${NORMAL}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	[ -n "${2}" ] && jname="${2}"
+
+	_status=
+	_sql="SELECT name,type,count,cache FROM bhyve_dskcontroller"
+	cbsdsql ${sqlfile} ${_sql}| while read name type count cache; do
+		populate_output_data
+		printf "${GREEN}"
+		printf "${_status}"
+		printf "${NORMAL}\n"
+	done
+
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && node=$(cbsd node mode=list header=0 allinfo=0)
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode _status _vm _lvm
+
+	show_header
+
+	for _vm in ${vms}; do
+		_lvm="${jailsysdir}/${_vm}/local.sqlite"
+		[ -r "${_lvm}" ] && show_jaildata_from_sql ${_lvm} ${_vm}
+	done
+
+}
+
+show_dsk()
+{
+
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	if [ -n "${alljails}" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+
+}
+
+vm_list()
+{
+	if [ -n "${jname}" ]; then
+		vms="${jname}"
+	else
+		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" | /usr/bin/xargs )
+	fi
+}
+
+
+rescan_dsk()
+{
+	local _dsk _res
+	[ -z "${jname}" ] && err 1 "${MAGENTA}Please specify ${GREEN}jname=${NORMAL}"
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}no such jail: ${GREEN}${jname}${NORMAL}"
+	for _dsk in $( /usr/bin/find ${data} -depth 1 -maxdepth 1 -name *.vhd -exec basename {} \; ); do
+		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${_dsk}\"" 2>/dev/null );
+		if [ -z "${_res}" ]; then
+			${ECHO} "${MAGENTA}Found new disk: ${GREEN}${_dsk}${MAGENTA} for ${GREEN}${jname}${NORMAL}"
+			cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"virtio-blk\",\"${_dsk}\","0" )"
+		fi
+	done
+}
+
+vms=
+vm_list
+
+#### MAIN
+if [ "${mode}" = "rescan" ]; then
+	rescan_dsk
+	exit 0
+fi
+
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_dsk | /usr/bin/column -t

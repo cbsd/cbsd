@@ -125,7 +125,8 @@ int main(int argc, char *argv[])
 
 		if (nev == 0) {
 			//timeout 
-			strcpy(cmd,".");
+			fprintf(stderr,".\r\n");
+			fflush(stderr);
 			//continue;
 		} else {
 			if (ev.fflags & NOTE_DELETE) {
@@ -162,10 +163,9 @@ int main(int argc, char *argv[])
 				strcpy(cmd,"revoked ");
 				ev.fflags &= ~NOTE_REVOKE;
 			}
+			fprintf(stdout,"%s\r\n",cmd);
+			fflush(stdout);
 		}
-
-		fprintf(stdout,"%s\r\n",cmd);
-		fflush(stdout);
-		}
+	}
 }
 
