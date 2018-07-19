@@ -1,0 +1,177 @@
+#
+if [ ! "$_CBSD_MULTIPLE_SUBR" ]; then
+_CBSD_MULTIPLE_SUBR=1
+###
+## A handler for multiple generic tasks over environments
+##
+## typical use:
+##   in main program:
+##   a) prepare and run the necessary tasks through tasks
+##   b) take a TASKID list in $multiple_task_id_all global vars
+##   c) execute mutliple_processing_spawn -n "consumer name" -o "taskowner"
+## where taskowner - uniq world for this task
+## e.g:
+## --
+# #${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+# task_id=
+# task_id_cur=
+# task_owner="pkg_install"
+#
+#for jname in ${jail_list}; do
+#	. ${jrcconf}
+#	[ ${myjid} -eq 0 ] && continue
+#	task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd pkg jname=${jname} ${*} 2>/dev/null )
+#	task_id="${task_id} ${task_id_cur}"
+#done
+#
+#multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+#multiple_processing_spawn -o multi_pkg_install -n "pkg install"
+## --
+###
+
+
+# _multiple_consumer_name as global variable for name in status string
+multiple_subr_info()
+{
+	local IFS=" "
+
+	[ -z "${_multiple_consumer_name}" ] && _multiple_consumer_name="multi"
+
+	if [ ${_pending_num} -ne 0 ]; then
+		_pending_state="${_pending_num}:[${_pending_jail}]"
+	else
+		_pending_state="${_pending_num}"
+	fi
+
+	if [ ${_active_num} -ne 0 ]; then
+		_active_state="${_active_num}:[${_active_jail}]"
+	else
+		_active_state="${_active_num}"
+	fi
+
+	printf "${CLRLINE}"
+	printf "${CURSORRST}"
+
+	printf "${GREEN} * [${MAGENTA}${_multiple_consumer_name}: ${GREEN}pending: ${LGREEN}${_pending_state}${MAGENTA}, ${YELLOW}active: ${LYELLOW}${_active_state}${GREEN}]${NORMAL}" 1>&2
+
+}
+
+multiple_tail_stale_log()
+{
+	local i
+
+	local IFS="|"
+
+	cbsdsql ${sqlfile} SELECT logfile,jname FROM taskd WHERE owner=\"${_multiple_task_owner}\" AND id IN \( ${multiple_task_id_all} \) AND status=\"1\" | while read logfile jname; do
+		[ ! -r ${logfile} ] && continue
+		IFS=" "
+		${ECHO} "${MAGENTA}Last 200 line of logfile for :${GREEN}${jname}${NORMAL}"
+		echo "---cut---"
+		/usr/bin/tail -n200 ${logfile}
+		echo
+		echo "---end---"
+		IFS="|"
+	done
+}
+
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+multiple_processing_spawn()
+{
+	local ret
+
+	while getopts "n:o:" opt; do
+		case "${opt}" in
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) _multiple_task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_multiple_task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+	[ -z "${multiple_task_id_all}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty multiple_task_id_all global variable${NORMAL}"
+
+	sqlfile="cbsdtaskd"
+	ret=1
+	trap 'multiple_tail_stale_log' SIGINFO
+
+	while [ ${ret} -ne 0 ]; do
+		_pending_num=0
+		_active_num=0
+
+		_pending_jail=
+		_active_jail=
+
+		# and control task for each task execution
+		OIFS=${IFS}
+		IFS="|"
+
+		cbsdsql ${sqlfile} SELECT id,status,logfile,errcode,jname,st_time,end_time FROM taskd WHERE owner=\"${_multiple_task_owner}\" AND id IN \( ${multiple_task_id_all} \) | while read _id _status _logfile _errcode _jname _st_time _end_time; do
+			IFS=${OIFS}
+
+			if [ ${_status} -eq 0 ]; then
+				_pending_num=$(( _pending_num + 1 ))
+				_pending_jail="${_pending_jail} ${_jname}"
+			fi
+
+			if [ ${_status} -eq 1 ]; then
+				_active_num=$(( _active_num + 1 ))
+				_active_jail="${_active_jail} ${_jname}"
+			fi
+
+			if [ ${_status} -eq 2 ]; then
+				tasktime=$(( _end_time - _st_time ))
+				case ${_errcode} in
+					0)
+						STATE="${GREEN}success in ${tasktime} sec:${NORMAL}"
+						;;
+					*)
+						STATE="${LRED}failed in ${tasktime} sec:${NORMAL}"
+						;;
+				esac
+
+				echo
+				${ECHO} "${LYELLOW}${_jname}${GREEN}: ${STATE}${NORMAL}"
+				if [ -f ${_logfile} ]; then
+					echo
+					/bin/cat ${_logfile}
+					echo
+					/bin/rm -f ${_logfile}
+				fi
+				cbsdsql ${sqlfile} DELETE FROM taskd WHERE id=\"${_id}\"
+			else
+				/bin/cat > /tmp/cbsd_multiple.lock.$$ <<EOF
+_pending_num="${_pending_num}"
+_active_num="${_active_num}"
+_pending_jail="${_pending_jail}"
+_active_jail="${_active_jail}"
+EOF
+			fi
+
+			IFS="|"
+
+		done
+
+		IFS=${OIFS}
+
+		if [ -r /tmp/cbsd_multiple.lock.$$ ]; then
+			. /tmp/cbsd_multiple.lock.$$
+			multiple_subr_info
+			# Waiting for other task
+			/bin/rm -f /tmp/cbsd_multiple.lock.$$
+			# push changes to cbsdd
+			[ ${ret} -eq 1 ] && /usr/bin/touch ${dbdir}/cbsdtaskd.sqlite
+			sleep 1
+		else
+			# all finished, exit
+			ret=0
+		fi
+	done
+
+	echo
+	return 0
+}
+
+
+###
+fi
