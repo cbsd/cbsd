@@ -23,10 +23,9 @@
 
 #include "sqlcmd.h"
 
-#define SQLITE_BUSY_TIMEOUT	5000
+//#define SQLITE_BUSY_TIMEOUT	5000
 
 char *delim;
-
 
 char *
 nm(void)
@@ -85,8 +84,11 @@ sqlitecmd(int argc, char **argv)
 	int		ret = 0;
 	sqlite3_stmt   *stmt;
 	char		*cp;
+	int		maxretry = 20;
+	int		retry = 0;
 
-	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
+//	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
+	const char journal_mode_sql[] = "PRAGMA journal_mode = WAL;";
 
 	if ((cp = lookupvar("sqldelimer")) == NULL)
 		delim = DEFSQLDELIMER;
@@ -121,7 +123,9 @@ sqlitecmd(int argc, char **argv)
 	}
 	free(dbfile);
 
-	sqlite3_busy_timeout(db, SQLITE_BUSY_TIMEOUT);
+//	sqlite3_busy_timeout(db, SQLITE_BUSY_TIMEOUT);
+	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
+	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
 
 	res = 0;
 	for (i = 2; i < argc; i++)
@@ -138,8 +142,18 @@ sqlitecmd(int argc, char **argv)
 		tmp[-1] = 0;
 	}
 
-	sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
-	ret = 	sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+	do {
+		sqlite3_exec(db, "BEGIN", 0, 0, 0);
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+		sqlite3_exec(db, "COMMIT", 0, 0, 0);
+		if (ret==SQLITE_OK)
+			break;
+		usleep(10000);
+		retry++;
+		if ( retry>maxretry )
+			break;
+//		sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
+	} while (ret != SQLITE_OK);
 
 	if (ret == SQLITE_OK) {
 		ret = sqlite3_step(stmt);

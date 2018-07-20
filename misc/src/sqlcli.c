@@ -10,7 +10,7 @@
 
 #include "sqlcli.h"
 
-#define SQLITE_BUSY_TIMEOUT 5000
+//#define SQLITE_BUSY_TIMEOUT 5000
 
 char *
 nm(void)
@@ -81,7 +81,7 @@ main(int argc, char **argv)
 	char           *query;
 	char           *tmp;
 	char           *err = NULL;
-	int		maxretry = 10;
+	int		maxretry = 20;
 	int		retry = 0;
 	sqlite3_stmt   *stmt;
 	int		ret;
@@ -102,6 +102,10 @@ main(int argc, char **argv)
 		return 1;
 	}
 	res = 0;
+
+	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
+	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
+
 	for (i = 2; i < argc; i++)
 		res += strlen(argv[i]) + 1;
 	if (res) {
@@ -116,7 +120,17 @@ main(int argc, char **argv)
 		tmp[-1] = 0;
 	}
 
-	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+	do {
+		sqlite3_exec(db, "BEGIN", 0, 0, 0);
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+		sqlite3_exec(db, "COMMIT", 0, 0, 0);
+		if (ret==SQLITE_OK)
+			break;
+		usleep(10000);
+		retry++;
+		if (retry>maxretry)
+			break;
+	} while (ret != SQLITE_OK);
 
 	if (ret == SQLITE_OK) {
 		ret = sqlite3_step(stmt);
@@ -126,7 +140,6 @@ main(int argc, char **argv)
 			ret = sqlite3_step(stmt);
 		}
 	}
-
 	sqlite3_finalize(stmt);
 	sqlite3_free(query);
 	sqlite3_close(db);

@@ -1,10 +1,14 @@
 #!/usr/local/bin/cbsd
 #v11.2.0
-MYARG="jname"
+MYARG="jname mode"
 MYOPTARG="name poweroff"
 MYDESC="bhyve checkpoint"
 CBSDMODULE="bhyve"
-ADDHELP="name= name of checkpoint. by default: checkpoint\n\
+ADDHELP="mode=create,list,destroyall\
+  create   - create new checkpoint\
+  list     - show available checkpoint for current domain\
+  destroyall - destoy all checkpoints for current domain\
+name= name of checkpoint. by default: checkpoint\n\
 poweroff=  - 1 - turn off the domain immediately after checkpoint, by default - 0\n"
 
 . ${subr}
@@ -20,51 +24,82 @@ init $*
 oname="${name}"
 
 . ${jrcconf}
-#[ $? -eq 1 ] && try_remote
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such domains: ${GREEN}${jname}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && log_err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
-[ ${jid} -eq 0 ] && log_err 1 "Not running"
 
 # restore original name
 name="${oname}"
 
-[ -z "${name}" ] && log_err 1 "${MAGENTA}Empty checkpoint name${NORMAL}"
+CHECKPOINT_DIR="${jailsysdir}/${jname}/checkpoints"
+[ ! -d ${CHECKPOINT_DIR} ] && /bin/mkdir -p ${CHECKPOINT_DIR}
 
-CHECKPOINT="${jailsysdir}/${jname}/${name}.ckp"
+checkpoint_create()
+{
+	[ ${jid} -eq 0 ] && log_err 1 "Not running"
+	[ -z "${name}" ] && log_err 1 "${MAGENTA}Empty checkpoint name${NORMAL}"
 
-# todo: check for .ckp extenions
+	CHECKPOINT="${CHECKPOINT_DIR}/${name}.ckp"
 
-if [ -r ${CHECKPOINT} ]; then
-	${ECHO} "${MAGENTA}Prune old checkpoint...${NORMAL}"
-	cbsdlogger NOTICE ${CBSD_APP}: prune old checkpoint: ${CHECKPOINT}
-	/bin/rm -f ${CHECKPOINT} ${CHECKPOINT}.kern ${CHECKPOINT}.meta
-fi
+	# todo: check for .ckp extenions
 
-if [ ${poweroff} -eq 1 ]; then
-	# we must shutdown VM after the checkpoint is created.
-	# We guarantee that it will not work any more, freezing its condition before snapshot.
-	# In this life, VM will never wake up and we can kill VM hard
-	#bpause jname=${jname} mode=on
-	/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
+	if [ -r ${CHECKPOINT} ]; then
+		${ECHO} "${MAGENTA}Prune old checkpoint...${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: prune old checkpoint: ${CHECKPOINT}
+		/bin/rm -f ${CHECKPOINT} ${CHECKPOINT}.kern ${CHECKPOINT}.meta
+	fi
+
+	if [ ${poweroff} -eq 1 ]; then
+		# we must shutdown VM after the checkpoint is created.
+		# We guarantee that it will not work any more, freezing its condition before snapshot.
+		# In this life, VM will never wake up and we can kill VM hard
+		#bpause jname=${jname} mode=on
+		/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
+		sync
+		cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
+		# todo: rewrite to file modification test
+		for i in $( /usr/bin/seq 1 5 ); do
+			${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
+			sleep 1
+		done
+		# kill the virtual machine immediately
+		bstop jname=${jname} noacpi=1
+		cbsdlogger NOTICE ${CBSD_APP}: stop ${jname} due to checkpoint poweroff=1: ${CHECKPOINT}
+	else
+		/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
+		sync
+		cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
+		# todo: rewrite to file modification test
+		for i in $( /usr/bin/seq 1 5 ); do
+			${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
+			sleep 1
+		done
+	fi
+
 	sync
-	cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
-	# todo: rewrite to file modification test
-	for i in $( /usr/bin/seq 1 5 ); do
-		${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
-		sleep 1
-	done
-	# kill the virtual machine immediately
-	bstop jname=${jname} noacpi=1
-	cbsdlogger NOTICE ${CBSD_APP}: stop ${jname} due to checkpoint poweroff=1: ${CHECKPOINT}
-else
-	/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
-	sync
-	cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
-	# todo: rewrite to file modification test
-	for i in $( /usr/bin/seq 1 5 ); do
-		${ECHO} "${MAGENTA}Waiting and sure that the info is written on the disk: ${GREEN}${i}/5${NORMAL}"
-		sleep 1
-	done
-fi
+	${ECHO} "${MAGENTA}Checkpoint was created!: ${GREEN}${CHECKPOINT}${NORMAL}"
+	return 0
+}
 
-sync
-log_err 0 "${MAGENTA}Checkpoint was created!: ${GREEN}${CHECKPOINT}${NORMAL}"
+checkpoint_list()
+{
+	${ECHO} "${MAGENTA}Created checkpoint for ${GREEN}${jname}${MAGENTA}:${NORMAL}"
+	/usr/bin/find ${CHECKPOINT_DIR}/ -type f -depth 1 -maxdepth 1 -name \*.ckp -exec /usr/bin/basename {} \; | /usr/bin/sort | while read _file; do
+		p1=${_file%%.*}
+		p2=${_file##*.}
+		echo ${p1}
+	done
+}
+
+case "${mode}" in
+	create)
+		checkpoint_create
+		;;
+	destroyall)
+		[ -d ${CHECKPOINT_DIR} ] && /bin/rm -rf ${CHECKPOINT_DIR}
+		;;
+	list)
+		checkpoint_list
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+esac

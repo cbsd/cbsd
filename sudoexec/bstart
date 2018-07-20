@@ -1,9 +1,10 @@
 #!/usr/local/bin/cbsd
 #v11.1.17
 MYARG=""
-MYOPTARG="jname inter debug"
+MYOPTARG="jname inter debug checkpoint"
 MYDESC="Start jail"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
+  checkpoint - start from specified checkpoint name\n"
 CBSDMODULE="bhyve"
 EXTHELP="wf_jstop_jstart.html"
 
@@ -340,12 +341,17 @@ media_auto_eject="${media_auto_eject}"
 nice='${nice}'
 EOF
 
-	CHECKPOINT="${jailsysdir}/${jname}/checkpoint.ckp"
+	checkpoint_args=
 
-	if [ -r ${CHECKPOINT} ]; then
-		checkpoint_args="-r ${CHECKPOINT}"
-	else
-		checkpoint_args=
+	if [ -n "${checkpoint}" ]; then
+		CHECKPOINT_DIR="${jailsysdir}/${jname}/checkpoints"
+		CHECKPOINT="${CHECKPOINT_DIR}/${checkpoint}.ckp"
+		if [ -r ${CHECKPOINT} ]; then
+			${ECHO} "${MAGENTA}Checkpoint found, starting from: ${GREEN}${CHECKPOINT}${NORMAL}"
+			checkpoint_args="-r ${CHECKPOINT}"
+		else
+			err 1 "${MAGENTA}Checkpoint not found: ${GREEN}${CHECKPOINT}${NORMAL}"
+		fi
 	fi
 
 	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf ${checkpoint_args}"
@@ -383,7 +389,7 @@ EOF
 
 	printf "${MAGENTA}Waiting for PID"
 	for i in $( /usr/bin/seq 10 ); do
-		vm_pid=$( /bin/ps axopid,ucomm,command|while read pid ucomm command; do
+		vm_pid=$( /bin/ps axopid,ucomm,command -ww | while read pid ucomm command; do
 			[ "${ucomm}" != "bhyve" ] && continue
 			cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
 
@@ -392,7 +398,7 @@ EOF
 				break
 			fi
 
-			if echo "${command}" |/usr/bin/egrep -q -e " ${jname}"$ 2>/dev/null; then
+			if echo "${command}" | /usr/bin/egrep -q -e " ${jname}"$ 2>/dev/null; then
 				echo ${pid}
 				break
 			fi
@@ -456,7 +462,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		sleep 12
 	done
 
-	wait_for_fpid start ${parallel}
+	wait_for_fpid -a start -t ${parallel}
 
 	err 0 "${MAGENTA}Multiple bstart: ${GREEN}done${NORMAL}"
 fi

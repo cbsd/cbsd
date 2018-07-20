@@ -21,10 +21,10 @@ NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 #LDADD= -ledit -ltermcap -lsqlite3 -lm -pthread -ljail
-LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs --static` -lm -lc++
+LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm -lc++
 
 #CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
-CFLAGS+=-DSHELL -static -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 
 # WITH LUA
 #CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
