@@ -126,7 +126,8 @@ main(int argc, char **argv)
 		sqlite3_exec(db, "COMMIT", 0, 0, 0);
 		if (ret==SQLITE_OK)
 			break;
-		usleep(10000);
+		if (ret==SQLITE_BUSY)
+			usleep(5000);
 		retry++;
 		if (retry>maxretry)
 			break;
