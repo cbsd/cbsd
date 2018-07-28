@@ -96,7 +96,6 @@ cbsd: pkg-config-check
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd
 
-
 install:
 	${MKDIR} -p ${DESTDIR}${PREFIX}/cbsd
 	${CP} -Rpv * ${DESTDIR}${PREFIX}/cbsd/
