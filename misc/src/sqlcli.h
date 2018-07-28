@@ -41,6 +41,7 @@ const struct jail_db jaildb_info[] = {
 	{"allow_mount", "boolean default 0"},
 	{"allow_devfs", "boolean default 0"},
 	{"allow_nullfs", "boolean default 0"},
+	{"allow_fusefs", "boolean default 0"},
 	{"mount_fstab", "boolean default 0"},
 	{"mkhostsfile", "boolean default 0"},
 	{"devfs_ruleset", "integer default 0"},

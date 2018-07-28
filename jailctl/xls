@@ -2,22 +2,50 @@
 #v11.1.12
 CBSDMODULE="xen"
 MYARG=""
-MYOPTARG="alljails shownode display node header"
+MYOPTARG="alljails shownode display node header order"
 MYDESC="List jail and status"
 ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n"
+display= list by comma for column. Default: jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+order= asc (default) or desc\n"
 EXTHELP="wf_xls.html"
 
 . ${subr}
 . ${strings}
+. ${nodes}
 
 readconf xls.conf
 init $*
 
-[ -z "${display}" ] && display="jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
+oalljails="${alljails}"		# store original settings, they have more weight vs auto
+oshownode="${shownode}"		# store original settings, they have more weight vs auto
+
+# autosettings for alljails and shownode
+is_cluster_mode
+cluster_mode=$?         # cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+	alljails=1
+	shownode=1
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
+
+if [ -z "${display}" ]; then
+#	case "${racct}" in
+#		1)
+#			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port"
+#			;;
+#		*)
+			display="jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
+#			;;
+#	esac
+fi
+
 [ "${shownode}" = "1" ] && display="nodename,${display}"
 [ -z "${order}" ] && order="asc"
 
@@ -25,7 +53,7 @@ init $*
 mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
 
 # upper for header
-myheader=$( echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]' )
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
 
 JLS=""
 
@@ -59,8 +87,16 @@ conv_status()
 
 show_header()
 {
-	local _header="${BOLD}${myheader}${NORMAL}"
-	[ ${header} -eq 1 ] && $ECHO ${_header}
+	local _header="${WHITE}${BOLD}${myheader}${NORMAL}"
+	[ ${header} -eq 1 ] && ${ECHO} ${_header}
+}
+
+# $1 - pid
+get_rctl()
+{
+	local _val
+
+	get_rctl_values -m process -p ${1} -j ${jname}
 }
 
 # -j $jname
@@ -88,7 +124,7 @@ populate_output_data()
 	_ALLJCOL="vm_cpus,vm_ram,vm_os_type,vm_os_profile,ip4_addr"
 
 	# empty string on remote node if cbsd version is mistmatch ( diff. jail schema )
-	_A=$( 2>/dev/null env sqldelimer="|" ${miscdir}/sqlcli  ${jailsysdir}/${jname}/local.sqlite "SELECT ${_ALLJCOL} FROM settings ORDER BY (created) DESC LIMIT 1;" )
+	_A=$( 2>/dev/null env sqldelimer="|" ${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "SELECT ${_ALLJCOL} FROM settings ORDER BY (created) DESC LIMIT 1;" )
 
 	[ -z "${_A}" ] && return 1
 
@@ -115,7 +151,7 @@ populate_output_data()
 				fi
 				;;
 			ip4_addr)
-				_val=$( cbsdsql local "SELECT ip4_addr FROM bhyve WHERE jname=\"${jname}\"" 2>/dev/null )
+				_val=$( cbsdsql local "SELECT ip4_addr FROM xen WHERE jname=\"${jname}\"" 2>/dev/null )
 				[ "${_val}" = "(null)" ] && _val="DHCP"
 				;;
 		esac
