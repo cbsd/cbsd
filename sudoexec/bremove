@@ -130,6 +130,7 @@ for jname in ${JLIST}; do
 	external_exec_master_script "remove.d"
 
 	PARRENT_SNAPSHOTS=""
+	DEPENDENT_VMS=""
 	if [ ${unregister} -eq 0 ] ; then
 		if [  ${jid} -ne 0 ]; then
 			case "${emulator}" in
@@ -147,7 +148,28 @@ for jname in ${JLIST}; do
 		fi
 		# auto-promote if we have children
 		if [ ${zfsfeat} -eq 1 ]; then
-			for disk_path in $( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" ); do
+			base_vm_disks=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
+			for vm_item in $( cbsdsql storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
+				vm=$( echo ${vm_item} | cut -f 1 -d '|' )
+				disk_path=$( echo ${vm_item} | cut -f 2 -d '|' )
+				disk_zvol=$( readlink -f ${disk_path} | sed 's;^/dev/zvol/;;' )
+				parrent_snapshot=$( zfs get -Ho value origin ${disk_zvol} )
+				if [ "${parrent_snapshot}" = "-" ]; then
+					continue
+				fi
+				original_disk=$( echo ${parrent_snapshot} | sed "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
+				for _disk_path in ${base_vm_disks}; do
+					original_disk_path=$( readlink -f ${_disk_path} )
+					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
+						DEPENDENT_VMS="${DEPENDENT_VMS} ${vm}"
+					fi
+				done
+			done
+			if [ ! -z "${DEPENDENT_VMS}" ]; then
+				${ECHO} "${MAGENTA}The following machines depend on ${jname}:${NORMAL}${DEPENDENT_VMS}" >&2
+				exit 1
+			fi
+			for disk_path in ${base_vm_disks}; do
 				disk_zvol=$( readlink -f ${disk_path} | sed 's;^/dev/zvol/;;' )
 				parrent_snapshot=$( zfs get -Ho value origin ${disk_zvol} )
 				if [ "${parrent_snapshot}" != "-" ]; then
