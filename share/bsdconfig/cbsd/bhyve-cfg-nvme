@@ -1,0 +1,225 @@
+#!/usr/local/bin/cbsd
+
+. ${subr}
+. ${strings}
+. ${tools}
+. ${workdir}/virtual.subr
+
+############################################################ FUNCTIONS
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+
+	local title=" nvme Properties ${jname}:${nvme} "
+	hline=
+
+	local prompt="${_desc}"
+	local sqldelimer=" "
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,devpath,ram,maxq,qsz,ioslots,sectsz,ser FROM bhyve_nvme WHERE devpath=\"${nvme}\"" | while read id devpath ram maxq qsz ioslots sectsz ser; do
+		[ -z "${id}" ] && return 0
+		echo "export nvme_id=\"${id}\""
+		echo "export new_nvme_devpath=\"${devpath}\""
+		echo "export new_nvme_ram=\"${ram}\""
+		echo "export new_nvme_maxq=\"${maxq}\""
+		echo "export new_nvme_qsz=\"${qsz}\""
+		echo "export new_nvme_ioslots=\"${ioslots}\""
+		echo "export new_nvme_sectsz=\"${sectsz}\""
+		echo "export new_nvme_ser=\"${ser}\""
+		nvme_last_id=$(( nvme_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create nvme map${NORMAL}"
+
+	local menu_list="
+		'ram'		'${new_nvme_ram}'	'ram=size_in_MiB'
+		'maxq'		'${new_nvme_maxq}'	'Max number of queues'
+		'qsz'		'${new_nvme_qsz}'	'Max elements in each queue'
+		'ioslots'	'${new_nvme_ioslots}'	'Max number of concurrent I/O equests'
+		'sectsz'	'${new_nvme_sectsz}'	'Sector size (defaults to blockif sector size)'
+		'ser'		'${new_nvme_ser}'	'Serial number with maximum 20 characters'
+		'-'		'-'			''
+		'remove'	'remove'		'Remove NVMe'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname nvme"
+MYOPTARG=""
+MYDESC="Edit properties for vitual image of VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
+. ${dialog}
+
+. ${workdir}/bsdconfig.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-nvme.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+. ${workdir}/bhyve.subr
+. $BSDCFG_LIBE/$APP_DIR/include/bhyve-nvme.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_bhyvenvme "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+. ${workdir}/bhyve.subr
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-")
+					continue
+					;;
+				"devpath")
+					get_nvme_devpath
+					if [ -n "${new_nvme_devpath}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET devpath=\"${new_nvme_devpath}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"ram")
+					get_nvme_ram
+					if [ -n "${new_nvme_ram}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET ram=\"${new_nvme_ram}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"maxq")
+					get_nvme_maxq
+					if [ -n "${new_nvme_maxq}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET mazq=\"${new_nvme_maxq}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"qsz")
+					get_nvme_qsz
+					if [ -n "${new_nvme_qsz}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET qsz=\"${new_nvme_qsz}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"ioslots")
+					get_nvme_ioslots
+					if [ -n "${new_nvme_ioslots}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET ioslots=\"${new_nvme_ioslots}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"sectsz")
+					get_nvme_sectsz
+					if [ -n "${new_nvme_sectsz}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET sectsz=\"${new_nvme_sectsz}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				"ser")
+					get_nvme_ser
+					if [ -n "${new_nvme_ser}" ]; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyve_nvme SET ser=\"${new_nvme_ser}\" WHERE devpath=\"${nvme}\"
+					fi
+					;;
+				remove)
+					if getyesno "Detach and remove ${nvme} from ${jname} VM?"; then
+						cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyve_nvme WHERE devpath=\"${nvme}\"
+						f_die
+					fi
+					;;
+				*)
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

@@ -11,19 +11,22 @@ dialog_menu_main()
 {
 	local _input _retval
 
-	local btitle="${DIALOG_BACKTITLE}"
-	local title=" ${jname} ${ctr}: New NVMe "
+	local btitle="$DIALOG_BACKTITLE"
+	local title=" ${jname} ${nvme}: New Controller "
 	hline=
 
 	local prompt="${_desc}"
 
 	local menu_list="
-		'type'		'${new_nvme_type}'	'Select controller type'
-		'name'		'${new_nvme_name}'	'Name of controller'
-		'count'		'${new_nvme_count}'	'Max Port Count'
-		'cache'		'${new_nvme_cache}'	'Use Host I/O Cache'
-		'-'		'-'		''
-		'COMMIT'	'COMMIT'	'Create and attach new disk'
+		'devpath'	'${new_nvme_devpath}'	'/dev/blockdev or /path/to/image - path to device'
+		'ram'		'${new_nvme_ram}'	'ram=size_in_MiB'
+		'maxq'		'${new_nvme_maxq}'	'Max number of queues'
+		'qsz'		'${new_nvme_qsz}'	'Max elements in each queue'
+		'ioslots'	'${new_nvme_ioslots}'	'Max number of concurrent I/O equests'
+		'sectsz'	'${new_nvme_sectsz}'	'Sector size (defaults to blockif sector size)'
+		'ser'		'${new_nvme_ser}'	'Serial number with maximum 20 characters'
+		'-'		'-'			''
+		'COMMIT'	'COMMIT'	'Create and attach new NVMe'
 	" # END-QUOTE
 
 	local height width rows
@@ -56,20 +59,20 @@ dialog_menu_main()
 
 	local retval=$?
 	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "${menu_choice}"
+	f_dialog_menutag_store "$menu_choice"
 
 	# Only update default-item on success
-	[ ${retval} -eq $DIALOG_OK ] && f_dialog_default_store "${menu_choice}"
-	return ${retval}
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
 }
 
 
 ############################################################ MAIN
 export NOCOLOR=1
 
-MYARG="jname ctr"
+MYARG="jname nvme"
 MYOPTARG=""
-MYDESC="Add and attach new vitual NVMe controller to VM"
+MYDESC="Add and attach new vitual image to VM"
 CBSDMODULE="bhyve"
 
 globalconf="${workdir}/cbsd.conf";
@@ -94,7 +97,7 @@ f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-nvme.subr
 . $BSDCFG_LIBE/$APP_DIR/include/bhyve-nvme.subr
 . ${workdir}/bhyve.subr
 
-#load_ctr_info
+#load_nvme_info
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -112,9 +115,17 @@ shift $(( $OPTIND - 1 ))
 #
 # Initialize
 #
-f_dialog_title " ${msg_configure_bhyve_nvme} "
+f_dialog_title " $msg_add_bhyvenvme "
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
+
+
+cur_nvme_count=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
+
+if [ "${cur_nvme_count}" != "0" ]; then
+	f_dialog_msgbox "Sorry, this version support only one NVMe controller per guest"
+	exit 0
+fi
 
 #
 # Loop over the main menu until we've accomplished what we came here to do
@@ -122,7 +133,7 @@ f_mustberoot_init
 while :; do
 
 	if [ -z "${new_nvme_name}" -a -n "${new_nvme_type}" ]; then
-		new_nvme_name="${ctr}_${new_nvme_type}"
+		new_nvme_name="${nvme}_${new_nvme_type}"
 	fi
 	[ -z "${new_nvme_count}" ] && new_nvme_count="8"
 	[ -z "${new_nvme_cache}" ] && new_nvme_cache="nocache"
@@ -138,27 +149,36 @@ while :; do
 				?" $msg_exit")
 					break
 					;;
-				"-"|slot|ctr_type)
+				"-"|slot|nvme_type)
 					continue
 					;;
-				"name")
-					get_ctr_name
+				"devpath")
+					get_nvme_devpath
 					;;
-				"type")
-					get_ctr_type
+				"ram")
+					get_nvme_ram
 					;;
-				"count")
-					get_ctr_count
+				"maxq")
+					get_nvme_maxq
 					;;
-				"cache")
-					get_ctr_cache
+				"qsz")
+					get_nvme_qsz
+					;;
+				"ioslots")
+					get_nvme_ioslots
+					;;
+				"sectsz")
+					get_nvme_sectsz
+					;;
+				"ser")
+					get_nvme_ser
 					;;
 				"COMMIT")
-					if [ -z "${new_nvme_name}" -o -z "${new_nvme_type}" -o -z "${new_nvme_count}" -o -z "${new_nvme_cache}" ]; then
-						f_dialog_msgbox "all field is mandatory"
+					if [ -z "${new_nvme_devpath}" ]; then
+						f_dialog_msgbox "devpath field is mandatory"
 						continue
 					fi
-					_res=$( add_ctr -c ${new_nvme_count} -n "${new_nvme_name}" -t ${new_nvme_type} -z ${new_nvme_cache} )
+					_res=$( add_nvme -d "${new_nvme_devpath}" -i "${new_nvme_ioslots}" -m "${new_nvme_maxq}" -q "${new_nvme_qsz}" -r "${new_nvme_ram}" -s "${new_nvme_sectsz}" -v "${new_nvme_ser}" )
 					if [ $? -ne 0 ]; then
 						f_dialog_msgbox "Error: ${_res}"
 					else
@@ -167,8 +187,8 @@ while :; do
 					;;
 				*)
 					index=${mtag%% *}
-					ctr=${mtag##* }
-					command="bhyvectr-cfgctr jname=${jname} ctr=${ctr}"
+					nvme=${mtag##* }
+					command="bhyvenvme-cfgnvme jname=${jname} nvme=${nvme}"
 					;;
 			esac
 			;;
