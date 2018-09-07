@@ -116,7 +116,25 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
 
-	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${jname}"
+	if [ -n "${live_migration_args}" ]; then
+		# check that this is for me
+		if [ ! -r ${jailsysdir}/${jname}/live_migration.conf ]; then
+			live_migration_args=
+			break
+		else
+			. ${jailsysdir}/${jname}/live_migration.conf
+			my_hostname=$( cat ${workdir}/nodename | awk '{printf $1}' )
+			if [ "${my_hostname}" = "${live_migration_dst_nodename}" ]; then
+				# this is for me!
+				live_migration_args="-R ${live_migration_args}"
+			else
+				# this is not for me!
+				live_migration_args=
+			fi
+		fi
+	fi
+
+	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t CBSD "[debug] ${bhyve_cmd}"
@@ -166,6 +184,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	reset
 	clear
 done
+
+# live migration todo
+# check for bhyve migrated successfull to me ( bregister and/or bstatus passed ? )
 
 # extra destroy
 /usr/bin/nice -n ${nice} /usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1 || true
