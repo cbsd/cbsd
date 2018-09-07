@@ -1,12 +1,20 @@
 #!/usr/local/bin/cbsd
 #v11.1.17
 MYARG=""
-MYOPTARG="jname inter debug checkpoint"
+MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport"
 MYDESC="Start jail"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
-  checkpoint - start from specified checkpoint name\n"
+  checkpoint   - start from specified checkpoint name\n\
+  lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
+  lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
+  lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n"
 CBSDMODULE="bhyve"
 EXTHELP="wf_jstop_jstart.html"
+
+# by default - no live-migrated domain
+lm="0"
+lm_dport=
+lm_rnodename=
 
 . ${subr}
 . ${system}
@@ -266,10 +274,18 @@ start_bhyve()
 		unset lpc_args
 	fi
 
-
 	# init vnc_args
-	if ! compile_vnc_args ; then
+	if ! compile_vnc_args; then
 		unset vnc_args
+	fi
+
+	if [ "${lm}" = "1" -a -n "${lm_rnodename}"  ]; then
+		[ -z "${lm_dport}" ] && lm_dport="0"
+		# prepare live_migration_args and {jailsysdir}/${jname}/live_migration.conf config for live migration
+		${ECHO} "${MAGENTA}Compile live migration settings...${NORMAL}"
+		if ! compile_live_migration_args -a ${lm_rnodename} -b ${nodename} -p ${lm_dport}; then
+			unset live_migration_args
+		fi
 	fi
 
 	# Poehali!
@@ -344,6 +360,7 @@ bhyve_vnc_vgaconf="${bhyve_vnc_vgaconf}"
 media_auto_eject="${media_auto_eject}"
 
 nice='${nice}'
+live_migration_args='${live_migration_args}'
 EOF
 
 	checkpoint_args=
@@ -478,26 +495,68 @@ fi
 st_time=$( /bin/date +%s )
 [ -z "${jname}" ] && jname=$1
 
-. ${jrcconf}
-if [ $? -eq 1 ]; then
-	# remote start
-	[ ${sqlreplica} -eq 0 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
-	remotenode=$( bwhereis ${jname} )
-	[ -z "${remotenode}" ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
-	for i in ${remotenode}; do
-		if [ "${i}" = "${nodename}" ]; then
-			${ECHO} "${MAGENTA}Remote bstart: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
-			continue
-		fi
-		${ECHO} "${MAGENTA}Remote bstart: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
-		rexe node=${i} cbsd bstart jname=${jname}
-		if [ $? -eq 0 ]; then
-			# updating state and put task for retrinv inventory
-			${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
-			task mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
-		fi
+if [ "${lm}" = "0" ]; then
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		# remote start
+		[ ${sqlreplica} -eq 0 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+		remotenode=$( bwhereis ${jname} )
+		[ -z "${remotenode}" ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+		for i in ${remotenode}; do
+			if [ "${i}" = "${nodename}" ]; then
+				${ECHO} "${MAGENTA}Remote bstart: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
+				continue
+			fi
+			${ECHO} "${MAGENTA}Remote bstart: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
+			rexe node=${i} cbsd bstart jname=${jname}
+			if [ $? -eq 0 ]; then
+				# updating state and put task for retrinv inventory
+				${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
+				task mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+			fi
+		done
+		exit 0
+	fi
+else
+	# Request for live migration start
+	. ${nodes}
+	${ECHO} "${MAGENTA}Request for live migration...${NORMAL}"
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${MAGENTA}This is local domain! Please unregister first: ${GREEN}${jname}${NORMAL}"
+
+	RHST=
+
+	if [ -z "${lm_rnodename}" ]; then
+		# detect remote hoster name by $jname in cluster
+		RHST=$( bwhereis ${jname} | /usr/bin/head -n1 )
+		[ -z "${RHST}" ] && err 1 "${MAGENTA}No such domain in the current CBSD cluster: ${GREEN}${jname}${NORMAL}"
+		lm_rnodename="${RHST}"	# for rjrcconf
+	else
+		RHST="${lm_rnodename}"
+	fi
+	# extra check
+	_tmp=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${lm_rnodename}\" )
+	[ -z "${_tmp}" ] && err 1 "${MAGENTA}No such node in the current CBSD cluster: ${GREEN}${lm_rnodename}${NORMAL}"
+
+	# todo: check for node idle and online, rexe?
+	# todo2: extra check for shared storage
+	shared_dir="jails-data jails-rcconf jails-system"
+
+	${ECHO} "   ${LCYAN}* ${MAGENTA}check for shared storage: ${NORMAL}"
+
+	for i in ${shared_dir}; do
+		printf "      ${LCYAN}* ${GREEN}${i}: ${NORMAL}"
+		check_for_shared_dir -d ${i} -n ${lm_rnodename} || err 1 "${MAGENTA}directory id do not match, dir not shared: ${GREEN}${i}${MAGENTA} ?${NORMAL}"
+		printf "${LYELLOW}ok${NORMAL}"
+		echo
 	done
-	exit 0
+
+	emulator="bhyve"
+	. ${rjrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}Request for live migration: no such VM in cluster: ${GREEN}${jname}${MAGENTA}. Perhaps you forget to: ${GREEN}cbsd node mode=add${MAGENTA} ?${NORMAL}"
+	. ${workdir}/jcreate.subr       # for export_bhyve_data_for_external_hook
+	export_bhyve_data_for_external_hook
 fi
 
 default_profile="bhyve-default-default.conf"
@@ -511,8 +570,10 @@ readconf bstart.conf
 
 readconf ${default_profile}
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+if [ "${lm}" = "0" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+fi
 
 [ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
 
@@ -529,6 +590,8 @@ elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt 16 ]; then
 fi
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+# todo: NVMe
+# todo: Controller
 MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 
 [ -z "${MDFILE}" ] && ${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"

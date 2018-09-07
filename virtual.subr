@@ -322,18 +322,57 @@ check_for_empty_hdd()
 }
 
 
-# print next free vnc/rdp port
-# $1 - start port
-get_next_rd_port()
+# print next free tcp port on specified IP
+# do a tcp port scan through nc(1)
+# we use mainly for searching free port for VNC/Spice or port for live migration
+# -a (optional) address to scan (e.g: -a 127.0.0.1 which is default)
+# -e (mandatory) end port range (e.g: -e 6000)
+# -s (mandatory) start port range (e.g: -s 5900)
+# -w (optional) nc(1) timeout (e.g: -w 2 which is default)
+# return 0 and print found port to stdout when free port available
+# return 1 and print '0' to stdout when no free port in current range
+get_next_tcp_port()
 {
-	local _start=5900
+	local _start_port _end_port _nc_timeout _address
 
-	[ -n "${1}" ] && _start="$1"
-
-	for _rd_port in $( /usr/bin/seq ${_start} 6000 ); do
-		/usr/bin/nc -w 2 -z 127.0.0.1 ${_rd_port} > /dev/null 2>&1 || break
+	while getopts "a:e:s:w:" opt; do
+		case "${opt}" in
+			a) _address="${OPTARG}" ;;
+			e) _end_port="${OPTARG}" ;;
+			s) _start_port="${OPTARG}" ;;
+			w) _nc_timeout="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
 	done
-	echo ${_rd_port}
+
+	# some defaults
+	[ -z "${_address}" ] && _address="127.0.0.1"
+	[ -z "${_nc_timeout}" ] && _nc_timeout=2
+
+	if [ -z "${_start_port}" -o -z "${_end_port}" ]; then
+		${ECHO} "${LRED}Warning: ${MAGENTA}${CBSD_APP}: get_next_tcp_port: empty _start_port or _end_port params${NORMAL}"
+		cbsdlogger WARNING ${CBSD_APP}: get_next_tcp_port: empty _start_port or _end_port params
+		return 1
+	fi
+
+	if [ ${_start_port} -gt ${_end_port} ]; then
+		${ECHO} "${LRED}Warning: ${MAGENTA}${CBSD_APP}: _start_port ${_start_port} greater then _end_port ${_end_port}${NORMAL}"
+		cbsdlogger WARNING ${CBSD_APP}: _start_port ${_start_port} greater then _end_port ${_end_port}
+		return 1
+	fi
+
+	for _tcp_port in $( /usr/bin/seq ${_start_port} ${_end_port} ); do
+		/usr/bin/nc -w ${_nc_timeout} -z ${_address} ${_tcp_port} > /dev/null 2>&1 || break
+	done
+
+	if [ ${_tcp_port} -eq ${_end_port} ]; then
+		cbsdlogger WARNING ${CBSD_APP}: no free port available from ${_start_port} to ${_end_port} range at ${_address}
+		echo "0"
+		return 1
+	fi
+
+	echo ${_tcp_port}
+	return 0
 }
 
 # check 1 when DMAR detected

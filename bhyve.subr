@@ -717,6 +717,93 @@ compile_virtio_9p_args()
 	return 0
 }
 
+
+# export $live_migration_args and store live migration settings
+# into ${jailsysdir}/${jname}/live_migration.conf ascii file
+# for later use on source node upon 'bhyvectl --migrate' stage
+# variables on conf:
+#  - $live_migration_dst_node_ip
+#  - $live_migration_src_node_ip
+#  - $live_migration_dst_port
+#  - $live_migration_src_nodename
+#  - $live_migration_dst_nodename
+# At the moment, we assume that DFS is being used.
+# Therefore, the problem with the transfer of this information
+# to the source node at the moment is missing: just read the file
+# -a (required) - nodename of the CBSD source node
+# -b (required) - nodename of the CBSD recipient node
+# -p (required) - port for migration data exchange on recipient node, can be '0' for auto
+# -x (optional) - IP of the CBSD source node
+# -y (optional) - IP of the CBSD recipiend node
+compile_live_migration_args()
+{
+	local _dst_port _src_nodename _dst_nodename _src_nodename_ip _dst_nodename_ip
+
+	live_migration_args=
+
+	while getopts "a:b:p:x:y:" opt; do
+		case "${opt}" in
+			a) _src_nodename="${OPTARG}" ;;
+			b) _dst_nodename="${OPTARG}" ;;
+			p) _dst_port="${OPTARG}" ;;
+			x) _src_nodename_ip="${OPTARG}" ;;
+			y) _dst_nodename_ip="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${_dst_port}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty dst_port, please use -p${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_src_nodename}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty src_nodename, please use -a${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_dst_nodename}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty dst_nodename, please use -a${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_src_nodename_ip}" ]; then
+		# obtain IP of source node from database
+		_src_nodename_ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${_src_nodename}\" )
+		if [ -z "${_src_nodename_ip}" ]; then
+			${ECHO} "${MAGENTA}Failed to obtain _src_nodename_ip for node ${_src_nodename}. Is this node added to cluster? Please use first: ${GREEN}cbsd node mode=add node=${_src_nodename}${NORMAL}"
+			return 1
+		fi
+	fi
+	if [ -z "${_dst_nodename_ip}" ]; then
+		# we assume that this is current node, so use $nodeip
+		_dst_nodename_ip=$( getinfo mode=quiet nodeip )
+		if [ -z "${_dst_nodename_ip}" ]; then
+			${ECHO} "${MAGENTA}Failed to obtain _dst_nodename_ip for current node. ${GREEN}nodeip${MAGENTA} specified? You can change this via: ${GREEN}cbsd initenv-tui${NORMAL}"
+			return 1
+		fi
+	fi
+
+	# auto rport?
+	if [ "${rport}" = "0" ]; then
+		rport=$( get_next_tcp_port -s 20000 -e 21000 )
+		[ $? -ne 0 ] && err 1 "${MAGENTA}no free available port in 20000-21000 range for live migration${NORMAL}"
+	fi
+
+	# store info into ascii files
+	/bin/cat > ${jailsysdir}/${jname}/live_migration.conf << EOF
+live_migration_src_nodename="${_src_nodename}"		# nodename of the CBSD source node
+live_migration_dst_nodename="${_dst_nodename}"		# nodename of the CBSD destination node
+live_migration_dst_port="${_dst_port}"			# port for migration data exchange on destination node
+live_migration_src_nodename_ip="${_src_nodename_ip}"	# IP of the CBSD source node
+live_migration_dst_nodename_ip="${_dst_nodename_ip}"	# IP of the CBSD destination node
+EOF
+
+	${ECHO} "${MAGENTA}Live migration configuration stored and ready: waiting from: ${GREEN}${_src_nodename}:${_src_nodename_ip} ${MAGENTA}to${GREEN} me(${_dst_nodename}:${_dst_nodename_ip})${MAGENTA}"
+
+	live_migration_args="-R ${_src_nodename_ip},${_dst_port}"
+
+	return 0
+}
+
+
 # export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)
 # $iso_img must be present
 compile_cd_args()
@@ -945,7 +1032,8 @@ compile_vnc_args()
 
 	case "${vm_vnc_port}" in
 		0)
-			vm_port=$( get_next_rd_port )
+			vm_port=$( get_next_tcp_port -s 5900 -e 6900 )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}no free available port in 5900-6900 range${NORMAL}"
 			;;
 		1)
 			return 1
