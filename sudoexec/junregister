@@ -1,0 +1,84 @@
+#!/usr/local/bin/cbsd
+#v11.1.3
+MYARG="jname"
+MYOPTARG="dbfile mode rcfile"
+MYDESC="Register jail records to SQLite from ASCii config or re-populate ASCii config from SQLite"
+ADDHELP="mode= set (apply), unset, show (show current state) or get (show limits)\n\
+rcfile=alternarive path for rcconf instead of jails-rcconf dir\n"
+CBSDMODULE="jail"
+
+. ${subr}
+. ${strings}
+. ${tools}
+
+init $*
+
+. ${workdir}/env_register.subr
+
+emulator="jail" # for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	JLIST="${jail_list}"
+else
+	JLIST="${jname}"
+fi
+
+for jname in ${JLIST}; do
+	ret=0
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		# jail can be alread unregistered
+		JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+		if [ ! -f "${JAILRCCONF}" ]; then
+			${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+			continue
+		else
+			${ECHO} "${MAGENTA}Already unregistered: ${GREEN}${jname}${NORMAL}"
+			continue
+		fi
+	fi
+
+	if [ ${jid} -ne 0 ]; then
+		${ECHO} "${MAGENTA}Jail is active. Please stop them first: ${GREEN}${jname}${NORMAL}"
+		ret=1
+		continue
+	fi
+
+	[ -z "${dbfile}" ] && dbfile="${dbdir}/local.sqlite"
+	if [ ! -f "${dbfile}" ]; then
+		${ECHO} "${MAGENTA}inventorydb not found. You must create them first via misc/updatesql: ${GREEN}${dbfile}${NORMAL}"
+		ret=1
+		continue
+	fi
+
+	if [ -z "${rcfile}" ]; then
+		JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+	else
+		JAILRCCONF="${rcfile}"
+	fi
+
+	jmkrcconf jname=${jname} > ${JAILRCCONF}
+	res=$( replacewdir file0="${JAILRCCONF}" old=${workdir} new="CBSDROOT" )
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		/bin/rm -f ${JAILRCCONF}
+		err 1 "${MAGENTA}Error replacewdir for ${JAILRCCONF}: ${res}${NORMAL}"
+	fi
+
+	if [ -r ${mount_fstab} ]; then
+		res=$( replacewdir file0="${mount_fstab}" old=${workdir} new="CBSDROOT" )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Error replacewdir for ${mount_fstab}: ${res}${NORMAL}"
+	fi
+
+	if [ -r {mount_fstab}.local ]; then
+		res=$( replacewdir file0="{mount_fstab}.local" old=${workdir} new="CBSDROOT" )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Error replacewdir for ${mount_fstab}.local: ${res}${NORMAL}"
+	fi
+
+	register_delete_full
+done
+
+exit ${ret}
