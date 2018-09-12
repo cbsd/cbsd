@@ -42,6 +42,77 @@ fi
 
 need_for_restart=0
 
+# todo:
+# this code duplicates in settings-tui.subr in get_construct_ip4_addr
+# with small difference (dialog). merge into one
+validate_ipaddr()
+{
+	[ -z "${ip4_addr}" ] && return 1
+	. ${workdir}/vnet.subr	# for is_nic_exist
+	for _i in ${ip4_addr}; do
+		ipwmask ${_i}
+		[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+		iptype ${IWM}
+		if [ $? -ne 0 ]; then
+			if [ -n "${V_INTERFACE}" -a -n "${V_IP}" ]; then
+				if ! is_nic_exist -n ${V_INTERFACE}; then
+					log_err 1 "${MAGENTA}jset for ${jname} error: interface not exist: ${GREEN}${V_INTERFACE}${NORMAL}"
+				fi
+				_myip="${_myip} ${V_IP}"
+			else
+				_myip="${_myip} ${IWM}"
+			fi
+		fi
+	done
+
+	# check for other jail
+	IFS="|"
+	_i=0
+	eval $( cbsdsql local SELECT jname,ip4_addr FROM jails WHERE ip4_addr!="0" 2>/dev/null | while read _jname _ips; do
+		echo jname${_i}=\"$_jname\"
+		echo ips${_i}=\"${_ips}\"
+		_i=$(( _i + 1 ))
+	done )
+	unset IFS
+
+	for _i in $( /usr/bin/seq 0 255 ); do
+		_ok=1
+		unset _existing_ipjail _existing_ip
+		eval _jname="\$jname$_i"
+		[ -z "${_jname}" ] && break
+		# skip for myself
+		[ "${_jname}" = "${jname}" ] && continue
+
+		eval _existing_ipjail="\$ips$_i"
+		[ -z "${_existing_ipjail}" ] && break
+
+		_existing_ipjail=$( echo ${_existing_ipjail} | /usr/bin/tr "," " " )
+
+		for _x in ${_existing_ipjail}; do
+			[ "${_x}" = "DHCP" ] && continue
+			ipwmask ${_x}
+			[ -z "${IWM}" ] && continue
+			iptype ${IWM}
+			[ $? -eq 1 ] && _existing_ip="${_existing_ip} ${IWM}"
+		done
+
+		[ -z "${_existing_ip}" ] && continue
+
+		for _x in ${_existing_ip}; do
+			for _j in ${_myip}; do
+				[ "${_x}" = "${_j}" ] && _ok=0 && break
+			done
+			[ ${_ok} -eq 0 ] && break
+		done
+
+		if [ ${_ok} -eq 0 ]; then
+			${ECHO} "${LRED}jset warning: ${MAGENTA}IP address ${GREEN}${_j}${MAGENTA} already assigned to jail: ${GREEN}${_jname}${NORMAL}"
+		fi
+	done # check for local jail end
+}
+
+
 # jid, interface, ip4_addr and jname must be set
 modify_ipaddr()
 {
@@ -55,6 +126,9 @@ modify_ipaddr()
 		cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: on-the-fly currently disabled because option interface is 0
 		return 0
 	fi
+
+	# extra check
+	validate_ipaddr
 
 	IFS=","
 
@@ -406,7 +480,7 @@ need_action()
 			[ -z "${oldval}" ] && oldval="0"
 			;;
 		*)
-			oldval=$( cbsdsql local SELECT ${i} FROM jails  WHERE jname=\"${jname}\" LIMIT 1 2>/dev/null )
+			oldval=$( cbsdsql local SELECT ${i} FROM jails WHERE jname=\"${jname}\" LIMIT 1 2>/dev/null )
 			;;
 	esac
 
@@ -440,6 +514,9 @@ update_jails()
 		nic_hwaddr)
 			cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE jailnic SET nic_hwaddr=\"${VAL}\" WHERE name=\"epairb\"
 			return 0
+			;;
+		ip4_addr)
+			validate_ipaddr
 			;;
 	esac
 
