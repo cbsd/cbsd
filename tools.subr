@@ -217,7 +217,7 @@ node_state()
 # -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
 select_jail_by_list()
 {
-	local tmpfile
+	local tmpdir tmpfile
 	local _ret _id i=1
 	local sqldelimer=" "
 	local emulator="jls"
@@ -228,6 +228,7 @@ select_jail_by_list()
 	local searchstr
 	local active="."
 	local only_online_node=0	# only online node
+	local curr_time
 
 	while getopts "a:r:s:e:o:" opt; do
 		case "${opt}" in
@@ -261,12 +262,14 @@ select_jail_by_list()
 
 	${ECHO} "${MAGENTA}${subject}${NORMAL}"
 
+	tmpdir=$( /usr/bin/mktemp -d )
 	tmpfile=$( /usr/bin/mktemp )
-	/usr/bin/truncate -s0 ${tmpfile}
 
 	local my_nodename="${nodename}"
 
-	${searchstr} shownode=1 display=jname,status header=0 order=asc | /usr/bin/egrep ${active}$ |while read nodename jname status; do
+	curr_time=$( /bin/date +%s )
+
+	${searchstr} shownode=1 display=jname,status header=0 order=asc | /usr/bin/egrep ${active}$ | while read nodename jname status; do
 		# continue only when any node status or when node is online (when -r 1)
 		node_state || continue
 		[ -z "${nodename}" ] && continue
@@ -282,14 +285,45 @@ select_jail_by_list()
 				;;
 		esac
 
-		echo "${active}:${jname}:${nodename}" >> ${tmpfile}
+		echo "${active}:${jname}:${nodename}" >> ${tmpdir}/${jname}.img
+		sqllistdelimer=" "
+
+		case "${emulator}" in
+			jls)
+				info=$( cbsdsql local SELECT ip4_addr,ver,state_time FROM jails WHERE jname=\"${jname}\" )
+				sqllist "${info}" ip4_addr ver state_time
+
+				diff_time=$(( curr_time - state_time ))
+				run_time=$(( diff_time / 60 ))
+
+				if [ ${active} -eq 1 ]; then
+					${ECHO} "${LCYAN}ip_addr: ${LYELLOW}${ip4_addr}${LCYAN}; ver: ${LYELLOW}${ver}${LCYAN}; uptime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+				else
+					${ECHO} "${LCYAN}downtime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+				fi
+				;;
+			bls)
+				if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
+					info=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT vm_cpus,vm_os_type,state_time FROM settings )
+					sqllist "${info}" vm_cpus vm_os_type state_time
+					diff_time=$(( curr_time - state_time ))
+					run_time=$(( diff_time / 60 ))
+					if [ ${active} -eq 1 ]; then
+						${ECHO} "${LCYAN}os: ${LYELLOW}${vm_os_type}${LCYAN}; core's: ${LYELLOW}${vm_cpus}${LCYAN}; uptime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+					else
+						${ECHO} "${LCYAN}os: ${LYELLOW}${vm_os_type}${LCYAN}; core's: ${LYELLOW}${vm_cpus}${LCYAN}; ${LCYAN}downtime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+					fi
+				fi
+				;;
+		esac
 	done
 
-	_ret=$( /usr/bin/stat -f "%z" ${tmpfile} 2>/dev/null )
-	[ "${_ret}" = "0" ] && err 1 "${MAGENTA}No ${stuff} found${NORMAL}"
+	#_ret=$( /usr/bin/stat -f "%z" ${tmpfile} 2>/dev/null )
+	#[ "${_ret}" = "0" ] && err 1 "${MAGENTA}No ${stuff} found${NORMAL}"
 
-	select_jail ${tmpfile} 2>/dev/null
+	select_jail ${tmpdir} ${tmpfile} 2>/dev/null
 	_ret=$?
+	/bin/rm -rf ${tmpdir}
 
 	case "${_ret}" in
 		0)
