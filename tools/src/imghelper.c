@@ -18,6 +18,8 @@ enum {
 	C_END_SIGN,
 	C_INFILE,
 	C_OUTFILE,
+	C_PARAM,
+	C_NEWVAL,
 	C_HELP,
 };
 
@@ -37,23 +39,28 @@ int main(int argc, char *argv[])
 	int c;
 	int len_st=0;
 	int len_end=0;
-	char buf_start[len_st];
-	char buf_end[len_end];
+	int len_param=0;
 	char *end = NULL;
 	char *st = NULL;
 	char *infile = NULL;
 	char *outfile = NULL;
+	char *param = NULL;
+	char *newval = NULL;
 	int win = FALSE;
 	int optcode = 0;
 	int option_index = 0, ret = 0;
 	int is_header=0;		//search for first MByte only
-	off_t total_bytes;		//bytes processed
+	int find_param=0;               //also find and replace param= by newval
+	char *newval_buf;
+	off_t total_bytes=0;		//bytes processed
 
 	static struct option long_options[] = {
 		{"start", required_argument, 0, C_START_SIGN},
 		{"end", required_argument, 0, C_END_SIGN},
 		{"infile", required_argument, 0, C_INFILE},
 		{"outfile", required_argument, 0, C_OUTFILE},
+		{"param", required_argument, 0, C_PARAM},
+		{"newval", required_argument, 0, C_NEWVAL},
 		{"help", no_argument, 0, C_HELP},
 		/* End of options marker */
 		{0, 0, 0, 0}
@@ -86,6 +93,18 @@ int main(int argc, char *argv[])
 				if (!strcmp(st,"___NCSTART_HEADER=1"))
 					is_header=1;		// we are looking header only at the beginning
 				break;
+			case C_PARAM:
+				param = malloc(strlen(optarg) + 1);
+				memset(param, 0, strlen(optarg) + 1);
+				strcpy(param, optarg);
+				find_param=1;
+				break;
+			case C_NEWVAL:
+				newval = malloc(strlen(optarg) + 1);
+				memset(newval, 0, strlen(optarg) + 1);
+				strcpy(newval, optarg);
+				find_param=1;
+				break;
 			case C_HELP:
 				usage();
 		}
@@ -102,17 +121,32 @@ int main(int argc, char *argv[])
 
 	off_t start_pos=0;
 	off_t stop_pos=0;
+	off_t param_pos=0;
 
-	if ((fp = fopen(infile, "r")) == NULL) {
-			err(1,"error open: %s\r\n", infile);
+	if (find_param==1) {
+		len_param=strlen(param);
+		newval_buf=malloc(len_param+strlen(newval)+3);		// +2: extra char for quotes + \0
+		printf("Find and replace param mode\r\n");
+		if ((fp = fopen(infile, "r+b")) == NULL) {
+				err(1,"error open for write: %s\r\n", infile);
+		}
+	} else {
+		if ((fp = fopen(infile, "r")) == NULL) {
+				err(1,"error open: %s\r\n", infile);
+		}
 	}
 
+	char buf_start[len_st];
+	char buf_end[len_end];
+	char buf_param[len_param];
+
 	int hammer=0;
+	int hammer_param=0;
 	int i=0;
+	int j=0;
 
 	// first pass - label scan
 	while ( hammer!= 2 ) {
-
 		c=getc(fp);
 		total_bytes++;
 		if (feof(fp)) break;
@@ -145,6 +179,23 @@ int main(int argc, char *argv[])
 					i=0;
 				}
 
+				if (find_param==1) {
+					if (c==param[j]) {
+						buf_param[j]=c;
+						j++;
+					} else {
+						j=0;
+					}
+					if (j == len_param ) {
+						param_pos=ftello(fp) - len_param;
+						fseek( fp, param_pos, SEEK_SET );
+						sprintf(newval_buf,"%s=\"%s\"\n",param,newval);
+						fwrite( newval_buf, strlen(newval_buf), 1, fp );
+						find_param=0;
+						fclose(fp);
+						exit(0);
+					}
+				}
 				if (i == len_end) {
 					stop_pos=ftello(fp) - len_end;
 					hammer++;
