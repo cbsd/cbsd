@@ -43,7 +43,7 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "f:e:")) != -1)
 		switch((char)ch) {
 		case 'e':
-			bytes_expected=atoi(optarg);
+			bytes_expected=atoll(optarg);
 			break;
 		case 'f':
 			filename = optarg;
