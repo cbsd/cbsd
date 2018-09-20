@@ -99,6 +99,7 @@ compile_uefi_boot_args()
 	case "${vm_boot}" in
 		hdd)
 			if [ "${vm_os_type}" != "openbsd" -a "${vm_os_type}" != "freebsd" ]; then
+			#if [ "${vm_os_type}" != "openbsd" ]; then
 				uefi_boot_args="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
 			fi
 			;;
@@ -245,6 +246,61 @@ compile_dsk_controller_args()
 	return 0
 }
 
+
+# -s <n>,nvme,devpath,maxq=#,qsz=#,ioslots=#,sectsz=#,ser=A-Z
+compile_nvme_args()
+{
+	local prefix
+	local full_dsk_path
+	local sqldelimer=" "
+
+	nvme_args=
+
+	cur_nvme_count=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
+
+	[ "${cur_nvme_count}" = "0" ] && return 1
+
+	${ECHO} "${MAGENTA}NVMe controller: ${GREEN}${cur_nvme_count}${NORMAL}"
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,devpath,ram,maxq,qsz,ioslots,sectsz,ser FROM bhyve_nvme LIMIT 1" | while read id devpath ram maxq qsz ioslots sectsz ser; do
+		[ -z "${id}" ] && return 0
+		echo "export nvme_id=\"${id}\""
+		echo "export nvme_devpath=\"${devpath}\""
+		echo "export nvme_ram=\"${ram}\""
+		echo "export nvme_maxq=\"${maxq}\""
+		echo "export nvme_qsz=\"${qsz}\""
+		echo "export nvme_ioslots=\"${ioslots}\""
+		echo "export nvme_sectsz=\"${sectsz}\""
+		echo "export nvme_ser=\"${ser}\""
+		nvme_last_id=$(( nvme_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create nvme map${NORMAL}"
+
+	${ECHO} "${MAGENTA}NVMe controller path: ${GREEN}${nvme_devpath}${NORMAL}"
+
+	[ -z "${nvme_devpath}" ] && return 1
+
+	if ! next_pci_id; then
+		# no free pci bus
+		exit 0
+	fi
+
+	pcislot=${bhyve_pci_index}
+
+	nvme_args="-s ${pcislot}:0,nvme"
+
+	if [ ! -r ${nvme_devpath} ]; then
+		${ECHO} "${LDED}Warning: compile_nvme_args: path not available, skipp: ${GREEN}${nvme_devpath}${NORMAL}"
+		return 1
+	fi
+
+	# todo
+	# validation for ram>0 and so on..
+
+	nvme_args="${nvme_args},${nvme_devpath},ram=${nvme_ram}"
+
+	[ -z "${nvme_args}" ] && return 1
+	return 0
+}
 
 # print 5c:f9:dd:76:d5:c4 from 5cf9dd76d5c4
 normalize_nic_hwaddr()
@@ -661,6 +717,93 @@ compile_virtio_9p_args()
 	return 0
 }
 
+
+# export $live_migration_args and store live migration settings
+# into ${jailsysdir}/${jname}/live_migration.conf ascii file
+# for later use on source node upon 'bhyvectl --migrate' stage
+# variables on conf:
+#  - $live_migration_dst_node_ip
+#  - $live_migration_src_node_ip
+#  - $live_migration_dst_port
+#  - $live_migration_src_nodename
+#  - $live_migration_dst_nodename
+# At the moment, we assume that DFS is being used.
+# Therefore, the problem with the transfer of this information
+# to the source node at the moment is missing: just read the file
+# -a (required) - nodename of the CBSD source node
+# -b (required) - nodename of the CBSD recipient node
+# -p (required) - port for migration data exchange on recipient node, can be '0' for auto
+# -x (optional) - IP of the CBSD source node
+# -y (optional) - IP of the CBSD recipiend node
+compile_live_migration_args()
+{
+	local _dst_port _src_nodename _dst_nodename _src_nodename_ip _dst_nodename_ip
+
+	live_migration_args=
+
+	while getopts "a:b:p:x:y:" opt; do
+		case "${opt}" in
+			a) _src_nodename="${OPTARG}" ;;
+			b) _dst_nodename="${OPTARG}" ;;
+			p) _dst_port="${OPTARG}" ;;
+			x) _src_nodename_ip="${OPTARG}" ;;
+			y) _dst_nodename_ip="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${_dst_port}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty dst_port, please use -p${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_src_nodename}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty src_nodename, please use -a${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_dst_nodename}" ]; then
+		${ECHO} "${MAGENTA}compile_live_migration_args: empty dst_nodename, please use -a${NORMAL}"
+		return 1
+	fi
+	if [ -z "${_src_nodename_ip}" ]; then
+		# obtain IP of source node from database
+		_src_nodename_ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${_src_nodename}\" )
+		if [ -z "${_src_nodename_ip}" ]; then
+			${ECHO} "${MAGENTA}Failed to obtain _src_nodename_ip for node ${_src_nodename}. Is this node added to cluster? Please use first: ${GREEN}cbsd node mode=add node=${_src_nodename}${NORMAL}"
+			return 1
+		fi
+	fi
+	if [ -z "${_dst_nodename_ip}" ]; then
+		# we assume that this is current node, so use $nodeip
+		_dst_nodename_ip=$( getinfo mode=quiet nodeip )
+		if [ -z "${_dst_nodename_ip}" ]; then
+			${ECHO} "${MAGENTA}Failed to obtain _dst_nodename_ip for current node. ${GREEN}nodeip${MAGENTA} specified? You can change this via: ${GREEN}cbsd initenv-tui${NORMAL}"
+			return 1
+		fi
+	fi
+
+	# auto _dst_port?
+	if [ "${_dst_port}" = "0" ]; then
+		_dst_port=$( get_next_tcp_port -s 20000 -e 21000 )
+		[ $? -ne 0 ] && err 1 "${MAGENTA}no free available port in 20000-21000 range for live migration${NORMAL}"
+	fi
+
+	# store info into ascii files
+	/bin/cat > ${jailsysdir}/${jname}/live_migration.conf << EOF
+live_migration_src_nodename="${_src_nodename}"		# nodename of the CBSD source node
+live_migration_dst_nodename="${_dst_nodename}"		# nodename of the CBSD destination node
+live_migration_dst_port="${_dst_port}"			# port for migration data exchange on destination node
+live_migration_src_nodename_ip="${_src_nodename_ip}"	# IP of the CBSD source node
+live_migration_dst_nodename_ip="${_dst_nodename_ip}"	# IP of the CBSD destination node
+EOF
+
+	${ECHO} "${MAGENTA}Live migration configuration stored and ready: waiting from: ${LYELLOW}${_src_nodename}${MAGENTA}:${GREEN}${_src_nodename_ip} ${MAGENTA}to${LYELLOW} me${MAGENTA}(${LYELLOW}${_dst_nodename}${MAGENTA}:${GREEN}${_dst_nodename_ip}${MAGENTA})${NORMAL}"
+
+	live_migration_args="${_src_nodename_ip},${_dst_port}"
+
+	return 0
+}
+
+
 # export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)
 # $iso_img must be present
 compile_cd_args()
@@ -704,7 +847,7 @@ compile_cd_args()
 	#return 0
 
 	case "${vm_os_type}" in
-		openbsd)
+		openbsd|netbsd)
 			# small hack: openbsd use install.fs as hdd drive, not cd
 			cd_args="-s ${bhyve_pci_index}:0,ahci-hd,${iso_img},ro"
 			cd_args2=""
@@ -889,7 +1032,8 @@ compile_vnc_args()
 
 	case "${vm_vnc_port}" in
 		0)
-			vm_port=$( get_next_rd_port )
+			vm_port=$( get_next_tcp_port -s 5900 -e 6900 )
+			[ $? -ne 0 ] && err 1 "${MAGENTA}no free available port in 5900-6900 range${NORMAL}"
 			;;
 		1)
 			return 1
@@ -949,6 +1093,45 @@ compile_vnc_args()
 	fi
 
 	return 0
+}
+
+# -j ${jname}
+# return 0 when no VM process exist by $jname
+# return 1 when VM process exist with $jname + return $vm_pid and $vm_state variables
+check_for_bhyve_process()
+{
+	local jname
+	unset vm_pid vm_state
+
+	while getopts "j:" opt; do
+		case "${opt}" in
+			j) jname="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${jname}" ] && return 0
+
+	local search_cmd="bhyve: ${jname}"
+	local strlen_search_cmd=$( strlen "${search_cmd}" )
+
+	eval $( /bin/ps axopid,state,ucomm,command -ww | while read pid state ucomm command; do
+		[ "${ucomm}" != "bhyve" ] && continue
+		cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+		b_jname=$( echo "${command}" | /usr/bin/awk '/bhyve: /{print $2}' )
+
+		[ "${b_jname}" != "${jname}" ] && continue
+
+		echo vm_state=\"${state}\"
+		echo vm_pid=\"${pid}\"
+		break
+	done )
+
+	[ -z "${vm_pid}" ] && return 0
+
+	echo "vm_state = ${vm_state}"
+	echo "vm_pid = ${vm_pid}"
+	return 1
 }
 
 ###

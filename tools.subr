@@ -2,29 +2,79 @@ if [ ! "$_CBSD_TOOLS_SUBR" ]; then
 _CBSD_TOOLS_SUBR=1
 ###
 
+# auto-detect if $1 has vhid or iface (for ip4_addr normalization)
+is_special_ip()
+{
+	local _pos _p1 _p2 _ip i _res=
+	_ip="${1}"
+
+	[ -z "${_ip}" ] && return 0
+
+	OIFS="${IFS}"
+	IFS=","		# multiple IP separator
+
+	for i in ${_ip}; do
+		IFS="${OIFS}"
+		strpos --str="${i}" --search="#"
+		_pos=$?
+		if [ ${_pos} -ne 0 ]; then
+			# vhid or with iface
+			_p1=${i%%#*}
+			_p2=${i##*#}
+			if [ -z "${_res}" ]; then
+				_res="${_p2}"
+			else
+				_res="${_res},${_p2}"
+			fi
+		fi
+		IFS=","		# multiple IP separator
+	done
+	IFS="${OIFS}"
+
+	[ -z "${_res}" ] && _res="${_ip}"
+
+	printf "${_res}"
+	return ${_pos}
+}
+
+
 #v11.0.12
 #return 0 errcode for undefined type
 #return 1 errcode for ipv4
 #return 2 errcode for ipv6
 # fill VHID args when CARP-specific records
 # export IWM global variables
+# fill V_INTERFACE and V_IP by iface/ip_addr when:
+#   <iface>#<ip>
+# form received.
 iptype() {
-	local prefix p1 p2 ip
+	local prefix p1 p2 ip _special=0 _tmp
 	[ -z "${1}" ] && return 0
 	ip="${1}"
 
-	unset VHID IPWVHID
-	prefix=$( substr --pos=0 --len=4 --str=${ip} )
+	unset VHID IPWVHID V_INTERFACE V_IP
 
-	if [ "${prefix}" = "vhid" ]; then
-		p1=${ip%%#*}	# cut all after '#'
-		IPWVHID=${ip##*#}	# cut all before '#' (ip with mask)
-		ipwmask "${IPWVHID}"	# get IWM
-		VHID=${p1##*_}		# get VHID
-		. ${tools}
-		is_number ${VHID} && err 1 "${MAGENTA}Error in iptype: vhid should be number${NORMAL}"
+	_tmp=$( is_special_ip ${ip} )
+	_special=$?
+
+	# CARP or with IFACE
+	if [ ${_special} -ne 0 ]; then
+		prefix=$( substr --pos=0 --len=4 --str=${ip} )
+		if [ "${prefix}" = "vhid" ]; then
+			p1=${ip%%#*}	# cut all after '#'
+			IPWVHID=${ip##*#}	# cut all before '#' (ip with mask)
+			ipwmask "${IPWVHID}"	# get IWM
+			VHID=${p1##*_}		# get VHID
+			. ${tools}
+			is_number ${VHID} && err 1 "${MAGENTA}Error in iptype: vhid should be number${NORMAL}"
+			ipwmask "${1}"
+		else
+			# cut network prefix if exist
+			V_INTERFACE=${ip%%#*}
+			V_IP=${ip##*#}
+			ipwmask "${V_IP}"
+		fi
 	else
-		# cut network prefix if exist
 		ipwmask "${1}"
 	fi
 
@@ -44,7 +94,7 @@ iptype() {
 	# Identify type {inet,inet6}.
 	case "${IWM}" in
 		*\.*\.*\.*)
-			echo "${IWM}" |/usr/bin/egrep -q '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$' && return 1
+			echo "${IWM}" | /usr/bin/egrep -q '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$' && return 1
 			# its not ip
 			return 0
 		;;
@@ -55,7 +105,6 @@ iptype() {
 		;;
 	esac
 }
-
 
 resolvhost()
 {
@@ -168,7 +217,7 @@ node_state()
 # -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
 select_jail_by_list()
 {
-	local tmpfile
+	local tmpdir tmpfile
 	local _ret _id i=1
 	local sqldelimer=" "
 	local emulator="jls"
@@ -179,6 +228,7 @@ select_jail_by_list()
 	local searchstr
 	local active="."
 	local only_online_node=0	# only online node
+	local curr_time
 
 	while getopts "a:r:s:e:o:" opt; do
 		case "${opt}" in
@@ -212,12 +262,14 @@ select_jail_by_list()
 
 	${ECHO} "${MAGENTA}${subject}${NORMAL}"
 
+	tmpdir=$( /usr/bin/mktemp -d )
 	tmpfile=$( /usr/bin/mktemp )
-	/usr/bin/truncate -s0 ${tmpfile}
 
 	local my_nodename="${nodename}"
 
-	${searchstr} shownode=1 display=jname,status header=0 order=asc | /usr/bin/egrep ${active}$ |while read nodename jname status; do
+	curr_time=$( /bin/date +%s )
+
+	${searchstr} shownode=1 display=jname,status header=0 order=asc | /usr/bin/egrep ${active}$ | while read nodename jname status; do
 		# continue only when any node status or when node is online (when -r 1)
 		node_state || continue
 		[ -z "${nodename}" ] && continue
@@ -233,14 +285,45 @@ select_jail_by_list()
 				;;
 		esac
 
-		echo "${active}:${jname}:${nodename}" >> ${tmpfile}
+		echo "${active}:${jname}:${nodename}" >> ${tmpdir}/${jname}.img
+		sqllistdelimer=" "
+
+		case "${emulator}" in
+			jls)
+				info=$( cbsdsql local SELECT ip4_addr,ver,state_time FROM jails WHERE jname=\"${jname}\" )
+				sqllist "${info}" ip4_addr ver state_time
+
+				diff_time=$(( curr_time - state_time ))
+				run_time=$(( diff_time / 60 ))
+
+				if [ ${active} -eq 1 ]; then
+					${ECHO} "${LCYAN}ip_addr: ${LYELLOW}${ip4_addr}${LCYAN}; ver: ${LYELLOW}${ver}${LCYAN}; uptime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+				else
+					${ECHO} "${LCYAN}downtime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+				fi
+				;;
+			bls)
+				if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
+					info=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT vm_cpus,vm_os_type,state_time FROM settings )
+					sqllist "${info}" vm_cpus vm_os_type state_time
+					diff_time=$(( curr_time - state_time ))
+					run_time=$(( diff_time / 60 ))
+					if [ ${active} -eq 1 ]; then
+						${ECHO} "${LCYAN}os: ${LYELLOW}${vm_os_type}${LCYAN}; core's: ${LYELLOW}${vm_cpus}${LCYAN}; uptime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+					else
+						${ECHO} "${LCYAN}os: ${LYELLOW}${vm_os_type}${LCYAN}; core's: ${LYELLOW}${vm_cpus}${LCYAN}; ${LCYAN}downtime: ${LYELLOW}${run_time} min." > ${tmpdir}/${jname}.descr
+					fi
+				fi
+				;;
+		esac
 	done
 
-	_ret=$( /usr/bin/stat -f "%z" ${tmpfile} 2>/dev/null )
-	[ "${_ret}" = "0" ] && err 1 "${MAGENTA}No ${stuff} found${NORMAL}"
+	#_ret=$( /usr/bin/stat -f "%z" ${tmpfile} 2>/dev/null )
+	#[ "${_ret}" = "0" ] && err 1 "${MAGENTA}No ${stuff} found${NORMAL}"
 
-	select_jail ${tmpfile} 2>/dev/null
+	select_jail ${tmpdir} ${tmpfile} 2>/dev/null
 	_ret=$?
+	/bin/rm -rf ${tmpdir}
 
 	case "${_ret}" in
 		0)
@@ -337,7 +420,7 @@ jname_is_multiple()
 	fi
 
 	if [ ${is_mask} -ne 0 ]; then
-		jail_mask=$( echo ${jname} |/usr/bin/tr "*" "%" )
+		jail_mask=$( echo ${jname} | /usr/bin/tr "*" "%" )
 		jail_list=$( cbsdsql local SELECT jname FROM jails WHERE emulator = \"${emulator}\" AND jname LIKE \"${jail_mask}\" | /usr/bin/xargs )
 	fi
 }

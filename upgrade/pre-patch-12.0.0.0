@@ -1,0 +1,40 @@
+#!/bin/sh
+#v10.0.0
+# Update state_time values in bhyve settings when value is not timestampbhyvedsk tables for controller_id column
+: ${distdir="/usr/local/cbsd"}
+unset workdir
+
+# MAIN
+. /etc/rc.conf
+
+[ -z "${cbsd_workdir}" ] && exit
+
+workdir="${cbsd_workdir}"
+
+[ ! -f "${workdir}/cbsd.conf" ] && exit
+
+. ${distdir}/cbsd.conf
+. ${distdir}/tools.subr
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit
+
+vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+
+curr_time=$( /bin/date +%s )
+
+for i in ${vms}; do
+	mydb="${jailsysdir}/${i}/local.sqlite"
+	[ ! -r "${mydb}" ] && continue
+	unset _test
+	_test=$( ${miscdir}/sqlcli ${mydb} "SELECT state_time FROM settings LIMIT 1" )
+	[ -z "${_test}" ] && continue
+	# if the value contains a space is an invalid value
+	part1=
+	part2=
+	part1=${_test%% *}
+	part2=${_test##* }
+	[ "${part1}" = "${part2}" -o -z "${part2}" ] && continue
+	${ECHO} "  * ${MAGENTA}Convert bhyve state_time to timestamp value ${curr_time}: ${GREEN}${i}${NORMAL}"
+	${miscdir}/sqlcli ${mydb} UPDATE settings SET state_time="${curr_time}"
+done

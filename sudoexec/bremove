@@ -129,6 +129,8 @@ for jname in ${JLIST}; do
 	export_bhyve_data_for_external_hook
 	external_exec_master_script "remove.d"
 
+	PARRENT_SNAPSHOTS=""
+	DEPENDENT_VMS=""
 	if [ ${unregister} -eq 0 ] ; then
 		if [  ${jid} -ne 0 ]; then
 			case "${emulator}" in
@@ -144,19 +146,44 @@ for jname in ${JLIST}; do
 					;;
 			esac
 		fi
-		jcleanup jname=${jname}
-		/sbin/umount ${path} 2>/dev/null
 		# auto-promote if we have children
 		if [ ${zfsfeat} -eq 1 ]; then
-			/sbin/zfs get -H -o name,value origin |while read _name _values; do
-				[ "${_values}" = "-" ] && continue
-				echo "${_values}" |grep -q -E "${jname}@cbsd-original\-*" 2>/dev/null
-				if [ $? -eq 0 ]; then
-					${ECHO} "${MAGENTA}Auto-promote FS: ${GREEN}${_name}${NORMAL}"
-					/sbin/zfs promote ${_name}
+			base_vm_disks=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
+			for vm_item in $( cbsdsql storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
+				vm=$( echo ${vm_item} | /usr/bin/cut -f 1 -d '|' )
+				disk_path=$( echo ${vm_item} | /usr/bin/cut -f 2 -d '|' )
+				disk_zvol=$( readlink -f ${disk_path} | /usr/bin/sed 's;^/dev/zvol/;;' )
+				parrent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				if [ "${parrent_snapshot}" = "-" ]; then
+					continue
 				fi
-			done || true
+				original_disk=$( echo ${parrent_snapshot} | /usr/bin/sed "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
+				for _disk_path in ${base_vm_disks}; do
+					original_disk_path=$( /usr/bin/readlink -f ${_disk_path} )
+					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
+						DEPENDENT_VMS="${DEPENDENT_VMS}\n${vm}"
+					fi
+				done
+			done
+			if [ ! -z "${DEPENDENT_VMS}" ]; then
+				dep_vms=$( echo ${DEPENDENT_VMS} | /usr/bin/sort | /usr/bin/uniq )
+				err 1 "${MAGENTA}The following machines depend on ${jname}:${NORMAL} ${dep_vms}" >&2
+			fi
+			for disk_path in ${base_vm_disks}; do
+				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | /usr/bin/sed 's;^/dev/zvol/;;' )
+				parrent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				if [ "${parrent_snapshot}" != "-" ]; then
+					PARRENT_SNAPSHOTS="${PARRENT_SNAPSHOTS} ${parrent_snapshot}"
+				fi
+			done
+
+			path_parrent=$( /sbin/zfs get -Ho value origin ${DST} )
+			if [ "${path_parrent}" != "-" ]; then
+				PARRENT_SNAPSHOTS="${PARRENT_SNAPSHOTS} ${path_parrent}"
+			fi
 		fi
+		jcleanup jname=${jname}
+		/sbin/umount ${path} 2>/dev/null
 	fi
 
 	[ -d "${DST}" ] && removedata ${DST} force
@@ -169,6 +196,9 @@ for jname in ${JLIST}; do
 	[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf "${jailsysdir}/${jname}"
 	[ -f "${logdir}/${jname}.log" ] && /bin/rm -f "${logdir}/${jname}.log"
 	[ -d "${jaildir}/${jname}" ] && /bin/rmdir "${jaildir}/${jname}"
+	for parrent_snapshot in ${PARRENT_SNAPSHOTS}; do
+		/sbin/zfs destroy ${parrent_snapshot}
+	done
 
 	# detach ppt
 	cbsdsql local "DELETE FROM bhyveppt WHERE jname=\"${jname}\""

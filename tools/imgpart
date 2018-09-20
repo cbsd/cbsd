@@ -1,15 +1,20 @@
 #!/usr/local/bin/cbsd
 #v16.1.17
 MYARG="jname part mode"
-MYOPTARG="out hdrver compress emulator"
+MYOPTARG="out hdrver compress emulator filestats ebytes"
 MYDESC="Pack or extract chunk from from image"
 ADDHELP="out=path_to_file for ascii-part or directory to extract for binary\n\
 or for binary image from pack mode\n\
 part variants: header,rcconf,fstab,pkginfo,descr,info,sysdata,data\n\
 mode=pack,extract\n\
-compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n"
+compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
+filestats - save bytes stats for part=data into file in pack mode\n\
+ebytes - expected bytes (for pass into cbsdtee) in extract mode\n"
 
 . ${subr}
+
+filestats=
+ebytes=
 
 init $*
 
@@ -36,7 +41,11 @@ extractchunk()
 			;;
 		1)
 			[ -z "${out}" ] && out=$( /bin/pwd )
-			imghelper --start ${FROM} --end ${TO} --infile ${SRC} | /usr/bin/tar xpf - -C "${out}" --numeric-owner
+			if [ -z "${ebytes}" ]; then
+				imghelper --start ${FROM} --end ${TO} --infile ${SRC} | /usr/bin/tar xpf - -C "${out}" --numeric-owner
+			else
+				imghelper --start ${FROM} --end ${TO} --infile ${SRC} | ${miscdir}/cbsdtee -e ${ebytes} | /usr/bin/tar xpf - -C "${out}" --numeric-owner
+			fi
 			[ $? -ne 0 ] && err 1 "${MAGENTA}imghelper error${NORMAL}"
 			;;
 	esac
@@ -111,7 +120,7 @@ extractme()
 packme()
 {
 	local _hwnum=$( /sbin/sysctl -qn hw.ncpu )
-	local _dsk_list _zvol_list _zvol_name
+	local _dsk_list _zvol_list _zvol_name _my_nodename
 
 	[ -z "${_hwnum}" ] && _hwnum="0"
 
@@ -120,13 +129,19 @@ packme()
 			# use jailrcconfdir for back compatible with CBSD < 10.1.0
 			[ ! -f "${jailrcconfdir}/rc.conf_${jname}" -a ! -f "${jailsysdir}/${jname}/rc.conf_${jname}" ] && err 1 "${MAGENTA}No such rcconf for: ${GREEN}$jname${NORMAL}"
 			[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && . ${jailrcconfdir}/rc.conf_${jname}
-			[ -f "$jailsysdir/$jname/rc.conf_${jname}" ] && . $jailsysdir/$jname/rc.conf_${jname}
+			[ -f "$jailsysdir/$jname/rc.conf_${jname}" ] && . ${jailsysdir}/${jname}/rc.conf_${jname}
 			echo "add header"
 			DT=$( /bin/date "+%Y%m%d" )
 
+			if [ -r ~cbsd/nodename ]; then
+				_my_nodename=$( /bin/cat ~cbsd/nodename )
+			else
+				_my_nodename=$( /bin/hostname )
+			fi
+
 			/bin/cat > ${out} <<EOF
 ___NCSTART_HEADER=1
-hdrver="3"
+hdrver="4"
 jname="${jname}"
 compress="${compress}"
 arch="${arch}"
@@ -135,6 +150,8 @@ date="${DT}"
 emulator="${emulator}"
 ip4_addr="${ip4_addr}"
 host_hostname="${host_hostname}"
+from_nodename="${_my_nodename}"
+img_flat_size= ###########################################################################################
 EOF
 
 			# collect storage info
@@ -218,7 +235,7 @@ EOF
 		sysdata)
 			echo "add sysdata"
 			echo "___NCSTART_SYSDATA=1" >> ${out}
-			cd $jailsysdir
+			cd ${jailsysdir}
 			[ ! -d "$jname" ] && /bin/mkdir -p ${jname}
 			TMPCHUNK="$tmpdir/sys$$.tgz"
 			trap "/bin/rm -f ${TMPCHUNK}" 0 1 2 3 4
@@ -241,15 +258,29 @@ EOF
 			case "${compress}" in
 				0)
 					# no compression
-					/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) >> ${out}
+					if [ -n "${filestats}" ]; then
+						# save bytes statistics to ${filestats}
+						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | ${miscdir}/cbsdtee -f ${filestats} >> ${out}
+					else
+						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) >> ${out}
+					fi
 					;;
 				*)
-					/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) |/usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
+					if [ -n "${filestats}" ]; then
+						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | ${miscdir}/cbsdtee -f ${filestats} | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
+					else
+						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
+					fi
 					;;
 			esac
 
 			echo >> ${out}
 			echo "___NCSTOP_DATA=1" >> ${out}
+
+			if [ -n "${filestats}" -a -r "${filestats}" ]; then
+				. ${filestats}
+				imghelper --start ___NCSTART_HEADER=1 --end ___NCSTOP_HEADER=1 --infile ${out} --param=img_flat_size --newval="${img_flat_size}"
+			fi
 
 			# additional loop to check for symlink and zvol
 			if [ ${zfsfeat} -eq 1 ]; then
@@ -258,7 +289,7 @@ EOF
 					if is_getzvol ${i}; then
 						_zvol_name=$( /usr/bin/basename ${i} | /usr/bin/sed 's:\.vhd::g' )
 						echo "___NCSTART_ZVOL_${_zvol_name}=1" >> ${out}
-						/bin/dd if=/dev/zvol/${is_zvol} |/usr/bin/gzip --fast -c >> ${out}
+						/bin/dd if=/dev/zvol/${is_zvol} | /usr/bin/gzip --fast -c >> ${out}
 						echo >> ${out}
 						echo "___NCSTOP_ZVOL_${_zvol_name}=1" >> ${out}
 					fi
@@ -275,7 +306,7 @@ cd ${workdir}
 
 [ -z "${compress}" ] && compress=6
 
-case "$mode" in
+case "${mode}" in
 	extract)
 		extractme || err 1 "Error extract"
 		;;

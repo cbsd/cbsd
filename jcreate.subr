@@ -2,6 +2,9 @@ if [ ! "$_CBSD_JCREATE_SUBR" ]; then
 _CBSD_JCREATE_SUBR=1
 ###
 
+# export JARG
+. ${sharedir}/jail-arg
+
 # postaction for bsdconf-related module action
 # pkg, useradd, password etc
 # $1 - set $jname
@@ -23,7 +26,7 @@ postcreate_module_action()
 
 	if [ -n "${sysrc_enable}" ]; then
 		for i in ${sysrc_enable}; do
-			sysrc jname=${jname} ${i}_enable="YES"
+			/usr/sbin/sysrc jname=${jname} ${i}_enable="YES"
 		done
 	fi
 
@@ -54,11 +57,22 @@ postcreate_module_action()
 
 
 # users custom stop script
-# $1 - is source dir
+# -s - is source dir (stop.d start.d)
+# -a auto-start if status off (create.d)
 external_exec_script()
 {
 	local _res
-	local _dir="${1}"
+	local _dir
+	local _astart=0
+	local _shutdown=0
+
+	while getopts "as:" opt; do
+		case "${opt}" in
+			a) _astart="1" ;;
+			s) _dir="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	[ -z "${_dir}" ] && return 1
 
@@ -67,62 +81,24 @@ external_exec_script()
 	[ -d "${data}/tmp/${_dir}" ] && /bin/rm -rf "${data}/tmp/${_dir}"
 	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
 
-	/usr/bin/find "${data}/tmp/${_dir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
-		${ECHO} "${MAGENTA}Execute script: ${GREEN}${_file}${NORMAL}"
-		jexec jname="${jname}" /tmp/${_dir}/${_file}
-	done
-	/bin/rm -rf "${data}/tmp/${_dir}"
-}
+	. ${jrcconf}
 
-# users custom stop for executing in master host
-# $1 - is source dir name ( master_poststart.d master_prestart.d )
-external_exec_master_script()
-{
-	local _res
-	local _dir="${1}"
-	local _i
-
-	[ -z "${_dir}" ] && return 1
-
-	local _srcdir="${jailsysdir}/${jname}/${_dir}"
-
-	[ ! -d "${_srcdir}" ] && return 0
-	[ -z "$( /bin/ls ${_srcdir}/ )" ] && return 0
-
-	local CBSDPATH="${PATH}"
-	# reset CBSD PATH
-	# it is necessary that the calling of any commands from external hooks
-	# does not conflict with the same CBSD commands that the user does not expect
-	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
-
-	/usr/bin/find "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
-		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
-		${ECHO} "${MAGENTA} :: ${_srcdir}/${_file}${NORMAL}"
-		${_srcdir}/${_file}
-	done
-
-	# restore CBSD PATH
-	export PATH="${CBSDPATH}"
-}
-
-# users custom stop script
-# $1 - is source dir (stop.d start.d)
-external_exec_script()
-{
-	local _res
-	local _dir="${1}"
-
-	[ -z "${_dir}" ] && return 1
-
-	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
-	[ -z "$( /bin/ls ${jailsysdir}/${jname}/${_dir}/ )" ] && return 0
-	[ -d "${data}/tmp/${_dir}" ] && rm -rf "${data}/tmp/${_dir}"
-	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
+	if [ ${jid} -eq 0 -a ${_astart} -eq 1 ]; then
+		# Jail should be running
+		${ECHO} "${MAGENTA}Jail has custom exec script, run it for a while...${NORMAL}"
+		_shutdown=1
+		jstart ${jname}
+	fi
 
 	/usr/bin/find "${data}/tmp/${_dir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
 		${ECHO} "${MAGENTA}Execute script: ${GREEN}${_file}${NORMAL}"
 		jexec jname="${jname}" /tmp/${_dir}/${_file}
 	done
+
+	if [ ${_shutdown} -eq 1 ]; then
+		# Jail was offline, stop
+		jstop ${jname}
+	fi
 
 	/bin/rm -rf "${data}/tmp/${_dir}"
 }
@@ -147,7 +123,7 @@ external_exec_master_script()
 	# does not conflict with the same CBSD commands that the user does not expect
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 
-	/usr/bin/find "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; |while read _file; do
+	/usr/bin/find "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
 		${ECHO} "${MAGENTA}Execute master script: ${GREEN}${_file}${NORMAL}"
 		${ECHO} "${MAGENTA} :: ${_srcdir}/${_file}${NORMAL}"
 		${_srcdir}/${_file}
@@ -310,7 +286,7 @@ export_bhyve_data_for_external_hook()
 
 	local sqldelimer=" "
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr,nic_parent FROM bhyvenic"| while read nic_hwaddr nic_parent; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr,nic_parent FROM bhyvenic" | while read nic_hwaddr nic_parent; do
 		echo "export nic_hwaddr${nic_id}=\"${nic_hwaddr}\""
 		get_vm_uplink_interface ${nic_parent}
 		echo "export nic_parent${nic_id}=\"${interface}\""

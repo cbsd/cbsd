@@ -1,12 +1,20 @@
 #!/usr/local/bin/cbsd
-#v11.1.17
+#v12.0.0
 MYARG=""
-MYOPTARG="jname inter debug checkpoint"
+MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport"
 MYDESC="Start jail"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
-  checkpoint - start from specified checkpoint name\n"
+  checkpoint   - start from specified checkpoint name\n\
+  lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
+  lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
+  lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n"
 CBSDMODULE="bhyve"
 EXTHELP="wf_jstop_jstart.html"
+
+# by default - no live-migrated domain
+lm="0"
+lm_dport=
+lm_rnodename=
 
 . ${subr}
 . ${system}
@@ -48,7 +56,7 @@ start_bhyve()
 	local bhyveload_cmd _err
 	local passt_args=
 
-	local is_ppt=$( cbsdsql local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
+	local is_ppt=$( cbsdsql ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 	[ -n "${is_ppt}" ] && passt_args="-S"
 
 	# flags which means that the CD as boot device will use only once
@@ -61,14 +69,22 @@ start_bhyve()
 		sleep 2
 	fi
 	# re-read jail params and apply personal after profile
-	. ${jrcconf}
+	if [ "${lm}" = "0" ]; then
+		. ${jrcconf}
+	else
+		. ${rjrcconf}
+	fi
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstart status=1
 	fi
 
-	vm_boot=$( cbsdsql local SELECT vm_boot FROM bhyve WHERE jname=\"${jname}\" 2>/dev/null )
+	vm_boot=$( cbsdsql ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
+
+	# live migration todo:
+	# a) no cdrom (error?)
+	# b) shared ISO dir too?
 
 	case "${vm_os_type}" in
 		freebsd)
@@ -110,7 +126,7 @@ start_bhyve()
 
 			[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 			# re-read jail params and apply personal after profile 
-			. ${jrcconf}
+			[ "${lm}" = "0" ] && . ${jrcconf}
 			check_for_empty_hdd
 
 			if [ "${vm_boot}" = "cd" ]; then
@@ -132,7 +148,13 @@ start_bhyve()
 			readconf vm-${vm_os_type}-${vm_os_profile}.conf
 			[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 			# re-read jail params and apply personal after profile
-			. ${jrcconf}
+
+			if [ "${lm}" = "0" ]; then
+				. ${jrcconf}
+			else
+				. ${rjrcconf}
+			fi
+
 			check_for_empty_hdd
 			if [ "${vm_boot}" = "cd" ]; then
 				init_iso
@@ -146,7 +168,9 @@ start_bhyve()
 				fi
 			fi
 
-			_err=$( /usr/bin/file -s ${data}/${MDFILE}| /usr/bin/cut -d":" -f2| /usr/bin/xargs )
+			_err=$( /usr/bin/file -s ${data}/${MDFILE} | /usr/bin/cut -d":" -f2 | /usr/bin/xargs )
+
+			# live migration todo: skipp this >> ?
 
 			if [ "${_err}" = "data" -a "${vm_boot}" = "hdd" ]; then
 				${ECHO} "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}"
@@ -226,6 +250,10 @@ start_bhyve()
 		unset nic_args
 	fi
 
+	if ! compile_nvme_args; then
+		unset compile_nvme_args
+	fi
+
 	# init pci_passthru_args
 	if ! compile_pci_passthru_args; then
 		${ECHO} "${MAGENTA}No such pci_passthru for VMs: ${GREEN}${jname}${NORMAL}"
@@ -262,10 +290,19 @@ start_bhyve()
 		unset lpc_args
 	fi
 
-
 	# init vnc_args
-	if ! compile_vnc_args ; then
+	if ! compile_vnc_args; then
 		unset vnc_args
+	fi
+
+	if [ "${lm}" = "1" -a -n "${lm_rnodename}"  ]; then
+		[ -z "${lm_dport}" ] && lm_dport="0"
+		# prepare live_migration_args and {jailsysdir}/${jname}/live_migration.conf config for live migration
+		${ECHO} "${MAGENTA}Compile live migration settings...${NORMAL}"
+		if ! compile_live_migration_args -a ${lm_rnodename} -b ${nodename} -p ${lm_dport}; then
+			unset live_migration_args
+			[ "${lm}" = "1" ] && err 1 "${MAGENTA}live_migration_args is failed${NORMAL}"
+		fi
 	fi
 
 	# Poehali!
@@ -274,8 +311,10 @@ start_bhyve()
 	# for init external hook variables
 	geniplist ${ip4_addr}
 
-	export_bhyve_data_for_external_hook
-	external_exec_master_script "master_prestart.d"
+	if [ "${lm}" = "0" ]; then
+		export_bhyve_data_for_external_hook
+		external_exec_master_script "master_prestart.d"
+	fi
 
 	vm_logfile=$( /usr/bin/mktemp )
 
@@ -309,6 +348,7 @@ dsk_args='${dsk_args}'
 dsk_controller_args='${dsk_controller_args}'
 cd_args='${cd_args}'
 cd_args2='${cd_args2}'
+nvme_args='${nvme_args}'
 #
 efi_args='${efi_args}'
 vnc_args='${vnc_args}'
@@ -339,6 +379,7 @@ bhyve_vnc_vgaconf="${bhyve_vnc_vgaconf}"
 media_auto_eject="${media_auto_eject}"
 
 nice='${nice}'
+live_migration_args='${live_migration_args}'
 EOF
 
 	checkpoint_args=
@@ -377,7 +418,7 @@ EOF
 		${tmuxcmd} select-window -t cbsd-${jname}:0
 	fi
 
-	external_exec_master_script "master_poststart.d"
+	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
@@ -414,15 +455,21 @@ EOF
 	echo
 
 	${ECHO} "${MAGENTA}PID: ${GREEN}${vm_pid}${NORMAL}"
-	cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
-	# update state_time
-	cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
+	if [ "${lm}" = "0" ]; then
+		cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
-	if [ "${vm_efi}" = "none" ]; then
-		err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
-	else
-		err 0 ""
+		# update state_time
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+
+		# update state_time, local SQLite for back compatible
+		cbsdsql local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
+
+		if [ "${vm_efi}" = "none" ]; then
+			err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
+		else
+			err 0 ""
+		fi
 	fi
 }
 
@@ -473,26 +520,66 @@ fi
 st_time=$( /bin/date +%s )
 [ -z "${jname}" ] && jname=$1
 
-. ${jrcconf}
-if [ $? -eq 1 ]; then
-	# remote start
-	[ ${sqlreplica} -eq 0 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
-	remotenode=$( bwhereis ${jname} )
-	[ -z "${remotenode}" ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
-	for i in ${remotenode}; do
-		if [ "${i}" = "${nodename}" ]; then
-			${ECHO} "${MAGENTA}Remote bstart: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
-			continue
-		fi
-		${ECHO} "${MAGENTA}Remote bstart: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
-		rexe node=${i} cbsd bstart jname=${jname}
-		if [ $? -eq 0 ]; then
-			# updating state and put task for retrinv inventory
-			${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
-			task mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
-		fi
+if [ "${lm}" = "0" ]; then
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		# remote start
+		[ ${sqlreplica} -eq 0 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+		remotenode=$( bwhereis ${jname} )
+		[ -z "${remotenode}" ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+		for i in ${remotenode}; do
+			if [ "${i}" = "${nodename}" ]; then
+				${ECHO} "${MAGENTA}Remote bstart: found on nodename ${GREEN}${nodename}${MAGENTA}. Skipped${NORMAL}"
+				continue
+			fi
+			${ECHO} "${MAGENTA}Remote bstart: ${GREEN}${jname} ${MAGENTA}on${GREEN} ${i}${NORMAL}"
+			rexe node=${i} cbsd bstart jname=${jname}
+			if [ $? -eq 0 ]; then
+				# updating state and put task for retrinv inventory
+				${ECHO} "${MAGENTA}Updating inventory...${NORMAL}"
+				task mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+			fi
+		done
+		exit 0
+	fi
+else
+	# Request for live migration start
+	. ${nodes}
+	${ECHO} "${MAGENTA}Request for live migration...${NORMAL}"
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${MAGENTA}This is local domain! Please unregister first: ${GREEN}${jname}${NORMAL}"
+
+	RHST=
+
+	if [ -z "${lm_rnodename}" ]; then
+		# detect remote hoster name by $jname in cluster
+		RHST=$( bwhereis ${jname} | /usr/bin/head -n1 )
+		[ -z "${RHST}" ] && err 1 "${MAGENTA}No such domain in the current CBSD cluster: ${GREEN}${jname}${NORMAL}"
+		lm_rnodename="${RHST}"	# for rjrcconf
+	else
+		RHST="${lm_rnodename}"
+	fi
+	# extra check
+	_tmp=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${lm_rnodename}\" )
+	[ -z "${_tmp}" ] && err 1 "${MAGENTA}No such node in the current CBSD cluster: ${GREEN}${lm_rnodename}${NORMAL}"
+
+	# todo: check for node idle and online, rexe?
+	# todo2: extra check for shared storage
+	shared_dir="jails-data jails-rcconf jails-system"
+
+	${ECHO} "   ${LCYAN}* ${MAGENTA}check for shared storage: ${NORMAL}"
+
+	for i in ${shared_dir}; do
+		printf "      ${LCYAN}* ${GREEN}${i}: ${NORMAL}"
+		check_for_shared_dir -d ${i} -n ${lm_rnodename} || err 1 "${MAGENTA}directory id do not match, dir not shared: ${GREEN}${i}${MAGENTA} ?${NORMAL}"
+		printf "${LYELLOW}ok${NORMAL}"
+		echo
 	done
-	exit 0
+
+	emulator="bhyve"
+	. ${rjrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}Request for live migration: no such VM in cluster: ${GREEN}${jname}${MAGENTA}. Perhaps you forget to: ${GREEN}cbsd node mode=add${MAGENTA} ?${NORMAL}"
 fi
 
 default_profile="bhyve-default-default.conf"
@@ -506,13 +593,20 @@ readconf bstart.conf
 
 readconf ${default_profile}
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+if [ "${lm}" = "0" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+	[ ${jid} -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
+	main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
+	[ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
+else
+	. ${rjrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
+	# change SQL local path to remote sqlite (exported by . ${rjrcconf})
+	main_sqlite_local="${remote_local_sqlite}"
+fi
 
-[ ${status} -eq 2 ] && err 1 "${MAGENTA}Jail in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
-
-[ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
-[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not bhyve mode${NORMAL}"
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
@@ -524,8 +618,9 @@ elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt 16 ]; then
 fi
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
-MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
-
+# todo: NVMe
+# todo: Controller
+MDFILE=$( cbsdsql ${main_sqlite_local} SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 [ -z "${MDFILE}" ] && ${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"
 
 if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
@@ -535,7 +630,7 @@ if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
 	[ "${zfsfeat}" != "1" ] && break
 
 	readconf zfs.conf
-	. $zfstool
+	. ${zfstool}
 	DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
 
 	[ -z "${DATA}" ] && break
@@ -558,20 +653,29 @@ for _i in ${JARG} ${MYCOL}; do
 	export ${_i}="${T}"
 done
 
-# test for incorrect state
-if [ ${status} -eq 3 ]; then
-	cbsdsql local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
-	comment="cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
-	if [ "${comment}" = "Stopping_VM" ]; then
-		jswmode jname=${jname} mode=master comment='0'
-	else
-		${ECHO} "${MAGENTA}Bhyve in maintenance: ${GREEN}${comment}${NORMAL}"
-		err 1 "${MAGENTA}Please finish maintenance and switch mode via: ${GREEN}jswmode jname=${jname} mode=master comment='0'${NORMAL}"
+# for local bhyve only
+if [ "${lm}" = "0" ]; then
+	# test for incorrect state
+	if [ ${status} -eq 3 ]; then
+		cbsdsql local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
+		comment="cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
+		if [ "${comment}" = "Stopping_VM" ]; then
+			jswmode jname=${jname} mode=master comment='0'
+		else
+			${ECHO} "${MAGENTA}Bhyve in maintenance: ${GREEN}${comment}${NORMAL}"
+			err 1 "${MAGENTA}Please finish maintenance and switch mode via: ${GREEN}jswmode jname=${jname} mode=master comment='0'${NORMAL}"
+		fi
 	fi
 fi
 
 start_bhyve
-end_time=$( /bin/date +%s )
-cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in $(( end_time - st_time ))s
+
+if [ "${lm}" = "0" ]; then
+	end_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in $(( end_time - st_time ))s
+else
+	end_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started for live migration for source node ${lm_rnodename} in $(( end_time - st_time ))s
+fi
 
 exit 0

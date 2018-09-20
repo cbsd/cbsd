@@ -1,0 +1,209 @@
+#!/usr/local/bin/cbsd
+. ${subr}
+. ${strings}
+. ${tools}
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval
+
+	local btitle="$DIALOG_BACKTITLE"
+	local title=" ${jname} ${nvme}: New Controller "
+	hline=
+
+	local prompt="${_desc}"
+
+	local menu_list="
+		'devpath'	'${new_nvme_devpath}'	'/dev/blockdev or /path/to/image - path to device'
+		'ram'		'${new_nvme_ram}'	'ram=size_in_MiB'
+		'maxq'		'${new_nvme_maxq}'	'Max number of queues'
+		'qsz'		'${new_nvme_qsz}'	'Max elements in each queue'
+		'ioslots'	'${new_nvme_ioslots}'	'Max number of concurrent I/O equests'
+		'sectsz'	'${new_nvme_sectsz}'	'Sector size (defaults to blockif sector size)'
+		'ser'		'${new_nvme_ser}'	'Serial number with maximum 20 characters'
+		'-'		'-'			''
+		'COMMIT'	'COMMIT'	'Create and attach new NVMe'
+	" # END-QUOTE
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname nvme"
+MYOPTARG=""
+MYDESC="Add and attach new vitual image to VM"
+CBSDMODULE="bhyve"
+
+globalconf="${workdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+init $*
+
+. ${dialog}
+. ${workdir}/bsdconfig.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyve-nvme.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/bhyve-nvme.subr
+. ${workdir}/bhyve.subr
+
+#load_nvme_info
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_bhyvenvme "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+
+cur_nvme_count=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
+
+if [ "${cur_nvme_count}" != "0" ]; then
+	f_dialog_msgbox "Sorry, this version support only one NVMe controller per guest"
+	exit 0
+fi
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+
+	if [ -z "${new_nvme_name}" -a -n "${new_nvme_type}" ]; then
+		new_nvme_name="${nvme}_${new_nvme_type}"
+	fi
+	[ -z "${new_nvme_count}" ] && new_nvme_count="8"
+	[ -z "${new_nvme_cache}" ] && new_nvme_cache="nocache"
+
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|slot|nvme_type)
+					continue
+					;;
+				"devpath")
+					get_nvme_devpath
+					;;
+				"ram")
+					get_nvme_ram
+					;;
+				"maxq")
+					get_nvme_maxq
+					;;
+				"qsz")
+					get_nvme_qsz
+					;;
+				"ioslots")
+					get_nvme_ioslots
+					;;
+				"sectsz")
+					get_nvme_sectsz
+					;;
+				"ser")
+					get_nvme_ser
+					;;
+				"COMMIT")
+					if [ -z "${new_nvme_devpath}" ]; then
+						f_dialog_msgbox "devpath field is mandatory"
+						continue
+					fi
+					_res=$( add_nvme -d "${new_nvme_devpath}" -i "${new_nvme_ioslots}" -m "${new_nvme_maxq}" -q "${new_nvme_qsz}" -r "${new_nvme_ram}" -s "${new_nvme_sectsz}" -v "${new_nvme_ser}" )
+					if [ $? -ne 0 ]; then
+						f_dialog_msgbox "Error: ${_res}"
+					else
+						f_die
+					fi
+					;;
+				*)
+					index=${mtag%% *}
+					nvme=${mtag##* }
+					command="bhyvenvme-cfgnvme jname=${jname} nvme=${nvme}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

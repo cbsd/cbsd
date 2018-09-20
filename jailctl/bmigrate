@@ -1,0 +1,356 @@
+#!/usr/local/bin/cbsd
+#v12.0.0
+MYARG="jname node"
+MYOPTARG=""
+MYDESC="bhyve live migration"
+CBSDMODULE="bhyve"
+ADDHELP=""
+
+. ${subr}
+. ${tools}
+. ${strings}
+. ${nodes}
+
+init $*
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such domains: ${GREEN}${jname}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && log_err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
+
+remote_node_rip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${node}\" )
+[ -z "${remote_node_rip}" ] && log_err 1 "${MAGENTA}bmigrate: no such node ${node}. Please add node via: ${GREEN}cbsd add node=${node}${NORMAL}"
+
+remote_node_ip=$( getinfo mode=quiet nodeip )
+
+${ECHO} "  ${GREEN}Data gathering for live migration${NORMAL}"
+printf "   ${LCYAN}* ${MAGENTA}check for remote CBSD version: ${NORMAL}"
+d_cbsd_ver=$( rexe node=${node} /usr/local/bin/cbsd -c version 2>/dev/null | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+[ $? -ne 0 ] && err 1 "${MAGENTA}bmigrate: failed: rexe node=${node}${NORMAL}"
+printf "${LYELLOW}ok${NORMAL}"
+echo
+s_cbsd_ver=$( version | /usr/bin/awk '/./{print $1}' )
+
+# Check for compiatible 
+# - todo: CPU features/modesl check
+# - todo: Memory/free amount check
+remote_process_status=$( rexe node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname} | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+[ -n "${remote_process_status}" ] && err 1 "${MAGENTA}bmigrate error: node ${GREEN}${jname}${MAGENTA} already has the running bhyve process with jname: ${GREEN}${jname}${NORMAL}"
+
+shared_dir="jails-data jails-rcconf jails-system"
+
+${ECHO} "   ${LCYAN}* ${MAGENTA}check for shared storage: ${NORMAL}"
+
+for i in ${shared_dir}; do
+	printf "      ${LCYAN}* ${GREEN}${i}: ${NORMAL}"
+	check_for_shared_dir -d ${i} -n ${node} || err 1 "${MAGENTA}directory id do not match, dir not shared: ${GREEN}${i}${MAGENTA} ?${NORMAL}"
+	printf "${LYELLOW}ok${NORMAL}"
+	echo
+done
+
+source_vm_name="${jname}"
+dest_vm_name="${jname}"
+
+LOCAL_FS="local,shared"
+REMOTE_FS="local,shared"
+s_migrator_ver="0.1"
+d_migrator_ver="0.1"
+
+my_nodename=$( /bin/cat ~cbsd/nodename )
+remote_node_name="${node}"
+
+DC_NAME="local"
+if [ ${jid} -ne 0 ]; then
+	jail_status="active"
+else
+	jail_status="offline"
+fi
+
+echo
+${ECHO} "  ${GREEN}Data gathering complete!${NORMAL}"
+srcpad=" "
+destpad=" "
+
+/bin/cat <<XxX1387784305xXx
+
+We will be migrating:
+     INSTANCE:
+               jname:  ${jname}
+                fqdn:  ${host_hostname}
+          IP Addr(s):  ${ip4_addr}
+          datacenter:  ${DC_NAME}
+      instance state:  ${jail_status}
+                type:  ${emulator}
+               owner:  root
+           create at:  -
+          base image:  -
+  total dataset size:  ${SZMDS} ${rise} across ${dsCNT} datasets
+        migration id:  $$
+XxX1387784305xXx
+
+/bin/cat <<XxX1394397713xXx
+
+                    Source                                        Destination
+----------------------------------------------  ----------------------------------------------
+XxX1394397713xXx
+printf "Host:     %-36s  Host:     %-36s\n" ${my_nodename} ${remote_node_name}
+printf "JNAME:    %-36s  JNAME:    %-36s\n" ${source_vm_name} ${dest_vm_name}
+printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
+printf "IP Addr:  %-36s  IP Addr:  %-36s\n" ${remote_node_ip} ${remote_node_rip}
+printf "RemoteFS: %-36s  RemoteFS: %-36s\n" ${LOCAL_FS} ${REMOTE_FS}
+printf "API ver:  %-36s  API ver:  %-36s\n" ${s_migrator_ver} ${d_migrator_ver}
+
+echo
+
+if getyesno "Are you ready to proceed? "; then
+	echo
+else
+	${ECHO} "${MAGENTA}Exiting.${NORMAL}"
+	exit 1
+fi
+
+${ECHO} ${MAGENTA} "  ${GREEN}Preparing destination node...${NORMAL}"
+
+printf "   ${LCYAN}* ${MAGENTA}Phase1: launch ${jname} domain on remote node ... ${NORMAL}"
+
+# remove old live migration config
+/bin/rm -f ${jailsysdir}/${jname}/live_migration.conf
+
+r_task_id=$( rexe node=${node} /usr/local/bin/cbsd task mode=new owner=migration.$$ /usr/local/bin/cbsd bstart jname=${jname} lm=1 | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+[ -z "${r_task_id}" ] && err 1 "${MAGENTA}cbsd task on ${node} failed: no task id${NORMAL}"
+
+sleep 1
+printf "${LYELLOW}ok${NORMAL}"
+
+### test 1: waiting for remote bhyve is running
+echo
+printf "   ${LCYAN}* ${MAGENTA}Phase2 (1/3): waiting for bhyve instance ready by task id ${GREEN}${r_task_id}${MAGENTA}...${NORMAL}"
+max_attempt=7		# ( sleep 2 x 7 = 14 seconds for run: this should be enough )
+cur_attempt=0
+
+for i in $( /usr/bin/seq 1 ${max_attempt} ); do
+	cur_attempt=$(( cur_attempt + 1 ))
+	if [ ! -r ${jailsysdir}/${jname}/live_migration.conf ]; then
+		sleep 2
+		continue
+	fi
+	r_job_status=$( cbsd rexe node=${node} misc/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}" 2>/dev/null | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+	if [ "${r_job_status}" != "1" ]; then
+		printf "${MAGENTA}.${NORMAL}"
+		sleep 2
+	else
+		printf "${LYELLOW} ok${NORMAL}"
+		break
+	fi
+done
+
+echo
+[ ${cur_attempt} -gt ${max_attempt} ] && err 1 "${MAGENTA}Taskd timeout, max attempt exceeded: ${GREEN}${cur_attempt}${MAGENTA}. Please check on node ${GREEN}${node}${MAGENTA}: ${GREEN}cbsd taskls${NORMAL}"
+
+### test 2: check config
+echo
+printf "   ${LCYAN}* ${MAGENTA}Phase2 (2/3): check migration configuration, task id ${GREEN}${r_task_id}${MAGENTA}...${NORMAL}"
+
+live_migration_src_nodename=
+live_migration_dst_nodename=
+live_migration_dst_port=
+live_migration_src_nodename_ip=
+live_migration_dst_nodename_ip=
+
+. ${jailsysdir}/${jname}/live_migration.conf
+
+# trap for cleanup
+trap "cbsd rexe node=${node} /usr/local/bin/cbsd task mode=new owner=migration.$$ /usr/local/bin/cbsd bstop jname=${jname} lm=1" HUP INT ABRT BUS TERM EXIT
+
+[ -z "${live_migration_src_nodename}" ] && err 1 "${MAGENTA}Empty ${live_migration_src_nodename}${NORMAL}"
+[ -z "${live_migration_dst_nodename}" ] && err 1 "${MAGENTA}Empty ${live_migration_dst_nodename}${NORMAL}"
+[ -z "${live_migration_dst_port}" ] && err 1 "${MAGENTA}Empty ${live_migration_dst_port}${NORMAL}"
+[ -z "${live_migration_src_nodename_ip}" ] && err 1 "${MAGENTA}Empty ${live_migration_src_nodename_ip}${NORMAL}"
+[ -z "${live_migration_dst_nodename_ip}" ] && err 1 "${MAGENTA}Empty ${live_migration_dst_nodename_ip}${NORMAL}"
+
+echo
+${ECHO} "    ${LCYAN}- (cfg) ${MAGENTA}live_migration_src_nodename: ${GREEN}${live_migration_src_nodename}${NORMAL}"
+${ECHO} "    ${LCYAN}- (cfg) ${MAGENTA}live_migration_dst_nodename: ${GREEN}${live_migration_dst_nodename}${NORMAL}"
+${ECHO} "    ${LCYAN}- (cfg) ${MAGENTA}live_migration_dst_port: ${GREEN}${live_migration_dst_port}${NORMAL}"
+${ECHO} "    ${LCYAN}- (cfg) ${MAGENTA}live_migration_src_nodename_ip: ${GREEN}${live_migration_src_nodename_ip}${NORMAL}"
+${ECHO} "    ${LCYAN}- (cfg) ${MAGENTA}live_migration_dst_nodename_ip: ${GREEN}${live_migration_dst_nodename_ip}${NORMAL}"
+
+### test 3: waiting for bind/socket's open
+echo
+printf "   ${LCYAN}* ${MAGENTA}Phase2 (3/3): check for remote host bind/socket's open, task id ${GREEN}${r_task_id}${MAGENTA}...${NORMAL}"
+# waiting for remote bhyve is running
+max_attempt=3		# sleep 2 x 3 = 6 seconds for run: this should be enough
+cur_attempt=0
+
+. ${workdir}/virtual.subr	# for get_next_tcp_port
+
+for i in $( /usr/bin/seq 1 ${max_attempt} ); do
+	cur_attempt=$(( cur_attempt + 1 ))
+
+	# scan by next_tcp_port
+	_tmp=$( get_next_tcp_port -a ${live_migration_src_nodename_ip} -e ${live_migration_dst_port} -s ${live_migration_dst_port} )
+	if [ "${_tmp}" != "0" ]; then
+		printf "${MAGENTA}.${NORMAL}"
+		sleep 2
+	else
+		printf "${LYELLOW} ok${NORMAL}"
+		break
+	fi
+done
+
+echo
+[ ${cur_attempt} -gt ${max_attempt} ] && err 1 "${MAGENTA}Taskd timeout, max attempt exceeded: ${GREEN}${cur_attempt}${MAGENTA}. Please check on node ${GREEN}${node}${MAGENTA}: ${GREEN}cbsd taskls${NORMAL}"
+
+r_job_logfile=$( cbsd rexe node=${node} misc/sqlcli var/db/cbsdtaskd.sqlite "SELECT logfile FROM taskd WHERE id=${r_task_id}" 2>/dev/null | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+sleep 1
+${ECHO} "   ${LCYAN}* ${MAGENTA}Phase3: migration, please wait...${NORMAL}"
+${ECHO} "${CYAN}     [debug]remote cmd: bhyvectl --migrate=${live_migration_dst_nodename_ip},${live_migration_dst_port} --vm=${jname}${NORMAL}"
+
+# clean trap
+trap "date > /dev/null" HUP INT ABRT BUS TERM EXIT
+
+/usr/sbin/bhyvectl --migrate=${live_migration_dst_nodename_ip},${live_migration_dst_port} --vm=${jname}
+
+bhyve_migrate_ret=$?
+bhyve_remote_task_complete=0
+
+# Well, at this point, we no longer know in what state everything is 
+# and we need to monitor both systems to draw some conclusions.
+# First: let's wait for the completion of the remote task
+# Second: find bhyve process with ${jname} on both host
+
+# waiting for task finished
+max_attempt=5
+cur_attempt=0
+
+printf "   ${LCYAN}* ${MAGENTA}Phase4: Waiting for task finished: ${GREEN}${r_task_id}...${NORMAL}"
+
+for i in $( /usr/bin/seq 1 ${max_attempt} ); do
+	cur_attempt=$(( cur_attempt + 1 ))
+	r_job_status=$( cbsd rexe node=${node} misc/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}" 2>/dev/null | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+	if [ "${r_job_status}" != "2" ]; then
+		printf "${MAGENTA}.${NORMAL}"
+		sleep 1
+	else
+		printf "${LYELLOW} ok${NORMAL}"
+		break
+	fi
+done
+
+echo
+if [ ${cur_attempt} -gt ${max_attempt} ]; then
+	bhyve_remote_task_complete=1
+	${ECHO} "${LRED}bmigrate error: ${MAGENTA}Taskd timeout, max attempt exceeded: ${GREEN}${cur_attempt}${MAGENTA}. Please check on node ${GREEN}${node}${MAGENTA}: ${GREEN}cbsd taskls${NORMAL}"
+else
+	bhyve_remote_task_complete=1
+fi
+
+${ECHO} "      ${MAGENTA}Remote log for taskid ${LYELLOW}${r_task_id}${MAGENTA}: ${GREEN}${r_job_logfile}${MAGENTA}:${NORMAL}"
+${ECHO} "${LCYAN}----------------------${WHITE}${BOLD}[log]${LCYAN}----------------------${NORMAL}"
+rexe node=${node} /bin/cat ${r_job_logfile}
+${ECHO} "${LCYAN}----------------------${WHITE}${BOLD}[log]${LCYAN}----------------------${NORMAL}"
+echo
+
+echo
+printf "   ${LCYAN}* ${MAGENTA}Phase5: waiting for the bhyve process to go away${NORMAL}"
+
+# waiting for config
+max_attempt=20
+cur_attempt=0
+
+for i in $( /usr/bin/seq 1 ${max_attempt} ); do
+	cur_attempt=$(( cur_attempt + 1 ))
+	if [ -e "/dev/vmm/${jname}" ]; then
+		printf "${MAGENTA}.${NORMAL}"
+		sleep 3
+	else
+		printf "${LYELLOW} ok${NORMAL}"
+		break
+	fi
+done
+
+echo
+remote_process_status=$( rexe node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname} | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+local_process_status=$( bhyve-exist jname=${jname} | /usr/bin/tr -d \\r | /usr/bin/awk '/./{print $1}' )
+
+if [ -n "${remote_process_status}" ]; then
+	printf "     ${LCYAN}* ${MAGENTA}Phase5: remote bhyve process: ${LYELLOW}registered${NORMAL}"
+else
+	printf "     ${LCYAN}* ${MAGENTA}Phase5: remote bhyve process: ${LRED}not registered${NORMAL}"
+fi
+
+# Final status handler
+
+####### Remote side failed #####
+# Scenario 1: remote task log completed but no bhyve process: migration failed
+echo
+${ECHO} "${CYAN}     [debug]error handler: test 1${NORMAL}"
+if [ "${bhyve_remote_task_complete}" = "1" -a -z "${remote_process_status}" ]; then
+	err 1 "${MAGENTA}bmigrate: migration failed: task complete (id:${GREEN}${r_task_id}${MAGENTA}) but bhyve process is absent, check log${NORMAL}"
+fi
+
+${ECHO} "${CYAN}     [debug]error handler: test 2${NORMAL}"
+# Scenatio 2: remote task log still waiting but no bhyve process: migration failed
+if [ "${bhyve_remote_task_complete}" = "0" -a -z "${remote_process_status}" ]; then
+	${ECHO} "${MAGENTA}bmigrate: migration failed: task still in progress (id:${GREEN}${r_task_id}${MAGENTA}) but bhyve process is absent. Force to kill. Please check log${NORMAL}"
+	[ -z "${local_process_status}" ] && err 1 "${LRED}Warning: ${MAGENTA}No such bhyve process on current host, bhyve was crashed???${NORMAL}"
+	exit 1
+fi
+
+${ECHO} "${CYAN}     [debug]error handler: test 3${NORMAL}"
+# Scenario 3: remote node have bhyve process and local node have process, split brain, stop VM on remote node
+if [ -n "${remote_process_status}" -a -n "${local_process_status}" ]; then
+	${ECHO} "${MAGENTA}bmigrate: migration failed: Split brain: two bhyve process with ${GREEN}${jname}${MAGENTA} on both nodes. Force to kill on remote node. Please check log${NORMAL}"
+	exit 1
+fi
+
+${ECHO} "${CYAN}     [debug]error handler: test 4${NORMAL}"
+# Scenario 4: local node still have bhyve process with $jname and no bhyve process on remote
+if [ -z "${remote_process_status}" -a -n "${local_process_status}" ]; then
+	${ECHO} "${MAGENTA}bmigrate: migration failed: no bhyve process on remote node with ${GREEN}${jname}${MAGENTA} while local still has it. Please check log${NORMAL}"
+	exit 1
+fi
+
+# Now the last scenario remains - when everything went well
+. ${jrcconf} > /dev/null 2>&1
+
+# TODO: SQLite backup ?
+${ECHO} "   ${LCYAN}* ${MAGENTA}Phase6: unregister ${jname} on ${my_nodename}${NORMAL}"
+bunregister jname=${jname}
+
+if [ $? -ne 0 ]; then
+	${ECHO} "${LRED}Warning: ${MAGENTA}Unregister error: ${GREEN}${jname}${NORMAL}"
+	local_unregister=0
+else
+	local_unregister=1
+fi
+
+JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+
+# lets wait for rc-conf file saved
+# waiting for config
+printf "   ${LCYAN}* ${MAGENTA}Phase7: waiting for rc.conf: ${NORMAL}"
+max_attempt=10
+cur_attempt=0
+
+for i in $( /usr/bin/seq 1 ${max_attempt} ); do
+	cur_attempt=$(( cur_attempt + 1 ))
+	if [ ! -r "${JAILRCCONF}" ]; then
+		printf "${MAGENTA}.${NORMAL}"
+		sleep 3
+	else
+		printf "${LYELLOW} ok${NORMAL}"
+		break
+	fi
+done
+
+echo
+if [ ${cur_attempt} -gt ${max_attempt} ]; then
+	${ECHO} "${MAGENTA}No rcconf saved. bregister on remode node is failed${NORMAL}"
+	# Restore backup from SQLite3? No RC Conf here?
+fi
+
+${ECHO} "   ${LCYAN}* ${MAGENTA}Phase7: register ${jname} on ${remote_node_name}${NORMAL}"
+rexe node=${node} /usr/local/bin/cbsd bregister jname=${jname}
+${ECHO} "   ${LCYAN}* ${MAGENTA}Phase8: update inventory${NORMAL}"
+retrinv node=${remote_node_name} > /dev/null 2>&1
+rexe node=${node} /usr/local/bin/cbsd retrinv node=${my_nodename} > /dev/null 2>&1

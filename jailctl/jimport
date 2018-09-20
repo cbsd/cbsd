@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.0
+#v11.2.1
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname list new_jname new_ip4_addr new_host_hostname"
@@ -68,7 +68,21 @@ if [ -n "${jname}" ]; then
 		exit 0
 	fi
 else
-	jname=$1
+	# support for multiple image by full path: /path /path2
+	jname=
+	for i in $*; do
+		# skip for arg=val args
+		strpos --str="${i}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			if [ -r ${i} -o -r "${importdir}/${i}.img" ]; then
+				jname="${jname} ${i}"
+			else
+				${ECHO} "${MAGENTA}jimport: no such file here, skipp: ${GREEN}${i}${NORMAL}"
+				continue
+			fi
+		fi
+	done
 fi
 
 if [ -z "${jname}" ]; then
@@ -81,236 +95,339 @@ if [ -z "${jname}" ]; then
 	exit 0
 fi
 
-DATA="${importdir}"
-SRC="${DATA}/${jname}.img"
+# $1 for jname/path
+import_jail()
+{
+	local jname="${1}"
+	local from_nodename img_flat_size date ebytes=0 _ret compress=
 
-if [ ! -f "${SRC}" ]; then
-	SRC=${jname}
-	[ ! -f "${SRC}" ] && err 1 "${MAGENTA}No such jail or image here: ${GREEN}${SRC}${NORMAL}"
-fi
-
-TMPDIR="${ftmpdir}/header.$$"
-imgpart mode=extract jname=${SRC} part=header out=${TMPDIR} >/dev/null 2>&1 || imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR} || err 1 "header"
-
-[ ! -f "${TMPDIR}" ] && err 1 "${MAGENTA}No header info extracted${NORMAL}"
-
-. "${TMPDIR}"
-[ -z "${hdrver}" ] && hdrver=0
-
-${ECHO} "${MAGENTA}Importing image, please stand by: ${GREEN}${jname}${NORMAL}"
-
-if [ ${hdrver} -ne 3 ]; then
-	${ECHO} "${MAGENTA}Legacy image version detected. Using imgpart2 for extract${NORMAL}"
-	/bin/rm -f ${TMPDIR}
-	imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR}
-	[ ! -f ${TMPDIR} ] && err 1 "Error retreive header v2"
-	. ${TMPDIR}
-	imgpart_tool="imgpart2"
-else
-	${ECHO} "${MAGENTA}CBSD Image, version: ${GREEN}${hdrver}${NORMAL}"
-	imgpart_tool="imgpart"
-fi
-
-origjname="${jname}"
-/bin/rm -f "${TMPDIR}"
-[ -n "${new_jname}" ] && jname=${new_jname}
-jstatus jname=$jname > /dev/null 2>&1
-[ $? -eq 0 ] || err 1 "${MAGENTA}Jail already exist: ${GREEN}${jname}${MAGENTA} May be ${GREEN}new_jname${MAGENTA} can help?${NORMAL}"
-
-JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
-JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
-JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${jname}.local"
-JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
-
-# check for already existance and offline
-[ -d "${JAILDIR}" ] &&  err 1 "${MAGENTA}Jail datadir for ${jname} already exist. Please check and remove first: ${GREEN}${JAILDIR}${NORMAL}"
-
-${imgpart_tool} mode=extract jname=${SRC} part=rcconf out=${JAILRCCONF} hdrver=${hdrver} || err 1 "error extract rcconf"
-
-[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILRCCONF}
-
-${SYSRC_CMD} -qf ${JAILRCCONF} path=${jaildir}/${jname} > /dev/null
-${SYSRC_CMD} -qf ${JAILRCCONF} mount_fstab=${jailfstabdir}/${jailfstabpref}${jname} >/dev/null
-${SYSRC_CMD} -qf ${JAILRCCONF} data=${jaildatadir}/${jname}-${jaildatapref} >/dev/null
-${SYSRC_CMD} -qf ${JAILRCCONF} rcconf=${jailrcconfdir}/${jname}-rcconf >/dev/null
-
-. ${JAILRCCONF}
-
-# CBSD QUEUE
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-
-	case "${emulator}" in
-		jail)
-			cbsd_queue_name="/clonos/jailscontainers/"
-			;;
-		bhyve)
-			cbsd_queue_name="/clonos/bhyvevms/"
-			;;
-	esac
-
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=unknown protected=${protected} vnc_port=0 status=1
-	if [ "${cbsd_queue_name2}" != "none" ]; then
-		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=1
-		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"information\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#started...\"}"
+	if [ -z "${jname}" ]; then
+		${ECHO} "${MAGENTA}Empty jname or path${NORMAL}"
+		return 1
 	fi
-fi
 
+	DATA="${importdir}"
+	SRC="${DATA}/${jname}.img"
 
-init_jail_path
+	if [ ! -f "${SRC}" ]; then
+		SRC=${jname}
+		if [ ! -f "${SRC}" ]; then
+			${ECHO} "${MAGENTA}No such jail or image here: ${GREEN}${SRC}${NORMAL}"
+			return 1
+		fi
+	fi
 
-${imgpart_tool} mode=extract jname=${SRC} part=fstab out=${JAILFSTAB} hdrver=${hdrver} || err 1 "fsta"
-[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILFSTAB}
-replacewdir file0="${JAILFSTAB}" file1="${JAILRCCONF}" old="CBSDROOT"
+	ebytes=$( /usr/bin/stat -f "%z" ${SRC} 2>/dev/null )
 
-if [ "${origjname}" != "${jname}" ]; then
-	/bin/mkdir -p ${jailsysdir}/tmp.$$
-	_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1) || err 1 "sysdata1: ${_ret}"
-	# migrate new version of rc.conf and delete old
-	[ -f "${JAILRCCONF}" ] && /bin/mv ${JAILRCCONF} ${jailsysdir}/tmp.$$/${origjname}/
-	[ -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}" ] && /bin/rm -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}"
-	[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf ${jailsysdir}/${jname}
-	[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && /bin/mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
-	/bin/rmdir ${jailsysdir}/tmp.$$
-else
-	_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${hdrver} 2>&1) || err 1 "sysdata2: ${_ret}"
-fi
+	TMPDIR="${ftmpdir}/header.$$"
+	imgpart mode=extract jname=${SRC} part=header out=${TMPDIR} >/dev/null 2>&1 || imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR}
+	if [ $? -ne 0 ]; then
+		echo 1 "header"
+		return 1
+	fi
 
-${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver} || err 1 "localfstab"
+	if [ ! -f "${TMPDIR}" ]; then
+		${ECHO} "${MAGENTA}No header info extracted${NORMAL}"
+		return 1
+	fi
 
-if [ "${origjname}" = "${jname}" ]; then
-	case ${zfsfeat} in
-		0)
-			/bin/mkdir ${JAILDIR}
-			;;
-		1)
-			. ${zfstool}
-			ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-			if [ -n "${ZPOOL}" ]; then
-				if zfsroot ${jname}; then
-					err 1 "ZFS with $jname in pool already exist"
+	. "${TMPDIR}"
+	[ -z "${hdrver}" ] && hdrver=0
+
+	${ECHO} "${MAGENTA}Importing image, please stand by: ${GREEN}${jname}${NORMAL}"
+
+	if [ ${hdrver} -lt 3 ]; then
+		${ECHO} "${MAGENTA}Legacy image version detected. Using imgpart2 for extract${NORMAL}"
+		/bin/rm -f ${TMPDIR}
+		imgpart2 mode=extract jname=${SRC} part=header out=${TMPDIR}
+		if [ ! -f ${TMPDIR} ]; then
+			${ECHO} "Error retreive header v2"
+			return 1
+		fi
+		. ${TMPDIR}
+		imgpart_tool="imgpart2"
+	else
+		${ECHO} "${MAGENTA}CBSD Image, version: ${GREEN}${hdrver}${NORMAL}"
+		imgpart_tool="imgpart"
+	fi
+
+	[ -n "${from_nodename}" ] && ${ECHO} "${MAGENTA}Image was created on node: ${GREEN}${from_nodename}${MAGENTA}"
+	[ -n "${date}" ] && ${ECHO} "${MAGENTA}Image was created at: ${LCYAN}${date}${NORMAL}"
+
+	if conv2human "${ebytes}"; then
+		${ECHO} "${MAGENTA}Image size: ${GREEN}${convval}${NORMAL}"
+	fi
+
+	if [ -n "${img_flat_size}" ]; then
+		if conv2human "${img_flat_size}"; then
+			${ECHO} "${MAGENTA}Environment flat size after extracting: ${GREEN}${convval}${NORMAL}"
+		fi
+	fi
+
+	[ -n "${compress}" ] && ${ECHO} "${MAGENTA}Compress level: ${GREEN}${compress}${NORMAL}"
+
+	origjname="${jname}"
+	/bin/rm -f "${TMPDIR}"
+	[ -n "${new_jname}" ] && jname=${new_jname}
+	jstatus jname=$jname > /dev/null 2>&1
+	if [ $? -eq 1 ]; then
+		${ECHO} "${MAGENTA}Jail already exist: ${GREEN}${jname}${MAGENTA}. May be ${GREEN}new_jname=${MAGENTA} args can help?${NORMAL}"
+		return 1
+	fi
+
+	JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
+	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+	JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${jname}.local"
+	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+
+	# check for already existance and offline
+	if [ -d "${JAILDIR}" ]; then
+		${ECHO} "${MAGENTA}Jail datadir for ${jname} already exist. Please check and remove first: ${GREEN}${JAILDIR}${NORMAL}"
+		return 1
+	fi
+
+	${imgpart_tool} mode=extract jname=${SRC} part=rcconf out=${JAILRCCONF} hdrver=${hdrver}
+	if [ $? -ne 0 ]; then
+		${ECHO} "error extract rcconf"
+		return 1
+	fi
+
+	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILRCCONF}
+
+	${SYSRC_CMD} -qf ${JAILRCCONF} path=${jaildir}/${jname} > /dev/null
+	${SYSRC_CMD} -qf ${JAILRCCONF} mount_fstab=${jailfstabdir}/${jailfstabpref}${jname} >/dev/null
+	${SYSRC_CMD} -qf ${JAILRCCONF} data=${jaildatadir}/${jname}-${jaildatapref} >/dev/null
+	${SYSRC_CMD} -qf ${JAILRCCONF} rcconf=${jailrcconfdir}/${jname}-rcconf >/dev/null
+
+	. ${JAILRCCONF}
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+
+		case "${emulator}" in
+			jail)
+				cbsd_queue_name="/clonos/jailscontainers/"
+				;;
+			bhyve)
+				cbsd_queue_name="/clonos/bhyvevms/"
+				;;
+		esac
+
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=unknown protected=${protected} vnc_port=0 status=1
+		if [ "${cbsd_queue_name2}" != "none" ]; then
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=1
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"information\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#started...\"}"
+		fi
+	fi
+
+	init_jail_path
+
+	${imgpart_tool} mode=extract jname=${SRC} part=fstab out=${JAILFSTAB} hdrver=${hdrver}
+	if [ $? -ne 0 ]; then
+		${ECHO} "fstab"
+		return 1
+	fi
+	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILFSTAB}
+	replacewdir file0="${JAILFSTAB}" file1="${JAILRCCONF}" old="CBSDROOT"
+
+	if [ "${origjname}" != "${jname}" ]; then
+		/bin/mkdir -p ${jailsysdir}/tmp.$$
+		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1 )
+		if [ $? -ne 0 ]; then
+			err 1 "sysdata1: ${_ret}"
+			return 1
+		fi
+		# migrate new version of rc.conf and delete old
+		[ -f "${JAILRCCONF}" ] && /bin/mv ${JAILRCCONF} ${jailsysdir}/tmp.$$/${origjname}/
+		[ -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}" ] && /bin/rm -f "${jailsysdir}/tmp.$$/${origjname}/rc.conf_${origjname}"
+		[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf ${jailsysdir}/${jname}
+		[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && /bin/mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
+		/bin/rmdir ${jailsysdir}/tmp.$$
+	else
+		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${hdrver} 2>&1 )
+		if [ $? -ne 0 ]; then
+			${ECHO} "sysdata2: ${_ret}"
+			return 1
+		fi
+	fi
+
+	${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver}
+	if [ $? -ne 0 ]; then
+		${ECHO} 1 "localfstab"
+		return 1
+	fi
+
+	if [ "${origjname}" = "${jname}" ]; then
+		case ${zfsfeat} in
+			0)
+				/bin/mkdir ${JAILDIR}
+				;;
+			1)
+				. ${zfstool}
+				ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+				if [ -n "${ZPOOL}" ]; then
+					if zfsroot ${jname}; then
+						${ECHO} "ZFS with $jname in pool already exist"
+						return 1
+					fi
+					/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
 				fi
-				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${JAILDIR} ${ZPOOL}/${jname}
-			fi
-			;;
-	esac
-	${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} > /dev/null || err 1 "data"
-	# remove old symlink if exist for VM
-	# due to create-bhyve|xen will create new structure ( which may not coincide with the original FS )
-	case "${emulator}" in
-		bhyve|xen)
-			[ -n "${jaildatadir}" -a -d "${jaildatadir}" ] && /usr/bin/find ${jaildatadir}/ -type l -depth 1 -maxdepth 1 -delete > /dev/null 2>&1
-			;;
-		*)
-			;;
-	esac
-else
-	# create temporary zfs file system for extract $origname data then rename it to $jname
-	case ${zfsfeat} in
-		0)
-			/bin/mkdir -p ${jaildatadir}/tmp.$$
-			${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "data"
-			[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && /bin/mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
-			/bin/rmdir ${jaildatadir}/tmp.$$
-			;;
-		1)
-			. ${zfstool}
-			ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-			if [ -z "${ZPOOL}" ]; then
-				${ECHO} "Can't determine ZPOOL for ${jaildatadir}. Working on non-zfs scenario"
+				;;
+		esac
+
+		printf "${LYELLOW}"
+		${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+		_ret=$?
+		printf "${NORMAL}"
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "data"
+			return 1
+		fi
+		# remove old symlink if exist for VM
+		# due to create-bhyve|xen will create new structure ( which may not coincide with the original FS )
+		case "${emulator}" in
+			bhyve|xen)
+				[ -n "${jaildatadir}" -a -d "${jaildatadir}" ] && /usr/bin/find ${jaildatadir}/ -type l -depth 1 -maxdepth 1 -delete > /dev/null 2>&1
+				;;
+			*)
+				;;
+		esac
+	else
+		# create temporary zfs file system for extract $origname data then rename it to $jname
+		case ${zfsfeat} in
+			0)
 				/bin/mkdir -p ${jaildatadir}/tmp.$$
-				${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} > /dev/null || err 1 "data"
+				printf "${LYELLOW}"
+				${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+				_ret=$?
+				printf "${NORMAL}"
+				if [ ${_ret} -ne 0 ]; then
+					${ECHO} "data"
+					return 1
+				fi
 				[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && /bin/mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
 				/bin/rmdir ${jaildatadir}/tmp.$$
-			else
-				#create temp zfs
-				TMPDATADIR="${jaildatadir}/tmp.$$"
-				TMPJAILDATADIR="${TMPDATADIR}/${origjname}-${jaildatapref}"
-				/bin/mkdir -p ${TMPJAILDATADIR}
-				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${TMPJAILDATADIR} ${ZPOOL}/${jname}
-				${imgpart_tool} mode=extract jname=${SRC} part=data out=${TMPDATADIR} hdrver=${hdrver} > /dev/null || err 1 "data"
-				/sbin/zfs unmount ${ZPOOL}/${jname}
-				/sbin/zfs set mountpoint=${JAILDIR} ${ZPOOL}/${jname}
-				if ! is_mounted ${JAILDIR}; then
-					/sbin/zfs mount ${ZPOOL}/${jname}
+				;;
+			1)
+				. ${zfstool}
+				ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+				if [ -z "${ZPOOL}" ]; then
+					${ECHO} "Can't determine ZPOOL for ${jaildatadir}. Working on non-zfs scenario"
+					/bin/mkdir -p ${jaildatadir}/tmp.$$
+					printf "${LYELLOW}"
+					${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+					_ret=$?
+					printf "${NORMAL}"
+					if [ ${_ret} -ne 0 ]; then
+						${ECHO} "data"
+						return 1
+					fi
+					[ -d "${jaildatadir}/tmp.$$/${origjname}-${jaildatapref}" ] && /bin/mv ${jaildatadir}/tmp.$$/${origjname}-${jaildatapref} ${jaildatadir}/${jname}-${jaildatapref}
+					/bin/rmdir ${jaildatadir}/tmp.$$
+				else
+					#create temp zfs
+					TMPDATADIR="${jaildatadir}/tmp.$$"
+					TMPJAILDATADIR="${TMPDATADIR}/${origjname}-${jaildatapref}"
+					/bin/mkdir -p ${TMPJAILDATADIR}
+					/sbin/zfs create ${zfs_create_flags} -o mountpoint=${TMPJAILDATADIR} ${ZPOOL}/${jname}
+					printf "${LYELLOW}"
+					${imgpart_tool} mode=extract jname=${SRC} part=data out=${TMPDATADIR} hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+					_ret=$?
+					printf "${NORMAL}"
+					if [ ${_ret} -ne 0 ]; then
+						${ECHO} "data"
+						return 1
+					fi
+					/sbin/zfs unmount ${ZPOOL}/${jname}
+					/sbin/zfs set mountpoint=${JAILDIR} ${ZPOOL}/${jname}
+					if ! is_mounted ${JAILDIR}; then
+						/sbin/zfs mount ${ZPOOL}/${jname}
+					fi
+					/bin/rmdir ${TMPJAILDATADIR} ${TMPDATADIR}
 				fi
-				/bin/rmdir ${TMPJAILDATADIR} ${TMPDATADIR}
+				;;
+		esac
+	fi
+
+	# zvol area
+	if [ -n "${vm_zvol_list}" ]; then
+		. ${workdir}/bhyve.subr
+		for i in ${vm_zvol_list}; do
+			vol_size=0
+			dsk=
+			eval vol_size="\$vm_zvol_size_${i}"
+
+			dsk=${jaildatadir}/${jname}-${jaildatapref}/${i}.vhd
+
+			_res=
+			_msg=
+
+			_msg=$( bhyve_create_dsk -p ${dsk} -s ${vol_size} -f 1 2>&1 )
+			_res=$?
+			if [ ${_res} -ne 0 ]; then
+				bremove ${jname}
+				${ECHO} "Error: jimport: couldn't create the image file. ${_msg}"
+				return 1
 			fi
-			;;
-	esac
-fi
 
-# zvol area
-if [ -n "${vm_zvol_list}" ]; then
-	. ${workdir}/bhyve.subr
-	for i in ${vm_zvol_list}; do
-		vol_size=0
-		dsk=
-		eval vol_size="\$vm_zvol_size_${i}"
+			imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} | /usr/bin/gunzip -c > ${dsk}
+		done
+	fi
 
-		dsk=${jaildatadir}/${jname}-${jaildatapref}/${i}.vhd
+	# post action: modify ip if necessary
+	if [ -n "${new_ip4_addr}" ]; then
+		case "${new_ip4_addr}" in
+			[Dd][Hh][Cc][Pp])
+				new_ip4_addr=$( dhcpd )
+				if [ $? -eq 2 ]; then
+					${ECHO} "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
+					return 1
+				fi
+				;;
+			*)
+		esac
+		${ECHO} "${MAGENTA}IP sets to: ${GREEN}${new_ip4_addr}${NORMAL}"
+		${SYSRC_CMD} -qf ${JAILRCCONF} ip4_addr="${new_ip4_addr}" >/dev/null
+	fi
 
-		_res=
-		_msg=
-
-		_msg=$( bhyve_create_dsk -p ${dsk} -s ${vol_size} -f 1 2>&1 )
-		_res=$?
-		if [ ${_res} -ne 0 ]; then
-			bremove ${jname}
-			err 1 "Error: jimport: couldn't create the image file. ${_msg}"
-		fi
-
-		imghelper --start ___NCSTART_ZVOL_${i}=1 --end ___NCSTOP_ZVOL_${i}=1 --infile ${SRC} | /usr/bin/gunzip -c > ${dsk}
-	done
-fi
-
-# post action: modify ip if necessary
-if [ -n "${new_ip4_addr}" ]; then
-	case "${new_ip4_addr}" in
-		[Dd][Hh][Cc][Pp])
-			new_ip4_addr=$( dhcpd )
-			[ $? -eq 2 ] && err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
-			;;
-		*)
-	esac
-	${ECHO} "${MAGENTA}IP sets to: ${GREEN}${new_ip4_addr}${NORMAL}"
-	${SYSRC_CMD} -qf ${JAILRCCONF} ip4_addr="${new_ip4_addr}" >/dev/null
-fi
-
-if [ -z "${new_host_hostname}" ]; then
-	mydomain=${host_hostname#*.}
-	if [ -n "${mydomain}" ]; then
-		if [ -n "${new_jname}" ]; then
-			new_host_hostname="${new_jname}.${mydomain}"
+	if [ -z "${new_host_hostname}" ]; then
+		mydomain=${host_hostname#*.}
+		if [ -n "${mydomain}" ]; then
+			if [ -n "${new_jname}" ]; then
+				new_host_hostname="${new_jname}.${mydomain}"
+			else
+				new_host_hostname="${jname}.${mydomain}"
+			fi
 		else
-			new_host_hostname="${jname}.${mydomain}"
+			new_host_hostname="${host_hostname}"
 		fi
-	else
-		new_host_hostname="${host_hostname}"
-	fi
-fi
-
-${ECHO} "${MAGENTA}Hostname sets to: ${GREEN}${new_host_hostname}${NORMAL}"
-${SYSRC_CMD} -qf ${JAILRCCONF} host_hostname="${new_host_hostname}" >/dev/null
-
-jregister jname=${jname} mode=new rcfile=${JAILRCCONF}
-
-if [ -f "${jailsysdir}/${jname}/jail-message" ]; then
-	echo "---- jail messages ----"
-	/bin/cat "${jailsysdir}/${jname}/jail-message"
-	echo "---- jail messages ----"
-fi
-
-
-# CBSD QUEUE
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	# refresh jail info
-	. ${jrcconf}
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} host_hostname=${host_hostname} protected=${protected} vnc_port=0 status=2
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" host_hostname="${host_hostname}" status=1
-
-	if [ "${cbsd_queue_name2}" != "none" ]; then
-		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=2
-		cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"success\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#completed\"}"
 	fi
 
-fi
+	${ECHO} "${MAGENTA}Hostname sets to: ${GREEN}${new_host_hostname}${NORMAL}"
+	${SYSRC_CMD} -qf ${JAILRCCONF} host_hostname="${new_host_hostname}" >/dev/null
+
+	jregister jname=${jname} mode=new rcfile=${JAILRCCONF}
+
+	if [ -f "${jailsysdir}/${jname}/jail-message" ]; then
+		echo "---- jail messages ----"
+		/bin/cat "${jailsysdir}/${jname}/jail-message"
+		echo "---- jail messages ----"
+	fi
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		# refresh jail info
+		. ${jrcconf}
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} host_hostname=${host_hostname} protected=${protected} vnc_port=0 status=2
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" host_hostname="${host_hostname}" status=1
+
+		if [ "${cbsd_queue_name2}" != "none" ]; then
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=2
+			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"success\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#completed\"}"
+		fi
+	fi
+}
+
+for i in ${jname}; do
+	import_jail ${i}
+done

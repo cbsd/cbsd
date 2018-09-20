@@ -7,7 +7,11 @@ TMPFILE="${ftmpdir}/inputbox.$$"
 
 jname_msg="Jail name. Name must begin with a letter / a-z /  and not have any special symbols: -,.=%"
 host_hostname_msg="Jail Fully Qualified Domain Name"
-ip4_addr_msg="Jail IP address from CBSD pool: ${nodeippool}. Use IP/PREFIX form. Comma-separated for aliases. 0 for disable IP creating by CBSD: useful for vnet Jails. Or DHCP for determine free IP automatically"
+ip4_addr_msg="Jail IPv4 and/or IPv6 address. Current CBSD IPv4 pool: ${nodeippool}\n\
+ Use IP/PREFIX form, comma-separated for aliases.\n\
+ '0' to disable IP creating by CBSD (useful for vnet jails)\n\
+ 'DHCP' for determine free IPv4 automatically\n\
+ 'nic1#ip_addr,nic2#ip_addr' for multiple NIC form\n"
 interface_msg="Auto create and auto remove IP on selected NICs. 0 for disable, auto - for auto detect"
 ver_msg="Jail base source version"
 basename_msg="Alternative jailbase name"
@@ -232,9 +236,11 @@ get_construct_host_hostname()
 get_construct_ip4_addr()
 {
 	local _ok=0 _input _retval _i _j _existing_ipjail _existing_ip _myip
-	local msg_yes msg_no IFS _jname _ips
+	local msg_yes msg_no IFS _jname _ips _mod=0 _tmp_input=
 
-	f_dialog_title " ip4_addr "
+	. ${workdir}/vnet.subr	# is_nic_exist
+
+	f_dialog_title " ip_addr "
 
 	while [ ${_ok} -ne 1 ]; do
 		if [ -z "${ip4_addr}" ]; then
@@ -260,6 +266,13 @@ get_construct_ip4_addr()
 			return 0
 		fi
 
+		# Yes, we wrote in the example that the valid separator between NIC and address
+		# is '#' and not '|' as experienced jail.conf users can get used to.
+		# But we will still try to convert the input with '|' to correct form
+		strpos --str="${_input}" --search="|"
+		_pos=$?
+		 [ ${_pos} -ne 0 ] && _input=$( echo ${_input} | /usr/bin/tr '|' '#' )
+
 		msg_yes="Ok"
 		msg_no="Not Ok"
 
@@ -269,11 +282,42 @@ get_construct_ip4_addr()
 
 		IFS=","
 		for _i in ${_input}; do
+
+			if [ "${_i}" = "DHCP" ]; then
+				_i=$( dhcpd 2>/dev/null )
+				if [ $? -eq 2 ]; then
+					local msg_ok="It's a pity"
+					f_dialog_msgbox "No free IP address for DHCP in nodeippool"
+					return 0
+				fi
+				_mod=1		# modify real input by _tmp_input string ( with DHCP-obtained IP address )
+			fi
+
+			if [ -z "${_tmp_input}" ]; then
+				_tmp_input="${_i}"
+			else
+				_tmp_input="${_tmp_input},${_i}"
+			fi
+
 			ipwmask ${_i}
 			[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
 			iptype ${IWM}
-			[ $? -ne 0 ] && _myip="${_myip} ${IWM}"
+			if [ $? -ne 0 ]; then
+				if [ -n "${V_INTERFACE}" -a -n "${V_IP}" ]; then
+					if ! is_nic_exist -n ${V_INTERFACE}; then
+						local msg_ok="I was wrong"
+						f_dialog_msgbox "Interface ${V_INTERFACE} not exist!"
+						return 0
+					fi
+					_myip="${_myip} ${V_IP}"
+				else
+					_myip="${_myip} ${IWM}"
+				fi
+			fi
 		done
+
+		[ ${_mod} -eq 1 ] && _input="${_tmp_input}"
 
 		# check for other jail
 		IFS="|"
@@ -288,6 +332,7 @@ get_construct_ip4_addr()
 		_ok=1
 
 		for _i in $( /usr/bin/seq 0 255 ); do
+			unset _existing_ipjail _existing_ip
 			eval _jname="\$jname$_i"
 			[ -z "${_jname}" ] && break
 			# skip for myself
@@ -295,24 +340,25 @@ get_construct_ip4_addr()
 			eval _existing_ipjail="\$ips$_i"
 			[ -z "${_existing_ipjail}" ] && break
 
-			_existing_ipjail=$( echo ${_existing_ipjail}|/usr/bin/tr "," " " )
+			_existing_ipjail=$( echo ${_existing_ipjail} | /usr/bin/tr "," " " )
 
-			for _i in ${_existing_ipjail}; do
-				ipwmask ${_i}
+			for _x in ${_existing_ipjail}; do
+				[ "${_x}" = "DHCP" ] && continue
+				ipwmask ${_x}
 				[ -z "${IWM}" ] && continue
 				iptype ${IWM}
 				[ $? -eq 1 ] && _existing_ip="${_existing_ip} ${IWM}"
 			done
 
-			for _i in ${_existing_ip}; do
+			for _x in ${_existing_ip}; do
 				for _j in ${_myip}; do
-					[ "${_i}" = "${_j}" ] && _ok=0 && break
+					[ "${_x}" = "${_j}" ] && _ok=0 && break
 				done
 				[ ${_ok} -eq 0 ] && break
 			done
 
 			if [ ${_ok} -eq 0 ]; then
-				f_dialog_noyes "${_i} already assigned to jail: ${_jname}.\nIf you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
+				f_dialog_noyes "${_j} already assigned to jail: ${_jname}.\nIf you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
 				if [ $? -eq 1 ]; then
 					_ok=0
 					break

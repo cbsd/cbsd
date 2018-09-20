@@ -1,0 +1,177 @@
+# load nvme info
+load_nvme_info()
+{
+	nvme_last_id=1
+	local sqldelimer=" "
+
+	unset nvmelist
+
+	for last_nvme in $( /usr/bin/seq 1 16 ); do
+		unset nvme_id${last_nvme}
+	done
+
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,devpath,ram,maxq,qsz,ioslots,sectsz,ser FROM bhyve_nvme" | while read id devpath ram maxq qsz ioslots sectsz ser; do
+		[ -z "${id}" ] && return 0
+		echo "export nvme_id${nvme_last_id}=\"${id}\""
+		echo "export nvme_devpath${nvme_last_id}=\"${devpath}\""
+		echo "export nvme_ram${nvme_last_id}=\"${ram}\""
+		echo "export nvme_maxq${nvme_last_id}=\"${maxq}\""
+		echo "export nvme_qsz${nvme_last_id}=\"${qsz}\""
+		echo "export nvme_ioslots${nvme_last_id}=\"${ioslots}\""
+		echo "export nvme_sectsz${nvme_last_id}=\"${sectsz}\""
+		echo "export nvme_ser${nvme_last_id}=\"${ser}\""
+		nvme_last_id=$(( nvme_last_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create nvme map${NORMAL}"
+}
+
+# form for $new_nvme_devpath
+get_nvme_devpath()
+{
+	local _input _defname="${new_nvme_devpath}"
+
+	f_dialog_title " Enter path to device "
+
+	[ -n "${new_nvme_name}" ] && _defname="${new_nvme_name}"
+
+	f_dialog_input _input "Input path, eg: /dev/blockdev or /var/nvme_dsk1 or nvme1" "${_defname}" \
+		"${_message}" || return $?
+
+	if [ -n "${_input}" ]; then
+		if [ ! -r ${_input} ]; then
+			_message="Unable to access to ${_input}. Please create them first"
+			 f_dialog_msgbox "${_message}"
+			return 0
+		else
+			new_nvme_devpath="${_input}"
+		fi
+	fi
+}
+
+# form for $new_nvme_ram
+get_nvme_ram()
+{
+	local _input _defname="0"
+
+	f_dialog_title " Enter RAM size for NVMe "
+
+	[ -n "${new_nvme_ram}" ] && _defname="${new_nvme_ram}"
+
+	f_dialog_input _input "Input RAM, eg: 128m, 10g ..." "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_ram="${_input}"
+}
+
+# form for $new_nvme_maxq
+get_nvme_maxq()
+{
+	local _input _defname="16"
+
+	f_dialog_title " Enter max number of queues "
+
+	[ -n "${new_nvme_maxq}" ] && _defname="${new_nvme_maxq}"
+
+	f_dialog_input _input "Input maxq, eg: 16 ( 0 - inherits default )" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_maxq="${_input}"
+}
+
+# form for $new_nvme_qsz
+get_nvme_qsz()
+{
+	local _input _defname="2048"
+
+	f_dialog_title " Enter max elements in each queue "
+
+	[ -n "${new_nvme_qsz}" ] && _defname="${new_nvme_qsz}"
+
+	f_dialog_input _input "Input qsz, eg: 2048 ( 0 - inherits default )" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_qsz="${_input}"
+}
+
+# form for $new_nvme_ioslots
+get_nvme_ioslots()
+{
+	local _input _defname="8"
+
+	f_dialog_title " Enter max number of concurrent I/O equests "
+
+	[ -n "${new_nvme_ioslots}" ] && _defname="${new_nvme_ioslots}"
+
+	f_dialog_input _input "Input ioslots, eg: 8 ( 0 - inherits default )" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_ioslots="${_input}"
+}
+
+# form for $new_nvme_sectsz
+get_nvme_sectsz()
+{
+	local _input _defname="1"
+
+	f_dialog_title " Enter sector size (defaults to blockif sector size) "
+
+	[ -n "${new_nvme_sectsz}" ] && _defname="${new_nvme_sectsz}"
+
+	f_dialog_input _input "Input sectsz, eg: 2" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_sectsz="${_input}"
+}
+
+# form for $new_nvme_ser
+get_nvme_ser()
+{
+	local _input _defname="bhyve-CBSD-NVMe"
+
+	f_dialog_title " Serial number with maximum 20 characters "
+
+	[ -n "${new_nvme_ser}" ] && _defname="${new_nvme_ser}"
+
+	f_dialog_input _input "Input ser, eg: bhyve-NVMe" "${_defname}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_nvme_ser="${_input}"
+}
+
+# form for new nvme
+# -d "${new_nvme_devpath}" -i "${new_nvme_ioslots}" -m "${new_nvme_maxq}" -q "${new_nvme_qsz}" -r "${new_nvme_ram}" -s "${new_nvme_sectsz}" -v "${new_nvme_ser}"
+# e.g: add_nvme -d /usr/nvme_10g.dsk -r 128 -m 2 -q 2 -i 2 -v "bhyve-CBSD-NVMe"
+add_nvme()
+{
+	local count=
+	local name=
+	local type=
+	local cache=
+	local _res _msg
+
+	while getopts "d:i:m:q:r:s:v:" opt; do
+		case "${opt}" in
+			d) devpath="${OPTARG}" ;;
+			i) ioslots="${OPTARG}" ;;
+			m) maxq="${OPTARG}" ;;
+			q) qsz="${OPTARG}" ;;
+			r) ram="${OPTARG}" ;;
+			s) sectsz="${OPTARG}" ;;
+			v) ser="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${devpath}" ] && err 1 "${MAGENTA}Empty count${NORMAL}"
+
+	# some defaults
+	[ -z "${ram}" ] && ram=0
+	[ -z "${maxq}" ] && maxq=0
+	[ -z "${qsz}" ] && qsz=0
+	[ -z "${ioslots}" ] && ioslots=0
+	[ -z "${sectsz}" ] && sectsz=0
+	[ -z "${ser}" ] && ser="bhyve-CBSD-NVMe"
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyve_nvme ( devpath,ram,maxq,qsz,ioslots,sectsz,ser ) VALUES ( \"${devpath}\",\"${ram}\",\"${maxq}\",\"${qsz}\",\"${ioslots}\",\"${sectsz}\",\"${ser}\" )"
+
+	return 0
+}

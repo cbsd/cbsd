@@ -17,6 +17,8 @@ set +e
 
 . ${subr}
 readconf srcup.conf
+readconf srcup-${platform}.conf
+
 init $*
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/sources/"
@@ -44,7 +46,7 @@ init_svn()
 		SCM_URL="${scmbase}/releng/${ver}"
 	fi
 
-	[ "${ver}" = "12.0" -o "${ver}" = "12" ] && SCM_URL="${scmbase}/head"
+	[ "${ver}" = "13.0" -o "${ver}" = "13" ] && SCM_URL="${scmbase}/head"
 	return 0
 }
 
@@ -55,24 +57,30 @@ init_git()
 	if [ -f "/usr/local/bin/git" ]; then
 		SCM="/usr/local/bin/git"
 	else
-		err 1 "${MAGENTA}No git in the base. Please install devel/git${NORMAL}"
+		err 1 "${MAGENTA}No git in the base. Please install: ${GREEN}pkg install -y devel/git${NORMAL}"
 	fi
 
-	[ -z "${scmbase}" ] && scmbase="${GITBASE}"
+	if [ -z "${scmbase}" ]; then
+		[ -z "${GITBASE}" ] && err 1 "${MAGENTA}Empty GITBASE variable. Please specify GITBASE via ${GREEN}srcup.conf${NORMAL}"
+		scmbase="${GITBASE}"
+	fi
 	SCM_URL="${scmbase}"
 
 	[ -d "${dst}/.git" ] && return 0
+	set -o xtrace
 
 	cd ${dst} && ${SCM} init
 	${SCM} remote add origin ${SCM_URL}
-	echo "${SCM} fetch --depth=1 origin"
 	${SCM} fetch ${git_flags} origin
 
+	set +o xtrace
 	return 0
 }
 
 svn_checkout()
 {
+	local _ret=0
+	local st_time end_time
 	# repair and upgrade
 	if [ -d "${dst}/.svn" ]; then
 		cd ${dst}
@@ -80,13 +88,20 @@ svn_checkout()
 		${SCM} cleanup
 	fi
 	${ECHO} "${MAGENTA}Processing svn update...${NORMAL}"
+	cbsdlogger NOTICE ${CBSD_APP}: processing svn update: ${SCM} checkout -r ${rev} ${SCM_URL} ${dst}
+	st_time=$( /bin/date +%s )
 	echo "${SCM} checkout -r ${rev} ${SCM_URL} ${dst}"
 	${SCM} checkout -r ${rev} ${SCM_URL} ${dst}
+	_ret=$?
+	end_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: svn_checkout done in $(( end_time - st_time ))s. with errcode: ${_ret}
 }
 
 git_checkout()
 {
 	local _depth _branch
+	local _ret=0
+	local st_time end_time
 
 	[ "${depth}" != "0" ] && _depth="${depth}"
 
@@ -103,13 +118,20 @@ git_checkout()
 
 	${ECHO} "${MAGENTA}Selected branch: ${GREEN}${_branch}${NORMAL}"
 
+	st_time=$( /bin/date +%s )
+
 	if [ -d "${dst}/.git" ]; then
 		echo "cd ${dst} && ${SCM} ${git_flags} branch ${_branch}"
+		cbsdlogger NOTICE ${CBSD_APP}: processing git checkout: ${_branch} in ${dst}
 		cd ${dst} && ${SCM} checkout ${_branch}
 		${SCM} pull
 	else
 		echo "Clone error: no .git"
 	fi
+
+	end_time=$( /bin/date +%s )
+	cbsdlogger NOTICE ${CBSD_APP}: svn_checkout done in $(( end_time - st_time ))s. with errcode: ${_ret}
+
 }
 
 status_is_maintenance_soft()
@@ -165,12 +187,13 @@ cleanup_sources()
 	status_is_normal
 }
 
+${ECHO} "${MAGENTA}Platform: ${GREEN}${platform}${NORMAL}"
 LOCKFILE=${ftmpdir}/src_$( /sbin/md5 -qs ${dst} ).lock
 makelock ${LOCKFILE}
 
 [ ! -d "${dst}" ] && /bin/mkdir -p ${dst}
 
-trap "cleanup_sources" HUP INT ABRT BUS TERM EXIT
+trap "cleanup_sources > /dev/null 2>&1" HUP INT ABRT BUS TERM EXIT
 
 case "${checkout_method}" in
 	svn*)
@@ -226,4 +249,3 @@ if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 fi
 
 status_is_normal
-
