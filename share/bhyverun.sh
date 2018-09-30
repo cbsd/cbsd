@@ -1,15 +1,18 @@
 #!/bin/sh
 
-while getopts "c:d:l:r:" opt; do
+while getopts "c:d:g:l:r:" opt; do
 	case "$opt" in
 		c) conf="${OPTARG}" ;;
 		d) debug="${OPTARG}" ;;
+		g) debug_engine="${OPTARG}" ;;
 		l) orig_logfile="${OPTARG}" ;;
 		r) restore_checkpoint="${OPTARG}" ;;
 	esac
 	shift $(($OPTIND - 1))
 done
 
+[ -z "${debug_engine}" ] && debug_engine="none"
+[ -z "${xhci}" ] && xhci=0
 [ ! -f "${conf}" ] && exit 0
 . ${conf}
 
@@ -86,8 +89,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
-			xhci_args="-s 30,xhci,tablet"
-
+			if [ ${xhci} -eq 1 ]; then
+				xhci_args="-s 30,xhci,tablet"
+			else
+				xhci_args=
+			fi
 			# VNC password support introduced in FreeBSD 11.1+
 			if [ ${freebsdhostversion} -gt 1101500 ]; then
 				if [ -n "${vnc_password}" ]; then
@@ -135,14 +141,44 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	fi
 
 	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	debug_bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t CBSD "[debug] ${bhyve_cmd}"
 	echo "cmd: ${bhyve_cmd}" >> ${vm_logfile}
 	echo "-----" >>  ${vm_logfile}
 
-	/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd} >> ${vm_logfile} 2>&1
-	ret=$?
+	case "${debug_engine}" in
+		gdb)
+			# break while loop
+			touch /tmp/bhyvestop.${jname}.lock
+			echo
+			echo "Warning"
+			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
+			echo
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/libexec/gdb -batch -x /tmp/cmds.$$ --args ${debug_bhyve_cmd}"
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/libexec/gdb -ex run --args ${debug_bhyve_cmd}
+			ret=$?
+			/bin/rm -f /tmp/cmds.$$
+			;;
+		lldb)
+			# break while loop
+			touch /tmp/bhyvestop.${jname}.lock
+			echo
+			echo "Warning"
+			echo "Run bhyve throuch LLDB. Please execute 'run' to launch bhyve instance"
+			echo
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}"
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}
+			ret=$?
+			/bin/rm -f /tmp/cmds.$$
+			;;
+		*)
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd} >> ${vm_logfile} 2>&1
+			ret=$?
+			;;
+	esac
+
 	if [ ${ret} -ne 0 ]; then
 		touch /tmp/bhyvestop.${jname}.lock
 		echo "Exit code: ${ret}. See ${vm_logfile} for details"
