@@ -1098,10 +1098,11 @@ compile_vnc_args()
 # -j ${jname}
 # return 0 when no VM process exist by $jname
 # return 1 when VM process exist with $jname + return $vm_pid and $vm_state variables
+# e.g: check_for_bhyve_process -j vm1
 check_for_bhyve_process()
 {
 	local jname
-	unset vm_pid vm_state
+	unset vm_pid vm_state b_jname
 
 	while getopts "j:" opt; do
 		case "${opt}" in
@@ -1112,25 +1113,36 @@ check_for_bhyve_process()
 
 	[ -z "${jname}" ] && return 0
 
+	. ${strings}
+
 	local search_cmd="bhyve: ${jname}"
 	local strlen_search_cmd=$( strlen "${search_cmd}" )
 
 	eval $( /bin/ps axopid,state,ucomm,command -ww | while read pid state ucomm command; do
-		[ "${ucomm}" != "bhyve" ] && continue
+
+		case ${ucomm} in
+				bhyve|grub-bhyve|bhyveload)
+				;;
+			*)
+				continue
+				;;
+		esac
+
 		cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
 		b_jname=$( echo "${command}" | /usr/bin/awk '/bhyve: /{print $2}' )
-
+		if [ -z "${b_jname}" ]; then
+			# second change: find for: /usr/sbin/bhyve -c ... <jname>
+			# this is bhyve stage on early start (e.g vncwait)
+			b_jname=$( echo "${command}" | /usr/bin/awk '/bhyve/{print $NF}' )
+		fi
+		[ -z "${b_jname}" ] && continue
 		[ "${b_jname}" != "${jname}" ] && continue
-
 		echo vm_state=\"${state}\"
 		echo vm_pid=\"${pid}\"
 		break
 	done )
 
 	[ -z "${vm_pid}" ] && return 0
-
-	echo "vm_state = ${vm_state}"
-	echo "vm_pid = ${vm_pid}"
 	return 1
 }
 

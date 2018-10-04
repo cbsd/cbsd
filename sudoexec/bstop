@@ -17,6 +17,7 @@ hard_timeout=N, how many seconds wait after ACPI signal before hard poweroff,\n\
 . ${mdtools}
 . ${strings}
 . ${tools}
+. ${workdir}/bhyve.subr
 
 [ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e bls -r ${sqlreplica}
 
@@ -107,16 +108,7 @@ if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 	[ "${cbsd_queue_name}" != "none" ] && [ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=1 data_status=1
 fi
 
-pid=
-
-pid=$( /bin/ps axopid,ucomm,command -ww | while read pid comm cmd; do
-	case "${comm}" in
-		bhyve|grub-bhyve)
-			_res=$( echo ${cmd} | /usr/bin/grep " ${jname}" 2>/dev/null)
-			[ -n "${_res}" ] && echo "${pid}" && exit 0
-			;;
-	esac
-done 2>/dev/null)
+check_for_bhyve_process -j ${jname}
 
 # for external hook variables
 geniplist ${ip4_addr}
@@ -131,10 +123,10 @@ trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 jswmode jname=${jname} mode=maintenance comment='Stopping_VM'
 
 if [ ${noacpi} -eq 0 ]; then
-	if [ -n "${pid}" ]; then
+	if [ -n "${vm_pid}" ]; then
 		# soft stop, send SIGTERM
 		tleft=$(( hard_timeout - 1 ))
-		kill -15 ${pid} > /dev/null 2>&1
+		kill -15 ${vm_pid} > /dev/null 2>&1
 		for i in $( /usr/bin/seq 1 ${hard_timeout} ); do
 			printf "${CLRLINE}"
 			printf "${CURSORRST}"
@@ -142,21 +134,21 @@ if [ ${noacpi} -eq 0 ]; then
 			for x in $( /usr/bin/seq 1 ${i} ); do
 				printf "${MAGENTA}."
 			done
-			cbsd_pwait --pid=${pid} --timeout=1 > /dev/null 2>&1
+			cbsd_pwait --pid=${vm_pid} --timeout=1 > /dev/null 2>&1
 			tleft=$(( tleft - 1 ))
 		done
 		printf "]${NORMAL}\n"
-		/bin/ps -p ${pid} > /dev/null 2>&1
+		/bin/ps -p ${vm_pid} > /dev/null 2>&1
 		if [ $? -eq 0 ]; then
 			# still live
 			cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} does not want to die via ACPI, soft timeout ${hart_timeout} exceeded. Kill him
-			kill -9 ${pid} > /dev/null 2>&1 || true
+			kill -9 ${vm_pid} > /dev/null 2>&1 || true
 		fi
 	else
 		${ECHO} "${MAGENTA}Warning: unable to determine bhyve pid for: ${GREEN}${jname}${NORMAL}"
 	fi
 else
-	kill -9 ${pid} > /dev/null 2>&1 || true
+	kill -9 ${vm_pid} > /dev/null 2>&1 || true
 fi
 
 [ -r ${jailsysdir}/${jname}/vnc_port ] && /bin/rm -f ${jailsysdir}/${jname}/vnc_port

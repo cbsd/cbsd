@@ -1,7 +1,7 @@
 #!/bin/sh
 
 while getopts "c:d:g:l:r:" opt; do
-	case "$opt" in
+	case "${opt}" in
 		c) conf="${OPTARG}" ;;
 		d) debug="${OPTARG}" ;;
 		g) debug_engine="${OPTARG}" ;;
