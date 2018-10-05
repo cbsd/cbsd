@@ -1,13 +1,14 @@
 #!/usr/local/bin/cbsd
 #v12.0.0
 MYARG=""
-MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport"
-MYDESC="Start jail"
+MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport debug_engine"
+MYDESC="Start bhyve domain"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
   checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
   lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
-  lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n"
+  lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n\
+  debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n"
 CBSDMODULE="bhyve"
 EXTHELP="wf_jstop_jstart.html"
 
@@ -15,6 +16,7 @@ EXTHELP="wf_jstop_jstart.html"
 lm="0"
 lm_dport=
 lm_rnodename=
+odebug_engine=
 
 . ${subr}
 . ${system}
@@ -28,7 +30,13 @@ readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
 [ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e bls -r ${sqlreplica}
+
+odebug_engine=		# overwrite debug_engine variable
+debug_engine=		# reset debug_engine before init
+
 init $*
+
+[ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
 . ${workdir}/fetch.subr
 . ${workdir}/jcreate.subr	# for external_exec_master_script
@@ -298,10 +306,12 @@ start_bhyve()
 	if [ "${lm}" = "1" -a -n "${lm_rnodename}"  ]; then
 		[ -z "${lm_dport}" ] && lm_dport="0"
 		# prepare live_migration_args and {jailsysdir}/${jname}/live_migration.conf config for live migration
-		${ECHO} "${MAGENTA}Compile live migration settings...${NORMAL}"
+		printf "${MAGENTA}Compile live migration settings...${NORMAL}"
 		if ! compile_live_migration_args -a ${lm_rnodename} -b ${nodename} -p ${lm_dport}; then
 			unset live_migration_args
-			[ "${lm}" = "1" ] && err 1 "${MAGENTA}live_migration_args is failed${NORMAL}"
+			[ "${lm}" = "1" ] && err 1 "${MAGENTA}failed${NORMAL}"
+		else
+			printf "${GREEN}done${NORMAL}"
 		fi
 	fi
 
@@ -324,6 +334,9 @@ start_bhyve()
 	[ -r "${jailsysdir}/${jname}/helpers/brctl.sqlite" ] && nice=$( cbsdsql ${jailsysdir}/${jname}/helpers/brctl.sqlite "SELECT cur FROM forms WHERE param=\"nice\"" )
 	[ -z "${nice}" ] && nice="0"
 	[ "${nice}" != "0" ] && ${ECHO} "${MAGENTA}bhyve renice: ${GREEN}${nice}${NORMAL}"
+
+	# restore overwrite debug_engine
+	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
 
 /bin/cat > ${jailsysdir}/${jname}/bhyve.conf <<EOF
 vm_boot='${vm_boot}'
@@ -396,10 +409,14 @@ EOF
 		fi
 	fi
 
-
 	case "${debug_engine}" in
 		gdb|lldb)
-			/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf ${checkpoint_args}
+			if [ "${lm}" = "1" ]; then
+				# for live migration always run in tmux due to non-interactive commands from remote side
+				${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}"
+			else
+				/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}
+			fi
 			;;
 		*)
 			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf ${checkpoint_args}"
