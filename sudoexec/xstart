@@ -2,7 +2,7 @@
 #v11.1.12
 MYARG=""
 MYOPTARG="jname inter debug"
-MYDESC="Start jail"
+MYDESC="Start XEN domain"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
 CBSDMODULE="xen"
 EXTHELP="wf_jstop_jstart.html"
@@ -13,7 +13,7 @@ EXTHELP="wf_jstop_jstart.html"
 . ${workdir}/universe.subr
 . ${workdir}/xen.subr
 . ${tools}
-. ${workdir}/virtual.subr	# for init_systap
+. ${workdir}/vnet.subr 		# get_vm_uplink_interface
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -23,6 +23,7 @@ init $*
 
 . ${workdir}/fetch.subr
 . ${workdir}/jcreate.subr       # for external_exec_master_script
+. ${workdir}/virtual.subr		# for init_systap
 
 make_freebsd_part()
 {
@@ -86,8 +87,7 @@ start_xen()
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart status=1
 	fi
 
-	#vm_boot=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT vm_boot FROM xen WHERE jname=\"${jname}\" 2>/dev/null )
-
+	vm_boot=$( cbsdsql ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
 	check_for_empty_hdd
 
 	if [ "${vm_boot}" = "cd" ]; then
@@ -265,12 +265,14 @@ EOF
 	cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
 	# update state_time
-	cbsdsql local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+
+	# update state_time, local SQLite for back compatible
+	cbsdsql local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
 
 	err 0 ""
 
 }
-
 
 
 # MAIN for multiple jails
@@ -284,7 +286,6 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	# multiple astart always non interactive
 	export inter=0
 	# recursive
-
 	if [ -n "${jail_list}" ]; then
 		JLIST="${jail_list}"
 	else
@@ -320,6 +321,7 @@ fi
 init_xen
 init_systap
 
+st_time=$( /bin/date +%s )
 [ -z "$jname" ] && jname=$1
 
 default_profile="xen-default-default.conf"
@@ -332,62 +334,39 @@ readconf ${default_profile}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such domain: ${GREEN}${jname}${NORMAL}"
 [ ${status} -eq 2 ] && err 1 "${MAGENTA}Domain in slave mode. Please ${GREEN}cbsd jswmode mode=master${MAGENTA} first${NORMAL}"
 
-[ $jid -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
+[ ${jid} -ne 0 ] && err 1 "${MAGENTA}Jail ${jname} already running, jid: ${GREEN}${jid}${NORMAL}"
 [ "${emulator}" != "xen" ] && err 1 "${MAGENTA}Not xen mode${NORMAL}"
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
 
-# to rcconf
-A=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vm_vnc_port,xen_vnc_tcp_bind,xen_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password FROM settings ORDER BY (created) DESC LIMIT 1;" )
-
-if [ -n "${A}" ]; then
-	OIFS="${IFS}"
-	IFS="|"
-	vm_cpus=
-	vm_ram=
-	vm_os_type=
-	vm_boot=
-	vm_os_profile=
-	vm_vnc_port=
-	xen_vnc_tcp_bind=
-	xen_vnc_resolution=
-	cd_vnc_wait=
-	protected=
-	hidden=
-	maintenance=
-	ip4_addr=
-	vnc_password=
-	sqllist "${A}" vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vm_vnc_port xen_vnc_tcp_bind xen_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr vnc_password
-	IFS="${OIFS}"
-else
-	err 1 "${MAGENTA}Unable to fetch vm data from: ${GREEN}${jailsysdir}/${jname}/local.sqlite${NORMAL}"
-fi
-
+main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
 MDFILE=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 
-[ -z "${MDFILE}" ] && ${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"
+if [ -z "${MDFILE}" ]; then
+	${ECHO} "${MAGENTA}Warning: no any storage device found for this VM${NORMAL}"
+else
+	if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
+		${ECHO} "${MAGENTA}No such ${data}/${MDFILE} but mdsize flags is not null.${NORMAL}"
 
-if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
-	${ECHO} "${MAGENTA}No such ${data}/${MDFILE} but mdsize flags is not null.${NORMAL}"
+		# if zfsfeat=1, try scan for zvol
+		[ "${zfsfeat}" != "1" ] && break
 
-	# if zfsfeat=1, try scan for zvol
-	[ "${zfsfeat}" != "1" ] && break
+		readconf zfs.conf
+		. ${zfstool}
+		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
 
-	readconf zfs.conf
-	. $zfstool
-	DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
+		[ -z "${DATA}" ] && break
 
-	[ -z "${DATA}" ] && break
-
-	for lunname in $( /usr/bin/seq 0 10 ); do
-		if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
-			/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
-			${ECHO} "${MAGENTA}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
-		fi
-	done
+		for lunname in $( /usr/bin/seq 0 10 ); do
+			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
+				/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
+				${ECHO} "${MAGENTA}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
+			fi
+		done
+	fi
 fi
 
 # export variables for external hooks
@@ -412,4 +391,7 @@ if [ ${status} -eq 3 ]; then
 fi
 
 start_xen
+end_time=$( /bin/date +%s )
+cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in $(( end_time - st_time ))s
+
 exit 0
