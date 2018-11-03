@@ -66,6 +66,8 @@ static int add_param(const char *name, void *value, size_t valuelen,
 static int sort_param(const void *a, const void *b);
 static int print_jail(int pflags, int jflags);
 
+int tojson=1;		// todo: load from stats.conf
+
 int nullfd = -1;
 struct pidfh *pidfile;
 char *path_my_pidfile;
@@ -367,6 +369,10 @@ int list_data()
 	char stats_file[1024];
 	FILE *fp;
 	int ret=0;
+	char json_str[4096];		// todo: dynamic from number of bhyve/jails
+	char json_buf[512];		// todo: dynamic from number of bhyve/jails
+
+	memset(json_str,0,sizeof(json_str));
 
 	for (ch = item_list; ch; ch = ch->next) {
 		if (ch->modified==0) continue;
@@ -374,6 +380,15 @@ int list_data()
 		printf("TYPE: %d, NAME: %s, PID %d, PCPU: %d, MEM: %lu, PROC: %d, OPENFILES: %d, RB: %d, WB: %d, RIO: %d, WIO: %d\n",ch->emulator,ch->name,ch->pid,ch->pcpu,ch->memoryuse,ch->maxproc,
 			ch->openfiles, ch->readbps, ch->writebps, ch->readiops, ch->writeiops);
 
+		memset(json_buf,0,sizeof(json_buf));
+		sprintf(json_buf,"{ \"name\": \"%s\", \"pcpu\": %d }",ch->name,ch->pcpu);
+		if (strlen(json_str)>2) {
+			strcat(json_str,",");
+			strcat(json_str,json_buf);
+		} else {
+			strcpy(json_str,"[");
+			strcat(json_str,json_buf);
+		}
 		memset(sql,0,sizeof(sql));
 		memset(stats_file,0,sizeof(stats_file));
 		sprintf(stats_file,"%s/jails-system/%s/racct.sqlite",workdir,ch->name);
@@ -392,6 +407,11 @@ int list_data()
 			ch->modified, ch->memoryuse, ch->maxproc, ch->openfiles, ch->pcpu, ch->readbps, ch->writebps, ch->readiops, ch->writeiops );
 		ret=sqlitecmd(stats_file,sql);
 	}
+
+	strcat(json_str,"]");
+	fp=fopen("/tmp/cbsd_stats.json","w");
+	fputs(json_str,fp);
+	fclose(fp);
 	return 0;
 }
 
