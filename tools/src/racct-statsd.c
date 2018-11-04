@@ -130,6 +130,8 @@ struct item_data {
 	unsigned int writeiops;
 	unsigned int modified;
 	unsigned int cpus;
+	unsigned long maxmem;
+	unsigned int pmem;
 	struct item_data *next;
 };
 
@@ -209,6 +211,37 @@ sql_get_int(sqlite3_stmt * stmt)
 	for (icol = 0; icol < allcol; icol++) {
 			if (icol == (allcol - 1))
 				return atoi((char *)sqlite3_column_text(stmt, icol));
+	}
+
+	return 0;
+}
+
+unsigned long
+sql_get_int64(sqlite3_stmt * stmt)
+{
+	int		icol, irow;
+	const char	*colname;
+	int		allcol;
+	char		*delim;
+	char		*cp;
+	int		printheader = 0;
+	char		*sqlcolnames = NULL;
+	int		ret = 0;
+
+	if (stmt == NULL)
+		return 1;
+
+	if ((cp = getenv("sqldelimer")) == NULL)
+		delim = DEFSQLDELIMER;
+	else
+		delim = cp;
+
+	sqlcolnames = getenv("sqlcolnames");
+	allcol = sqlite3_column_count(stmt);
+
+	for (icol = 0; icol < allcol; icol++) {
+			if (icol == (allcol - 1))
+				return atol((char *)sqlite3_column_text(stmt, icol));
 	}
 
 	return 0;
@@ -381,7 +414,7 @@ int list_data()
 			ch->openfiles, ch->readbps, ch->writebps, ch->readiops, ch->writeiops);
 
 		memset(json_buf,0,sizeof(json_buf));
-		sprintf(json_buf,"{ \"name\": \"%s\", \"pcpu\": %d }",ch->name,ch->pcpu);
+		sprintf(json_buf,"{ \"name\": \"%s\", \"pcpu\": %d, \"pmem\": %d }",ch->name,ch->pcpu,ch->pmem);
 		if (strlen(json_str)>2) {
 			strcat(json_str,",");
 			strcat(json_str,json_buf);
@@ -554,7 +587,7 @@ int update_racct_jail(char *jname, int jid)
 					} else if (!strcmp(param_name,"stacksize")) {
 						ch->stacksize=atoi(var);
 					} else if (!strcmp(param_name,"memoryuse")) {
-						ch->memoryuse=atoi(var);
+						ch->memoryuse=atol(var);
 					} else if (!strcmp(param_name,"memorylocked")) {
 						ch->memorylocked=atoi(var);
 					} else if (!strcmp(param_name,"maxproc")) {
@@ -562,7 +595,7 @@ int update_racct_jail(char *jname, int jid)
 					} else if (!strcmp(param_name,"openfiles")) {
 						ch->openfiles=atoi(var);
 					} else if (!strcmp(param_name,"vmemoryuse")) {
-						ch->vmemoryuse=atoi(var);
+						ch->vmemoryuse=atol(var);
 					} else if (!strcmp(param_name,"swapuse")) {
 						ch->swapuse=atoi(var);
 					} else if (!strcmp(param_name,"nthr")) {
@@ -584,6 +617,8 @@ int update_racct_jail(char *jname, int jid)
 					} else if (!strcmp(param_name,"writeiops")) {
 						ch->writeiops=atoi(var);
 					}
+
+					//calculate pmem
 					i=0;
 					}
 			}
@@ -611,7 +646,7 @@ get_bhyve_cpus(char *vmname)
 	int		vm_cpus=0;
 
 	memset(dbfile,0,sizeof(dbfile));
-	sprintf(dbfile,"%s/var/db/local.sqlite",workdir);
+	sprintf(dbfile,"%s/jails-system/%s/local.sqlite",workdir,vmname);
 
 	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
 		printf("%s: Can't open database file: %s\n", nm(), dbfile);
@@ -620,7 +655,7 @@ get_bhyve_cpus(char *vmname)
 
 	res=1024;
 
-	sprintf(query,"SELECT vm_cpus FROM bhyve WHERE jname='%s' LIMIT 1",vmname);
+	sprintf(query,"SELECT vm_cpus FROM settings LIMIT 1");
 	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 	if (ret == SQLITE_OK) {
@@ -638,6 +673,49 @@ get_bhyve_cpus(char *vmname)
 	return vm_cpus;
 }
 
+unsigned long
+get_bhyve_maxmem(char *vmname)
+{
+	sqlite3		*db;
+	int		res;
+	int		i;
+	char		query[1024];
+	char		*err = NULL;
+	int		maxretry = 10;
+	int		retry = 0;
+	sqlite3_stmt	*stmt;
+	int		ret;
+	char		dbfile[1024];
+	unsigned long	maxmem=0;
+
+	memset(dbfile,0,sizeof(dbfile));
+	sprintf(dbfile,"%s/jails-system/%s/local.sqlite",workdir,vmname);
+
+	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
+		printf("%s: Can't open database file: %s\n", nm(), dbfile);
+		return 1;
+	}
+
+	res=1024;
+
+	sprintf(query,"SELECT vm_ram FROM settings LIMIT 1");
+	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
+	if (ret == SQLITE_OK) {
+		ret = sqlite3_step(stmt);
+
+		while ( ret == SQLITE_ROW ) {
+			maxmem=sql_get_int64(stmt);
+			ret = sqlite3_step(stmt);
+		}
+	}
+
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+	return maxmem;
+}
+
+
 int update_racct_bhyve(char *vmname, char *vmpath)
 {
 	struct item_data *target = NULL, *ch, *next_ch;
@@ -652,6 +730,8 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 	char filter[MAXJNAME+10], unexpanded_rule[MAXJNAME+10];		//10 - extra "process::\0"
 	pid_t oldpid = 0;
 	int vm_cpus = 0;
+	unsigned long maxmem = 0;
+	FILE *fp;
 
 	sprintf(filter,"process:%d:",cur_bid);
 	sprintf(unexpanded_rule,"process:%d",cur_bid);
@@ -670,10 +750,20 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 				// if PID change, get CPUs from bhyve table for ncpu value
 				vm_cpus=get_bhyve_cpus(vmname);
 				if (vm_cpus == 0) return 0;
-				printf("* VM PID WAS CHANGES, UPDATE CPUS: %d\n", vm_cpus);
+				maxmem=get_bhyve_maxmem(vmname);
+				if (maxmem == 0) return 0;
+				printf("* VM PID WAS CHANGES, UPDATE CPUS: %d, UPDATE MAXMEM: %lu\n", vm_cpus,maxmem);
 				ch->cpus = vm_cpus;
+				ch->maxmem = maxmem;
 			} else {
+				if (ch->cpus == 0) {
+					ch->cpus=get_bhyve_cpus(vmname);
+				}
 				vm_cpus = ch->cpus;
+				if (ch->maxmem == 0) {
+					ch->maxmem=get_bhyve_maxmem(vmname);
+				}
+				maxmem = ch->maxmem;
 			}
 
 		for (;;) {
@@ -716,7 +806,7 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 					} else if (!strcmp(param_name,"stacksize")) {
 						ch->stacksize=atoi(var);
 					} else if (!strcmp(param_name,"memoryuse")) {
-						ch->memoryuse=atoi(var);
+						ch->memoryuse=atol(var);
 					} else if (!strcmp(param_name,"memorylocked")) {
 						ch->memorylocked=atoi(var);
 					} else if (!strcmp(param_name,"maxproc")) {
@@ -724,7 +814,7 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 					} else if (!strcmp(param_name,"openfiles")) {
 						ch->openfiles=atoi(var);
 					} else if (!strcmp(param_name,"vmemoryuse")) {
-						ch->vmemoryuse=atoi(var);
+						ch->vmemoryuse=atol(var);
 					} else if (!strcmp(param_name,"swapuse")) {
 						ch->swapuse=atoi(var);
 					} else if (!strcmp(param_name,"nthr")) {
@@ -735,6 +825,8 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 						} else {
 							ch->pcpu=atoi(var);
 						}
+						if (ch->pcpu>100)
+							ch->pcpu=100;
 					} else if (!strcmp(param_name,"readbps")) {
 						ch->readbps=atoi(var);
 					} else if (!strcmp(param_name,"writebps")) {
@@ -743,6 +835,11 @@ int update_racct_bhyve(char *vmname, char *vmpath)
 						ch->readiops=atoi(var);
 					} else if (!strcmp(param_name,"writeiops")) {
 						ch->writeiops=atoi(var);
+					} else {
+						//calculate pmem
+						ch->pmem = 100.0 * ch->memoryuse / ch->maxmem;
+						if (ch->pmem>100)
+							ch->pmem=100;
 					}
 					i=0;
 					}
@@ -912,6 +1009,9 @@ main(int argc, char **argv)
 			newd->pid=cur_bid;
 			strcpy(newd->name,vmname);
 			newd->modified = 0; // sign of new jail
+
+			newd->maxmem = 0;
+			newd->pmem = 0;
 
 			newd->next = item_list;
 			item_list = newd;
