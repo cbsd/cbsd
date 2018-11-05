@@ -224,6 +224,15 @@ done
 # live migration todo
 # check for bhyve migrated successfull to me ( bregister and/or bstatus passed ? )
 
+# CBSD QUEUE
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
+
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	[ "${cbsd_queue_name}" != "none" ] && [ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=1 data_status=1
+	sleep 0.3	# timeout for web socket
+	[ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=2 data_status=0
+fi
+
 # extra destroy
 /usr/bin/nice -n ${nice} /usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1 || true
 /bin/rm -f /tmp/bhyvestop.${jname}.lock

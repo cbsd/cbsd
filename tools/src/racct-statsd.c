@@ -1,5 +1,5 @@
-// CBSD Project 2017
-// Oleg Ginzburg <olevole@olevole.ru>
+// CBSD Project 2017-2018
+// CBSD Team <cbsd+subscribe@lists.tilda.center>
 // 0.1
 #include <sys/param.h>
 #include <sys/jail.h>
@@ -66,7 +66,7 @@ static int add_param(const char *name, void *value, size_t valuelen,
 static int sort_param(const void *a, const void *b);
 static int print_jail(int pflags, int jflags);
 
-int tojson=1;		// todo: load from stats.conf
+int tojson=1;				// todo: load from stats.conf
 
 int nullfd = -1;
 struct pidfh *pidfile;
@@ -74,8 +74,8 @@ char *path_my_pidfile;
 
 int ncpu;
 
-static int	checkfile; /* restrict to particular files or filesystems */
-static int	mflg;	/* include memory-mapped files */
+static int	checkfile;		/* restrict to particular files or filesystems */
+static int	mflg;			/* include memory-mapped files */
 
 uint64_t	fsid;
 uint64_t	ino;
@@ -83,6 +83,7 @@ char		*name;
 char		*workdir = NULL;
 
 static char *memf, *nlistf;
+unsigned long maxmem = 0;		/* Hoster memory in bytes, for jail pmem calculation */
 
 int getfname(char *filename);
 pid_t dofiles(struct procstat *procstat, struct kinfo_proc *p);
@@ -616,9 +617,13 @@ int update_racct_jail(char *jname, int jid)
 						ch->readiops=atoi(var);
 					} else if (!strcmp(param_name,"writeiops")) {
 						ch->writeiops=atoi(var);
+					} else {
+						//calculate pmem
+						ch->pmem = 100.0 * ch->memoryuse / maxmem;
+						if (ch->pmem>100)
+							ch->pmem=100;
 					}
 
-					//calculate pmem
 					i=0;
 					}
 			}
@@ -864,7 +869,8 @@ main(int argc, char **argv)
 	struct item_data *newd;
 	struct item_data *temp;
 	struct timeval  now_time;
-	size_t ncpu_len;
+	size_t ncpu_len = 0;
+	size_t maxmem_len = 0;
 	DIR *dirp;
 	int bhyve_exist=1;
 	int jail_exist=1;
@@ -875,6 +881,7 @@ main(int argc, char **argv)
 	pid_t vmpid;
 
 	ncpu_len = sizeof(ncpu);
+	maxmem_len = sizeof(maxmem);
 
 	jname = NULL;
 	pflags = jflags = jid = 0;
@@ -939,6 +946,14 @@ main(int argc, char **argv)
 
 	if (pidfile != NULL)
 		pidfile_write(pidfile);
+
+	i = sysctlbyname("hw.physmem",&maxmem, &maxmem_len, NULL, 0);
+
+	if (i != 0) {
+		if (errno == ENOENT)
+			errx(1, "Unable to determine hoster physical memory via sysctl hw.physmem");
+		err(1, "sysctlbyname");
+	}
 
 	i = sysctlbyname("hw.ncpu",&ncpu, &ncpu_len, NULL, 0);
 
