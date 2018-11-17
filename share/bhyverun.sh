@@ -150,14 +150,21 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	case "${debug_engine}" in
 		gdb)
+			if [ -x /usr/local/bin/gdb ]; then
+				gdb_cmd="/usr/local/bin/gdb"
+			elif [ -x /usr/libexec/gdb ]; then
+				gdb_cmd="/usr/libexec/gdb"
+			elif [ -x /usr/bin/gdb ]; then
+				gdb_cmd="/usr/bin/gdb"
+			fi
 			# break while loop
 			touch /tmp/bhyvestop.${jname}.lock
 			echo
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/libexec/gdb -batch -x /tmp/cmds.$$ --args ${debug_bhyve_cmd}"
-			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/libexec/gdb -ex run --args ${debug_bhyve_cmd}
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -batch -x /tmp/cmds.$$ --args ${debug_bhyve_cmd}"
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -ex run --args ${debug_bhyve_cmd}
 			ret=$?
 			/bin/rm -f /tmp/cmds.$$
 			;;
@@ -223,6 +230,15 @@ done
 
 # live migration todo
 # check for bhyve migrated successfull to me ( bregister and/or bstatus passed ? )
+
+# CBSD QUEUE
+[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
+
+if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	[ "${cbsd_queue_name}" != "none" ] && [ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=1 data_status=1
+	sleep 0.3	# timeout for web socket
+	[ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=2 data_status=0
+fi
 
 # extra destroy
 /usr/bin/nice -n ${nice} /usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1 || true

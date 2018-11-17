@@ -281,7 +281,7 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 	if (show_freebsdver) {
 		if (first_par)
 			snprintf(dest + strlen(dest), sz - strlen(dest), ":");
-		snprintf(dest + strlen(dest), sz - strlen(dest), "%d", freebsd_version);
+		snprintf(dest + strlen(dest), sz - strlen(dest), "%d.%d", freebsd_version, version / 1000 % 100);
 		first_par++;
 	}
 	ret = 0;
