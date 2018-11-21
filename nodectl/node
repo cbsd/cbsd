@@ -2,17 +2,18 @@
 #v11.1.3
 CBSDMODULE="node"
 MYARG="mode"
-MYOPTARG="node port rootkeyfile pw header allinfo display"
+MYOPTARG="node port rootkeyfile pw header allinfo display ip"
 MYDESC="Manipulate or show information for remote nodes"
 ADDHELP="mode = add, remove, list, status\n\
 node = remote node ip or fqdn\n\
 port = ssh port of remote node\n\
+ip = IP address for update\n\
 rootkeyfile = path to id_rsa for root access\n\
 pw = password of cbsd user from remote node\n\
 header = print header in node list\n\
 allinfo = 1 (default) show all info for nodelist, 0 - only nodename\n\
 display= list by comma for column. Default: nodename,ip,port,keyfile,status,idle\n\
-mode=show - show details about node\n"
+mode=show,update - show or modify details about node\n"
 
 EXTHELP="wf_node.html"
 
@@ -26,7 +27,7 @@ init $*
 [ -z "${display}" ] && display="nodename,ip,port,keyfile,status,idle"
 
 #remove commas for loop action on header
-mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ')
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
 
 # upper for header
 myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
@@ -291,6 +292,27 @@ shownode()
 	[ ${vmsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} VMs:${NORMAL}" && bls node=${node} display=jname,status && echo
 }
 
+update_node()
+{
+	local _port _ip
+
+	while getopts "i:p:" opt; do
+		case "${opt}" in
+			p)
+				_port="${OPTARG}"
+				cbsdsql nodes UPDATE nodelist SET port=\"${_port}\" WHERE nodename=\"${node}\"
+			;;
+			i)
+				_ip="${OPTARG}"
+				cbsdsql nodes UPDATE nodelist SET ip=\"${_ip}\" WHERE nodename=\"${node}\"
+			;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	return 0
+}
+
 # MAIN
 curtime=$( /bin/date +%s )
 
@@ -301,15 +323,33 @@ case "${mode}" in
 	"add")
 		nodeadd
 		;;
-	"remove")
-		nodedel
-		;;
 	"list")
 		show_nodes | /usr/bin/column -t
+		;;
+	"remove")
+		nodedel
 		;;
 	"show")
 		[ -z "${node}" ] && err 1 "${MAGENTA}Please specify: ${GREEN}node=${NORMAL}"
 		shownode
+		;;
+	"update")
+		[ -z "${node}" ] && err 1 "${MAGENTA}Please specify ${GREEN}node=${NORMAL}"
+		modified=0
+		if [ -n "${port}" ]; then
+			update_node -p "${port}"
+			modified=1
+		fi
+		if [ -n "${ip}" ]; then
+			update_node -i "${ip}"
+			modified=1
+		fi
+		if [ ${modified} -eq 1 ]; then
+			idle_update ${node} > /dev/null 2>&1
+			retrinv node=${node} tryoffline=1
+		else
+			err 1 "${MAGENTA}Please specify ${GREEN}ip=${MAGENTA} or ${GREEN}port=${MAGENTA} to update${NORMAL}"
+		fi
 		;;
 	*)
 		err 1 "${MAGENTA}Unknown mode${NORMAL}"
