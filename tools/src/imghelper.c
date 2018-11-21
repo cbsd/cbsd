@@ -37,6 +37,7 @@ int main(int argc, char *argv[])
 	int ch;
 	FILE *fp, *fo;
 	int c;
+	int prev_c;
 	int len_st=0;
 	int len_end=0;
 	int len_param=0;
@@ -144,6 +145,8 @@ int main(int argc, char *argv[])
 	int hammer_param=0;
 	int i=0;
 	int j=0;
+	//reset to \r by default
+	prev_c=10;
 
 	// first pass - label scan
 	while ( hammer!= 2 ) {
@@ -160,21 +163,36 @@ int main(int argc, char *argv[])
 		switch (hammer) {
 			case 0:
 				if (c==st[i]) {
-					buf_start[i]=c;
-					i++;
+					// we only respond if it is the beginning of a new line, stored in prev_c variable
+					if ((i==0)&&(prev_c==10)) {
+						buf_start[i]=c;
+						i++;
+					} else if (i!=0) {
+						buf_start[i]=c;
+						i++;
+					}
 				} else {
+					// sequence is broken, reset
 					i=0;
 				}
 
 				if (i == len_st) {
 					start_pos=ftello(fp) + 1;
+					// start sign found on start_pos (%ld)
 					hammer++;
 				}
 				break;
 			case 1:
 				if (c==end[i]) {
-					buf_end[i]=c;
-					i++;
+					// we only respond if it is the beginning of a new line, stored in prev_c variable
+					if ((i==0)&&(prev_c==10)) {
+						//fprintf(stderr,"H2 PREV: [%c][%d]\n",prev_c,prev_c);
+						buf_end[i]=c;
+						i++;
+					} else if (i!=0) {
+						buf_end[i]=c;
+						i++;
+					}
 				} else {
 					i=0;
 				}
@@ -204,6 +222,7 @@ int main(int argc, char *argv[])
 			case 2:
 				break;
 		}
+		prev_c=c;
 	}
 
 	fclose(fp);
