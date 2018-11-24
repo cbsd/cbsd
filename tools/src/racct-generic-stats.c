@@ -281,7 +281,7 @@ sqlitecmd(char *dbfile, char *query)
 	int res=0;
 
 	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
-		tolog(0,"%s: Can't open database file: %s\n", nm(), dbfile);
+		tolog(log_level,"%s: Can't open database file: %s\n", nm(), dbfile);
 		return 1;
 	}
 
@@ -393,16 +393,16 @@ int get_bs_stats(char *yaml,char *str)
 				break;
 		}
 		tmp[i]='\0';
-		//tolog(0,"get_bs_stats: found: [%s]\n",tmp);
+		//tolog(log_level,"get_bs_stats: found: [%s]\n",tmp);
 
 		x=0;
 		while ((token = strsep(&tmp, ":")) != NULL) {
 		switch (x) {
 			case 0:
-				//tolog(0,"TOKEN: [%s]\n",token);
+				//tolog(log_level,"TOKEN: [%s]\n",token);
 				break;
 			case 1:
-				//tolog(0,"TOKEN2: [%s]\n",token);
+				//tolog(log_level,"TOKEN2: [%s]\n",token);
 				sscanf(token,"%d",&values);
 				break;
 			}
@@ -413,7 +413,7 @@ int get_bs_stats(char *yaml,char *str)
 		free(val);
 		free(tmp);
 	} else {
-		tolog(0,"get_bs_stats: no [%s] here\n",str);
+		tolog(log_level,"get_bs_stats: no [%s] here\n",str);
 	}
 
 	return values;
@@ -480,7 +480,7 @@ int remove_data()
 	struct item_data *temp;
 
 	for (ch = item_list; ch; ch = ch->next) {
-		tolog(0,"NAME: %s, PID %d, PCPU: %d\n",ch->name,ch->pid,ch->cputime);
+		tolog(log_level,"NAME: %s, PID %d, PCPU: %d\n",ch->name,ch->pid,ch->cputime);
 		free(ch);
 	}
 
@@ -518,7 +518,7 @@ int prune_inactive_env()
 		if ( ch->modified == 0 ) continue;
 		// save_loop_count - number of node
 		if ((cur_time - (int)(ch->modified / 1000000000)) > (20 * save_loop_count) ) {
-			tolog(0,"!! Remove inactive env: %s\n",ch->name);
+			tolog(log_level,"!! Remove inactive env: %s\n",ch->name);
 			remove_data_by_jname(ch->name);
 		}
 	}
@@ -557,17 +557,17 @@ init_bs(char *tube)
 	bs_connected=0;
 
 	bs_version(&a, &b, &c);
-	tolog(0,"beanstalk-client version %d.%d.%d\n", a,b,c);
+	tolog(log_level,"beanstalk-client version %d.%d.%d\n", a,b,c);
 
 	while (socket == BS_STATUS_FAIL ) {
 		socket = bs_connect("127.0.0.1", 11300);
 		if (socket != BS_STATUS_FAIL)
 			break;
-		tolog(0,"Unable to connect to beanstalk 127.0.0.1:11300, sleep 10sec\n");
+		tolog(log_level,"Unable to connect to beanstalk 127.0.0.1:11300, sleep 10sec\n");
 		sleep(10);
 	}
 
-	tolog(0,"Connected to BS jail\n");
+	tolog(log_level,"Connected to BS jail\n");
 	bs_connected=1;
 	bs_use(socket, tube);
 	bs_watch(socket, tube);

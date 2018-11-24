@@ -78,7 +78,7 @@ void *doWork(void *param) {
 	{
 		if (sysctlbyname("kern.cp_time", &cur, &cur_sz, NULL, 0) < 0)
 		{
-			tolog(0,"Error reading kern.cp_times sysctl\n");
+			tolog(log_level,"Error reading kern.cp_times sysctl\n");
 			pthread_exit(NULL);
 			exit(-1);
 		}
@@ -119,7 +119,7 @@ int sum_data_hoster()
 	struct sum_item_data *temp;
 	struct sum_item_data *sumch, *next_sumch;
 
-	tolog(0,"\n ***---calc hoster avgdata---*** \n");
+	tolog(log_level,"\n ***---calc hoster avgdata---*** \n");
 
 	gettimeofday(&now_time, NULL);
 	cur_time = (time_t) now_time.tv_sec;
@@ -160,14 +160,14 @@ int sum_data_hoster()
 			newd->next = sum_item_list;
 			sum_item_list = newd;
 			strcpy(newd->name,ch->orig_name);
-			tolog(0,"[AVGSUM] !! %s struct has beed added\n",newd->name);
+			tolog(log_level,"[AVGSUM] !! %s struct has beed added\n",newd->name);
 		}
 	}
 
 	memset(json_str,0,sizeof(json_str));
 	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
 		if(strlen(sumch->name)<1) continue;
-		tolog(0," ***[%s]SUM|PCPU:%d,MEM:%ld,TIME:%ld\n",sumch->name,
+		tolog(log_level," ***[%s]SUM|PCPU:%d,MEM:%ld,TIME:%ld\n",sumch->name,
 		sumch->pcpu/round_total,
 		sumch->memoryuse/round_total,
 		sumch->modified/round_total);
@@ -189,7 +189,7 @@ int sum_data_hoster()
 			sprintf(stats_file,"%s/jails-system/%s/racct.sqlite",workdir,sumch->name);
 			fp=fopen(stats_file,"r");
 			if (!fp) {
-				tolog(0,"RACCT not exist, create via updatesql\n");
+				tolog(log_level,"RACCT not exist, create via updatesql\n");
 				sprintf(sql,"/usr/local/bin/cbsd %s/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",workdir,stats_file);
 				system(sql);
 				//write into base in next loop (protection if jail was removed in directory not exist anymore
@@ -201,7 +201,7 @@ int sum_data_hoster()
 			sprintf(sql,"INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
 				cur_time, sumch->memoryuse/round_total, sumch->maxproc/round_total, sumch->openfiles/round_total, sumch->pcpu/round_total, sumch->readbps/round_total, sumch->writebps/round_total,
 				sumch->readiops/round_total, sumch->writeiops/round_total, sumch->pmem/round_total);
-			tolog(0,"Save to SQL: %s [%s]\n",stats_file,sql);
+			tolog(log_level,"Save to SQL: %s [%s]\n",stats_file,sql);
 			ret=sqlitecmd(stats_file,sql);
 		}
 		sumch->modified=0;
@@ -232,18 +232,18 @@ int sum_data_hoster()
 		return 0;
 
 	if (strlen(json_str)>3) {
-		tolog(0,"bs_put: (%s)\n",json_str);
+		tolog(log_level,"bs_put: (%s)\n",json_str);
 		ret=bs_put(bs_socket, 0, 0, 0, json_str, strlen(json_str));
 		if(ret > 0) {
 			bs_tick=1;
 		} else {
-			tolog(0,"bs_put failed, trying to reconnect...\n");
+			tolog(log_level,"bs_put failed, trying to reconnect...\n");
 			bs_disconnect(bs_socket);
 			bs_connected=0;
 			return 1;
 		}
 	} else {
-		tolog(0,"skip_beanstalk = 1,skipp\n");
+		tolog(log_level,"skip_beanstalk = 1,skipp\n");
 	}
 	return 0;
 }
@@ -271,7 +271,7 @@ int update_racct_hoster(char *vmname, char *orig_jname)
 
 	for (ch = item_list; ch; ch = ch->next) {
 		if (!strcmp(vmname,ch->name)) {
-			tolog(0,"update metrics for hoster: [%s]\n",vmname);
+			tolog(log_level,"update metrics for hoster: [%s]\n",vmname);
 			ch->modified = nanoseconds();
 			// obtain from pthread (doWork) global vars
 			ch->pcpu = pcpu;
@@ -467,7 +467,7 @@ main(int argc, char **argv)
 	pthread_create(&threads[0], NULL, doWork, &numWork);
 
 	while(1) {
-        tolog(0,"main loop\n");
+        tolog(log_level,"main loop\n");
 		if (bs_socket!=-1)
 			bs_disconnect(bs_socket);
 		bs_socket=init_bs("racct-system");
@@ -477,7 +477,7 @@ main(int argc, char **argv)
 //			if (pthread_join(threads[thread], NULL)) {
 //				printf("Error waiting for thread %i of %i\n", thread, numThreads);
 //			}
-            tolog(0," round %d/%d\n ---------------- \n",cur_round,save_loop_count);
+            tolog(log_level," round %d/%d\n ---------------- \n",cur_round,save_loop_count);
 			//convert round integer to string
 			memset(rnum,0,sizeof(rnum));
 			sprintf(rnum,"%d",cur_round);
@@ -500,7 +500,7 @@ main(int argc, char **argv)
 				item_list = newd;
 				strcpy(newd->name,vmname);
 				strcpy(newd->orig_name,tmpjname);
-				tolog(0,"[hoster] !! %s has beed added (%s)\n",newd->name,newd->orig_name);
+				tolog(log_level,"[hoster] !! %s has beed added (%s)\n",newd->name,newd->orig_name);
 			}
 
 			c++;
@@ -514,26 +514,27 @@ main(int argc, char **argv)
 			i=bs_stats_tube(bs_socket, "racct-system", &yaml);
 			if(yaml) {
 				current_jobs_ready=get_bs_stats(yaml,"current-jobs-ready: ");
+				current_waiting=get_bs_stats(yaml,"current-waiting: ");
+				free(yaml);
 				if (current_jobs_ready<0) {
-					tolog(0,"get_bs_stats failed for current-jobs-ready\n");
+					tolog(log_level,"get_bs_stats failed for current-jobs-ready\n");
 					bs_connected=0;
 					sleep(loop_interval);
 					break;
 				}
 				current_waiting=get_bs_stats(yaml,"current-waiting: ");
 				if (current_waiting<0) {
-					tolog(0,"get_bs_stats failed for current-waiting\n");
+					tolog(log_level,"get_bs_stats failed for current-waiting\n");
 					bs_connected=0;
 					sleep(loop_interval);
 					break;
 				}
-				tolog(0,"current-jobs: %d, jobs_max_all: %d, current-waiting: %d\n",current_jobs_ready,jobs_max_all_items,current_waiting);
-				free(yaml);
+				tolog(log_level,"current-jobs: %d, jobs_max_all: %d, current-waiting: %d\n",current_jobs_ready,jobs_max_all_items,current_waiting);
 			} else {
 				current_waiting=-1;
 				current_jobs_ready=-1;
 				bs_connected=0;
-				tolog(0,"bs_stats_tube yaml error,reset bs connection\n");
+				tolog(log_level,"bs_stats_tube yaml error,reset bs connection\n");
 				sleep(1);
 				break;
 			}
@@ -541,7 +542,7 @@ main(int argc, char **argv)
 			if (current_waiting==0) {
 					skip_beanstalk=1;
 					//no consumer, (flush old data?)
-					tolog(0,"[debug]no waiting consumer anymore, clear/flush old jobs: %d\n",current_jobs_ready);
+					tolog(log_level,"[debug]no waiting consumer anymore, clear/flush old jobs: %d\n",current_jobs_ready);
 //					for (i=0;i<current_jobs_ready;i++) {		//remove
 //						bs_reserve_with_timeout(bs_socket, 1, &job);
 //						bs_release(bs_socket, job->id, 0, 0);
@@ -552,13 +553,13 @@ main(int argc, char **argv)
 //					}
 			} else if (current_jobs_ready>20) {
 					skip_beanstalk=1;
-					tolog(0,"[debug]too many ready jobs in bs: %d. skip for beanstalk\n",current_jobs_ready);
+					tolog(log_level,"[debug]too many ready jobs in bs: %d. skip for beanstalk\n",current_jobs_ready);
 			} else {
 				skip_beanstalk=0;
 			}
 
 			// giant cycle sleep
-			tolog(0,"\n");
+			tolog(log_level,"\n");
 //			usleep(100000);
 			sleep(loop_interval);
 			cur_round++;
@@ -655,11 +656,11 @@ int list_data()
 	if(log_level==0)
 		return 0;
 
-	tolog(0,"---listdata---\n");
+	tolog(log_level,"---listdata---\n");
 
 	for (ch = item_list; ch; ch = ch->next) {
 		if (ch->modified==0) continue;
-		tolog(0,"TIME:%ld,NAME:%s,ORIGNAME:%s,PCPU:%d,PMEM:%d\n",ch->modified,ch->name,ch->orig_name,ch->pcpu,ch->pmem);
+		tolog(log_level,"TIME:%ld,NAME:%s,ORIGNAME:%s,PCPU:%d,PMEM:%d\n",ch->modified,ch->name,ch->orig_name,ch->pcpu,ch->pmem);
 	}
 
 	return 0;
