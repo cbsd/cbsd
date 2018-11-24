@@ -42,7 +42,9 @@ clean:
 	${RM} -f tools/vale-ctl
 	${RM} -f tools/nic_info
 	${RM} -f tools/bridge
-	${RM} -f tools/racct-statsd
+	${RM} -f tools/racct-jail-statsd
+	${RM} -f tools/racct-bhyve-statsd
+	${RM} -f tools/racct-hoster-statsd
 	${RM} -f tools/select_jail
 	# clean object files
 	${RM} -f misc/dump_cpu_topology
@@ -93,7 +95,9 @@ cbsd: pkg-config-check
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
 	${CC} tools/src/nic_info.c -o tools/nic_info && ${STRIP} tools/nic_info
-	${CC} tools/src/racct-statsd.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -L/usr/local/lib -o tools/racct-statsd && ${STRIP} tools/racct-statsd
+	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
+	${CC} tools/src/racct-bhyve-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-bhyve-statsd && ${STRIP} tools/racct-bhyve-statsd
+	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C share/bsdconfig/cbsd

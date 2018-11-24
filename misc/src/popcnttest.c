@@ -1,5 +1,6 @@
 #include <stdio.h>
-#include <smmintrin.h>
+//#include <smmintrin.h>
+#include <nmmintrin.h>
 
 int main(void)
 {
