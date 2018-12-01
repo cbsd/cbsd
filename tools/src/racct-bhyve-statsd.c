@@ -323,26 +323,22 @@ int
 get_bhyve_cpus(char *vmname)
 {
 	sqlite3		*db;
-	int		res;
-	int		i;
-	char		query[1024];
+	char		query[40];
 	char		*err = NULL;
 	int		maxretry = 10;
 	int		retry = 0;
 	sqlite3_stmt	*stmt;
 	int		ret;
-	char		dbfile[1024];
+	char		dbfile[512];
 	int		vm_cpus=0;
 
 	memset(dbfile,0,sizeof(dbfile));
 	sprintf(dbfile,"%s/jails-system/%s/local.sqlite",workdir,vmname);
 
-	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
+	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
 		tolog(log_level,"%s: Can't open database file: %s\n", nm(), dbfile);
 		return 1;
 	}
-
-	res=1024;
 
 	sprintf(query,"SELECT vm_cpus FROM settings LIMIT 1");
 	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
