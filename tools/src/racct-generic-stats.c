@@ -68,6 +68,9 @@
 
 #define strlens(s) (s==NULL?0:strlen(s))
 
+const char *current_jobs_ready_str="current-jobs-ready: ";
+const char *current_waiting_str="current-waiting: ";
+
 /* List of all args */
 enum {
 	C_HELP,
@@ -355,7 +358,7 @@ sql_get_int64(sqlite3_stmt * stmt)
 	return 0;
 }
 
-int get_bs_stats(char *yaml,char *str)
+int get_bs_stats(char *yaml,const char *str)
 {
 	char *pch;
 	int str_len=0;
@@ -365,7 +368,7 @@ int get_bs_stats(char *yaml,char *str)
 	int values=-1;
 	int i=0;
 	int x;
-	char *token = NULL, *val = NULL;
+	char *token = NULL;
 
 	str_len=strlens(str);
 	str_with_val_len=str_len+10;		// assume value not greated than: XXXXXXXXXX
@@ -397,20 +400,18 @@ int get_bs_stats(char *yaml,char *str)
 
 		x=0;
 		while ((token = strsep(&tmp, ":")) != NULL) {
-		switch (x) {
-			case 0:
-				//tolog(log_level,"TOKEN: [%s]\n",token);
-				break;
-			case 1:
-				//tolog(log_level,"TOKEN2: [%s]\n",token);
-				sscanf(token,"%d",&values);
-				break;
-			}
-			x++;
+			switch (x) {
+				case 0:
+					//tolog(log_level,"TOKEN: [%s]\n",token);
+					break;
+				case 1:
+					//tolog(log_level,"TOKEN2: [%s]\n",token);
+					sscanf(token,"%d",&values);
+					break;
+				}
+				x++;
 		}
-
 		free(token);
-		free(val);
 		free(tmp);
 	} else {
 		tolog(log_level,"get_bs_stats: no [%s] here\n",str);

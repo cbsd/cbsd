@@ -31,6 +31,7 @@ detach=
 [ -f /tmp/bhyvestop.${jname}.lock ] && /bin/rm -f /tmp/bhyvestop.${jname}.lock
 
 . /etc/rc.conf
+
 if [ -z "${cbsd_workdir}" ]; then
 	echo "No cbsd workdir defined"
 	exit 1
@@ -41,7 +42,6 @@ fi
 . ${workdir}/cbsd.conf
 
 freebsdhostversion=$( ${miscdir}/elf_tables --ver /bin/sh )
-
 while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1

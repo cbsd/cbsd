@@ -80,6 +80,7 @@ GET_IMGTYPE_MSG="Choose image type"
 GET_ISOPATH_MSG="Path to ISO image in srcdir/iso, eg: release.iso. 0 - for default img_iso"
 GET_VM_ISOPATH_MSG="Select available/registered ISO"
 GET_VM_CPU_TOPOLOGY_MSG="Select CPU topology profile name"
+GET_CD_BOOT_FIRMWARE_MSG="Choose CD boot firmware"
 
 GET_GW4_MSG="Enter default gateway inside VMs or jail"
 
@@ -1724,7 +1725,6 @@ apply_vm_package()
 	[ -z "${vm_cpus}" ] && vm_cpus=$( cbsdsql local SELECT pkg_vm_cpus FROM vmpackages WHERE name=\"${vm_package}\" )
 	[ -z "${vm_ram}" ] && vm_ram=$( cbsdsql local SELECT pkg_vm_ram FROM vmpackages WHERE name=\"${vm_package}\" )
 	[ -z "${imgsize}" ] && imgsize=$( cbsdsql local SELECT pkg_vm_disk FROM vmpackages WHERE name=\"${vm_package}\" )
-
 	return 0
 }
 
@@ -1777,6 +1777,33 @@ get_construct_vm_console()
 	case $retval in
 		${DIALOG_OK})
 			[ -n "${mtag}" ] && vm_console="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for $cd_boot_firmware
+get_construct_cd_boot_firmware()
+{
+	local _input _res
+
+	local title="${GET_CD_BOOT_FIRMWARE_MSG}"
+	local defaultitem="${cd_boot_firmware}"
+
+	local menu_list="
+		'bhyve'		'standard bhyve firmware'	'No serial, just tmux session'
+		'refind'	'reFIND firmware'		'reFIND firmware'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && cd_boot_firmware="${mtag}"
 			;;
 		*)
 			;;
@@ -1838,11 +1865,13 @@ get_construct_vm_os_type()
 		retval=$?
 	fi
 
-	case $retval in
+	case ${retval} in
 		${DIALOG_OK})
 			[ -n "${mtag}" ] && vm_os_type="${mtag}"
-			unset vm_os_profile jname imgsize vm_ram vm_cpus
+			unset vm_os_profile jname imgsize vm_ram vm_cpus cd_boot_firmware
 			apply_vm_package
+			# set default
+			[ -z "${cd_boot_firmware}" ] && cd_boot_firmware="bhyve"
 			;;
 		*)
 			;;
@@ -2041,10 +2070,12 @@ get_construct_vm_os_profile()
 			[ -z "${_myfile}" ] && return 0
 
 			if [ -f "${_myfile}" ]; then
-				unset imgsize vm_ram vm_cpus
+				unset imgsize vm_ram vm_cpus cd_boot_firmware
 				. ${_myfile}
 				global_profile_file="${_myfile}"
 				apply_vm_package
+				# defaults
+				[ -z "${cd_boot_firmware}" ] && cd_boot_firmware="bhyve"
 			fi
 			;;
 		${DIALOG_EXTRA})
@@ -2229,6 +2260,7 @@ media_auto_eject="${media_auto_eject}";
 vm_cpu_topology="${vm_cpu_topology}";
 debug_engine="${debug_engine}";
 xhci="${xhci}";
+cd_boot_firmware="${cd_boot_firmware}";
 EOF
 }
 
@@ -2343,7 +2375,6 @@ devfs_ruleset="${devfs_ruleset}";
 ver="${ver}";
 basename="${basename}";
 baserw="${baserw}";
-allow_raw_sockets="${allow_raw_sockets}";
 mount_src="${mount_src}";
 mount_obj="${mount_obj}";
 mount_kernel="${mount_kernel}";
@@ -2375,7 +2406,7 @@ allow_reserved_ports="${allow_reserved_ports}";
 persist="${persist}";
 childrenmax="${childrenmax}";
 enforce_statfs="${enforce_statfs}";
-
+sysrc_enable="";
 EOF
 
 	[ -n "${interface}" ] && /bin/cat >> ${TMPFILE} <<EOF
@@ -2428,9 +2459,6 @@ EOF
 		/bin/rm -f ${adduser}
 	fi
 	# end of additional area
-
-#	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
-#	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
 
 	if [ -n "${alt_iso}" ]; then
 		iso_site=
