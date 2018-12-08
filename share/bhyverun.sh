@@ -256,6 +256,6 @@ if [ ${jailed} -eq 0 ]; then
 	for i in ${mytap}; do
 		/sbin/ifconfig ${i} destroy
 	done
-done
+fi
 
 exit ${bhyve_exit}
