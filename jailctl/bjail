@@ -3,8 +3,8 @@
 globalconf="${workdir}/cbsd.conf";
 MYARG="bname jname"
 MYOPTARG=""
-MYDESC="Move bhyve to jail"
-CBSDMODULE="jail"
+MYDESC="Drop bhyve domain into jail"
+CBSDMODULE="bhyve"
 
 . ${subr}
 . ${strings}
@@ -13,17 +13,62 @@ CBSDMODULE="jail"
 init $*
 
 . ${jrcconf}
-
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+b_exist=$( cbsdsql local "SELECT jname FROM jails WHERE jname=\"${bname}\" AND emulator=\"bhyve\"" 2>/dev/null )
+
+[ -z "${b_exist}" ] && err 1 "${MAGENTA}bhyve domain is not exist: ${GREEN}${bname}${NORMAL}"
 
 jdata="${data}"					# jail data path
 jpath="${path}"					# jail path
 bdata="${jaildatadir}/${bname}-data/"		# bhyve data path
 
-[ ! -d ${jpath}/usr/local/cbsd ] && /bin/mkdir -p ${jdata}/usr/local/cbsd	# nullfs mount point
-/sbin/mount -oro -t nullfs /usr/local/cbsd ${jdata}/usr/local/cbsd		# we need this for bhyve firmwares
+# ensrure jail is protected (and hidden for UI)
+${ECHO} "${MAGENTA}Apply bhyve-related settings...${NORMAL}"
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is protected${NORMAL}"
+jset protected=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is hidden for UI${NORMAL}"
+jset hidden=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is allow_vmm=1${NORMAL}"
+jset allow_vmm=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is devfs_ruleset${NORMAL}"
+jset devfs_ruleset=99 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure bhyve ${bname} is jailed${NORMAL}"
+bset jailed=${jname} jname=${bname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is running${NORMAL}"
+[ ${jid} -eq 0 ] && jstart jname=${jname}
 
-[ ! -d ${jpath}/usr/local/jails-data ] && /bin/mkdir -p ${jpath}/usr/local/jails-data
-[ ! -d ${jdata}/usr/local/jails-data/${bname}-data ] && /bin/mkdir -p ${jdata}/usr/local/jails-data/${bname}-data
-/bin/cp -a ${bdata}/* ${jpath}/usr/local/jails-data/${bname}-data/
+# unset tap
 
+#
+sysrc jname=${jname} cbsd_workdir=/usr/local/jails
+
+[ ! -d ${jpath}/usr/local/cbsd ] && /bin/mkdir -p ${jpath}/usr/local/cbsd	# nullfs mount point
+/sbin/mount -oro -t nullfs /usr/local/cbsd ${jpath}/usr/local/cbsd		# we need this for bhyve firmwares
+
+[ ! -d ${jpath}/usr/local/jails/jails-data ] && /bin/mkdir -p ${jpath}/usr/local/jails/jails-data
+[ ! -d ${jpath}/usr/local/jails/jails-system ] && /bin/mkdir -p ${jpath}/usr/local/jails/jails-system
+
+# nullfs ro
+for i in etc nodectl bin jailctl lib sbin misc tools sudoexec share src/iso; do
+	[ ! -d ${jpath}/usr/local/jails/${i} ] && /bin/mkdir -p ${jpath}/usr/local/jails/${i}
+	/sbin/mount -oro -t nullfs ${workdir}/${i} ${jpath}/usr/local/jails/${i}
+done
+
+# nullfs rw
+for i in jails-system/${bname} jails-data/${bname}-data; do
+	[ ! -d ${jpath}/usr/local/jails/${i} ] && /bin/mkdir -p ${jpath}/usr/local/jails/${i}
+	/sbin/mount -orw -t nullfs ${workdir}/${i} ${jpath}/usr/local/jails/${i}
+done
+
+tmpfile="/tmp/${bname}.jconf"
+
+bstart jname=${bname} cfg_only=${tmpfile}
+
+replacewdir file0="${tmpfile}" old=${workdir} new="/usr/local/jails"
+jailscp ${tmpfile} ${jname}:${tmpfile}
+jailscp ${workdir}/cbsd.conf ${jname}:/usr/local/jails/cbsd.conf
+jailscp ${workdir}/nodename ${jname}:/usr/local/jails/nodename
+jailscp /usr/local/bin/cbsd ${jname}:/usr/local/bin/cbsd
+
+echo "jexec jname=${jname} sh /usr/local/jails/share/bhyverun.sh -c ${tmpfile}"
