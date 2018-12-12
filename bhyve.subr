@@ -838,22 +838,36 @@ compile_cd_args()
 		return 1
 	fi
 
-	## for check via ref
-	#cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
-	#if ! next_pci_id; then
-	#	return 1
-	#fi
-	#cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
-	#return 0
-
 	case "${vm_os_type}" in
 		openbsd)
-			# small hack: openbsd use install.fs as hdd drive, not cd
-			cd_args="-s ${bhyve_pci_index}:0,ahci-hd,${iso_img},ro"
+			# small hack: we need special route for openbsd: openbsd use install.fs as hdd drive, not cd
+			case "${cd_boot_firmware}" in
+				bhyve)
+					cd_args="-s ${bhyve_pci_index}:0,ahci-hd,${iso_img},ro"
+					;;
+				refind)
+					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
+					if ! next_pci_id; then
+						return 1
+					fi
+					cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+					;;
+			esac
 			cd_args2=""
 			;;
 		*)
-			cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+			case "${cd_boot_firmware}" in
+				bhyve)
+					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+					;;
+				refind)
+					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
+					if ! next_pci_id; then
+						return 1
+					fi
+					cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+					;;
+			esac
 			case ${vm_os_type} in
 				freebsd)
 					# Latest FreeBSD has troubles with UIEF boot via refind, use default firmware
@@ -1019,7 +1033,7 @@ compile_vnc_args()
 {
 	local vm_port
 	local vnc_bind
-
+	local _jailed _jip _ret
 	local width height
 
 	vnc_args=
@@ -1053,6 +1067,26 @@ compile_vnc_args()
 		vnc_bind="${bhyve_vnc_tcp_bind}"
 	else
 		vnc_bind="${default_vnc_tcp_bind}"
+	fi
+
+	# jailed?
+	_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	[ -z "${_jailed}" ] && _jailed="0"
+
+	# this is jailed bhyve, try to obtain jail IPs
+	if [ "${_jailed}" != "0" ]; then
+		_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
+		iptype ${_jip} >/dev/null 2>&1
+		_ret=$?
+		case ${_ret} in
+		1)
+			# jail have valid IPv4
+			vnc_bind="${_jip}"
+			;;
+		*)
+			# ipv6 or invalid IP
+			;;
+		esac
 	fi
 
 	# add bhyve_vnc_tcp_ipconnect variables, used in

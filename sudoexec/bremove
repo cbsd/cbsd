@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.2
+#v12.0.4
 globalconf="${workdir}/cbsd.conf";
 MYARG=""
 MYOPTARG="jname inter"
@@ -101,7 +101,7 @@ for jname in ${JLIST}; do
 
 	if [ $? -eq 1 ]; then
 		if [ ! -f "${JAILRCCONF}" ]; then
-			if [ $sqlreplica -eq 0 ]; then
+			if [ ${sqlreplica} -eq 0 ]; then
 				${ECHO} "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
 				continue
 			fi
@@ -186,6 +186,20 @@ for jname in ${JLIST}; do
 		/sbin/umount ${path} 2>/dev/null
 	fi
 
+	# jailed process?
+	# if we are not inside jail then check for jailed bhyve and remove hoster jail
+	_jailed="0"	# no hoster jail
+	pjailed=$( /sbin/sysctl -qn security.jail.jailed 2>/dev/null )
+	[ -z "${pjailed}" ] && pjailed=0
+
+	if [ "${pjailed}" = "0" ]; then
+		# we a not jailed
+		# bhyve is jailed and has jail?
+		_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+		[ -z "${_jailed}" ] && _jailed="0"
+		# when _jailed != 0 use this variable to jremove at the end of the scenatio
+	fi
+
 	[ -d "${DST}" ] && removedata ${DST} force
 	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
 	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
@@ -232,6 +246,12 @@ for jname in ${JLIST}; do
 	end_time=$( /bin/date +%s )
 	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} removed in $(( end_time - st_time ))s
 
+	if [ "${_jailed}" != "0" ]; then
+		${ECHO} "${MAGENTA}remove hoster jail: ${GREEN}${_jailed}${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: remove bhyve [${jname}] hoster jail: ${_jailed}
+		jset protected=0 jname=${_jailed}
+		jremove jname="${_jailed}"
+	fi
 done
 
 exit 0

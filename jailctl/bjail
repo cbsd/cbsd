@@ -1,0 +1,95 @@
+#!/usr/local/bin/cbsd
+#v11.1.17
+globalconf="${workdir}/cbsd.conf";
+MYARG="bname jname"
+MYOPTARG=""
+MYDESC="Drop bhyve domain into jail"
+CBSDMODULE="bhyve"
+
+. ${subr}
+. ${strings}
+. ${tools}
+
+init $*
+
+. ${jrcconf}
+
+[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+
+b_exist=$( cbsdsql local "SELECT jname FROM jails WHERE jname=\"${bname}\" AND emulator=\"bhyve\"" 2>/dev/null )
+
+[ -z "${b_exist}" ] && err 1 "${MAGENTA}bhyve domain is not exist: ${GREEN}${bname}${NORMAL}"
+
+jdata="${data}"					# jail data path
+jpath="${path}"					# jail path
+bdata="${jaildatadir}/${bname}-data/"		# bhyve data path
+zfs_based=0		# zvol?
+jworkdir="/usr/local/jails"
+
+# ensrure jail is protected (and hidden for UI)
+${ECHO} "${MAGENTA}Apply bhyve-related settings...${NORMAL}"
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is protected${NORMAL}"
+jset protected=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is hidden for UI${NORMAL}"
+jset hidden=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is allow_vmm=1${NORMAL}"
+jset allow_vmm=1 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is devfs_ruleset${NORMAL}"
+#jset devfs_ruleset=4 jname=${jname}
+jset devfs_ruleset=99 jname=${jname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure bhyve ${bname} is jailed${NORMAL}"
+bset jailed=${jname} jname=${bname}
+${ECHO} "  ${LCYAN}*${MAGENTA} ensure jail ${jname} is running${NORMAL}"
+
+[ ${jid} -ne 0 ] && jstop jname=${jname}		# stop first
+jstart jname=${jname}
+
+# unset tap
+
+#
+sysrc jname=${jname} cbsd_workdir=${jworkdir}
+
+[ ! -d ${jpath}/usr/local/cbsd ] && /bin/mkdir -p ${jpath}/usr/local/cbsd	# nullfs mount point
+/sbin/mount -oro -t nullfs /usr/local/cbsd ${jpath}/usr/local/cbsd		# we need this for bhyve firmwares
+
+[ ! -d ${jpath}${jworkdir}/jails-data ] && /bin/mkdir -p ${jpath}${jworkdir}/jails-data
+[ ! -d ${jpath}${jworkdir}/jails-system ] && /bin/mkdir -p ${jpath}${jworkdir}/jails-system
+
+# nullfs ro
+for i in etc nodectl bin jailctl lib sbin misc tools sudoexec share src/iso; do
+	[ ! -d ${jpath}${jworkdir}/${i} ] && /bin/mkdir -p ${jpath}${jworkdir}/${i}
+	/sbin/mount -oro -t nullfs ${workdir}/${i} ${jpath}${jworkdir}/${i}
+done
+
+# nullfs rw
+for i in jails-system/${bname} jails-data/${bname}-data; do
+	[ ! -d ${jpath}${jworkdir}/${i} ] && /bin/mkdir -p ${jpath}${jworkdir}/${i}
+	/sbin/mount -orw -t nullfs ${workdir}/${i} ${jpath}${jworkdir}/${i}
+done
+
+tmpfile="/tmp/${bname}.jconf"
+
+bstart jname=${bname} cfg_only=${tmpfile}
+
+replacewdir file0="${tmpfile}" old=${workdir} new="${jworkdir}"
+jailscp ${tmpfile} ${jname}:${tmpfile}
+jailscp ${workdir}/cbsd.conf ${jname}:${jworkdir}/cbsd.conf
+jailscp ${workdir}/nodename ${jname}:${jworkdir}/nodename
+jailscp /usr/local/bin/cbsd ${jname}:/usr/local/bin/cbsd
+
+# get my tap
+ojname="${jname}"
+. ${tmpfile}
+jname="${ojname}"
+
+for i in ${mytap} vmm vmm/${bname}; do
+	${ECHO} "  ${LCYAN}*${MAGENTA} unhide devfs ${jname}: ${GREEN}${i}${NORMAL}"
+	/sbin/devfs -m ${jpath}/dev rule add path "${i}" unhide
+	/sbin/devfs -m ${jpath}/dev rule applyset
+done
+
+#/sbin/devfs -m ${jpath}/dev rule applyset
+
+echo "jexec jname=${jname} sh ${jworkdir}/share/bhyverun.sh -c ${tmpfile}"
+exec /usr/sbin/daemon -f jexec jname=${jname} sh ${jworkdir}/share/bhyverun.sh -c ${tmpfile}
+

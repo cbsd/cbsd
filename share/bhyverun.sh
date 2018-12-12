@@ -16,6 +16,10 @@ done
 [ ! -f "${conf}" ] && exit 0
 . ${conf}
 
+# jailed process?
+jailed=$( sysctl -qn security.jail.jailed 2>/dev/null )
+[ -z "${jailed}" ] && jailed=0
+
 [ -n "${orig_logfile}" ] && vm_logfile="${orig_logfile}"
 
 if [ -n "${restore_checkpoint}" ]; then
@@ -81,9 +85,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			fi
 	esac
 
-	for i in ${mytap}; do
-		/sbin/ifconfig ${i} up
-	done
+	if [ ${jailed} -eq 0 ]; then
+		for i in ${mytap}; do
+			/sbin/ifconfig ${i} up
+		done
+	fi
 
 	[ ${freebsdhostversion} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
 
@@ -246,8 +252,10 @@ fi
 # extra stop
 /usr/local/bin/cbsd bstop cbsd_queue_name=none jname=${jname}
 
-for i in ${mytap}; do
-	/sbin/ifconfig ${i} destroy
-done
+if [ ${jailed} -eq 0 ]; then
+	for i in ${mytap}; do
+		/sbin/ifconfig ${i} destroy
+	done
+fi
 
 exit ${bhyve_exit}
