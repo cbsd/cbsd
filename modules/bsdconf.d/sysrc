@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
+#v12.0.4
 globalconf="${workdir}/cbsd.conf"
 CBSDMODULE="bsdconf"
 MYARG=""
@@ -12,12 +12,77 @@ EXTHELP="modules/bsdconf.d.html"
 . ${subr}
 . ${strings}
 . ${system}
+. ${tools}
 init $*
 
 #defines
 _MYDIR=$( /usr/bin/dirname `/bin/realpath $0` )
 
+emulator="jail" # for jname_is_multiple
+jail_list=
+jname_is_multiple
+
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+sysrc_multi_init()
+{
+	local _jname
+
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+
+	. ${workdir}/multiple.subr
+	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd sysrc jname=${_jname} ${cmd} 2>/dev/null )
+		task_id="${task_id} ${task_id_cur}"
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 1
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	fi
+
+	task_owner="sysrc_multiple_query"
+	_args=
+
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix=$( substr --pos=0 --len=6 --str="${i}" )
+		[ "${prefix}" = "jname=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
+	sysrc_multi_init -c "${_args}" -o ${task_owner} -n "sysrc query"
+
+	err 0 "${MAGENTA}Multiple pkg: ${GREEN}done${NORMAL}"
+fi
+
 [ -n "${jname}" ] && shift # skip for jname
+
 
 if [ -n "${fromfile}" ]; then
 	shift

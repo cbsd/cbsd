@@ -566,8 +566,10 @@ main(int argc, char **argv)
 
 			i=bs_stats_tube(bs_socket, "racct-jail", &yaml);
 			if(yaml) {
-				current_jobs_ready=get_bs_stats(yaml,"current-jobs-ready: ");
-				current_waiting=get_bs_stats(yaml,"current-waiting: ");
+				current_jobs_ready=get_bs_stats(yaml,current_jobs_ready_str);
+				current_waiting=get_bs_stats(yaml,current_waiting_str);
+//				current_jobs_ready=get_bs_stats(yaml,"current-jobs-ready: ");
+//				current_waiting=get_bs_stats(yaml,"current-waiting: ");
 				free(yaml);
 				if (current_jobs_ready<0) {
 					tolog(log_level,"get_bs_stats failed for current-jobs-ready\n");

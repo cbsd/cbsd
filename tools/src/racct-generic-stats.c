@@ -568,7 +568,7 @@ init_bs(char *tube)
 		sleep(10);
 	}
 
-	tolog(log_level,"Connected to BS jail\n");
+	tolog(log_level,"Connected to BS: %s\n",tube);
 	bs_connected=1;
 	bs_use(socket, tube);
 	bs_watch(socket, tube);
