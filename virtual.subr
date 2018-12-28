@@ -391,11 +391,14 @@ check_dmar()
 }
 
 # Init 'system' persist tap interface in bridge
-# in order to exclude loosing networking upon stop/start first vm
+# work around in order to exclude loosing networking upon stop/start first vm
+# https://svnweb.freebsd.org/base/head/share/man/man4/bridge.4?r1=324659&r2=324658&pathrev=324659
+# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=221122
+# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=214359
 init_systap()
 {
 	local _i _iface _desc _mytap _sys_uplink _ret _parent_mtu
-	local count netwait_if_timeout output
+	local count netwait_if_timeout output _is_bridge _test_ifaces
 
 	_iface=$( /sbin/ifconfig -l )
 	_mytap=
@@ -433,9 +436,23 @@ init_systap()
 		return 1
 	fi
 
-	if ! mybridge=$( get_my_device bridge ${interface} ); then
-		${ECHO} "${MAGENTA}bstart init_systap warning: errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
-		return 1
+	_test_ifaces=$( get_nic_by_descr ${interface} )
+	cbsdlogger NOTICE ${CBSD_APP}: init_systap: interfaces found with ${interface} desc: ${_test_ifaces}.
+	mybridge=
+	for _i in ${_test_ifaces}; do
+		_is_bridge=$( /sbin/ifconfig ${_i} | /usr/bin/awk '/groups:/{print $2}' | /usr/bin/grep -o bridge )
+		if [ "${_is_bridge}" = "bridge" ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: init_systap: the ${_i} interface is in the bridge group. bridge found
+			mybridge="${_i}"
+			break
+		fi
+	done
+
+	if [ -z "${mybridge}" ]; then
+		if ! mybridge=$( get_my_device bridge ${interface} ); then
+			${ECHO} "${MAGENTA}bstart init_systap warning: errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+			return 1
+		fi
 	fi
 
 	_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
