@@ -538,10 +538,22 @@ usr/share"
 # return getbase_source variable
 select_getbase_source_by_list()
 {
+	local _tmpdir _tmpfile
+	local _ret _def_method=
+
+	# read config
+	readconf ${platform}-bases.conf
+
+	for i in ${default_obtain_base_method}; do
+		_def_method="${i}"
+		break		# get only first method from list: high priority
+	done
+
+	[ -z "${_def_method}" ] && _def_method="repo"
 
 	if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
 		# set default for non interactive action
-		getbase_source="repo"
+		getbase_source="${_def_method}"
 		return 0
 	fi
 
@@ -556,54 +568,54 @@ select_getbase_source_by_list()
 	local _method_list=
 
 	${ECHO} "${MAGENTA}${subject}${NORMAL}"
-	echo
-	${ECHO} "${BOLD}0 .. CANCEL${NORMAL}"
 
-	${ECHO} "${BOLD}${i} .. ${GREEN}repo${MAGENTA} (Fetch base from repository over Internet). ${GREEN}(default)${NORMAL}"
-	_method_list="${_method_list} repo"
-	i=$(( i + 1 ))
+	_tmpdir=$( /usr/bin/mktemp -d )
+	_tmpfile=$( /usr/bin/mktemp )
+
+	for i in repo extract build; do
+		if [ "${_def_method}" = "${i}" ]; then
+			echo "1:${i}:" >> ${_tmpdir}/${i}.item
+			printf "${LCYAN}*[default] " > ${_tmpdir}/repo.descr
+		else
+			/usr/bin/truncate -s0 ${_tmpdir}/repo.descr
+			echo "0:${i}:" >> ${_tmpdir}/${i}.item
+		fi
+	done
+
+	${ECHO} "${LYELLOW}fetch base from repository over network${NORMAL}" >> ${_tmpdir}/repo.descr
+	${ECHO} "${LYELLOW}specify path to base dir or archive${NORMAL}" >> ${_tmpdir}/extract.descr
+	${ECHO} "${LYELLOW}cbsd srcup + cbsd world, long method${NORMAL}" >> ${_tmpdir}/build.descr
+
 	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
 		local oarch=$( /usr/bin/uname -m )
 		if [ "${arch}" = "${oarch}" ]; then
-			${ECHO} "${BOLD}${i} .. ${GREEN}populate${MAGENTA} (Create base from your host's environment)${NORMAL}"
-			i=$(( i + 1 ))
-			_method_list="${_method_list} populate"
+			echo "4:populate:" >> ${_tmpdir}/populate.item
+			${ECHO} "${LYELLOW}create base from your host's environment${NORMAL}" > ${_tmpdir}/populate.descr
 		fi
-	else
-		${ECHO} "${MAGENTA}(Populating from current environment impossible due to jail version not equal base: hoster:${GREEN}${_elf_ver}${MAGENTA}, jail:${GREEN}:${_jail_ver}${MAGENTA})${NORMAL}"
 	fi
 
-	${ECHO} "${BOLD}${i} .. ${GREEN}extract${MAGENTA} (Specify path to base.txz and extract it)${NORMAL}"
-	i=$(( i + 1 ))
-	_method_list="${_method_list} extract"
-	${ECHO} "${BOLD}${i} .. ${GREEN}build${MAGENTA} (cbsd srcup + cbsd world. Checkout source and build it. Long method)${NORMAL}"
-	_method_list="${_method_list} build"
-	echo
-	printf "${BOLD}Enter id 0-${i} or method name:${NORMAL} "
-	set -e
-	read _id
-	set +e
-
-	[ "${_id}" = "0" ] && exit 0
-	if [ -z "${_id}" ]; then
-		# Empty input, use default
-		getbase_source="repo"
-		return 0
-	fi
+	# todo: rename select_jail to something neutral, due to not only for jail selector
+	select_jail ${_tmpdir} ${_tmpfile} item ${_def_method} 2>/dev/null
+	_ret=$?
+	/bin/rm -rf ${_tmpdir}
 
 	getbase_source=
 
-	if ! is_number ${_id}; then
-		local _tmp _x=0
-		for _tmp in ${_method_list}; do
-			_x=$(( _x + 1 ))
-			[ ${_x} -eq ${_id} ] && getbase_source="${_tmp}" && break
-			[ ${_x} -gt ${i} ] && break
-		done
-	else
-		getbase_source="${_id}"
-	fi
+	case "${_ret}" in
+		0)
+			getbase_source=$( /bin/cat ${_tmpfile} )
+			;;
+		1)
+			# cancel pressed
+			err 0 "${MAGENTA}select source cancel${NORMAL}"
+			;;
+		2)
+			# error
+			err 0 "${MAGENTA}select source error${NORMAL}"
+			;;
+	esac
 
+	/bin/rm -f ${_tmpfile}
 	[ -z "${getbase_source}" ] && return 1
 	return 0
 }

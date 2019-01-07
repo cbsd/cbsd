@@ -51,7 +51,7 @@ struct item_data {
 	char ext[MAXFNAME];		//extension (less size?)
 	char fullpath[MAXFULLPATH];	//realpath к файлу
 	char descr[MAXDESCRLEN];	//descr
-	char node[MAXJNAME];
+	char node[MAXFNAME];		//nodename
 	int active;
 	struct item_data *next;
 };
@@ -109,12 +109,12 @@ int print()
 /* qsort C-string comparison function */ 
 static int compare_fun (const void *p, const void *q)
 {
-    const char *l= p;
-    const char *r= q;
-    int cmp;
+	const char *l= p;
+	const char *r= q;
+	int cmp;
 
-    cmp= strcmp (l, r);
-    return cmp;
+	cmp= strcmp (l, r);
+	return cmp;
 }
 
 void reverse() {
@@ -144,9 +144,9 @@ int main(int argc, char **argv)
 	struct item_data *m_item;
 	char *token, *string, *tofree;
 	FILE *fp;
-    FILE *fo;
+	FILE *fo;
 	char buf[BUFLEN];
-    char buf2[BUFLEN];
+	char buf2[BUFLEN];
 	int x=0;
 	int pass=0;		// symbol range treshold
 	int id;
@@ -156,20 +156,27 @@ int main(int argc, char **argv)
 	DIR *dirp;
 	struct dirent *dp;
 	char ext[128];		//extenstion for scan
+	char def_item[128];		//default item
 	char descrfile[MAXFULLPATH];
-    char fullpath[MAXFULLPATH];
+	char fullpath[MAXFULLPATH];
 	char descr[MAXDESCRLEN];
-    int listmax=0; 
-    int n=0; 
-    char mylist[100][MAXFNAME];
-    
-	if (argc<3) usage(argv[0]);
-    memset(ext,0,sizeof(ext));
+	int listmax=0;
+	int n=0;
+	char mylist[100][MAXFNAME];
 
-    if (argv[3]!=NULL) {
+	if (argc<3) usage(argv[0]);
+	memset(ext,0,sizeof(ext));
+
+	if (argv[3]!=NULL) {
 		strcpy(ext,argv[3]);
 	} else {
 		strcpy(ext,"img");
+	}
+
+	if (argv[4]!=NULL) {
+		strcpy(def_item,argv[4]);
+	} else {
+		strcpy(def_item,"CANCEL");
 	}
 
 	dirp = opendir(argv[1]);
@@ -187,21 +194,21 @@ int main(int argc, char **argv)
 	tmp_id=96;
 	id=0;
 
-   	descr[0]='\0';
+	descr[0]='\0';
 
 	// load data
-    while ((dp = readdir(dirp)) != NULL && listmax < sizeof mylist / sizeof mylist[0]) {
-        if (dp->d_name[0]=='.') continue;
-        strncpy(mylist[listmax++] , dp->d_name, MAXFNAME);
-    }
-    (void)closedir(dirp);
+	while ((dp = readdir(dirp)) != NULL && listmax < sizeof mylist / sizeof mylist[0]) {
+		if (dp->d_name[0]=='.') continue;
+		strncpy(mylist[listmax++] , dp->d_name, MAXFNAME);
+	}
+	(void)closedir(dirp);
 	free(dp);
-    if (listmax<1) exit(0);
+	if (listmax<1) exit(0);
 
-    qsort( mylist , listmax , sizeof(mylist[0]), compare_fun);
+	qsort( mylist , listmax , sizeof(mylist[0]), compare_fun);
 
-    for(n=0;n<listmax;n++)
-    {
+	for(n=0;n<listmax;n++)
+	{
 		memset(buf,0,sizeof(buf));
 		strcpy(buf,mylist[n]);
 		CREATE(m_item, struct item_data, 1);
@@ -254,41 +261,43 @@ int main(int argc, char **argv)
 			memset(m_item->fullpath,0,sizeof(m_item->fullpath));
 			sprintf(m_item->fullpath,"%s/%s",argv[1],buf);
 
-            m_item->id=1;
+			m_item->id=1;
 
 			fprintf(stderr,"Pattern file found: %s\n",buf);
-            memset(fullpath,0,sizeof(fullpath));
-            sprintf(fullpath,"%s/%s",argv[1],buf);
-            fo=fopen(fullpath,"r");
+			memset(fullpath,0,sizeof(fullpath));
+			sprintf(fullpath,"%s/%s",argv[1],buf);
+			fo=fopen(fullpath,"r");
 
-            if (!fo) {
+			if (!fo) {
 				fprintf(stderr,"Unable to open file %s\n",fullpath);
 				break;
-		    }
+			}
 
-            memset(buf2,0,sizeof(buf2));
-            fscanf(fo,"%s",buf2);
-            //if (feof(fo)) break;
-            tofree = string = strdup(buf2);
-            assert(string != NULL);
-                                        
-            x=0;
-            while ((token = strsep(&string, ":")) != NULL) {
-                switch (x) {
-                        case 0: m_item->active=atoi(token); break;
-                        case 1: strcpy(m_item->name,token); break;
-                        case 2: strcpy(m_item->node,token); break;
-                }
-                x++;
-            }
+			memset(buf2,0,sizeof(buf2));
+			fscanf(fo,"%s",buf2);
+			//if (feof(fo)) break;
+			tofree = string = strdup(buf2);
+			assert(string != NULL);
 
-            fclose(fo);
+			x=0;
+			while ((token = strsep(&string, ":")) != NULL) {
+				switch (x) {
+					case 0: m_item->active=atoi(token); break;
+					case 1: strcpy(m_item->name,token); break;
+					case 2: memset(m_item->node,0,sizeof(m_item->node));
+						if (strlen(token)>1)
+							sprintf(m_item->node,"on %s",token);
+						break;
+				}
+				x++;
+			}
 
-            free(tofree);
+			fclose(fo);
+			free(tofree);
 
-            if (x!=3) {
-                fprintf(stdout,"Warning: not <active>.int:<name>.str:<node>.str format: [%s], skipp\n",fullpath);
-            }
+			if (x!=3) {
+				fprintf(stdout,"Warning: not <active>.int:<name>.str:<node>.str format: [%s], skipp\n",fullpath);
+			}
 
 			memset(descrfile,0,MAXFULLPATH);
 			sprintf(descrfile,"%s/%s.descr",argv[1],m_item->name);
@@ -297,7 +306,6 @@ int main(int argc, char **argv)
 				fprintf(stderr,"Found descr!\n");
 				memset(m_item->descr,0,MAXDESCRLEN);
 				fgets(m_item->descr, MAXDESCRLEN, fp);
-//				strcpy(m_item->descr,"OLALALLALALA BLABLA");
 				fclose(fp);
 				for (i=0;i<strlen(m_item->descr); i++)
 					if(m_item->descr[i]=='\n') m_item->descr[i]='\0';
@@ -323,13 +331,30 @@ int main(int argc, char **argv)
 	reverse();
 	//print();
 
-	cur_choice=1;		//set on Cancel
+	item=1;
+	i=1;
+
+	if (strcmp(def_item,"CANCEL")) {
+		for ( m_item = item_list; m_item; m_item = m_item->next)
+		{
+			i++;
+			if(!strcmp(m_item->name,def_item))
+				{
+					item=i;
+					break;
+				}
+		}
+	}
+
+	cur_choice=item;		//set default selector (cancel always 1 pos)
 
 	//-3 extra row
 	if (w.ws_row-3<max_choice) {
 		cur_choice=-1;
 		manual_input=1;	// terminal too small for this list, input jname manually
 	}
+
+	i=0;
 
 	while ( i != 10 ) {
 		item=1;
@@ -354,32 +379,32 @@ int main(int argc, char **argv)
 					}
 				if (item==cur_choice) {
 					if (manual_input==1)
-						printf(" %s%d .. %s%s on %s%s\n",BOLD,m_item->id,GREEN,m_item->name,m_item->node,NORMAL);
+						printf(" %s%d .. %s%s %s%s\n",BOLD,m_item->id,GREEN,m_item->name,m_item->node,NORMAL);
 					else
-						printf(" %s%c .. %s on %s%s\n",SELECT,m_item->cid,m_item->name,m_item->node,NORMAL);
+						printf(" %s%c .. %s %s%s\n",SELECT,m_item->cid,m_item->name,m_item->node,NORMAL);
 				} else {
 					if (manual_input==1)
-						printf(" %s%d .. %s%s on %s%s\n",BOLD,m_item->id,GREEN,m_item->name,m_item->node,NORMAL);
+						printf(" %s%d .. %s%s %s%s\n",BOLD,m_item->id,GREEN,m_item->name,m_item->node,NORMAL);
 					else
-						printf(" %s%c .. %s%s%s on %s%s%s\n",BOLD,m_item->cid,GREEN,m_item->name,NORMAL,LGREEN,m_item->node,NORMAL);
+						printf(" %s%c .. %s%s%s %s%s%s\n",BOLD,m_item->cid,GREEN,m_item->name,NORMAL,LGREEN,m_item->node,NORMAL);
 				}
 			} else {
 				if (item==cur_choice) {
 					printf("%s",SELECT);
-                    if (strlen(m_item->descr)) {
+					if (strlen(m_item->descr)) {
 						sprintf(descr,"%s%s%s%s",BOLD,LYELLOW,m_item->descr,NORMAL);
 					} else {
 							memset(descr,0,MAXDESCRLEN);
 					}
 					if (manual_input==1)
-						printf(" %s%d .. %s%s on %s%s\n",BOLD,m_item->id,LGREEN,m_item->name,m_item->node,NORMAL);
+						printf(" %s%d .. %s%s %s%s\n",BOLD,m_item->id,LGREEN,m_item->name,m_item->node,NORMAL);
 					else
-						printf(" %s%c .. %s%s on %s%s%s\n",SELECT,m_item->cid,LGREEN,m_item->name,LGREEN,m_item->node,NORMAL);
+						printf(" %s%c .. %s%s %s%s%s\n",SELECT,m_item->cid,LGREEN,m_item->name,LGREEN,m_item->node,NORMAL);
 				} else {
 					if (manual_input==1)
-						printf(" %s%d .. %s%s on %s%s\n",BOLD,m_item->id,LGREEN,m_item->name,m_item->node,NORMAL);
+						printf(" %s%d .. %s%s %s%s\n",BOLD,m_item->id,LGREEN,m_item->name,m_item->node,NORMAL);
 					else
-						printf(" %s%c .. %s%s%s on %s%s%s\n",BOLD,m_item->cid,LGREEN,m_item->name,NORMAL,LGREEN,m_item->node,NORMAL);
+						printf(" %s%c .. %s%s%s %s%s%s\n",BOLD,m_item->cid,LGREEN,m_item->name,NORMAL,LGREEN,m_item->node,NORMAL);
 				}
 			}
 		}
