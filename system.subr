@@ -624,9 +624,29 @@ select_getbase_source_by_list()
 	return 0
 }
 
+# $1 - path to archive
+extract_base_archive()
+{
+	local _path="${1}"
+
+	[ -z "${BASE_DIR}" ] && err 1 "${MAGENTA}extract_base_archive: INIT_DIR not initialized${NORMAL}"
+
+	if [ -r "${_path}" ]; then
+		${ECHO} "${MAGENTA}extract_base_archive: not readable: ${GREEN}${_path}${NORMAL}"
+		return 1
+	fi
+
+	[ ! -d "${BASE_DIR}" ] && /bin/mkdir -p ${BASE_DIR}
+	cd ${BASE_DIR}
+	set -e
+	/usr/bin/tar vxfz ${_path}
+	set +e
+}
+
 select_getbase()
 {
 	local _repeat=1
+	local _path
 
 	while [ ${_repeat} -ne 0 ]; do
 		select_getbase_source_by_list
@@ -636,27 +656,56 @@ select_getbase()
 
 		case "${getbase_source}" in
 			repo)
-				#echo "repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}"
-				repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}
+				if [ -n "${default_obtain_base_repo_sources}" ]; then
+					for i in ${default_obtain_base_repo_sources}; do
+						repo action=get sources=base url=${i}
+					done
+				else
+					repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}
+				fi
 				;;
 			populate)
 				get_base_from_current
 				;;
 			extract)
-				${ECHO} "${MAGENTA}Please provide full path to base archive, (e.g. default: ${GREEN}/mnt/usr/freebsd-dist/base.txz${MAGENTA}):${NORMAL}"
-				local _path
-				read _path
-				[ -z "${_path}" ] && _path="/mnt/usr/freebsd-dist/base.txz"
-				if [ ! -r "${_path}" ]; then
-					${ECHO} "${MAGENTA}No such archive file: ${GREEN}${_path}${NORMAL}"
-					continue
+				${ECHO} "${MAGENTA}Scan for config-based path to base archive: ${GREEN}${default_obtain_base_extract_source}${MAGENTA}${NORMAL}"
+
+				for _path in ${default_obtain_base_extract_source}; do
+					if [ ! -r "${_path}" ]; then
+						${ECHO} "${MAGENTA}info: no such archive file: ${GREEN}${_path}${NORMAL}"
+						continue
+					else
+						${ECHO} "${MAGENTA}Found: ${GREEN}${_path}${NORMAL}"
+						extract_base_archive
+					fi
+				done
+
+				# first check
+				if [ -x ${BASE_DIR}/bin/sh ]; then
+					_repeat=0
+					break
 				fi
 
-				[ ! -d "${BASE_DIR}" ] && /bin/mkdir -p ${BASE_DIR}
-				cd ${BASE_DIR}
-				set -e
-				/usr/bin/tar vxfz ${_path}
-				set +e
+				# for non-interactive mode this is end of scenario
+				[ "${inter}" = "1" -o "${INTER}" = "1" ] && return 1
+
+				# we can ask user for base to base.txz location
+				${ECHO} "${MAGENTA}Please provide full path to base archive, (e.g. default: ${GREEN}/usr/freebsd-dist/base.txz${MAGENTA}):${NORMAL}"
+				read _path
+				if [ ! -r "${_path}" ]; then
+					${ECHO} "${MAGENTA}info: no such archive file: ${GREEN}${_path}${NORMAL}"
+					continue
+				else
+					${ECHO} "${MAGENTA}Found: ${GREEN}${_path}${NORMAL}"
+					extract_base_archive
+				fi
+
+				# second check
+				if [ -x ${BASE_DIR}/bin/sh ]; then
+					_repeat=0
+					break
+				fi
+
 				;;
 			build)
 				local origver stable
