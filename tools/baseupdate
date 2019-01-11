@@ -1,22 +1,42 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG=""
-MYOPTARG=""
+MYOPTARG="ver arch target_arch destdir"
 MYDESC="Update base jail"
 CBSDMODULE="sys"
-ADDHELP=""
+ADDHELP="by default - update all available bases\n\
+ you can specify via additional args individual bases for\n\
+ update via: ver=,arch=,target_arch=\n"
 
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
 
+ver=
+arch=
+target_arch=
+destdir=
+
+keyprint=
+servername=
+components=
+
 init $*
 
-readconf baseupdate.conf
+readconf ${platform}-baseupdate.conf
 
 generate_freebsd_config()
 {
+	local _res
+
+	# validate mandatory variables
+	for i in keyprint servername components; do
+		_res=
+		eval _res="\$$i"
+		[ -z "${_res}" ] && err 1 "${MAGENTA}baseupdate generate_freebsd_config error: empty variable ${GREEN}${i}${MAGENTA}. please use ${platform}-baseupdate.conf to setup${NORMAL}"
+	done
+
 	/bin/cat << EOF > "${1}"
 KeyPrint ${keyprint}
 ServerName ${servername}
@@ -33,10 +53,36 @@ EOF
 
 update_base()
 {
-	local _i
+	local _i _res
 	sqlfile="local"
+	local _mod_count=0
 
 	_sql="SELECT platform,name,arch,targetarch,ver FROM bsdbase"
+
+	# when user specified several parameters, 
+	# add this as modifiers to narrow down the conditions for an exact result.
+	# for example when ver= specidied, we got: "WHERE ver=X"
+
+	for i in ver arch target_arch; do
+		_res=
+		eval _res="\$$i"
+		[ -z "${_res}" ] && continue
+		case ${_mod_count} in
+			0)
+				# first modificator
+				_sql="${_sql} WHERE ${i}=\"${_res}\""
+				;;
+			*)
+				# append modificator, concat with AND
+				_sql="${_sql} AND ${i}=\"${_res}\""
+				;;
+		esac
+		_mod_count=$(( _mod_count + 1 ))
+	done
+
+	#echo "[debug]: ${_sql}"
+	local sqldelimer=" "
+
 	cbsdsql ${sqlfile} ${_sql} | while read _platform _name _arch _targetarch _ver; do
 		base="${_name}_${_arch}_${_targetarch}_${_ver}"
 		basepath=${workdir}/basejail/${base}
@@ -68,5 +114,4 @@ update_base()
 	done
 }
 
-sqldelimer=" "
 update_base
