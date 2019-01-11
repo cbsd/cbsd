@@ -98,21 +98,6 @@ get_kernel_from_current()
 	fi
 }
 
-
-register_fetched_base()
-{
-	#idx platform name arch ver stable elf date
-	baseelf=
-	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
-
-	[ -z "${baseelf}" ] && baseelf="0"
-
-	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
-
-	#${ECHO} "${MAGENTA}Register base as: ${GREEN}p=$platform,a=$arch,t=$TARGET_ARCH,v=$ver,s=$stable${NORMAL}"
-	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
-}
-
 # check for base dir existance
 # if not exist - ask and try to fetch from repository
 # exit when no base and repo failure
@@ -149,7 +134,7 @@ get_base()
 
 	[ "${ver}" = "empty" ] && return 0
 
-	# fill $BASE_DIR
+	# fill ${BASE_DIR}
 	. ${buildconf}
 	init_basedir
 
@@ -160,13 +145,10 @@ get_base()
 
 	[ $? -eq 3 ] && err 1 "${MAGENTA}Base is not ready, please wait: base status: ${GREEN}3${NORMAL}"
 	${ECHO} "${MAGENTA}No base dir in: ${GREEN}${BASE_DIR}${NORMAL}"
+
 	select_getbase
 
-	if [ ! -x "${BASE_DIR}/bin/sh" ]; then
-		err 1 "${MAGENTA}No base data on: ${GREEN}${BASE_DIR}${NORMAL}"
-	else
-		register_fetched_base
-	fi
+	[ ! -x "${BASE_DIR}/bin/sh" ] && err 1 "${MAGENTA}No base data on: ${GREEN}${BASE_DIR}${NORMAL}"
 }
 
 
@@ -262,9 +244,9 @@ mountbase()
 		esac
 
 		if [ "${baserw}" = "0" ]; then
-			get_base
+			get_base -v ${ver}
 		else
-			[ ! -f "${path}/bin/sh" ] && get_base
+			[ ! -f "${path}/bin/sh" ] && get_base -v ${ver}
 		fi
 
 		[ ! -d "${path}" ] && /bin/mkdir -p ${path}
@@ -464,7 +446,7 @@ switch_baserw()
 	_dst=$( /bin/realpath ${1} )
 
 	[ ! -d "${_dst}" ] && return 0
-	get_base
+	get_base -v ${ver}
 
 	# populate
 	if [ "${2}" = "1" ]; then
@@ -739,9 +721,68 @@ select_getbase()
 	done
 
 	return 0
+}
 
+unset_bsdenv()
+{
+	unset OSVERSION
+	unset UNAME_s
+	unset UNAME_r
+	unset UNAME_v
+	unset release
+}
+
+# set/export OSVERSION UNAME_s UNAME_r UNAME_v RELEASE variable
+# according to version from /bin/sh in specified path
+# -p - chroot path with /bin/sh
+# -v - use version to determine -RELEASE or -STABLE (for jail) in $release
+set_bsdenv_by_path()
+{
+	unset_bsdenv
+	local path
+	local ver
+
+	while getopts "p:v:" opt; do
+		case "${opt}" in
+			p)
+				path="${OPTARG}"
+				;;
+			v)
+				ver="${OPTARG}"
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${path}" ]; then
+		${ECHO} "${MAGENTA}set_bsdenv_by_path: empty path${NORMAL}"
+		return 1
+	fi
+
+	if [ ! -r "${path}/bin/sh" ]; then
+		${ECHO} "${MAGENTA}set_bsdenv_by_path: no such /bin/sh here: ${GREEN}${path}${NORMAL}"
+		return 1
+	fi
+
+	[ -z "${ver}" ] && ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh 2>/dev/null )
+	local osversion=$( ${miscdir}/elf_tables --ver ${path}/bin/sh 2>/dev/null )
+	local release
+
+	. ${tools}
+
+	if ! is_number ${ver}; then
+		# is stable
+		export RELEASE="${ver}.0-STABLE"
+	else
+		# is release
+		export RELEASE="${ver}-RELEASE"
+	fi
+
+	export OSVERSION=${osversion}
+	export UNAME_s=FreeBSD
+	export UNAME_r=${RELEASE}
+	export UNAME_v="${UNAME_s} ${UNAME_r}"
 }
 
 ###
 fi
-
