@@ -30,6 +30,10 @@ dstdir=
 # summary size of processed ISO
 processed_iso_size=0
 
+# summary of bad ISO fetch
+processed_iso_bad_count=0
+processed_iso_bad_list=
+
 readconf fetch_iso
 
 init $*
@@ -52,7 +56,7 @@ gensha256_sum()
 
 	printf "${MAGENTA} calculating gensha256sum: ${NORMAL}"
 	_sha256sum=$( /sbin/sha256 -q ${_file} )
-	sysrc -qf ${_profile} sha256sum="${_sha256sum}"
+	/usr/sbin/sysrc -qf ${_profile} sha256sum="${_sha256sum}"
 	${ECHO} "${GREEN}${_sha256sum}${MAGENTA}. Updated${NORMAL}"
 }
 
@@ -60,14 +64,16 @@ gensha256_sum()
 # $iso_site, $rfile
 obtain_iso()
 {
-	if [ ! -r ${dstdir}/${fout} ]; then
+	[ -r ${dstdir}/${fout} ] && return 0
 
-		for site in ${iso_site}; do
-			echo "fetch -o ${dstdir}/${fout} ${site}${rfile}"
-			fetch -o ${dstdir}/${fout} ${site}${rfile}
-			[ $? -eq 0 ] && return 0
-		done
-	fi
+	for site in ${iso_site}; do
+		echo "fetch -o ${dstdir}/${fout} ${site}${rfile}"
+		fetch -o ${dstdir}/${fout} ${site}${rfile}
+		[ $? -eq 0 ] && return 0
+		/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
+	done
+
+	return 1
 }
 
 get_active_profiles_num()
@@ -100,6 +106,10 @@ show_size_stats()
 		size="${processed_iso_size}"
 	fi
 	${ECHO} "${MAGENTA}Processed ISO size: ${GREEN}${size}${NORMAL}"
+	if [ ${processed_iso_bad_count} -ne 0 ]; then
+		${ECHO} "${MAGENTA}Bad ISO count: ${LRED}${processed_iso_bad_count}${NORMAL}"
+		${ECHO} "${MAGENTA}Bad ISO list: ${LRED}${processed_iso_bad_list}${NORMAL}"
+	fi
 }
 
 fetch_iso_by_path()
@@ -162,6 +172,12 @@ fetch_iso_by_path()
 
 	obtain_iso
 	ret=$?
+
+	if [ ${ret} -ne 0 ]; then
+		${ECHO} "${LRED}Warning: ${MAGENTA}obtain_iso error for: ${LCYAN}${vm_profile}${NORMAL}"
+		processed_iso_bad_count=$(( processed_iso_bad_count + 1 ))
+		processed_iso_bad_list="${processed_iso_bad_list} ${vm_profile}"
+	fi
 
 	# check size
 	iso_bsize=$( /usr/bin/stat -f "%z" ${dstdir}/${fout} 2>/dev/null )

@@ -129,7 +129,17 @@ compile_dsk_args()
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	# select only direct-bus attached
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id='0'| while read dsk_controller dsk_path dsk_slot; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot; do
+
+		case "${dsk_controller}" in
+			virtio-blk|ahci-hd)
+				# direct connect
+				;;
+			*)
+				# via controller
+				continue
+				;;
+		esac
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -212,35 +222,36 @@ compile_dsk_controller_args()
 
 	dsk_controller_args=
 
+	local _dsk_path=
+	local _i
+
+	_dsk_controller_name=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller )
+	_dsk_controller_type=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+
+	[ -z "${_dsk_controller_name}" ] && return 0
+
 	if ! next_pci_id; then
 		# no free pci bus
 		exit 0
 	fi
 
 	pcislot=${bhyve_pci_index}
+	dsk_controller_args="-s ${bhyve_pci_index}:0,${_dsk_controller_type}"
+	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
 
-	local _dsk_path=
-	local _i
-
-	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id!='0'| /usr/bin/xargs )
-
-	[ -z "${_dsk_path}" ] && return 0
-
-	dsk_controller_args="-s ${pcislot}:0,ahci"
-
-	for _i in ${_dsk_path}; do
-	# test for full path. If path not started from '/' - append $data dir
+	for dsk_path in ${_dsk_path}; do
+		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
 		prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
 
 		if [ "${prefix}" != "/" ]; then
-			full_dsk_path="${data}/${_i}"
+			full_dsk_path="${data}/${dsk_path}"
 		else
-			full_dsk_path="${_i}"
+			full_dsk_path="${dsk_path}"
 		fi
-	done
 
-	dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+		dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+	done
 
 	[ -z "${dsk_controller_args}" ] && return 1
 	return 0
