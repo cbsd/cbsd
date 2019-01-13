@@ -369,6 +369,7 @@ int get_bs_stats(char *yaml,const char *str)
 	int i=0;
 	int x;
 	char *token = NULL;
+	char *tofree;
 
 	str_len=strlens(str);
 	str_with_val_len=str_len+10;		// assume value not greated than: XXXXXXXXXX
@@ -397,8 +398,9 @@ int get_bs_stats(char *yaml,const char *str)
 		}
 		tmp[i]='\0';
 		//tolog(log_level,"get_bs_stats: found: [%s]\n",tmp);
-
 		x=0;
+		tofree = tmp;
+
 		while ((token = strsep(&tmp, ":")) != NULL) {
 			switch (x) {
 				case 0:
@@ -411,7 +413,7 @@ int get_bs_stats(char *yaml,const char *str)
 				}
 				x++;
 		}
-		free(token);
+		free(tofree);
 		free(tmp);
 	} else {
 		tolog(log_level,"get_bs_stats: no [%s] here\n",str);
