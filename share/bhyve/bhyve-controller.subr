@@ -1,3 +1,9 @@
+# Generic storage controller bhyve function
+
+if [ ! "$_CBSD_BHYVE_NVME_SUBR" ]; then
+_CBSD_BHYVE_NVME_SUBR=1
+###
+
 # load ctr info
 load_ctr_info()
 {
@@ -10,7 +16,7 @@ load_ctr_info()
 		unset ctr_id${last_disk}
 	done
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,name,type,count,cache FROM bhyve_dskcontroller" | while read id name type count cache; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,name,type,count,cache FROM bhyve_dskcontroller WHERE name != \"0\" " | while read id name type count cache; do
 		[ -z "${id}" ] && return 0
 		echo "export ctr_id${ctr_last_id}=\"${id}\""
 		echo "export ctr_name${ctr_last_id}=\"${name}\""
@@ -25,17 +31,17 @@ load_ctr_info()
 get_ctr_type()
 {
 	local _input _retval
-	local title=" Controller type for ${mtag} "
+	local title=" Controller type "
 	hline=
 
+	defaultitem="${new_ctr_type}"
+
 	local menu_list="
-		'ahci'	'AHCI controller'	''
+		'ahci'	'AHCI controller'	'AHCI controller attached to arbitrary devices'
 	" # END-QUOTE
 
 	cbsd_menubox
 	retval=$?
-
-	new_ctr_type=
 
 	case $retval in
 		${DIALOG_OK})
@@ -50,13 +56,24 @@ get_ctr_type()
 # form for $new_ctr_name
 get_ctr_name()
 {
-	local _input _defname="${ctr}_${new_ctr_type}"
+	local _input _defname
+	local _tmp_new_ctr_type _freename
+
+	if [ -z "${new_ctr_type}" ]; then
+		f_dialog_msgbox "Please select controller type first"
+		return 1
+	fi
+
+	_tmp_new_ctr_type=$( echo ${new_ctr_type} | /usr/bin/tr '-' '_' )
+	_tmp_new_ctr_type="${_tmp_new_ctr_type}_ctr"
+
+	_freename=$( freejname default_jailname=${_tmp_new_ctr_type} )
+
+	_defname="${_freename}"
 
 	f_dialog_title " controller name "
 
-	[ -n "${new_ctr_name}" ] && _defname="${new_ctr_name}"
-
-	f_dialog_input _input "Input name, eg: ahci2" "${_defname}" \
+	f_dialog_input _input "Input name, eg: ahci_hd_ctr1" "${_defname}" \
 		"${_message}" || return $?
 
 	[ -n "${_input}" ] && new_ctr_name="${_input}"
@@ -135,7 +152,49 @@ add_ctr()
 	[ -z "${type}" ] && err 1 "${MAGENTA}Empty type${NORMAL}"
 	[ -z "${cache}" ] && err 1 "${MAGENTA}Empty cache${NORMAL}"
 
+	case "${type}" in
+		ahci|ahci-cd|ahci-hd|nvme)
+			;;
+		*)
+			err 1 "${MAGENTA}add_ctr: unknown controller type, valid: ahci,ahci-cd,ahci-hd,nvme. specified: ${GREEN}${type}${NORMAL}"
+			;;
+	esac
+
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name=\"${name}\" LIMIT 1 )
+
+	[ -n "${_res}" ] && err 1 "${MAGENTA}controller name already exist: ${GREEN}${name}${NORMAL}"
+
 	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyve_dskcontroller ( name,type,count,cache ) VALUES ( \"${name}\",\"${type}\",\"${count}\",\"${cache}\" )"
 
 	return 0
 }
+
+# form for remove ctr
+# -c "${new_ctr_count}" -n "${new_ctr_name}" -t "${new_ctr_type}" -z "${new_ctr_cache}"
+# e.g: del_ctr -c 8 -n "controller name" -t ahci -z nocache
+del_ctr()
+{
+	local name=
+	local _res _msg
+
+	while getopts "n::" opt; do
+		case "${opt}" in
+			n) name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${name}" ] && err 1 "${MAGENTA}Empty name${NORMAL}"
+
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name=\"${name}\" LIMIT 1 )
+
+	[ -z "${_res}" ] && err 1 "${MAGENTA}no such controller named: ${GREEN}${name}${NORMAL}"
+
+	# todo: check for disk dependencies
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite "DELETE FROM bhyve_dskcontroller WHERE name=\"${name}\""
+
+	return 0
+}
+
+###
+fi

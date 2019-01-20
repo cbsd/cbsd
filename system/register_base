@@ -1,30 +1,35 @@
 #!/usr/local/bin/cbsd
 #v11.1.16
-MYARG="arch ver stable"
-MYOPTARG="platform target_arch"
+MYARG="arch ver"
+MYOPTARG="platform target_arch source"
 MYDESC="Register bases for jails in the databases"
 CBSDMODULE="build"
 
 . ${subr}
+
+source=
 init $*
+
+[ -z "${source}" ] && source="unknown"
 
 . ${tools}
 . ${strings}
 . ${system}
 
 [ -z "${target_arch}" ] && target_arch="${arch}"
-if [ -z "${stable}" ]; then
-	strpos --str="${ver}" --search="."
-	# auto-detect for stable/release
-	pos=$?
-	if [ ${pos} -eq 0 ]; then
-		stable=1
-	else
-		stable=0
-	fi
-fi
 
 . ${workdir}/universe.subr
+
+strpos --str="${ver}" --search="."
+# auto-detect for stable/release
+pos=$?
+if [ ${pos} -eq 0 ]; then
+	stable=1
+	ostable=1
+else
+	stable=0
+	ostable=0
+fi
 
 init_basedir
 
@@ -35,11 +40,23 @@ baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
 idx=$( get_baseidx -a ${arch} -p ${platform} -s ${stable} -t ${target_arch} -v ${ver} )
 
 if [ -n "${idx}" ]; then
-	cbsdsql local "UPDATE bsdbase SET elf=\"${baseelf}\",date=datetime('now','localtime') WHERE idx=\"${idx}\""
+	cbsdsql local "UPDATE bsdbase SET elf=\"${baseelf}\",date=datetime('now','localtime'),source=\"${source}\" WHERE idx=\"${idx}\""
 	dt="$( cbsdsql local SELECT date FROM bsdbase WHERE elf=\"${baseelf}\" AND idx=\"${idx}\" )"
 	date=$( /bin/date -j -f "%Y-%m-%d %H:%M:%S" "${dt}" "+%s" )
-	err 0 "${MAGENTA}Bases updated: ${GREEN}${BASE_DIR}${NORMAL}"
+	${ECHO} "${MAGENTA}Bases updated: ${GREEN}${BASE_DIR}${NORMAL}"
 else
-	cbsdsql local "INSERT INTO bsdbase ( platform,name,arch,targetarch,ver,stable,elf ) VALUES ( \"${platform}\", \"base\", \"${arch}\", \"${target_arch}\", \"${ver}\", \"${stable}\", \"${baseelf}\" )"
-	err 0 "${MAGENTA}Bases registered: ${GREEN}${BASE_DIR}${NORMAL}"
+	cbsdsql local "INSERT INTO bsdbase ( platform,name,arch,targetarch,ver,stable,elf,source ) VALUES ( \"${platform}\", \"base\", \"${arch}\", \"${target_arch}\", \"${ver}\", \"${stable}\", \"${baseelf}\", \"${source}\" )"
+	${ECHO} "${MAGENTA}Bases registered: ${GREEN}${BASE_DIR}${NORMAL}"
+fi
+
+# auto baseupdate? for stable=0 only
+if [ "${stable}" = "0" ]; then
+	readconf ${platform}-bases.conf
+	if [ "${auto_baseupdate}" = "1" ]; then
+		${ECHO} "${MAGENTA}register_base: ${LCYAN}auto_baseupdate=1${MAGENTA} via ${platform}-bases.conf, trying to perform baseupdate, please wait...${NORMAL}"
+		baseupdate arch=${arch} ver=${ver} target_arch=${TARGET_ARCH}
+	else
+		${ECHO} "${MAGENTA}register_base: ${LCYAN}auto_baseupdate=0${MAGENTA} via ${platform}-bases.conf, updates disabled${NORMAL}"
+		${ECHO} "${MAGENTA}register_base: you might want to do ${GREEN}cbsd baseupdate${MAGENTA} by hand to fetch latest patches${NORMAL}"
+	fi
 fi

@@ -111,24 +111,27 @@ pid_t print_file_info(struct procstat *procstat, struct filestat *fst, const cha
 int getfname(char *filename)
 {
 	struct stat statbuf;
+	ino = 0;
+	fsid = 0;
 
 	if (stat(filename, &statbuf)) {
 		warn("%s", filename);
-		return (0);
+		return 0;
 	}
 
 	ino = statbuf.st_ino;
 	fsid = statbuf.st_dev;
 	name = filename;
 
-	return (1);
+	if ((ino == 0)||(fsid==0)) return 0;
+	return 1;
 }
 
 
 pid_t get_vm_pid(char *vmpath)
 {
 	struct kinfo_proc *p;
-	struct procstat *procstat;
+	struct procstat *procstat = NULL;
 	int arg, ch, what;
 	int i;
 	unsigned int cnt;
@@ -356,6 +359,47 @@ get_bhyve_cpus(char *vmname)
 	sqlite3_close(db);
 
 	return vm_cpus;
+}
+
+unsigned long
+get_vm_pid_from_sql(char *vmname)
+{
+	sqlite3		*db;
+	char		query[100];
+	char		*err = NULL;
+	int		maxretry = 10;
+	int		retry = 0;
+	sqlite3_stmt	*stmt;
+	int		ret;
+	char		dbfile[512];
+	unsigned long	jid=0;
+
+	memset(dbfile,0,sizeof(dbfile));
+	sprintf(dbfile,"%s/var/db/local.sqlite",workdir);
+
+	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
+		tolog(log_level,"%s: Can't open database file: %s\n", nm(), dbfile);
+		return 1;
+	}
+
+	memset(query,0,sizeof(query));
+	sprintf(query,"SELECT jid FROM jails WHERE jname=\"%s\"",vmname);
+	//tolog(log_level,"SQL[%s](%s)",query,dbfile);
+	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
+	if (ret == SQLITE_OK) {
+		ret = sqlite3_step(stmt);
+
+		while ( ret == SQLITE_ROW ) {
+			jid=sql_get_int64(stmt);
+			ret = sqlite3_step(stmt);
+		}
+	}
+
+	sqlite3_finalize(stmt);
+	sqlite3_close(db);
+
+	return jid;
 }
 
 unsigned long
@@ -620,6 +664,8 @@ main(int argc, char **argv)
 		}
 	}
 
+	chdir("/var/empty");
+
 	printf("CBSD bhyve racct statistics exporter\n");
 	if(log_file)
 		printf("log_file: %s\n",log_file);
@@ -746,7 +792,7 @@ main(int argc, char **argv)
 
 			if (bhyve_exist==1) {
 				tolog(log_level,"scan for /dev/vmm\n");
-				rewinddir(dirp);
+				//rewinddir(dirp);
 				while ((dp = readdir(dirp)) != NULL) {
 					if (dp->d_name[0]=='.') continue;
 					tolog(log_level,"/dev/vmm found: %s\n",dp->d_name);
@@ -755,7 +801,8 @@ main(int argc, char **argv)
 					sprintf(vmpath,"/dev/vmm/%s",dp->d_name);
 					strcpy(vmname,dp->d_name);
 					cur_bid=0;
-					cur_bid = get_vm_pid(vmpath);
+					//cur_bid = get_vm_pid(vmpath);
+					cur_bid = get_vm_pid_from_sql(dp->d_name);
 					if (cur_bid == 0) continue;
 
 					memset(tmpjname,0,sizeof(tmpjname));
@@ -797,8 +844,8 @@ main(int argc, char **argv)
 
 			i=bs_stats_tube(bs_socket, "racct-bhyve", &yaml);
 			if(yaml) {
-				current_jobs_ready=get_bs_stats(yaml,"current-jobs-ready: ");
-				current_waiting=get_bs_stats(yaml,"current-waiting: ");
+				current_jobs_ready=get_bs_stats(yaml,current_jobs_ready_str);
+				current_waiting=get_bs_stats(yaml,current_waiting_str);
 				free(yaml);
 				if (current_jobs_ready<0) {
 					tolog(log_level,"get_bs_stats failed for current-jobs-ready\n");

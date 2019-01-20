@@ -15,10 +15,6 @@ nomount=1 do not mount/unmount jail fs\n\
 mode=add,bootstrap,install,info,query,remove,update,upgrade,clean\n"
 EXTHELP="modules/pkg.d.html"
 
-set -e
-. ${globalconf}
-set +e
-
 . ${subr}
 . ${strings}
 . ${system}
@@ -33,7 +29,6 @@ set -e
 	. ${_MYDIR}/pkg.subr
 set +e
 
-[ -n "${mode}" ] && shift
 if [ -n "${nomount}" ]; then
 	shift
 	nomount=${nomount}
@@ -69,15 +64,17 @@ pkg_multi_init()
 	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
 	task_id=
 	task_id_cur=
-	task_owner="${task_owner}"
 	# spawn command for all jail
 	for jname in ${jail_list}; do
 		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd pkg jname=${jname} ${cmd} 2>/dev/null )
-		task_id="${task_id} ${task_id_cur}"
+		sleep 0.1		# dont bruce taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
 	done
 
 	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
-	sleep 1
+	sleep 0.5
 	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
 }
 
@@ -87,6 +84,22 @@ if [ -n "${jail_list}" ]; then
 	if [ -n "${jail_list}" ]; then
 		JLIST="${jail_list}"
 	fi
+
+	_args=
+
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+		prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+		[ "${prefix6}" = "jname=" ] && continue
+		[ "${prefix5}" = "mode=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
 
 	case "${mode}" in
 		clean)
@@ -100,19 +113,19 @@ if [ -n "${jail_list}" ]; then
 				;;
 		install|add)
 				task_owner="pkg_multiple_install"
-				pkg_multi_init -c "$*" -o ${task_owner} -n "pkg install"
+				pkg_multi_init -c "mode=install ${_args}" -o ${task_owner} -n "pkg install"
 				;;
 		remove)
 				task_owner="pkg_multiple_remove"
-				pkg_multi_init -c "$*" -o ${task_owner} -n "pkg remove"
+				pkg_multi_init -c "mode=remove ${_args}" -o ${task_owner} -n "pkg remove"
 				;;
 		info)
 				task_owner="pkg_multiple_info"
-				pkg_multi_init -c "$*" -o ${task_owner} -n "pkg info"
+				pkg_multi_init -c "mode=info ${_args}" -o ${task_owner} -n "pkg info"
 				;;
 		query)
 				task_owner="pkg_multiple_query"
-				pkg_multi_init -c "$*" -o ${task_owner} -n "pkg query"
+				pkg_multi_init -c "mode=query ${_args}" -o ${task_owner} -n "pkg query"
 				;;
 		*)
 				echo "Multiple unsupported yet for ${mode}"
@@ -168,11 +181,27 @@ else
 	path=""
 fi
 
+# trim special args
+_args=
+for i in $*; do
+	prefix=
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+	[ "${prefix6}" = "jname=" ] && continue
+	[ "${prefix5}" = "mode=" ] && continue
+	if [ -n "${_args}" ]; then
+		_args="${_args} ${i}"
+	else
+		_args="${i}"
+	fi
+done
+
+
 if [ -n "${pkglist}" ]; then
 	[ ! -s "${pkglist}" ] && err 1 "${MAGENTA}No such file or file is empty: ${GREEN}${pkglist}${NORMAL}"
 	pkgtarget=$( /bin/cat ${pkglist} | /usr/bin/xargs )
 else
-	pkgtarget="$*"
+	pkgtarget="${_args}"
 fi
 
 # init path and bootstrap pkg if necessary

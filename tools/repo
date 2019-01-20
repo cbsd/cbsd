@@ -4,7 +4,7 @@ globalconf="${workdir}/cbsd.conf";
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="mode quiet arch target_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile"
+MYOPTARG="mode quiet arch target_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile url"
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
 sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n
@@ -14,13 +14,15 @@ ver=any for mode=list for show all version (no for cur. version only\n\
 arch=any for mode=list for show all arch (no for cur. arch only\n\
 inter=0 to prevent any questions and to accept answers by default\n\
 newjname= for sources=img. Alternative jname for save\n\
-fromfile= load arguments from ascii file\n"
+fromfile= load arguments from ascii file\n\
+url= specify URL sources, separated by comma for multiple values\n"
 
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
 
+url=
 init $*
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bases/"
@@ -28,7 +30,7 @@ init $*
 origver="${ver}"
 . ${buildconf}
 # prefered for ver in arg
-[ "${ver}" != "${origver}" -a -n "${origver}" ] && ver=$origver
+[ "${ver}" != "${origver}" -a -n "${origver}" ] && ver=${origver}
 
 readconf buildworld.conf
 . ${workdir}/universe.subr
@@ -120,7 +122,11 @@ register_fetched_base()
 	baseelf=
 	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
 
+	local source="${1}"
+	[ -z "${source}" ] && source="unknown"
+
 	[ -z "${baseelf}" ] && baseelf="0"
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
 
 	strpos --str="${ver}" --search="."
 
@@ -131,8 +137,7 @@ register_fetched_base()
 		stable=0
 	fi
 
-	#${ECHO} "${MAGENTA}Register base as: ${GREEN}p=$platform,a=$arch,t=$TARGET_ARCH,v=$ver,s=$stable${NORMAL}"
-	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
+	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${source}"
 }
 
 
@@ -148,35 +153,48 @@ getbase()
 		BDIR="${basejailpref}_${basename}_${arch}_${ver}"
 	fi
 
-	case "${platform}" in
-		DragonFly)
-			err 1 "${MAGENTA}${platform} unsupported yet${NORMAL}"
-			;;
-		FreeBSD)
-			case "${ver}" in
-				13*)
-					# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
-					_release="snapshots"
-					_rel_postfix="CURRENT"
-					FHIER="${arch}/${target_arch}/13.0"
-					;;
-				*)
-					# RELEASES placed at /pub/FreeBSD/releases/${FHIER}-RELEASE/base.txz"
-					_release="releases"
-					_rel_postfix="RELEASE"
-					FHIER="${arch}/${target_arch}/${ver}"
-					;;
-			esac
-			BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${FHIER}-${_rel_postfix}/base.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/base.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/base.txz"
-			;;
-		HardenedBSD)
-			# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
-			# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
-			_majorver=${ver%%.*}
-			FHIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
-			BSDBASE_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${FHIER}/base.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${FHIER}/base.txz http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/base.txz"
-			;;
-	esac
+	if [ -n "${url}" ]; then
+		OIFS="${IFS}"
+		IFS=","
+		for i in ${url}; do
+			if [ -z "${i}" ]; then
+				BSDBASE_DISTSITE="${i}"
+			else
+				BSDBASE_DISTSITE="${BSDBASE_DISTSITE} ${i}"
+			fi
+		done
+		IFS="${OIFS}"
+	else
+		case "${platform}" in
+			DragonFly)
+				err 1 "${MAGENTA}${platform} unsupported yet${NORMAL}"
+				;;
+			FreeBSD)
+				case "${ver}" in
+					13*)
+						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
+						_release="snapshots"
+						_rel_postfix="CURRENT"
+						URL_HIER="${arch}/${target_arch}/13.0"
+						;;
+					*)
+						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/base.txz"
+						_release="releases"
+						_rel_postfix="RELEASE"
+						URL_HIER="${arch}/${target_arch}/${ver}"
+						;;
+				esac
+				BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/base.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/base.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/base.txz"
+				;;
+			HardenedBSD)
+				# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
+				# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
+				_majorver=${ver%%.*}
+				URL_HIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
+				BSDBASE_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${URL_HIER}/base.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${URL_HIER}/base.txz http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/base.txz"
+				;;
+		esac
+	fi
 
 	if [ -x "${BASE_DIR}/bin/sh" ]; then
 		[ ${upgrade} -eq 1 ] || err 1 "${MAGENTA}You already have ${ver}. Use mode=upgrade for upgrade${NORMAL}"
@@ -257,8 +275,8 @@ getbase()
 		## Official fbsd repo
 		${ECHO} "${MAGENTA}Looking for official ${platform} mirror:${NORMAL}"
 		ARCHIVE="${MYDIR}/base.txz"
-		for i in ${iso_site}; do
-			fetchme -u ${i} -o ${ARCHIVE}
+		for MIRROR in ${iso_site}; do
+			fetchme -u ${MIRROR} -o ${ARCHIVE}
 			if [ $? -eq 0 ]; then
 				break
 			else
@@ -274,11 +292,11 @@ getbase()
 			set +e
 			/bin/rm -f ${ARCHIVE}
 			# fetch lib32 only for amd64
-			if [ "${arch}" = "amd64" ]; then
+			if [ "${arch}" = "amd64" -a -z "${url}" ]; then
 				if [ "${platform}" = "FreeBSD" ]; then
-					BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${FHIER}-${_rel_postfix}/lib32.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/lib32.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${FHIER}-${_rel_postfix}/lib32.txz"
+					BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz"
 
-					#BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${FHIER}-RELEASE/lib32.txz"
+					#BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${URL_HIER}-RELEASE/lib32.txz"
 					ARCHIVE="${MYDIR}/lib32.txz"
 					for i in ${BSDBASE_DISTSITE}; do
 						fetchme -u ${i} -o ${ARCHIVE}
@@ -301,7 +319,7 @@ getbase()
 				fi
 			fi
 			preparebase dst=${BASE_DIR}
-			register_fetched_base
+			register_fetched_base ${MIRROR}
 			# CBSD QUEUE
 			if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 				baseelf=
@@ -323,7 +341,7 @@ getbase()
 
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
-		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html";
+		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html";
 		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
@@ -332,81 +350,50 @@ getbase()
 		fi
 
 		if [ -z "${basename}" ]; then
-			${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
-			fetchme -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base.txz
+			${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${URL_HIER}/base.txz${NORMAL}"
+			fetchme -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/base.txz
 
 			if [ $? -ne 0 ]; then
-				${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base.txz${NORMAL}"
+				${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${URL_HIER}/base.txz${NORMAL}"
+				continue
+			else
+				_src_found=1
+			fi
+			_srcmd5_found=1
+		else
+			${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${URL_HIER}/base_${basename}.txz${NORMAL}"
+			fetchme -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/base_${basename}.txz
+
+			if [ $? -ne 0 ]; then
+				${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${URL_HIER}/base_${basename}.txz${NORMAL}"
 				continue
 			else
 				_src_found=1
 			fi
 
-#	    fetchme -q1 -o ${MYDIR}/base_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5
-
-#	    if [ $? -ne 0 ]; then
-#		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
-#		continue
-#	    else
-		_srcmd5_found=1
-#	    fi
-	    else
-		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
-		fetchme -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/base_${basename}.txz
-
-		if [ $? -ne 0 ]; then
-			${ECHO} "${MAGENTA}Base not found: ${GREEN}${MYREPO}/releases/${FHIER}/base_${basename}.txz${NORMAL}"
-			continue
-		else
-			_src_found=1
-		fi
-
-#	    fetchme -q1 -o ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/base_${basename}_${arch}_${ver}.txz.md5
-
-#	    if [ $? -ne 0 ]; then
-#		${ECHO} "${MAGENTA}MD5 base not found: ${GREEN}${MYREPO}/${DIR}/base_${arch}_${ver}.txz.md5${NORMAL}"
-#		continue
-#	    else
-		_srcmd5_found=1
-#	    fi
+			_srcmd5_found=1
 		fi
 
 		[ ${_srcmd5_found} -eq 1 -a ${_src_found} -eq 1 ] && break
 	done
 
-#    if checkmd5 ${MYDIR}; then
-#	${ECHO} "${MAGENTA}MD5 sum:${GREEN} correct${NORMAL}"
-#    else
-#	err 1 "${MAGENTA}MD5 sum: ${GREEN}incorrect${NORMAL}"
-#    fi
-
-#    if [ -z "${basename}" ]; then
-#	rm -f  ${MYDIR}/base_${arch}_${ver}.txz.md5
-#    else
-#	rm -f ${MYDIR}/base_${basename}_${arch}_${ver}.txz.md5
-#    fi
-
 	[ ${_src_found} -ne 1 ] && err 1 "${MAGENTA}Not found data${NORMAL}"
 
 	${ECHO} "${MAGENTA}Extracting...${NORMAL}"
 	[ ! -d "${BASE_DIR}" ] && mkdir -p ${BASE_DIR}
-	#/base_${arch}_${ver}
-	cd $BASE_DIR
-	#/base_${arch}_${ver}
+	cd ${BASE_DIR}
 
 	if [ -z "${basename}" ]; then
 		set -e
 		tar xfz ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz
 		set +e
-#		rm -f ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz.md5
 	else
 		set -e
 		tar xfz ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz
 		set +e
-#		rm -f ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz.md5
 	fi
 
-	register_fetched_base
+	register_fetched_base ${MIRROR}
 	cleanup_bases
 
 	# CBSD QUEUE
@@ -499,7 +486,7 @@ getkernel()
 		KERNNAME="-GENERIC"
 	fi
 
-	FHIER="${arch}/${target_arch}/${ver}"
+	URL_HIER="${arch}/${target_arch}/${ver}"
 
 	if [ -d "${KERNEL_DIR}" ]; then
 		[ $upgrade -ne 1 ] && err 1 "${MAGENTA}You already have kernel ${name} for ${ver}${NORMAL}"
@@ -508,7 +495,7 @@ getkernel()
 
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO: ${GREEN}${MYREPO}${NORMAL}"
-		MIRROR="${MYREPO}/releases/${FHIER}/mirror.html"
+		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html"
 		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
@@ -516,8 +503,8 @@ getkernel()
 			${ECHO} "${MAGENTA}Found new mirror for ${ver}: ${GREEN}${MYREPO}${NORMAL}"
 		fi
 
-		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz${NORMAL}"
-		fetchme -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${FHIER}/kernel${KERNNAME}.txz
+		${ECHO} "${MAGENTA}Looking for: ${GREEN}${MYREPO}/releases/${URL_HIER}/kernel${KERNNAME}.txz${NORMAL}"
+		fetchme -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/kernel${KERNNAME}.txz
 		[ $? -eq 0 ] || continue
 		# fetchme -q1 -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5
 		# [ $? -eq 0 ] || continue
@@ -547,12 +534,12 @@ getkernel()
 
 getimg()
 {
-	local FHIER DST
+	local URL_HIER DST
 
 	[ -z "${newjname}" ] && newjname="${name}"
 
 	DST="${importdir}/${newjname}.img"
-	FHIER="${arch}/${target_arch}/${ver}/${name}"
+	URL_HIER="${arch}/${target_arch}/${ver}/${name}"
 
 	if [ -f "${DST}" ]; then
 		getyesno "You already have ${DST}. Remove them?"
@@ -568,7 +555,7 @@ getimg()
 
 	for MYREPO in ${repo}; do
 		${ECHO} "${MAGENTA}REPO:${GREEN} ${MYREPO}"
-		MIRROR="${MYREPO}/img/${FHIER}/mirror.html"
+		MIRROR="${MYREPO}/img/${URL_HIER}/mirror.html"
 		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
@@ -577,7 +564,7 @@ getimg()
 		fi
 
 		${ECHO} "${MAGENTA}Fetching ${name} jail: ${GREEN}${MYREPO}/${DIR}${MAGENTA}${NORMAL}"
-		fetchme -o ${DST} -u ${MYREPO}/img/${FHIER}/${name}.img
+		fetchme -o ${DST} -u ${MYREPO}/img/${URL_HIER}/${name}.img
 
 		[ $? -eq 0 ] || continue
 	done
@@ -587,7 +574,7 @@ getimg()
 
 getbhyve()
 {
-	local FHIER DST
+	local URL_HIER DST
 
 	[ -z "${name}" ] && err 1 "${MAGENTA}Empty name=${NORMAL}"
 

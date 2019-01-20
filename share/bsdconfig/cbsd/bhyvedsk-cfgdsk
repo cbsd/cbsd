@@ -13,32 +13,50 @@
 #
 dialog_menu_main()
 {
-	local _input _retval
+	local _input _retval _controller_desc _dsk_controller_type
 
 	local btitle="$DIALOG_BACKTITLE"
 
-	local title=" Image Properties ${jname}:${dsk_path} "
+	local title=" disk properties ${jname}:${dsk_path} "
 	hline=
 
 	local prompt="${_desc}"
 	local sqldelimer=" "
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type,controller_id FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type controller_id; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type; do
 		echo "export dsk_controller=\"${dsk_controller}\""
 		echo "export dsk_slot=\"${dsk_slot}\""
 		echo "export dsk_type=\"${dsk_type}\""
-		echo "export new_controller_id=\"${controller_id}\""
 	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
 
 	# get $dsk_size
 	populate_dsk_size
 
+	_dsk_controller_type=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${dsk_controller}\" )
+
+	# if no controller with specific name, than set controller type as controller name - probable direct connect via virtio-blk/ahci-hd
+	[ -z "${_dsk_controller_type}" ] && _dsk_controller_type="${dsk_controller}"
+
+	case "${_dsk_controller_type}" in
+		virtio-blk|ahci-hd)
+			_controller_desc="connected directly to motherboard"
+			;;
+		nvme)
+			_controller_desc="connected to NVM Express (NVMe) controller"
+			;;
+		ahci)
+			_controller_desc="connected to AHCI controller"
+			;;
+		*)
+			_controller_desc="unknown"
+			;;
+	esac
+
 	local menu_list="
 		'size'		'${dsk_size}'		'Current disk image size. Resize currently is not supported'
-		'controller'	'${dsk_controller}'	'Select controller type'
+		'controller'	'${dsk_controller}'	'Select controller. current: ${_controller_desc}'
 		'slot'		'${dsk_slot}'		'Bus slot. 0 - auto'
 		'dsk_type'	'${dsk_type}'		'Disk type ( vhd, vmdk, vdi, qcow )'
-		'controller_id'	'${new_controller_id}'	'Attach to controller, not to BUS directly'
 		'-'		'-'			''
 		'remove'	'remove'		'Detach and remove image'
 	" # END-QUOTE
@@ -103,13 +121,13 @@ init $*
 . ${dialog}
 
 . ${workdir}/bsdconfig.subr
-f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-bhyvedsk.subr
+. ${BSDCFG_LIBE}/${APP_DIR}/include/messages-bhyvedsk.subr
 
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${MAGENTA}No such VM: ${GREEN}${jname}${NORMAL}"
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
-. $BSDCFG_LIBE/$APP_DIR/include/bhyvedsk.subr
+. ${distdir}/share/bhyve/bhyve-dsk.subr
 . ${workdir}/bhyve.subr
 
 # Incorporate rc-file if it exists
@@ -160,12 +178,6 @@ while :; do
 					get_dsk_controller
 					if [ -n "${new_dsk_controller}" ]; then
 						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_controller=\"${new_dsk_controller}\" WHERE dsk_path=\"${dsk}.vhd\" AND jname=\"${jname}\"
-					fi
-					;;
-				controller_id)
-					get_controller_id
-					if [ -n "${new_controller_id}" ]; then
-						cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET controller_id=\"${new_controller_id}\" WHERE dsk_path=\"${dsk}.vhd\" AND jname=\"${jname}\"
 					fi
 					;;
 				"remove")

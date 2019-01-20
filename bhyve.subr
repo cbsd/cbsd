@@ -129,7 +129,17 @@ compile_dsk_args()
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	# select only direct-bus attached
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id='0'| while read dsk_controller dsk_path dsk_slot; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot; do
+
+		case "${dsk_controller}" in
+			virtio-blk|ahci-hd)
+				# direct connect
+				;;
+			*)
+				# via controller
+				continue
+				;;
+		esac
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -212,35 +222,36 @@ compile_dsk_controller_args()
 
 	dsk_controller_args=
 
+	local _dsk_path=
+	local _i
+
+	_dsk_controller_name=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name!=\"0\" )
+	_dsk_controller_type=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+
+	[ -z "${_dsk_controller_name}" ] && return 0
+
 	if ! next_pci_id; then
 		# no free pci bus
 		exit 0
 	fi
 
 	pcislot=${bhyve_pci_index}
+	dsk_controller_args="-s ${bhyve_pci_index}:0,${_dsk_controller_type}"
+	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
 
-	local _dsk_path=
-	local _i
-
-	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" AND controller_id!='0'| /usr/bin/xargs )
-
-	[ -z "${_dsk_path}" ] && return 0
-
-	dsk_controller_args="-s ${pcislot}:0,ahci"
-
-	for _i in ${_dsk_path}; do
-	# test for full path. If path not started from '/' - append $data dir
+	for dsk_path in ${_dsk_path}; do
+		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
 		prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
 
 		if [ "${prefix}" != "/" ]; then
-			full_dsk_path="${data}/${_i}"
+			full_dsk_path="${data}/${dsk_path}"
 		else
-			full_dsk_path="${_i}"
+			full_dsk_path="${dsk_path}"
 		fi
-	done
 
-	dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+		dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+	done
 
 	[ -z "${dsk_controller_args}" ] && return 1
 	return 0
@@ -308,7 +319,7 @@ normalize_nic_hwaddr()
 	local _hwaddr
 	[ -z "${1}" ] && return 0
 
-	_hwaddr=$( echo "${1}" |/usr/bin/tr -d ":"| /usr/bin/sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	_hwaddr=$( echo "${1}" | /usr/bin/tr -d ":" | /usr/bin/sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
 	printf ${_hwaddr}
 }
 
@@ -336,7 +347,7 @@ compile_nic_args()
 
 	local errmsg=
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" |while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
 
 		if ! next_pci_id; then
 			# no free pci bus
@@ -365,11 +376,17 @@ compile_nic_args()
 				get_vm_uplink_interface ${nic_parent}
 				;;
 			*)
-				_is_bridge=$( substr --pos=0 --len=6 --str=${nic_parent} )
+				# autodetect correct interface when auto by default gateway
+				if [ "${nic_parent}" = "auto" ]; then
+					nic_parent=$( getnics-by-ip ip=0.0.0.0 )
+					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic_parent is auto, detected by default gateway: ${nic_parent}
+				fi
+
+				_is_bridge=$( /sbin/ifconfig ${nic_parent} | /usr/bin/awk '/groups:/{print $2}' | /usr/bin/grep -o bridge )
 				if [ "${_is_bridge}" != "bridge" ]; then
 					# this is not bridge, detect uplink iface
+					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
 					get_vm_uplink_interface ${nic_parent}
-
 					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
 
 					if [ "${interface}" != "disable" ]; then
@@ -399,6 +416,7 @@ compile_nic_args()
 					# Get parent MTU size
 					_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
 					_ret=$?
+					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
 
 					if [ ${_ret} -eq 0 ]; then
 						[ -n "${_parent_mtu}" ] && _ret=$( /sbin/ifconfig ${mytap} mtu ${_parent_mtu} )
@@ -412,6 +430,7 @@ compile_nic_args()
 					#	[ ${nic_mtu} -gt ${_parent_mtu} ]
 					#fi
 					_ret=$( /sbin/ifconfig ${mytap} mtu ${nic_mtu} )
+					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 				fi
 
 				/sbin/ifconfig ${mytap} description "${jname}-nic${_id}" group vm-port up
@@ -1033,7 +1052,7 @@ compile_vnc_args()
 {
 	local vm_port
 	local vnc_bind
-
+	local _jailed _jip _ret
 	local width height
 
 	vnc_args=
@@ -1067,6 +1086,26 @@ compile_vnc_args()
 		vnc_bind="${bhyve_vnc_tcp_bind}"
 	else
 		vnc_bind="${default_vnc_tcp_bind}"
+	fi
+
+	# jailed?
+	_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	[ -z "${_jailed}" ] && _jailed="0"
+
+	# this is jailed bhyve, try to obtain jail IPs
+	if [ "${_jailed}" != "0" ]; then
+		_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
+		iptype ${_jip} >/dev/null 2>&1
+		_ret=$?
+		case ${_ret} in
+		1)
+			# jail have valid IPv4
+			vnc_bind="${_jip}"
+			;;
+		*)
+			# ipv6 or invalid IP
+			;;
+		esac
 	fi
 
 	# add bhyve_vnc_tcp_ipconnect variables, used in

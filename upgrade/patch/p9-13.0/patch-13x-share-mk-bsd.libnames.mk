@@ -1,5 +1,5 @@
---- bsd.libnames.mk.orig	2018-10-24 00:58:26.631316000 +0300
-+++ bsd.libnames.mk	2018-11-30 15:14:56.449022000 +0300
+--- bsd.libnames.mk.orig	2018-12-14 16:47:08.499011000 +0300
++++ bsd.libnames.mk	2018-12-14 17:27:28.768143000 +0300
 @@ -17,6 +17,7 @@
  LIBCRT0?=	${LIBDESTDIR}${LIBDIR_BASE}/crt0.o
  

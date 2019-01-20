@@ -221,6 +221,14 @@ main(int argc, char *argv[])
 	setvarsafe("PATH",cbsdpath,1);
 	ckfree(cbsdpath);
 
+	// read global params first (disable/enable colors, repos etc..)
+	read_profile("${workdir}/etc/defaults/global.conf");
+	read_profile("${workdir}/etc/global.conf");
+
+	if (lookupvar("NOCOLOR") != NULL ) {
+		putenv("NOCOLOR=1");
+	}
+
 	read_profile("${workdir}/cbsd.conf");
 	read_profile("${workdir}/etc/defaults/logger.conf");
 	read_profile("${workdir}/etc/logger.conf");

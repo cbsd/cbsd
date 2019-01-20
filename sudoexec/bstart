@@ -1,14 +1,15 @@
 #!/usr/local/bin/cbsd
-#v12.0.0
+#v12.0.4
 MYARG=""
-MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport debug_engine"
+MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
 MYDESC="Start bhyve domain"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
   checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
   lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
   lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n\
-  debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n"
+  debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n\
+cfg_only=<file_path>  when set, find/create tap/vnc and generate bhyve.conf into <file_path> but without run\n"
 CBSDMODULE="bhyve"
 EXTHELP="wf_jstop_jstart.html"
 
@@ -17,6 +18,8 @@ lm="0"
 lm_dport=
 lm_rnodename=
 odebug_engine=
+
+cfg_only=		# create a configuration and run immediately
 
 . ${subr}
 . ${system}
@@ -35,6 +38,8 @@ odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 
 init $*
+
+[ -z "${jname}" -a -z "$*" ] && err 1 "${MAGENTA}No bhyve specified${NORMAL}"
 
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
@@ -399,7 +404,18 @@ media_auto_eject="${media_auto_eject}"
 nice='${nice}'
 live_migration_args='${live_migration_args}'
 debug_engine='${debug_engine}'
+
+on_poweroff='${on_poweroff}'
+on_reboot='${on_reboot}'
+on_crash='${on_crash}'
+
 EOF
+
+	# create a configuration only
+	if [ -n "${cfg_only}" ]; then
+		/bin/mv ${jailsysdir}/${jname}/bhyve.conf ${cfg_only}
+		err 0 "${MAGENTA}config created: ${GREEN}${cfg_only}${NORMAL}"
+	fi
 
 	checkpoint_args=
 
@@ -424,7 +440,7 @@ EOF
 			fi
 			;;
 		*)
-			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf ${checkpoint_args}"
+			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args}"
 			;;
 	esac
 
@@ -438,7 +454,7 @@ EOF
 
 		con=0
 		for i in ${console_nmdm}; do
-			if [ $con -eq 0 ]; then
+			if [ ${con} -eq 0 ]; then
 				${tmuxcmd} split-window -v -p 96 -t 0 "cu -l ${i} -s 9600" # DEBUG string
 			else
 				${tmuxcmd} new-window -t 1 "cu -l ${i} -s 9600"
@@ -472,6 +488,11 @@ EOF
 	echo
 
 	${ECHO} "${MAGENTA}PID: ${GREEN}${vm_pid}${NORMAL}"
+
+	if [ "${vm_pid}" = "0" ]; then
+		${ECHO} "${MAGENTA}Please use for debug: ${GREEN}sh ~cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${NORMAL}"
+	fi
+
 
 	if [ "${lm}" = "0" ]; then
 		cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
@@ -530,7 +551,6 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	err 0 "${MAGENTA}Multiple bstart: ${GREEN}done${NORMAL}"
 fi
-
 
 # MAIN
 . ${sharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
@@ -597,6 +617,26 @@ else
 	emulator="bhyve"
 	. ${rjrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}Request for live migration: no such VM in cluster: ${GREEN}${jname}${MAGENTA}. Perhaps you forget to: ${GREEN}cbsd node mode=add${MAGENTA} ?${NORMAL}"
+fi
+
+# jailed bhyve?
+_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
+[ -z "${_jailed}" ] && _jailed="0"
+if [ "${_jailed}" != "0" ]; then
+	case "${_jailed}" in
+		1)
+			_jname=$( freejname default_jailname=J${jname} )
+			${ECHO} "${MAGENTA}Jailed bhyve. Create temporary jail: ${GREEN}${_jname}${NORMAL}"
+			/usr/bin/sed -e "s:%%jname%%:${_jname}:g" \
+			-e "s:%%workdir%%:${workdir}:g" \
+			-e "s:%%domain%%#:my.domain:g" ${distdir}/share/jail.jconf > /tmp/jail.$$
+			jcreate jconf=/tmp/jail.$$
+			/bin/rm -f /tmp/jail.$$
+			exec bjail jname=${_jname} bname=${jname}
+			;;
+		*)
+			;;
+	esac
 fi
 
 default_profile="bhyve-default-default.conf"

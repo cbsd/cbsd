@@ -1,22 +1,42 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v12.0.4
 MYARG=""
-MYOPTARG=""
+MYOPTARG="ver arch target_arch destdir"
 MYDESC="Update base jail"
 CBSDMODULE="sys"
-ADDHELP=""
+ADDHELP="by default - update all available bases\n\
+ you can specify via additional args individual bases for\n\
+ update via: ver=,arch=,target_arch=\n"
 
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
 
+ver=
+arch=
+target_arch=
+destdir=
+
+keyprint=
+servername=
+components=
+
 init $*
 
-readconf baseupdate.conf
+readconf ${platform}-baseupdate.conf
 
 generate_freebsd_config()
 {
+	local _res
+
+	# validate mandatory variables
+	for i in keyprint servername components; do
+		_res=
+		eval _res="\$$i"
+		[ -z "${_res}" ] && err 1 "${MAGENTA}baseupdate generate_freebsd_config error: empty variable ${GREEN}${i}${MAGENTA}. please use ${platform}-baseupdate.conf to setup${NORMAL}"
+	done
+
 	/bin/cat << EOF > "${1}"
 KeyPrint ${keyprint}
 ServerName ${servername}
@@ -33,16 +53,51 @@ EOF
 
 update_base()
 {
-	local _i
+	local _i _res
 	sqlfile="local"
+	local _mod_count=0
 
 	_sql="SELECT platform,name,arch,targetarch,ver FROM bsdbase"
+
+	# when user specified several parameters, 
+	# add this as modifiers to narrow down the conditions for an exact result.
+	# for example when ver= specidied, we got: "WHERE ver=X"
+
+	for i in ver arch target_arch; do
+		_res=
+		eval _res="\$$i"
+		[ -z "${_res}" ] && continue
+		case ${_mod_count} in
+			0)
+				# first modificator
+				_sql="${_sql} WHERE ${i}=\"${_res}\""
+				;;
+			*)
+				# append modificator, concat with AND
+				_sql="${_sql} AND ${i}=\"${_res}\""
+				;;
+		esac
+		_mod_count=$(( _mod_count + 1 ))
+	done
+
+	#echo "[debug]: ${_sql}"
+	local sqldelimer=" "
+
 	cbsdsql ${sqlfile} ${_sql} | while read _platform _name _arch _targetarch _ver; do
 		base="${_name}_${_arch}_${_targetarch}_${_ver}"
 		basepath=${workdir}/basejail/${base}
-		${ECHO} ${MAGENTA}"Updating ${basepath}"${NORMAL}
+		if [ ! -r ${basepath}/bin/sh ]; then
+			${ECHO} "${MAGENTA}No such /bin/sh in: ${GREEN}${basepath}${MAGENTA}. Bad dir/hier? Skipped${NORMAL}"
+			continue
+		fi
+		printf "${MAGENTA}Updating ${basepath}: ${NORMAL}"
+
+		# set fake env
+		set_bsdenv_by_path -p ${basepath} -v ${_ver}
+		/usr/bin/uname -v
 		case "${platform}" in
 			HardenedBSD)
+				${ECHO} "${MAGENTA}/usr/sbin/hbsd-update -n -r \"${GREEN}${basepath}${MAGENTA}\"${NORMAL}"
 				/usr/sbin/hbsd-update -n -r "${basepath}"
 				;;
 			FreeBSD)
@@ -50,11 +105,13 @@ update_base()
 				trap "/bin/rm -f ${update_conf}" HUP INT ABRT BUS TERM EXIT
 				generate_freebsd_config "${updateconf}"
 				FBSD_UPDATE="/usr/sbin/freebsd-update -f ${updateconf} -b ${basepath} --not-running-from-cron"
+				${ECHO} "${MAGENTA}${FBSD_UPDATE}${NORMAL}"
 				/usr/bin/env PAGER=/bin/cat ${FBSD_UPDATE} fetch install
 				;;
 		esac
+
+		unset_bsdenv
 	done
 }
 
-sqldelimer=" "
 update_base

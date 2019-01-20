@@ -1,0 +1,88 @@
+#!/usr/local/bin/cbsd
+#v12.0.4
+MYARG="mode"
+MYOPTARG="jname controller dsk dsk_size"
+MYDESC="Manage bhyve ahci/virtio disk"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve.html"
+ADDHELP="mode=attach,detach,remove,list\n\
+  - attach - create and attach new disk\n\
+  - detach - detach disk from controller (without removing dsk)\n\
+  - delete - detach and remove disk\n"
+
+. ${subr}
+. ${system}
+. ${strings}
+. ${tools}
+
+init $*
+
+. ${workdir}/bhyve.subr
+. ${workdir}/virtual.subr
+. ${distdir}/share/bhyve/bhyve-dsk.subr
+
+dsk_attach()
+{
+	local _val
+	for i in jname controller dsk dsk_size; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${MAGENTA}bhyve-dsk error: ${GREEN}${i}= ${MAGENTA}is mandatory${NORMAL}"
+	done
+
+	add_dsk -c "${controller}" -d "${dsk}" -s "${dsk_size}"
+}
+
+dsk_detach()
+{
+	local _val
+	local _devpath
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${MAGENTA}bhyve-dsk error: ${GREEN}${i}= ${MAGENTA}is mandatory${NORMAL}"
+	done
+
+	_devpath=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
+	[ -z "${_devpath}" ] && err 1 "${MAGENTA}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${NORMAL}"
+
+	media mode=detach name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+}
+
+dsk_delete()
+{
+	local _val
+	local _devpath
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${MAGENTA}bhyve-dsk error: ${GREEN}${i}= ${MAGENTA}is mandatory${NORMAL}"
+	done
+
+	_devpath=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
+	[ -z "${_devpath}" ] && err 1 "${MAGENTA}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${NORMAL}"
+
+	media mode=delete name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+}
+
+case "${mode}" in
+	attach)
+		dsk_attach
+		;;
+	delete)
+		dsk_delete
+		;;
+	detach)
+		dsk_detach
+		;;
+	list)
+		bhyve-dsk-list
+		;;
+	*)
+		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
+		;;
+esac

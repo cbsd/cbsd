@@ -1,23 +1,25 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
-globalconf="${workdir}/cbsd.conf"
+#v12.0.4
 CBSDMODULE="bsdconf"
-MYARG=""
-MYOPTARG="jname mode baseonly ver arch"
+MYARG="jname mode"
+MYOPTARG="baseonly ver arch service"
 MYDESC="cbsd service wrapper"
-ADDHELP="jname= work in with jail\n\
-mode=list - show service list but apply IGNORE_SERVICES list from srvbrowser.conf\n\
-baseonly=1 - show services only from FreeBSD distribition (use basejail dir)\n"
+ADDHELP="jname= work in with jail. Also can be path to basejail\n\
+mode= work mode, list or action\n\
+  list   - show service list but apply IGNORE_SERVICES list from srvbrowser.conf\n\
+  action - passthru command to service, e.g: stop, start, onestop, onestart, status\n\
+baseonly=1 - show services only from FreeBSD distribition (use basejail dir)\n\
+service = specify service name for mode=action\n"
 EXTHELP="modules/bsdconf.d.html"
 
 . ${subr}
 . ${strings}
 . ${system}
+. ${tools}
 
 unset jname baseonly arch ver
 
 init $*
-
 
 srv_list()
 {
@@ -39,26 +41,117 @@ srv_list()
 	done
 }
 
-#defines
-_MYDIR=$( dirname `realpath $0` )
-[ -n "${jname}" ] && shift # skip for jname arg
-[ -n "${baseonly}" ] && shift # skip for baseonly arg
-[ -n "${arch}" ] && shift # skip for arch arg
-[ -n "${ver}" ] && shift # skip for ver arg
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+service_multi_init()
+{
+	local _jname
 
-cmd="${@}"
-[ -z "${cmd}" ] && err 1 "${MAGENTA}Empty command${NORMAL}"
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+
+	. ${workdir}/multiple.subr
+	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd service jname=${_jname} ${cmd} 2>/dev/null )
+		sleep 0.1               # dont brute taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 0.5
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
+#defines
+_MYDIR=$( /usr/bin/dirname `/bin/realpath $0` )
+SERVICE="service"
+
+# MAIN
+origjname=
+emulator="jail" # for jname_is_multiple
+jail_list=
+jname_is_multiple
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	fi
+
+	task_owner="service_multiple_query"
+	_args=
+
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix=$( substr --pos=0 --len=6 --str="${i}" )
+		[ "${prefix}" = "jname=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
+
+	case "${mode}" in
+		list)
+			task_owner="service_multiple_list"
+			service_multi_init -c "${_args}" -o ${task_owner} -n "service list"
+			;;
+		action)
+			task_owner="service_multiple_action"
+			service_multi_init -c "${_args}" -o ${task_owner} -n "service action"
+			;;
+	esac
+
+	err 0 "${MAGENTA}Multiple service: ${GREEN}done${NORMAL}"
+fi
+
+cmd=
+
+# trim for jname= and action= in "$*"
+for i in $*; do
+	prefix6=
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	[ "${prefix6}" = "jname=" ] && continue
+
+	prefix5=
+	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+	[ "${prefix5}" = "mode=" ] && continue
+
+	prefix9=
+	prefix9=$( substr --pos=0 --len=9 --str="${i}" )
+	[ "${prefix9}" = "baseonly=" ] && continue
+
+	if [ -n "${cmd}" ]; then
+		cmd="${cmd} ${i}"
+	else
+		cmd="${i}"
+	fi
+done
+
+# test jname as path ?
+prefix=$( substr --pos=0 --len=1 --str="${jname}" )
 
 ## MAIN ##
-if [ -n "${jname}" ]; then
-	. ${jrcconf}
-	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
-	[ ${jid} -eq 0 ] && err 1 "Jail is offline"
-#	permit any action, e.g: configtest ?
-	[ $baserw -eq 1 ] && path=$data
-
-	exec_cmd="jexec jname=${jname} /usr/sbin/service"
-else
+if [ "${prefix}" = "/" ]; then
+	# this is path
 	data=""
 	if [ "${baseonly}" = "1" ]; then
 		. ${workdir}/universe.subr
@@ -75,6 +168,13 @@ else
 	else
 		exec_cmd="/usr/sbin/service"
 	fi
+else
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+	[ ${jid} -eq 0 ] && err 1 "Jail is offline"
+#	permit any action, e.g: configtest ?
+	[ $baserw -eq 1 ] && path=$data
+	exec_cmd="jexec jname=${jname} /usr/sbin/service"
 fi
 
 [ ! -d "${data}/etc" ] && err 1 "${MAGENTA}No such etc dir: ${GREEN}${data}/etc${NORMAL}"
@@ -84,6 +184,7 @@ case "${mode}" in
 		srv_list
 		;;
 	*)
+		[ -z "${cmd}" ] && err 1 "${MAGENTA}Empty command${NORMAL}"
 		${exec_cmd} ${cmd}
 		errcode=$?
 		;;

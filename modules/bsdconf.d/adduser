@@ -1,18 +1,19 @@
 #!/usr/local/bin/cbsd
-#v11.0.5
-globalconf="${workdir}/cbsd.conf";
+#v12.0.4
 MYARG="mode"
 MYOPTARG="fromfile jname login fullname group uid secgroup shell pw epw"
 MYDESC="Add user to jail"
-ADDHELP="mode can be: remove, add, show\n"
+ADDHELP="mode can be: remove, add, show\n\
+pw - plain password, or\n\
+epw - encrypted password\n"
 
 . ${subr}
 . ${strings}
 . ${system}
+. ${tools}
 init $*
 
-#defines
-_MYDIR=$(dirname `realpath $0`)
+_MYDIR=$( /usr/bin/dirname `/bin/realpath $0` )
 SERVICE="adduser"
 
 f_getvar()
@@ -30,16 +31,17 @@ f_getvar()
 check_jaildir()
 {
 	local check_file="${path}/etc/master.passwd ${path}/etc/passwd ${path}/etc/group ${path}/usr/sbin/pw"
-	local i
+	local _i
 	local ret=0
 
-	for i in $check_file; do
-		[ ! -f "${i}" ] && echo ${i} && ret=1
+	for _i in ${check_file}; do
+		[ ! -f "${_i}" ] && echo ${_i} && ret=1
 	done
 
 	return ${ret}
 }
 
+# not for multiple action
 getpw()
 {
 	local _oldmodes=$( /bin/stty -g ) _try=0
@@ -77,11 +79,9 @@ getpw()
 # opt: uid, fullname, group, secgroup, shell
 c_adduser()
 {
-	local _res
+	local _res _ret
 
 	[ -z "${login}" ] && ${ECHO} "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}" && return 1
-
-	echo " $exec_cmd user show $login "
 
 	_res=$( ${exec_cmd} user show ${login} 2>&1)
 	case $? in
@@ -126,26 +126,122 @@ c_adduser()
 	${CHROOT_EXEC} /bin/sh <<EOF
 /usr/sbin/pw useradd ${login} ${ADDON} -m
 EOF
+	_ret=$?
 
 	if [ -n "${pw}" ]; then
 		${CHROOT_EXEC} /bin/sh <<EOF
-echo "${pw}" |/usr/sbin/pw mod user ${login} -h 0 -
+echo "${pw}" | /usr/sbin/pw mod user ${login} -h 0 -
 EOF
 	elif [ -n "${epw}" ]; then
 		${CHROOT_EXEC} /bin/sh <<EOF
 /usr/bin/chpass -p '${epw}' ${login}
 EOF
 	fi
+
+	return ${_ret}
 }
 
 # must be filled:
 # mandatory: login
 remove()
 {
-	${exec_cmd} user del ${login}
+	local _ret _res
+	_res=$( ${exec_cmd} user del ${login} )
+	_ret=$?
+	if [ ${_ret} -eq 0 ]; then
+		${ECHO} "${GREEN}user delete successfull${NORMAL}"
+	else
+		echo "${_res}"
+	fi
+	return ${_ret}
 }
 
-origjname=
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+adduser_multi_init()
+{
+	local _jname
+
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+
+	. ${workdir}/multiple.subr
+	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd adduser jname=${_jname} ${cmd} 2>/dev/null )
+		sleep 0.1               # dont brute taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 0.5
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
+# MAIN
+emulator="jail" # for jname_is_multiple
+jail_list=
+jname_is_multiple
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	fi
+
+	task_owner="adduser_multiple_query"
+	_args=
+
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix=$( substr --pos=0 --len=6 --str="${i}" )
+		[ "${prefix}" = "jname=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
+
+	case "${mode}" in
+		add)
+			[ -z "${pw}" -a -z "${epw}" ] && err 1 "${GREEN}pw= ${MAGENTA}or ${GREEN}epw=${MAGENTA} is mandatory for multiple operation${NORMAL}"
+			task_owner="adduser_multiple_add"
+			adduser_multi_init -c "${_args}" -o ${task_owner} -n "adduser add"
+			;;
+		remove)
+			[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}"
+			task_owner="adduser_multiple_remove"
+			adduser_multi_init -c "${_args}" -o ${task_owner} -n "adduser remove"
+			;;
+		show)
+			[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA} is mandatory${NORMAL}"
+			task_owner="adduser_multiple_show"
+			adduser_multi_init -c "${_args}" -o ${task_owner} -n "adduser show"
+			;;
+	esac
+
+	err 0 "${MAGENTA}Multiple adduser: ${GREEN}done${NORMAL}"
+fi
+
+[ -n "${jname}" ] && shift # skip for jname
+
 
 if [ -z "${jname}" ]; then
 	data=""
@@ -233,29 +329,28 @@ if [ -r "${fromfile}" ]; then
 fi
 
 case "${mode}" in
-	"remove")
+	remove)
 		res=$( ${exec_cmd} user show ${login} 2>&1)
 		err=$?
 		case ${err} in
 			0)
 				;;
 			*)
-				err 1 "${MAGENTA}Error: ${NORMAL}${T}"
+				err 1 "${MAGENTA}Error: ${NORMAL}${res}"
 				;;
 		esac
 		res=$( remove )
 		err=$?
 		;;
-	"add")
-		res=$( adduser )
+	add)
+		res=$( c_adduser )
 		err=$?
 		;;
-	"show")
+	show)
 		[ -z "${login}" ] && err 1 "${GREEN}login= ${MAGENTA}is mandatory${NORMAL}"
 		res=$( ${exec_cmd} user show ${login} )
 		err=$?
 		;;
 esac
 
-[ ${err} -ne 0 ] && err 1 "${res}"
-exit 0
+err ${err} "${res}"

@@ -522,7 +522,6 @@ main(int argc, char **argv)
 					sleep(loop_interval);
 					break;
 				}
-				current_waiting=get_bs_stats(yaml,"current-waiting: ");
 				if (current_waiting<0) {
 					tolog(log_level,"get_bs_stats failed for current-waiting\n");
 					bs_connected=0;
