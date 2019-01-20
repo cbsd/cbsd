@@ -2,7 +2,8 @@
 #v11.2.1
 CBSDMODULE="jail"
 MYARG=""
-MYOPTARG="alljails display emulator header human jname mode node prometheus shownode"
+. ${sharedir}/rctl.conf
+MYOPTARG="alljails display emulator header human jname mode node prometheus shownode ${RCTL} ${RCTL_EXTRA}"
 MYDESC="Set or flush resource limit for jail"
 ADDHELP="\
 alljails=1 - get jaillist from remote node\n\
@@ -15,6 +16,7 @@ mode= set (apply), unset, show (show current state) or get (show limits)\n\
 node= only for current node\n\
 prometheus=0 or 1 = prometheus metric mode output\n\
 shownode=1 - show nodename for jails\n\
+rctl params: ${RCTL} ${RCTL_EXTRA}\n\
 "
 EXTHELP="wf_jrctl.html"
 
@@ -106,11 +108,7 @@ show_jaildata_from_sql()
 		. ${workdir}/rctl.subr
 		. ${jrcconf}
 		populate_output_data
-
-#		active=$( cbsdsql local SELECT jid FROM jails WHERE jname=\"${jname}\" )
-
 		printf "${NORMAL}" # for column sort
-
 		if [ "${jid}" != "0" ]; then
 			printf "${GREEN}"
 		else
@@ -164,31 +162,51 @@ show_jails()
 set_limit()
 {
 	local LIMITS="${jailsysdir}/${jname}/jail.limits"
-	local _formfile
+	local _formfile _mymodule
 	local _val _valnew
 	local i DATA
 
 	case "${emulator}" in
 		jail)
 			_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+			_mymodule="jrctl"
 			;;
 		bhyve)
 			_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
+			_mymodule="brctl"
 			;;
 	esac
 
-	[ ! -r "${_formfile}" ] && return 0
+	if [ ! -r "${_formfile}" ]; then
+		${ECHO} "${MAGENTA}No such ${_formfile}${NORMAL}"
+		forms module=${_mymodule} jname=${jname} inter=0
+		if [ ! -r "${_formfile}" ]; then
+			${ECHO} "${MAGENTA}No such ${_formfile}${NORMAL}"
+			return 1
+		fi
+	fi
 
 	/usr/bin/truncate -s0 ${LIMITS}
 
 	for i in ${RCTL}; do
+
+		# rctl params update if args sets
+		_val=
+
+		eval _val="\$rctl_${i}"
+		if [ -n "${_val}" ]; then
+			${ECHO} "${MAGENTA}update rctl for: ${GREEN}${i}${NORMAL}"
+			cbsdsql ${_formfile} "UPDATE forms SET new=\"${_val}\",cur=\"${_val}\" WHERE param=\"${i}\"" 2>/dev/null
+		fi
+
+		_valnew=
 		_valnew=$( cbsdsql ${_formfile} "SELECT new FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
-		if [ -z "${_valnew}" -o "${_valnew}" ]; then
+		if [ -z "${_valnew}" ]; then
 			_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
 		else
 			# apply 'cur' values and truncate 'new'
 			_val="${_valnew}"
-			cbsdsql ${_formfile} "UPDATE form SET cur=\"${_val}\" AND new='' WHERE param=\"${i}\" LIMIT 1" 2>/dev/null
+			cbsdsql ${_formfile} "UPDATE forms SET cur=\"${_val}\",new='' WHERE param=\"${i}\"" 2>/dev/null
 		fi
 		[ -z "${_val}" ] && _val=0
 		[ "${_val}" = "0" ] && continue
@@ -196,14 +214,22 @@ set_limit()
 	done
 
 	for i in ${RCTL_EXTRA}; do
+		# rctl params update if args sets
 		_val=
+		eval _val="\$rctl_${i}"
+		if [ -n "${_val}" ]; then
+			${ECHO} "${MAGENTA}update rctl-extra for: ${GREEN}${i}${NORMAL}"
+			cbsdsql ${_formfile} "UPDATE forms SET new=\"${_val}\",cur=\"${_val}\" WHERE param=\"${i}\"" 2>/dev/null
+		fi
+		_val=
+		_valnew=
 		_valnew=$( cbsdsql ${_formfile} "SELECT new FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
-		if [ -z "${_valnew}" -o "${_valnew}" ]; then
+		if [ -z "${_valnew}" ]; then
 			_val=$( cbsdsql ${_formfile} "SELECT cur FROM forms WHERE param=\"${i}\" LIMIT 1" 2>/dev/null )
 		else
 			# apply 'cur' values and truncate 'new'
 			_val="${_valnew}"
-			cbsdsql ${_formfile} "UPDATE form SET cur=\"${_val}\" AND new='' WHERE param=\"${i}\" LIMIT 1" 2>/dev/null
+			cbsdsql ${_formfile} "UPDATE forms SET cur=\"${_val}\",new='' WHERE param=\"${i}\"" 2>/dev/null
 		fi
 
 		[ "${_val}" = "0" -o -z "${_val}" ] && continue
@@ -266,11 +292,15 @@ set_limit()
 
 jail_rctl()
 {
+	local _ret
+
 	local LIMITS="${jailsysdir}/${jname}/jail.limits"
 
 	case "${mode}" in
 		"set")
 			set_limit
+			_ret=$?
+			[ ${_ret} -ne 0 ] && err ${_ret} "set_error"
 			;;
 		"unset")
 			[ -z "${jname}" ] && err 1 "${MAGENTA}jname= must be set${NORMAL}"
@@ -386,6 +416,13 @@ jail_rctl()
 			;;
 	esac
 }
+
+# store args settings
+for i in ${RCTL} ${RCTL_EXTRA}; do
+	_val=
+	eval _val="\$${i}"
+	[ -n "${_val}" ] && export rctl_${i}="${_val}"
+done
 
 #### MAIN
 if [ -n "${jname}" ]; then
