@@ -1,5 +1,5 @@
 #!/bin/sh
-#v12.0.2
+#v12.0.4
 export distdir=${distdir:-"/usr/local/cbsd"}
 globalconf="${distdir}/cbsd.conf";
 MYLOCK="/tmp/initenv.lock"
@@ -1021,12 +1021,36 @@ EOF_HEADER
 		fi
 	fi
 
+	[ -z "${rcshutdown_timeout}" ] && rcshutdown_timeout="0"
+
 	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?"; then
 			${SYSRC_CMD} -vf /etc/rc.conf rcshutdown_timeout="900"
+			rcshutdown_timeout="900"
 		else
 			${SYSRC_CMD} -qf ${workdir}/rc.conf rcshutdown_timeout="900"
 		fi
+	fi
+
+	kern_init_shutdown_timeout=$( /sbin/sysctl -qn kern.init_shutdown_timeout 2>/dev/null )
+	[ -z "${kern_init_shutdown_timeout}" ] && kern_init_shutdown_timeout="${rcshutdown_timeout}"	# unknown sysctl ? skip
+
+	if [ ${kern_init_shutdown_timeout} -lt ${rcshutdown_timeout} ]; then
+		if [ $( ${GREP_CMD} -E "^kern.init_shutdown_timeout=|^kern_init_shutdown_timeout=" /etc/sysctl.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+			if getyesno "Shall i modify the /etc/sysctl.conf to sets kern.init_shutdown_timeout=\"900\"?"; then
+				${SYSRC_CMD} -vf /etc/sysctl.conf kern.init_shutdown_timeout="900"
+				kern_init_shutdown_timeout="900"
+				/sbin/sysctl -qw kern.init_shutdown_timeout="900"
+			else
+				${SYSRC_CMD} -qf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
+			fi
+		fi
+	fi
+
+	# show warning if ${rcshutdown_timeout} has no effect due to wrong ${kern_init_shutdown_timeout} value
+	if [ ${kern_init_shutdown_timeout} -lt ${rcshutdown_timeout} ]; then
+		${ECHO} "${LRED}Warning: ${MAGENTA}kern.init_shutdown_timeout(${kern_init_shutdown_timeout}) less than rcshutdown_timeout(${rcshutdown_timeout})${NORMAL}"
+		${ECHO} "${MAGENTA}Current setting of rcshutdown_timeout will have no effect until the sysctl(8) variable kern.init_shutdown_timeout is also increased${MAGENTA}"
 	fi
 
 	if [ $( ${GREP_CMD} ^sshd_flags= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
