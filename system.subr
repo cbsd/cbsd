@@ -518,20 +518,44 @@ usr/share"
 }
 
 # return getbase_source variable
+# -s args for skip, e.g: -s "repo populate extract"
 select_getbase_source_by_list()
 {
-	local _tmpdir _tmpfile
+	local _tmpdir _tmpfile _skip=
 	local _ret _def_method=
+	local i j _get_next
+
+	while getopts "s:" opt; do
+		case "${opt}" in
+			s)
+				_skip="${OPTARG}"
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	# read config
 	readconf ${platform}-bases.conf
 
 	for i in ${default_obtain_base_method}; do
-		_def_method="${i}"
-		break		# get only first method from list: high priority
+		_get_next=0
+		for j in ${_skip}; do
+			if [ "${i}" = "${j}" ]; then
+				_get_next=1
+				break
+			fi
+		done
+
+		if [ ${_get_next} -eq 0 ]; then
+			_def_method="${i}"	# get only first method from list: high priority
+			break
+		fi
 	done
 
-	[ -z "${_def_method}" ] && _def_method="repo"
+	if [ -z "${_def_method}" ]; then
+		getbase_source=
+		return 1
+	fi
 
 	if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
 		# set default for non interactive action
@@ -607,13 +631,14 @@ select_getbase_source_by_list()
 }
 
 # $1 - path to archive
+# 
 extract_base_archive()
 {
 	local _path="${1}"
 
 	[ -z "${BASE_DIR}" ] && err 1 "${MAGENTA}extract_base_archive: INIT_DIR not initialized${NORMAL}"
 
-	if [ -r "${_path}" ]; then
+	if [ ! -r "${_path}" ]; then
 		${ECHO} "${MAGENTA}extract_base_archive: not readable: ${GREEN}${_path}${NORMAL}"
 		return 1
 	fi
@@ -623,19 +648,32 @@ extract_base_archive()
 	set -e
 	/usr/bin/tar vxfz ${_path}
 	set +e
+	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${_path}"
 }
 
 select_getbase()
 {
 	local _repeat=1
 	local _path
-	local _url= _url_str=
+	local _url= _url_str= _skip= _cycle=0
 
 	while [ ${_repeat} -ne 0 ]; do
-		select_getbase_source_by_list
 
+		_cycle=$(( _cycle + 1 ))
+		if [ ${_cycle} -gt 16 ]; then
+			${ECHO} "${MAGENTA}select_getbase: too many loop, break${NORMAL}"
+			_repeat=0	# loop protection
+			continue
+		fi
+
+		select_getbase_source_by_list -s "${_skip}"
 		[ $? -ne 0 ] && echo "No valid source"
-		[ "${inter}" = "0" -o "${INTER}" = "0" ] && _repeat=0
+
+		if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
+			# we need special route for non-interactive and
+			# multiple source list.
+			_skip="${_skip} ${getbase_source}"
+		fi
 
 		case "${getbase_source}" in
 			repo)
@@ -668,7 +706,7 @@ select_getbase()
 						continue
 					else
 						${ECHO} "${MAGENTA}Found: ${GREEN}${_path}${NORMAL}"
-						extract_base_archive
+						extract_base_archive ${_path}
 					fi
 				done
 
@@ -678,8 +716,7 @@ select_getbase()
 					break
 				fi
 
-				# for non-interactive mode this is end of scenario
-				[ "${inter}" = "1" -o "${INTER}" = "1" ] && return 1
+				[ "${inter}" = "0" -o "${INTER}" = "0" ] && continue
 
 				# we can ask user for base to base.txz location
 				${ECHO} "${MAGENTA}Please provide full path to base archive, (e.g. default: ${GREEN}/usr/freebsd-dist/base.txz${MAGENTA}):${NORMAL}"
@@ -714,10 +751,10 @@ select_getbase()
 				;;
 		esac
 
-			if [ -x "${BASE_DIR}/bin/sh" ]; then
-				preparebase dst=${BASE_DIR}
-				_repeat=0
-			fi
+		if [ -x "${BASE_DIR}/bin/sh" ]; then
+			preparebase dst=${BASE_DIR}
+			_repeat=0
+		fi
 	done
 
 	return 0
