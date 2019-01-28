@@ -37,6 +37,7 @@ main(int argc, char *argv[])
 	FILE *fp;
 	off_t part=0;
 	off_t stage_part[10];
+	int progress=0;
 	unsigned int cur_part=1;
 #define	BSIZE (8 * 1024)
 
@@ -65,7 +66,7 @@ main(int argc, char *argv[])
 	{
 		fprintf(stderr,"WIP: [0");
 		part=bytes_expected / 10;
-		for (n=0;n<9;n++) {
+		for (n=0;n<10;n++) {
 			stage_part[n]=part * n;
 		}
 	}
@@ -77,7 +78,6 @@ main(int argc, char *argv[])
 			exitval = 1;
 		} else
 			add(fd, *argv);
-
 
 	while ((rval = read(STDIN_FILENO, buf, BSIZE)) > 0)
 		for (p = head; p; p = p->next) {
@@ -93,7 +93,11 @@ main(int argc, char *argv[])
 				received+=n;
 				if (bytes_expected>0) {
 					if (received>stage_part[cur_part]) {
-						fprintf(stderr,"...%d%%",cur_part*10);
+						
+						progress=cur_part*10;
+						if(progress>100)
+							progress=100;
+						fprintf(stderr,"...%d%%",progress);
 						cur_part++;
 					}
 				
