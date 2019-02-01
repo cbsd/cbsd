@@ -31,6 +31,7 @@ clean:
 	${RM} -f misc/pwcrypt
 	${RM} -f misc/cbsdlogtail
 	${RM} -f misc/elf_tables
+	${RM} -f misc/fmagic
 	${RM} -f misc/conv2human
 	${RM} -f misc/cbsd_fwatch
 	${RM} -f misc/popcnttest
@@ -85,6 +86,7 @@ cbsd: pkg-config-check
 	${CC} misc/src/chk_arp_byip.c -o misc/chk_arp_byip && ${STRIP} misc/chk_arp_byip
 	${CC} misc/src/cbsdtee.c -o misc/cbsdtee && ${STRIP} misc/cbsdtee
 	${CC} misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/elf_tables && ${STRIP} misc/elf_tables
+	${CC} misc/src/fmagic.c -lmagic -o misc/fmagic && ${STRIP} misc/fmagic
 	${CC} misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && ${STRIP} misc/conv2human
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && ${STRIP} misc/cbsd_fwatch
 	${CC} misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && ${STRIP} misc/popcnttest > /dev/null 2>&1 || /usr/bin/true

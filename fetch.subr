@@ -18,6 +18,7 @@ fetchme()
 	local _TONULL
 	local _filename
 	local _fromrepo
+	local _fetch_current_retry
 
 	# global variable. Need for most dialog-based action
 	[ -n "${quiet}" ] && _quiet="${quiet}"
@@ -34,6 +35,9 @@ fetchme()
 	done
 
 	[ -z "${_url}" ] && echo "Empty URL" && return 1
+
+	# global settings
+	readconf fetch.conf
 
 	local _sizebyte=
 	local _humansize=
@@ -69,20 +73,43 @@ fetchme()
 		return 1
 	fi
 
-	if [ -n "${_DPV}" ]; then
-		/usr/bin/lockf -s -t0 ${_out}.lock ${_FETCH_CMD} -q -o '-' ${_url}| ${_DPV} -b "${product}" -p "Fetching from ${_fromrepo}:" -t " CBSD Repository "  -x "/bin/cat > ${_out}" ${_sizebyte}:${_filename}
-		# check for size, cause "fetch | dpv " is always true
-		if [ -s "${_out}" ]; then
-			_res=0
-		else
-			/bin/rm -f ${_out}
-			_res=1
-		fi
-	else
-		[ -n "${_humansize}" ] && ${ECHO} "${MAGENTA}Retrieve ${LCYAN}${_filename}${MAGENTA} from ${LYELLOW}${_fromrepo}${MAGENTA}, size: ${GREEN}${_humansize}${NORMAL}"
-		/usr/bin/lockf -s -t0 ${_out}.lock ${_FETCH_CMD} -o ${_out} ${_url} ${_TONULL}
-		_res=$?
+	[ -z ${fetch_max_retry} ] && fetch_max_retry=0
+
+	if is_number ${fetch_max_retry}; then
+		# not number?
+		${ECHO} "${MAGENTA}fetch_max_retry not number: ${GREEN}${fetch_max_retry}${MAGENTA}? reset to 0${NORMAL}"
+		fetch_max_retry=0
 	fi
+
+	if [ ${fetch_max_retry} -eq 0  ]; then
+		_fetch_current_retry=-1
+	else
+		_fetch_current_retry=0
+	fi
+
+	_res=1
+
+	while [ ${_fetch_current_retry} -lt ${fetch_max_retry} ]; do
+		_fetch_current_retry=$(( _fetch_current_retry + 1 ))
+		if [ -n "${_DPV}" ]; then
+			/usr/bin/lockf -s -t0 ${_out}.lock ${_FETCH_CMD} ${fetch_opts} -q -o '-' ${_url} | ${_DPV} -b "${product}" -p "Fetching from ${_fromrepo}:" -t " CBSD Repository "  -x "/bin/cat > ${_out}" ${_sizebyte}:${_filename}
+			# check for size, cause "fetch | dpv " is always true
+			if [ -s "${_out}" ]; then
+				_res=0
+			else
+				/bin/rm -f ${_out}
+				_res=1
+			fi
+		else
+			[ -n "${_humansize}" ] && ${ECHO} "${MAGENTA}Retrieve ${LCYAN}${_filename}${MAGENTA} from ${LYELLOW}${_fromrepo}${MAGENTA}, size: ${GREEN}${_humansize}${NORMAL}"
+			/usr/bin/lockf -s -t0 ${_out}.lock ${_FETCH_CMD} ${fetch_opts} -o ${_out} ${_url} ${_TONULL}
+			_res=$?
+		fi
+
+		# success of interrupted
+		[ ${_res} -eq 0 ] && break
+		[ -z "${_DPV}" ] && ${ECHO} "${MAGENTA}retry: ${GREEN}${_fetch_current_retry}/${fetch_max_retry}${NORMAL}"
+	done
 
 	return ${_res}
 }

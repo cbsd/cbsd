@@ -1,5 +1,5 @@
 #!/bin/sh
-#v12.0.2
+#v12.0.4
 export distdir=${distdir:-"/usr/local/cbsd"}
 globalconf="${distdir}/cbsd.conf";
 MYLOCK="/tmp/initenv.lock"
@@ -294,6 +294,10 @@ phase2()
 	[ ! -f "${distdir}/misc/elf_tables" ] && ${CC_CMD} -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${distdir}/misc/src/elf_tables.c -lelf -o ${distdir}/misc/elf_tables
 	installne "-s -o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/misc/elf_tables ${miscdir}/elf_tables
 	[ -f ${distdir}/misc/elf_tables ] && /bin/rm -f ${distdir}/misc/elf_tables
+
+	[ ! -f "${distdir}/misc/fmagic" ] && ${CC_CMD} ${distdir}/misc/src/fmagic.c -lmagic -o ${distdir}/misc/fmagic
+	installne "-s -o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/misc/fmagic ${miscdir}/fmagic
+	[ -f ${distdir}/misc/fmagic ] && /bin/rm -f ${distdir}/misc/fmagic
 
 	[ ! -f "${distdir}/misc/conv2human" ] && ${CC_CMD} -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${distdir}/misc/src/conv2human.c -lelf -o ${distdir}/misc/conv2human -lutil
 	installne "-s -o ${cbsduser} -g ${cbsduser} -m 555" ${distdir}/misc/conv2human ${miscdir}/conv2human
@@ -615,7 +619,11 @@ phase3()
 
 		if [ "${_hname}" = "${_sname}" ]; then
 			${ECHO} "${GREEN}${_hname}${MAGENTA} - Wrong hostname. Full hostname must be not equal short hostname. Please set FQDN (${GREEN}${_hname}.my.domain${MAGENTA} for example):${NORMAL}"
-			read p
+			if [ "${inter}" = "0" ]; then
+				p="${_hname}.my.domain"
+			else
+				read p
+			fi
 			if getyesno "Shall i modify the /etc/rc.conf to sets new hostname value?: $p"; then
 				hostname $p
 				${SYSRC_CMD} -vf /etc/rc.conf hostname="${p}"
@@ -1021,12 +1029,36 @@ EOF_HEADER
 		fi
 	fi
 
+	[ -z "${rcshutdown_timeout}" ] && rcshutdown_timeout="0"
+
 	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?"; then
 			${SYSRC_CMD} -vf /etc/rc.conf rcshutdown_timeout="900"
+			rcshutdown_timeout="900"
 		else
 			${SYSRC_CMD} -qf ${workdir}/rc.conf rcshutdown_timeout="900"
 		fi
+	fi
+
+	kern_init_shutdown_timeout=$( /sbin/sysctl -qn kern.init_shutdown_timeout 2>/dev/null )
+	[ -z "${kern_init_shutdown_timeout}" ] && kern_init_shutdown_timeout="${rcshutdown_timeout}"	# unknown sysctl ? skip
+
+	if [ ${kern_init_shutdown_timeout} -lt ${rcshutdown_timeout} ]; then
+		if [ $( ${GREP_CMD} -E "^kern.init_shutdown_timeout=|^kern_init_shutdown_timeout=" /etc/sysctl.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+			if getyesno "Shall i modify the /etc/sysctl.conf to sets kern.init_shutdown_timeout=\"900\"?"; then
+				printf "\nkern.init_shutdown_timeout=\"900\"\n" >> /etc/sysctl.conf
+				kern_init_shutdown_timeout="900"
+				/sbin/sysctl -qw kern.init_shutdown_timeout="900"
+			else
+				${SYSRC_CMD} -qf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
+			fi
+		fi
+	fi
+
+	# show warning if ${rcshutdown_timeout} has no effect due to wrong ${kern_init_shutdown_timeout} value
+	if [ ${kern_init_shutdown_timeout} -lt ${rcshutdown_timeout} ]; then
+		${ECHO} "${LRED}Warning: ${MAGENTA}kern.init_shutdown_timeout(${kern_init_shutdown_timeout}) less than rcshutdown_timeout(${rcshutdown_timeout})${NORMAL}"
+		${ECHO} "${MAGENTA}Current setting of rcshutdown_timeout will have no effect until the sysctl(8) variable kern.init_shutdown_timeout is also increased${MAGENTA}"
 	fi
 
 	if [ $( ${GREP_CMD} ^sshd_flags= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then

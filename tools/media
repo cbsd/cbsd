@@ -46,6 +46,12 @@ show_header()
 	[ ${header} -eq 1 ] && ${ECHO} "${_header}"
 }
 
+# dummy function when no $emulator
+dummy_remove_dsk()
+{
+
+}
+
 # construct and print full path or $1 is relative
 normalize_full_path()
 {
@@ -303,6 +309,8 @@ check_protected()
 
 storage_attach()
 {
+	local _data_dir_path _tmp_dir_path= _tmp_dsk_path= _res
+
 	[ -z "${name}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${NORMAL}"
 	[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${NORMAL}"
 	[ -z "${jname}" ] && err 1 "${MAGENTA}Give me ${GREEN}jname=${NORMAL}"
@@ -338,13 +346,31 @@ storage_attach()
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${MAGENTA}attachzfs: no such jail: ${GREEN}${jname}${NORMAL}"
 
+	if [ -z "${type}" ]; then
+		type=$( imgtype path=${dsk_path} 2>&1 )
+		${ECHO} "${MAGENTA}media: auto-detected image type for ${dsk_path}: ${GREEN}${type}${NORMAL}"
+	fi
+
 	case "${type}" in
 		iso|shared)
 			;;
 		hdd)
 			mydb="${jailsysdir}/${jname}/local.sqlite"
 			virtio_type="virtio-blk"
-			cbsdsql ${mydb} "INSERT INTO ${emulator}dsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${dsk_path}\","0" )"
+			# simplify if the file is located in the data directory
+			_data_dir_path="${jaildatadir}/${jname}-data"
+			_tmp_dir_path=$( /usr/bin/dirname ${dsk_path} )
+			if [ "${_data_dir_path}" = "${_tmp_dir_path}" ]; then
+				_tmp_dsk_path=$( /usr/bin/basename ${dsk_path} )
+			else
+				_tmp_dsk_path="${dsk_path}"
+			fi
+			_res=$( cbsdsql ${mydb} SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${_tmp_dsk_path}\" LIMIT 1 2>/dev/null )
+			if [ -n "${_res}" ]; then
+				${ECHO} "${MAGENTA}dsk_path already exist for ${jname}: ${GREEN}${_tmp_dsk_path}${NORMAL}"
+				return 1
+			fi
+			cbsdsql ${mydb} "INSERT INTO ${emulator}dsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${_tmp_dsk_path}\","0" )"
 			;;
 	esac
 
