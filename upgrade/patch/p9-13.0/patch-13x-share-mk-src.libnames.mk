@@ -1,5 +1,5 @@
---- src.libnames.mk.orig	2018-12-14 16:47:08.689801000 +0300
-+++ src.libnames.mk	2018-12-14 17:26:04.567523000 +0300
+--- src.libnames.mk.orig	2019-02-21 09:19:09.639372000 +0000
++++ src.libnames.mk	2019-02-24 10:42:05.930835000 +0000
 @@ -57,6 +57,7 @@
  		${_INTERNALLIBS} \
  		${LOCAL_LIBRARIES} \
