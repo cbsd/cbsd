@@ -257,8 +257,8 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-	bhyve_cmd="/usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
-	debug_bhyve_cmd="/usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	debug_bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t bhyverun.sh "[debug] ${bhyve_cmd}"
