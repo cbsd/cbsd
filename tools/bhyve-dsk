@@ -1,21 +1,27 @@
 #!/usr/local/bin/cbsd
-#v12.0.4
+#v12.0.6
 MYARG="mode"
-MYOPTARG="jname controller dsk dsk_size"
+MYOPTARG="jname controller dsk dsk_size bootable"
 MYDESC="Manage bhyve ahci/virtio disk"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve.html"
-ADDHELP="mode=attach,detach,remove,list\n\
+ADDHELP="mode=attach,detach,remove,list,modify\n\
   - attach - create and attach new disk\n\
   - detach - detach disk from controller (without removing dsk)\n\
-  - delete - detach and remove disk\n"
+  - delete - detach and remove disk\n\
+  - modify - modify disk properties (e.g: bootable=)\n\
+ modify properties:\n\
+  - bootable - set bootable flag (1 - true, - false)\n"
 
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
 
+bootable=
 init $*
+
+available_properties="bootable"
 
 . ${workdir}/bhyve.subr
 . ${workdir}/virtual.subr
@@ -69,6 +75,81 @@ dsk_delete()
 	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
 }
 
+dsk_modify_bootable()
+{
+	local _bootable _res
+	local _old_controller= _old_dsk=
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${MAGENTA}dsk_modify_bootable error: ${GREEN}${i}= ${MAGENTA}is mandatory${NORMAL}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${MAGENTA}No such database: ${GREEN}${jailsysdir}/${jname}/local.sqlite${NORMAL}"
+
+	case "${bootable}" in
+		[Nn][Oo] | [Ff][Aa][Ll][Ss][Ee] | 0)
+			_bootable="false"
+			;;
+		[Yy][Ee][Ss] | [Tt][Rr][Uu][Ee] | 1)
+			_bootable="true"
+			;;
+		*)
+			err 1 "${MAGENTA}dsk_modify_bootable: unknown bootable: ${GREEN}${bootable}. ${MAGENTA}Valid: [1|true|yes] and [0|false|no]${NORMAL}"
+			;;
+	esac
+
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path FROM bhyvedsk WHERE bootable=${_bootable} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	sqllist "${_res}" _old_controller _old_dsk
+
+	case "${_bootable}" in
+		true)
+			if [ "${_old_controller}" = "${controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk}" ]; then
+					${ECHO} "${MAGENTA}${jname}: ${controller} ${dsk} already bootable${NORMAL}"
+					return 0
+				fi
+			fi
+
+			# currently only one device can be bootable, so set false for all devices first
+			cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET bootable=false
+			[ -n "${_res}" ] && ${ECHO} "${MAGENTA}Update bootable flag for ${jname}:${_old_controller}:${_old_dsk} -> false${NORMAL}"
+			${ECHO} "${MAGENTA}Update bootable flag for ${jname}:${controller}:${dsk} -> ${GREEN}${_bootable}${NORMAL}"
+			;;
+		false)
+			if [ "${_old_controller}" = "${controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk}" ]; then
+					${ECHO} "${MAGENTA}${jname}: ${controller} ${dsk} already not bootable${NORMAL}"
+					return 0
+				fi
+			fi
+			${ECHO} "${MAGENTA}Update bootable flag for ${jname}:${controller}:${dsk} -> ${GREEN}${_bootable}${NORMAL}"
+			;;
+	esac
+
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET bootable=${_bootable} WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+	return 0
+}
+
+
+dsk_modify()
+{
+	local _val
+	local _devpath _prop_num=0
+
+	# determine properties
+	for i in ${available_properties}; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		dsk_modify_${i}
+		_prop_num=$(( _prop_num + 1 ))
+	done
+
+	[ ${_prop_num} -eq 0 ] && ${ECHO} "${MAGENTA}available properties: ${GREEN}${available_properties}${NORMAL}"
+}
+
 case "${mode}" in
 	attach)
 		dsk_attach
@@ -81,6 +162,9 @@ case "${mode}" in
 		;;
 	list)
 		bhyve-dsk-list
+		;;
+	modify)
+		dsk_modify
 		;;
 	*)
 		err 1 "${MAGENTA}Unknown mode: ${GREEN}${mode}${NORMAL}"
