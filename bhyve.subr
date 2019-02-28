@@ -60,14 +60,189 @@ init_bhyve()
 	[ -z "${tmuxcmd}" ] && err 1 "${MAGENTA}Current version required for ${GREEN}tmux${MAGENTA}\nPlease ${GREEN}pkg install tmux ${MAGENTA} or ${GREEN}make -C /usr/ports/sysutils/tmux install${MAGENTA} it.${NORMAL}"
 }
 
+# return 0 or 1 if $1 bus id exist in global $bhyve_pci_id_busy_list
+#  if is_bhyve_pci_id_busy 5; then
+#         echo "EXIST"
+#  fi
+#
+# if ! is_bhyve_pci_id_busy 5; then
+#        echo "NOT EXIST"
+# fi
+is_bhyve_pci_id_busy()
+{
+	local _id="${1}"
+	local _i
+	local _buf_file="${jailsysdir}/${jname}/bhyve_pciid"
+
+	# use $_buf_file as an intermediate buffer for share
+	# and exchange $bhyve_pci_id_busy_list vars
+	[ -r ${_buf_file} ] && . ${_buf_file}
+
+	# free
+	[ -z "${bhyve_pci_id_busy_list}" ] && return 1
+
+	for _i in ${bhyve_pci_id_busy_list}; do
+		[ ${_i} -eq ${_id} ] && return 0		# already exist
+	done
+
+	# free
+	return 1
+}
+
+# add new $1 bus id in $bhyve_pci_id_busy_list array
+add_bhyve_pci_id_busy()
+{
+	local _id="${1}"
+	local _buf_file="${jailsysdir}/${jname}/bhyve_pciid"
+
+	if is_bhyve_pci_id_busy ${_id}; then
+		# already in list
+		return 0
+	fi
+
+	bhyve_pci_id_busy_list="${bhyve_pci_id_busy_list} ${_id}"
+
+	# use $_buf_file as an intermediate buffer for share
+	# and exchange $bhyve_pci_id_busy_list vars
+	/usr/sbin/sysrc -qf ${_buf_file} bhyve_pci_id_busy_list="${bhyve_pci_id_busy_list}" > /dev/null 2>&1
+
+	return 0
+}
+
+# -a _pcislot_bus
+# -b _pcislot_pcislot
+# -c _pcislot_function
+# -n - device name: fbuf,..
+# -d - device descr/args, e.g <path_to_device>
+store_bhyve_pci_slot()
+{
+	local _pcislot_bus=0
+	local _pcislot_pcislot=0
+	local _pcislot_function=0
+	local _pcislot_name=
+	local _pcislot_desc=
+	local _mydb _i _res
+
+	while getopts "a:b:c:d:n:" opt; do
+		case "${opt}" in
+			a) _pcislot_bus="${OPTARG}" ;;
+			b) _pcislot_pcislot="${OPTARG}" ;;
+			c) _pcislot_function="${OPTARG}" ;;
+			d) _pcislot_desc="${OPTARG}" ;;
+			n) _pcislot_name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	_mydb="${jailsysdir}/${jname}/local.sqlite"
+
+	[ -z "${_pcislot_name}" ] && err 1 "store_bhyve_pci_slot: name is empty"
+
+	for _i in _pcislot_bus _pcislot_pcislot _pcislot_function; do
+		eval _res="\${${_i}}"
+		if is_number ${_res}; then
+			err 1 "store_bhyve_pci_slot: ${_i} is not number: ${_res}"
+		fi
+	done
+
+	local _search_condition
+	local _tmp_bhyve_pci_index=
+
+	_search_condition="pcislot_name=\"${_pcislot_name}\""
+	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
+	_tmp_bhyve_pci_index=$( cbsdsql ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+
+	if [ -n "${_tmp_bhyve_pci_index}" ]; then
+		# update modified flags
+		cbsdsql ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+		[ "${_tmp_bhyve_pci_index}" = "${_pcislot_bus}" ] && return 0		# record already exist (todo: check for bus/func equal
+		# pci slot not equal, update
+		cbsdsql ${_mydb} "UPDATE pcibus SET pcislot_bus=\"${_pcislot_bus}\" WHERE ${_search_condition}"
+		return 0
+	fi
+
+	# store pci bus map
+	cbsdsql ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+}
 
 # autoincement for $bhyve_pci_index variable which symbolizes pci id bus
+# -e end bus range range (e.g: -e 31), default: 31
+# -o (order): next or prev (default is: next)
+# -s start bus range (e.g: -s 4), default: 3
+# -n - device name: fbuf,..
+# -d - device descr/args, e.g <path_to_device>
+# when (-n name) and/or (-d descr) specified,
+# lookup for stored pciid information first to
+# get old settings
+# 0 - reserved for hostbridge
+# 1 - reserved for ReFIND device
+# 2 - reserved for boot device
+# normal use:
+#   if ! next_pci_id; then
+#     # no free pci bus
+#     exit 0
+#   fi
+# or:
+#   if ! next_pci_id -n fbuf; then
+#     # no free pci bus
+#     exit 0
+#   fi
+#
 next_pci_id()
 {
+	local _start_bus_id=3 _end_bus_id=31 _order="next"
+	local _pcislot_name=
+	local _pcislot_desc=
+
+	while getopts "d:e:n:o:s:" opt; do
+		case "${opt}" in
+			e) _end_bus_id="${OPTARG}" ;;
+			o) _order="${OPTARG}" ;;
+			s) _start_bus_id="${OPTARG}" ;;
+			d) _pcislot_desc="${OPTARG}" ;;
+			n) _pcislot_name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# lookup database stored first
+	if [ -n "${_pcislot_name}" ]; then
+		local _mydb
+		local _search_condition
+		local _tmp_bhyve_pci_index=
+
+		_mydb="${jailsysdir}/${jname}/local.sqlite"
+		_search_condition="pcislot_name=\"${_pcislot_name}\""
+		[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
+		#echo "x: ${_search_condition}" >> /tmp/query.txt
+		_tmp_bhyve_pci_index=$( cbsdsql ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+		if [ -n "${_tmp_bhyve_pci_index}" ]; then
+			#echo "found!!: ${_tmp_bhyve_pci_index}" >> /tmp/query.txt
+
+			# update modified
+			cbsdsql ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+
+			bhyve_pci_index=${_tmp_bhyve_pci_index}
+			return 0
+		fi
+	fi
+	# end of lookup database stored first
+
+	[ ${_start_bus_id} -gt ${_end_bus_id} ] && ${ECHO} "${MAGENTA}next_pci_id: invalid range${NORMAL}" && return 1
 	[ -z "${bhyve_pci_index}" ] && bhyve_pci_index="0"
-	bhyve_pci_index=$(( bhyve_pci_index + 1 ))
-	[ ${bhyve_pci_index} -gt 31 ] && ${ECHO} "${MAGENTA}No free available bhyve_pci_index, 31 is max${NORMAL}" && return 1
-	return 0
+
+	bhyve_pci_index=0
+
+	for bhyve_pci_index in $( /usr/bin/seq ${_start_bus_id} ${_end_bus_id} ); do
+		if ! is_bhyve_pci_id_busy ${bhyve_pci_index}; then
+			# found
+			return 0
+		fi
+
+	done
+
+	${ECHO} "${MAGENTA}No free available bhyve_pci_index in ${_start_bus_id} ${_end_bus_id} range${NORMAL}"
+	return 1
 }
 
 # autoincement for nmdm_index
@@ -88,23 +263,86 @@ next_nmdm_id()
 	return 0
 }
 
+
+get_pcislot_args()
+{
+	local _i
+	local _pcislot_bus
+	local _pcislot_pcislot
+	local _pcislot_function
+	local _bhyve_pci_index
+	local _pcislot_args
+
+	_pcislot_pcislot=0	# optional, 0 to 255. if not specified, the bus value defaults to 0
+	_pcislot_function=0	# optional, 0 to 7. if not specified, the function value defaults to 0
+
+	while getopts "a:b:c:i:" opt; do
+		case "${opt}" in
+			a) _pcislot_bus="${OPTARG}" ;;
+			b) _pcislot_pcislot="${OPTARG}" ;;
+			c) _pcislot_function="${OPTARG}" ;;
+			i) _bhyve_pci_index="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_bhyve_pci_index}" ] && err 1 "get_pcislot_args: empty _bhyve_pci_index"
+	add_bhyve_pci_id_busy ${_bhyve_pci_index}
+
+	_pcislot_bus="${_bhyve_pci_index}"	# 0 to 31
+
+	# always set pcislot
+	_pcislot_args="${_pcislot_bus}"
+
+	# skip defaults for bus and func
+	for _i in ${_pcislot_pcislot} ${_pcislot_function}; do
+		[ ${_i} -eq 0 ] && continue
+		_pcislot_args="${_pcislot_args}:${_i}"
+	done
+
+	printf "${_pcislot_args}"
+}
+
+
 compile_uefi_boot_args()
 {
-	if ! next_pci_id; then
-		# no free pci bus
-		exit 0
-	fi
+	local _pcislot_args=
 
 	#also same string in compile_cd_args cd_args
 	case "${vm_boot}" in
 		hdd)
 			if [ "${vm_os_type}" != "openbsd" -a "${vm_os_type}" != "freebsd" ]; then
-			#if [ "${vm_os_type}" != "openbsd" ]; then
-				uefi_boot_args="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+
+#				refind alwas at 1 reserved pci id
+#				if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
+#					# no free pci bus
+#					exit 0
+#				fi
+
+				bhyve_pci_index=1
+				_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+				uefi_boot_args="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+				# strip path to efirefd.fd?
+				# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+				store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
 			fi
 			;;
 		net)
-			uefi_boot_args="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefn.fd"
+
+#			refind alwas at 1 reserved pci id
+#			if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefn.fd; then
+#				# no free pci bus
+#				exit 0
+#			fi
+
+			bhyve_pci_index=1
+			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+			uefi_boot_args="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefn.fd"
+			# strip path to efirefn.fd?
+			# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefn.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+			store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefn.fd -a ${bhyve_pci_index}
 			;;
 	esac
 }
@@ -125,6 +363,7 @@ compile_dsk_args()
 	local prefix
 	local full_dsk_path
 	local _shared_devs
+	local _pcislot_args=
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
@@ -141,17 +380,6 @@ compile_dsk_args()
 				;;
 		esac
 
-		if ! next_pci_id; then
-			# no free pci bus
-			exit 0
-		fi
-
-		if [ ${dsk_slot} -eq 0 ]; then
-			pcislot=${bhyve_pci_index}
-		else
-			pcislot=${dsk_slot}
-		fi
-
 		dsk_conf=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
 
 		# test for full path. If path not started from '/' - append $data dir
@@ -164,11 +392,22 @@ compile_dsk_args()
 			full_dsk_path="${dsk_path}"
 		fi
 
-		if [ -n "${dsk_conf}" ]; then
-			echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${full_dsk_path},${dsk_conf}\" ;"
-		else
-			echo "export dsk${dsk_id}=\"-s ${pcislot}:0,${dsk_controller},${full_dsk_path}\" ;"
+		if ! next_pci_id -n ${dsk_controller} -d ${full_dsk_path}; then
+			# no free pci bus
+			exit 0
 		fi
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+		if [ -n "${dsk_conf}" ]; then
+			echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path},${dsk_conf}\" ;"
+		else
+			echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path}\" ;"
+		fi
+
+		# strip $workdir from full_dsk_path?
+		#echo "store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}
 
 		dsk_id=$(( dsk_id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
@@ -177,10 +416,11 @@ compile_dsk_args()
 	for i in $( /usr/bin/seq 0 31 ); do
 		eval T="\$dsk$i"
 		[ -z "${T}" ] && break
-		# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
-		if ! next_pci_id; then
-			# no free pci bus
-		fi
+		## make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
+		#if ! next_pci_id; then
+		#	# no free pci bus
+		#fi
+		#add_bhyve_pci_id_busy ${bhyve_pci_index}
 		dsk_args="${dsk_args} ${T}"
 	done
 
@@ -188,17 +428,32 @@ compile_dsk_args()
 	_shared_devs=$( cbsdsql storage_media "SELECT path FROM media WHERE type=\"shared\" AND jname=\"${jname}\"" )
 
 	for i in ${_shared_devs}; do
-		if ! next_pci_id; then
+
+		if ! next_pci_id -n virtio-blk -d ${i}; then
 			# no free pci bus
+			exit 0
 		fi
-		dsk_args="${dsk_args} -s ${bhyve_pci_index}:0,virtio-blk,${i}"
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+		dsk_args="${dsk_args} -s ${_pcislot_args},virtio-blk,${i}"
+		# todo: strip workdir from $i
+		# echo "store_bhyve_pci_slot -n virtio-blk -d ${i} -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n virtio-blk -d ${i} -a ${bhyve_pci_index}
 	done
 
 	if [ -r ${data}/cbsd.img ]; then
-		if ! next_pci_id; then
+
+		if ! next_pci_id -n virtio-blk -d cbsd.img; then
 			# no free pci bus
+			exit 0
 		fi
-		dsk_args="${dsk_args} -s ${bhyve_pci_index}:0,virtio-blk,${data}/cbsd.img"
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+		dsk_args="${dsk_args} -s ${_pcislot_args},virtio-blk,${data}/cbsd.img"
+		# echo "store_bhyve_pci_slot -n virtio-blk -d cbsd.img -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n virtio-blk -d cbsd.img -a ${bhyve_pci_index}
 	fi
 
 	[ -z "${dsk_args}" ] && return 1
@@ -219,6 +474,7 @@ compile_dsk_controller_args()
 {
 	local prefix
 	local full_dsk_path
+	local _pcislot_args=
 
 	dsk_controller_args=
 
@@ -230,13 +486,19 @@ compile_dsk_controller_args()
 
 	[ -z "${_dsk_controller_name}" ] && return 0
 
-	if ! next_pci_id; then
+	# todo: controller name as desc ? dsk inherit bus id ?
+	if ! next_pci_id -n ${_dsk_controller_type}; then
 		# no free pci bus
 		exit 0
 	fi
 
-	pcislot=${bhyve_pci_index}
-	dsk_controller_args="-s ${bhyve_pci_index}:0,${_dsk_controller_type}"
+	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+	# todo: controller name as desc ? dsk inherit bus id ?
+	# echo "store_bhyve_pci_slot -n ${_dsk_controller_name} -a ${bhyve_pci_index}" >> /tmp/test.txt
+	store_bhyve_pci_slot -n ${_dsk_controller_name} -a ${bhyve_pci_index}
+
+	dsk_controller_args="-s ${_pcislot_args},${_dsk_controller_type}"
+
 	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
 
 	for dsk_path in ${_dsk_path}; do
@@ -264,6 +526,7 @@ compile_nvme_args()
 	local prefix
 	local full_dsk_path
 	local sqldelimer=" "
+	local _pcislot_args=
 
 	nvme_args=
 
@@ -290,14 +553,17 @@ compile_nvme_args()
 
 	[ -z "${nvme_devpath}" ] && return 1
 
-	if ! next_pci_id; then
+	# todo: nvme name, path?
+	if ! next_pci_id -n nvme; then
 		# no free pci bus
 		exit 0
 	fi
 
-	pcislot=${bhyve_pci_index}
+	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 
-	nvme_args="-s ${pcislot}:0,nvme"
+	nvme_args="-s ${_pcislot_args},nvme"
+	# echo "store_bhyve_pci_slot -n nvme -a ${bhyve_pci_index}" >> /tmp/test.txt
+	store_bhyve_pci_slot -n nvme -a ${bhyve_pci_index}
 
 	if [ ! -r ${nvme_devpath} ]; then
 		${ECHO} "${LDED}Warning: compile_nvme_args: path not available, skipp: ${GREEN}${nvme_devpath}${NORMAL}"
@@ -343,22 +609,14 @@ compile_nic_args()
 	local _ret=
 	local _is_bridge=
 	local autoconn_iface=$( /usr/sbin/sysrc -n cbsd_autoconnect_bridge 2>&1 )
+	local _pcislot_args=
+	local IFS OIFS
+
 	. ${workdir}/vnet.subr # get_vm_uplink_interface
 
 	local errmsg=
 
 	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
-
-		if ! next_pci_id; then
-			# no free pci bus
-			exit 0
-		fi
-
-		if [ ${nic_slot} -eq 0 ]; then
-			pcislot=${bhyve_pci_index}
-		else
-			pcislot=${nic_slot}
-		fi
 
 		case "${nic_driver}" in
 			e1000)
@@ -444,15 +702,15 @@ compile_nic_args()
 				fi
 
 				if [ -n "${nic_address}" ]; then
+					OIFS="${OIFS}"
 					if [ "${nic_address}" != "0" -o "${nic_address}" != "disable" ]; then
-
 						IFS=","
 						for ip in ${nic_address}; do
 							if [ "${ip}" = "DHCP" ]; then
 								ip=$( dhcpd )
 								[ $? -eq 2 ] && err 1 "${MAGENTA}No free IP address for DHCP in nodeippool${NORMAL}"
 							fi
-							IFS=" "
+							IFS="${OIFS}"
 							ipwmask ${ip}
 							iptype ${IWM}
 							local _inet=$?
@@ -471,7 +729,7 @@ compile_nic_args()
 							/sbin/ifconfig ${mytap} ${proto} ${ip} alias
 						IFS=","
 					done
-					IFS=" "
+					IFS="${OIFS}"
 					fi
 				fi
 
@@ -485,14 +743,29 @@ compile_nic_args()
 			cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
 		fi
 
+		#echo "search next_pci_id -n ${net_emul}" >> /tmp/net.txt
+
+		# todo: name as descr? or mac as desc?
+		if ! next_pci_id -n ${net_emul}; then
+			# no free pci bus
+			exit 0
+		fi
+
+		#echo "found : ${bhyve_pci_index} " >> /tmp/net.txt
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
 			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
-			echo "export nic${_id}=\"-s ${pcislot}:0,${net_emul},${mytap},mac=${mymac}\" ;"
+			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap},mac=${mymac}\" ;"
 		else
-			echo "export nic${_id}=\"-s ${pcislot}:0,${net_emul},${mytap}\" ;"
+			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap}\" ;"
 		fi
 
+		# todo: name as descr? or mac as desc?
+		#echo "store_bhyve_pci_slot -n ${net_emul} -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n ${net_emul} -a ${bhyve_pci_index}
 		echo "export mytap${_id}=\"${mytap}\";"
 
 		_id=$(( _id + 1 ))
@@ -510,10 +783,6 @@ compile_nic_args()
 		eval taplist="\$mytap$i"
 		[ -z "${T}" ] && break
 		[ -z "${taplist}" ] && break
-		# make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
-		if ! next_pci_id; then
-			# no free pci bus
-		fi
 		nic_args="${nic_args} ${T}"
 		mytap="${mytap} ${taplist}"
 	done
@@ -527,21 +796,56 @@ compile_nic_args()
 # export arguments for bhyve hostbridge_args
 compile_hostbridge_args()
 {
-	# This is usually configured at slot 0
+	local _pcislot_bus=
+	local _pcislot_function=
+	local _pcislot_pcislot=
+	local _pcislot_args=
 
-	# what the diffrence?
-	#hostbridge_args="-s 0,${vm_hostbridge}"
-	hostbridge_args="-s 0:0,${vm_hostbridge}"
+	# This is usually configured at slot 0
+	_pcislot_bus="0"			# 0 to 31
+	_pcislot_pcislot=0			# optional, 0 to 255. if not specified, the bus value defaults to 0
+	_pcislot_function=0			# optional, 0 to 7. if not specified, the function value defaults to 0
+
+	# always set pcislot
+	_pcislot_args="${_pcislot_bus}"
+
+	# skip defaults for bus and func
+	for i in ${_pcislot_pcislot} ${_pcislot_function}; do
+		[ ${i} -eq 0 ] && continue
+		_pcislot_args="${_pcislot_args}:${i}"
+	done
+
+	hostbridge_args="-s ${_pcislot_args},${vm_hostbridge}"
 }
 
 # export arguments for bhyve lpc_args
 compile_lpc_args()
 {
-#	if ! next_pci_id; then
-#		return 1
-#	fi
+	local _pcislot_bus=
+	local _pcislot_function=
+	local _pcislot_pcislot=
+	local _pcislot_args=
 
-	lpc_args="-s 31,lpc"
+	# todo: backward order
+	_pcislot_bus="31"		# 0 to 31
+	_pcislot_pcislot=0		# optional, 0 to 255. if not specified, the bus value defaults to 0
+	_pcislot_function=0		# optional, 0 to 7. if not specified, the function value defaults to 0
+
+	# hard-coded id
+	bhyve_pci_index="${_pcislot_bus}"
+
+	# always set pcislot
+	_pcislot_args="${_pcislot_bus}"
+
+	# skip defaults for bus and func
+	for i in ${_pcislot_pcislot} ${_pcislot_function}; do
+		[ ${i} -eq 0 ] && continue
+		_pcislot_args="${_pcislot_args}:${i}"
+	done
+
+	lpc_args="-s ${_pcislot_args},lpc"
+	# echo "store_bhyve_pci_slot -n lpc -a ${bhyve_pci_index}" >> /tmp/test.txt
+	store_bhyve_pci_slot -n lpc -a ${bhyve_pci_index}
 }
 
 # export arguments for bhyve_cpus
@@ -602,6 +906,7 @@ compile_bhyve_cpus_args()
 compile_pci_passthru_args()
 {
 	local ppt _i
+	local _pcislot_args=
 
 	ppt=$( cbsdsql local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 
@@ -611,13 +916,18 @@ compile_pci_passthru_args()
 
 	for _i in ${ppt}; do
 
-		if ! next_pci_id; then
-			return 1
+		if ! next_pci_id -n passthru -d ${_i}; then
+			# no free pci bus
+			exit 0
 		fi
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 
 		${ECHO} "${MAGENTA}Passthru enabled: ${GREEN}${_i}${NORMAL}"
 
-		pci_passthru_args="${pci_passthru_args} -s ${bhyve_pci_index},passthru,${_i}"
+		pci_passthru_args="${pci_passthru_args} -s ${_pcislot_args},passthru,${_i}"
+		# echo "store_bhyve_pci_slot -n passthru -d ${_i} -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n passthru -d ${_i} -a ${bhyve_pci_index}
 	done
 
 	pci_passthru_args="${pci_passthru_args}"
@@ -681,19 +991,28 @@ compile_console_args()
 # export arguments for bhyve virtio-rnd
 compile_virtiornd_args()
 {
+	local _pcislot_args=
+
 	# this is feature of FreeBSD 10.1+
 	[ ${freebsdhostversion} -lt 1000730 ] && return 0
 
-	if ! next_pci_id; then
-		return 1
+	if ! next_pci_id -n virtio-rnd; then
+		# no free pci bus
+		exit 0
 	fi
 
-	virtiornd_args="-s ${bhyve_pci_index}:0,virtio-rnd"
+	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+	virtiornd_args="-s ${_pcislot_args},virtio-rnd"
+	# echo "store_bhyve_pci_slot -n virtio-rnd -a ${bhyve_pci_index}" >> /tmp/test.txt
+	store_bhyve_pci_slot -n virtio-rnd -a ${bhyve_pci_index}
 }
 
 # export arguments for bhyve virtio-9p
 compile_virtio_9p_args()
 {
+	local _pcislot_args=
+
 	# this is feature of FreeBSD 12.+
 	[ ${freebsdhostversion} -lt 1000730 ] && return 0
 	local shares_num
@@ -720,14 +1039,19 @@ compile_virtio_9p_args()
 		unset \$p9path$last_share
 		unset \$p9device$last_share
 
-		if ! next_pci_id; then
-			return 1
-		fi
-
 		if [ -d ${p9path} ]; then
+			if ! next_pci_id -n virtio-9p -d ${p9device}; then
+				# no free pci bus
+				exit 0
+			fi
+
+			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
 			${ECHO} "${MAGENTA}virtio_p9_shares: shared directory enabled: ${LYELLOW}${p9device} ${MAGENTA} ${MAGENTA}-> ${p9path}${NORMAL}"
 			${ECHO} "  ${MAGENTA}Use to mount: mount -t 9p -o trans=virtio ${p9device} /mnt"
-			virtio_9p_args="${virtio_9p_args} -s ${bhyve_pci_index},virtio-9p,${p9device}=${p9path}"
+			virtio_9p_args="${virtio_9p_args} -s ${_pcislot_args},virtio-9p,${p9device}=${p9path}"
+			# echo "store_bhyve_pci_slot -n virtio-9p -d ${p9device} -a ${bhyve_pci_index}" >> /tmp/test.txt
+			store_bhyve_pci_slot -n virtio-9p -d ${p9device} -a ${bhyve_pci_index}
 		else
 			${ECHO} "${MAGENTA}virtio_p9_shares error: directory doesn't exist, skipp for share: ${GREEN}${p9path}${NORMAL}"
 		fi
@@ -827,15 +1151,13 @@ EOF
 # $iso_img must be present
 compile_cd_args()
 {
+	local _pcislot_args=
+
 	cd_args=
 	cd_args2=
 
 	# Ubuntu has trouble when got two CD
 	#[ "${vm_boot}" = "net" ] && return 0
-
-	if ! next_pci_id; then
-		return 1
-	fi
 
 	if [ -z "${iso_img}" ]; then
 		${ECHO} "${MAGENTA}iso_img variable is not set${NORMAL}"
@@ -862,14 +1184,45 @@ compile_cd_args()
 			# small hack: we need special route for openbsd: openbsd use install.fs as hdd drive, not cd
 			case "${cd_boot_firmware}" in
 				bhyve)
-					cd_args="-s ${bhyve_pci_index}:0,ahci-hd,${iso_img},ro"
+					# todo: strip workdir in iso_img ?
+					if ! next_pci_id -n ahci-hd -d ${iso_img}; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args="-s ${_pcislot_args},ahci-hd,${iso_img},ro"
+					# todo: strip workdir in iso_img ?
+					# echo "store_bhyve_pci_slot -n ahci-hd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-hd -d ${iso_img} -a ${bhyve_pci_index}
 					;;
 				refind)
-					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
-					if ! next_pci_id; then
-						return 1
+
+					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
 					fi
-					cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args="-s ${_pcislot_args},ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
+					# echo "store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
+
+					# second cd
+					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					# append cd_args with refind
+					cd_args="${cd_args} -s ${_pcislot_args},ahci-cd,${iso_img}"
+					# todo: strip workdir in iso_img ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
 					;;
 			esac
 			cd_args2=""
@@ -877,24 +1230,74 @@ compile_cd_args()
 		*)
 			case "${cd_boot_firmware}" in
 				bhyve)
-					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args="-s ${_pcislot_args},ahci-cd,${iso_img}"
+					# todo: strip workdir in iso_img ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
 					;;
 				refind)
-					cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
-					if ! next_pci_id; then
-						return 1
+					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
 					fi
-					cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args="-s ${_pcislot_args},ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
+					# todo: strip workdir in iso_img ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
+
+					# second cd
+					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					# append cd_args with refind
+					cd_args="${cd_args} -s ${_pcislot_args},ahci-cd,${iso_img}"
+					# todo: strip workdir in iso_img ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
 					;;
 			esac
 			case ${vm_os_type} in
 				freebsd)
 					# Latest FreeBSD has troubles(?) with UEFI boot via refind, use default firmware
-					cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args2="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
 					#cd_args2=""
+					# todo: strip path to efirefd.fd ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
 					;;
 				*)
-					cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
+					fi
+
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args2="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+					# todo: strip path to efirefd.fd ?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
 					;;
 			esac
 			;;
@@ -1055,6 +1458,7 @@ compile_vnc_args()
 	local vnc_bind
 	local _jailed _jip _ret
 	local width height
+	local _pcislot_args=
 
 	vnc_args=
 
@@ -1077,9 +1481,15 @@ compile_vnc_args()
 			;;
 	esac
 
-	if ! next_pci_id; then
-		return 1
+	if ! next_pci_id -n fbuf -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
+		# no free pci bus
+		exit 0
 	fi
+
+	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+	# store pci bus map
+	# echo "store_bhyve_pci_slot -n fbuf -a ${bhyve_pci_index}" >> /tmp/test.txt
+	store_bhyve_pci_slot -n fbuf -a ${bhyve_pci_index}
 
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
@@ -1129,7 +1539,7 @@ compile_vnc_args()
 		heigh="${default_vnc_height}"
 	fi
 
-	vnc_args="-s ${bhyve_pci_index},fbuf,tcp=${vnc_bind}:${vm_port},w=${width},h=${height}"
+	vnc_args="-s ${_pcislot_args},fbuf,tcp=${vnc_bind}:${vm_port},w=${width},h=${height}"
 
 	if [ "${vm_efi}" != "none" ]; then
 		${ECHO} "${MAGENTA}VRDP is enabled. VNC bind/port: ${GREEN}${bhyve_vnc_tcp_ipconnect}:${vm_port}${NORMAL}"
