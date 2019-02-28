@@ -368,7 +368,7 @@ compile_dsk_args()
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	# select only direct-bus attached
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,bootable FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot bootable; do
 
 		case "${dsk_controller}" in
 			virtio-blk|ahci-hd)
@@ -398,16 +398,23 @@ compile_dsk_args()
 		fi
 
 		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+		# strip $workdir from full_dsk_path?
+		#echo "store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}
+
+		if [ "${bootable}" = "1" ]; then
+			# use reserved bus id 2 for bootable device, not for store in pcibus
+			# just overwrite pcislot_args
+			bhyve_pci_index=2
+			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+			echo "export dsk_bootable=\"${dsk_path}\" ;"
+		fi
 
 		if [ -n "${dsk_conf}" ]; then
 			echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path},${dsk_conf}\" ;"
 		else
 			echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path}\" ;"
 		fi
-
-		# strip $workdir from full_dsk_path?
-		#echo "store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}" >> /tmp/test.txt
-		store_bhyve_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${bhyve_pci_index}
 
 		dsk_id=$(( dsk_id + 1 ))
 	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
@@ -443,7 +450,6 @@ compile_dsk_args()
 	done
 
 	if [ -r ${data}/cbsd.img ]; then
-
 		if ! next_pci_id -n virtio-blk -d cbsd.img; then
 			# no free pci bus
 			exit 0
