@@ -218,6 +218,9 @@ start_bhyve()
 	# mark modified field to FALSE in pcibus table to find unmodified entries for pciid cleanup
 	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
 
+	# truncate pcibus_run table
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus_run
+
 	# init bhyve_cpus
 	if ! compile_bhyve_cpus_args; then
 		${ECHO} "${MAGENTA}Unable to compile bhyve_cpus_args for VMs: ${GREEN}${jname}${NORMAL}"
@@ -340,6 +343,19 @@ start_bhyve()
 
 	# prune old/orphaned devices from pcibus table (which not modified by compile_args)
 	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus WHERE modified=false
+
+	# extra validate we have no collision in PCI bus
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1' 2>/dev/null )
+
+	if [ -n "${_res}" ]; then
+		sqllistdelimer=" "
+		sqllist "${_res}" pcislot_bus pcislot_bus_count
+		unset sqllistdelimer
+		${ECHO} "${LRED}Error: ${MAGENTA}PCI collision for bus: ${GREEN}${pcislot_bus}${MAGENTA}, count=${pcislot_bus_count}:${NORMAL}"
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus_run WHERE pcislot_bus=${pcislot_bus}
+		bcleanup jname="${jname}"
+		exit 1
+	fi
 
 	# for init external hook variables
 	geniplist ${ip4_addr}

@@ -145,6 +145,9 @@ store_bhyve_pci_slot()
 		fi
 	done
 
+	# store into temporary pcibus map to determine bus id collisin
+	cbsdsql ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+
 	local _search_condition
 	local _tmp_bhyve_pci_index=
 
@@ -193,6 +196,7 @@ next_pci_id()
 	local _start_bus_id=3 _end_bus_id=31 _order="next"
 	local _pcislot_name=
 	local _pcislot_desc=
+	local _res
 
 	while getopts "d:e:n:o:s:" opt; do
 		case "${opt}" in
@@ -234,6 +238,11 @@ next_pci_id()
 	bhyve_pci_index=0
 
 	for bhyve_pci_index in $( /usr/bin/seq ${_start_bus_id} ${_end_bus_id} ); do
+
+		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE pcislot_bus=${bhyve_pci_index} LIMIT 1 2>/dev/null )
+
+		[ -n "${_res}" ] && continue		# probably already used by another devices
+
 		if ! is_bhyve_pci_id_busy ${bhyve_pci_index}; then
 			# found
 			return 0
@@ -749,10 +758,10 @@ compile_nic_args()
 			cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
 		fi
 
-		#echo "search next_pci_id -n ${net_emul}" >> /tmp/net.txt
+		# echo "search next_pci_id -n ${net_emul} -d ${nic_id}" >> /tmp/net.txt
 
 		# todo: name as descr? or mac as desc?
-		if ! next_pci_id -n ${net_emul}; then
+		if ! next_pci_id -n ${net_emul} -d ${nic_id}; then
 			# no free pci bus
 			exit 0
 		fi
@@ -771,7 +780,7 @@ compile_nic_args()
 
 		# todo: name as descr? or mac as desc?
 		#echo "store_bhyve_pci_slot -n ${net_emul} -a ${bhyve_pci_index}" >> /tmp/test.txt
-		store_bhyve_pci_slot -n ${net_emul} -a ${bhyve_pci_index}
+		store_bhyve_pci_slot -n ${net_emul} -d ${nic_id} -a ${bhyve_pci_index}
 		echo "export mytap${_id}=\"${mytap}\";"
 
 		_id=$(( _id + 1 ))
