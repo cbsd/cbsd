@@ -99,6 +99,30 @@ start_bhyve()
 	# a) no cdrom (error?)
 	# b) shared ISO dir too?
 
+	if [ -n "${vm_iso_path}" ]; then
+		local prefix=
+		local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+
+		if [ "${prefix6}" = "cloud-" ]; then
+			local _orig_vm_iso_path="${vm_iso_path}"
+			vm_boot="cd"
+			init_iso
+			if [ $? -eq 1 ]; then
+				err 1 "${MAGENTA}No such cloud source: ${GREEN}${vm_iso_path}/${iso_img}${NORMAL}"
+			fi
+			vm_boot="hdd"
+			echo "Cloud init"
+			echo "POPUL: ${data}/dsk1.vhd, I: ${iso_img}"
+			local _myfile="${iso_img}"
+			[ ! -r "${_myfile}" ] && err 1 "${MAGENTA}Error: bstart: not readable: ${GREEN}${_myfile}${NORMAL}"
+			echo "dd if=${_myfile} of=${data}/dsk1.vhd bs=1M"
+			#/bin/dd if=${_myfile} of=${data}/dsk1.vhd bs=1M
+			echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+			media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+			# eject
+		fi
+	fi
+
 	case "${vm_os_type}" in
 		freebsd)
 			if [ "${from_jail}" = "1" ]; then
@@ -360,6 +384,8 @@ start_bhyve()
 		unset sqllistdelimer
 		${ECHO} "${LRED}Error: ${MAGENTA}PCI collision for bus: ${GREEN}${pcislot_bus}${MAGENTA}, count=${pcislot_bus_count}:${NORMAL}"
 		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus_run WHERE pcislot_bus=${pcislot_bus}
+		echo
+		${ECHO} "${MAGENTA}Please use bconfig to re-configure devices or use: ${GREEN}cbsd bpcibus jname=${jname} mode=reset${MAGENTA} to reset${NORMAL}"
 		bcleanup jname="${jname}"
 		exit 1
 	fi
@@ -594,6 +620,22 @@ fi
 . ${sharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 st_time=$( /bin/date +%s )
 [ -z "${jname}" ] && jname=$1
+
+# cloud-init enabled?
+if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
+	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | /usr/bin/xargs )
+	if [ -n "${CLOUD_FILES}" ]; then
+		cloud_init=1
+		GENISOIMAGE_CMD=$( which genisoimage )
+		${ECHO} "${LCYAN}cloud-init: ${LYELLOW}enabled${NORMAL}"
+		[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${MAGENTA}cloud-init feature requires genisoimage tools. Please install it first: ${GREEN}pkg install -y sysutils/genisoimage${MAGENTA}"
+#		${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid config-2 -joliet -rock ${CLOUD_FILES}
+		${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid cidata -joliet -rock ${CLOUD_FILES}
+	fi
+	unset GENISOIMAGE_CMD CLOUD_FILES
+else
+	cloud_init=0
+fi
 
 if [ "${lm}" = "0" ]; then
 	. ${jrcconf}

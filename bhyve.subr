@@ -145,11 +145,11 @@ store_bhyve_pci_slot()
 		fi
 	done
 
-	# store into temporary pcibus map to determine bus id collisin
-	cbsdsql ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
-
 	local _search_condition
 	local _tmp_bhyve_pci_index=
+
+	# store into temporary pcibus map to determine/avoid bus id collision
+	cbsdsql ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
 
 	_search_condition="pcislot_name=\"${_pcislot_name}\""
 	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
@@ -161,11 +161,10 @@ store_bhyve_pci_slot()
 		[ "${_tmp_bhyve_pci_index}" = "${_pcislot_bus}" ] && return 0		# record already exist (todo: check for bus/func equal
 		# pci slot not equal, update
 		cbsdsql ${_mydb} "UPDATE pcibus SET pcislot_bus=\"${_pcislot_bus}\" WHERE ${_search_condition}"
-		return 0
+	else
+		# store pci bus map
+		cbsdsql ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
 	fi
-
-	# store pci bus map
-	cbsdsql ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
 }
 
 # autoincement for $bhyve_pci_index variable which symbolizes pci id bus
@@ -320,30 +319,63 @@ compile_uefi_boot_args()
 	#also same string in compile_cd_args cd_args
 	case "${vm_boot}" in
 		hdd)
-			if [ "${vm_os_type}" != "openbsd" -a "${vm_os_type}" != "freebsd" ]; then
+			# refind alwas at 1 reserved pci id
+			#if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
+			#	# no free pci bus
+			#	exit 0
+			#fi
 
-#				refind alwas at 1 reserved pci id
-#				if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
-#					# no free pci bus
-#					exit 0
-#				fi
+			bhyve_pci_index=1
+			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 
-				bhyve_pci_index=1
-				_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+			uefi_boot_args="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+			# strip path to efirefd.fd?
+			# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+			store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
+			;;
+		cd)
 
-				uefi_boot_args="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
-				# strip path to efirefd.fd?
-				# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
-				store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
-			fi
+			case "${cd_boot_firmware}" in
+				refind)
+					# refind alwas at 1 reserved pci id
+					if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
+					fi
+
+					bhyve_pci_index=1
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					uefi_boot_args="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+					# strip path to efirefd.fd?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
+					;;
+				bhyve)
+					# populate cd_args2
+					# refind alwas at 1 reserved pci id
+					if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd; then
+						# no free pci bus
+						exit 0
+					fi
+
+					bhyve_pci_index=1
+					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+					cd_args2="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
+					# strip path to efirefd.fd?
+					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
+					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
+					;;
+			esac
 			;;
 		net)
 
-#			refind alwas at 1 reserved pci id
-#			if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefn.fd; then
-#				# no free pci bus
-#				exit 0
-#			fi
+			# refind alwas at 1 reserved pci id
+			#if ! next_pci_id -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefn.fd; then
+			#	# no free pci bus
+			#	exit 0
+			#fi
 
 			bhyve_pci_index=1
 			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
@@ -475,6 +507,70 @@ compile_dsk_args()
 	return 0
 }
 
+
+# export arguments for bhyve cd dsk vms in $cd_args variable
+# $jname must be set's
+# sample:
+# jname="debian"
+# if compile_cd_args; then
+# 	echo $cd_args
+# else
+#	echo "No disks"
+# fi
+compile_cd_args()
+{
+	local cd_id=0
+	local sqldelimer=" "
+	local _pcislot_args=
+
+	#echo "IN CD" >> /tmp/cd.txt
+
+	eval $( cbsdsql storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
+
+		if ! next_pci_id -n ahci-cd -d ${path}-${idx}; then
+			# no free pci bus
+			exit 0
+		fi
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+		#echo "$path pci index: $bhyve_pci_index, args: ${_pcislot_args}" >> /tmp/cd.txt
+
+		store_bhyve_pci_slot -n ahci-cd -d ${path}-${idx} -a ${bhyve_pci_index}
+		echo "export cd${cd_id}=\"-s ${_pcislot_args},ahci-cd,${path}\" ;"
+
+		cd_id=$(( cd_id + 1 ))
+	done ) || err 1 "${MAGENTA}Error while create cd map${NORMAL}"
+
+	cd_args=
+	for i in $( /usr/bin/seq 0 31 ); do
+		eval T="\$cd$i"
+		[ -z "${T}" ] && break
+		cd_args="${cd_args} ${T}"
+	done
+
+	# Cloud-init support. Looking for seed.iso in sysdir
+	if [ -r ${jailsysdir}/${jname}/seed.iso ]; then
+		if ! next_pci_id -n ahci-cd -d seed.iso; then
+			# no free pci bus
+			exit 0
+		fi
+
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+		cd_args="${cd_args} -s ${_pcislot_args},ahci-cd,${jailsysdir}/${jname}/seed.iso"
+		# echo "store_bhyve_pci_slot -n ahci-cd -d seed.iso -a ${bhyve_pci_index}" >> /tmp/test.txt
+		store_bhyve_pci_slot -n ahci-cd -d seed.iso -a ${bhyve_pci_index}
+	fi
+
+
+	#echo "cd_args ${cd_args}" >> /tmp/cd.txt
+	#exit 0
+	[ -z "${cd_args}" ] && return 1
+	# export for boot/install/eject mode as cd_args
+	#cd_args2=
+	#"${cd_args}"
+	return 0
+}
 
 # export arguments for bhyve about dsk vms attached to controller_id in $dsk_controller_args variable
 # $jname must be set's
@@ -1161,163 +1257,6 @@ EOF
 	return 0
 }
 
-
-# export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)
-# $iso_img must be present
-compile_cd_args()
-{
-	local _pcislot_args=
-
-	cd_args=
-	cd_args2=
-
-	# Ubuntu has trouble when got two CD
-	#[ "${vm_boot}" = "net" ] && return 0
-
-	if [ -z "${iso_img}" ]; then
-		${ECHO} "${MAGENTA}iso_img variable is not set${NORMAL}"
-		return 1
-	fi
-
-	if [ ! -r "${iso_img}" ]; then
-		iso_img2=$( cbsdsql storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
-		if [ ! -r ${iso_img2} ]; then
-			${ECHO} "${MAGENTA}iso_img in not readable: ${GREEN}${iso_img} ${iso_img2}${NORMAL}"
-			return 1
-		else
-			iso_img="${iso_img2}"
-		fi
-	fi
-
-	if [ -z "${iso_img}" ]; then
-		${ECHO} "${MAGENTA}iso_img variable is empty: no ISO or image is not readable${NORMAL}"
-		return 1
-	fi
-
-	case "${vm_os_type}" in
-		openbsd)
-			# small hack: we need special route for openbsd: openbsd use install.fs as hdd drive, not cd
-			case "${cd_boot_firmware}" in
-				bhyve)
-					# todo: strip workdir in iso_img ?
-					if ! next_pci_id -n ahci-hd -d ${iso_img}; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args="-s ${_pcislot_args},ahci-hd,${iso_img},ro"
-					# todo: strip workdir in iso_img ?
-					# echo "store_bhyve_pci_slot -n ahci-hd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-hd -d ${iso_img} -a ${bhyve_pci_index}
-					;;
-				refind)
-
-					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args="-s ${_pcislot_args},ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
-					# echo "store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
-
-					# second cd
-					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					# append cd_args with refind
-					cd_args="${cd_args} -s ${_pcislot_args},ahci-cd,${iso_img}"
-					# todo: strip workdir in iso_img ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
-					;;
-			esac
-			cd_args2=""
-			;;
-		*)
-			case "${cd_boot_firmware}" in
-				bhyve)
-					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args="-s ${_pcislot_args},ahci-cd,${iso_img}"
-					# todo: strip workdir in iso_img ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
-					;;
-				refind)
-					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args="-s ${_pcislot_args},ahci-cd,${distdir}/upgrade/patch/efirefd.fd"
-					# todo: strip workdir in iso_img ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
-
-					# second cd
-					if ! next_pci_id -n ahci-cd -d ${iso_img}; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					# append cd_args with refind
-					cd_args="${cd_args} -s ${_pcislot_args},ahci-cd,${iso_img}"
-					# todo: strip workdir in iso_img ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d ${iso_img} -a ${bhyve_pci_index}
-					;;
-			esac
-			case ${vm_os_type} in
-				freebsd)
-					# Latest FreeBSD has troubles(?) with UEFI boot via refind, use default firmware
-					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args2="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
-					#cd_args2=""
-					# todo: strip path to efirefd.fd ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
-					;;
-				*)
-					if ! next_pci_id -n ahci-cd -d ${distdir}/upgrade/patch/efirefd.fd; then
-						# no free pci bus
-						exit 0
-					fi
-
-					_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-					cd_args2="-s ${_pcislot_args},ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd"
-					# todo: strip path to efirefd.fd ?
-					# echo "store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}" >> /tmp/test.txt
-					store_bhyve_pci_slot -n ahci-cd -d /usr/local/cbsd/upgrade/patch/efirefd.fd -a ${bhyve_pci_index}
-					;;
-			esac
-			;;
-	esac
-}
 
 # create new disk image for bhyve VMs
 # -f fsfeat ( 1 or 0 ) - use of skip FS features
