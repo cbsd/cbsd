@@ -47,6 +47,7 @@ init_iso()
 	local _fetch_attempt=0
 	local _mirror_num=0 _mirror_cur=0
 	local _iso_img_type=
+	local _ret _is_link
 
 	readconf fetch.conf
 
@@ -112,7 +113,32 @@ init_iso()
 
 	if [ -r "${_myfile}" ]; then
 		iso_img="${_myfile}"
-		return 0
+		# convert CLOUD images into ZVOL when ZFS feature is on
+
+		if [ "${_iso_img_type}" = "cloud" -a "${zfsfeat}" = "1" ]; then
+			. ${zfstool}
+			DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+			_ret=$( /usr/bin/basename ${_myfile} )
+			if [ ! -r "/dev/zvol/${DATA}/${_ret}" ]; then
+				# create ZVOL from file
+				zfs_create_zvol_from_file -f ${_myfile} -n ${_ret} -p ${DATA}
+				if [ -r "/dev/zvol/${DATA}/${_ret}" ]; then
+					# recreate symlink
+					/bin/rm -f ${_myfile}
+					/bin/ln -s /dev/zvol/${DATA}/${_ret} ${_myfile}
+				fi
+			else
+				# vol already exist ?
+				# recreate symlink
+				is_link=$( /usr/bin/readlink ${_myfile} )
+				if [ "${is_link}" != "/dev/zvol/${DATA}/${_ret}" ]; then
+					/bin/rm -f ${_myfile}
+					/bin/ln -s /dev/zvol/${DATA}/${_ret} ${_myfile}
+				fi
+			fi
+
+			return 0
+		fi
 	fi
 
 	_mirror_num=$( echo "${iso_site} ${cbsd_iso_mirrors}" | /usr/bin/wc -w | /usr/bin/awk {'printf $1'} )
@@ -284,10 +310,32 @@ init_iso()
 	else
 		iso_img=
 	fi
+
+	# convert CLOUD images into ZVOL when ZFS feature is on
+	if [ "${_iso_img_type}" = "cloud" ]; then
+		# create ZVOL from file
+		_ret=$( /usr/bin/basename ${_myfile} )
+		# create ZVOL from file
+
+		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+
+		if [ ! -r "/dev/zvol/${DATA}/${_ret}" ]; then
+			. ${zfstool}
+
+			zfs_create_zvol_from_file -f ${_myfile} -n ${_ret} -p ${DATA}
+
+			if [ -r "/dev/zvol/${DATA}/${_ret}" ]; then
+				# recreate symlink
+				/bin/rm -f ${_myfile}
+				/bin/ln -s /dev/zvol/${DATA}/${_ret} ${_myfile}
+			fi
+		fi
+	fi
+
 	return 0
 }
 
-check_for_empty_hdd()
+manage_boot_by_empty_hdd()
 {
 	local _err
 	local dsk_size=0
@@ -303,25 +351,12 @@ check_for_empty_hdd()
 		return 0
 	fi
 
-	if [ -h "${data}/${MDFILE}" ]; then
-		. ${zfstool}
-		if is_getzvol ${data}/${MDFILE}; then
-			dsk_size=$( /sbin/zfs get -Hp -o value refer ${is_zvol} 2>/dev/null )
-		else
-			checkres=$( /usr/bin/readlink ${data}/${MDFILE} )
-			[ -r ${checkres} ] && dsk_size=$( /usr/bin/du -sk ${checkres} 2>/dev/null | /usr/bin/awk '{printf $1}' )
-		fi
-	else
-		[ -r ${checkres} ] && dsk_size=$( /usr/bin/du -sk ${data}/${MDFILE} 2>/dev/null | /usr/bin/awk '{printf $1}' )
-	fi
+	check_for_empty_hdd path="${data}/${MDFILE}"
+	_ret=$?
 
-	[ -z "${dsk_size}" ] && err 1 "${MAGENTA}Unable to determine disk size for ${data}/${MDFILE}, empty result for dsk_size${NORMAL}"
+	[ ${_ret} -eq 2 ] && return 0		# unknown error
 
-	if is_number ${dsk_size}; then
-		err 1 "${MAGENTA}Unable to determine disk size for ${data}/${MDFILE}, result: [${dsk_size}]${NORMAL}"
-	fi
-
-	if [ ${dsk_size} -lt 327680 ]; then
+	if [ ${_ret} -eq 0 ]; then
 		${ECHO} "${MAGENTA}Looks like ${GREEN}${data}/${MDFILE}${MAGENTA} is empty.${NORMAL}"
 		ALWAYS_YES=1
 		if getyesno "May be you want to boot from CD? "; then

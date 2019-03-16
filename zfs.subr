@@ -124,5 +124,90 @@ is_getzvol()
 	return ${_ret}
 }
 
+
+# create ZVOL from file
+# -b 0,1 - show progressbar (1 - by default), via cbsdtee
+# -f full path to file
+# -p alternative parent ZPOOL name (datadir zpool by default)
+# -n ZVOL name (by default: basename of ${_file}
+# if ! zfs_create_zvol_from_file -f /boot/kernel/kernel -n kernelvolume; then
+#    echo ";=("
+# fi
+# return 0 when on success
+# return 1 when error
+# return 2 when zvol already exist
+zfs_create_zvol_from_file()
+{
+	local _file= _pool= _zvol_name= DATA= _ebytes= _human_bytes=
+	local _res _bar=1
+
+	while getopts "b:f:p:n:" opt; do
+		case "${opt}" in
+			b) _bar="${OPTARG}" ;;
+			f) _file="${OPTARG}" ;;
+			p) _pool="${OPTARG}" ;;
+			n) _zvol_name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ ! -r "${_file}" ]; then
+		echo "zfs_create_zvol_from_file: no such file: ${_file}"
+		return 1
+	fi
+
+	_ebytes=$( /usr/bin/stat -f "%z" ${_file} 2>/dev/null )
+
+	if [ ${_ebytes} -lt 128 ]; then
+			echo "zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes"
+			return 1
+	fi
+
+	if [ "${fsfeat}" = "0" ]; then
+		echo "zfs_create_zvol_from_file: zfsfeat = 0"
+		return 1
+	fi
+
+	[ -z "${_zvol_name}" ] && _zvol_name=$( /usr/bin/basename ${_file} )
+
+	if conv2human "${_ebytes}"; then
+			_human_bytes=${convval}
+	else
+			_human_bytes="${_ebytes}"
+	fi
+
+	. ${zfstool}
+
+	if [ -z "${_pool}" ]; then
+		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+	else
+		DATA="${_pool}"
+	fi
+
+	if [ -r "/dev/zvol/${DATA}/${_zvol_name}" ]; then
+			echo "zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}"
+			return 2
+	fi
+
+	_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name} 2>&1 )
+	_res=$?
+
+	if [ ${_res} -ne 0 ]; then
+		echo "zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}"
+		return 1
+	fi
+
+	if [ ${_bar} -eq 1 ]; then
+		${ECHO} "${MAGENTA}Converting ${GREEN}${_myfile}${MAGENTA} -> ${GREEN}/dev/zvol/${DATA}/${_zvol_name}${MAGENTA}: ${GREEN}${_human_bytes}${MAGENTA}...${NORMAL}"
+		/bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
+		echo
+	else
+		/bin/dd if=${_myfile} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
+		echo
+	fi
+
+	return 0
+}
+
 ###
 fi

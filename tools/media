@@ -471,6 +471,23 @@ eject()
 	cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
 }
 
+# try to remove ISO file
+try_to_rm()
+{
+	local path="${1}"
+
+	[ -z "${path}" ] && err 1 "${MAGENTA}media: try_to_rm: empty path${NORMAL}"
+
+	. ${zfstool}
+	if is_getzvol ${path}; then
+		/sbin/zfs destroy ${is_zvol}
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Unable to destroy zvol, please remove it by hand: ${GREEN}${is_zvol}${NORMAL}"
+	fi
+	/bin/rm -f ${path}
+	return 0
+}
+
 
 #### MAIN
 [ -z "${header}" ] && header=1
@@ -559,7 +576,7 @@ case "${mode}" in
 		err 0 "${MAGENTA}Flushed${NORMAL}"
 		;;
 	delete|remove)
-		[ -z "${type}" ] && type="hdd"
+		[ -z "${type}" ] && err 1 "${GREEN}type= ${MAGENTA}is mandatory${NORMAL}"
 		[ -z "${jname}" ] && jname="-"
 
 		check_protected
@@ -567,11 +584,15 @@ case "${mode}" in
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
 
 		if [ -n "${name}" -a -n "${path}" ]; then
+
+			try_to_rm ${path}
+
 			if [ "${jname}" = "-" ]; then
 				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
 			else
 				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\" AND jname=\"${jname}\""
 			fi
+
 		else
 			if [ -n "${name}" ]; then
 				select_by_name
@@ -588,12 +609,13 @@ case "${mode}" in
 
 		case "${type}" in
 			iso)
-				/bin/rm -f ${path}
+				try_to_rm -f ${path}
 				;;
 			vhd|hdd)
-				mydb="${jailsysdir}/${jname}/local.sqlite"
-				#echo "cbsdsql ${mydb} \"DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\"\""
-				cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\""
+				if [ "${jname}" != "-" ]; then
+					mydb="${jailsysdir}/${jname}/local.sqlite"
+					cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\""
+				fi
 				${emulator}_remove_dsk ${short_dsk_path}
 				;;
 		esac

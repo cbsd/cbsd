@@ -68,6 +68,9 @@ start_bhyve()
 {
 	local bhyveload_cmd _err
 	local passt_args=
+	local _ebytes _dsk_ebytes _cloud_truncate
+	local _cloud_source_is_zvol
+	local _cloud_source_zvol _dsk_source_zvol
 
 	local is_ppt=$( cbsdsql ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 	[ -n "${is_ppt}" ] && passt_args="-S"
@@ -99,27 +102,86 @@ start_bhyve()
 	# a) no cdrom (error?)
 	# b) shared ISO dir too?
 
-	if [ -n "${vm_iso_path}" ]; then
-		local prefix=
-		local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+	# Cloud-init init. Cloud init only for empty disk
+	if check_for_empty_hdd path=${data}/dsk1.vhd; then
+		if [ -n "${vm_iso_path}" ]; then
+			local prefix=
+			local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
 
-		if [ "${prefix6}" = "cloud-" ]; then
-			local _orig_vm_iso_path="${vm_iso_path}"
-			vm_boot="cd"
-			init_iso
-			if [ $? -eq 1 ]; then
-				err 1 "${MAGENTA}No such cloud source: ${GREEN}${vm_iso_path}/${iso_img}${NORMAL}"
+			if [ "${prefix6}" = "cloud-" ]; then
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${MAGENTA}No such cloud source: ${GREEN}${vm_iso_path}/${iso_img}${NORMAL}"
+				fi
+				vm_boot="hdd"
+				${ECHO} "${MAGENTA}cloud init image initialization..${NORMAL}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${MAGENTA}Error: bstart: not readable: ${GREEN}${_myfile}${NORMAL}"
+
+				. ${zfstool}
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( /usr/bin/stat -f "%z" ${_myfile} 2>/dev/null )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( /usr/bin/stat -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some 
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					${ECHO} "${MAGENTA}Clone cloud image into first/system vm disk (dd method)${NORMAL}"
+					# to generic clonedata (add dd method)?
+					/bin/dd if=${_myfile} | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					echo
+					# adjust original image size
+					/usr/bin/truncate -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					${ECHO} "${MAGENTA}Clone cloud image into first/system vm disk (zfs clone method)${NORMAL}"
+					# to generic clonedata ?
+						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+						echo "/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						_ret=$?
+						if [ ${_ret} -eq 1 ]; then
+							# create cloud snapshot for $jname
+							/sbin/zfs snapshot ${_cloud_source_zvol}@boot-${jname}
+							# destory original zvol disk for vm
+							/sbin/zfs destroy ${_dsk_source_zvol}
+							#/sbin/zfs clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							/sbin/zfs clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							# restore original size
+							# /sbin/zfs set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# bug here, need for atomic ops ^^ in clone action
+							/sbin/zfs set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							/sbin/zfs set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+						else
+							err 1 "${MAGENTA}snapshot already exist ${_cloud_snapshot_name}${NORMAL}"
+						fi
+				fi
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
 			fi
-			vm_boot="hdd"
-			echo "Cloud init"
-			echo "POPUL: ${data}/dsk1.vhd, I: ${iso_img}"
-			local _myfile="${iso_img}"
-			[ ! -r "${_myfile}" ] && err 1 "${MAGENTA}Error: bstart: not readable: ${GREEN}${_myfile}${NORMAL}"
-			echo "dd if=${_myfile} of=${data}/dsk1.vhd bs=1M"
-			#/bin/dd if=${_myfile} of=${data}/dsk1.vhd bs=1M
-			echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
-			media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
-			# eject
 		fi
 	fi
 
@@ -129,7 +191,7 @@ start_bhyve()
 				create_from_jail
 			else
 				# default mode
-				check_for_empty_hdd
+				manage_boot_by_empty_hdd
 				if [ "${vm_boot}" = "cd" ]; then
 					init_iso
 					if [ $? -eq 1 ]; then
@@ -164,7 +226,7 @@ start_bhyve()
 			[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 			# re-read jail params and apply personal after profile 
 			[ "${lm}" = "0" ] && . ${jrcconf}
-			check_for_empty_hdd
+			manage_boot_by_empty_hdd
 
 			if [ "${vm_boot}" = "cd" ]; then
 				init_iso
@@ -192,7 +254,7 @@ start_bhyve()
 				. ${rjrcconf}
 			fi
 
-			check_for_empty_hdd
+			manage_boot_by_empty_hdd
 			if [ "${vm_boot}" = "cd" ]; then
 				init_iso
 				if [ $? -eq 1 ]; then
@@ -393,11 +455,6 @@ start_bhyve()
 	# for init external hook variables
 	geniplist ${ip4_addr}
 
-	if [ "${lm}" = "0" ]; then
-		export_bhyve_data_for_external_hook
-		external_exec_master_script "master_prestart.d"
-	fi
-
 	vm_logfile=$( /usr/bin/mktemp )
 
 	# The parameters in local rc.conf file can overwrite the settings in the database
@@ -493,6 +550,25 @@ EOF
 		fi
 	fi
 
+	# this section should be BEFORE cloud-init seed generator
+	if [ "${lm}" = "0" ]; then
+		export_bhyve_data_for_external_hook
+		external_exec_master_script "master_prestart.d"
+	fi
+
+	# cloud-init enabled?
+	# this section should be AFTER master_prestart
+	# cloud_init and CLOUD_FILES was initialized earlier
+	if [ ${cloud_init} -eq 1 ]; then
+			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
+			#${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid cidata -joliet -rock ${CLOUD_FILES}
+			/usr/sbin/makefs -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+			# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+			# why upper here, whereis spec?
+			/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+			sync
+	fi
+
 	case "${debug_engine}" in
 		gdb|lldb)
 			if [ "${lm}" = "1" ]; then
@@ -527,8 +603,6 @@ EOF
 
 		${tmuxcmd} select-window -t cbsd-${jname}:0
 	fi
-
-	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
@@ -573,6 +647,8 @@ EOF
 			err 0 ""
 		fi
 	fi
+
+	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
 }
 
 
@@ -622,17 +698,19 @@ st_time=$( /bin/date +%s )
 [ -z "${jname}" ] && jname=$1
 
 # cloud-init enabled?
+# we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
+# since some helpers may work with runtime (e.g pcibus + cloudinit) config
 if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
 	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | /usr/bin/xargs )
+	# gen seed only if files exist
 	if [ -n "${CLOUD_FILES}" ]; then
 		cloud_init=1
-		GENISOIMAGE_CMD=$( which genisoimage )
 		${ECHO} "${LCYAN}cloud-init: ${LYELLOW}enabled${NORMAL}"
-		[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${MAGENTA}cloud-init feature requires genisoimage tools. Please install it first: ${GREEN}pkg install -y sysutils/genisoimage${MAGENTA}"
-#		${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid config-2 -joliet -rock ${CLOUD_FILES}
-		${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid cidata -joliet -rock ${CLOUD_FILES}
+		/usr/bin/touch ${jailsysdir}/${jname}/seed.iso
+	else
+		cloud_init=0
+		unset CLOUD_FILES
 	fi
-	unset GENISOIMAGE_CMD CLOUD_FILES
 else
 	cloud_init=0
 fi
@@ -744,6 +822,9 @@ else
 	# change SQL local path to remote sqlite (exported by . ${rjrcconf})
 	main_sqlite_local="${remote_local_sqlite}"
 fi
+
+# cleanup old artifacts before start new session
+bcleanup jname="${jname}"
 
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0

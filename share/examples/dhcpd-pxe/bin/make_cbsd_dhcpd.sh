@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/local/bin/cbsd
 # Helper for integration CBSD/bhyve and isc-dhcpd
 # We assume bhyve have correct 'ip4_addr' settings
 # To add dhcpf.conf extra-config (e.g. bootp-related) for
@@ -9,42 +9,15 @@
 # Additional: https://www.bsdstore.ru/en/articles/cbsd_vm_hook_dhcpd.html
 #
 # Autor: olevole@olevole.ru
-
 DHCPD_CONF="/root/etc/dhcpd.conf"
-
-. /etc/rc.conf
-
-workdir="${cbsd_workdir}"
 
 set -e
 . ${workdir}/cbsd.conf
-. ${workdir}/nc.subr
+. ${subr}
+. ${cbsdinit}
 set +e
 
 export NOCOLOR=1
-
-# $1 - ip test
-# return 0 if ip4
-# return 1 if ip6
-# return 2 if DHCP
-# return 3 if unknown
-ip_type()
-{
-	case "${1}" in
-		*\.*\.*\.*)
-			return 0
-			;;
-		*:*)
-			return 1
-			;;
-		[Dd][Hh][Cc][Pp])
-			return 2
-			;;
-		*)
-			return 3
-			;;
-	esac
-}
 
 [ -z "${jname}" ] && err 1 "no jname variable"
 [ -z "${nic_hwaddr0}" ] && err 1 "no nic_hwaddr0 variable"
@@ -53,7 +26,9 @@ ip_type()
 
 EXTRA_CONF="${jailsysdir}/${jname}/dhcpd_extra.conf"
 
-ip_type ${ip4_addr}
+ipwmask "${ip4_addr}"
+[ -n "${IWM}" ] && ip="${IWM}"
+iptype ${ip}
 
 ret=$?
 
@@ -66,15 +41,15 @@ case "${ret}" in
 		;;
 	2)
 		# Fake DHCP - we need learn to get IPS from real dhcpd (tap iface + mac ?)
-		tmp_addr=$( /usr/local/bin/cbsd dhcpd )
-		ip4_addr=${tmp_addr%%/*}
+		tmp_addr=$( dhcpd )
+		ip=${tmp_addr%%/*}
 		# check again
-		ip_type ${ip4_addr}
+		ip_type ${ip}
 		ret=$?
 		case "${ret}" in
 			0|1)
 				# update new IP
-				cbsd bset ip4_addr="${ip4_addr}" jname="${jname}"
+				bset ip4_addr="${ip}" jname="${jname}"
 				;;
 			*)
 				err 0 "Can't obtain DHCP addr"
@@ -82,40 +57,40 @@ case "${ret}" in
 		esac
 		;;
 	*)
-		err 0 "Unknown IP type: ${ip4_addr}"
+		err 0 "Unknown IP type: ${ip}"
 		;;
 esac
 
 # Remove old records for this host if exist
-if grep "CBSD-AUTO-${jname}" ${DHCPD_CONF} >/dev/null 2>&1; then
+if /usr/bin/grep "CBSD-AUTO-${jname}" ${DHCPD_CONF} >/dev/null 2>&1; then
 	/bin/cp -a ${DHCPD_CONF} /tmp/dhcpd.tmp.$$
 	trap "/bin/rm -f /tmp/dhcpd.tmp.$$" HUP INT ABRT BUS TERM EXIT
-	grep -v "CBSD-AUTO-${jname}" /tmp/dhcpd.tmp.$$ > ${DHCPD_CONF}
+	/usr/bin/grep -v "CBSD-AUTO-${jname}" /tmp/dhcpd.tmp.$$ > ${DHCPD_CONF}
 fi
 
 # Insert new records into config file
-cat >> ${DHCPD_CONF} <<EOF
+/bin/cat >> ${DHCPD_CONF} <<EOF
 host ${jname} {					# CBSD-AUTO-${jname}
 	hardware ethernet ${nic_hwaddr0};	# CBSD-AUTO-${jname}
-	fixed-address ${ip4_addr};		# CBSD-AUTO-${jname}
+	fixed-address ${ip};			# CBSD-AUTO-${jname}
 EOF
 
 if [ -r "${EXTRA_CONF}" ]; then
 	echo "Found extra conf: ${EXTRA_CONF}"
-	cat ${EXTRA_CONF} |while read _line; do
-		cat >> ${DHCPD_CONF} <<EOF
+	/bin/cat ${EXTRA_CONF} |while read _line; do
+		/bin/cat >> ${DHCPD_CONF} <<EOF
 	${_line}				# CBSD-AUTO-${jname}
 EOF
 	done
 fi
 
-cat >> ${DHCPD_CONF} <<EOF
+/bin/cat >> ${DHCPD_CONF} <<EOF
 }				# CBSD-AUTO-${jname}
 EOF
 
-arp -d ${ip4_addr}
-arp -s ${ip4_addr} ${nic_hwaddr0} pub
+/usr/sbin/arp -d ${ip}
+/usr/sbin/arp -s ${ip} ${nic_hwaddr0} pub
 
 #service isc-dhcpd restart
-service isc-dhcpd stop
-service isc-dhcpd start
+/usr/sbin/service isc-dhcpd stop
+/usr/sbin/service isc-dhcpd start
