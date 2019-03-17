@@ -2233,6 +2233,7 @@ get_construct_vm_os_type()
 {
 	local _input
 	local defaultitem="${vm_os_type}"
+	local _vm_os_type_old="${vm_os_type}"
 
 	if [ -n "${1}" ]; then
 		vm_os_type="${1}"
@@ -2254,6 +2255,8 @@ get_construct_vm_os_type()
 
 	case ${retval} in
 		${DIALOG_OK})
+			[ "${_vm_os_type_old}" = "${mtag}" ] && return 0		# not changed
+			/bin/rm -f ${tmpdir}/get_construct_vm_os_profile.menu
 			[ -n "${mtag}" ] && vm_os_type="${mtag}"
 			unset vm_os_profile jname imgsize vm_ram vm_cpus cd_boot_firmware
 			apply_vm_package
@@ -2405,11 +2408,21 @@ get_profiles_update()
 get_construct_vm_os_profile()
 {
 	local _input _search_profile="vm-${vm_os_type}" _search_cloud_profile="vm-${vm_os_type}-cloud" _res vm_profile _myprofiles="" _myfile _all _num _myfile
-	local menu_list cloud_menu_list
+	local menu_list cloud_menu_list _menu_list_cache
 	local _cnt=0
+	local _menu_list_cache=
 
 	local title=" profile "
 	local prompt="${GET_VMPROFILE_MSG}"
+
+	# use menu item cache
+	if [ -r ${tmpdir}/get_construct_vm_os_profile.menu ]; then
+		#_menu_list_cache=$( /bin/cat ${tmpdir}/get_construct_vm_os_profile.menu )
+		. ${tmpdir}/get_construct_vm_os_profile.menu
+	else
+		f_dialog_info "scan and build menu entry..."
+		_menu_list_cache=
+	fi
 
 	while [ ${_cnt} -ne 1 ]; do
 
@@ -2417,42 +2430,72 @@ get_construct_vm_os_profile()
 		cloud_menu_list=
 		_all=0
 
-		eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} show_cloud=0 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
-			unset long_description
-			eval $( ${GREP_CMD} ^long_description= ${path} )
-			[ -z "${long_description}" ] && long_description="${vm_profile}"
-			[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
-			_mypath=$( echo ${path} | /usr/bin/sed s:^${workdir}/::g )
-			menu_list="${menu_list} '${vm_profile}' '${_mypath}' '${long_description}'"
-			echo "menu_list=\"${menu_list}\""
-			# store filename
-			echo "profile${_all}=\"${vm_profile}\""
-			echo "file${_all}=\"${path}\""
-			_all=$(( _all + 1 ))
-			echo "_all=${_all}"
-		done )
+		if [ -z "${_menu_list_cache}" ]; then
+			eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} show_cloud=0 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
+				unset long_description iso_img_dist_size
+				eval $( ${GREP_CMD} ^long_description= ${path} )
+				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				[ -z "${long_description}" ] && long_description="${vm_profile}"
+				if [ -z "${iso_img_dist_size}" ]; then
+					iso_img_dist_size="Unknown"
+				else
+					if conv2human "${iso_img_dist_size}"; then
+						iso_img_dist_size=${convval}
+					fi
+				fi
+				[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
+				_mypath=$( echo ${path} | /usr/bin/sed s:^${workdir}/::g )
+				menu_list="${menu_list} '${vm_profile}' '${_mypath}' '${long_description}, size: ${iso_img_dist_size}'"
+				echo "menu_list=\"${menu_list}\""
+				# store filename
+				echo "profile${_all}=\"${vm_profile}\""
+				echo "file${_all}=\"${path}\""
+				_all=$(( _all + 1 ))
+				echo "_all=${_all}"
+			done )
 
-		eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_cloud_profile} show_cloud=1 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
-			unset long_description
-			eval $( ${GREP_CMD} ^long_description= ${path} )
-			[ -z "${long_description}" ] && long_description="${vm_profile}"
-			[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
-			_mypath=$( echo ${path} | /usr/bin/sed s:^${workdir}/::g )
-			cloud_menu_list="${cloud_menu_list} '${vm_profile}' '${_mypath}' '${long_description}'"
-			echo "cloud_menu_list=\"${cloud_menu_list}\""
-			# store filename
-			echo "profile${_all}=\"${vm_profile}\""
-			echo "file${_all}=\"${path}\""
-			_all=$(( _all + 1 ))
-			echo "_all=${_all}"
-		done )
+			eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_cloud_profile} show_cloud=1 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
+				unset long_description iso_img_dist_size
+				# when -n $1 we apply profile, so skip unnecessary vars
+				eval $( ${GREP_CMD} ^long_description= ${path} )
+				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				[ -z "${long_description}" ] && long_description="${vm_profile}"
+				if [ -z "${iso_img_dist_size}" ]; then
+					iso_img_dist_size="Unknown"
+				else
+					if conv2human "${iso_img_dist_size}"; then
+						iso_img_dist_size=${convval}
+					fi
+				fi
+				[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
+				_mypath=$( echo ${path} | /usr/bin/sed s:^${workdir}/::g )
+				cloud_menu_list="${cloud_menu_list} '${vm_profile}' '${_mypath}' '${long_description}, size: ${iso_img_dist_size}'"
+				echo "cloud_menu_list=\"${cloud_menu_list}\""
+				# store filename
+				echo "profile${_all}=\"${vm_profile}\""
+				echo "file${_all}=\"${path}\""
+				_all=$(( _all + 1 ))
+				echo "_all=${_all}"
+			done )
 
-		if [ -n "${cloud_menu_list}" ]; then
-			menu_list="${menu_list} '>' ' Cloud images ' ''"
-			menu_list="${menu_list} ${cloud_menu_list}"
+			if [ -n "${cloud_menu_list}" ]; then
+				menu_list="${menu_list} '>' ' Cloud images ' ''"
+				menu_list="${menu_list} ${cloud_menu_list}"
+			fi
+		else
+			menu_list="${_menu_list_cache}"
+			_all="${_all_cache}"
 		fi
 
 		[ -z "${menu_list}" ] && unset vm_os_profile && return 0
+
+		# store menu item cache
+		/usr/sbin/sysrc -qf ${tmpdir}/get_construct_vm_os_profile.menu _menu_list_cache="${menu_list}" > /dev/null 2>&1
+		/usr/sbin/sysrc -qf ${tmpdir}/get_construct_vm_os_profile.menu _all_cache="${_all}" > /dev/null 2>&1
+
+#		o "menu_list=\"${menu_list}\"" > ${tmpdir}/get_construct_vm_os_profile.menu
+
+#		o "menu_list=\"${menu_list}\"" > ${tmpdir}/get_construct_vm_os_profile.menu
 
 		if [ -n "${1}" ]; then
 			mtag="${1}"
@@ -2493,6 +2536,8 @@ get_construct_vm_os_profile()
 				;;
 			${DIALOG_EXTRA})
 				get_profiles_update
+				/bin/rm -f ${tmpdir}/get_construct_vm_os_profile.menu
+				_menu_list_cache=
 				continue
 				;;
 			*)

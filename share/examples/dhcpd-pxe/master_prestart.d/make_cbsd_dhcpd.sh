@@ -9,7 +9,12 @@
 # Additional: https://www.bsdstore.ru/en/articles/cbsd_vm_hook_dhcpd.html
 #
 # Autor: olevole@olevole.ru
+
 DHCPD_CONF="/root/etc/dhcpd.conf"
+
+#. /etc/rc.conf
+
+#workdir="${cbsd_workdir}"
 
 set -e
 . ${workdir}/cbsd.conf
@@ -25,6 +30,14 @@ export NOCOLOR=1
 [ ! -r "${DHCPD_CONF}" ] && err 1 "no ${DHCPD_CONF}"
 
 EXTRA_CONF="${jailsysdir}/${jname}/dhcpd_extra.conf"
+
+case "${ip4_addr}" in
+	[Dd][Hh][Cc][Pp])
+		ip4_addr=$( dhcpd )
+		;;
+	*)
+		;;
+esac
 
 ipwmask "${ip4_addr}"
 [ -n "${IWM}" ] && ip="${IWM}"
