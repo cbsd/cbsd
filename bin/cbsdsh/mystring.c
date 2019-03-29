@@ -73,6 +73,11 @@ enum {
 };
 
 enum {
+	C_NUM,
+	C_MULTIPLE,
+};
+
+enum {
 	D_SEARCH,
 	D_STR,
 };
@@ -292,5 +297,72 @@ strposcmd(int argc, char **argv)
 	return pos;
 }
 
+int
+roundup_usage(void)
+{
+	out1fmt("roundup\n");
+	out1fmt("require: --num, --multiple\n");
+	out1fmt("  sample: roundup --num=1477 --multiple=500\n");
+	return (EX_USAGE);
+}
+
+
+// roundup num by multiple
+// todo: long long? :
+//   roundup --num=1231332132132132132 --multiple=100
+//   roundup --num=12313321321321321321 --multiple=100
+int
+roundupcmd(int argc, char **argv)
+{
+	int pos = 0;
+	int len = 0;
+	unsigned long long numtoround = 0;
+	unsigned long long multiple = 0;
+	int optcode = 0;
+	int option_index = 0;
+
+	struct option long_options[] = {
+		{ "num", required_argument, 0 , C_NUM },
+		{ "multiple", required_argument, 0 , C_MULTIPLE },
+		/* End of options marker */
+		{ 0, 0, 0, 0 }
+	};
+
+	//zero for getopt* variables for next execute
+	optarg=NULL;
+	optind=0;
+	optopt=0;
+	opterr=0;
+	optreset=0;
+
+	if (argc != 3)
+		roundup_usage();
+
+	while (TRUE) {
+		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
+		if (optcode == -1) break;
+		switch (optcode) {
+			case C_NUM:
+				numtoround=atoll(optarg);
+				break;
+			case C_MULTIPLE:
+				multiple=atol(optarg);
+				break;
+		}
+	} //while
+
+	if(multiple == 0)
+	{
+		out1fmt("%llu",numtoround);
+		return 0;
+	}
+
+	unsigned long long rounddown = ( (unsigned long long) (numtoround) / multiple) * multiple;
+	unsigned long long roundup = rounddown + multiple;
+	unsigned long long roundcalc = roundup;
+
+	out1fmt("%llu",roundcalc);
+	return 0;
+}
 
 #endif

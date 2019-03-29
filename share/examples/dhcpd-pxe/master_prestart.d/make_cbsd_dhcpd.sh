@@ -17,7 +17,7 @@ DHCPD_CONF="/root/etc/dhcpd.conf"
 #workdir="${cbsd_workdir}"
 
 set -e
-. ${workdir}/cbsd.conf
+. ${distdir}/cbsd.conf
 . ${subr}
 . ${cbsdinit}
 set +e

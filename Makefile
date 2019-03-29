@@ -18,6 +18,10 @@ all:	cbsd dump_cpu_topology dump_iscsi_discovery
 clean:
 	${MAKE} -C bin/cbsdsh clean
 	${RM} -f bin/cbsdsh/.depend*
+
+distclean:
+	${MAKE} -C bin/cbsdsh clean
+	${RM} -f bin/cbsdsh/.depend*
 	${RM} -f misc/chk_arp_byip
 	${RM} -f misc/cbsdtee
 	${RM} -f bin/cbsdsftp

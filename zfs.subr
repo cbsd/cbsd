@@ -139,7 +139,7 @@ is_getzvol()
 zfs_create_zvol_from_file()
 {
 	local _file= _pool= _zvol_name= DATA= _ebytes= _human_bytes=
-	local _res _bar=1
+	local _res _bar=1 _zvol_rec_size=0
 
 	while getopts "b:f:p:n:" opt; do
 		case "${opt}" in
@@ -151,8 +151,15 @@ zfs_create_zvol_from_file()
 		shift $(($OPTIND - 1))
 	done
 
+	if [ "${fsfeat}" = "0" ]; then
+		echo "zfs_create_zvol_from_file: zfsfeat = 0"
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs feature off, skipp"
+		return 1
+	fi
+
 	if [ ! -r "${_file}" ]; then
 		echo "zfs_create_zvol_from_file: no such file: ${_file}"
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file no such file: ${_file}"
 		return 1
 	fi
 
@@ -160,12 +167,8 @@ zfs_create_zvol_from_file()
 
 	if [ ${_ebytes} -lt 128 ]; then
 			echo "zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes"
+			cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes
 			return 1
-	fi
-
-	if [ "${fsfeat}" = "0" ]; then
-		echo "zfs_create_zvol_from_file: zfsfeat = 0"
-		return 1
 	fi
 
 	[ -z "${_zvol_name}" ] && _zvol_name=$( /usr/bin/basename ${_file} )
@@ -186,7 +189,25 @@ zfs_create_zvol_from_file()
 
 	if [ -r "/dev/zvol/${DATA}/${_zvol_name}" ]; then
 			echo "zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}"
+			cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}
 			return 2
+	fi
+
+	_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
+	# volume size must be a multiple of volume block size
+	_ebytes=$( roundup --num=${_ebytes} --multiple=${_zvol_rec_size} 2>/dev/null )
+
+	cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: roundup by recsize ${_zvol_rec_size}: [${_ebytes}]
+
+	if [ -z "${_ebytes}" ]; then
+		echo "zfs_create_zvol_from_file: roundup error: roundup --num=${_ebytes} --multiple=${_zvol_rec_size}"
+		return 1
+	fi
+
+	if is_number ${_ebytes}; then
+		echo "zfs_create_zvol_from_file: roundup error: not number: [${_ebytes}]"
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: roundup by recsize ${_zvol_rec_size}: [${_ebytes}]
+		return 1
 	fi
 
 	_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name} 2>&1 )
@@ -194,19 +215,83 @@ zfs_create_zvol_from_file()
 
 	if [ ${_res} -ne 0 ]; then
 		echo "zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}"
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}
 		return 1
 	fi
 
 	if [ ${_bar} -eq 1 ]; then
-		${ECHO} "${MAGENTA}Converting ${GREEN}${_myfile}${MAGENTA} -> ${GREEN}/dev/zvol/${DATA}/${_zvol_name}${MAGENTA}: ${GREEN}${_human_bytes}${MAGENTA}...${NORMAL}"
-		/bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
+		${ECHO} "${MAGENTA}Converting ${GREEN}${_file}${MAGENTA} -> ${GREEN}/dev/zvol/${DATA}/${_zvol_name}${MAGENTA}: ${GREEN}${_human_bytes}${MAGENTA}...${NORMAL}"
+		/bin/dd if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
 		echo
 	else
-		/bin/dd if=${_myfile} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
+		/bin/dd if=${_file} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
 		echo
 	fi
 
 	return 0
+}
+
+# -n _zvol_name - destination zvol name in ${_zvol_dst} ( when
+#     not specified, use basename from ${_source} file )
+# -s source file, _source
+# -z zvol_dst (when not specified, get parent from ${jaildatadir}
+convert_source_image_to_zvol()
+{
+	local _source _orig_source DATA _zvol_dst _zvol_name
+
+	[ ${zfsfeat} -ne 1 ] && return 0
+
+	while getopts "n:s:z:" opt; do
+		case "${opt}" in
+			n)
+				_zvol_name="${OPTARG}"
+				;;
+			s)
+				_orig_source="${OPTARG}"
+				;;
+			z)
+				_zvol_dst="${OPTARG}"
+				;;
+		esac
+
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${_zvol_dst}" ]; then
+		_zvol_dst=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: auto zvol_dst selected: ${_zvol_dst}
+	fi
+
+	if [ -z "${_zvol_dst}" ]; then
+		${ECHO} "${MAGENTA}convert_source_image_zvol: empty _zvol_dst${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: empty _zvol_dst
+		return 0
+	fi
+	if [ -z "${_orig_source}" ]; then
+		${ECHO} "${MAGENTA}convert_source_image_zvol: empty _source, use -s <file>${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: empty _orig_source
+		return 0
+	fi
+	if [ ! -r "${_orig_source}" ]; then
+		${ECHO} "${MAGENTA}convert_source_image_zvol: file not readable: ${GREEN}${_orig_source}${NORMAL}"
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: file not readable: ${_orig_source}
+		return 0
+	fi
+
+	[ -z "${_zvol_name}" ] && _zvol_name=$( /usr/bin/basename ${_orig_source} )
+	if [ -r "/dev/zvol/${_zvol_dst}/${_zvol_name}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: already exist: /dev/zvol/${_zvol_dst}/${_zvol_name}, nothing to do
+		return 0		# already exist
+	fi
+
+	zfs_create_zvol_from_file -f ${_orig_source} -n ${_zvol_name} -p ${_zvol_dst}
+
+	if [ -r "/dev/zvol/${_zvol_dst}/${_zvol_name}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: convert_source_image_to_zvol: re-create symlink ${_orig_source}:/dev/zvol/${_zvol_dst}/${_zvol_name}
+		# re-create symlink
+		/bin/rm -f ${_orig_source}
+		/bin/ln -s /dev/zvol/${_zvol_dst}/${_zvol_name} ${_orig_source}
+	fi
 }
 
 ###

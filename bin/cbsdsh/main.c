@@ -91,6 +91,7 @@ int localeisutf8, initial_localeisutf8;
 #ifdef CBSD
 char *cbsd_history_file = NULL;
 int cbsd_enable_history=0;
+const char cbsd_distdir[] = "/usr/local/cbsd";
 #endif
 
 static void reset(void);
@@ -217,7 +218,7 @@ main(int argc, char *argv[])
 
 	// %s/modules must be first for opportunity to have a module commands greater priority than the original CBSD command.
 	// This makes it possible to write a 3rd party modules with altered functionality of the original code.
-	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,workdir,workdir,workdir,workdir,workdir,workdir);
+	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir);
 	setvarsafe("PATH",cbsdpath,1);
 	ckfree(cbsdpath);
 
@@ -229,7 +230,7 @@ main(int argc, char *argv[])
 		putenv("NOCOLOR=1");
 	}
 
-	read_profile("${workdir}/cbsd.conf");
+	read_profile("/usr/local/cbsd/cbsd.conf");
 	read_profile("${workdir}/etc/defaults/logger.conf");
 	read_profile("${workdir}/etc/logger.conf");
 

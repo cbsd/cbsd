@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.2.0
+#v12.0.8
 MYARG="dstdir"
 MYOPTARG="gensha256 keepname name path purge purgeonly cloud"
 MYDESC="Fetch ISO images from mirror sites"
@@ -13,9 +13,12 @@ path - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf
 purge - when 1, purge ISO which are not referenced by any profiles\n\
 purgeonly - when 1, no download, just purge ISO which are not referenced by any profiles\n\
 cloud - when 1, work with cloud image instead of iso ( 0 by default )\n\
+conv2zvol - when 1, try to convert ( keepname = 0 ) cloud images to ZVOL ( 0 by default )\n\
 "
 
 cloud=0
+conv2zvol=0
+
 . ${subr}
 
 keepname=0
@@ -41,7 +44,6 @@ readconf fetch_iso
 
 . ${cbsdinit}
 . ${system}
-
 
 [ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
 [ ! -d ${dstdir} ] && /bin/mkdir -p ${dstdir}
@@ -73,13 +75,39 @@ gensha256_sum()
 # $iso_site, $rfile
 obtain_iso()
 {
-	[ -r ${dstdir}/${fout} ] && return 0
+	if [ ${keepname} -eq 1 ]; then
+		[ -r ${dstdir}/${fout} ] && return 0
+	else
+		# keepname 0
+		[ -r ${dstdir}/${register_iso_name} ] && return 0
+	fi
 
 	for site in ${iso_site}; do
 		echo "fetch -o ${dstdir}/${fout} ${site}${rfile}"
 		fetch -o ${dstdir}/${fout} ${site}${rfile}
-		[ $? -eq 0 ] && return 0
-		/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
+
+		if [ $? -ne 0 ]; then
+			/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
+			continue
+		fi
+
+		if [ ${keepname} -eq 1 ]; then
+			# no any action need
+			return 0
+		else
+			if [ -n "${iso_extract}" -a -f "${dstdir}/${fout}" ]; then
+				${ECHO} "${MAGENTA}Extracting ${dstdir}/${fout} -> ${dstdir}/${iso_img} ...${NORMAL}"
+				set -o xtrace
+				cd ${dstdir}
+				${iso_extract}
+				set +o xtrace
+				/bin/mv ${dstdir}/${iso_img} ${dstdir}/${register_iso_name}
+			else
+				# keepname 0
+				/bin/mv ${dstdir}/${fout} ${dstdir}/${register_iso_name}
+			fi
+		fi
+		return 0
 	done
 
 	return 1
@@ -142,6 +170,7 @@ fetch_iso_by_path()
 	vm_profile=
 	register_iso_name=
 	sha256sum=0
+	iso_extract=
 
 	if [ ! -r ${path} ]; then
 		${ECHO} "${MAGENTA}Unreadable profile: ${GREEN}${path}${NORMAL}"
@@ -166,11 +195,13 @@ fetch_iso_by_path()
 		rfile="${iso_img}"
 	fi
 
-	if [ ${keepname} -eq 1 ]; then
+	fout="${rfile}"
+
+#	if [ ${keepname} -eq 1 ]; then
 		fout="${rfile}"
-	else
-		fout="${register_iso_name}"
-	fi
+#	else
+#		fout="${register_iso_name}"
+#	fi
 
 	${ECHO} " ${WHITE}* ${LCYAN}[${profile_cur}/${profile_num}] ${GREEN}== ${MAGENTA}Processing ${GREEN}${vm_profile}${MAGENTA} from ${GREEN}${path}${NORMAL} =="
 
@@ -200,6 +231,12 @@ fetch_iso_by_path()
 		${ECHO} "${MAGENTA}${path} sha256sum=0, skipp${NORMAL}"
 	fi
 	echo
+
+	if [ ${cloud} -eq 1 -a ${conv2zvol} -eq 1 ]; then
+		${ECHO} "${MAGENTA}Trying to convert cloud images to zvol: ${GREEN}${fout}${NORMAL}"
+		. ${zfstool}
+		convert_source_image_to_zvol -s "${dstdir}/${fout}"
+	fi
 }
 
 # create array: (separated by spaces)
@@ -260,6 +297,7 @@ fetch_iso_all()
 		vm_profile=
 		register_iso_name=
 		sha256sum=0
+		iso_extract=
 
 		[ ! -r ${i} ] && continue
 
@@ -311,6 +349,7 @@ purge_iso_all()
 		vm_profile=
 		register_iso_name=
 		sha256sum=0
+		iso_extract=
 
 		[ ! -r ${i} ] && continue
 

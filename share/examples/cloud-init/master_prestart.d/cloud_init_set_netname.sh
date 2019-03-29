@@ -5,7 +5,7 @@
 # Additional: https://www.bsdstore.ru/en/articles/cbsd_cloud_init.html
 
 set -e
-. ${workdir}/cbsd.conf
+. ${distdir}/cbsd.conf
 . ${subr}
 . ${cbsdinit}
 set +e

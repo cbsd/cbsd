@@ -141,7 +141,7 @@ detach=
 
 [ -f /tmp/bhyvestop.${jname}.lock ] && /bin/rm -f /tmp/bhyvestop.${jname}.lock
 
-. /etc/rc.conf
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 
 if [ -z "${cbsd_workdir}" ]; then
 	echo "No cbsd workdir defined"
@@ -150,7 +150,7 @@ else
 	workdir="${cbsd_workdir}"
 fi
 
-. ${workdir}/cbsd.conf
+. /usr/local/cbsd/cbsd.conf
 
 freebsdhostversion=$( ${miscdir}/elf_tables --ver /bin/sh )
 orig_vnc_args="${vnc_args}"
