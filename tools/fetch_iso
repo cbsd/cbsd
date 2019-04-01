@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
-#v11.2.0
+#v12.0.8
 MYARG="dstdir"
-MYOPTARG="gensha256 keepname name path purge purgeonly"
+MYOPTARG="gensha256 keepname name path purge purgeonly cloud"
 MYDESC="Fetch ISO images from mirror sites"
 CBSDMODULE="sys"
 ADDHELP="dstdir - destination directory. Use dstdir=default for using default iso dir: \$cbsd_workdir/src/iso\n\
@@ -12,12 +12,14 @@ name - fetch by profile name, e.g: FreeBSD-x64-11.1, Debian-x86-9\n\
 path - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf\n\
 purge - when 1, purge ISO which are not referenced by any profiles\n\
 purgeonly - when 1, no download, just purge ISO which are not referenced by any profiles\n\
+cloud - when 1, work with cloud image instead of iso ( 0 by default )\n\
+conv2zvol - when 1, try to convert ( keepname = 0 ) cloud images to ZVOL ( 0 by default )\n\
 "
 
+cloud=0
+conv2zvol=0
+
 . ${subr}
-. ${system}
-. ${strings}
-. ${tools}
 
 keepname=0
 gensha256=0
@@ -40,7 +42,8 @@ purged_iso_list=
 
 readconf fetch_iso
 
-init $*
+. ${cbsdinit}
+. ${system}
 
 [ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
 [ ! -d ${dstdir} ] && /bin/mkdir -p ${dstdir}
@@ -54,6 +57,7 @@ gensha256_sum()
 	local _profile="${1}"
 	local _file="${2}"
 	local _mdfile="${2}.sha256"
+	local _iso_img_dist_size=0
 
 	[ ! -r ${_profile} ] && return 0
 	[ ! -r ${_file} ] && return 0
@@ -61,6 +65,9 @@ gensha256_sum()
 	printf "${MAGENTA} calculating gensha256sum: ${NORMAL}"
 	_sha256sum=$( /sbin/sha256 -q ${_file} )
 	/usr/sbin/sysrc -qf ${_profile} sha256sum="${_sha256sum}"
+	# update size
+	_iso_img_dist_size=$( /usr/bin/stat -f %z ${_file} )
+	/usr/sbin/sysrc -qf ${_profile} iso_img_dist_size="${_iso_img_dist_size}"
 	${ECHO} "${GREEN}${_sha256sum}${MAGENTA}. Updated${NORMAL}"
 }
 
@@ -68,13 +75,39 @@ gensha256_sum()
 # $iso_site, $rfile
 obtain_iso()
 {
-	[ -r ${dstdir}/${fout} ] && return 0
+	if [ ${keepname} -eq 1 ]; then
+		[ -r ${dstdir}/${fout} ] && return 0
+	else
+		# keepname 0
+		[ -r ${dstdir}/${register_iso_name} ] && return 0
+	fi
 
 	for site in ${iso_site}; do
 		echo "fetch -o ${dstdir}/${fout} ${site}${rfile}"
 		fetch -o ${dstdir}/${fout} ${site}${rfile}
-		[ $? -eq 0 ] && return 0
-		/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
+
+		if [ $? -ne 0 ]; then
+			/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
+			continue
+		fi
+
+		if [ ${keepname} -eq 1 ]; then
+			# no any action need
+			return 0
+		else
+			if [ -n "${iso_extract}" -a -f "${dstdir}/${fout}" ]; then
+				${ECHO} "${MAGENTA}Extracting ${dstdir}/${fout} -> ${dstdir}/${iso_img} ...${NORMAL}"
+				set -o xtrace
+				cd ${dstdir}
+				${iso_extract}
+				set +o xtrace
+				/bin/mv ${dstdir}/${iso_img} ${dstdir}/${register_iso_name}
+			else
+				# keepname 0
+				/bin/mv ${dstdir}/${fout} ${dstdir}/${register_iso_name}
+			fi
+		fi
+		return 0
 	done
 
 	return 1
@@ -82,7 +115,7 @@ obtain_iso()
 
 get_active_profiles_num()
 {
-	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+	for i in $( env NOCOLOR=1 show_profile_list show_cloud=${cloud} show_bhyve=1 search_profile=vm- display=path header=0 ); do
 		[ ! -r ${i} ] && continue
 
 		iso_site=
@@ -137,6 +170,7 @@ fetch_iso_by_path()
 	vm_profile=
 	register_iso_name=
 	sha256sum=0
+	iso_extract=
 
 	if [ ! -r ${path} ]; then
 		${ECHO} "${MAGENTA}Unreadable profile: ${GREEN}${path}${NORMAL}"
@@ -161,11 +195,13 @@ fetch_iso_by_path()
 		rfile="${iso_img}"
 	fi
 
-	if [ ${keepname} -eq 1 ]; then
+	fout="${rfile}"
+
+#	if [ ${keepname} -eq 1 ]; then
 		fout="${rfile}"
-	else
-		fout="${register_iso_name}"
-	fi
+#	else
+#		fout="${register_iso_name}"
+#	fi
 
 	${ECHO} " ${WHITE}* ${LCYAN}[${profile_cur}/${profile_num}] ${GREEN}== ${MAGENTA}Processing ${GREEN}${vm_profile}${MAGENTA} from ${GREEN}${path}${NORMAL} =="
 
@@ -195,6 +231,12 @@ fetch_iso_by_path()
 		${ECHO} "${MAGENTA}${path} sha256sum=0, skipp${NORMAL}"
 	fi
 	echo
+
+	if [ ${cloud} -eq 1 -a ${conv2zvol} -eq 1 ]; then
+		${ECHO} "${MAGENTA}Trying to convert cloud images to zvol: ${GREEN}${fout}${NORMAL}"
+		. ${zfstool}
+		convert_source_image_to_zvol -s "${dstdir}/${fout}"
+	fi
 }
 
 # create array: (separated by spaces)
@@ -214,7 +256,7 @@ get_profile_name_path_map()
 	# protect from long loop
 	trap 'exit 0' SIGINT
 
-	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+	for i in $( env NOCOLOR=1 show_profile_list show_cloud=${cloud} show_bhyve=1 search_profile=vm- display=path header=0 ); do
 		iso_img=
 		iso_img_dist=
 		iso_site=
@@ -247,7 +289,7 @@ fetch_iso_all()
 	# protect from long loop
 	trap 'exit 0' SIGINT
 
-	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+	for i in $( env NOCOLOR=1 show_profile_list show_cloud=${cloud} show_bhyve=1 search_profile=vm- display=path header=0 ); do
 		iso_img=
 		iso_img_dist=
 		iso_site=
@@ -255,6 +297,7 @@ fetch_iso_all()
 		vm_profile=
 		register_iso_name=
 		sha256sum=0
+		iso_extract=
 
 		[ ! -r ${i} ] && continue
 
@@ -298,7 +341,7 @@ purge_iso_all()
 
 	active_iso_list=
 
-	for i in $( env NOCOLOR=1 cbsd show_profile_list show_bhyve=1 search_profile=vm- display=path header=0 ); do
+	for i in $( env NOCOLOR=1 show_profile_list show_cloud=${cloud} show_bhyve=1 search_profile=vm- display=path header=0 ); do
 		iso_img=
 		iso_img_dist=
 		iso_site=
@@ -306,6 +349,7 @@ purge_iso_all()
 		vm_profile=
 		register_iso_name=
 		sha256sum=0
+		iso_extract=
 
 		[ ! -r ${i} ] && continue
 

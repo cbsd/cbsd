@@ -12,8 +12,8 @@ fi
 
 workdir="${cbsd_workdir}"
 
-[ ! -f "${workdir}/cbsd.conf" ] && exit 1
-. ${workdir}/cbsd.conf
+[ ! -f "${distdir}/cbsd.conf" ] && exit 1
+. ${distdir}/cbsd.conf
 . ${subr}
 . ${system}
 . ${strings}
@@ -53,7 +53,7 @@ fi
 . ${jrcconf}
 [ "$baserw" = "1" ] && path=${data}
 
-. ${workdir}/freebsd_world.subr
+. ${distdir}/freebsd_world.subr
 customskel
 
 [ ! -f ${data}/bin/bash ] && err 1 "${MAGENTA}No such ${data}/bin/bash"

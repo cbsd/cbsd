@@ -3,12 +3,15 @@ MYDIR="$( /usr/bin/dirname $0 )"
 MYPATH="$( /bin/realpath ${MYDIR} )"
 HELPER="jrctl"
 
-. /etc/rc.conf
-
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
+if [ -z "${cbsd_workdir}" ]; then
+	echo "no such cbsd_workdir"
+	exit
+fi
 workdir="${cbsd_workdir}"
 
 set -e
-. ${workdir}/cbsd.conf
+. ${distdir}/cbsd.conf
 . ${subr}
 set +e
 

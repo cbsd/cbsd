@@ -22,12 +22,7 @@ odebug_engine=
 cfg_only=		# create a configuration and run immediately
 
 . ${subr}
-. ${system}
-. ${strings}
-. ${workdir}/universe.subr
-. ${workdir}/bhyve.subr
-. ${tools}
-. ${workdir}/vnet.subr # get_vm_uplink_interface
+. ${tools}		# for select_jail_by_list
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -37,15 +32,20 @@ readconf jail-freebsd-default.conf
 odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 
-init $*
+. ${cbsdinit}
+
+. ${system}
+. ${distdir}/universe.subr
+. ${distdir}/bhyve.subr
+. ${distdir}/vnet.subr # get_vm_uplink_interface
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${MAGENTA}No bhyve specified${NORMAL}"
 
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
-. ${workdir}/fetch.subr
-. ${workdir}/jcreate.subr	# for external_exec_master_script
-. ${workdir}/virtual.subr	# for init_systap
+. ${distdir}/fetch.subr
+. ${distdir}/jcreate.subr	# for external_exec_master_script
+. ${distdir}/virtual.subr	# for init_systap
 
 create_from_jail()
 {
@@ -68,6 +68,9 @@ start_bhyve()
 {
 	local bhyveload_cmd _err
 	local passt_args=
+	local _ebytes _dsk_ebytes _cloud_truncate
+	local _cloud_source_is_zvol
+	local _cloud_source_zvol _dsk_source_zvol
 
 	local is_ppt=$( cbsdsql ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 	[ -n "${is_ppt}" ] && passt_args="-S"
@@ -99,13 +102,96 @@ start_bhyve()
 	# a) no cdrom (error?)
 	# b) shared ISO dir too?
 
+	# Cloud-init init. Cloud init only for empty disk
+	if check_for_empty_hdd path=${data}/dsk1.vhd; then
+		if [ -n "${vm_iso_path}" ]; then
+			local prefix=
+			local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+
+			if [ "${prefix6}" = "cloud-" ]; then
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${MAGENTA}No such cloud source: ${GREEN}${vm_iso_path}/${iso_img}${NORMAL}"
+				fi
+				vm_boot="hdd"
+				${ECHO} "${MAGENTA}cloud init image initialization..${NORMAL}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${MAGENTA}Error: bstart: not readable: ${GREEN}${_myfile}${NORMAL}"
+
+				. ${zfstool}
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( /usr/bin/stat -f "%z" ${_myfile} 2>/dev/null )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( /usr/bin/stat -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some 
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					${ECHO} "${MAGENTA}Clone cloud image into first/system vm disk (${LRED}dd${MAGENTA} method)${NORMAL}"
+					# to generic clonedata (add dd method)?
+					/bin/dd if=${_myfile} | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					echo
+					# adjust original image size
+					/usr/bin/truncate -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					${ECHO} "${MAGENTA}Clone cloud image into first/system vm disk (zfs clone method)${NORMAL}"
+					# to generic clonedata ?
+						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+						echo "/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						_ret=$?
+						if [ ${_ret} -eq 1 ]; then
+							# create cloud snapshot for $jname
+							/sbin/zfs snapshot ${_cloud_source_zvol}@boot-${jname}
+							# destory original zvol disk for vm
+							/sbin/zfs destroy ${_dsk_source_zvol}
+							#/sbin/zfs clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							/sbin/zfs clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							# restore original size
+							# /sbin/zfs set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# bug here, need for atomic ops ^^ in clone action
+							/sbin/zfs set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							/sbin/zfs set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+						else
+							err 1 "${MAGENTA}snapshot already exist ${_cloud_snapshot_name}${NORMAL}"
+						fi
+				fi
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+			fi
+		fi
+	fi
+
 	case "${vm_os_type}" in
 		freebsd)
 			if [ "${from_jail}" = "1" ]; then
 				create_from_jail
 			else
 				# default mode
-				check_for_empty_hdd
+				manage_boot_by_empty_hdd
 				if [ "${vm_boot}" = "cd" ]; then
 					init_iso
 					if [ $? -eq 1 ]; then
@@ -140,7 +226,7 @@ start_bhyve()
 			[ -z "${vm_profile}" ] && err 1 "${MAGENTA}No such profile: ${GREEN}vm-${vm_os_type}-${vm_os_profile}.conf${NORMAL}"
 			# re-read jail params and apply personal after profile 
 			[ "${lm}" = "0" ] && . ${jrcconf}
-			check_for_empty_hdd
+			manage_boot_by_empty_hdd
 
 			if [ "${vm_boot}" = "cd" ]; then
 				init_iso
@@ -168,7 +254,7 @@ start_bhyve()
 				. ${rjrcconf}
 			fi
 
-			check_for_empty_hdd
+			manage_boot_by_empty_hdd
 			if [ "${vm_boot}" = "cd" ]; then
 				init_iso
 				if [ $? -eq 1 ]; then
@@ -210,6 +296,17 @@ start_bhyve()
 	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
 	[ "${vm_os_profile}" = "0" ] && unset vm_os_profile
 
+	# reset global bhyve_pci_id_busy_list (used by compile_ func via next_pci_id()
+	# and remove buffer file with old $bhyve_pci_id_busy_list ( used by add_bhyve_pci_id_busy )
+	bhyve_pci_id_busy_list=
+	[ -f ${jailsysdir}/${jname}/bhyve_pciid ] && /bin/rm -f ${jailsysdir}/${jname}/bhyve_pciid
+
+	# mark modified field to FALSE in pcibus table to find unmodified entries for pciid cleanup
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
+
+	# truncate pcibus_run table
+	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus_run
+
 	# init bhyve_cpus
 	if ! compile_bhyve_cpus_args; then
 		${ECHO} "${MAGENTA}Unable to compile bhyve_cpus_args for VMs: ${GREEN}${jname}${NORMAL}"
@@ -234,6 +331,7 @@ start_bhyve()
 			if ! compile_dsk_args; then
 				${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
 				unset dsk_args
+				unset dsk_bootable
 			fi
 
 			# init cd_args
@@ -251,6 +349,7 @@ start_bhyve()
 			if ! compile_dsk_args; then
 				${ECHO} "${MAGENTA}No such disk for VMs: ${GREEN}${jname}${NORMAL}"
 				unset dsk_args
+				unset dsk_bootable
 			fi
 			;;
 		*)
@@ -328,13 +427,33 @@ start_bhyve()
 	# Poehali!
 	passthr=""
 
+	# purge old/orphaned devices from pcibus table (which not modified by compile_args)
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE modified=false 2>/dev/null )
+	if [ -n "${_res}" ]; then
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus WHERE modified=false 2>/dev/null | while read _name _desc; do
+			# debug: echo "Prune for: [${_name} ${_desc}]"
+			cbsdlogger NOTICE ${CBSD_APP}: pcibus map: purge for old/orphaned devices for ${jname}: [${_name} ${_desc}]
+		done
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus WHERE modified=false
+	fi
+
+	# extra validate we have no collision in PCI bus
+	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1' 2>/dev/null )
+
+	if [ -n "${_res}" ]; then
+		sqllistdelimer=" "
+		sqllist "${_res}" pcislot_bus pcislot_bus_count
+		unset sqllistdelimer
+		${ECHO} "${LRED}Error: ${MAGENTA}PCI collision for bus: ${GREEN}${pcislot_bus}${MAGENTA}, count=${pcislot_bus_count}:${NORMAL}"
+		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus_run WHERE pcislot_bus=${pcislot_bus}
+		echo
+		${ECHO} "${MAGENTA}Please use bconfig to re-configure devices or use: ${GREEN}cbsd bpcibus jname=${jname} mode=reset${MAGENTA} to reset${NORMAL}"
+		bcleanup jname="${jname}"
+		exit 1
+	fi
+
 	# for init external hook variables
 	geniplist ${ip4_addr}
-
-	if [ "${lm}" = "0" ]; then
-		export_bhyve_data_for_external_hook
-		external_exec_master_script "master_prestart.d"
-	fi
 
 	vm_logfile=$( /usr/bin/mktemp )
 
@@ -368,6 +487,7 @@ virtiornd_args='${virtiornd_args}'
 nic_args='${nic_args}'
 uefi_boot_args='${uefi_boot_args}'
 dsk_args='${dsk_args}'
+dsk_bootable='${dsk_bootable}'
 dsk_controller_args='${dsk_controller_args}'
 cd_args='${cd_args}'
 cd_args2='${cd_args2}'
@@ -430,17 +550,36 @@ EOF
 		fi
 	fi
 
+	# this section should be BEFORE cloud-init seed generator
+	if [ "${lm}" = "0" ]; then
+		export_bhyve_data_for_external_hook
+		external_exec_master_script "master_prestart.d"
+	fi
+
+	# cloud-init enabled?
+	# this section should be AFTER master_prestart
+	# cloud_init and CLOUD_FILES was initialized earlier
+	if [ ${cloud_init} -eq 1 ]; then
+			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
+			#${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid cidata -joliet -rock ${CLOUD_FILES}
+			/usr/sbin/makefs -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+			# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+			# why upper here, whereis spec?
+			/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+			sync
+	fi
+
 	case "${debug_engine}" in
 		gdb|lldb)
 			if [ "${lm}" = "1" ]; then
 				# for live migration always run in tmux due to non-interactive commands from remote side
-				${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}"
+				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}"
 			else
-				/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}
+				env cbsd_workdir="${workdir}" /bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}
 			fi
 			;;
 		*)
-			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args}"
+			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args}"
 			;;
 	esac
 
@@ -465,8 +604,6 @@ EOF
 		${tmuxcmd} select-window -t cbsd-${jname}:0
 	fi
 
-	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
-
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstart status=2 data_status=1
@@ -475,6 +612,7 @@ EOF
 	search_cmd="bhyve: ${jname}"
 	strlen_search_cmd=$( strlen "${search_cmd}" )
 
+	[ -n "${dsk_bootable}" ] && ${ECHO} "${MAGENTA}Boot device: ${GREEN}${dsk_bootable}${NORMAL}"
 	printf "${MAGENTA}Waiting for PID"
 	for i in $( /usr/bin/seq 10 ); do
 		check_for_bhyve_process -j ${jname}
@@ -509,6 +647,8 @@ EOF
 			err 0 ""
 		fi
 	fi
+
+	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
 }
 
 
@@ -556,6 +696,24 @@ fi
 . ${sharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 st_time=$( /bin/date +%s )
 [ -z "${jname}" ] && jname=$1
+
+# cloud-init enabled?
+# we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
+# since some helpers may work with runtime (e.g pcibus + cloudinit) config
+if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
+	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | /usr/bin/xargs )
+	# gen seed only if files exist
+	if [ -n "${CLOUD_FILES}" ]; then
+		cloud_init=1
+		${ECHO} "${LCYAN}cloud-init: ${LYELLOW}enabled${NORMAL}"
+		/usr/bin/touch ${jailsysdir}/${jname}/seed.iso
+	else
+		cloud_init=0
+		unset CLOUD_FILES
+	fi
+else
+	cloud_init=0
+fi
 
 if [ "${lm}" = "0" ]; then
 	. ${jrcconf}
@@ -664,6 +822,9 @@ else
 	# change SQL local path to remote sqlite (exported by . ${rjrcconf})
 	main_sqlite_local="${remote_local_sqlite}"
 fi
+
+# cleanup old artifacts before start new session
+bcleanup jname="${jname}"
 
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${MAGENTA}Parameter is mandatory: ${GREEN}vm_ram, vm_cpus, vm_os_type${NORMAL}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0

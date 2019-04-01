@@ -59,9 +59,15 @@ usage() {
 }
 
 # parser/initialization for MYARG, OPTARG
+# if CBSD_INIT_SAVE2FILE variables exist, use first <arg> as filename
+# and save all settings into <arg> filename
 init() {
 	local MYNUMTEST=0 _i
 	local bin_version= _pos _arg_len _pref
+	local _tofile=0
+	local IFS OIFS
+
+	[ -n "${CBSD_INIT_SAVE2FILE}" ] && _tofile=1
 
 	. ${strings}
 
@@ -69,7 +75,12 @@ init() {
 
 	bin_version=$( /usr/local/bin/cbsd -c version 2>/dev/null )
 
-	[ "${bin_version}" != "${myversion}" ] && ${ECHO} "${MAGENTA}Warning: CBSD is ${bin_version} while workdir initializated for ${myversion}. Please re-run: ${GREEN}cbsd initenv${NORMAL}"
+	if [ "${bin_version}" != "${myversion}" ]; then
+		OIFS="${IFS}"
+		IFS=" "
+		${ECHO} "${LRED}Warning${MAGENTA}: CBSD is ${bin_version} while workdir initializated for ${myversion}. Please re-run: ${GREEN}cbsd initenv${NORMAL}" 1>&2
+		IFS="${OIFS}"
+	fi
 
 	for _i in ${MYARG} ${MYOPTARG}; do
 		MYNUMTEST=$(( MYNUMTEST + 1 ))
@@ -82,6 +93,7 @@ init() {
 	export NO_CBSD_HISTORY=yes
 
 	if [ "$1" = "--help" ]; then
+		IFS=" "
 		[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
 		${ECHO} "[${BOLD}${CBSDMODULE}${NORMAL}] ${GREEN}${MYDESC}${NORMAL}"
 		${ECHO} "${BOLD}require: ${GREENL}${MYARG}${NORMAL}"
@@ -94,6 +106,7 @@ init() {
 	fi
 
 	if [ "$1" = "--args" ]; then
+		IFS=" "
 		echo "${greeting} ${MYNUMTEST}"
 		for argword in ${MYARG} ${MYOPTARG}; do
 			echo "${argword}"
@@ -107,36 +120,43 @@ init() {
 	# example
 	#MYARG="src mk"
 	#MYOPTARG="arch"
-	while [ -n "$1" -a ${MYNUMTEST} -gt 0 ]; do
 
+	i=0
+
+	while [ -n "${1}" ]; do
+		IFS=
 		strpos --str="${1}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
 			# not params=value form
-		else
-			_arg_len=$( strlen ${1} )
-			_pref=$(( _arg_len - _pos ))
-			ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-			VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+			IFS=" "
+			shift
+			continue
 		fi
-
-		for arg in ${MYARG} ${MYOPTARG}; do
-			case "${arg}" in
-				"${ARG}")
-					eval T="\$$ARG"
-					[ ${double_args} -eq 0 -a -n "${T}" ] && continue # value already set, skip
-					eval "${ARG}='${VAL}'"; MYNUMTEST=$((MYNUMTEST - 1));
-					break
-					;;
-			esac
-		done
+		_arg_len=$( strlen ${1} )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		IFS=" "
+		VAL=$( echo ${VAL} | /usr/bin/tr -d '"' )		# strip extra quotes
+		if [ ${double_args} -eq 0 -a -n "${VAL}" ]; then
+			shift
+			continue	# value already set, skip
+		fi
+		i=$(( i + 1 ))
+		eval "${ARG}='${VAL}'";
+		[ ${_tofile} -eq 1 ] && /bin/cat >> ${CBSD_INIT_SAVE2FILE} <<EOF
+${ARG}='${VAL}'
+EOF
 		shift
 	done
 
-	for i in $MYARG; do
+	IFS=" "
+
+	for i in ${MYARG}; do
 		unset T
 		eval T="\$$i"
-		[ -z "${T}" ] && err 1 "${MAGENTA}Please set ${CBSD_APP}: ${GREEN}$i${NORMAL}"
+		[ -z "${T}" ] && err 1 "${MAGENTA}Please set ${CBSD_APP}: ${GREEN}${i}${NORMAL}"
 	done
 
 	return 0
@@ -487,7 +507,7 @@ of the text or fix html pages via GITHUB repository: https://github.com/olevole/
 
 EOF
 
-	/usr/bin/sed -e 's/<[^>]*>//g' ${_myhtml} |/usr/bin/tr -s "[:space:]"| /usr/bin/fold -s -w 100 >> ${_myhelp}
+	/usr/bin/sed -e 's/<[^>]*>//g' ${_myhtml} | /usr/bin/tr -s "[:space:]"| /usr/bin/fold -s -w 100 >> ${_myhelp}
 
 	if [ ${_fetch} -eq 1 ]; then
 		trap "" HUP INT ABRT BUS TERM EXIT

@@ -21,15 +21,13 @@ type=iso,hdd or shared\n\
 display= list by comma for column. Default: name,path,type,jname,size\n"
 
 . ${subr}
+
+. ${cbsdinit}
+
 . ${system}
-. ${strings}
-. ${tools}
-
-init $*
-
-. ${workdir}/bhyve.subr
-. ${workdir}/xen.subr
-. ${workdir}/virtual.subr
+. ${distdir}/bhyve.subr
+. ${distdir}/xen.subr
+. ${distdir}/virtual.subr
 
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/media/"
 [ -z "${display}" ] && display="name,path,type,jname,size"
@@ -473,6 +471,47 @@ eject()
 	cbsdsql storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
 }
 
+which_vm_depens_on_zvol()
+{
+	local _vm_list _vol="${1}"
+
+	[ -z "${_vol}" ] && return 0
+
+	_vm_list=$( /sbin/zfs list -H -r -t snapshot -o name ${_vol} | /usr/bin/cut -d '@' -f 2 | /usr/bin/cut -d '-' -f 2 | /usr/bin/xargs )
+
+	[ -z "${_vm_list}" ] && return 0
+	printf "${_vm_list}"
+	return 1
+}
+
+
+# try to remove ISO file
+try_to_rm()
+{
+	local path="${1}"
+	local _vm_list
+
+	[ -z "${path}" ] && err 1 "${MAGENTA}media: try_to_rm: empty path${NORMAL}"
+
+	. ${zfstool}
+	if is_getzvol ${path}; then
+		/sbin/zfs list ${is_zvol} > /dev/null 2>&1
+		if [ $? -eq 0 ]; then
+
+			_vm_list=$( which_vm_depens_on_zvol ${is_zvol} )
+
+			[ -n "${_vm_list}" ] && err 1 "${MAGENTA}Current vm depends from ${is_zvol}: ${GREEN}${_vm_list}${NORMAL}"
+
+			# zvol exist
+			/sbin/zfs destroy ${is_zvol}
+			_ret=$?
+			[ ${_ret} -ne 0 ] && err 1 "${MAGENTA}Unable to destroy zvol, please remove it by hand: ${GREEN}${is_zvol}${NORMAL}"
+		fi
+	fi
+	/bin/rm -f ${path}
+	return 0
+}
+
 
 #### MAIN
 [ -z "${header}" ] && header=1
@@ -514,7 +553,12 @@ case "${mode}" in
 		[ -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}path=${MAGENTA} is mandatory${NORMAL}"
 		select_by_path && err 1 "${MAGENTA}Path already exist for: ${GREEN}${vm_res}${NORMAL}"
 		select_by_name && err 1 "${MAGENTA}Name already exist for: ${GREEN}${vm_res}${NORMAL}"
-		[ -z "${type}" ] && type="hdd"
+
+		if [ -z "${type}" ]; then
+			type=$( imgtype path=${path} 2>&1 )
+			${ECHO} "${MAGENTA}media: auto-detected image type for ${path}: ${GREEN}${type}${NORMAL}"
+		fi
+
 		[ -z "${jname}" ] && jname="-"
 
 		register_or_add -n "${name}" -p "${path}" -t "${type}" -j "${jname}"
@@ -561,7 +605,7 @@ case "${mode}" in
 		err 0 "${MAGENTA}Flushed${NORMAL}"
 		;;
 	delete|remove)
-		[ -z "${type}" ] && type="hdd"
+		[ -z "${type}" ] && err 1 "${GREEN}type= ${MAGENTA}is mandatory${NORMAL}"
 		[ -z "${jname}" ] && jname="-"
 
 		check_protected
@@ -569,17 +613,24 @@ case "${mode}" in
 		[ -z "${name}" -a -z "${path}" ] && err 1 "${MAGENTA}media: ${GREEN}name=${MAGENTA} or ${GREEN}path=${MAGENTA} value is reguired${NORMAL}"
 
 		if [ -n "${name}" -a -n "${path}" ]; then
+
+			# need before actual delete from SQL due to zvol deps check
+			[ "${type}" = "iso" ] && try_to_rm ${path}
+
 			if [ "${jname}" = "-" ]; then
 				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\""
 			else
 				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND path=\"${path}\" AND type=\"${type}\" AND jname=\"${jname}\""
 			fi
+
 		else
 			if [ -n "${name}" ]; then
 				select_by_name
 				path="${vm_res}"
 				cbsdsql storage_media "DELETE FROM media WHERE name=\"${name}\" AND jname=\"${jname}\""
 			elif [ -n "${path}" ]; then
+				# need before actual delete from SQL due to zvol deps check
+				[ "${type}" = "iso" ] && try_to_rm ${path}
 				cbsdsql storage_media "DELETE FROM media WHERE path=\"${path}\" AND jname=\"${jname}\""
 			fi
 		fi
@@ -590,12 +641,13 @@ case "${mode}" in
 
 		case "${type}" in
 			iso)
-				/bin/rm -f ${path}
+				try_to_rm -f ${path}
 				;;
 			vhd|hdd)
-				mydb="${jailsysdir}/${jname}/local.sqlite"
-				#echo "cbsdsql ${mydb} \"DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\"\""
-				cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\""
+				if [ "${jname}" != "-" ]; then
+					mydb="${jailsysdir}/${jname}/local.sqlite"
+					cbsdsql ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path=\"${short_dsk_path}\""
+				fi
 				${emulator}_remove_dsk ${short_dsk_path}
 				;;
 		esac
@@ -609,16 +661,10 @@ case "${mode}" in
 		;;
 	deleteall|removeall)
 		for i in $( cbsdsql storage_media SELECT path FROM media WHERE type != \"hdd\" ); do
-			cbsdsql storage_media "DELETE FROM media WHERE path=\"${i}\""
-			[ -r "${i}" ] && /bin/rm -f ${i}
+			${ECHO} "${MAGENTA}removing: ${GREEN}${i}${MAGENTA} ...${NORMAL}"
+			media mode=remove path="${i}" type="iso"
 		done
-
-		# CBSD QUEUE
-		if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-			[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} cmd=refresh
-		fi
-
-		err 0 "${MAGENTA}Deleted${NORMAL}"
+		exit 0
 		;;
 	update)
 		[ -n "${type}" ] && update_type

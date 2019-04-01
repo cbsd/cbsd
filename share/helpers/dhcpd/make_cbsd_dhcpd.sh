@@ -17,8 +17,8 @@ DHCPD_CONF="/root/etc/dhcpd.conf"
 workdir="${cbsd_workdir}"
 
 set -e
-. ${workdir}/cbsd.conf
-. ${workdir}/nc.subr
+. ${distdir}/cbsd.conf
+. ${distdir}/nc.subr
 set +e
 
 export NOCOLOR=1

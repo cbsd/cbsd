@@ -265,7 +265,7 @@ int sum_data_bhyve()
 			fp=fopen(stats_file,"r");
 			if (!fp) {
 				tolog(log_level,"RACCT not exist, create via updatesql\n");
-				sprintf(sql,"/usr/local/bin/cbsd %s/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",workdir,stats_file);
+				sprintf(sql,"/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",stats_file);
 				system(sql);
 				//write into base in next loop (protection if jail was removed in directory not exist anymore
 				continue;

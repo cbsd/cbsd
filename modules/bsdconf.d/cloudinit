@@ -1,0 +1,151 @@
+#!/usr/local/bin/cbsd
+#v12.0.6
+MYARG="mode jname"
+MYOPTARG="fromfile jname"
+MYDESC="cloud-init helper t generate CI yaml"
+ADDHELP="mode can be: show, gen\n\
+pw - plain password, or\n\
+epw - encrypted password\n"
+
+. ${subr}
+
+. ${cbsdinit}
+
+. ${jrcconf}
+[ "${emulator}" != "bhyve" ] && log_err 1 "${MAGENTA}Not in bhyve emulator: ${GREEN}${jname}${NORMAL}"
+
+_MYDIR="${distdir}/modules/bsdconf.d"
+SERVICE="adduser"
+
+cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
+master_prestart_dir="${jailsysdir}/${jname}/master_prestart.d"
+
+f_getvar()
+{
+	local __var_to_get="$1" __var_to_set="$2"
+	[ "$__var_to_set" ] || local value
+	eval [ \"\${$__var_to_get+set}\" ]
+	local __retval=$?
+	eval ${__var_to_set:-value}=\"\${$__var_to_get}\"
+	[ "$__var_to_set" ] || { [ "$value" ] && echo "$value"; }
+	return $__retval
+}
+
+
+# -s source: "meta-data", "network-config" or "user-data"
+show()
+{
+	local _source=
+	local _tpldir="${_MYDIR}/cloud-tpl/${ci_template}"
+	local _keytest
+
+	[ ! -d ${_tpldir} ] && err 1 "${MAGENTA}cloudinit: no template dir: ${GREEN}${_tpldir}${NORMAL}"
+
+	while getopts "s:" opt; do
+		case "${opt}" in
+			s) _source="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# ci_pubkey test
+	. ${distdir}/settings-tui-virtual.subr	# for is_valid_ssh_key
+	if [ -r "${workdir}/${ci_pubkey}" ]; then
+		_keytest=$( /usr/bin/grep -v '#' ${workdir}/${ci_pubkey} | /usr/bin/grep . | /usr/bin/head -n1 )
+		if ! is_valid_ssh_key "${_keytest}"; then
+			err 1 "${MAGENTA}cloudinit: invalid ssh key in ${workdir}/${ci_pubkey}. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${NORMAL}"
+		fi
+	elif [ -r "${ci_pubkey}" ]; then
+		_keytest=$( /usr/bin/grep -v '#' ${ci_pubkey} | /usr/bin/grep . | /usr/bin/head -n1 )
+		if ! is_valid_ssh_key "${_keytest}"; then
+			err 1 "${MAGENTA}cloudinit: invalid ssh key in ${ci_pubkey}. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${NORMAL}"
+		fi
+	else
+		if ! is_valid_ssh_key "${ci_pubkey}"; then
+			err 1 "${MAGENTA}cloudinit: invalid ssh key in ${mtag}. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${NORMAL}"
+		fi
+		_keytest="${ci_pubkey}"
+	fi
+
+	case "${_source}" in
+		meta-data)
+			/usr/bin/sed -e "s:%%ci_jname%%:${ci_jname}:g" \
+			-e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
+			${_tpldir}/${_source}
+			;;
+		network-config)
+			/usr/bin/sed -e "s:%%ci_interface%%:${ci_interface}:g" \
+			-e "s:%%ci_ip4_addr%%:${ci_ip4_addr}:g" \
+			-e "s:%%ci_gw4%%:${ci_gw4}:g" \
+			-e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
+			${_tpldir}/${_source}
+			;;
+		user-data)
+			/usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" \
+			-e "s:%%ci_shell%%:${ci_shell}:g" \
+			-e "s:%%ci_pubkey%%:${_keytest}:g" \
+			${_tpldir}/${_source}
+			;;
+	esac
+}
+
+
+# MAIN
+if [ -r "${fromfile}" ]; then
+
+	unset ci_template ci_user_pw_root_crypt ci_user_add ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_search
+	unset ci_jname ci_fqdn ci_interface ci_ip4_addr ci_gw4 ci_nameserver_address
+
+	. ${fromfile}
+
+	[ -z "${ci_template}" ] && err 1 "${MAGENTA}No ci_template${NORMAL}"
+
+	for i in ${ci_user_add}; do
+		unset login epw ci_pw ci_fullname ci_secgroup ci_group ci_shell res err
+		unset ci_pubkey
+		ci_login="${i}"
+
+		f_getvar ci_user_pw_${i} ci_pw
+		f_getvar ci_user_pw_${i}_crypt ci_epw
+		f_getvar ci_user_gecos_${i} ci_fullname
+		f_getvar ci_user_home_${i} ci_home
+		f_getvar ci_user_shell_${i} ci_shell
+		f_getvar ci_user_member_groups_${i} ci_secgroup
+		f_getvar ci_user_pubkey_${i} ci_pubkey
+
+		case "${mode}" in
+			show)
+				for i in meta-data network-config user-data; do
+					show -s ${i}
+				done
+				ret=$?
+				;;
+			gen)
+				[ ! -d "${cloud_init_dir}" ] && /bin/mkdir -p ${cloud_init_dir}
+				for i in meta-data network-config user-data; do
+					show -s ${i} > ${cloud_init_dir}/${i}
+				done
+
+				if [ "${ci_adjust_inteface_helper}" = "1" ]; then
+					[ ! -d "${master_prestart_dir}" ] && /bin/mkdir -p ${master_prestart_dir}
+					/bin/cp -a ${_MYDIR}/cloud-master_prestart.d/cloud_init_set_netname.sh ${master_prestart_dir}/
+				fi
+
+				;;
+			*)
+				err 1 "${MAGENTA}cloudinit helper: unknown mode: ${GREEN}${mode}${NORMAL}"
+		esac
+
+	done
+	exit 0
+fi
+
+case "${mode}" in
+	show)
+		echo "SHOOW"
+		err=$?
+		;;
+esac
+
+err ${err} "${res}"

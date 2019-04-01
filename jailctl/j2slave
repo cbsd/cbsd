@@ -1,26 +1,91 @@
 #!/usr/local/bin/cbsd
-#v11.0.0
-globalconf="${workdir}/cbsd.conf";
+#v12.0.6
 CBSDMODULE="jail"
-MYARG="node jname"
-MYOPTARG="sharedfs"
+MYARG="node jname progress tryoffline"
+MYOPTARG="sharedfs "
 MYDESC="Transfer jail as slave jail to remote node"
-
-set -e
-. ${globalconf}
-set +e
+ADDHELP="progress=0,1 show progress, by default 1, yes\n"
 
 . ${subr}
-. ${jfs}
-. ${strings}
 
 sharedfs=0
+tryoffline=0
+progress=1
 
-init $*
+. ${cbsdinit}
+
+. ${jfs}
+. ${system}
 
 [ ${sharedfs} -eq 1 ] && exit 0
+
+emulator="jail" # for jname_is_multiple
+jail_list=
+jname_is_multiple
+
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+j2slave_multi_init()
+{
+	local _jname
+
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+
+	. ${distdir}/multiple.subr
+	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd j2slave jname=${_jname} ${cmd} 2>/dev/null )
+		sleep 0.1               # dont bruce taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 0.5
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
 [ -z "${node}" ] && log_err 1 "${MAGENTA}Give me node${NORMAL}"
-[ -z "${jname}" ] && log_err 1 "${MAGENTA}Give me jname${NORMAL}"
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple jailsastart always non interactive
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	fi
+
+	_args=
+
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+		[ "${prefix6}" = "jname=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
+
+	task_owner="j2slave_multiple_remove"
+	j2slave_multi_init -c "${_args}" -o ${task_owner} -n "j2slave"
+	err 0 "${MAGENTA}Multiple j2slave: ${GREEN}done${NORMAL}"
+fi
 
 . ${jrcconf}
 [ $? -eq 1 ] && log_err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
@@ -42,8 +107,14 @@ esac
 [ ! -d "${data}" ] && log_err 1 "${MAGENTA}No such jaildir${NORMAL}"
 cbsdlogger NOTICE ${CBSD_APP}: rsync ${jname} data, port: 1873, secrets: ${etcdir}/${jname}.secrets
 
+if [ ${progress} -eq 1 ]; then
+	_rs_progress="--progress"
+else
+	_rs_progress="--verbose"
+fi
+
 # sync for sysdata
-/usr/local/bin/rsync --port=1873 -arvPzz --devices --numeric-ids --delete --exclude locked --recursive --partial --password-file=${etcdir}/${jname}.secrets ${jailsysdir}/${jname}/ rsync://${jname}@${ip}/${jname}-sysdata/ > ${DEBLOG} 2>&1
+/usr/local/bin/rsync --port=1873 -arzz --partial ${_rs_progress} --devices --numeric-ids --delete --exclude locked --recursive --partial --password-file=${etcdir}/${jname}.secrets ${jailsysdir}/${jname}/ rsync://${jname}@${ip}/${jname}-sysdata/ 2>${DEBLOG}
 _err=$?
 
 case ${_err} in
@@ -58,8 +129,7 @@ case ${_err} in
 esac
 
 # sync for data
-/usr/local/bin/rsync --port=1873 -arvPzz --devices --numeric-ids --delete --recursive --partial --password-file=${etcdir}/${jname}.secrets ${data}/ rsync://${jname}@${ip}/${jname}/ > ${DEBLOG} 2>&1
-
+/usr/local/bin/rsync --port=1873 -arzz --partial ${_rs_progress} --devices --numeric-ids --delete --recursive --partial --password-file=${etcdir}/${jname}.secrets ${data}/ rsync://${jname}@${ip}/${jname}/ 2>${DEBLOG}
 _err=$?
 
 case ${_err} in

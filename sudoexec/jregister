@@ -1,132 +1,162 @@
 #!/usr/local/bin/cbsd
 #v11.0.15
 CBSDMODULE="jail"
-MYARG="jname"
-MYOPTARG="dbfile mode status rcfile"
+MYARG=""
+MYOPTARG="jname dbfile mode status rcfile"
 MYDESC="Register jail records to SQLite from ASCii config or re-populate ASCii config from SQLite"
 ADDHELP="mode= set (apply), unset, show (show current state) or get (show limits)\n\
 status= overwrite default status, for example set it to maintenace by default\n\
 rcfile= alternative path to ascii rc.conf file\n"
 
 . ${subr}
-. ${strings}
-. ${tools}
 
-init $*
+. ${cbsdinit}
 
-. ${workdir}/env_register.subr
+[ -z "${jname}" -a -z "${rcfile}" ] && err 1 "${MAGENTA}Please specify: ${GREEN}jname= ${MAGENTA} or ${GREEN}rcfile=${NORMAL}"
 
+. ${system}
 
-# We accept jname with wildcard '*' e.g.: jail*, *vnet*
-# Also we need personal jname_is_multiple()
-# since jname_is_multiple from tools operate only with SQLite3
-# while jregister works only with ascii-based rc.conf files
+emulator="jail" # for jname_is_multiple
 
-# jail as mask?
-is_mask=0
+# jname_is_multiple but for file in rc.conf version
+jname_rcconf_is_multiple() 
+{
+	jail_list=
 
-jail_pref=$( substr --pos=0 --len=1 --str=${jname} )
+	# We accept jname with wildcard '*' e.g.: jail*, *vnet*
+	# jail as mask?
+	local is_mask=0
 
-if [ "${jail_pref}" = "*" ]; then
-	is_mask=1
-else
-	strpos --str="${jname}" --search="*"
-	is_mask=$?
-fi
+	local jail_pref=$( substr --pos=0 --len=1 --str=${jname} )
 
-jail_list=
-
-if [ ${is_mask} -ne 0 ]; then
-
-	for J in $( /bin/ls ${jailrcconfdir} ); do
-		[ "${J}" = "dir.id" ] && continue
-		jname=
-		[ ! -r ${jailrcconfdir}/${J} ] && continue
-		. ${jailrcconfdir}/${J}
-		[ -z "${jname}" ] && continue
-		jail_list="${jail_list} ${jname}"
-	done
-fi
-
-if [ -n "${jail_list}" ]; then
-	JLIST="${jail_list}"
-else
-	JLIST="${jname}"
-fi
-
-for jname in ${JLIST}; do
-
-	if [ -z "${rcfile}" ]; then
-		JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+	if [ "${jail_pref}" = "*" ]; then
+		is_mask=1
 	else
-		JAILRCCONF="${rcfile}"
+		strpos --str="${jname}" --search="*"
+		is_mask=$?
 	fi
 
-	if [ ! -f  ${JAILRCCONF} ]; then
-		${ECHO} "${MAGENTA}no rcconf ${JAILRCCONF} file for jail: ${GREEN}${jname}${NORMAL}"
-		continue
+	if [ ${is_mask} -ne 0 ]; then
+		jail_list=$( /usr/bin/find ${jailrcconfdir} -depth 1 -maxdepth 1 -name rc.conf_${jname} | /usr/bin/xargs )
+	fi
+}
+
+jname_rcconf_is_multiple
+
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+jregister_multi_init()
+{
+	local _jname _res
+
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${MAGENTA}multiple_processing_spawn: empty -o multiple_task_owner${NORMAL}"
+
+	. ${distdir}/multiple.subr
+	${ECHO} "${MAGENTA}Hint: Press ${GREEN}'Ctrl+t'${MAGENTA} to see last logfile line for active task${NORMAL}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+        _res=$( /usr/bin/basename ${_jname} )
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_res}.log.$$ client_id=${_res} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd jregister rcfile=${_jname} jname=${_res} ${cmd} 2>/dev/null )
+		sleep 0.1               # dont brute taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 0.5
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
+
+# MAIN for multiple jails
+if [ -n "${jail_list}" ]; then
+	# multiple jailsastart always non interactive
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
 	fi
 
-	# MAIN
-	# load defaults
-	readconf jail-freebsd-default.conf
+	_args=
 
-	# make backup before replacewdir
-	/bin/cp -a ${JAILRCCONF} /tmp/rcconf.$$
+	# trim for jname= in "$*"
+	for i in $*; do
+		prefix=
+		prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+		[ "${prefix6}" = "jname=" ] && continue
+		if [ -n "${_args}" ]; then
+			_args="${_args} ${i}"
+		else
+			_args="${i}"
+		fi
+	done
 
-	replacewdir file0=/tmp/rcconf.$$ old="CBSDROOT"
-	. /tmp/rcconf.$$
+	task_owner="jregister_multiple_remove"
+	jregister_multi_init -c "${_args}" -o ${task_owner} -n "jregister"
+	
+	err 0 "${MAGENTA}Multiple jregister: ${GREEN}done${NORMAL}"
+fi
 
-	# extra check for system direcories
-	#if [ ! -r ${jailsysdir}/${jname}/local.sqlite ]; then
-	#	/bin/rm -f /tmp/rcconf.$$
-	#	err 1 "${LRED}Error: no data (shared dir?) or wrong permission in system directory: ${GREEN}${jailsysdir}/${jname}/local.sqlite${NORMAL}"
-	#fi
+# we prefer rcfile
+if [ -z "${rcfile}" ]; then
+	JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+else
+	JAILRCCONF="${rcfile}"
+fi
 
-	# extra check for data direcories
-	_data_files=$( /bin/ls -1 ${data} )
+if [ ! -f  ${JAILRCCONF} ]; then
+	err 1 "${MAGENTA}no rcconf ${JAILRCCONF} file for jail: ${GREEN}${jname}${NORMAL}"
+fi
 
-	#if [ -z "${_data_files}" ]; then
-	#	/bin/rm -f /tmp/rcconf.$$
-	#	err 1 "${LRED}Error: no data (shared dir?) or wrong permission, empty dir: ${GREEN}${data}${NORMAL}"
-	#fi
+. ${distdir}/env_register.subr
 
-	#case "${emulator}" in
-	#	jail)
-	#		[ ! -r ${mount_fstab} ] && ${ECHO} "${LRED}Warning: fstab file not found - this is ok (shared dir?): ${GREEN}${mount_fstab}${NORMAL}"
-	#		[ -r ${mount_fstab} ] && replacewdir file0="${mount_fstab}" old="CBSDROOT"
-	#		[ -r ${mount_fstab}.local ] && replacewdir file0="${mount_fstab}.local" old="CBSDROOT"
-	#		;;
-	#esac
+# MAIN
+# load defaults
+readconf jail-freebsd-default.conf
 
-	# looks fine, here goes!
-	# restore replaces wdir first as real rc.conf
-	/bin/mv /tmp/rcconf.$$ ${JAILRCCONF}
+# make backup before replacewdir
+/bin/cp -a ${JAILRCCONF} /tmp/rcconf.$$
 
-	[ -z "${dbfile}" ] && dbfile="${dbdir}/local.sqlite"
+replacewdir file0=/tmp/rcconf.$$ old="CBSDROOT"
+. /tmp/rcconf.$$
 
-	if [ ! -f "${dbfile}" ]; then
-		${ECHO} "${MAGENTA}inventorydb not found. You must create them first via misc/updatesql: ${GREEN}${dbfile}${NORMAL}"
-		continue
-	fi
+# looks fine, here goes!
+# restore replaces wdir first as real rc.conf
+/bin/mv /tmp/rcconf.$$ ${JAILRCCONF}
 
-	. ${sharedir}/jail-arg
+[ -z "${dbfile}" ] && dbfile="${dbdir}/local.sqlite"
 
-	register_delete_full
-	register_insert_full
+if [ ! -f "${dbfile}" ]; then
+	err 1 "${MAGENTA}inventorydb not found. You must create them first via misc/updatesql: ${GREEN}${dbfile}${NORMAL}"
+fi
 
-	case "${emulator}" in
-		"bhyve")
-			register_insert_bhyve
-			;;
-		"virtualbox")
-			register_insert_virtualbox
-			;;
-		"xen")
-			register_insert_xen
-			;;
-	esac
+. ${sharedir}/jail-arg
 
-	[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
-	/bin/mv ${JAILRCCONF} ${jailsysdir}/${jname}
-done
+register_delete_full
+register_insert_full
+
+case "${emulator}" in
+	"bhyve")
+		register_insert_bhyve
+		;;
+	"virtualbox")
+		register_insert_virtualbox
+		;;
+	"xen")
+		register_insert_xen
+		;;
+esac
+
+[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
+/bin/mv ${JAILRCCONF} ${jailsysdir}/${jname}

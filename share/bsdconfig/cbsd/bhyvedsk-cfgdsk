@@ -3,7 +3,11 @@
 . ${subr}
 . ${strings}
 . ${tools}
-. ${workdir}/virtual.subr
+. ${distdir}/virtual.subr
+
+. ${settingstui}		# invert_checkbox
+. ${distdir}/settings-tui-virtual.subr
+. ${distdir}/settings-tui-bhyve.subr
 
 ############################################################ FUNCTIONS
 
@@ -14,6 +18,7 @@
 dialog_menu_main()
 {
 	local _input _retval _controller_desc _dsk_controller_type
+	local _checkbox="bootable" i _mytest
 
 	local btitle="$DIALOG_BACKTITLE"
 
@@ -23,13 +28,14 @@ dialog_menu_main()
 	local prompt="${_desc}"
 	local sqldelimer=" "
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type; do
+	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type,bootable FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type bootable; do
 		echo "export dsk_controller=\"${dsk_controller}\""
 		echo "export dsk_slot=\"${dsk_slot}\""
 		echo "export dsk_type=\"${dsk_type}\""
+		echo "export bootable=\"${bootable}\""
 	done ) || err 1 "${MAGENTA}Error while create disk map${NORMAL}"
 
-	# get $dsk_size
+	# get ${dsk_size}
 	populate_dsk_size
 
 	_dsk_controller_type=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${dsk_controller}\" )
@@ -52,11 +58,35 @@ dialog_menu_main()
 			;;
 	esac
 
+	# checkbox mark
+	for i in ${_checkbox}; do
+		#eval _new_mytest=\$new_$i
+		#[ -n "${_new_mytest}" ] && eval "${i}=${_new_mytest}"
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+		else
+			export ${i}_mark=" "
+		fi
+	done
+
 	local menu_list="
 		'size'		'${dsk_size}'		'Current disk image size. Resize currently is not supported'
 		'controller'	'${dsk_controller}'	'Select controller. current: ${_controller_desc}'
 		'slot'		'${dsk_slot}'		'Bus slot. 0 - auto'
 		'dsk_type'	'${dsk_type}'		'Disk type ( vhd, vmdk, vdi, qcow )'
+		'dsk_type'	'${dsk_type}'		'Disk type ( vhd, vmdk, vdi, qcow )'
+	" # END-QUOTE
+
+	#checkbox area
+	for i in ${_checkbox}; do
+		eval _mytest=\$${i}_mark
+		[ -z "${_mytest}" ] && _mytest=" "
+		#inc_menu_index item_let
+		menu_list="${menu_list}	'${i}'	'[${_mytest}]'	'${_mydesc}'"
+	done
+
+	menu_list="${menu_list}
 		'-'		'-'			''
 		'remove'	'remove'		'Detach and remove image'
 	" # END-QUOTE
@@ -67,7 +97,7 @@ dialog_menu_main()
 		\"\$btitle\" \
 		\"\$prompt\" \
 		\"\$hline\"  \
-		$menu_list
+		${menu_list}
 
 	# Obtain default-item from previously stored selection
 	f_dialog_default_fetch defaultitem
@@ -107,7 +137,7 @@ MYOPTARG=""
 MYDESC="Edit properties for vitual image of VM"
 CBSDMODULE="bhyve"
 
-globalconf="${workdir}/cbsd.conf";
+globalconf="${distdir}/cbsd.conf";
 
 set -e
 . ${globalconf}
@@ -116,11 +146,11 @@ set +e
 . ${subr}
 . ${strings}
 . ${tools}
-init $*
+. ${cbsdinit}
 
 . ${dialog}
 
-. ${workdir}/bsdconfig.subr
+. ${distdir}/bsdconfig.subr
 . ${BSDCFG_LIBE}/${APP_DIR}/include/messages-bhyvedsk.subr
 
 . ${jrcconf}
@@ -128,7 +158,7 @@ init $*
 [ "${emulator}" != "bhyve" ] && err 1 "${MAGENTA}Not in bhyve mode${NORMAL}"
 
 . ${distdir}/share/bhyve/bhyve-dsk.subr
-. ${workdir}/bhyve.subr
+. ${distdir}/bhyve.subr
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -154,7 +184,9 @@ f_mustberoot_init
 # Select from SQL by dsk_path. Also this variable used in populate_dsk_size func
 dsk_path="${dsk}.vhd"
 
-. ${workdir}/bhyve.subr
+. ${distdir}/bhyve.subr
+
+new_checkbox=
 
 #
 # Loop over the main menu until we've accomplished what we came here to do
@@ -163,8 +195,11 @@ while :; do
 	dialog_menu_main
 	ret=$?
 
+	#index=${mtag%% *}
+	#mychoice=${mtag##* }
+
 	command=
-	case $ret in
+	case ${ret} in
 		${DIALOG_OK})
 			f_dialog_menutag_fetch mtag
 			case "$mtag" in
@@ -187,6 +222,12 @@ while :; do
 						media mode=remove name=${real_dsk_name} path=${real_dsk_path} jname=${jname} type="hdd"
 						f_die
 					fi
+					;;
+				"bootable")
+					invert_checkbox ${mtag}
+					#new_bootable="${bootable}"
+					bhyve-dsk mode=modify bootable=${bootable} jname=${jname} controller="${dsk_controller}" dsk="${dsk}.vhd" > /dev/null 2>&1
+					continue
 					;;
 				*)
 					;;
