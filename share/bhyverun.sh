@@ -364,7 +364,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 done
 
 # live migration todo
-# check for bhyve migrated successfull to me ( bregister and/or bstatus passed ? )
+# check for bhyve migrated successful to me ( bregister and/or bstatus passed ? )
 
 # bhyverun.sh QUEUE
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
