@@ -8,8 +8,8 @@
 1. [Project Description - What does the project do?](#project-description)
 2. [Usage - Configuration options and additional functionality](#usage)
 3. [Limitations - OS compatibility, etc.](#limitations)
-4. [Contributing - Contribute the project](#contributing)
-5. [Support - Maillist, Talks, Contacts](#support)
+4. [Contributing - Contribute to the project](#contributing)
+5. [Support - Mailing List, Talks, Contacts](#support)
 
 ## project description
 
@@ -39,6 +39,6 @@ Tested with following OSes and distribution:
 
 * For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
 * Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
-* Or subscribe to maillist by sending email to: cbsd+subscribe@lists.tilda.center
+* Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
 * Other contact: https://www.bsdstore.ru/en/feedback.html
 
