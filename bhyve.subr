@@ -149,21 +149,21 @@ store_bhyve_pci_slot()
 	local _tmp_bhyve_pci_index=
 
 	# store into temporary pcibus map to determine/avoid bus id collision
-	cbsdsql ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+	cbsdsqlrw ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
 
 	_search_condition="pcislot_name=\"${_pcislot_name}\""
 	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
-	_tmp_bhyve_pci_index=$( cbsdsql ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
 
 	if [ -n "${_tmp_bhyve_pci_index}" ]; then
 		# update modified flags
-		cbsdsql ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+		cbsdsqlrw ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
 		[ "${_tmp_bhyve_pci_index}" = "${_pcislot_bus}" ] && return 0		# record already exist (todo: check for bus/func equal
 		# pci slot not equal, update
-		cbsdsql ${_mydb} "UPDATE pcibus SET pcislot_bus=\"${_pcislot_bus}\" WHERE ${_search_condition}"
+		cbsdsqlrw ${_mydb} "UPDATE pcibus SET pcislot_bus=\"${_pcislot_bus}\" WHERE ${_search_condition}"
 	else
 		# store pci bus map
-		cbsdsql ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+		cbsdsqlrw ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
 	fi
 }
 
@@ -218,12 +218,12 @@ next_pci_id()
 		_search_condition="pcislot_name=\"${_pcislot_name}\""
 		[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
 		#echo "x: ${_search_condition}" >> /tmp/query.txt
-		_tmp_bhyve_pci_index=$( cbsdsql ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+		_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
 		if [ -n "${_tmp_bhyve_pci_index}" ]; then
 			#echo "found!!: ${_tmp_bhyve_pci_index}" >> /tmp/query.txt
 
 			# update modified
-			cbsdsql ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+			cbsdsqlrw ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
 
 			bhyve_pci_index=${_tmp_bhyve_pci_index}
 			return 0
@@ -238,7 +238,7 @@ next_pci_id()
 
 	for bhyve_pci_index in $( /usr/bin/seq ${_start_bus_id} ${_end_bus_id} ); do
 
-		_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE pcislot_bus=${bhyve_pci_index} LIMIT 1 2>/dev/null )
+		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE pcislot_bus=${bhyve_pci_index} LIMIT 1 2>/dev/null )
 
 		[ -n "${_res}" ] && continue		# probably already used by another devices
 
@@ -407,9 +407,9 @@ compile_dsk_args()
 	local _pcislot_args=
 
 	# temporary workaround for Alex' (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
-	#	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
+	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	# select only direct-bus attached
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,bootable FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot bootable; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,bootable FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot bootable; do
 
 		case "${dsk_controller}" in
 			virtio-blk|ahci-hd)
@@ -421,7 +421,7 @@ compile_dsk_args()
 				;;
 		esac
 
-		dsk_conf=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -473,7 +473,7 @@ compile_dsk_args()
 	done
 
 	# shared devices
-	_shared_devs=$( cbsdsql storage_media "SELECT path FROM media WHERE type=\"shared\" AND jname=\"${jname}\"" )
+	_shared_devs=$( cbsdsqlro storage_media "SELECT path FROM media WHERE type=\"shared\" AND jname=\"${jname}\"" )
 
 	for i in ${_shared_devs}; do
 
@@ -525,7 +525,7 @@ compile_cd_args()
 
 	#echo "IN CD" >> /tmp/cd.txt
 
-	eval $( cbsdsql storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
+	eval $( cbsdsqlro storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
 
 		if ! next_pci_id -n ahci-cd -d ${path}-${idx}; then
 			# no free pci bus
@@ -593,8 +593,8 @@ compile_dsk_controller_args()
 	local _dsk_path=
 	local _i
 
-	_dsk_controller_name=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name!=\"0\" )
-	_dsk_controller_type=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+	_dsk_controller_name=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name!=\"0\" )
+	_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
 
 	[ -z "${_dsk_controller_name}" ] && return 0
 
@@ -611,7 +611,7 @@ compile_dsk_controller_args()
 
 	dsk_controller_args="-s ${_pcislot_args},${_dsk_controller_type}"
 
-	_dsk_path=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
+	_dsk_path=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
 
 	for dsk_path in ${_dsk_path}; do
 		# test for full path. If path not started from '/' - append $data dir
@@ -642,13 +642,13 @@ compile_nvme_args()
 
 	nvme_args=
 
-	cur_nvme_count=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
+	cur_nvme_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
 
 	[ "${cur_nvme_count}" = "0" ] && return 1
 
 	${ECHO} "${MAGENTA}NVMe controller: ${GREEN}${cur_nvme_count}${NORMAL}"
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT id,devpath,ram,maxq,qsz,ioslots,sectsz,ser FROM bhyve_nvme LIMIT 1" | while read id devpath ram maxq qsz ioslots sectsz ser; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT id,devpath,ram,maxq,qsz,ioslots,sectsz,ser FROM bhyve_nvme LIMIT 1" | while read id devpath ram maxq qsz ioslots sectsz ser; do
 		[ -z "${id}" ] && return 0
 		echo "export nvme_id=\"${id}\""
 		echo "export nvme_devpath=\"${devpath}\""
@@ -728,7 +728,7 @@ compile_nic_args()
 
 	local errmsg=
 
-	eval $( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
 
 		case "${nic_driver}" in
 			e1000)
@@ -852,7 +852,7 @@ compile_nic_args()
 		if [ "${nic_hwaddr}" = "0" ]; then
 			nic_hwaddr=$( mac_gen 00:a0:98 )
 			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
-			cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
 		fi
 
 		# echo "search next_pci_id -n ${net_emul} -d ${nic_id}" >> /tmp/net.txt
@@ -981,7 +981,7 @@ compile_bhyve_cpus_args()
 			;;
 	esac
 
-	_query=$( cbsdsql local SELECT sockets,cores,threads FROM vm_cpu_topology WHERE name=\"${vm_cpu_topology}\" )
+	_query=$( cbsdsqlro local SELECT sockets,cores,threads FROM vm_cpu_topology WHERE name=\"${vm_cpu_topology}\" )
 	if [ -z "${_query}" ]; then
 		${ECHO} "${MAGENTA}Warning: no vm_cpu_topology: ${GREEN}${vm_cpu_topology}${MAGENTA}. Skip.${NORMAL}"
 		return 0
@@ -1020,7 +1020,7 @@ compile_pci_passthru_args()
 	local ppt _i
 	local _pcislot_args=
 
-	ppt=$( cbsdsql local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
+	ppt=$( cbsdsqlro local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 
 	[ -z "${ppt}" ] && return 0
 
@@ -1136,7 +1136,7 @@ compile_virtio_9p_args()
 
 	sqldelimer=" "
 
-	eval $( cbsdsql ${mydb} SELECT p9path,p9device FROM p9shares 2>/dev/null | while read _p9path _p9device; do
+	eval $( cbsdsqlro ${mydb} SELECT p9path,p9device FROM p9shares 2>/dev/null | while read _p9path _p9device; do
 		echo "p9path${shares_num}=\"${_p9path}\""
 		echo "p9device${shares_num}=\"${_p9device}\""
 		shares_num=$(( shares_num + 1 ))
@@ -1221,7 +1221,7 @@ compile_live_migration_args()
 	fi
 	if [ -z "${_src_nodename_ip}" ]; then
 		# obtain IP of source node from database
-		_src_nodename_ip=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${_src_nodename}\" )
+		_src_nodename_ip=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${_src_nodename}\" )
 		if [ -z "${_src_nodename_ip}" ]; then
 			${ECHO} "${MAGENTA}Failed to obtain _src_nodename_ip for node ${_src_nodename}. Is this node added to cluster? Please use first: ${GREEN}cbsd node mode=add node=${_src_nodename}${NORMAL}"
 			return 1
@@ -1371,7 +1371,7 @@ bhyve_remove_dsk()
 	local dsk="${1}"; shift
 	[ -z "${jname}" -o -z "${dsk}" ] && return 0
 
-	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk}\" AND jname=\"${jname}\"
+	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_path=\"${dsk}\" AND jname=\"${jname}\"
 
 	if [ "${zfsfeat}" = "1" ]; then
 		readconf zfs.conf
@@ -1401,7 +1401,7 @@ bhyve_remove_nic()
 	local id="${1}"; shift
 	[ -z "${jname}" -o -z "${id}" ] && return 0
 
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvenic WHERE id=\"${id}\" AND jname=\"${jname}\"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvenic WHERE id=\"${id}\" AND jname=\"${jname}\"
 
 	return 0
 }
@@ -1455,7 +1455,7 @@ compile_vnc_args()
 	fi
 
 	# jailed?
-	_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
 	[ -z "${_jailed}" ] && _jailed="0"
 
 	# this is jailed bhyve, try to obtain jail IPs

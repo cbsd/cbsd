@@ -72,7 +72,7 @@ start_bhyve()
 	local _cloud_source_is_zvol
 	local _cloud_source_zvol _dsk_source_zvol
 
-	local is_ppt=$( cbsdsql ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
+	local is_ppt=$( cbsdsqlro ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 	[ -n "${is_ppt}" ] && passt_args="-S"
 
 	# flags which means that the CD as boot device will use only once
@@ -96,7 +96,7 @@ start_bhyve()
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstart status=1
 	fi
 
-	vm_boot=$( cbsdsql ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
+	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
 
 	# live migration todo:
 	# a) no cdrom (error?)
@@ -302,10 +302,10 @@ start_bhyve()
 	[ -f ${jailsysdir}/${jname}/bhyve_pciid ] && /bin/rm -f ${jailsysdir}/${jname}/bhyve_pciid
 
 	# mark modified field to FALSE in pcibus table to find unmodified entries for pciid cleanup
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
 
 	# truncate pcibus_run table
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus_run
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus_run
 
 	# init bhyve_cpus
 	if ! compile_bhyve_cpus_args; then
@@ -428,24 +428,24 @@ start_bhyve()
 	passthr=""
 
 	# purge old/orphaned devices from pcibus table (which not modified by compile_args)
-	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE modified=false 2>/dev/null )
+	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE modified=false 2>/dev/null )
 	if [ -n "${_res}" ]; then
-		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus WHERE modified=false 2>/dev/null | while read _name _desc; do
+		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus WHERE modified=false 2>/dev/null | while read _name _desc; do
 			# debug: echo "Prune for: [${_name} ${_desc}]"
 			cbsdlogger NOTICE ${CBSD_APP}: pcibus map: purge for old/orphaned devices for ${jname}: [${_name} ${_desc}]
 		done
-		cbsdsql ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus WHERE modified=false
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus WHERE modified=false
 	fi
 
 	# extra validate we have no collision in PCI bus
-	_res=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite 'SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1' 2>/dev/null )
+	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1' 2>/dev/null )
 
 	if [ -n "${_res}" ]; then
 		sqllistdelimer=" "
 		sqllist "${_res}" pcislot_bus pcislot_bus_count
 		unset sqllistdelimer
 		${ECHO} "${LRED}Error: ${MAGENTA}PCI collision for bus: ${GREEN}${pcislot_bus}${MAGENTA}, count=${pcislot_bus_count}:${NORMAL}"
-		cbsdsql ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus_run WHERE pcislot_bus=${pcislot_bus}
+		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT pcislot_name,pcislot_desc FROM pcibus_run WHERE pcislot_bus=${pcislot_bus}
 		echo
 		${ECHO} "${MAGENTA}Please use bconfig to re-configure devices or use: ${GREEN}cbsd bpcibus jname=${jname} mode=reset${MAGENTA} to reset${NORMAL}"
 		bcleanup jname="${jname}"
@@ -460,7 +460,7 @@ start_bhyve()
 	# The parameters in local rc.conf file can overwrite the settings in the database
 	[ -r ${jailsysdir}/${jname}/etc/rc.conf ] && . ${jailsysdir}/${jname}/etc/rc.conf
 
-	[ -r "${jailsysdir}/${jname}/helpers/brctl.sqlite" ] && nice=$( cbsdsql ${jailsysdir}/${jname}/helpers/brctl.sqlite "SELECT cur FROM forms WHERE param=\"nice\"" )
+	[ -r "${jailsysdir}/${jname}/helpers/brctl.sqlite" ] && nice=$( cbsdsqlro ${jailsysdir}/${jname}/helpers/brctl.sqlite "SELECT cur FROM forms WHERE param=\"nice\"" )
 	[ -z "${nice}" ] && nice="0"
 	[ "${nice}" != "0" ] && ${ECHO} "${MAGENTA}bhyve renice: ${GREEN}${nice}${NORMAL}"
 
@@ -633,13 +633,13 @@ EOF
 
 
 	if [ "${lm}" = "0" ]; then
-		cbsdsql local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
+		cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
 		# update state_time
-		cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
 
 		# update state_time, local SQLite for back compatible
-		cbsdsql local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
+		cbsdsqlrw local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
 
 		if [ "${vm_efi}" = "none" ]; then
 			err 0 "${MAGENTA}Use ${GREEN}cbsd blogin ${jname}${MAGENTA} for attach to console${NORMAL}"
@@ -756,7 +756,7 @@ else
 		RHST="${lm_rnodename}"
 	fi
 	# extra check
-	_tmp=$( cbsdsql nodes SELECT ip FROM nodelist WHERE nodename=\"${lm_rnodename}\" )
+	_tmp=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${lm_rnodename}\" )
 	[ -z "${_tmp}" ] && err 1 "${MAGENTA}No such node in the current CBSD cluster: ${GREEN}${lm_rnodename}${NORMAL}"
 
 	# todo: check for node idle and online, rexe?
@@ -778,7 +778,7 @@ else
 fi
 
 # jailed bhyve?
-_jailed=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
+_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
 [ -z "${_jailed}" ] && _jailed="0"
 if [ "${_jailed}" != "0" ]; then
 	case "${_jailed}" in
@@ -839,7 +839,7 @@ fi
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
 # todo: NVMe
 # todo: Controller
-MDFILE=$( cbsdsql ${main_sqlite_local} SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+MDFILE=$( cbsdsqlro ${main_sqlite_local} SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 if [ -z "${MDFILE}" ]; then
 	${ECHO} "${LCYAN}Notice: ${MAGENTA}no any storage device found for this VM${NORMAL}"
 else
@@ -877,8 +877,8 @@ done
 if [ "${lm}" = "0" ]; then
 	# test for incorrect state
 	if [ ${status} -eq 3 ]; then
-		cbsdsql local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
-		comment="cbsdsql local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
+		cbsdsqlrw local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
+		comment="cbsdsqlro local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
 		if [ "${comment}" = "Stopping_VM" ]; then
 			jswmode jname=${jname} mode=master comment='0'
 		else

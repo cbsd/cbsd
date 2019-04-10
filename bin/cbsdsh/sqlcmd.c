@@ -72,7 +72,7 @@ sqlCB(sqlite3_stmt * stmt)
 }
 
 int
-sqlitecmd(int argc, char **argv)
+sqlitecmdrw(int argc, char **argv)
 {
 	sqlite3        *db;
 	int		res;
@@ -116,7 +116,8 @@ sqlitecmd(int argc, char **argv)
 		sprintf(dbfile,"%s",argv[1]);
 	}
 
-	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
+	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL))) {
+//	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
 		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
 		free(dbfile);
 		return 1;
@@ -173,6 +174,100 @@ sqlitecmd(int argc, char **argv)
 }
 
 
+int
+sqlitecmdro(int argc, char **argv)
+{
+	sqlite3        *db;
+	int		res;
+	int		i;
+	char		*query;
+	char		*tmp;
+	char		*dbdir;
+	char		*dbfile;
+	int		ret = 0;
+	sqlite3_stmt   *stmt;
+	char		*cp;
+	int		maxretry = 20;
+	int		retry = 0;
+
+//	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
+//	const char journal_mode_sql[] = "PRAGMA journal_mode = WAL;";
+
+	if ((cp = lookupvar("sqldelimer")) == NULL)
+		delim = DEFSQLDELIMER;
+	else
+		delim = cp;
+
+	if (argc < 3) {
+		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
+		return 0;
+	}
+
+	if ( argv[1][0]!='/' ) {
+		//search file in dbdir
+		dbdir = lookupvar("dbdir");
+		i = strlen(dbdir) + strlen(argv[1]);
+		dbfile = calloc(strlen(dbdir) + strlen(argv[1]) + strlen(DBPOSTFIX) + 1, sizeof(char *));
+
+		if (dbfile == NULL) {
+			error("Out of memory!\n");
+			return (1);
+		}
+		sprintf(dbfile, "%s/%s%s", dbdir, argv[1], DBPOSTFIX);
+	} else {
+		dbfile = calloc(strlen(argv[1]) + 1, sizeof(char *));
+		sprintf(dbfile,"%s",argv[1]);
+	}
+
+	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READONLY, NULL))) {
+		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
+		free(dbfile);
+		return 1;
+	}
+	free(dbfile);
+
+	res = 0;
+	for (i = 2; i < argc; i++)
+		res += strlen(argv[i]) + 1;
+	if (res) {
+		query = (char *)sqlite3_malloc(res);
+		tmp = query;
+		for (i = 2; i < argc; i++) {
+			strcpy(tmp, argv[i]);
+			tmp += strlen(tmp);
+			*tmp = ' ';
+			tmp++;
+		}
+		tmp[-1] = 0;
+	}
+
+	do {
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+		if (ret==SQLITE_OK)
+			break;
+		if (ret==SQLITE_BUSY)
+			usleep(5000);
+		retry++;
+		if ( retry>maxretry )
+			break;
+//		sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
+	} while (ret != SQLITE_OK);
+
+	if (ret == SQLITE_OK) {
+		ret = sqlite3_step(stmt);
+
+		while ( ret == SQLITE_ROW ) {
+			sqlCB(stmt);
+			ret = sqlite3_step(stmt);
+		}
+	}
+
+	sqlite3_finalize(stmt);
+	sqlite3_free(query);
+	sqlite3_close(db);
+
+	return 0;
+}
 
 int
 update_idlecmd(int argc, char **argv)
@@ -189,7 +284,7 @@ update_idlecmd(int argc, char **argv)
 	sprintf(str, "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename='%s'", argv[1]);
 
 	char           *a[] = {NULL, "nodes", str};
-	sqlitecmd(3, a);
+	sqlitecmdrw(3, a);
 
 	free(str);
 
