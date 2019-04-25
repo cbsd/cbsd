@@ -11,19 +11,19 @@ register_delete_full()
 
 	# export media data to ascii file
 	media mode=dump jname=${jname} > ${MEDIASQL}
-	cbsdsql storage_media DELETE FROM media WHERE jname=\"${jname}\" 2>/dev/null
+	cbsdsqlrw storage_media DELETE FROM media WHERE jname=\"${jname}\" 2>/dev/null
 
 	jmkrctlconf jname=${jname} type=rctl mode=tofile file=${LIMITS}
 	jmkrctlconf jname=${jname} type=extra mode=tofile file=${LIMITS}.extra
 
-	cbsdsql local "DELETE FROM jails WHERE jname='${jname}'"
-	cbsdsql local "DELETE FROM rctl WHERE jname='${jname}'" 2>/dev/null
-	cbsdsql local "DELETE FROM bhyve WHERE jname='${jname}'" 2>/dev/null
-	cbsdsql local "DELETE FROM xen WHERE jname='${jname}'" 2>/dev/null
-	cbsdsql local "DELETE FROM virtualbox WHERE jname='${jname}'" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM jails WHERE jname='${jname}'"
+	cbsdsqlrw local "DELETE FROM rctl WHERE jname='${jname}'" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM bhyve WHERE jname='${jname}'" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM xen WHERE jname='${jname}'" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM virtualbox WHERE jname='${jname}'" 2>/dev/null
 
-	cbsdsql local "DELETE FROM virtualboxdsk WHERE jname=\"${jname}\" 2>/dev/null
-	cbsdsql local "DELETE FROM virtualboxnic WHERE jname=\"${jname}\" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM virtualboxdsk WHERE jname=\"${jname}\" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM virtualboxnic WHERE jname=\"${jname}\" 2>/dev/null
 }
 
 register_insert_full()
@@ -59,7 +59,7 @@ register_insert_full()
 
 	_sqlvalue="${_sqlvalue}, ${status}"
 
-	cbsdsql local "INSERT INTO jails ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw local "INSERT INTO jails ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
 	[ -f "${LIMITS}" ] && jmkrctlconf jname=${jname} type=rctl mode=tosql file=${LIMITS}
 	[ -f "${LIMITS}.extra" ] && jmkrctlconf jname=${jname} type=extra mode=tosql file=${LIMITS}.extra
@@ -76,7 +76,7 @@ register_insert_bhyve()
 {
 	local MYCOL _val _i _n _sql _sqlparam _sqlvalue _jid
 
-	. ${sharedir}/bhyve.conf
+	. ${distsharedir}/bhyve.conf
 
 	_sqlparam="jname "
 	_sqlvalue="'${jname}'"
@@ -112,17 +112,17 @@ register_insert_bhyve()
 		_sqlvalue="${_sqlvalue}, '${_val}'"
 	done
 
-	cbsdsql local "INSERT INTO bhyve ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw local "INSERT INTO bhyve ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
 
 	# settings already exist?
-	_ret=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT created FROM settings LIMIT 1" )
+	_ret=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT created FROM settings LIMIT 1" )
 	[ -n "${_ret}" ] && return 0
 
 	# new schema:
-	. ${sharedir}/bhyve_settings.conf
+	. ${distsharedir}/bhyve_settings.conf
 
 	_sqlparam=
 	_sqlvalue=
@@ -164,7 +164,10 @@ register_insert_bhyve()
 		fi
 	done
 
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+
+	# update PID for domain ( 0 for offline and actual process ID for live migrated vm)
+	bset jname=${jname} vm_pid=auto > /dev/null
 }
 
 
@@ -172,7 +175,7 @@ register_insert_virtualbox()
 {
 	local MYCOL _val _i _n _sql _sqlparam _sqlvalue _jid
 
-	. ${sharedir}/virtualbox.conf
+	. ${distsharedir}/virtualbox.conf
 
 	_sqlparam="jname "
 	_sqlvalue="'${jname}'"
@@ -197,10 +200,10 @@ register_insert_virtualbox()
 		_sqlvalue="${_sqlvalue}, '${_val}'"
 	done
 
-	cbsdsql local "INSERT INTO virtualbox ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw local "INSERT INTO virtualbox ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
 	# bhyvedsk
-	for last_disk in $( seq 1 16 ); do
+	for last_disk in $( /usr/bin/seq 1 16 ); do
 		unset dsk_controller dsk_path dsk_slot dsk_type
 		eval dsk_controller="\$dsk_controller$last_disk"
 		[ -z "${dsk_controller}" ] && break
@@ -209,14 +212,14 @@ register_insert_virtualbox()
 		eval dsk_type="\$dsk_type$last_disk"
 
 		if [ -n "${virtio_type}" ]; then
-			cbsdsql local "INSERT INTO virtualboxdsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${dsk_controller}\",\"${dsk_path}\",\"${dsk_slot}\" )"
+			cbsdsqlrw local "INSERT INTO virtualboxdsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${dsk_controller}\",\"${dsk_path}\",\"${dsk_slot}\" )"
 		else
-			cbsdsql local "INSERT INTO virtualboxdsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${dsk_path}\",\"${dsk_slot}\" )"
+			cbsdsqlrw local "INSERT INTO virtualboxdsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${dsk_path}\",\"${dsk_slot}\" )"
 		fi
 	done
 	
 	# bhyvenic
-	for last_nic in $( seq 1 16 ); do
+	for last_nic in $( /usr/bin/seq 1 16 ); do
 		unset nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr
 
 		eval nic_driver="\$nic_driver$last_nic"
@@ -228,7 +231,7 @@ register_insert_virtualbox()
 		eval nic_parent="\$nic_parent$last_nic"
 		eval nic_hwaddr="\$nic_hwaddr$last_nic"
 
-		cbsdsql local "INSERT INTO virtualboxnic ( jname,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr  ) VALUES ( \"${jname}\",\"${nic_order}\",\"${nic_driver}\",\"${nic_slot}\",\"${nic_type}\",\"${nic_parent}\",\"${nic_hwaddr}\" )"
+		cbsdsqlrw local "INSERT INTO virtualboxnic ( jname,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr  ) VALUES ( \"${jname}\",\"${nic_order}\",\"${nic_driver}\",\"${nic_slot}\",\"${nic_type}\",\"${nic_parent}\",\"${nic_hwaddr}\" )"
 	done
 }
 
@@ -237,7 +240,7 @@ register_insert_xen()
 {
 	local MYCOL _val _i _n _sql _sqlparam _sqlvalue _jid
 
-	. ${sharedir}/xen.conf
+	. ${distsharedir}/xen.conf
 
 	_sqlparam="jname "
 	_sqlvalue="'${jname}'"
@@ -273,17 +276,17 @@ register_insert_xen()
 		_sqlvalue="${_sqlvalue}, '${_val}'"
 	done
 
-	cbsdsql local "INSERT INTO xen ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw local "INSERT INTO xen ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
 
 	# settings already exist?
-	_ret=$( cbsdsql ${jailsysdir}/${jname}/local.sqlite "SELECT created FROM settings LIMIT 1" )
+	_ret=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT created FROM settings LIMIT 1" )
 	[ -n "${_ret}" ] && return 0
 
 	# new schema:
-	. ${sharedir}/xen_settings.conf
+	. ${distsharedir}/xen_settings.conf
 
 	_sqlparam=
 	_sqlvalue=
@@ -325,7 +328,7 @@ register_insert_xen()
 		fi
 	done
 
-	cbsdsql ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
 
 }
 

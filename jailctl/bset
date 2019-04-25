@@ -4,14 +4,15 @@ MYARG="jname"
 CBSDMODULE="bhyve"
 
 . ${subr}
-. ${sharedir}/bhyve.conf
+. ${distsharedir}/bhyve.conf
 
 #concat for bhyve arg
-JARG="${MYCOL} nice"
+JARG="${MYCOL} nice vm_pid"
 
 MYOPTARG="$JARG"
-MYDESC="Modify parameter for jail"
-ADDHELP="mode=force for modification on the running jail\n"
+MYDESC="Modify parameter for bhyve"
+ADDHELP="mode=force for modification on the running jail\n\
+vm_pid - when 'auto', force to update pid from process list\n"
 
 . ${tools}
 . ${strings}
@@ -35,7 +36,8 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 
-[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
+readconf cbsd_queue.conf
+[ -z "${cbsd_bhyve_queue_name}" ] && cbsd_bhyve_queue_name="/clonos/bhyvevms/"
 
 update_jails()
 {
@@ -55,6 +57,27 @@ update_jails()
 				VAL=$(( ${VAL} * 1024 * 1024 ))
 			fi
 		;;
+		vm_pid)
+			VAL=
+			case "${vm_pid}" in
+				[Aa][Uu][Tt][Oo])
+					. ${distdir}/bhyve.subr
+					check_for_bhyve_process -j ${jname}
+					if [ $? -eq 0 ]; then
+						VAL=0
+					else
+						VAL="${vm_pid}"
+					fi
+					;;
+				*)
+					VAL="${vm_pid}"
+					;;
+			esac
+			[ -z "${VAL}" ] && err 1 "${N1_COLOR}bset vm_pid: unable to determine pid for: ${N2_COLOR}${jname}${N0_COLOR}"
+
+			if is_number ${VAL}; then
+				err 1 "${N1_COLOR}bset vm_pid: not number: ${N2_COLOR}${VAL}${N0_COLOR}"
+			fi
 	esac
 
 	[ -z "${i}" ] && return 0
@@ -63,32 +86,36 @@ update_jails()
 		nice)
 			_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
 			if [ ! -r ${_formfile} ]; then
-				${ECHO} "${MAGENTA}No such rctl file: ${GREEN}${_formfile}${NORMAL}"
+				${ECHO} "${N1_COLOR}No such rctl file: ${N2_COLOR}${_formfile}${N0_COLOR}"
 				return 1
 			fi
-			cbsdsql ${_formfile} UPDATE forms set cur=\"${VAL}\" WHERE param=\"nice\"
+			cbsdsqlrw ${_formfile} UPDATE forms set cur=\"${VAL}\" WHERE param=\"nice\"
 			brenice jname=${jname}
 			;;
+		vm_pid)
+			# pid stored in jails settings as JID (should be moved to settings table)
+			cbsdsqlrw local "UPDATE jails SET jid=\"${VAL}\" WHERE jname=\"${jname}\""
+			;;
 		*)
-			cbsdsql ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
-
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
 			# back compatible
-			cbsdsql local UPDATE bhyve SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+			cbsdsqlrw local UPDATE bhyve SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
 			;;
 	esac
 
 	cbsdlogger NOTICE ${CBSD_APP}: ${argpart}: ${VAL}
-	${ECHO} "${argpart}: ${MAGENTA}changed${NORMAL}"
+	${ECHO} "${argpart}: ${N1_COLOR}changed${N0_COLOR}"
 
 }
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
 jid=$( jstatus jname=${jname} )
-[ $? -eq 0 ] && err 1 "${MAGENTA}No such jail: ${GREEN}${jname}${NORMAL}"
+[ $? -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 	allstr="$@"
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ${allstr}
+	echo "QUEUE OK: cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=update ${allstr}"
+	[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=update ${allstr}
 fi
 
 for n in "$@"; do

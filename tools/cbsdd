@@ -30,20 +30,20 @@ shmux()
 
 	if [ -f "${_locallockfile}" ]; then
 		if check_locktime ${_locallockfile} >/dev/null 2>&1; then
-			cbsdsql nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE ip=\"${_ip}\""
+			cbsdsqlrw nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE ip=\"${_ip}\""
 		fi
 		return 0
 	fi
 
 	SSH_ARGS="-oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
-	[ ! -f "${_locallockfile}" ] && ${miscdir}/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} misc/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated 2>/dev/null
+	[ ! -f "${_locallockfile}" ] && ${miscdir}/daemon -u ${cbsduser} ${_locallock} /usr/bin/ssh ${SSH_ARGS} "${_remotelock} /usr/local/cbsd/misc/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated 2>/dev/null
 }
 
 update_jaillock()
 {
 	local jname
 
-	for jname in $( cbsdsql local SELECT jname FROM jails WHERE status=1 ); do
+	for jname in $( cbsdsqlro local SELECT jname FROM jails WHERE status=1 ); do
 		jaillock="${jailsysdir}/${jname}/locked"
 		/usr/sbin/daemon -f -u ${cbsduser} /usr/bin/lockf -s -t0 ${ftmpdir}/update_jaillock.lock /usr/bin/touch ${jaillock}
 	done
@@ -87,7 +87,7 @@ retrinv_loop=0
 echo $$ > /var/run/cbsdd.pid
 trap "/bin/rm -f /var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 
-cbsdsql cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
+cbsdsqlrw cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 
 # remove stale lock and trash files
 /usr/bin/find -E ${ftmpdir} -depth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
@@ -106,7 +106,7 @@ while [ 1 ]; do
 	# make sshmux control master
 	if [ ${sqlreplica} -eq 1 ]; then
 		sqldelimer=" "
-		cbsdsql nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
+		cbsdsqlro nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
 			[ -n "${_ip}" ] && shmux
 			if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
 				cbsdlogger NOTICE ${CBSD_APP}: update remote inventory for ${_ip} via loop_per_retrinv [${loop_per_retrinv}]
@@ -127,7 +127,7 @@ while [ 1 ]; do
 
 	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
 	_err=0
-	queue=$( cbsdsql cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
 
 	if [ -z "${queue}" -o "${queue}" = "0" ]; then
 		echo "cbsdd: empty taskd queue, sleep for 15 sec.."

@@ -1,15 +1,16 @@
 #!/usr/local/bin/cbsd
-#v11.1.3
+#v12.0.9
 CBSDMODULE="node"
 MYARG="mode"
-MYOPTARG="node port rootkeyfile pw header allinfo display ip"
+MYOPTARG="node port rootkeyfile cbsdkeyfile pw header allinfo display ip"
 MYDESC="Manipulate or show information for remote nodes"
 ADDHELP="mode = add, remove, list, status\n\
 node = remote node ip or fqdn\n\
 port = ssh port of remote node\n\
 ip = IP address for update\n\
 rootkeyfile = path to id_rsa for root access\n\
-pw = password of cbsd user from remote node\n\
+pw = password of cbsd user from remote node (when cbsdkeyfile= is not used)\n\
+cbsdkeyfile = path to cbsd user id_rsa insead of pw\n\
 header = print header in node list\n\
 allinfo = 1 (default) show all info for nodelist, 0 - only nodename\n\
 display= list by comma for column. Default: nodename,ip,port,keyfile,status,idle\n\
@@ -35,7 +36,7 @@ myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
 
 show_header()
 {
-	local _header="${WHITE}${BOLD}${myheader}${NORMAL}"
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
 	[ ${header} -eq 1 ] && ${ECHO} "${_header}"
 }
 
@@ -46,7 +47,7 @@ getpw()
 
 	trap "stty ${oldmodes}" HUP INT ABRT BUS TERM EXIT
 
-	printf "${BOLD}Enter password of cbsd user on ${GREEN}${node}${NORMAL}${BOLD}:${NORMAL} "
+	printf "${BOLD}Enter password of cbsd user on ${N2_COLOR}${node}${N0_COLOR}${BOLD}:${N0_COLOR} "
 	while [ -z "${pw}" ]; do
 		stty -echo
 		set -e
@@ -63,9 +64,13 @@ nodeadd()
 	local _res
 	local _myip
 
-	[ -z "${node}" ] && err 1 "${MAGENTA}Empty node${NORMAL}"
+	[ -z "${node}" ] && err 1 "${N1_COLOR}Empty node${N0_COLOR}"
 	[ -z "${port}" ] && port=22222
-	[ -z "${pw}" ] && getpw
+	if [ -z "${cbsdkeyfile}" ]; then
+		[ -z "${pw}" ] && getpw
+	else
+		[ ! -r "${cbsdkeyfile}" ] && err 1 "${N1_COLOR}node: no such file here: ${N2_COLOR}${cbsdkeyfile}${N0_COLOR}"
+	fi
 	[ -z "${rootkeyfile}" ] && rootkeyfile="/root/.ssh/id_rsa"
 
 	iptype ${node} >/dev/null 2>&1
@@ -78,7 +83,7 @@ nodeadd()
 			;;
 		*)
 			_myip=$( resolvhost ${node} )
-			[ -z "${_myip}" ] && err 1 "${MAGENTA}Can't resolv IP for ${node} hostname. Use IP address.${NORMAL}"
+			[ -z "${_myip}" ] && err 1 "${N1_COLOR}Can't resolv IP for ${node} hostname. Use IP address.${N0_COLOR}"
 			node=${_myip}
 			;;
 	esac
@@ -90,62 +95,74 @@ nodeadd()
 	# so try to find out first IPv4 for aliasing
 	case ${_ret} in
 		1)
-			CBSD_SSH_CMD="cbsdssh"
-			CBSD_SFTP_CMD="cbsdsftp"
+			if [ -n "${cbsdkeyfile}" ]; then
+				# ssh key based
+				CBSD_SSH_CMD="/usr/bin/ssh -i ${cbsdkeyfile} -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oBatchMode=yes -oPort=${port} -l ${cbsduser} ${node}"
+			else
+				# pw based auth
+				CBSD_SSH_CMD="cbsdssh ${node} ${port} ${cbsduser} ${pw}"
+			fi
 			proto="IPv4"
 			;;
 		2)
-			CBSD_SSH_CMD="cbsdssh6"
-			CBSD_SFTP_CMD="cbsdsftp6"
+			if [ -n "${cbsdkeyfile}" ]; then
+				# ssh key based
+				CBSD_SSH_CMD="/usr/bin/ssh -6 -i ${cbsdkeyfile} -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null -oBatchMode=yes -oPort=${port} -l ${cbsduser} ${node}"
+			else
+				CBSD_SSH_CMD="cbsdssh6 ${node} ${port} ${cbsduser} ${pw}"
+			fi
 			proto="IPv6"
 			;;
 		*)
-			err 1 "${MAGENTA}Unknown IP type: ${GREEN}${_myip}${NORMAL}"
+			err 1 "${N1_COLOR}Unknown IP type: ${N2_COLOR}${_myip}${N0_COLOR}"
 		;;
 	esac
 
-	${ECHO} "${MAGENTA}Connecting to ${node} via ${proto}...${NORMAL}"
-	NODENAME=$( ${CBSD_SSH_CMD} ${node} ${port} ${cbsduser} ${pw} /usr/local/bin/cbsd getinfo -q nodename )
+	${ECHO} "${N1_COLOR}Connecting to ${node} via ${proto}...${N0_COLOR}"
+	NODENAME=$( ${CBSD_SSH_CMD} /usr/local/bin/cbsd getinfo -q nodename )
 	code=$?
 
 	case ${code} in
 		0)
-			${ECHO} "${MAGENTA}${node} has nodename: ${GREEN}${NODENAME}${NORMAL}"
+			${ECHO} "${N1_COLOR}${node} has nodename: ${N2_COLOR}${NODENAME}${N0_COLOR}"
 			;;
 		2)
-			err 1 "${MAGENTA}Bad password or system user${NORMAL}"
+			err 1 "${N1_COLOR}Bad password or system user: ${NODENAME}${N0_COLOR}"
 			;;
 		*)
-			err 1 "${MAGENTA}Connection problem (code ${code}): ${GREEN}${node}${NORMAL}"
+			err 1 "${N1_COLOR}Connection problem (code ${code}): ${N2_COLOR}${NODENAME}${N0_COLOR}"
 			;;
 	esac
 
-	[ -z "${NODENAME}" ] && err 1 "${MAGENTA}No nodename found. Check remote cbsd settings${NORMAL}"
+	[ -z "${NODENAME}" ] && err 1 "${N1_COLOR}No nodename found. Check remote cbsd settings${N0_COLOR}"
 
 	MD5NAME=$( /sbin/md5 -qs ${NODENAME} )
-	nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > ${DEBLOG} 2>&1
-
+	if [ -n "${cbsdkeyfile}" ]; then
+		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} cbsdkeyfile=${cbsdkeyfile} > ${DEBLOG} 2>&1
+	else
+		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > ${DEBLOG} 2>&1
+	fi
 	_res=$?
 
 	case ${_res} in
 		0)
-			${ECHO} "${MAGENTA}Added successfull: ${GREEN}${node}${NORMAL}"
-			${ECHO} "${LRED}!Warning! ${LCYAN}In a multi-node configuration your commands can be run on remote servers ${LRED}!Warning!${NORMAL}"
-			${ECHO} "${LRED}!Warning! ${LCYAN}Be careful with [xjb]remove-like command ${LRED}!Warning!${NORMAL}"
+			${ECHO} "${N1_COLOR}Added successful: ${N2_COLOR}${node}${N0_COLOR}"
+			${ECHO} "${W1_COLOR}!Warning! ${H5_COLOR}In a multi-node configuration your commands can be run on remote servers ${W1_COLOR}!Warning!${N0_COLOR}"
+			${ECHO} "${W1_COLOR}!Warning! ${H5_COLOR}Be careful with [xjb]remove-like command ${W1_COLOR}!Warning!${N0_COLOR}"
 			LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
 			/usr/bin/touch ${rsshdir}/${NODENAME}.node
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node SSHKEY=${LOCALKEY} > /dev/null
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node IP=${node} > /dev/null
 			${SYSRC_CMD} -qf ${rsshdir}/${NODENAME}.node PORT=${port} > /dev/null
 			/usr/sbin/chown ${cbsduser} ${rsshdir}/${NODENAME}.node
-			IP=$( cbsdsql nodes select ip from nodelist where nodename=\"${NODENAME}\" )
+			IP=$( cbsdsqlro nodes select ip from nodelist where nodename=\"${NODENAME}\" )
 
 			if [ -z "${IP}" ]; then
-				cbsdsql nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( \"${NODENAME}\", \"${node}\", \"${port}\", \"${LOCALKEY}\", \"${rootkeyfile}\", \"inv.${NODENAME}.sqlite\" )"
+				cbsdsqlrw nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( \"${NODENAME}\", \"${node}\", \"${port}\", \"${LOCALKEY}\", \"${rootkeyfile}\", \"inv.${NODENAME}.sqlite\" )"
 			else
-				${ECHO} "${MAGENTA}Already exist in database, updating: ${GREEN}${node}${NORMAL}"
-				cbsdsql nodes DELETE FROM nodelist WHERE nodename=\"${NODENAME}\"
-				cbsdsql nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( \"${NODENAME}\", \"${node}\", \"${port}\", \"${LOCALKEY}\", \"${rootkeyfile}\", \"inv.${NODENAME}.sqlite\" )"
+				${ECHO} "${N1_COLOR}Already exist in database, updating: ${N2_COLOR}${node}${N0_COLOR}"
+				cbsdsqlrw nodes DELETE FROM nodelist WHERE nodename=\"${NODENAME}\"
+				cbsdsqlrw nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( \"${NODENAME}\", \"${node}\", \"${port}\", \"${LOCALKEY}\", \"${rootkeyfile}\", \"inv.${NODENAME}.sqlite\" )"
 			fi
 			idle_update ${NODENAME}
 			retrinv node=${NODENAME} tryoffline=1
@@ -153,15 +170,15 @@ nodeadd()
 			;;
 		1)
 			cat ${DEBLOG}
-			err ${_res} "${MAGENTA}Error: Bad password${NORMAL}"
+			err ${_res} "${N1_COLOR}Error: Bad password${N0_COLOR}"
 			;;
 		2)
 			[ -f "${DEBLOG}" ] && /bin/cat ${DEBLOG}
-			err ${_res} "${MAGENTA}Error: No key found or wrong hostname. Make initenv on remote machine${NORMAL}"
+			err ${_res} "${N1_COLOR}Error: No key found or wrong hostname. Make initenv on remote machine${N0_COLOR}"
 			;;
 		*)
 			cat ${DEBLOG}
-			err ${_res} "${MAGENTA}Error: Unkown error${NORMAL}"
+			err ${_res} "${N1_COLOR}Error: Unkown error${N0_COLOR}"
 			;;
 	esac
 }
@@ -170,7 +187,7 @@ nodedel()
 {
 	local _descext="descr role domain notes location" _res
 
-	[ -z "${node}" ] && err 1 "${MAGENTA}Empty node${NORMAL}"
+	[ -z "${node}" ] && err 1 "${N1_COLOR}Empty node${N0_COLOR}"
 	NODECONF="${rsshdir}/${node}.node"
 
 	if [ -f "${NODECONF}" ]; then
@@ -178,18 +195,18 @@ nodedel()
 		[ -f ${SSHKEY} ] && /bin/rm -f ${SSHKEY}
 		/bin/rm -f ${NODECONF}
 	else
-		${ECHO} "${MAGENTA}No such node config: ${GREEN}${NODECONF}${NORMAL}"
+		${ECHO} "${N1_COLOR}No such node config: ${N2_COLOR}${NODECONF}${N0_COLOR}"
 	fi
 
 	[ -f "${dbdir}/${node}.sqlite" ] && /bin/rm -f "${dbdir}/${node}.sqlite"
-	_res=$( cbsdsql nodes DELETE FROM nodelist WHERE nodename=\"${node}\" )
+	_res=$( cbsdsqlrw nodes DELETE FROM nodelist WHERE nodename=\"${node}\" )
 
 	#descriptions die too
 	/usr/bin/find ${dbdir}/nodedescr -type f -depth 1 -maxdepth 1 -name ${node}.\*.descr -delete
 	for i in ${_descext}; do
 		[ -f "${dbdir}/nodedescr/${node}.${i}" ] && /bin/rm -f "${dbdir}/nodedescr/${node}.${i}"
 	done
-	err 0 "${MAGENTA}Removed${NORMAL}"
+	err 0 "${N1_COLOR}Removed${N0_COLOR}"
 }
 
 show_nodes()
@@ -198,12 +215,12 @@ show_nodes()
 	local sqldelimer IFS
 
 	if [ ${allinfo} -eq 0 ]; then
-		cbsdsql nodes SELECT nodename FROM nodelist
+		cbsdsqlro nodes SELECT nodename FROM nodelist
 	else
 		show_header
 		sqldelimer="|"
 		IFS="|"
-		cbsdsql nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist | while read nodename ip port keyfile idle; do
+		cbsdsqlro nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist | while read nodename ip port keyfile idle; do
 			IFS=${OIFS}
 
 			conv_idle "${idle}"
@@ -215,13 +232,13 @@ show_nodes()
 				[ -z "${_val}" ] && _val="-"
 
 				if [ -z "${_status}" ]; then
-					_status="${NORMAL}${GREEN}${_val}"
+					_status="${N0_COLOR}${N2_COLOR}${_val}"
 				else
 					_status="${_status} ${_val}"
 				fi
 			done
 
-			${ECHO} "${_status}${NORMAL}"
+			${ECHO} "${_status}${N0_COLOR}"
 			IFS="|"
 			_status=
 		done
@@ -234,25 +251,25 @@ shownode()
 	local _res
 
 	local sqldelimer=" "
-	_res=$( cbsdsql nodes SELECT nodename FROM nodelist WHERE nodename=\"${node}\" )
+	_res=$( cbsdsqlro nodes SELECT nodename FROM nodelist WHERE nodename=\"${node}\" )
 
-	[ -z "${_res}" ] && err 1 "${MAGENTA}No such node in databases: ${GREEN}${node}${NORMAL}"
+	[ -z "${_res}" ] && err 1 "${N1_COLOR}No such node in databases: ${N2_COLOR}${node}${N0_COLOR}"
 
-	${ECHO} "${BOLD}  Summary statistics for ${node}  ${NORMAL}"
-	${ECHO} "${BOLD}  ====================================  ${NORMAL}"
+	${ECHO} "${BOLD}  Summary statistics for ${node}  ${N0_COLOR}"
+	${ECHO} "${BOLD}  ====================================  ${N0_COLOR}"
 	echo
 
 	if [ ! -f "${dbdir}/${node}.sqlite" ]; then
-		${ECHO} "${MAGENTA}No such inventory for: ${GREEN}${node}${NORMAL}. ${MAGENTA}Try to obtain it...${NORMAL}"
+		${ECHO} "${N1_COLOR}No such inventory for: ${N2_COLOR}${node}${N0_COLOR}. ${N1_COLOR}Try to obtain it...${N0_COLOR}"
 		retrinv node=${node} tryoffline=1
-		[ ! -f "${dbdir}/${node}.sqlite" ] && err 1 "${MAGENTA}No such inventory for: ${GREEN}${node}${NORMAL}"
+		[ ! -f "${dbdir}/${node}.sqlite" ] && err 1 "${N1_COLOR}No such inventory for: ${N2_COLOR}${node}${N0_COLOR}"
 	fi
 
 	local _nodeinv="hostname,nodeip,fs,ncpu,physmem,freemem,disks,cpumode,cpufreq,nics,osrelease,hostarch"
 
 	sqldelimer="|"
 
-	eval $( cbsdsql ${node} SELECT ${_nodeinv} FROM local | while read hostname nodeip fs ncpu physmem freemem disks cpumodel cpufreq nics osrelease hostarch; do
+	eval $( cbsdsqlro ${node} SELECT ${_nodeinv} FROM local | while read hostname nodeip fs ncpu physmem freemem disks cpumodel cpufreq nics osrelease hostarch; do
 		echo "local hostname=\"\${hostname}\""
 		echo "local nodeip=\"\${nodeip}\""
 		echo "local fs=\"${fs}\""
@@ -269,30 +286,30 @@ shownode()
 
 	sqldelimer=" "
 
-	local jailsnum=$( cbsdsql ${node} SELECT count\(jname\) FROM jails WHERE emulator != \"bhyve\" )
-	local vmsnum=$( cbsdsql ${node} SELECT count\(jname\) FROM jails WHERE emulator = \"bhyve\" )
+	local jailsnum=$( cbsdsqlro ${node} SELECT count\(jname\) FROM jails WHERE emulator != \"bhyve\" )
+	local vmsnum=$( cbsdsqlro ${node} SELECT count\(jname\) FROM jails WHERE emulator = \"bhyve\" )
 
 	[ -z "${jailsnum}" ] && jailsnum="0"
 	[ -z "${vmsnum}" ] && vmsnum="0"
 
-	${ECHO} "${BOLD}Nodename: ${GREEN}${node}${NORMAL}"
-	${ECHO} "${BOLD}Hostname: ${GREEN}${hostname}${NORMAL}"
-	${ECHO} "${BOLD}Node IP: ${GREEN}${nodeip}${NORMAL}"
-	${ECHO} "${BOLD}FS: ${GREEN}${fs}${NORMAL}"
-	${ECHO} "${BOLD}Total core's: ${GREEN}${ncpu}${NORMAL}"
-	${ECHO} "${BOLD}CPU Model: ${GREEN}${cpumode}${NORMAL}"
-	${ECHO} "${BOLD}CPU Frequency: ${GREEN}${cpufrq}${NORMAL}"
-	${ECHO} "${BOLD}Total physmem: ${GREEN}${physmem}${NORMAL}"
-	${ECHO} "${BOLD}Free mem: ${GREEN}${freemem}${NORMAL}"
-	${ECHO} "${BOLD}NICs: ${GREEN}${nics}${NORMAL}"
+	${ECHO} "${BOLD}Nodename: ${N2_COLOR}${node}${N0_COLOR}"
+	${ECHO} "${BOLD}Hostname: ${N2_COLOR}${hostname}${N0_COLOR}"
+	${ECHO} "${BOLD}Node IP: ${N2_COLOR}${nodeip}${N0_COLOR}"
+	${ECHO} "${BOLD}FS: ${N2_COLOR}${fs}${N0_COLOR}"
+	${ECHO} "${BOLD}Total core's: ${N2_COLOR}${ncpu}${N0_COLOR}"
+	${ECHO} "${BOLD}CPU Model: ${N2_COLOR}${cpumode}${N0_COLOR}"
+	${ECHO} "${BOLD}CPU Frequency: ${N2_COLOR}${cpufrq}${N0_COLOR}"
+	${ECHO} "${BOLD}Total physmem: ${N2_COLOR}${physmem}${N0_COLOR}"
+	${ECHO} "${BOLD}Free mem: ${N2_COLOR}${freemem}${N0_COLOR}"
+	${ECHO} "${BOLD}NICs: ${N2_COLOR}${nics}${N0_COLOR}"
 	echo
-	${ECHO} "${BOLD}OS Release: ${GREEN}${osrelease}${NORMAL}"
-	${ECHO} "${BOLD}OS arch: ${GREEN}${hostarch}${NORMAL}"
-	${ECHO} "${BOLD}Total VMs: ${GREEN}${vmsnum}${NORMAL}"
-	${ECHO} "${BOLD}Total Jails: ${GREEN}${jailsnum}${NORMAL}"
+	${ECHO} "${BOLD}OS Release: ${N2_COLOR}${osrelease}${N0_COLOR}"
+	${ECHO} "${BOLD}OS arch: ${N2_COLOR}${hostarch}${N0_COLOR}"
+	${ECHO} "${BOLD}Total VMs: ${N2_COLOR}${vmsnum}${N0_COLOR}"
+	${ECHO} "${BOLD}Total Jails: ${N2_COLOR}${jailsnum}${N0_COLOR}"
 	echo
-	[ ${jailsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} jails:${NORMAL}" && jls node=${node} display=jname,host_hostname,status && echo
-	[ ${vmsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} VMs:${NORMAL}" && bls node=${node} display=jname,status && echo
+	[ ${jailsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} jails:${N0_COLOR}" && jls node=${node} display=jname,host_hostname,status && echo
+	[ ${vmsnum} -ne 0 ] && ${ECHO} "${BOLD}List of ${node} VMs:${N0_COLOR}" && bls node=${node} display=jname,status && echo
 }
 
 update_node()
@@ -303,11 +320,11 @@ update_node()
 		case "${opt}" in
 			p)
 				_port="${OPTARG}"
-				cbsdsql nodes UPDATE nodelist SET port=\"${_port}\" WHERE nodename=\"${node}\"
+				cbsdsqlrw nodes UPDATE nodelist SET port=\"${_port}\" WHERE nodename=\"${node}\"
 			;;
 			i)
 				_ip="${OPTARG}"
-				cbsdsql nodes UPDATE nodelist SET ip=\"${_ip}\" WHERE nodename=\"${node}\"
+				cbsdsqlrw nodes UPDATE nodelist SET ip=\"${_ip}\" WHERE nodename=\"${node}\"
 			;;
 		esac
 		shift $(($OPTIND - 1))
@@ -333,11 +350,11 @@ case "${mode}" in
 		nodedel
 		;;
 	"show")
-		[ -z "${node}" ] && err 1 "${MAGENTA}Please specify: ${GREEN}node=${NORMAL}"
+		[ -z "${node}" ] && err 1 "${N1_COLOR}Please specify: ${N2_COLOR}node=${N0_COLOR}"
 		shownode
 		;;
 	"update")
-		[ -z "${node}" ] && err 1 "${MAGENTA}Please specify ${GREEN}node=${NORMAL}"
+		[ -z "${node}" ] && err 1 "${N1_COLOR}Please specify ${N2_COLOR}node=${N0_COLOR}"
 		modified=0
 		if [ -n "${port}" ]; then
 			update_node -p "${port}"
@@ -351,10 +368,10 @@ case "${mode}" in
 			idle_update ${node} > /dev/null 2>&1
 			retrinv node=${node} tryoffline=1
 		else
-			err 1 "${MAGENTA}Please specify ${GREEN}ip=${MAGENTA} or ${GREEN}port=${MAGENTA} to update${NORMAL}"
+			err 1 "${N1_COLOR}Please specify ${N2_COLOR}ip=${N1_COLOR} or ${N2_COLOR}port=${N1_COLOR} to update${N0_COLOR}"
 		fi
 		;;
 	*)
-		err 1 "${MAGENTA}Unknown mode${NORMAL}"
+		err 1 "${N1_COLOR}Unknown mode${N0_COLOR}"
 		;;
 esac

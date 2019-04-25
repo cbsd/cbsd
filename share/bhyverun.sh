@@ -267,6 +267,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	bhyve_exit=0
 
+	# triggering to update process id
+	/usr/local/bin/cbsd task mode=new "sleep 5; /usr/local/bin/cbsd bset jname=${jname} vm_pid=auto"
+
 	case "${debug_engine}" in
 		gdb)
 			if [ -x /usr/local/bin/gdb ]; then
@@ -304,6 +307,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			bhyve_exit=$?
 			;;
 	esac
+
 
 	ret=0
 	exit_action_mode
@@ -364,7 +368,7 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 done
 
 # live migration todo
-# check for bhyve migrated successfull to me ( bregister and/or bstatus passed ? )
+# check for bhyve migrated successful to me ( bregister and/or bstatus passed ? )
 
 # bhyverun.sh QUEUE
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
