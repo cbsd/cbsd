@@ -230,6 +230,12 @@ main(int argc, char *argv[])
 		putenv("NOCOLOR=1");
 	}
 
+	// non-interactive global env
+	if (lookupvar("NOINTER") != NULL ) {
+		setvarsafe("inter","1",1);
+		putenv("inter=0");
+	}
+
 	read_profile("/usr/local/cbsd/cbsd.conf");
 	read_profile("${workdir}/etc/defaults/logger.conf");
 	read_profile("${workdir}/etc/logger.conf");
