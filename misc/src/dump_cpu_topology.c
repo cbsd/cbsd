@@ -373,7 +373,7 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 			last_cid=pop_core_id();
 			new_thread(0,last_cid,last_sid - 1);
 		}else if ((!strcmp(szHandlerAttribute,"count")) && (!strcmp(szHandlerValue,"1")) ) {
-                        last_cid=pop_core_id();
+                        last_cid=pop_core_id()+1;
                         new_core(0,last_cid,last_sid - 1);
 		}
 
