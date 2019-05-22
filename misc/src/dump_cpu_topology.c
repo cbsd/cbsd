@@ -372,6 +372,9 @@ void* handler (SimpleXmlParser parser, SimpleXmlEvent event,
 			fprintf(stderr,"\n* NEW THREAD, Sock %d *\n", last_sid - 1);
 			last_cid=pop_core_id();
 			new_thread(0,last_cid,last_sid - 1);
+		}else if ((!strcmp(szHandlerAttribute,"count")) && (!strcmp(szHandlerValue,"1")) ) {
+                        last_cid=pop_core_id();
+                        new_core(0,last_cid,last_sid - 1);
 		}
 
 		if ( (!strcmp(szHandlerAttribute,"level")) && (!strcmp(szHandlerValue,"3")) ) {
