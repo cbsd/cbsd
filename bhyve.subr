@@ -1254,8 +1254,10 @@ compile_live_migration_args()
 
 	# auto _dst_port?
 	if [ "${_dst_port}" = "0" ]; then
+		# defip
 		_dst_port=$( get_next_tcp_port -s 20000 -e 21000 )
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 20000-21000 range for live migration${N0_COLOR}"
+
 	fi
 
 	# store info into ascii files
@@ -1289,6 +1291,7 @@ EOF
 bhyve_create_dsk()
 {
 	local newdsk imgsize fsfeat imgtype _msg
+	local _zvol_rec_size
 
 	while getopts "f:p:s:t:" opt; do
 		case "${opt}" in
@@ -1342,6 +1345,12 @@ bhyve_create_dsk()
 		. ${zfstool}
 
 		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
+		# volume size must be a multiple of volume block size
+		imgbytes=$( roundup --num=${imgbytes} --multiple=${_zvol_rec_size} 2>/dev/null )
+		cbsdlogger NOTICE ${CBSD_APP}: bhyve_create_dsk: roundup by recsize ${_zvol_rec_size}: [${imgbytes}]
+
 		# zfs_create_sparse defined via zfs.conf
 		if [ "${zfs_create_sparse}" = "0" ]; then
 			_msg=$( /sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
@@ -1363,10 +1372,10 @@ bhyve_create_dsk()
 	else
 		blockcount=$(( imgbytes  / 1048576 ))
 		[ ! -f "${newdsk}" -a ! -h "${newdsk}" ] && /usr/bin/touch "${newdsk}"
-		/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
-	#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
+		_msg=$( /bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 2>&1 )
 		_res=$?
-		[ ${_res} -ne 0 ] && return ${_res}
+		[ ${_res} -ne 0 ] && echo "${_msg}"
+		return ${_res}
 	fi
 
 	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}"

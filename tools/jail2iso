@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.6
+#v12.0.12
 MYARG="jname dstdir media"
 MYOPTARG="dstname name label product publisher prunelist freesize host_hostname ip4_addr gw4 timezone nameserver nic inter quiet efi nobase swapsize fromfile vm_guestfs"
 MYDESC="Convert jail into cd9660 ISO or memstick image"
@@ -26,6 +26,9 @@ EXTHELP="wf_jail2iso.html"
 
 readconf buildworld.conf
 readconf jail2iso.conf
+
+# todo: to conf
+EFI_PART_SIZE="260m"			# default FreeBSD efi partition
 
 . ${cbsdinit}
 
@@ -245,10 +248,16 @@ makemfsroot()
 
 show_bhyve_message()
 {
+	if [ ${freebsdhostversion} -lt 1300021 ]; then
+		local _tap_module="if_tap"
+	else
+		local _tap_module="if_tuntap"
+	fi
+
 	$ECHO "${N1_COLOR}Completed. Image ready for bhyve, example:${N0_COLOR}"
 	/bin/cat << EOF
  % kldload vmm
- % kldload if_tap
+ % kldload ${_tap_module}
  % sysctl -w net.link.tap.up_on_open=1
  % ifconfig tap0 create
  % ifconfig bridge0 create
@@ -266,6 +275,20 @@ create_img_for_dir()
 {
 	local base_size minfree1 minfree2
 	local _res _msg
+	local _reserved_size="512m"		# free reserved size
+	local _efi_size="${EFI_PART_SIZE}"
+
+	if is_number "${_reserved_size}"; then
+		if conv2bytes ${_reserved_size}; then
+			_reserved_size="${convval}"
+		fi
+	fi
+
+	if is_number "${_efi_size}"; then
+		if conv2bytes ${_efi_size}; then
+			_efi_size="${convval}"
+		fi
+	fi
 
 	[ -z "${freesize}" ] && freesize=0
 	[ -z "${imgfreesize}" ] && imgfreesize=0
@@ -305,10 +328,20 @@ create_img_for_dir()
 	minfree1=$(( base_size * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
 	minfree2=$(( freesize * 9 / 100 )) # 9% - du -sk and conv2bytes fault compensation
 
-	all_size=$(( base_size + freesize + minfree1 + minfree2 + imgfreesize + swapsize ))
-	fs_size=$(( base_size + freesize + minfree1 + minfree2 ))
+	all_size=$(( base_size + freesize + minfree1 + minfree2 + imgfreesize + swapsize + _reserved_size + _efi_size ))
+	#fs_size=$(( base_size + freesize + minfree1 + minfree2 ))
+	# ?? recalc
+	fs_size="${freesize}"
 
-	_msg=$( bhyve_create_dsk -p ${2} -s ${all_size} -f 0 )
+	if conv2human "${all_size}"; then
+		all_size=${convval}
+	fi
+
+	echo "r: ${_reserved_size} , e: ${_efi_size} "
+	echo "bhyve_create_dsk -p ${2} -s ${all_size} -f 0 -t md"
+
+	# todo: type zvol
+	_msg=$( bhyve_create_dsk -p ${2} -s ${all_size} -f 0  -t md )
 	_res=$?
 	if [ ${_res} -ne 0 ]; then
 		err 1 "Error: Couldn't create the image file. ${_msg}"
@@ -319,6 +352,7 @@ create_img_for_dir()
 bhyve_zfs_install()
 {
 	local mnttmp tmpjname
+	local _ret
 	/sbin/kldstat -qm zfs || /sbin/kldload zfs
 	mnttmp=$( /usr/bin/mktemp -d )
 
@@ -337,9 +371,18 @@ bhyve_zfs_install()
 
 	[ $? -ne 0 ] && err 1 "${N1_COLOR}Can't find free pool name: ${N2_COLOR}${mypool}${N0_COLOR}"
 
-	echo "zfsinstall devs=${unit} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap=\"${swapsize}\" quiet=1"
-	zfsinstall devs=${unit} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap="${swapsize}" quiet=1
-	[ $? -ne 0 ] && err 1 "${N1_COLOR}Error for zfsinstall${N0_COLOR}"
+	if [ "${baserw}" = "0" ]; then
+		mountbase -o "" -p "" -d "" -c "" -s ""
+		if  [ "${ver}" != "empty" ]; then
+				mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
+		fi
+	fi
+
+	echo "zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap=\"${swapsize}\" quiet=1"
+	zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap="${swapsize}" quiet=1
+	_ret=$?
+	echo "RET ${_ret}"
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}jail2iso: zfsinstall error${N0_COLOR}"
 
 	# hack for remove all dirty zpool 
 	/bin/cat > ${mnttmp}/etc/rc.local <<EOF
@@ -371,6 +414,7 @@ EOF
 
 make_ufs()
 {
+	${ECHO} "${N1_COLOR}kernel required: ${ver}${N0_COLOR}"
 	# move to kernel init?
 	get_kernel
 
@@ -378,7 +422,13 @@ make_ufs()
 	[ "$media" = "iso" -o "$media" = "memstick" -o "${media}" = "bhyve" ] || err 1 "${N1_COLOR}Unknown media type. Must be: ${N2_COLOR}iso${N1_COLOR},${N2_COLOR} memstick ${N1_COLOR}or${N2_COLOR} bhyve${N0_COLOR}"
 
 	mountbase -o "" -p "" -d "" -c "" -s ""
-	[ "${ver}" != "empty" ] && mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
+	if  [ "${ver}" != "empty" ]; then
+		if [ "${baserw}" = "0" ]; then
+			if ! is_mounted ${path}; then
+				mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}" > /dev/null 2>&1
+			fi
+		fi
+	fi
 
 	BS=8192
 
@@ -438,8 +488,10 @@ EOF
 			ROOTFS="/dev/ufs/${LABEL} /mnt ufs ro,noatime 1 1"
 			;;
 		"bhyve")
-	#		ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
-			ROOTFS="/dev/gpt/${LABEL} / ufs rw 1 1"
+			#ROOTFS="/dev/ufs/${LABEL} / ufs rw 1 1"
+			ROOTFS="/dev/vtbd0p2    /               ufs     rw      1       1"
+			#ROOTFS="gpt/${LABEL} / ufs rw 1 1"
+			# cloud init doesn't like '/dev' - /dev/dev/gpt/LABEL as result
 			;;
 	esac
 
@@ -603,25 +655,60 @@ case "${media}" in
 		unit=$( /sbin/mdconfig -a -t vnode -f ${dstdir}/${dstname} )
 
 		[ $? -ne 0 ] && err 1 "mdconfig failed"
+		${ECHO} "${N1_COLOR}guest os: ${vm_guestfs}${N0_COLOR}"
 
 		case "${vm_guestfs}" in
 			"ufs")
 				make_ufs
+				${ECHO} "${N1_COLOR}gpart create...${N0_COLOR}"
 				/sbin/gpart create -s gpt ${unit}
-				/sbin/gpart add -t freebsd-boot -l gpboot -b 40 -s 512K ${unit}
-				/sbin/gpart bootcode -b ${TMP_DIR}/boot/pmbr -p ${TMP_DIR}/boot/gptboot -i 1 ${unit}
+				#${ECHO} "${N1_COLOR}gpart freebsd-boot...${N0_COLOR}"
+				#/sbin/gpart add -t freebsd-boot -l gpboot -b 40 -s 512K ${unit}	# p1
+				${ECHO} "${N1_COLOR}gpart efi...${N0_COLOR}"
+				/sbin/gpart add -t efi -s ${EFI_PART_SIZE} ${unit}	# p1
+				#${ECHO} "${N1_COLOR}gpart bootcode...${N0_COLOR}"
+				#/sbin/gpart bootcode -b ${TMP_DIR}/boot/pmbr -p ${TMP_DIR}/boot/gptboot -i 1 ${unit}
 				# bug? not more than 9g?
-				ufspart=$( /sbin/gpart add -t freebsd-ufs -l ${LABEL} -b 1M -s ${fs_size} ${unit} |/usr/bin/awk '/ added/{print $1}' )
+				${ECHO} "${N1_COLOR}gpart freebsd-ufs...${N0_COLOR}"
+
+
+#				echo "/sbin/gpart add -t freebsd-ufs -l ${LABEL} -s ${fs_size} ${unit}"
+#				ufspart=$( /sbin/gpart add -t freebsd-ufs -l ${LABEL} -s ${fs_size} ${unit} | /usr/bin/awk '/ added/{print $1}' )		# p2
+# no label: cloud init  doesnt like: /dev/dev/gpt/label
+				echo "/sbin/gpart add -t freebsd-ufs -s ${fs_size} ${unit}"
+				ufspart=$( /sbin/gpart add -t freebsd-ufs -s ${fs_size} ${unit} | /usr/bin/awk '/ added/{print $1}' )		# p2
+
+				[ -z "${ufspart}" ] && err 1 "${N1_COLOR}unable to determine ufspart${N0_COLOR}"
 
 				if [ "${swapsize}" != "0" ]; then
-					/sbin/gpart add -t freebsd-swap -l swap ${unit}
+					${ECHO} "${N1_COLOR}gpart freebsd-swap...${N0_COLOR}"
+					/sbin/gpart add -t freebsd-swap -l swap ${unit}		# p3
 				fi
 
+				${ECHO} "${N1_COLOR}stamp efiboot...${N0_COLOR}"
+
+				/sbin/newfs_msdos -F 32 -c 1 /dev/${unit}p1
+
+				_ret=$?
+				[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}unable to newfs_msdos ${unit}p1${N0_COLOR}"
+
+				tdir=$( /usr/bin/mktemp -d )
+				/sbin/mount -t msdosfs /dev/${unit}p1 ${tdir}
+
+				_ret=$?
+				[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}unable to mount ${unit}p1 -> ${tdir}${N0_COLOR}"
+
+				/bin/mkdir -p ${tdir}/EFI/BOOT
+				/bin/cp -a /boot/loader.efi ${tdir}/EFI/BOOT/BOOTX64.efi
+				/sbin/umount ${tdir}
+
 				if [ -z "${ufspart}" ]; then
+					${ECHO} "${N1_COLOR}/sbin/mdconfig -d -u ${unit}...${N0_COLOR}"
 					/sbin/mdconfig -d -u ${unit}
 					err 1 "Can't create UFS part for ${unit}"
 				fi
 
+				echo "/sbin/newfs -U -n -L "${LABEL}" /dev/${ufspart}"
 				/sbin/newfs -U -n -L "${LABEL}" /dev/${ufspart}
 				tdir=$( /usr/bin/mktemp -d )
 
