@@ -174,6 +174,9 @@ for i in ${BHYVE_ARGS}; do
 			rcconf)
 				_mytest="${jailrcconfdir}/rc.conf_${jname}"
 				;;
+			vm_os_type)
+				_mytest=$( echo "${_mytest}" | /usr/bin/tr '[:upper:]' '[:lower:]' )
+				;;
 			*)
 				# skip unknown args
 				continue
@@ -182,6 +185,9 @@ for i in ${BHYVE_ARGS}; do
 	fi
 	${SYSRC_CMD} -qf ${temprcconf} ${i}="${_mytest}" > /dev/null 2>&1
 done
+
+vm_os_type=$( echo "${vm_os_type}" | /usr/bin/tr '[:upper:]' '[:lower:]' )
+${SYSRC_CMD} -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
 
 . ${buildconf}
 . ${temprcconf}
@@ -268,7 +274,7 @@ cp ${jconf_tmp} /tmp/jconf.$$
 if [ "${vnc_password}" = "0" ]; then
 	unset vnc_password
 else
-	[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}"
+	[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}" > /dev/null 2>&1
 fi
 
 # re-read jail params and apply personal after profile
@@ -363,10 +369,15 @@ ${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
 
 /bin/rm -f ${rcconf}
 
+if [ -z "${sectorsize}" ]; then
+	sectorsize="${default_sectorsize}"
+	[ -z "${sectorsize}" ] && sectorsize="4096"
+fi
+
 if [ -n "${virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${sectorsize}\" )"
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${defdsk}\","0", \"${sectorsize}\" )"
 fi
 
 if [ -n "${nic_driver}" ]; then
@@ -441,7 +452,19 @@ if [ ${is_cloud} -eq 1 ]; then
 
 	case "${ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
-			bset jname="${jname}" ip4_addr="${ci_ip4_addr}" > /dev/null 2>&1
+
+			iptype ${ci_ip4_addr}
+			_ret=$?
+			case ${_ret} in
+			1)
+				ip4_addr="${IWM}"
+				;;
+			*)
+				ip4_addr="${ci_ip4_addr}"
+				;;
+			esac
+
+			bset jname="${jname}" ip4_addr="${ip4_addr}" > /dev/null 2>&1
 			;;
 	esac
 
