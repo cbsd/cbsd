@@ -418,6 +418,9 @@ compile_dsk_args()
 	# select only direct-bus attached
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,bootable FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot bootable; do
 
+		dsk_sectorsize=
+		dsk_conf=
+
 		case "${dsk_controller}" in
 			virtio-blk|ahci-hd)
 				# direct connect
@@ -428,7 +431,19 @@ compile_dsk_args()
 				;;
 		esac
 
-		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+		# back compatible for < CBSD 12.0.12, unset sectorsize=512
+		[ "${dsk_conf}" = "sectorsize=512" -o "${dsk_conf}" = "0" ] && dsk_conf=
+
+		dsk_sectorsize=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_sectorsize FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+
+		if [ -n "${dsk_sectorsize}" ]; then
+			if [ -n "${dsk_conf}" ]; then
+				dsk_conf="${dsk_conf},sectorsize=${dsk_sectorsize}"
+			else
+				dsk_conf="sectorsize=${dsk_sectorsize}"
+			fi
+		fi
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -758,7 +773,10 @@ compile_nic_args()
 		cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic driver: ${nic_driver}, nic_parent: ${nic_parent}
 
 		case ${nic_parent} in
-			vale_*)
+			cbsdvale*)
+				get_vm_uplink_interface ${nic_parent}
+				;;
+			vale*)
 				get_vm_uplink_interface ${nic_parent}
 				;;
 			*)
@@ -1278,6 +1296,7 @@ EOF
 
 
 # create new disk image for bhyve VMs
+# -b volblocksize ( must be power of 2 from 512B to 128KB, e.g: 128K)
 # -f fsfeat ( 1 or 0 ) - use of skip FS features
 # -p full path
 # -s size (eg: 1g)
@@ -1290,15 +1309,17 @@ EOF
 # fi
 bhyve_create_dsk()
 {
-	local newdsk imgsize fsfeat imgtype _msg
+	local newdsk imgsize fsfeat imgtype _msg volblocksize= sectorsize=
 	local _zvol_rec_size
 
-	while getopts "f:p:s:t:" opt; do
+	while getopts "b:f:p:s:t:z:" opt; do
 		case "${opt}" in
+			b) volblocksize="${OPTARG}" ;;
 			f) feat="${OPTARG}" ;;
 			p) newdsk="${OPTARG}" ;;
 			s) imgsize="${OPTARG}" ;;
 			t) imgtype="${OPTARG}" ;;
+			z) sectorsize="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -1344,6 +1365,15 @@ bhyve_create_dsk()
 		readconf zfs.conf
 		. ${zfstool}
 
+		[ -z "${bhyve_zvol_volmode}" ] && bhyve_zvol_volmode="${default_bhyve_zvol_volmode}"
+		[ -z "${bhyve_zvol_volmode}" ] && bhyve_zvol_volmode="dev"
+		if [ -z "${volblocksize}" ]; then
+			echo "O"
+			[ -z "${bhyve_zvol_volblocksize}" ] && bhyve_zvol_volblocksize="${default_bhyve_zvol_volblocksize}"
+			[ -z "${bhyve_zvol_volblocksize}" ] && bhyve_zvol_volblocksize="128K"
+			volblocksize="${bhyve_zvol_volblocksize}"
+		fi
+
 		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
 
 		_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
@@ -1353,12 +1383,13 @@ bhyve_create_dsk()
 
 		# zfs_create_sparse defined via zfs.conf
 		if [ "${zfs_create_sparse}" = "0" ]; then
-			_msg=$( /sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
-			_res=$?
+			local _sparse_args=
 		else
-			_msg=$( /sbin/zfs create -V ${imgbytes} -s -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
-			_res=$?
+			local _sparse_args="-s"
 		fi
+
+		_msg=$( /sbin/zfs create -V ${imgbytes} ${_sparse_args} -o volmode=${bhyve_zvol_volmode} -o volblocksize=${volblocksize} ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
+		_res=$?
 
 		if [ ${_res} -ne 0 ]; then
 			echo "${_msg}"
@@ -1378,7 +1409,12 @@ bhyve_create_dsk()
 		return ${_res}
 	fi
 
-	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}"
+	if [ -z "${sectorsize}" ]; then
+		[ -n "${default_sectorsize}" ] && sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="512"
+	fi
+
+	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}" sectorsize="${sectorsize}"
 	return 0
 }
 
