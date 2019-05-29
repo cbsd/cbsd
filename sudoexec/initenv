@@ -219,11 +219,15 @@ phase0()
 	[ -r "${inventory}" ] && . ${inventory}
 	[ -z "${cbsdver}" ] && cbsdver="unknown"
 	oldver="${cbsdver}"
+}
 
+phase0X()
+{
+	[ -z "${workdir}" ] && return 0
+	[ ! -r "${workdir}/var/db/local.sqlite" ] && return 0
 	${ECHO} "${N1_COLOR}[Stage 0:${N2_COLOR} upgrading and migration data from ${oldver} to ${newver}${N1_COLOR}]${N0_COLOR}"
-
-	[ -d "${workdir}/upgrade" ] && /usr/bin/find ${workdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-initenv-\* -exec {} \;
-	[ -d "${distdir}/upgrade" ] && /usr/bin/find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-patch-\* -exec {} \;
+	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${workdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-initenv-\* -exec {} \;
+	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-patch-\* -exec {} \;
 }
 
 # execute post scripts from upgrade directory
@@ -231,10 +235,9 @@ phaseX()
 {
 	local myversion cbsdd_enable cbsd_workdir workdir
 	${ECHO} "${N1_COLOR}[Stage X:${N2_COLOR} upgrading${N1_COLOR}]${N0_COLOR}"
-	[ -d "${distdir}/upgrade" ] && /usr/bin/find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name post-patch-\* -exec {} \;
-	[ -d "${workdir}/upgrade" ] && /usr/bin/find ${workdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name post-initenv-\* -exec {} \;
+	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name post-patch-\* -exec {} \;
+	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${workdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name post-initenv-\* -exec {} \;
 }
-
 
 phase1()
 {
@@ -817,6 +820,7 @@ EOF_HEADER
 	${ECHO} "${N1_COLOR}>>> Installing or upgrading${N0_COLOR}"
 
 	phase0
+	phase0X			# pre-migrate script
 	phase1
 	phase2
 	phase3
@@ -825,12 +829,14 @@ EOF_HEADER
 	[ -d ${workdir} -a ! -f ${workdir}/rc.conf ] && ${TOUCH_CMD} ${workdir}/rc.conf
 
 	if [ "${cbsd_workdir}" != "${workdir}" ]; then
-		if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
-			initenv_modify_rcconf_cbsd_workdir=1
-			${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
-		else
-			initenv_modify_rcconf_cbsd_workdir=0
-			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+		if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+			if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
+				initenv_modify_rcconf_cbsd_workdir=1
+				${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
+			else
+				initenv_modify_rcconf_cbsd_workdir=0
+				${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+			fi
 		fi
 	fi
 
