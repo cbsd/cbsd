@@ -87,25 +87,28 @@ SYSDIROLD="${jailsysdir}/${old}"
 SYSDIRNEW="${jailsysdir}/${new}"
 
 . ${distdir}/jcreate.subr
-geniplist ${ip4_addr}           # for ipvX_first_public-like vars
+geniplist ${ip4_addr}				# for ipvX_first_public-like vars
 export_jail_data_for_external_hook
 external_exec_master_script "clone.d"
 
 external_exec_local_script "clone-local.d"
 _ret=$?
 
-skip_data_operation=0
-
 case "${_ret}" in
 	0)
 		# no local script, continue as usual
+		skip_data_operation=0
 		;;
 	1)
 		# local script exist and successful, skip data operation
-		skip_data_operation=0
+		${ECHO} "${N1_COLOR}clone-local.d hook success${N0_COLOR}"
+		skip_data_operation=1
 		;;
 	2)
 		err 1 "${N1_COLOR}clone-local.d hook failed, cancel clone${N0_COLOR}"
+		;;
+	*)
+		skip_data_operation=0
 		;;
 esac
 
@@ -120,7 +123,7 @@ esac
 
 [ ! -d "${SRC}" ] && err 1 "${N1_COLOR}No jail data: ${N2_COLOR}${SRC}${N0_COLOR}"
 
-if [ -d "${DST}" ]; then
+if [ -d "${DST}" -a ${skip_data_operation} -eq 0 ]; then
 	/bin/rmdir ${DST} >/dev/null 2>&1
 
 	# CBSD QUEUE
@@ -175,6 +178,13 @@ if [ ${skip_data_operation} -eq 0 ]; then
 				clonedata -s ${SRC} -d ${DST} -m rsync > /dev/null 2>&1
 			fi
 	esac
+else
+	if [ ! -d "${DST}" ]; then
+		${ECHO} "${N1_COLOR}jclone error: local script succeeded, however destination dir doesn't exist: ${N2_COLOR}${DST}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}make sure your scripts are copying the data correctly, we expect ${N2_COLOR}${DST}${N1_COLOR} to be the same as ${N2_COLOR}${SRC}${N0_COLOR}"
+		jremove jname=${new}
+		exit 1
+	fi
 fi
 
 dot "clone rsync"
@@ -182,6 +192,10 @@ dot "clone rsync"
 if [ -d "${SYSDIROLD}" ]; then
 	[ -d "${SYSDIRNEW}" ] && /bin/rm -rf ${SYSDIRNEW}
 	/bin/cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
+	if [ -d ${SYSDIRNEW}/clone-local.d ]; then
+		printf "${N1_COLOR}.[purge ${SYSDIRNEW}/clone-local.d/ entry].${N0_COLOR}"
+		/usr/bin/find ${SYSDIRNEW}/clone-local.d/ -type f -delete
+	fi
 	dot "cp sysdir"
 fi
 
