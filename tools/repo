@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.7
+#v12.0.12
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
@@ -476,24 +476,178 @@ getobj()
 
 getkernel()
 {
-	local name KERNNAME
+	local _srcmd5_found _src_found _majorver _release _rel_postfix
+	local win_mirror win_rate t_size
+	local _mirror_num=0 _mirror_cur=0
 
-	if [ -n "${name}" -a "${name}" != "GENERIC" ]; then
-		KERNNAME="-${name}"
+	if [ -z "${basename}" ]; then
+		BDIR="${basejailpref}_${arch}_${ver}"
 	else
-		KERNNAME="-GENERIC"
+		BDIR="${basejailpref}_${basename}_${arch}_${ver}"
 	fi
 
-	URL_HIER="${arch}/${target_arch}/${ver}"
-
-	if [ -d "${KERNEL_DIR}" ]; then
-		[ $upgrade -ne 1 ] && err 1 "${N1_COLOR}You already have kernel ${name} for ${ver}${N0_COLOR}"
-		removekernel ver=${ver} arch=${arch} name=${name}
+	if [ -n "${url}" ]; then
+		OIFS="${IFS}"
+		IFS=","
+		for i in ${url}; do
+			if [ -z "${i}" ]; then
+				BSDKERNEL_DISTSITE="${i}"
+			else
+				BSDKERNEL_DISTSITE="${BSDKERNEL_DISTSITE} ${i}"
+			fi
+		done
+		IFS="${OIFS}"
+	else
+		case "${platform}" in
+			DragonFly)
+				err 1 "${N1_COLOR}${platform} unsupported yet${N0_COLOR}"
+				;;
+			FreeBSD)
+				case "${ver}" in
+					13*)
+						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
+						_release="snapshots"
+						_rel_postfix="CURRENT"
+						URL_HIER="${arch}/${target_arch}/13.0"
+						;;
+					*)
+						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/kernel.txz"
+						_release="releases"
+						_rel_postfix="RELEASE"
+						URL_HIER="${arch}/${target_arch}/${ver}"
+						;;
+				esac
+				BSDKERNEL_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/kernel.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/kernel.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/kernel.txz"
+				;;
+			HardenedBSD)
+				# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
+				# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
+				_majorver=${ver%%.*}
+				URL_HIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
+				BSDKERNEL_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${URL_HIER}/kernel.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${URL_HIER}/kernel.txz http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/kernel.txz"
+				;;
+		esac
 	fi
+
+	if [ -x "${KERNEL_DIR}/bin/sh" ]; then
+		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}. Use mode=upgrade for upgrade${N0_COLOR}"
+		${CHFLAGS_CMD} -R noschg ${KERNEL_DIR}
+	fi
+
+	strpos --str="${ver}" --search="."
+
+	pos=$?
+	if [ ${pos} -eq 0 ]; then
+		stable=1
+	else
+		stable=0
+	fi
+
+	init_target_arch
+
+	trap "cleanup_kernels" HUP INT ABRT BUS TERM EXIT
+	register_kernel arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo elf="-" id=kernel${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="-" status=1
+	fi
+
+	if [ -x "${KERNEL_DIR}/bin/sh" ]; then
+		kernel_status_is_maintenance_soft
+	else
+		kernel_status_is_maintenance_hard
+	fi
+
+	win_mirror=
+	win_rate=0
+	t_size=0
+
+	if [ "${fbsdrepo}" = "1" ]; then
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
+
+		_mirror_num=$( echo "${BSDKERNEL_DISTSITE}" | /usr/bin/wc -w | /usr/bin/awk {'printf $1'} )
+
+		local max_url_len=0
+		local cur_url_len=0
+		local free_len=0
+
+		# determine longest url
+		for i in ${BSDKERNEL_DISTSITE}; do
+			cur_url_len=$( strlen ${i} )
+			[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
+		done
+
+		max_url_len=$(( max_url_len + 1 ))
+
+		for i in ${BSDKERNEL_DISTSITE}; do
+			_mirror_cur=$(( _mirror_cur + 1 ))
+			cur_url_len=$( strlen ${i} )
+			free_len=$(( max_url_len - cur_url_len ))
+			printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
+			t_size=$( /usr/bin/timeout -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${i} 2>/dev/null )
+			if [ -z "${t_size}" ]; then
+				${ECHO} "${W1_COLOR}failed${N0_COLOR}"
+			else
+				${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
+				if ! is_number ${t_size}; then
+					if [ ${t_size} -gt ${win_rate} ]; then
+						win_rate=${t_size}
+						win_mirror="${i}"
+					fi
+				else
+					${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
+				fi
+			fi
+		done
+		[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
+		iso_site="${win_mirror} ${BSDKERNEL_DISTSITE}"
+	fi
+
+	if [ "${fbsdrepo}" = "1" -a -z "${basename}" ]; then
+		## Official fbsd repo
+		${ECHO} "${N1_COLOR}Looking for official ${platform} mirror:${N0_COLOR}"
+		ARCHIVE="${MYDIR}/kernel.txz"
+		for MIRROR in ${iso_site}; do
+			fetchme -u ${MIRROR} -o ${ARCHIVE}
+			if [ $? -eq 0 ]; then
+				break
+			else
+				[ -r ${ARCHIVE} ] && /bin/rm -f ${ARCHIVE}
+			fi
+		done
+		if [ -r ${ARCHIVE} ]; then
+			printf "\n${N1_COLOR}Extracting kernel...${N0_COLOR}\n"
+			[ ! -d "${KERNEL_DIR}" ] && mkdir -p ${KERNEL_DIR}
+			cd ${KERNEL_DIR}
+			set -e
+			/usr/bin/tar xfz ${ARCHIVE}
+			set +e
+			/bin/rm -f ${ARCHIVE}
+			preparekernel dst=${KERNEL_DIR}
+			register_fetched_kernel ${MIRROR}
+			# CBSD QUEUE
+			if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+				baseelf=
+				baseelf=$( ${miscdir}/elf_tables --ver ${KERNEL_DIR}/bin/sh 2>/dev/null )
+				date=$( /bin/date +%s )
+				[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=update id=kernel${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+				[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo id=kernel${ver}-${arch}-${stable} status=2
+			fi
+
+			${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+			return 0
+		fi
+		printf "${N2_COLOR} Not found${N0_COLOR}\n"
+		### Official fbsd repo end ###
+	fi
+
+	# _srcmd5_found=0
+	_src_found=0
 
 	for MYREPO in ${repo}; do
 		${ECHO} "${N1_COLOR}REPO: ${N2_COLOR}${MYREPO}${N0_COLOR}"
-		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html"
+		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html";
 		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
@@ -501,32 +655,65 @@ getkernel()
 			${ECHO} "${N1_COLOR}Found new mirror for ${ver}: ${N2_COLOR}${MYREPO}${N0_COLOR}"
 		fi
 
-		${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/kernel${KERNNAME}.txz${N0_COLOR}"
-		fetchme -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/kernel${KERNNAME}.txz
-		[ $? -eq 0 ] || continue
-		# fetchme -q1 -o ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5 -u ${MYREPO}/${DIR}/kernel_${name}_${arch}_${ver}.txz.md5
-		# [ $? -eq 0 ] || continue
+		if [ -z "${basename}" ]; then
+			${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/kernel.txz${N0_COLOR}"
+			fetchme -o ${MYDIR}/kernel_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/kernel.txz
+
+			if [ $? -ne 0 ]; then
+				${ECHO} "${N1_COLOR}kernel not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/kernel.txz${N0_COLOR}"
+				continue
+			else
+				_src_found=1
+			fi
+			_srcmd5_found=1
+		else
+			${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/kernel_${basename}.txz${N0_COLOR}"
+			fetchme -o ${MYDIR}/kernel_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/kernel_${basename}.txz
+
+			if [ $? -ne 0 ]; then
+				${ECHO} "${N1_COLOR}Kernel not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/kernel_${basename}.txz${N0_COLOR}"
+				continue
+			else
+				_src_found=1
+			fi
+
+			_srcmd5_found=1
+		fi
+
+		[ ${_srcmd5_found} -eq 1 -a ${_src_found} -eq 1 ] && break
 	done
 
-	[ ! -f "${MYDIR}/kernel_${name}_${arch}_${ver}.txz" ] && err 1 "${N1_COLOR}No such sources:${N2_COLOR}${MYDIR}/kernel_${name}_${arch}_${ver}.txz${N0_COLOR}"
-
-	# if checkmd5 ${MYDIR}; then
-	# ${ECHO} "${N1_COLOR}MD5 sum: ${N2_COLOR}correct${N0_COLOR}"
-	# else
-	# err 1 "${N1_COLOR}MD5 sum: ${N2_COLOR}incorrect${N0_COLOR}"
-	# exit 1
-	# fi
-
-	# /bin/rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz.md5
+	[ ${_src_found} -ne 1 ] && err 1 "${N1_COLOR}Not found data${N0_COLOR}"
 
 	${ECHO} "${N1_COLOR}Extracting...${N0_COLOR}"
 	[ ! -d "${KERNEL_DIR}" ] && mkdir -p ${KERNEL_DIR}
-	cd $KERNEL_DIR
-	set -e
-	tar xfz ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
-	set +e
-	rm -f ${MYDIR}/kernel_${name}_${arch}_${ver}.txz
+	cd ${KERNEL_DIR}
+
+	if [ -z "${basename}" ]; then
+		set -e
+		tar xfz ${MYDIR}/kernel_${arch}_${target_arch}_${ver}.txz
+		set +e
+	else
+		set -e
+		tar xfz ${MYDIR}/kernel_${basename}_${arch}_${target_arch}_${ver}.txz
+		set +e
+	fi
+
+	register_fetched_kernel ${MIRROR}
+	cleanup_kernels
+
+	# CBSD QUEUE
+	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+		baseelf=
+		baseelf=$( ${miscdir}/elf_tables --ver ${KERNEL_DIR}/bin/sh 2>/dev/null )
+		date=$( /bin/date +%s )
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=update id=kernel${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo id=kernel${ver}-${arch}-${stable} status=2
+	fi
+
 	${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+
+	return 0
 }
 
 
