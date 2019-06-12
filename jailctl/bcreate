@@ -294,11 +294,7 @@ if [ -z "${cd_vnc_wait}" ]; then
 	esac
 fi
 
-if [ "${vnc_password}" = "0" ]; then
-	unset vnc_password
-else
-	[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}" > /dev/null 2>&1
-fi
+[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}" > /dev/null 2>&1
 
 # re-read jail params and apply personal after profile
 . ${jconf_tmp}
@@ -381,7 +377,7 @@ fi
 echo
 if [ "${vm_zfs_guid}" != "0" ]; then
 	[ -z "${NOINTER}" ] && ${ECHO} "${N1_COLOR}Global VM ZFS guid: ${N2_COLOR}${vm_zfs_guid}${N0_COLOR}"
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET vm_zfs_guid="${vm_zfs_guid}"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET vm_zfs_guid=\"${vm_zfs_guid}\"
 fi
 
 if [ -z "${NOINTER}" ]; then
@@ -502,6 +498,19 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ -z "${ci_interface}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface="${default_ci_interface}" > /dev/null 2>&1
 	[ -z "${ci_user_pw_user}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_user="${ci_user_pw_user}" > /dev/null 2>&1
 	[ -z "${ci_user_pw_root}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
+	[ -z "${ci_user_pw_root}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
+
+	# GET MAC
+	nic_hwaddr0=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM bhyvenic LIMIT 1 )
+
+	if [ "${nic_hwaddr0}" = "0" ]; then
+		# gen MAC
+		nic_hwaddr0=$( mac_gen 00:a0:98 )
+		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: MAC address randomized and updated for nic id 1: ${nic_hwaddr0}
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr0}\" WHERE id=\"1\""
+	fi
+
+	[ -z "${ci_nic_hwaddr0}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nic_hwaddr0="${nic_hwaddr0}" > /dev/null 2>&1
 
 	case "${ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
@@ -509,11 +518,23 @@ if [ ${is_cloud} -eq 1 ]; then
 			;;
 	esac
 
-	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname}
+	case "${vm_os_type}" in
+		windows)
+			cloudengine="cloudinit-base"
+			;;
+		*)
+			cloudengine="cloud-init"
+			;;
+	esac
+
+	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 
 # mark the first disk bootable
 cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
+
+# unset vnc_password when vnc_password=0 (reserved)
+[ "${vnc_password}" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
 
 # rctl
 . ${sharedir}/rctl.conf
