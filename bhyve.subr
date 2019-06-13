@@ -759,6 +759,9 @@ compile_nic_args()
 
 	local errmsg=
 
+	# bstart.conf: clear VM hwaddr in global ARP table
+	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
+
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent; do
 
 		case "${nic_driver}" in
@@ -896,6 +899,13 @@ compile_nic_args()
 			nic_hwaddr=$( mac_gen 00:a0:98 )
 			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
+		fi
+
+		if [ "${clean_arp_table_by_vm}" = "1" ]; then
+			/usr/sbin/arp -an | /usr/bin/awk -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | /usr/bin/sort | /usr/bin/tr -d '()' | while read _ip; do
+				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+				/usr/sbin/arp -n -d ${_ip} > /dev/null 2>&1 || true
+			done
 		fi
 
 		# echo "search next_pci_id -n ${net_emul} -d ${nic_id}" >> /tmp/net.txt
