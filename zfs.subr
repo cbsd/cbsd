@@ -142,8 +142,8 @@ is_getzvol()
 # return 2 when zvol already exist
 zfs_create_zvol_from_file()
 {
-	local _file= _pool= _zvol_name= DATA= _ebytes= _human_bytes=
-	local _res _bar=1 _zvol_rec_size=0
+	local _file= _pool= _zvol_name= DATA= _human_bytes= _res _bar=1 _zvol_rec_size=0
+	local _ebytes _ebytes_data _ebytes_data_orig _human_data_bytes
 
 	while getopts "b:f:p:n:" opt; do
 		case "${opt}" in
@@ -168,6 +168,8 @@ zfs_create_zvol_from_file()
 	fi
 
 	_ebytes=$( /usr/bin/stat -f "%z" ${_file} 2>/dev/null )
+	_ebytes_data=$( /usr/bin/stat -f "%b" ${_file} 2>/dev/null )
+	_ebytes_data=$(( _ebytes_data * 512 ))			# real referenced size/data
 
 	if [ ${_ebytes} -lt 128 ]; then
 			echo "zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes"
@@ -181,6 +183,12 @@ zfs_create_zvol_from_file()
 			_human_bytes=${convval}
 	else
 			_human_bytes="${_ebytes}"
+	fi
+
+	if conv2human "${_ebytes_data}"; then
+			_human_data_bytes=${convval}
+	else
+			_human_data_bytes="${_ebytes_data}"
 	fi
 
 	. ${zfstool}
@@ -214,21 +222,30 @@ zfs_create_zvol_from_file()
 		return 1
 	fi
 
-	_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name} 2>&1 )
-	_res=$?
+	readconf zfs.conf
+
+	if [ "${convert_source_image_to_zvol_dedup}" = "1" ]; then
+		# debup
+		_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev -o dedup=on ${DATA}/${_zvol_name} 2>&1 )
+		_res=$?
+	else
+		# no dedup
+		_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name} 2>&1 )
+		_res=$?
+	fi
 
 	if [ ${_res} -ne 0 ]; then
-		echo "zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}"
 		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}
 		return 1
 	fi
 
 	if [ ${_bar} -eq 1 ]; then
-		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR}: ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
-		/bin/dd if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
+		${ECHO} "${N1_COLOR}Original size: ${_human_bytes}, real referenced size/data: ${_human_data_bytes}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR} (dedup: ${convert_source_image_to_zvol_dedup}): ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
+		/usr/bin/nice -n 20 /bin/dd if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
 		echo
 	else
-		/bin/dd if=${_file} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
+		/usr/bin/nice -n 20 /bin/dd if=${_file} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
 		echo
 	fi
 
