@@ -124,27 +124,89 @@ get_construct_vm_vnc_port()
 get_construct_vm_ram()
 {
 	local _input _tmp
+	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human=
+	local _ret=1
+	local _add_help_msg= _input_bytes=
+	local _message
+	local _local_physmem_bytes=
+	local _local_physmem_human=
 
-	f_dialog_title " ram "
+	_local_physmem_bytes=$( /sbin/sysctl -n hw.physmem )
+	if conv2human "${_local_physmem_bytes}"; then
+			_local_physmem_human="${convval}"
+	else
+		_local_physmem_human="${_local_physmem_bytes}"
+	fi
 
-	f_dialog_input _input "${GET_RAM_MSG}" "${vm_ram}" \
-			"${_message}" || return $?
+	_message=" current hoster physmem: ${_local_physmem_human} "
 
-	# test for human
-	if ! is_number "${_input}"; then
-		# is number. assume user's input value in MB, so convert to bytes
-		_input=$(( _input * 1024 * 1024 ))
-		if conv2human "${_input}"; then
-			_tmp="${convval}"
+	# determine min/max threshold for input validation
+	if [ -n "${vm_ram_min}" ]; then
+		_minbytes=$( get_bytes ${vm_ram_min} )
+		if conv2human "${_minbytes}"; then
+			_minbytes_human="${convval}"
 		else
-			_tmp=$(( _input * 1024 * 1024 ))
-			if conv2human "${VAL}"; then
+			_minbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="min:${_minbytes_human}"
+	fi
+	if [ -n "${vm_ram_max}" ]; then
+		[ "${vm_ram_max}" = "native" ] && vm_ram_max=$( /sbin/sysctl -n hw.physmem )
+		_maxbytes=$( get_bytes ${vm_ram_max} )
+		if conv2human "${_maxbytes}"; then
+			_maxbytes_human="${convval}"
+		else
+			_maxbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="${_add_help_msg} max:${_maxbytes_human}"
+	fi
+
+	f_dialog_title " RAM amount "
+
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_RAM_MSG}\n${_add_help_msg}" "${vm_ram}" \
+				"${_message}" || return $?
+
+		# test for human
+		if ! is_number "${_input}"; then
+			# is number. assume user's input value in MB, so convert to bytes
+			_input=$(( _input * 1024 * 1024 ))
+			if conv2human "${_input}"; then
 				_tmp="${convval}"
+			else
+				_tmp=$(( _input * 1024 * 1024 ))
+				if conv2human "${VAL}"; then
+					_tmp="${convval}"
+				fi
+			fi
+		else
+			_tmp="${_input}"
+		fi
+
+		if conv2human "${_input}"; then
+			_input_bytes="${convval}"
+		else
+			_input_bytes="${_minbytes}"
+		fi
+
+		if [ -n "${_minbytes}" ]; then
+			if [ ${_input_bytes} -lt ${_minbytes} ]; then
+				f_show_msg "Values ${_tmp} too small, minimal: ${_minbytes_human}"
+				continue
 			fi
 		fi
-	else
-		_tmp="${_input}"
-	fi
+
+		if [ -n "${_maxbytes}" ]; then
+			if [ ${_input_bytes} -gt ${_maxbytes} ]; then
+				if ! getyesno "Warning! Values too high: ${_maxbytes_human}. Overcommitting RAM anyway?"; then
+					continue
+				fi
+			fi
+		fi
+
+		_ret=0
+	done
 
 	vm_ram="${_tmp}"
 }
