@@ -52,11 +52,68 @@ get_construct_spice_password()
 get_construct_imgsize()
 {
 	local _input
+	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human= _minbytes_human_mb
+	local _ret=1
+	local _add_help_msg= _input_bytes=
+	local _message
+
+	# determine min/max threshold for input validation
+	if [ -n "${imgsize_min}" ]; then
+		_minbytes=$( get_bytes ${imgsize_min} )
+		_minbytes=$(( _minbytes + 536870912 ))		# + 512 MB for stock
+		if conv2human "${_minbytes}"; then
+			_minbytes_human="${convval}"
+		else
+			_minbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="min:${_minbytes_human}"
+	fi
+	if [ -n "${imgsize_max}" ]; then
+		_maxbytes=$( get_bytes ${imgsize_max} )
+		if conv2human "${_maxbytes}"; then
+			_maxbytes_human="${convval}"
+		else
+			_maxbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="${_add_help_msg} max:${_maxbytes_human}"
+	fi
 
 	f_dialog_title " imgsize "
 
-	f_dialog_input _input "${GET_IMGSIZE_MSG}:" "${imgsize}" \
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_IMGSIZE_MSG}\n${_add_help_msg}" "${imgsize}" \
 			"${_message}" || return $?
+
+		if ! is_number "${_input}"; then
+			# is number. assume user's input value in MB, so convert to bytes
+			_input="${_input}m"
+		fi
+
+		if conv2human "${_input}"; then
+			_input_bytes="${convval}"
+		else
+			_input_bytes="${_minbytes}"
+		fi
+
+		if [ -n "${_minbytes}" ]; then
+			if [ ${_input_bytes} -lt ${_minbytes} ]; then
+				_minbytes_human_mb=$(( _minbytes / 1024 / 1024 ))
+				f_show_msg "Values ${_tmp} too small, minimal > ${_minbytes_human_mb}m+"
+				continue
+			fi
+		fi
+
+		if [ -n "${_maxbytes}" ]; then
+			if [ ${_input_bytes} -gt ${_maxbytes} ]; then
+				if ! getyesno "Warning! Values too high: ${_maxbytes_human}. Overcommitting size anyway?"; then
+					continue
+				fi
+			fi
+		fi
+
+		_ret=0
+	done
 
 	imgsize="${_input}"
 }
@@ -124,7 +181,7 @@ get_construct_vm_vnc_port()
 get_construct_vm_ram()
 {
 	local _input _tmp
-	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human=
+	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human= _minbytes_human_mb=
 	local _ret=1
 	local _add_help_msg= _input_bytes=
 	local _message
@@ -171,18 +228,10 @@ get_construct_vm_ram()
 		# test for human
 		if ! is_number "${_input}"; then
 			# is number. assume user's input value in MB, so convert to bytes
-			_input=$(( _input * 1024 * 1024 ))
-			if conv2human "${_input}"; then
-				_tmp="${convval}"
-			else
-				_tmp=$(( _input * 1024 * 1024 ))
-				if conv2human "${VAL}"; then
-					_tmp="${convval}"
-				fi
-			fi
-		else
-			_tmp="${_input}"
+			_input="${_input}m"
 		fi
+
+		_tmp="${_input}"
 
 		if conv2human "${_input}"; then
 			_input_bytes="${convval}"
@@ -192,7 +241,8 @@ get_construct_vm_ram()
 
 		if [ -n "${_minbytes}" ]; then
 			if [ ${_input_bytes} -lt ${_minbytes} ]; then
-				f_show_msg "Values ${_tmp} too small, minimal: ${_minbytes_human}"
+				_minbytes_human_mb=$(( _minbytes / 1024 / 1024 ))
+				f_show_msg "Values ${_tmp} too small, minimal > ${_minbytes_human_mb}m+"
 				continue
 			fi
 		fi
