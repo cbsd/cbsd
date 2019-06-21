@@ -28,10 +28,11 @@ dialog_menu_main()
 	local prompt="${_desc}"
 	local sqldelimer=" "
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type,bootable FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type bootable; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type,dsk_sectorsize,bootable FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type dsk_sectorsize bootable; do
 		echo "export dsk_controller=\"${dsk_controller}\""
 		echo "export dsk_slot=\"${dsk_slot}\""
 		echo "export dsk_type=\"${dsk_type}\""
+		echo "export dsk_sectorsize=\"${dsk_sectorsize}\""
 		echo "export bootable=\"${bootable}\""
 	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
@@ -75,6 +76,7 @@ dialog_menu_main()
 		'controller'	'${dsk_controller}'	'Select controller. current: ${_controller_desc}'
 		'slot'		'${dsk_slot}'		'Bus slot. 0 - auto'
 		'dsk_type'	'${dsk_type}'		'Disk type ( vhd, vmdk, vdi, qcow )'
+		'sectorsize'	'${dsk_sectorsize}'	'Logical sectorsize'
 	" # END-QUOTE
 
 	#checkbox area
@@ -159,6 +161,9 @@ set +e
 . ${distdir}/share/bhyve/bhyve-dsk.subr
 . ${distdir}/bhyve.subr
 
+readconf bhyve-default-default.conf
+[ -z "${dsk_sectorsize}" ] && dsk_sectorsize="${default_sectorsize}"
+
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
 
@@ -211,15 +216,25 @@ while :; do
 				"controller")
 					get_dsk_controller
 					if [ -n "${new_dsk_controller}" ]; then
-						cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_controller=\"${new_dsk_controller}\" WHERE dsk_path=\"${dsk}.vhd\" AND jname=\"${jname}\"
+						cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_controller=\"${new_dsk_controller}\" WHERE dsk_path=\"${dsk}.vhd\"
 					fi
 					;;
 				"remove")
 					if getyesno "Detach and remove ${dsk_path} from ${jname} VM?"; then
 						real_dsk_name="hdd-${dsk_path}"
-						real_dsk_path=$( cbsdsqlro storage_media SELECT path FROM media WHERE name=\"${real_dsk_name}\" AND jname=\"${jname}\" AND type=\"hdd\" )
+						real_dsk_path=$( cbsdsqlro storage_media SELECT path FROM media WHERE name=\"${real_dsk_name}\" AND type=\"hdd\" )
 						media mode=remove name=${real_dsk_name} path=${real_dsk_path} jname=${jname} type="hdd"
 						f_die
+					fi
+					;;
+				sectorsize)
+					f_dialog_title " set sectorsize "
+					f_dialog_input _input "Specify the logical sector sizes of\n the emulated disk, e.g: 512 or 4096 .." "${dsk_sectorsize}" \
+						"${_message}" || return $?
+					if [ -n "${_input}" ]; then
+						dsk_sectorsize="${_input}"
+						new_dsk_sectorsize="${_input}"
+						cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_sectorsize=\"${new_dsk_sectorsize}\" WHERE dsk_path=\"${dsk}.vhd\"
 					fi
 					;;
 				"bootable")
