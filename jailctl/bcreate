@@ -7,13 +7,13 @@ BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart n
 iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile swapsize vm_iso_path vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory \
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver \
 vnc_password media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr \
-ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add"
+ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root"
 MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 MYDESC="Create bhyve from config file"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
 removejconf= 0,1: remove jconf after jcreate? 0 - don't remove\n"
 CBSDMODULE="bhyve"
-EXTHELP="wf_bcreate.html"
+EXTHELP="wf_bcreate"
 
 . ${subr}
 
@@ -93,7 +93,7 @@ really_create_vm()
 				imgtype="md"
 	esac
 
-	if [ "${from_jail}" ]; then
+	if [ "${from_jail}" = "1" ]; then
 		${ECHO} "${N1_COLOR}Stage2: ${N2_COLOR}jail2iso...${N0_COLOR}"
 		[ -z "${swapsize}" ] && swapsize="0"
 
@@ -174,6 +174,9 @@ for i in ${BHYVE_ARGS}; do
 			rcconf)
 				_mytest="${jailrcconfdir}/rc.conf_${jname}"
 				;;
+			vm_os_type)
+				_mytest=$( echo "${_mytest}" | /usr/bin/tr '[:upper:]' '[:lower:]' )
+				;;
 			*)
 				# skip unknown args
 				continue
@@ -182,6 +185,37 @@ for i in ${BHYVE_ARGS}; do
 	fi
 	${SYSRC_CMD} -qf ${temprcconf} ${i}="${_mytest}" > /dev/null 2>&1
 done
+
+jstatus jname=${jname} > /dev/null 2>&1
+[ $? -eq 0 ] || log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+vm_os_type=$( echo "${vm_os_type}" | /usr/bin/tr '[:upper:]' '[:lower:]' )
+${SYSRC_CMD} -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
+
+if [ "${zfsfeat}" = "1" ]; then
+	readconf zfs.conf
+	. ${zfstool}
+	DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+	_msg=$( /sbin/zfs create -o mountpoint=${workdir}/vm/${jname} ${DATA}/${jname} )
+	_res=$?
+	if [ ${_res} -ne 0 ]; then
+		echo "${_msg}"
+		exit ${_res}
+	fi
+	vm_zfs_guid=$( /sbin/zfs get -Ho value guid ${DATA}/${jname} )
+	[ -z "${data}" ] && data="${jaildatadir}/${jname}-${jaildatapref}"
+	olddata="${data}"
+	data="${workdir}/vm/${jname}"
+	${SYSRC_CMD} -qf ${temprcconf} data="${data}" > /dev/null 2>&1
+	#set -o xtrace
+	/bin/ln -sf ${data} ${olddata}
+	/bin/ln -sf ${data} ${jailsysdir}/${jname}
+	#set +o xtrace
+else
+	#removedata ${data}
+	[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
+	vm_zfs_guid="0"
+fi
 
 . ${buildconf}
 . ${temprcconf}
@@ -263,22 +297,13 @@ if [ -z "${cd_vnc_wait}" ]; then
 	esac
 fi
 
-cp ${jconf_tmp} /tmp/jconf.$$
-
-if [ "${vnc_password}" = "0" ]; then
-	unset vnc_password
-else
-	[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}"
-fi
+[ -z "${vnc_password}" ] && /usr/sbin/sysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}" > /dev/null 2>&1
 
 # re-read jail params and apply personal after profile
 . ${jconf_tmp}
 
 # apply pkglist from tpl_pkglist
 [ -n "${tpl_pkglist}" ] && ${SYSRC_CMD} -qf ${jconf_tmp} pkglist="${tpl_pkglist}" > /dev/null 2>&1
-
-jstatus jname=${jname} > /dev/null 2>&1
-[ $? -eq 0 ] || log_err 1 "${N1_COLOR}Jail with ${jname} already exist${N0_COLOR}"
 
 # CBSD QUEUE
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
@@ -303,7 +328,63 @@ if [ -n "${interface}" -a "${inteface}" != "0" ]; then
 	esac
 fi
 
-[ -d "${data}" ] && removedata ${data}
+# imgsize validate
+if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
+
+	if ! is_number "${imgsize_min}"; then
+		# imgsize_min is number. assume value in bytes
+		imgsize_min_bytes="${imgsize_min}"
+	else
+		imgsize_min_bytes=$( get_bytes ${imgsize_min} )
+	fi
+
+	imgsize_min_human_mb=$(( imgsize_min_bytes / 1024 / 1024 ))
+
+	if ! is_number "${imgsize}"; then
+		# imgsize is number. assume value in bytes
+		imgsize_bytes="${imgsize}"
+	else
+		imgsize_bytes=$( get_bytes ${imgsize} )
+	fi
+
+	imgsize_human_mb=$(( imgsize_bytes / 1024 / 1024 ))
+
+	if [ ${imgsize_bytes} -lt ${imgsize_min_bytes} ]; then
+		if [ "${zfsfeat}" = "1" ]; then
+			/sbin/zfs destroy ${DATA}/${jname}
+		fi
+		err 1 "${N1_COLOR}imgsize too small: ${N2_COLOR}${imgsize_bytes} ( ${imgsize_human_mb}mb ) < ${imgsize_min_bytes} ( ${imgsize_min_human_mb}mb )${N0_COLOR}"
+	fi
+fi
+
+# vm_ram validate
+if [ -n "${vm_ram_min}" -a -n "${vm_ram}" ]; then
+
+	if ! is_number "${vm_ram_min}"; then
+		# vm_ram_min is number. assume value in bytes
+		vm_ram_min_bytes="${vm_ram_min}"
+	else
+		vm_ram_min_bytes=$( get_bytes ${vm_ram_min} )
+	fi
+
+	vm_ram_min_human_mb=$(( vm_ram_min_bytes / 1024 / 1024 ))
+
+	if ! is_number "${vm_ram}"; then
+		# vm_ram is number. assume value in bytes
+		vm_ram_bytes="${vm_ram}"
+	else
+		vm_ram_bytes=$( get_bytes ${vm_ram} )
+	fi
+
+	vm_ram_human_mb=$(( vm_ram_bytes / 1024 / 1024 ))
+
+	if [ ${vm_ram_bytes} -lt ${vm_ram_min_bytes} ]; then
+		if [ "${zfsfeat}" = "1" ]; then
+			/sbin/zfs destroy ${DATA}/${jname}
+		fi
+		err 1 "${N1_COLOR}vm_ram too small: ${N2_COLOR}${vm_ram_bytes} ( ${vm_ram_human_mb}mb ) < ${vm_ram_min_bytes} ( ${vm_ram_min_human_mb}mb )${N0_COLOR}"
+	fi
+fi
 
 defdsk="dsk1.vhd"
 defnic="nic1.vhd"
@@ -318,7 +399,6 @@ fi
 
 [ ! -d "${data}" ] && log_err 1 "Can't create datadir ${data}"
 [ ! -d ${jailfstabdir}  ] && /bin/mkdir -p ${jailfstabdir}
-[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
 
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyvedsk.schema bhyvedsk
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-dskcontroller.schema bhyve_dskcontroller
@@ -353,20 +433,32 @@ fi
 
 
 echo
-${ECHO} "${N1_COLOR}To edit VM properties use: ${N2_COLOR}cbsd bconfig jname=${jname}${N0_COLOR}"
-${ECHO} "${N1_COLOR}To start VM use: ${N2_COLOR}cbsd bstart ${jname}${N0_COLOR}"
-${ECHO} "${N1_COLOR}To stop VM use: ${N2_COLOR}cbsd bstop ${jname}${N0_COLOR}"
-${ECHO} "${N1_COLOR}To remove VM use: ${N2_COLOR}cbsd bremove ${jname}${N0_COLOR}"
-${ECHO} "${N1_COLOR}For attach VM console use: ${N2_COLOR}cbsd blogin ${jname}${N0_COLOR}"
-echo
-${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
+if [ "${vm_zfs_guid}" != "0" ]; then
+	[ -z "${NOINTER}" ] && ${ECHO} "${N1_COLOR}Global VM ZFS guid: ${N2_COLOR}${vm_zfs_guid}${N0_COLOR}"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET vm_zfs_guid=\"${vm_zfs_guid}\"
+fi
+
+if [ -z "${NOINTER}" ]; then
+	${ECHO} "${N1_COLOR}To edit VM properties use: ${N2_COLOR}cbsd bconfig jname=${jname}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}To start VM use: ${N2_COLOR}cbsd bstart ${jname}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}To stop VM use: ${N2_COLOR}cbsd bstop ${jname}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}To remove VM use: ${N2_COLOR}cbsd bremove ${jname}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}For attach VM console use: ${N2_COLOR}cbsd blogin ${jname}${N0_COLOR}"
+	echo
+	${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
+fi
 
 /bin/rm -f ${rcconf}
 
+if [ -z "${sectorsize}" ]; then
+	sectorsize="${default_sectorsize}"
+	[ -z "${sectorsize}" ] && sectorsize="4096"
+fi
+
 if [ -n "${virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${sectorsize}\" )"
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot  ) VALUES ( \"${jname}\",\"${defdsk}\","0" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${defdsk}\","0", \"${sectorsize}\" )"
 fi
 
 if [ -n "${nic_driver}" ]; then
@@ -397,13 +489,13 @@ if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 
 	if [ "${cd_rec_num}" = "0" ]; then
 		# register new ISO with assignment to this VM
-		media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
+		_res=$( media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname} 2>&1 )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}bcreate: media register error: ${_res}${N0_COLOR}"
 	else
 		# we have free/unassignent CD. link to this VM
 		cbsdsqlrw storage_media "UPDATE media SET jname=\"${jname}\" WHERE jname=\"-\" AND type=\"iso\" AND name=\"${cd_name}\" AND path=\"${cd_path}\""
 	fi
-
-#	media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
 fi
 
 [ ! -d ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
@@ -441,7 +533,19 @@ if [ ${is_cloud} -eq 1 ]; then
 
 	case "${ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
-			bset jname="${jname}" ip4_addr="${ci_ip4_addr}" > /dev/null 2>&1
+
+			iptype ${ci_ip4_addr}
+			_ret=$?
+			case ${_ret} in
+			1)
+				ip4_addr="${IWM}"
+				;;
+			*)
+				ip4_addr="${ci_ip4_addr}"
+				;;
+			esac
+
+			bset jname="${jname}" ip4_addr="${ip4_addr}" > /dev/null 2>&1
 			;;
 	esac
 
@@ -450,6 +554,21 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ -z "${ci_nameserver_address}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_address="${default_ci_nameserver_address}" > /dev/null 2>&1
 	[ -z "${ci_nameserver_search}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_search="${default_ci_nameserver_search}" > /dev/null 2>&1
 	[ -z "${ci_interface}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface="${default_ci_interface}" > /dev/null 2>&1
+	[ -z "${ci_user_pw_user}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_user="${ci_user_pw_user}" > /dev/null 2>&1
+	[ -z "${ci_user_pw_root}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
+	[ -z "${ci_user_pw_root}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
+
+	# GET MAC
+	nic_hwaddr0=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM bhyvenic LIMIT 1 )
+
+	if [ "${nic_hwaddr0}" = "0" ]; then
+		# gen MAC
+		nic_hwaddr0=$( mac_gen 00:a0:98 )
+		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: MAC address randomized and updated for nic id 1: ${nic_hwaddr0}
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr0}\" WHERE id=\"1\""
+	fi
+
+	[ -z "${ci_nic_hwaddr0}" ] && /usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nic_hwaddr0="${nic_hwaddr0}" > /dev/null 2>&1
 
 	case "${ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
@@ -457,11 +576,23 @@ if [ ${is_cloud} -eq 1 ]; then
 			;;
 	esac
 
-	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname}
+	case "${vm_os_type}" in
+		windows)
+			cloudengine="cloudinit-base"
+			;;
+		*)
+			cloudengine="cloud-init"
+			;;
+	esac
+
+	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 
 # mark the first disk bootable
 cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
+
+# unset vnc_password when vnc_password=0 (reserved)
+[ "${vnc_password}" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
 
 # rctl
 . ${sharedir}/rctl.conf

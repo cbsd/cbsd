@@ -1,12 +1,16 @@
 #!/usr/local/bin/cbsd
 #v11.0.7
 MYARG="ip"
-MYOPTARG=""
-MYDESC="Return network interface name by ip"
+MYOPTARG="mode skip"
+MYDESC="Return network interface name by ip\n\
+mode=route (default) - detect interface for routing\n\
+mode=strict - match IP on local interface only (check for ip existance)\n\
+skip= skip for interface(s), e.g: skip=\"bridge\"\n"
 
 . ${subr}
-
+skip=
 . ${cbsdinit}
+[ -z "${mode}" ] && mode="route"
 
 ipwmask ${ip}
 iptype ${IWM}
@@ -14,19 +18,33 @@ _inet=$?
 
 [ ${_inet} -eq 0 ] && err 1 "not ip"
 
-ifs=$( ${miscdir}/nics-list -s bridge | /usr/bin/xargs )
+if [ -z "${skip}" ]; then
+	ifs=$( ${miscdir}/nics-list | /usr/bin/xargs )
+else
+	ifs=$( ${miscdir}/nics-list -s "${skip}" | /usr/bin/xargs )
+fi
 
+iface=
+
+# search on local iface first
 for iface in ${ifs}; do
 	case "${_inet}" in
 		1)
-			A=$( /sbin/ifconfig ${iface}| /usr/bin/awk '/inet [0-9]+/{print $2}' | ${GREP_CMD} ^${IWM}$ 2>/dev/null )
+			A=$( /sbin/ifconfig ${iface} | /usr/bin/awk '/inet [0-9]+/{print $2}' | ${GREP_CMD} ^${IWM}$ 2>/dev/null )
 			;;
 		2)
-			A=$( /sbin/ifconfig ${iface}|  /usr/bin/awk '/inet6 *:*+/{print $2}'| ${GREP_CMD} -v %${iface}$ |${GREP_CMD} ^${IWM}$ 2>/dev/null )
+			A=$( /sbin/ifconfig ${iface} |  /usr/bin/awk '/inet6 *:*+/{print $2}'| ${GREP_CMD} -v %${iface}$ | ${GREP_CMD} ^${IWM}$ 2>/dev/null )
 			;;
 	esac
-	[ -z "${A}" ] || err 0 ${iface}
+	[ -n "${A}" ] && break
 done
+
+if [ -n "${A}" ]; then
+	err 0 "${iface}"
+fi
+
+# strict search end here ^^
+[ "${mode}" = "strict" ] && exit 1
 
 case ${_inet} in
 	1)
@@ -41,5 +59,4 @@ IFACE=$( /sbin/route -n get ${MODIF} ${IWM} 2>/dev/null | /usr/bin/awk '/interfa
 
 # return default
 [ -z ${IFACE} ] && IFACE="lo0"
-
 err 0 ${IFACE}

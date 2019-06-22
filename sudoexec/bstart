@@ -11,7 +11,7 @@ ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
   debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n\
 cfg_only=<file_path>  when set, find/create tap/vnc and generate bhyve.conf into <file_path> but without run\n"
 CBSDMODULE="bhyve"
-EXTHELP="wf_jstop_jstart.html"
+EXTHELP="wf_jstop_jstart"
 
 # by default - no live-migrated domain
 lm="0"
@@ -152,7 +152,7 @@ start_bhyve()
 				if [ ${_cloud_truncate} -eq 1 ]; then
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
 					# to generic clonedata (add dd method)?
-					/bin/dd if=${_myfile} | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					/usr/bin/nice -n 20 /bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
 					echo
 					# adjust original image size
 					/usr/bin/truncate -s${_dsk_ebytes} ${data}/dsk1.vhd
@@ -410,6 +410,19 @@ start_bhyve()
 	# init vnc_args
 	if ! compile_vnc_args; then
 		unset vnc_args
+	else
+		case "${bhyve_vnc_tcp_bind}" in
+			127.0.0.1|0.0.0.0)
+				;;
+			*)
+				getnics-by-ip ip=${bhyve_vnc_tcp_bind} mode=strict
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					err 1 "${N1_COLOR}Unable to bind bhyve VNC, please check bhyve_vnc_tcp_bind settings: ${N2_COLOR}${bhyve_vnc_tcp_bind}${N0_COLOR}"
+				fi
+				;;
+		esac
+		# todo: check for port
 	fi
 
 	if [ "${lm}" = "1" -a -n "${lm_rnodename}"  ]; then
@@ -563,25 +576,30 @@ EOF
 	# cloud_init and CLOUD_FILES was initialized earlier
 	if [ ${cloud_init} -eq 1 ]; then
 			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
-			#${GENISOIMAGE_CMD} -output ${jailsysdir}/${jname}/seed.iso -volid cidata -joliet -rock ${CLOUD_FILES}
-			/usr/sbin/makefs -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
-			# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
-			# why upper here, whereis spec?
-			/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
-			sync
+			if [ "${vm_os_type}" = "windows" ]; then
+				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
+				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
+				${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+			else
+				GENISOIMAGE_CMD=$( which makefs )
+				${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+				# why upper here, whereis spec?
+				/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+			fi
 	fi
 
 	case "${debug_engine}" in
 		gdb|lldb)
 			if [ "${lm}" = "1" ]; then
 				# for live migration always run in tmux due to non-interactive commands from remote side
-				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}"
+				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}"
 			else
-				env cbsd_workdir="${workdir}" /bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}
+				env cbsd_workdir="${workdir}" /bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args}
 			fi
 			;;
 		*)
-			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${sharedir}/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args}"
+			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args}"
 			;;
 	esac
 
@@ -630,7 +648,7 @@ EOF
 	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
 
 	if [ "${vm_pid}" = "0" ]; then
-		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}sh ~cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}sh /usr/local/cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
 	fi
 
 
@@ -697,8 +715,9 @@ fi
 
 # MAIN
 . ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
+. ${distdir}/time.subr
 st_time=$( /bin/date +%s )
-[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && jname=${1}
 
 # cloud-init enabled?
 # we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
@@ -893,12 +912,15 @@ fi
 
 start_bhyve
 
+end_time=$( /bin/date +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+
 if [ "${lm}" = "0" ]; then
-	end_time=$( /bin/date +%s )
-	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in $(( end_time - st_time ))s
+	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in ${diff_time}
 else
-	end_time=$( /bin/date +%s )
-	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started for live migration for source node ${lm_rnodename} in $(( end_time - st_time ))s
+	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started for live migration for source node ${lm_rnodename} in ${diff_time}
 fi
 
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 exit 0

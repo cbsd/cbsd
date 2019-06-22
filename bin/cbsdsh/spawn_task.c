@@ -9,6 +9,7 @@
 
 #include "spawn_task.h"
 #include "output.h"
+#include "var.h"
 
 int logging_type=0;
 char log_file_name[1024];
@@ -53,7 +54,12 @@ spawncmd(int argc, char **argv)
 	pid_t pid, logger_pid = -1;
 	int child_status = 0, infd = -1, outfd[2] = {-1, -1};
 //	char ** env = NULL;
-	char *env[] = { "PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin", "NOCOLOR=1", "INTER=0", NULL};
+	char *workdir=lookupvar("workdir");
+	char env_workdir[10+strlen(workdir)];
+
+	sprintf(env_workdir,"workdir=%s",workdir);
+
+	char *env[] = { "PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin", "NOCOLOR=1", "INTER=0", env_workdir, NULL};
 //	char *shell="/bin/sh";
 	char *shell="/usr/local/bin/cbsd";
 	int res = 0;

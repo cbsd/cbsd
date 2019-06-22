@@ -105,7 +105,7 @@ exit_action_mode()
 	return ${_ret}
 }
 
-while getopts "c:d:e:g:l:r:" opt; do
+while getopts "c:d:e:g:l:r:w:" opt; do
 	case "${opt}" in
 		c) conf="${OPTARG}" ;;
 		d) debug="${OPTARG}" ;;
@@ -113,6 +113,7 @@ while getopts "c:d:e:g:l:r:" opt; do
 		g) debug_engine="${OPTARG}" ;;
 		l) orig_logfile="${OPTARG}" ;;
 		r) restore_checkpoint="${OPTARG}" ;;
+		w) workdir="${OPTARG}" ;;
 	esac
 	shift $(($OPTIND - 1))
 done
@@ -141,13 +142,15 @@ detach=
 
 [ -f /tmp/bhyvestop.${jname}.lock ] && /bin/rm -f /tmp/bhyvestop.${jname}.lock
 
-[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
+if [ -z "${workdir}" ]; then
+	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 
-if [ -z "${cbsd_workdir}" ]; then
-	echo "No cbsd workdir defined"
-	exit 1
-else
-	workdir="${cbsd_workdir}"
+	if [ -z "${cbsd_workdir}" ]; then
+		echo "No cbsd workdir defined"
+		exit 1
+	else
+		workdir="${cbsd_workdir}"
+	fi
 fi
 
 . /usr/local/cbsd/cbsd.conf

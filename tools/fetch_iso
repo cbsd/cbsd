@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.8
 MYARG="dstdir"
-MYOPTARG="gensha256 keepname name path purge purgeonly cloud"
+MYOPTARG="gensha256 keepname name path purge purgeonly cloud calc_raw_data"
 MYDESC="Fetch ISO images from mirror sites"
 CBSDMODULE="sys"
 ADDHELP="dstdir - destination directory. Use dstdir=default for using default iso dir: \$cbsd_workdir/src/iso\n\
@@ -14,8 +14,10 @@ purge - when 1, purge ISO which are not referenced by any profiles\n\
 purgeonly - when 1, no download, just purge ISO which are not referenced by any profiles\n\
 cloud - when 1, work with cloud image instead of iso ( 0 by default )\n\
 conv2zvol - when 1, try to convert ( keepname = 0 ) cloud images to ZVOL ( 0 by default )\n\
+calc_raw_data - when 1, calculate and update imgsize_min for cloud image\n\
 "
 
+calc_raw_data=0
 cloud=0
 conv2zvol=0
 
@@ -83,12 +85,33 @@ obtain_iso()
 	fi
 
 	for site in ${iso_site}; do
-		echo "fetch -o ${dstdir}/${fout} ${site}${rfile}"
-		fetch -o ${dstdir}/${fout} ${site}${rfile}
+		echo "/usr/bin/fetch -o ${dstdir}/${fout} ${site}${rfile}"
+		/usr/bin/fetch -o ${dstdir}/${fout} ${site}${rfile}
 
 		if [ $? -ne 0 ]; then
 			/bin/rm -f ${dstdir}/${fout}	# remove broken ISO
 			continue
+		fi
+
+		if [ ${cloud} -eq 1 -a ${calc_raw_data} -eq 1 ]; then
+			# stamp imgsize_min
+
+			if [ -n "${iso_extract}" -a -f "${dstdir}/${fout}" ]; then
+				${ECHO} "${N1_COLOR}Extracting ${dstdir}/${fout} -> ${dstdir}/${iso_img} ...${N0_COLOR}"
+				set -o xtrace
+				cd ${dstdir}
+				${iso_extract}
+				set +o xtrace
+				_ebytes_raw_data=$( /usr/bin/stat -f "%z" ${dstdir}/${iso_img} 2>/dev/null )
+				#_ebytes_raw_data=$(( _ebytes_raw_data * 512 ))					# real referenced size/data ( for: stat -f "%b" )
+				/bin/rm -f ${dstdir}/${iso_img}
+			else
+				_ebytes_raw_data=$( /usr/bin/stat -f "%z" ${dstdir}/${fout} 2>/dev/null )
+				#_ebytes_raw_data=$(( _ebytes_raw_data * 512 ))					# real referenced size/data ( for: stat -f "%b" )
+			fi
+
+			echo "/usr/sbin/sysrc -qf /usr/local/cbsd/etc/defaults/${profile_name} imgsize_min=${_ebytes_raw_data}"
+			/usr/sbin/sysrc -qf /usr/local/cbsd/etc/defaults/${profile_name} imgsize_min="${_ebytes_raw_data}"
 		fi
 
 		if [ ${keepname} -eq 1 ]; then
@@ -157,6 +180,8 @@ fetch_iso_by_path()
 {
 	local iso_bsize=0
 	local _source_raw=
+	# raw data size in bytes
+	_ebytes_raw_data=0
 
 	[ -n "${1}" ] && path="${1}"
 
@@ -215,6 +240,8 @@ fetch_iso_by_path()
 		return 1
 	fi
 
+	profile_name=$( /usr/bin/basename ${path} )
+
 	obtain_iso
 	ret=$?
 
@@ -230,22 +257,30 @@ fetch_iso_by_path()
 
 	# gensha256?
 	if [ ${gensha256} -eq 1 ]; then
-		profile_name=$( /usr/bin/basename ${path} )
 		gensha256_sum /usr/local/cbsd/etc/defaults/${profile_name} ${dstdir}/${fout}
 	else
 		${ECHO} "${N1_COLOR}${path} sha256sum=0, skipp${N0_COLOR}"
 	fi
 	echo
 
+	if [ -r "${dstdir}/${register_iso_name}" ]; then
+		_source_raw=${dstdir}/${register_iso_name}
+	elif [ -r "${dstdir}/${iso_img}" ]; then
+		_source_raw=${dstdir}/${iso_img}
+	fi
+
 	if [ ${cloud} -eq 1 -a ${conv2zvol} -eq 1 ]; then
-		if [ -r "${dstdir}/${register_iso_name}" ]; then
-			_source_raw=${dstdir}/${register_iso_name}
-		elif [ -r "${dstdir}/${iso_img}" ]; then
-			_source_raw=${dstdir}/${iso_img}
+		if [ "${keepname}" -eq 1 ]; then
+			${ECHO} "${N1_COLOR}converting to ZFS volume disabled due to keepname=1. Please use keepname=0${N0_COLOR}"
+			return 0
 		fi
-		${ECHO} "${N1_COLOR}Trying to convert cloud images to zvol: ${N2_COLOR}${_source_raw}${N0_COLOR}"
-		. ${zfstool}
-		convert_source_image_to_zvol -s "${_source_raw}"
+		if [ ! -r "${_source_raw}" ]; then
+			${ECHO} "${N1_COLOR} no such raw file, skip convert to zvol: ${N2_COLOR}${_source_raw}${N0_COLOR}"
+		else
+			${ECHO} "${N1_COLOR}Trying to convert cloud images to zvol: ${N2_COLOR}${_source_raw}${N0_COLOR}"
+			. ${zfstool}
+			convert_source_image_to_zvol -s "${_source_raw}"
+		fi
 	fi
 }
 

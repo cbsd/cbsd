@@ -10,12 +10,14 @@ shownode=1 - show nodename for domains\n\
 node= only for current node\n\
 header=0 don't print header\n\
 display= list by comma for column.\n\
-    Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port\n\
-    If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
-    If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+    Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc\n\
+    If ZFS features on: vm_zfs_guid\n\
+    If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+    If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
      additional field: path\n\
+    Notes: vnc data is meta info from: bhyve_vnc_tcp_bind:vnc_port\n\
 order= asc (default) or desc\n"
-EXTHELP="wf_bls.html"
+EXTHELP="wf_bls"
 
 . ${subr}
 . ${strings}
@@ -49,10 +51,10 @@ fi
 if [ -z "${display}" -a -z "${odisplay}" ]; then
 	case "${racct}" in
 		1)
-			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port"
+			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc"
 			;;
 		*)
-			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
+			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc"
 			;;
 	esac
 fi
@@ -144,7 +146,7 @@ populate_output_data()
 			if [ "${racct}" = "1" ]; then
 				memoryuse=0
 				pcpu=0
-				_pid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+				_pid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 				if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
 					_val="0"
 				else
@@ -160,7 +162,7 @@ populate_output_data()
 		eval _node_is_online=\$node_${_md5_node_name}_online
 		if [ "${_node_is_online}" = "1" ]; then
 			# retr from sql
-			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 			case ${jid} in
 				0)
 					printf "${N4_COLOR}"
@@ -173,6 +175,7 @@ populate_output_data()
 			printf "${DGRAY}"
 		fi
 	fi
+
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
@@ -190,12 +193,20 @@ populate_output_data()
 		case "${_i}" in
 			vm_ram)
 				# convert to MB
-				_val=$(( _val / 1024 / 1024 ))
+				if ! is_number "${_val}"; then
+					_val=$(( _val / 1024 / 1024 ))
+				else
+					_val="0"
+				fi
 				;;
 			vm_curmem)
 				# convert to MB
 				if [ "${_pid}" != "0" ]; then
-					_val=$(( memoryuse / 1024 / 1024 ))
+					if ! is_number "${memoryuse}"; then
+						_val=$(( memoryuse / 1024 / 1024 ))
+					else
+						_val=0
+					fi
 					[ -z "${_val}" ] && _val=0
 				else
 					_val="0"
@@ -203,16 +214,27 @@ populate_output_data()
 				;;
 			pcpu)
 				if [ "${_pid}" != "0" ]; then
-					_val="${pcpu}"
+					if ! is_number "${pcpu}"; then
+						_val="${pcpu}"
+					else
+						_val=0
+					fi
 					[ -z "${_val}" ] && _val=0
 				else
 					_val="0"
 				fi
 				;;
 			vnc_port)
-				if [ -r "${sqlfile_sysdir}/${jname}/vnc_port" ]; then
-					_tmpport=$( /bin/cat ${sqlfile_sysdir}/${jname}/vnc_port )
-
+				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
+					_val="${_tmpport}"
+				else
+					_val="0"
+				fi
+				;;
+			vnc)
+				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
 					# jailed?
 					_jailed=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
 					[ -z "${_jailed}" ] && _jailed="0"
@@ -255,6 +277,14 @@ populate_output_data()
 					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
 				else
 					_val="Unk"
+				fi
+				[ "${_val}" = "(null)" ] && _val="DHCP"
+				;;
+			vm_zfs_guid)
+				if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
+				else
+					_val="0"
 				fi
 				[ "${_val}" = "(null)" ] && _val="DHCP"
 				;;
@@ -325,7 +355,7 @@ show_local()
 	vm_os_type="-"
 	path="-"
 	status="-"
-	vnc_port="-"
+	vnc="-"
 
 	for J in $( /bin/ls ${jailrcconfdir} ); do
 		[ "${J}" = "dir.id" ] && continue

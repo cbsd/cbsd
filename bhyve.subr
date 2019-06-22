@@ -20,7 +20,6 @@ init_bhyve()
 	fi
 
 	if [ "${skip_bhyve_init_warning}" != "1" ]; then
-
 		_res=$( /usr/bin/su -m cbsd -c ${miscdir}/popcnttest > /dev/null 2>&1 )
 
 		if [ $? -ne 0 ]; then
@@ -30,17 +29,19 @@ init_bhyve()
 			${ECHO} "${N1_COLOR}Warning: It seems like your CPU does not support ${N2_COLOR}EPT${N0_COLOR}"
 			${ECHO} "${N1_COLOR}But I will try to run bhyve anyway...${N0_COLOR}"
 			echo
-			${ECHO} "${N1_COLOR}To disable this warning, please set: ${N2_COLOR}skip_bhyve_init_warning${N1_COLOR} to: ${N2_COLOR}1${N0_COLOR}"
+			${ECHO} "${N1_COLOR}To disable this warning, please set in ${workdir}/etc/bhyve-default-default.conf: ${N2_COLOR}skip_bhyve_init_warning${N1_COLOR} to: ${N2_COLOR}1${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Pause for 10 seconds${N0_COLOR}"
 			sleep 10
 		fi
+	fi
 
+	if [ "${skip_bhyve_init_virtual_warning}" != "1" ]; then
 		if [ "${is_virtual}" != "physical" ]; then
 			${ECHO} "${N1_COLOR}Warning: Your current environment is not physical. This is a requirement for a working bhyve${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Virtual engine detected: ${N2_COLOR}${is_virtual}${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Please refer to this page for more information: ${N2_COLOR}https://wiki.freebsd.org/bhyve${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Try to run bhyve anyway...${N0_COLOR}"
-			${ECHO} "${N1_COLOR}To disable this warning, please set: ${N2_COLOR}skip_bhyve_init_warning${N1_COLOR} to: ${N2_COLOR}1${N0_COLOR}"
+			${ECHO} "${N1_COLOR}To disable this warning, please set in ${workdir}/etc/bhyve-default-default.conf: ${N2_COLOR}skip_bhyve_init_virtual_warning${N1_COLOR} to: ${N2_COLOR}1${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Pause for 10 seconds${N0_COLOR}"
 			sleep 10
 		fi
@@ -50,7 +51,7 @@ init_bhyve()
 		if ! /sbin/kldstat -qm ${_i} >/dev/null 2>&1; then
 			${ECHO} "${N1_COLOR}No kldloaded module: ${N2_COLOR}${_i}${N0_COLOR}"
 			${ECHO} "${N1_COLOR}Please add ${N2_COLOR}vmm_load=\"YES\"${N1_COLOR} to /boot/loader.conf and${N1_COLOR}"
-			${ECHO} "${N1_COLOR}put ${N2_COLOR}kld_list=\"if_bridge if_tap nmdm\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host.${N0_COLOR}"
+			${ECHO} "${N1_COLOR}put ${N2_COLOR}kld_list=\"${_required_kmods}\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host.${N0_COLOR}"
 			[ -n "${DIALOG}" ] && ${ECHO} "${N1_COLOR}Press any key...${N0_COLOR}" && read p
 
 			# CBSD QUEUE
@@ -418,6 +419,9 @@ compile_dsk_args()
 	# select only direct-bus attached
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,bootable FROM bhyvedsk WHERE dsk_type=\"vhd\" AND controller_id='0' | while read dsk_controller dsk_path dsk_slot bootable; do
 
+		dsk_sectorsize=
+		dsk_conf=
+
 		case "${dsk_controller}" in
 			virtio-blk|ahci-hd)
 				# direct connect
@@ -428,7 +432,19 @@ compile_dsk_args()
 				;;
 		esac
 
-		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_conf FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+		# back compatible for < CBSD 12.0.12, unset sectorsize=512
+		[ "${dsk_conf}" = "sectorsize=512" -o "${dsk_conf}" = "0" ] && dsk_conf=
+
+		dsk_sectorsize=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_sectorsize FROM bhyvedsk WHERE dsk_path=\"${dsk_path}\" LIMIT 1 2>/dev/null )
+
+		if [ -n "${dsk_sectorsize}" ]; then
+			if [ -n "${dsk_conf}" ]; then
+				dsk_conf="${dsk_conf},sectorsize=${dsk_sectorsize}"
+			else
+				dsk_conf="sectorsize=${dsk_sectorsize}"
+			fi
+		fi
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -737,14 +753,17 @@ compile_nic_args()
 	local _ret=
 	local _is_bridge=
 	local autoconn_iface=$( /usr/sbin/sysrc -n cbsd_autoconnect_bridge 2>&1 )
-	local _pcislot_args=
+	local _pcislot_args= _pref
 	local IFS OIFS
 
 	. ${distdir}/vnet.subr # get_vm_uplink_interface
 
 	local errmsg=
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu; do
+	# bstart.conf: clear VM hwaddr in global ARP table
+	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
+
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent; do
 
 		case "${nic_driver}" in
 			e1000)
@@ -757,118 +776,143 @@ compile_nic_args()
 
 		cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic driver: ${nic_driver}, nic_parent: ${nic_parent}
 
-		case ${nic_parent} in
-			vale_*)
-				get_vm_uplink_interface ${nic_parent}
-				;;
-			*)
-				# autodetect correct interface when auto by default gateway
-				if [ "${nic_parent}" = "auto" ]; then
-					nic_parent=$( getnics-by-ip ip=0.0.0.0 )
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic_parent is auto, detected by default gateway: ${nic_parent}
-				fi
-
-				_is_bridge=$( /sbin/ifconfig ${nic_parent} | /usr/bin/awk '/groups:/{print $2}' | /usr/bin/grep -o bridge )
-				if [ "${_is_bridge}" != "bridge" ]; then
-					# this is not bridge, detect uplink iface
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
+		# when nic_persistent=1 just put it to args
+		if [ ${nic_persistent} -eq 1 ]; then
+			_pref3=$( substr --pos=0 --len=3 --str=${nic_parent} )
+			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
+			/sbin/ifconfig ${nic_parent} > /dev/null 2>&1
+			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
+			nic_hwaddr="0"
+			mytap="${nic_parent}"
+			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${mytap} marked as persistent
+		else	# << if [ ${nic_persistent} -eq 0 ]
+			case ${nic_parent} in
+				cbsdvale*)
 					get_vm_uplink_interface ${nic_parent}
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+					;;
+				vale*)
+					get_vm_uplink_interface ${nic_parent}
+					;;
+				*)
+					if [ "${nic_parent}" != "0" ]; then
+						# autodetect correct interface when auto by default gateway
+						if [ "${nic_parent}" = "auto" ]; then
+							nic_parent=$( getnics-by-ip ip=0.0.0.0 skip=bridge )
+							cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic_parent is auto, detected by default gateway: ${nic_parent}
+						fi
 
-					if [ "${interface}" != "disable" ]; then
-						# always up parent device
-						/sbin/ifconfig ${interface} up
-						if ! mybridge=$( get_my_device bridge ${interface} ); then
-							err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+						_is_bridge=$( /sbin/ifconfig ${nic_parent} | /usr/bin/awk '/groups:/{print $2}' | /usr/bin/grep -o bridge )
+						if [ "${_is_bridge}" != "bridge" ]; then
+							# this is not bridge, detect uplink iface
+							cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
+							get_vm_uplink_interface ${nic_parent}
+							cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+
+							if [ "${interface}" != "disable" ]; then
+								# always up parent device
+								/sbin/ifconfig ${interface} up
+								if ! mybridge=$( get_my_device bridge ${interface} ); then
+									err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+								fi
+							else
+								# don't create/attach to bridge
+								mybridge="disable"
+							fi
+						else
+							/sbin/ifconfig ${nic_parent} > /dev/null 2>&1
+							_ret=$?
+							[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
+							mybridge="${nic_parent}"
 						fi
 					else
 						# don't create/attach to bridge
 						mybridge="disable"
 					fi
-				else
-					/sbin/ifconfig ${nic_parent} > /dev/null 2>&1
+
+					mytap=$( get_my_tap ${mybridge} )
 					_ret=$?
-					[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
-					mybridge="${nic_parent}"
-				fi
+					[ ${_ret} -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
 
-				mytap=$( get_my_tap ${mybridge} )
-				_ret=$?
-				[ ${_ret} -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
+					# MTU management, should be before addm
+					[ -z "${nic_mtu}" ] && nic_mtu=0	# AUTO
+					if [ ${nic_mtu} -eq 0 -a "${mybridge}" != "disable" ]; then
+						# Get parent MTU size
+						_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						_ret=$?
+						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
 
-				# MTU management, should be before addm
-				[ -z "${nic_mtu}" ] && nic_mtu="0"	# AUTO
-				if [ ${nic_mtu} -eq 0 ]; then
-					# Get parent MTU size
-					_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
-					_ret=$?
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
-
-					if [ ${_ret} -eq 0 ]; then
-						[ -n "${_parent_mtu}" ] && _ret=$( /sbin/ifconfig ${mytap} mtu ${_parent_mtu} )
-					fi
-				else
-					# Get parent MTU size
-					# compare MTU with parent
-					#_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
-					#_ret=$?
-					#if [ ${_ret} -eq 0 ]; then
-					#	[ ${nic_mtu} -gt ${_parent_mtu} ]
-					#fi
-					_ret=$( /sbin/ifconfig ${mytap} mtu ${nic_mtu} )
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
-				fi
-
-				/sbin/ifconfig ${mytap} description "${jname}-nic${_id}" group vm-port up
-
-				if [ "${mybridge}" != "disable" ]; then
-					if [ "${autoconn_iface}" = "NO" ]; then
-						/sbin/ifconfig ${mybridge} addm ${mytap} >/dev/null 2>&1
+						if [ ${_ret} -eq 0 ]; then
+							[ -n "${_parent_mtu}" ] && _ret=$( /sbin/ifconfig ${mytap} mtu ${_parent_mtu} )
+						fi
 					else
-						/sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+						# Get parent MTU size
+						# compare MTU with parent
+						#_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						#_ret=$?
+						#if [ ${_ret} -eq 0 ]; then
+						#	[ ${nic_mtu} -gt ${_parent_mtu} ]
+						#fi
+						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
+						_ret=$( /sbin/ifconfig ${mytap} mtu ${nic_mtu} )
+						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
-				fi
 
-				if [ -n "${nic_address}" ]; then
-					OIFS="${OIFS}"
-					if [ "${nic_address}" != "0" -o "${nic_address}" != "disable" ]; then
-						IFS=","
-						for ip in ${nic_address}; do
-							if [ "${ip}" = "DHCP" ]; then
-								ip=$( dhcpd )
-								[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
-							fi
-							IFS="${OIFS}"
-							ipwmask ${ip}
-							iptype ${IWM}
-							local _inet=$?
-							case "${_inet}" in
-								1)
-									local proto="inet"
-									;;
-								2)
-									local proto="inet6"
-									;;
-								*)
-									continue
-									;;
-							esac
-							# ipv type + mask
-							/sbin/ifconfig ${mytap} ${proto} ${ip} alias
-						IFS=","
-					done
-					IFS="${OIFS}"
+					/sbin/ifconfig ${mytap} description "${jname}-nic${_id}" group vm-port up
+
+					if [ "${mybridge}" != "disable" ]; then
+						if [ "${autoconn_iface}" = "NO" ]; then
+							/sbin/ifconfig ${mybridge} addm ${mytap} >/dev/null 2>&1
+						else
+							/sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+						fi
 					fi
-				fi
 
-				;;
-		esac
-
+					if [ -n "${nic_address}" ]; then
+						OIFS="${OIFS}"
+						if [ "${nic_address}" != "0" -o "${nic_address}" != "disable" ]; then
+							IFS=","
+							for ip in ${nic_address}; do
+								if [ "${ip}" = "DHCP" ]; then
+									ip=$( dhcpd )
+									[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
+								fi
+								IFS="${OIFS}"
+								ipwmask ${ip}
+								iptype ${IWM}
+								local _inet=$?
+								case "${_inet}" in
+									1)
+										local proto="inet"
+										;;
+									2)
+										local proto="inet6"
+										;;
+									*)
+										continue
+										;;
+								esac
+								# ipv type + mask
+								/sbin/ifconfig ${mytap} ${proto} ${ip} alias
+							IFS=","
+						done
+						IFS="${OIFS}"
+						fi
+					fi
+					;;
+			esac
+		fi	# << if [ ${nic_persistent} -eq 0 ]
 		# MAC MGMT
 		if [ "${nic_hwaddr}" = "0" ]; then
 			nic_hwaddr=$( mac_gen 00:a0:98 )
 			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
+		fi
+
+		if [ "${clean_arp_table_by_vm}" = "1" ]; then
+			/usr/sbin/arp -an | /usr/bin/awk -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | /usr/bin/sort | /usr/bin/tr -d '()' | while read _ip; do
+				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+				/usr/sbin/arp -n -d ${_ip} > /dev/null 2>&1 || true
+			done
 		fi
 
 		# echo "search next_pci_id -n ${net_emul} -d ${nic_id}" >> /tmp/net.txt
@@ -1254,8 +1298,10 @@ compile_live_migration_args()
 
 	# auto _dst_port?
 	if [ "${_dst_port}" = "0" ]; then
+		# defip
 		_dst_port=$( get_next_tcp_port -s 20000 -e 21000 )
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 20000-21000 range for live migration${N0_COLOR}"
+
 	fi
 
 	# store info into ascii files
@@ -1276,26 +1322,28 @@ EOF
 
 
 # create new disk image for bhyve VMs
+# -b volblocksize ( must be power of 2 from 512B to 128KB, e.g: 128K)
 # -f fsfeat ( 1 or 0 ) - use of skip FS features
 # -p full path
 # -s size (eg: 1g)
 # -t type (zvol, md)
-# require: /usr/local/bin/cbsd as shell
-# require: ${tools}
 #
 # if ! bhyve_create_dsk -p /tmp/olala.vhd -s 10g -f 0; then
 #    echo ";=("
 # fi
 bhyve_create_dsk()
 {
-	local newdsk imgsize fsfeat imgtype _msg
+	local newdsk imgsize fsfeat imgtype _msg volblocksize= sectorsize=
+	local _zvol_rec_size
 
-	while getopts "f:p:s:t:" opt; do
+	while getopts "b:f:p:s:t:z:" opt; do
 		case "${opt}" in
+			b) volblocksize="${OPTARG}" ;;
 			f) feat="${OPTARG}" ;;
 			p) newdsk="${OPTARG}" ;;
 			s) imgsize="${OPTARG}" ;;
 			t) imgtype="${OPTARG}" ;;
+			z) sectorsize="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -1341,15 +1389,32 @@ bhyve_create_dsk()
 		readconf zfs.conf
 		. ${zfstool}
 
-		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+		[ -z "${bhyve_zvol_volmode}" ] && bhyve_zvol_volmode="${default_bhyve_zvol_volmode}"
+		[ -z "${bhyve_zvol_volmode}" ] && bhyve_zvol_volmode="dev"
+		if [ -z "${volblocksize}" ]; then
+			echo "O"
+			[ -z "${bhyve_zvol_volblocksize}" ] && bhyve_zvol_volblocksize="${default_bhyve_zvol_volblocksize}"
+			[ -z "${bhyve_zvol_volblocksize}" ] && bhyve_zvol_volblocksize="128K"
+			volblocksize="${bhyve_zvol_volblocksize}"
+		fi
+
+#		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+		DATA=$( /sbin/zfs get -Ho value name ${datadir} )
+
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
+		# volume size must be a multiple of volume block size
+		imgbytes=$( roundup --num=${imgbytes} --multiple=${_zvol_rec_size} 2>/dev/null )
+		cbsdlogger NOTICE ${CBSD_APP}: bhyve_create_dsk: roundup by recsize ${_zvol_rec_size}: [${imgbytes}]
+
 		# zfs_create_sparse defined via zfs.conf
 		if [ "${zfs_create_sparse}" = "0" ]; then
-			_msg=$( /sbin/zfs create -V ${imgbytes} -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
-			_res=$?
+			local _sparse_args=
 		else
-			_msg=$( /sbin/zfs create -V ${imgbytes} -s -o volmode=dev ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
-			_res=$?
+			local _sparse_args="-s"
 		fi
+
+		_msg=$( /sbin/zfs create -V ${imgbytes} ${_sparse_args} -o volmode=${bhyve_zvol_volmode} -o volblocksize=${volblocksize} ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
+		_res=$?
 
 		if [ ${_res} -ne 0 ]; then
 			echo "${_msg}"
@@ -1363,13 +1428,18 @@ bhyve_create_dsk()
 	else
 		blockcount=$(( imgbytes  / 1048576 ))
 		[ ! -f "${newdsk}" -a ! -h "${newdsk}" ] && /usr/bin/touch "${newdsk}"
-		/bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || return 1
-	#	/bin/dd if=/dev/random of="${newdsk}" bs=1m count=${blockcount}
+		_msg=$( /bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 2>&1 )
 		_res=$?
-		[ ${_res} -ne 0 ] && return ${_res}
+		[ ${_res} -ne 0 ] && echo "${_msg}"
+		return ${_res}
 	fi
 
-	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}"
+	if [ -z "${sectorsize}" ]; then
+		[ -n "${default_sectorsize}" ] && sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="512"
+	fi
+
+	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}" sectorsize="${sectorsize}"
 	return 0
 }
 
@@ -1425,6 +1495,7 @@ compile_vnc_args()
 	local _jailed _jip _ret
 	local width height
 	local _pcislot_args=
+	local _vnc_bind=127.0.0.1
 
 	vnc_args=
 
@@ -1436,8 +1507,18 @@ compile_vnc_args()
 
 	case "${vm_vnc_port}" in
 		0)
-			vm_port=$( get_next_tcp_port -s 5900 -e 6900 )
-			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range${N0_COLOR}"
+
+			case "${bhyve_vnc_tcp_bind}" in
+				0.0.0.0)
+					_vnc_bind="127.0.0.1"
+					;;
+				*)
+					_vnc_bind="${bhyve_vnc_tcp_bind}"
+					;;
+			esac
+			vm_port=$( get_next_tcp_port -a ${_vnc_bind} -s 5900 -e 6900 )
+			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port: ${vm_port} for ${_vnc_bind}
 			;;
 		1)
 			return 1
@@ -1457,6 +1538,8 @@ compile_vnc_args()
 	# echo "store_bhyve_pci_slot -n fbuf -a ${bhyve_pci_index}" >> /tmp/test.txt
 	store_bhyve_pci_slot -n fbuf -a ${bhyve_pci_index}
 
+	# update vnc_port in SQL and duplicate it in the ascii file
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_port=\"${vm_port}\""
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
 	if [ -n "${bhyve_vnc_tcp_bind}" ]; then

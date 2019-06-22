@@ -1,0 +1,62 @@
+#!/usr/local/bin/cbsd
+#v11.1.16
+MYARG="arch ver"
+MYOPTARG="platform target_arch source"
+MYDESC="Register kernels for jails in the datakernels"
+CBSDMODULE="build"
+
+. ${subr}
+
+source=
+. ${cbsdinit}
+
+[ -z "${source}" ] && source="unknown"
+
+. ${tools}
+. ${strings}
+. ${system}
+
+[ -z "${target_arch}" ] && target_arch="${arch}"
+
+. ${distdir}/universe.subr
+
+strpos --str="${ver}" --search="."
+# auto-detect for stable/release
+pos=$?
+if [ ${pos} -eq 0 ]; then
+	stable=1
+	ostable=1
+else
+	stable=0
+	ostable=0
+fi
+
+init_kerneldir
+
+[ ! -x "${kernel_DIR}/bin/sh" ] && err 1 "${N1_COLOR}No such kernels here: ${N2_COLOR}${kernel_DIR}${N0_COLOR}"
+
+kernelelf=$( ${miscdir}/elf_tables --ver ${kernel_DIR}/bin/sh 2>/dev/null )
+
+idx=$( get_kernelidx -a ${arch} -p ${platform} -s ${stable} -t ${target_arch} -v ${ver} )
+
+if [ -n "${idx}" ]; then
+	cbsdsqlrw local "UPDATE bsdkernel SET elf=\"${kernelelf}\",date=datetime('now','localtime'),source=\"${source}\" WHERE idx=\"${idx}\""
+	dt="$( cbsdsqlro local SELECT date FROM bsdkernel WHERE elf=\"${kernelelf}\" AND idx=\"${idx}\" )"
+	date=$( /bin/date -j -f "%Y-%m-%d %H:%M:%S" "${dt}" "+%s" )
+	${ECHO} "${N1_COLOR}kernels updated: ${N2_COLOR}${kernel_DIR}${N0_COLOR}"
+else
+	cbsdsqlrw local "INSERT INTO bsdkernel ( platform,name,arch,targetarch,ver,stable,elf,source ) VALUES ( \"${platform}\", \"kernel\", \"${arch}\", \"${target_arch}\", \"${ver}\", \"${stable}\", \"${kernelelf}\", \"${source}\" )"
+	${ECHO} "${N1_COLOR}kernels registered: ${N2_COLOR}${kernel_DIR}${N0_COLOR}"
+fi
+
+# auto kernelupdate? for stable=0 only
+if [ "${stable}" = "0" ]; then
+	readconf ${platform}-kernels.conf
+	if [ "${auto_kernelupdate}" = "1" ]; then
+		${ECHO} "${N1_COLOR}register_kernel: ${H5_COLOR}auto_kernelupdate=1${N1_COLOR} via ${platform}-kernels.conf, trying to perform kernelupdate, please wait...${N0_COLOR}"
+		kernelupdate arch=${arch} ver=${ver} target_arch=${TARGET_ARCH}
+	else
+		${ECHO} "${N1_COLOR}register_kernel: ${H5_COLOR}auto_kernelupdate=0${N1_COLOR} via ${platform}-kernels.conf, updates disabled${N0_COLOR}"
+		${ECHO} "${N1_COLOR}register_kernel: you might want to do ${N2_COLOR}cbsd kernelupdate${N1_COLOR} by hand to fetch latest patches${N0_COLOR}"
+	fi
+fi

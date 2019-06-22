@@ -1,23 +1,35 @@
 #!/usr/local/bin/cbsd
 #v12.0.6
 MYARG="mode jname"
-MYOPTARG="fromfile jname"
+MYOPTARG="fromfile jname cloudengine"
 MYDESC="cloud-init helper t generate CI yaml"
 ADDHELP="mode can be: show, gen\n\
 pw - plain password, or\n\
-epw - encrypted password\n"
+epw - encrypted password\n\
+cloudengine - 'cloud-init' (default) or 'cloudinit-base'\n"
 
 . ${subr}
-
 . ${cbsdinit}
-
 . ${jrcconf}
 [ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+[ -z "${cloudengine}" ] && cloudengine="cloud-init"
 
 _MYDIR="${distdir}/modules/bsdconf.d"
 SERVICE="adduser"
 
-cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
+case "${cloudengine}" in
+	cloud-init)
+		cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
+		cloud_data_files="meta-data network-config user-data"
+		;;
+	cloudinit-base)
+		cloud_init_dir="${jailsysdir}/${jname}/cloud-init/openstack/latest"
+		cloud_data_files="meta_data.json network_data.json"
+		;;
+	*)
+		err 1 "${N1_COLOR}cloudinit: unknown cloud engine: ${L2_COLOR}${cloudengine}${N0_COLOR}"
+esac
+
 master_prestart_dir="${jailsysdir}/${jname}/master_prestart.d"
 
 f_getvar()
@@ -67,10 +79,22 @@ show()
 		_keytest="${ci_pubkey}"
 	fi
 
+	ci_user_pw_user_lock="false"
+	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user='*'
+	ci_user_pw_root_lock="false"
+	[ -z "${ci_user_pw_root}" ] && ci_user_pw_root='*'
+
+	# todo: test for empty values
 	case "${_source}" in
 		meta-data)
 			/usr/bin/sed -e "s:%%ci_jname%%:${ci_jname}:g" \
 			-e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
+			${_tpldir}/${_source}
+			;;
+		meta_data.json)
+			/usr/bin/sed -e "s:%%ci_jname%%:${ci_jname}:g" \
+			-e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
+			-e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
 			${_tpldir}/${_source}
 			;;
 		network-config)
@@ -81,11 +105,78 @@ show()
 			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
 			${_tpldir}/${_source}
 			;;
-		user-data)
-			/usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" \
-			-e "s:%%ci_shell%%:${ci_shell}:g" \
-			-e "s:%%ci_pubkey%%:${_keytest}:g" \
+		network_data.json)
+			/usr/bin/sed -e "s:%%ci_interface%%:${ci_interface}:g" \
+			-e "s:%%ci_ip4_addr%%:${ci_ip4_addr}:g" \
+			-e "s:%%ci_gw4%%:${ci_gw4}:g" \
+			-e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
+			-e "s#%%ci_nic_hwaddr0%%#${ci_nic_hwaddr0}#g" \
 			${_tpldir}/${_source}
+			;;
+		user-data)
+			# user list here
+			# This is a multi-part compound file.
+			# Without jinja/erb this is really entangled code ;-(
+
+			# change user password needed?
+			need_user_chpasswd=0
+			# change root password needed?
+			need_root_chpasswd=0
+
+			prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_user} )
+			if [ "${prefix}" = "*" ]; then
+				ci_user_pw_user_lock="true"
+			else
+				ci_user_pw_user_lock="false"
+				need_user_chpasswd=1
+			fi
+
+			/bin/cat ${_tpldir}/10-user-data		# header
+			if [ "${ci_user_pw_user_lock}" = "false" ]; then
+				/usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" \
+				-e "s:%%ci_shell%%:${ci_shell}:g" \
+				-e "s:%%ci_pubkey%%:${_keytest}:g" \
+				-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
+				${_tpldir}/20-user-data-user-password
+			else
+				/usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" \
+				-e "s:%%ci_shell%%:${ci_shell}:g" \
+				-e "s:%%ci_pubkey%%:${_keytest}:g" \
+				${_tpldir}/20-user-data-user-lockpassword
+			fi
+
+			# root user ( combine with users ^^ ? )
+			prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_root} )
+			if [ "${prefix}" = "*" ]; then
+				ci_user_pw_root_lock="true"
+			else
+				ci_user_pw_root_lock="false"
+				need_root_chpasswd=1
+			fi
+			if [ "${ci_user_pw_root_lock}" = "false" ]; then
+				/usr/bin/sed -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
+				${_tpldir}/20-user-data-root-password
+			else
+				/bin/cat ${_tpldir}/20-user-data-root-lockpassword
+			fi
+
+			# chpasswd
+			if [ "${need_user_chpasswd}" = "1" -o "${need_root_chpasswd}" = "1" ]; then
+				/bin/cat ${_tpldir}/30-user-data-chpasswd
+				[ "${need_user_chpasswd}" = "1" ] && /usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" -e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" ${_tpldir}/40-user-data-chpasswd-user
+				[ "${need_root_chpasswd}" = "1" ] && /usr/bin/sed -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" ${_tpldir}/40-user-data-chpasswd-root
+				/bin/cat ${_tpldir}/50-user-data-chpasswd
+			fi
+
+#			/usr/bin/sed -e "s:%%ci_login%%:${ci_login}:g" \
+#			-e "s:%%ci_shell%%:${ci_shell}:g" \
+#			-e "s:%%ci_pubkey%%:${_keytest}:g" \
+#			-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
+#			-e "s:%%ci_user_pw_user_lock%%:${ci_user_pw_user_lock}:g" \
+#			-e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
+#			-e "s:%%ci_user_pw_root_lock%%:${ci_user_pw_root_lock}:g" \
+#			${_tpldir}/${_source}
 			;;
 	esac
 }
@@ -94,8 +185,9 @@ show()
 # MAIN
 if [ -r "${fromfile}" ]; then
 
-	unset ci_template ci_user_pw_root_crypt ci_user_add ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_search
-	unset ci_jname ci_fqdn ci_interface ci_ip4_addr ci_gw4 ci_nameserver_address
+	unset ci_template ci_user_pw_root ci_user_add ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_search
+	unset ci_jname ci_fqdn ci_interface ci_ip4_addr ci_gw4 ci_nameserver_address ci_user_pw_user ci_user_pw_root
+	unset ci_nic_hwaddr0
 
 	. ${fromfile}
 
@@ -121,14 +213,14 @@ if [ -r "${fromfile}" ]; then
 
 		case "${mode}" in
 			show)
-				for i in meta-data network-config user-data; do
+				for i in ${cloud_data_files}; do
 					show -s ${i}
 				done
 				ret=$?
 				;;
 			gen)
 				[ ! -d "${cloud_init_dir}" ] && /bin/mkdir -p ${cloud_init_dir}
-				for i in meta-data network-config user-data; do
+				for i in ${cloud_data_files}; do
 					show -s ${i} > ${cloud_init_dir}/${i}
 				done
 
@@ -148,7 +240,7 @@ fi
 
 case "${mode}" in
 	show)
-		echo "SHOOW"
+		echo "SHOW"
 		err=$?
 		;;
 esac

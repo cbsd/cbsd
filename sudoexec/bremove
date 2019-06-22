@@ -1,10 +1,10 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG=""
-MYOPTARG="jname inter"
+MYOPTARG="jname"
 MYDESC="Destroy bhyve domain"
 CBSDMODULE="bhyve"
-EXTHELP="wf_bremove.html"
+EXTHELP="wf_bremove"
 
 . ${subr}
 . ${tools}	# for select_jail_by_list
@@ -22,8 +22,6 @@ fi
 . ${cbsdinit}
 
 . ${jfs}
-
-[ -n "${inter}" ] && shift
 
 if [ -n "${jname}" ]; then
 
@@ -43,19 +41,24 @@ fi
 readconf cbsd_queue.conf
 [ -z "${cbsd_bhyve_queue_name}" ] && cbsd_bhyve_queue_name="/clonos/bhyvevms/"
 
-for jname in ${JLIST}; do
-	st_time=$( /bin/date +%s )
+. ${distdir}/time.subr
+st_time=$( /bin/date +%s )
 
+for jname in ${JLIST}; do
 	DST="${jaildatadir}/${jname}-${jaildatapref}"
 	JAILDIR="${jaildir}/${jname}"
 	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
-	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
-
+	JAILSYSRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+	JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
 	unregister=0
 
 	. ${jrcconf}
 	if [ $? -eq 1 ]; then
-		if [ ! -f "${JAILRCCONF}" ]; then
+		if [ -r "${JAILRCCONF}" -o -r "${JAILSYSRCCONF}" ]; then
+			[ -r ${JAILSYSRCCONF} ] && . ${JAILSYSRCCONF}
+			[ -r ${JAILRCCONF} ] && . ${JAILRCCONF}
+			unregister=1
+		else
 			# remote?
 			if [ ${sqlreplica} -eq 0 ]; then
 				${ECHO} "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -80,9 +83,6 @@ for jname in ${JLIST}; do
 			fi
 			done
 			continue
-		else
-			. ${JAILRCCONF}
-			unregister=1
 		fi
 	fi
 
@@ -208,12 +208,35 @@ for jname in ${JLIST}; do
 	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
 	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
 	[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && /bin/rm -f "${jailrcconfdir}/rc.conf_${jname}"
-	[ -d "${jailsysdir}/${jname}" ] && /bin/rm -rf "${jailsysdir}/${jname}"
+	if [ -d "${jailsysdir}/${jname}" ]; then
+		/bin/rm -rf "${jailsysdir}/${jname}"
+	elif [ -h "${jailsysdir}/${jname}" ]; then
+		/bin/rm -f "${jailsysdir}/${jname}"
+	fi
 	[ -f "${logdir}/${jname}.log" ] && /bin/rm -f "${logdir}/${jname}.log"
 	[ -d "${jaildir}/${jname}" ] && /bin/rmdir "${jaildir}/${jname}"
 	for parent_snapshot in ${PARENT_SNAPSHOTS}; do
 		/sbin/zfs destroy ${parent_snapshot}
 	done
+
+	vmdir="${workdir}/vm/${jname}"
+
+	### xxx
+	if [ "${zfsfeat}" = "1" ]; then
+		readconf zfs.conf
+		. ${zfstool}
+		zfsmnt "${vmdir}"
+		_ret=$?
+		if [ ${_ret} -eq 1 -o ${_ret} -eq 2 ]; then
+			_msg=$( /sbin/zfs destroy ${ZPOOL} )
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${N1_COLOR}bremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"
+			fi
+		fi
+	fi
+
+	[ -d "${vmdir}" ] && /bin/rm -rf ${vmdir}
 
 	# detach ppt
 	cbsdsqlrw local "DELETE FROM bhyveppt WHERE jname=\"${jname}\""
@@ -244,9 +267,6 @@ for jname in ${JLIST}; do
 		[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=2
 	fi
 
-	end_time=$( /bin/date +%s )
-	cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} removed in $(( end_time - st_time ))s
-
 	if [ "${_jailed}" != "0" ]; then
 		${ECHO} "${N1_COLOR}remove hoster jail: ${N2_COLOR}${_jailed}${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: remove bhyve [${jname}] hoster jail: ${_jailed}
@@ -254,5 +274,11 @@ for jname in ${JLIST}; do
 		jremove jname="${_jailed}"
 	fi
 done
+
+end_time=$( /bin/date +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${JLIST} removed in ${diff_time}
 
 exit 0
