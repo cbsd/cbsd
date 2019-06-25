@@ -153,10 +153,15 @@ if [ -z "${workdir}" ]; then
 	fi
 fi
 
-. /usr/local/cbsd/cbsd.conf
-
-freebsdhostversion=$( ${miscdir}/elf_tables --ver /bin/sh )
 orig_vnc_args="${vnc_args}"
+
+. /usr/local/cbsd/cbsd.conf
+. ${subr}		# readconf
+# mod_cbsd_queue_enabled?
+. ${inventory}
+if [ "${mod_cbsd_queue_enabled}" = "YES" ]; then
+	readconf cbsd_queue.conf
+fi
 
 while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 

@@ -1,10 +1,9 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG=""
-MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
+MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
 MYDESC="Start bhyve domain"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
-  checkpoint   - start from specified checkpoint name\n\
+ADDHELP="checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
   lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
   lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n\
@@ -92,8 +91,8 @@ start_bhyve()
 	fi
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=1
+	if [ "${mod_cbsd_queue_enabled}" = "YES" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=1 workdir="${workdir}"
 	fi
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
@@ -625,8 +624,8 @@ EOF
 	fi
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1
+	if [ "${mod_cbsd_queue_enabled}" = "YES" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}"
 	fi
 
 	search_cmd="bhyve: ${jname}"
@@ -674,11 +673,11 @@ EOF
 
 # MAIN for multiple jails
 TRAP=""
-readconf cbsd_queue.conf
-[ -z "${cbsd_bhyve_queue_name}" ] && cbsd_bhyve_queue_name="/clonos/bhyvevms/"
-
 emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple
+if [ "${mod_cbsd_queue_enabled}" = "YES" ]; then
+	readconf cbsd_queue.conf
+fi
 
 if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	# multiple astart always non interactive
@@ -694,11 +693,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		if [ -n "${cbsd_bhyve_queue_name}" ]; then
-			/usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname} cbsd_bhyve_queue_name="${cbsd_bhyve_queue_name}"
-		else
-			/usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname}
-		fi
+		env NOINTER=1 /usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
