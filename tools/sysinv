@@ -101,12 +101,20 @@ sysinv_get_info_racct()
 sysinv_get_info_physmem()
 {
 	local _realmem
-	_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
 
-	if [ -n "${_realmem}" ]; then
-		physmem=$(( _realmem / 1048576 ))
+	. ${distdir}/xen.subr
+
+	if is_xen_dom0; then
+		_realmem=$( ${XL_CMD} info total_memory 2>/dev/null )   # in MB by default
+		[ -n "${_realmem}" ] && _realmem=$(( _realmem * 1024 * 1024 ))          # ->KB -> Bytes
 	else
+		_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
+	fi
+
+	if [ -z "${_realmem}" ]; then
 		physmem=0
+	else
+		physmem="${_realmem}"
 	fi
 }
 
@@ -114,17 +122,25 @@ sysinv_get_info_freemem()
 {
 	local _realmem _page_size _active_count _wire_count _active_size _wire_size _freemem
 
-	_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
-	_page_size=$( /sbin/sysctl -n vm.stats.vm.v_page_size )
-	_active_count=$( /sbin/sysctl -n vm.stats.vm.v_active_count )
-	_wire_count=$( /sbin/sysctl -n vm.stats.vm.v_wire_count )
-	_active_size=$(( _page_size * _active_count ))
-	_wire_size=$(( _page_size * _wire_count ))
+	. ${distdir}/xen.subr
 
-	_freemem=$(( _realmem - _active_size - _wire_size ))
+	if is_xen_dom0; then
+		_freemem=$( ${XL_CMD} info free_memory 2>/dev/null )			# in MB by default
+		[ -n "${_freemem}" ] && _freemem=$(( _freemem * 1024 * 1024 ))		# ->KB -> Bytes
+	else
+		sysinv_get_info_physmem		# get physmem
+		_realmem="${physmem}"
+		_realmem=$( /sbin/sysctl -n hw.physmem 2>/dev/null )
+		_page_size=$( /sbin/sysctl -n vm.stats.vm.v_page_size )
+		_active_count=$( /sbin/sysctl -n vm.stats.vm.v_active_count )
+		_wire_count=$( /sbin/sysctl -n vm.stats.vm.v_wire_count )
+		_active_size=$(( _page_size * _active_count ))
+		_wire_size=$(( _page_size * _wire_count ))
+		_freemem=$(( _realmem - _active_size - _wire_size ))
+	fi
 
 	if [ -n "${_freemem}" ]; then
-		freemem=$(( _freemem / 1048576 ))
+		freemem="${_freemem}"
 	else
 		freemem=0
 	fi
