@@ -159,7 +159,7 @@ orig_vnc_args="${vnc_args}"
 . ${subr}		# readconf
 # mod_cbsd_queue_enabled?
 . ${inventory}
-if [ "${mod_cbsd_queue_enabled}" = "YES" ]; then
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
 fi
 
@@ -382,9 +382,9 @@ done
 [ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bhyvevms/"
 
 if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && [ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=1 data_status=1
+	[ "${cbsd_queue_name}" != "none" ] && [ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop progress=1 data_status=1
 	sleep 0.3	# timeout for web socket
-	[ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=2 data_status=0
+	[ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop progress=100 data_status=0
 fi
 
 # extra destroy
