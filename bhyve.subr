@@ -1233,6 +1233,53 @@ compile_virtio_9p_args()
 }
 
 
+# export arguments for bhyve soundhw_args
+compile_soundhw_args()
+{
+	local _pcislot_args=
+	local _ret
+	soundhw_args=
+
+	# this is feature of FreeBSD 12.+
+	[ ${freebsdhostversion} -lt 1300034 ] && return 0
+
+	mydb="${jailsysdir}/${jname}/local.sqlite"
+
+	_ret=$( cbsdsqlro ${mydb} SELECT soundhw FROM settings 2>/dev/null )
+	[ -z "${_ret}" -o "${_ret}" = "none" ] && return 0
+
+	local _play _rec
+
+	_play=$( cbsdsqlro ${mydb} SELECT soundhw_play FROM bhyve_soundhw 2>/dev/null )
+	_rec=$( cbsdsqlro ${mydb} SELECT soundhw_rec FROM bhyve_soundhw 2>/dev/null )
+
+	[ -z "${_play}" ] && return 0
+	[ -z "${_rec}" ] && return 0
+
+	# test play
+	echo "0" > ${_play} > /dev/null 2>&1
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}soundhw configured to: ${N2_COLOR}${_play}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}But seems this device not configured (eg: cat <something> > ${_play})${N0_COLOR}"
+			${ECHO} "${N1_COLOR}soundhw has been disabled...${N0_COLOR}"
+			return 0
+	fi
+
+	if ! next_pci_id -n hda; then
+		# no free pci bus
+		exit 0
+	fi
+
+	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+	soundhw_args="-s ${_pcislot_args},hda,play=${_play},rec=${_rec}"
+	store_bhyve_pci_slot -n hda -a ${bhyve_pci_index}
+
+	${ECHO} "${N1_COLOR}soundhw enabled: play: ${N2_COLOR}${_play}${N1_COLOR}, rec: ${N2_COLOR}${_rec}${N0_COLOR}"
+}
+
+
 # export $live_migration_args and store live migration settings
 # into ${jailsysdir}/${jname}/live_migration.conf ascii file
 # for later use on source node upon 'bhyvectl --migrate' stage

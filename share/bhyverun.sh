@@ -120,6 +120,7 @@ done
 
 [ -z "${debug_engine}" ] && debug_engine="none"
 [ -z "${xhci}" ] && xhci=0
+[ -z "${hda}" ] && hda="none"
 [ -z "${exit_action}" ] && exit_action=0	# use on_poweroff/on_reboot/on_crash settings: disabled by default
 [ ! -f "${conf}" ] && exit 0
 . ${conf}
@@ -243,6 +244,13 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
 
+	if [ -n "${soundhw_args}" ]; then
+		if [ "${soundhw_args}" = "none" -o ${freebsdhostversion} -lt 1300034 ]; then
+			soundhw_args=
+		fi
+	fi
+
+
 	checkpoint_args=
 
 	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
@@ -265,8 +273,8 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-	bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
-	debug_bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	debug_bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd}"
 	logger -t bhyverun.sh "[debug] ${bhyve_cmd}"
