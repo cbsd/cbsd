@@ -24,6 +24,7 @@ fs_feat=1
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
 readconf zfs.conf
@@ -189,7 +190,7 @@ import_jail()
 	JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
 	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
 	JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${jname}.local"
-	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+	JAILRCCONF="${ftmpdir}/rc.conf_${jname}.$$"
 
 	# check for already existance and offline
 	if [ -d "${JAILDIR}" ]; then
@@ -202,6 +203,8 @@ import_jail()
 		${ECHO} "error extract rcconf"
 		return 1
 	fi
+
+	trap "/bin/rm -f ${JAILRCCONF}" HUP INT ABRT BUS TERM EXIT
 
 	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILRCCONF}
 
@@ -238,8 +241,9 @@ import_jail()
 	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILFSTAB}
 	replacewdir file0="${JAILFSTAB}" file1="${JAILRCCONF}" old="CBSDROOT"
 
+	/bin/mkdir -p ${jailsysdir}/tmp.$$
+
 	if [ "${origjname}" != "${jname}" ]; then
-		/bin/mkdir -p ${jailsysdir}/tmp.$$
 		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1 )
 		if [ $? -ne 0 ]; then
 			err 1 "sysdata1: ${_ret}"
@@ -252,11 +256,14 @@ import_jail()
 		[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && /bin/mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
 		/bin/rmdir ${jailsysdir}/tmp.$$
 	else
-		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${hdrver} 2>&1 )
+		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1 )
 		if [ $? -ne 0 ]; then
 			${ECHO} "sysdata2: ${_ret}"
 			return 1
 		fi
+		[ -d ${jailsysdir}/${jname} -o -h ${jailsysdir}/${jname} ] && /bin/rm -rf ${jailsysdir}/${jname}	# ZFS dir
+		/usr/bin/find ${jailsysdir}/tmp.$$/ -maxdepth 1 -depth 1 -type d -exec /bin/mv {} ${jailsysdir}/${jname} \;
+		/bin/rmdir ${jailsysdir}/tmp.$$
 	fi
 
 	${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver}
@@ -286,8 +293,12 @@ import_jail()
 		esac
 
 		printf "${H3_COLOR}"
-		${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+		/bin/mkdir -p ${jaildatadir}/tmp.$$
+		${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} ebytes=${ebytes} > /dev/null
 		_ret=$?
+		#[ -d ${jaildatadir}/${jname}-${jaildatapref} -o -h ${jaildatadir}/${jname}-${jaildatapref} ] && /bin/rm -rf ${jaildatadir}/${jname}-${jaildatapref}	# ZFS dir
+		/usr/bin/find ${jaildatadir}/tmp.$$/ -maxdepth 3 -type f -exec /bin/mv {} ${JAILDIR}/ \;
+		/bin/rm -rf ${jaildatadir}/tmp.$$
 		printf "${N0_COLOR}"
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "data"

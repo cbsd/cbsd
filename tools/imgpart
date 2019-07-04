@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v16.1.17
+#v12.0.13
 MYARG="jname part mode"
 MYOPTARG="out hdrver compress emulator filestats ebytes"
 MYDESC="Pack or extract chunk from from image"
@@ -122,6 +122,7 @@ packme()
 {
 	local _hwnum=$( /sbin/sysctl -qn hw.ncpu )
 	local _dsk_list _zvol_list _zvol_name _my_nodename
+	local real_jailsysdir real_datadir
 
 	[ -z "${_hwnum}" ] && _hwnum="0"
 
@@ -242,11 +243,15 @@ EOF
 		sysdata)
 			echo "add sysdata"
 			echo "___NCSTART_SYSDATA=1" >> ${out}
-			cd ${jailsysdir}
-			[ ! -d "$jname" ] && /bin/mkdir -p ${jname}
+			[ ! -d ${jailsysdir}/${jname} -o ! -h ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
+			real_jailsysdir_jname=$( /bin/realpath ${jailsysdir}/${jname} )
+			real_jailsysdir=$( /usr/bin/dirname ${real_jailsysdir_jname} )
+			real_dir=$( /usr/bin/basename ${real_jailsysdir_jname} )
+			cd ${real_jailsysdir}
 			TMPCHUNK="$tmpdir/sys$$.tgz"
 			trap "/bin/rm -f ${TMPCHUNK}" 0 1 2 3 4
-			/usr/bin/tar cfz ${TMPCHUNK} ${jname} --numeric-owner > /dev/null 2>&1
+			# exclude ^dsk[0-9]+ files when dir consolidated (e.g: zfs)
+			/usr/bin/tar cfz ${TMPCHUNK} --exclude "${real_dir}/dsk[0-9]*.vhd" --numeric-owner ${real_dir} > /dev/null 2>&1
 			/bin/cat ${TMPCHUNK} >> ${out}
 			echo >> ${out}
 			echo "___NCSTOP_SYSDATA=1" >> ${out}
@@ -257,31 +262,49 @@ EOF
 			[ ! -f "${jailrcconfdir}/rc.conf_${jname}" -a ! -f "${jailsysdir}/${jname}/rc.conf_${jname}" ] && err 1 "${N1_COLOR}No such rcconf for: ${N2_COLOR}$jname${N0_COLOR}"
 			[ -f ${jailrcconfdir}/rc.conf_${jname} ] && . ${jailrcconfdir}/rc.conf_${jname}
 			[ -f ${jailsysdir}/${jname}/rc.conf_${jname} ] && . ${jailsysdir}/${jname}/rc.conf_${jname}
-			eval data=\"\$data\"
-			[ -n "${data}" -a -d "${data}" ] || err 1 "No such data directory $data."
-			echo "___NCSTART_DATA=1" >> ${out}
-			cd $( /usr/bin/dirname ${data} )
+			#eval data=\"\$data\"
+			real_datadir_jname=$( /bin/realpath ${data} )			# /usr/jails/jails-data/XXX-data
+			real_datadir=$( /usr/bin/dirname ${real_datadir_jname} )	# /usr/jails/jails-data
+			real_dir=$( /usr/bin/basename ${real_datadir_jname} )		# XXX-data
+			[ -z "${real_datadata}" -a ! -d "${real_datadir}" ] && err 1 "No such data directory ${real_datadir}."
+			cd ${real_datadir}
+			if [ ! -d ${real_dir} ]; then
+				real_dir="${jname}-data"
+				/bin/mkdir -p ${real_dir}
+			fi
 
+			echo "___NCSTART_DATA=1" >> ${out}
 			[ -z "${ebytes}" ] && ebytes=0
+
+			# create exclude file list based on md5 when jailsysdir in symlink and consolidated with data dir (e.g: ZFS feat)
+			if [ -h ${jailsysdir}/${jname} -a -h ${jaildatadir}/${jname}-${jaildatapref} ]; then
+				_res1=$( /bin/realpath ${jailsysdir}/${jname} )
+				_res2=$( /bin/realpath ${jaildatadir}/${jname}-${jaildatapref} )
+				if [ "${_res1}" = "${_res2}" ]; then
+					/usr/bin/find ${_res1}/ -depth 1 -maxdepth 1 \( -type l -or -type f -or -type d \) -and -not -regex "${_res1}/dsk[0-9]*\.vhd" -exec /usr/bin/basename {} \; > /tmp/exclude.txt
+					_sys_exclude="-X /tmp/exclude.txt"
+				else
+					_sys_exclude=
+				fi
+			fi
 
 			case "${compress}" in
 				0)
 					# no compression
 					if [ -n "${filestats}" ]; then
 						# save bytes statistics to ${filestats}
-						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | ${miscdir}/cbsdtee -e ${ebytes} -f ${filestats} >> ${out}
+						/usr/bin/nice -n 20 /usr/bin/tar cf - ${_sys_exclude} --numeric-owner ${real_dir} | ${miscdir}/cbsdtee -e ${ebytes} -f ${filestats} >> ${out}
 					else
-						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) >> ${out}
+						/usr/bin/nice -n 20 /usr/bin/tar cf - ${_sys_exclude} --numeric-owner ${real_dir} >> ${out}
 					fi
 					;;
 				*)
-					# cbsdtee got buffered data? 
+					# cbsdtee got buffered data?
 					if [ -n "${filestats}" ]; then
-						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | ${miscdir}/cbsdtee -e ${ebytes} -f ${filestats} | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
+						/usr/bin/nice -n 20 /usr/bin/tar cf - ${_sys_exclude} --numeric-owner ${real_dir} | ${miscdir}/cbsdtee -e ${ebytes} -f ${filestats} | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
 					else
-						/usr/bin/nice -n 20 /usr/bin/tar cf - --numeric-owner $( /usr/bin/basename ${data} ) | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
+						/usr/bin/nice -n 20 /usr/bin/tar cf - ${_sys_exclude} --numeric-owner ${real_dir} | /usr/bin/nice -n 20 /usr/bin/xz -${compress}e -T${_hwnum} >> ${out}
 					fi
-					echo "DONE"
 					;;
 			esac
 
@@ -320,8 +343,6 @@ EOF
 				. ${filestats}
 				imghelper --start ___NCSTART_HEADER=1 --end ___NCSTOP_HEADER=1 --infile ${out} --param=img_flat_size --newval="${img_flat_size_summary}"
 			fi
-
-
 			;;
 	esac
 }

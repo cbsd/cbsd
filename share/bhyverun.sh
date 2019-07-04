@@ -162,6 +162,7 @@ orig_vnc_args="${vnc_args}"
 . ${inventory}
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
 while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
