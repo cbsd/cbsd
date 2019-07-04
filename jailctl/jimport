@@ -22,8 +22,10 @@ fs_feat=1
 
 . ${system}
 
-[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/jailscontainers/"
-[ -z "${cbsd_queue_name2}" ] && cbsd_queue_name2="/clonos/imported/"
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
 
 readconf zfs.conf
 
@@ -188,7 +190,7 @@ import_jail()
 	JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
 	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
 	JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${jname}.local"
-	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+	JAILRCCONF="${ftmpdir}/rc.conf_${jname}.$$"
 
 	# check for already existance and offline
 	if [ -d "${JAILDIR}" ]; then
@@ -202,6 +204,8 @@ import_jail()
 		return 1
 	fi
 
+	trap "/bin/rm -f ${JAILRCCONF}" HUP INT ABRT BUS TERM EXIT
+
 	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILRCCONF}
 
 	${SYSRC_CMD} -qf ${JAILRCCONF} path=${jaildir}/${jname} > /dev/null
@@ -212,22 +216,19 @@ import_jail()
 	. ${JAILRCCONF}
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 
 		case "${emulator}" in
 			jail)
-				cbsd_queue_name="/clonos/jailscontainers/"
+				[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jcreate ip4_addr=unknown protected=${protected} vnc_port=0 progress=1
 				;;
 			bhyve)
-				cbsd_queue_name="/clonos/bhyvevms/"
+				[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=jcreate ip4_addr=unknown protected=${protected} vnc_port=0 progress=1
 				;;
 		esac
 
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=unknown protected=${protected} vnc_port=0 status=1
-		if [ "${cbsd_queue_name2}" != "none" ]; then
-			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=1
-			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"information\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#started...\"}"
-		fi
+		${cbsd_queue_backend} cbsd_queue_name=${cbsd_import_queue_name} id=${jname} cmd=jimport progress=1
+		${cbsd_queue_backend} cbsd_queue_name=${cbsd_import_queue_name} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"information\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#started...\"}"
 	fi
 
 	init_jail_path
@@ -240,8 +241,9 @@ import_jail()
 	[ "${origjname}" != "${jname}" ] && /usr/bin/sed -i '' s:${origjname}:${jname}:g ${JAILFSTAB}
 	replacewdir file0="${JAILFSTAB}" file1="${JAILRCCONF}" old="CBSDROOT"
 
+	/bin/mkdir -p ${jailsysdir}/tmp.$$
+
 	if [ "${origjname}" != "${jname}" ]; then
-		/bin/mkdir -p ${jailsysdir}/tmp.$$
 		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1 )
 		if [ $? -ne 0 ]; then
 			err 1 "sysdata1: ${_ret}"
@@ -254,11 +256,14 @@ import_jail()
 		[ -d "${jailsysdir}/tmp.$$/${origjname}" ] && /bin/mv ${jailsysdir}/tmp.$$/${origjname} ${jailsysdir}/${jname}
 		/bin/rmdir ${jailsysdir}/tmp.$$
 	else
-		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir} hdrver=${hdrver} 2>&1 )
+		_ret=$( ${imgpart_tool} mode=extract jname=${SRC} part=sysdata out=${jailsysdir}/tmp.$$ hdrver=${hdrver} 2>&1 )
 		if [ $? -ne 0 ]; then
 			${ECHO} "sysdata2: ${_ret}"
 			return 1
 		fi
+		[ -d ${jailsysdir}/${jname} -o -h ${jailsysdir}/${jname} ] && /bin/rm -rf ${jailsysdir}/${jname}	# ZFS dir
+		/usr/bin/find ${jailsysdir}/tmp.$$/ -maxdepth 1 -depth 1 -type d -exec /bin/mv {} ${jailsysdir}/${jname} \;
+		/bin/rmdir ${jailsysdir}/tmp.$$
 	fi
 
 	${imgpart_tool} mode=extract jname=${SRC} part=localfstab out=${JAILLOCALFSTAB} hdrver=${hdrver}
@@ -288,8 +293,12 @@ import_jail()
 		esac
 
 		printf "${H3_COLOR}"
-		${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir} hdrver=${hdrver} ebytes=${ebytes} > /dev/null
+		/bin/mkdir -p ${jaildatadir}/tmp.$$
+		${imgpart_tool} mode=extract jname=${SRC} part=data out=${jaildatadir}/tmp.$$ hdrver=${hdrver} ebytes=${ebytes} > /dev/null
 		_ret=$?
+		#[ -d ${jaildatadir}/${jname}-${jaildatapref} -o -h ${jaildatadir}/${jname}-${jaildatapref} ] && /bin/rm -rf ${jaildatadir}/${jname}-${jaildatapref}	# ZFS dir
+		/usr/bin/find ${jaildatadir}/tmp.$$/ -maxdepth 3 -type f -exec /bin/mv {} ${JAILDIR}/ \;
+		/bin/rm -rf ${jaildatadir}/tmp.$$
 		printf "${N0_COLOR}"
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "data"
@@ -442,16 +451,23 @@ import_jail()
 	fi
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 		# refresh jail info
 		. ${jrcconf}
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} host_hostname=${host_hostname} protected=${protected} vnc_port=0 status=2
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" host_hostname="${host_hostname}" status=1
 
-		if [ "${cbsd_queue_name2}" != "none" ]; then
-			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} id=${jname} cmd=jimport status=2
-			cbsd_queue cbsd_queue_name=${cbsd_queue_name2} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"success\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#completed\"}"
-		fi
+		case "${emulator}" in
+			jail)
+				[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} host_hostname=${host_hostname} protected=${protected} vnc_port=0 progress=100
+				[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" host_hostname="${host_hostname}" progress=1
+				;;
+			bhyve)
+				[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} host_hostname=${host_hostname} protected=${protected} vnc_port=0 progress=100
+				[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" host_hostname="${host_hostname}" progress=1
+				;;
+		esac
+
+		cbsd_queue cbsd_queue_name=${cbsd_import_queue_name} id=${jname} cmd=jimport progress=100
+		cbsd_queue cbsd_queue_name=${cbsd_import_queue_name} cmd=message msg="{\"cmd\":\"tooltip\",\"type\":\"success\",\"timeout\":10000,\"author\":\"Import\",\"msg\":\"${jname}#import#completed\"}"
 	fi
 
 	end_time=$( /bin/date +%s )

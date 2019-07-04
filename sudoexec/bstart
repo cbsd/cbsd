@@ -1,10 +1,9 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG=""
-MYOPTARG="jname inter debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
+MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
 MYDESC="Start bhyve domain"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
-  checkpoint   - start from specified checkpoint name\n\
+ADDHELP="checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
   lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
   lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n\
@@ -92,8 +91,8 @@ start_bhyve()
 	fi
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=1
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart progress=1 workdir="${workdir}"
 	fi
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
@@ -395,6 +394,12 @@ start_bhyve()
 		unset virtio_9p_args
 	fi
 
+	# init soundhw_args= (hda)
+	if ! compile_soundhw_args; then
+		${ECHO} "${N1_COLOR}No such hda for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+		unset soundhw_args
+	fi
+
 	# init efi_args
 	if ! compile_efi_args; then
 		${ECHO} "${N1_COLOR}No such efi for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -543,7 +548,7 @@ on_reboot='${on_reboot}'
 on_crash='${on_crash}'
 
 xhci='${xhci}'
-
+soundhw_args='${soundhw_args}'
 EOF
 
 	# create a configuration only
@@ -624,11 +629,6 @@ EOF
 		${tmuxcmd} select-window -t 0
 	fi
 
-	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1
-	fi
-
 	search_cmd="bhyve: ${jname}"
 	strlen_search_cmd=$( strlen "${search_cmd}" )
 
@@ -651,7 +651,6 @@ EOF
 		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}sh /usr/local/cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
 	fi
 
-
 	if [ "${lm}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
@@ -661,24 +660,28 @@ EOF
 		# update state_time, local SQLite for back compatible
 		cbsdsqlrw local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
 
-		if [ "${vm_efi}" = "none" ]; then
-			err 0 "${N1_COLOR}Use ${N2_COLOR}cbsd blogin ${jname}${N1_COLOR} for attach to console${N0_COLOR}"
-		else
-			err 0 ""
-		fi
+		[ "${vm_efi}" = "none" ] && ${ECHO} "${N1_COLOR}Use ${N2_COLOR}cbsd blogin ${jname}${N1_COLOR} for attach to console${N0_COLOR}"
 	fi
 
 	[ "${lm}" = "0" ] && external_exec_master_script "master_poststart.d"
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart progress=100 data_status=1 workdir="${workdir}"
+	fi
+
+	exit 0
 }
 
 
 # MAIN for multiple jails
 TRAP=""
-readconf cbsd_queue.conf
-[ -z "${cbsd_bhyve_queue_name}" ] && cbsd_bhyve_queue_name="/clonos/bhyvevms/"
-
 emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
 
 if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	# multiple astart always non interactive
@@ -694,11 +697,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		if [ -n "${cbsd_bhyve_queue_name}" ]; then
-			/usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname} cbsd_bhyve_queue_name="${cbsd_bhyve_queue_name}"
-		else
-			/usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart inter=${inter} jname=${jname}
-		fi
+		env NOINTER=1 /usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}

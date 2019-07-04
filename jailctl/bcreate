@@ -17,9 +17,6 @@ EXTHELP="wf_bcreate"
 
 . ${subr}
 
-readconf cbsd_queue.conf
-[ -z "${cbsd_bhyve_queue_name}" ] && cbsd_bhyve_queue_name="/clonos/bhyvevms/"
-
 readconf buildworld.conf
 #readconf bhyve-default-default.conf
 readconf zfs.conf
@@ -305,9 +302,14 @@ fi
 # apply pkglist from tpl_pkglist
 [ -n "${tpl_pkglist}" ] && ${SYSRC_CMD} -qf ${jconf_tmp} pkglist="${tpl_pkglist}" > /dev/null 2>&1
 
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
 # CBSD QUEUE
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' status=1
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' progress=1
 fi
 
 # ip validate
@@ -409,6 +411,7 @@ fi
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-pcibus.schema pcibus_run
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-cpu_topology.schema cpu_topology
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-settings.schema settings
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-soundhw.schema bhyve_soundhw
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
@@ -455,10 +458,19 @@ if [ -z "${sectorsize}" ]; then
 	[ -z "${sectorsize}" ] && sectorsize="4096"
 fi
 
+if [ ${zfsfeat} -eq 1 ]; then
+	. ${zfstool}
+	dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} )
+	_ret=$?
+	[ $? -ne 0 ] && dsk_zfs_guid="0"
+fi
+
+[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
+
 if [ -n "${virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${sectorsize}\" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${defdsk}\","0", \"${sectorsize}\" )"
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0", \"${sectorsize}\", \"${dsk_zfs_guid}\" )"
 fi
 
 if [ -n "${nic_driver}" ]; then
@@ -585,6 +597,7 @@ if [ ${is_cloud} -eq 1 ]; then
 			;;
 	esac
 
+	cbsdlogger NOTICE ${CBSD_APP}: cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 
@@ -616,8 +629,8 @@ EOF
 
 jcleanup jname=${jname}
 
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_bhyve_queue_name}" != "none" ] && cbsd_queue cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate status=2 data_status=0
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate progress=100 data_status=0
 fi
 
 end_time=$( /bin/date +%s )
