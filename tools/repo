@@ -3,7 +3,7 @@
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="mode quiet arch target_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile url"
+MYOPTARG="mode quiet arch target_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile url register_basename"
 MYDESC="Working with CBSD Repository"
 ADDHELP="action can be: list, get, put
 sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n
@@ -14,11 +14,13 @@ arch=any for mode=list for show all arch (no for cur. arch only\n\
 inter=0 to prevent any questions and to accept answers by default\n\
 newjname= for sources=img. Alternative jname for save\n\
 fromfile= load arguments from ascii file\n\
-url= specify URL sources, separated by comma for multiple values\n"
+url= specify URL sources, separated by comma for multiple values\n\
+register_basename= register with alternative/custom basename\n"
 
 . ${subr}
 
 url=
+register_basename=
 . ${cbsdinit}
 
 . ${system}
@@ -75,7 +77,7 @@ getsrc()
 {
 	init_srcdir
 
-	[ ! -f "${srcdir}/${DIR}/Makefile" -a $upgrade -ne 1 ] && err 1 "You already have ${ver}"
+	[ ! -f "${srcdir}/${DIR}/Makefile" -a $upgrade -ne 1 ] && err 1 "${N0_COLOR}repo: you already have ${ver}: ${N2_COLOR}${srcdir}/${DIR}${N0_COLOR}"
 
 	for MYREPO in ${repo}; do
 		${ECHO} "${N1_COLOR}REPO${N0_COLOR}:${N2_COLOR}${MYREPO}${N0_COLOR}"
@@ -116,6 +118,8 @@ getsrc()
 
 register_fetched_base()
 {
+	local _basename_args=
+
 	#idx platform name arch ver stable elf date
 	baseelf=
 	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
@@ -135,20 +139,29 @@ register_fetched_base()
 		stable=0
 	fi
 
-	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${source}"
+	if [ -n "${basename}" ]; then
+		_basename_args="basename=\"${basename}\""
+	fi
+	if [ -n "${register_basename}" ]; then
+		_basename_args="basename=\"${register_basename}\""
+	fi
+
+	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${source}" ${_basename_args}
 }
 
 
 getbase()
 {
 	local _srcmd5_found _src_found _majorver _release _rel_postfix
-	local win_mirror win_rate t_size
+	local win_mirror win_rate t_size _basename_args
 	local _mirror_num=0 _mirror_cur=0
 
 	if [ -z "${basename}" ]; then
 		BDIR="${basejailpref}_${arch}_${ver}"
+		_basename_args=
 	else
 		BDIR="${basejailpref}_${basename}_${arch}_${ver}"
+		_basename_args="basename=\"${basename}\""
 	fi
 
 	if [ -n "${url}" ]; then
@@ -195,7 +208,7 @@ getbase()
 	fi
 
 	if [ -x "${BASE_DIR}/bin/sh" ]; then
-		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}. Use mode=upgrade for upgrade${N0_COLOR}"
+		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}: ${N2_COLOR}${BASE_DIR}${N1_COLOR}. Use mode=upgrade for upgrade${N0_COLOR}"
 		${CHFLAGS_CMD} -R noschg ${BASE_DIR}
 	fi
 
@@ -211,11 +224,11 @@ getbase()
 	init_target_arch
 
 	trap "cleanup_bases" HUP INT ABRT BUS TERM EXIT
-	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
+	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" ${_basename_args}
 
 	# CBSD QUEUE
 	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo elf="-" id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="-" progress=1
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo elf="-" id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" ${_basename_args} date="-" progress=1
 	fi
 
 	if [ -x "${BASE_DIR}/bin/sh" ]; then
@@ -399,7 +412,7 @@ getbase()
 		baseelf=
 		baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
 		date=$( /bin/date +%s )
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=update id=base${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" progress=1
+		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=update id=base${ver}-${arch}-${stable} elf=${baseelf} ${_basename_args} platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" progress=1
 		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=repo id=base${ver}-${arch}-${stable} progress=100
 	fi
 
@@ -530,7 +543,7 @@ getkernel()
 	fi
 
 	if [ -x "${KERNEL_DIR}/bin/sh" ]; then
-		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}. Use mode=upgrade for upgrade${N0_COLOR}"
+		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}: ${N2_COLOR}${KERNEL_DIR}${N1_COLOR}. Use mode=upgrade for upgrade${N0_COLOR}"
 		${CHFLAGS_CMD} -R noschg ${KERNEL_DIR}
 	fi
 
@@ -960,9 +973,12 @@ case "${action}" in
 			"base")
 				# LOCKFILE=${SRC}.lock
 				# makelock $LOCKFILE "rm -f ${TF}; /bin/rm -rf ${MYDIR}" safe
-				init_basedir
+				if [ -n "${register_basename}" ]; then
+					init_basedir -b ${register_basename}
+				else
+					init_basedir
+				fi
 				init_kerneldir
-
 				# make base lock
 				echo $$ > ${BASE_DIR_LOCKFILE}
 				trap "rm -f ${TF} ${BASE_DIR_LOCKFILE}; /bin/rm -rf ${MYDIR}"
