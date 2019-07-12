@@ -1,31 +1,69 @@
 #!/usr/local/bin/cbsd
-#v10.0.3
+#v12.0.14
 MYARG=""
 MYOPTARG="jname"
 MYDESC="Stop jail"
 CBSDMODULE="xen"
 EXTHELP="wf_jstop_jstart"
+ADDHELP="noacpi= 1 - force hard poweroff immediately or 0 - send ACPI signal first\n\
+    can be overwriten by xstop.conf\n\
+hard_timeout=N, how many seconds wait after ACPI signal before hard poweroff,\n\
+    default is: 30. Can be overwriten by xstop.conf\n"
 
 . ${subr}
-
 . ${tools}		# for select_jail_by_list
 
 . ${distdir}/xen.subr
 
 [ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e xls -r ${sqlreplica}
 
+noacpi=0		# soft shutdown by default
+hard_timeout=30		# default soft timeout: 30 seconds
+
+readconf xstop.conf
+
 . ${cbsdinit}
 . ${system}
 . ${mdtools}
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No domain specified${N0_COLOR}"
+. ${distdir}/jcreate.subr	# external_exec_master_script
 
 # MAIN
-if [ $# -gt 1 ]; then
-#	recursive stop
-	JLIST=$*
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
+emulator="xen"		# for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	TMP_JLIST="${jail_list}"
+else
+	TMP_JLIST=$*
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		jail_num=$(( jail_num + 1 ))
+	fi
+done
+
+. ${distdir}/time.subr
+st_time=$( /bin/date +%s )
+
+# this is multiple list, split it by parallel xstop execution
+if [ ${jail_num} -gt 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple stopping: ${JLIST}
 	for jname in ${JLIST}; do
-		/usr/sbin/daemon -p ${ftmpdir}/xstop.${jname}.$$ /usr/local/bin/cbsd xstop jname=${jname}
+		/usr/sbin/daemon -p ${ftmpdir}/xstop.${jname}.$$ /usr/local/bin/cbsd xstop jname=${jname} noacpi=${noacpi} hard_timeout=${hard_timeout}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/xstop.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/xstop.${jname}.$$ ) --timeout=${parallel}
@@ -33,36 +71,111 @@ if [ $# -gt 1 ]; then
 
 	wait_for_fpid -a stop
 
-	err 0 "${N1_COLOR}Multiple stop: ${N2_COLOR}done${N0_COLOR}"
+	end_time=$( /bin/date +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple done in ${diff_time}: ${JLIST}
+	err 0 "${N1_COLOR}Multiple stop: ${N2_COLOR}done in ${diff_time}${N0_COLOR}"
 fi
 
-[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && jname=$( echo ${JLIST} | /usr/bin/awk '{printf $1}' )
+[ -z "${jname}" ] && jname="${1}"
+[ -z "${jname}" ] && err 1 "${N1_COLOR}Give me domain name${N0_COLOR}"
+
+. ${distsharedir}/xen.conf		# only for for MYCOL variables: used in exports below
 
 . ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-#[ ${jid} -eq 0 ] && err 1 "${N1_COLOR}Not Running: ${N2_COLOR}${jname}${N0_COLOR}"
-[ "${emulator}" != "xen" ] && err 1 "${N1_COLOR}Not in xen mode${N0_COLOR}"
+if [ $? -eq 1 ]; then
+	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+	remotenode=$( xwhereis ${jname} )
+	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+	for i in ${remotenode}; do
+		${ECHO} "${N1_COLOR}Remote xstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
+		rexe node=${i} cbsd xstop jname=${jname}
+		if [ $? -eq 0 ]; then
+			# update inventory
+			${ECHO} "${N1_COLOR}Updating inventory...${N0_COLOR}"
+			task autoflush=2 mode=new cbsd retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+		fi
+	done
+	exit 0
+fi
 
+[ "${emulator}" != "xen" ] && err 1 "${N1_COLOR}Not in XEN mode${N0_COLOR}"
 
-${XL_CMD} shutdown ${jname} > /dev/null 2>&1
+# CBSD QUEUE
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xstop progress=1 data_status=1 workdir="${workdir}"
+fi
 
-# wait 15 seconds until vm is shutdown. After 15 sec and while vm is still alive
-# apply hard stop
+# for external hook variables
+geniplist ${ip4_addr}
 
-${ECHO} "${N2_COLOR}ACPI power button in progress.${N0_COLOR}"
-printf "Wait for 30 seconds"
+export_bhyve_data_for_external_hook
+external_exec_master_script "master_prestop.d"
 
-for i in $( /usr/bin/seq 1 30 ); do
-	_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
-	if [ $? -eq 0 ]; then
-		printf "."
-		sleep 1
-	else
-		echo
-		exit 0
+TRAP=""
+TRAP="${TRAP} jswmode jname=${jname} mode=master comment='0';"
+trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+
+jswmode jname=${jname} mode=maintenance comment='Stopping_VM'
+
+if [ ${noacpi} -eq 0 ]; then
+	if [ -n "${vm_pid}" ]; then
+		# soft stop, send SIGTERM
+		tleft=$(( hard_timeout - 1 ))
+		${XL_CMD} shutdown ${jname} > /dev/null 2>&1
+		for i in $( /usr/bin/seq 1 ${hard_timeout} ); do
+			printf "${CLRLINE}"
+			printf "${CURSORRST}"
+			printf "${N1_COLOR}Send SIGTERM to ${N2_COLOR}${jname}${N1_COLOR}. Soft timeout is ${N2_COLOR}${hard_timeout}${N1_COLOR} sec. ${W1_COLOR}${tleft}${N1_COLOR} seconds left [${N0_COLOR}"
+			for x in $( /usr/bin/seq 1 ${i} ); do
+				printf "${N1_COLOR}."
+			done
+			_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+			if [ $? -eq 0 ]; then
+				sleep 1
+			else
+				break
+			fi
+			tleft=$(( tleft - 1 ))
+		done
+		printf "]${N0_COLOR}\n"
 	fi
-done
+else
+	${XL_CMD} destroy ${jname}
+fi
 
-${XL_CMD} destroy ${jname}
-echo
+_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+if [ $? -eq 0 ]; then
+	# still live
+	cbsdlogger NOTICE ${CBSD_APP}: XEN domain ${jname} does not want to die via ACPI, soft timeout ${hart_timeout} exceeded. Kill him
+	${XL_CMD} destroy ${jname}
+fi
+
+[ -r ${jailsysdir}/${jname}/vnc_port ] && /bin/rm -f ${jailsysdir}/${jname}/vnc_port
+
+jswmode jname=${jname} mode=master comment='0'
+
+# cleanup for ifaces
+. ${vimageconf}
+
+# update state_time
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+
+# update state_time and pid in local DB
+cbsdsqlrw local UPDATE jails SET jid=0,state_time="(strftime('%s','now'))" WHERE jname=\"${jname}\"
+
+external_exec_master_script "master_poststop.d"
+
+# CBSD QUEUE
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xstop progress=100 data_status=0 workdir="${workdir}"
+fi
+
+end_time=$( /bin/date +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+cbsdlogger NOTICE ${CBSD_APP}: XEN domain ${jname} stopped in ${diff_time}
 exit 0

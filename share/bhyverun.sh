@@ -302,10 +302,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -batch -x /tmp/cmds.$$ --args ${debug_bhyve_cmd}"
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -batch --args ${debug_bhyve_cmd}"
 			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -ex run --args ${debug_bhyve_cmd}
 			bhyve_exit=$?
-			/bin/rm -f /tmp/cmds.$$
 			;;
 		lldb)
 			# break while loop
@@ -317,7 +316,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}"
 			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}
 			bhyve_exit=$?
-			/bin/rm -f /tmp/cmds.$$
 			;;
 		*)
 			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd} >> ${vm_logfile} 2>&1
