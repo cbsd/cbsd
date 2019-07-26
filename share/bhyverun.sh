@@ -105,6 +105,7 @@ exit_action_mode()
 	return ${_ret}
 }
 
+
 while getopts "c:d:e:g:l:r:w:" opt; do
 	case "${opt}" in
 		c) conf="${OPTARG}" ;;
@@ -174,11 +175,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	if [ ${cd_boot_once} -eq 0 ]; then
 		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
-		eval "${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}" 2>&1 | /usr/bin/tee -a ${vm_logfile}
 	else
 		echo "Boot from CD" | /usr/bin/tee -a ${vm_logfile}
 		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
-		eval "${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}" 2>&1 | /usr/bin/tee -a ${vm_logfile}
 	fi
 
 	case "${vm_boot}" in
@@ -251,7 +252,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-
 	checkpoint_args=
 
 	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
@@ -322,7 +322,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			bhyve_exit=$?
 			;;
 	esac
-
 
 	ret=0
 	exit_action_mode
