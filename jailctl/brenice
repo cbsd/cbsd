@@ -14,8 +14,69 @@ ADDHELP="nice=[new value]\n\
 
 . ${cbsdinit}
 
+emulator="bhyve" # for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	TMP_JLIST="${jail_list}"
+else
+	TMP_JLIST=$*
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		jail_num=$(( jail_num + 1 ))
+	fi
+done
+
+# this is multiple list, split it by parallel bstop execution
+if [ ${jail_num} -gt 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple brenice: ${JLIST}
+	new_arg=
+
+	for i in $*; do
+		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+		[ "${_is_jname}" = "jname" ] && continue
+		new_arg="${new_arg} ${i}"
+	done
+
+	for jname in ${JLIST}; do
+		brenice jname=${jname} ${new_arg}
+	done
+	exit 0
+fi
+
+[ -z "${jname}" ] && jname=$( echo ${JLIST} | /usr/bin/awk '{printf $1}' )
+[ -z "${jname}" ] && jname="${1}"
+[ -z "${jname}" ] && err 1 "${N1_COLOR}Give me domain name${N0_COLOR}"
+
+. ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
+
 . ${jrcconf}
-[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}{NORMAL}"
+if [ $? -eq 1 ]; then
+	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+	remotenode=$( bwhereis ${jname} )
+	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+	for i in ${remotenode}; do
+		${ECHO} "${N1_COLOR}Remote bstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
+		rexe node=${i} cbsd bstop jname=${jname}
+		if [ $? -eq 0 ]; then
+			# update inventory
+			${ECHO} "${N1_COLOR}Updating inventory...${N0_COLOR}"
+			task autoflush=2 mode=new cbsd retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+		fi
+	done
+	exit 0
+fi
+
+. ${jrcconf}
+[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}${NORMAL}"
 [ ${jid} -eq 0 ] && exit 0
 
 if [ -z "${nice}" ]; then
