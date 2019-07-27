@@ -1,0 +1,272 @@
+#!/usr/local/bin/cbsd
+#v12.0.14
+MYARG="mode"
+MYOPTARG="jname controller dsk dsk_size bootable display header"
+MYDESC="Manage XEN disks"
+CBSDMODULE="xen"
+EXTHELP="wf_xen"
+ADDHELP="mode=attach,detach,remove,list,modify\n\
+  - attach - create and attach new disk\n\
+  - detach - detach disk from controller (without removing dsk)\n\
+  - delete - detach and remove disk\n\
+  - modify - modify disk properties (e.g: bootable=)\n\
+ modify properties:\n\
+  - bootable - set bootable flag (1 - true, - false)\n\
+  - dsk_zfs_guid - can be: 'auto'\n\
+ mode=list properties:\n\
+  header=0 don't print header\n\
+  display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,bootable,dsk_iops_limit,dsk_mbps_limit\n\
+    also available: dsk_zfs_guid\n\
+  mode=get properties\n"
+
+. ${subr}
+. ${system}
+
+bootable=
+dsk_iops_limit=
+dsk_mbps_limit=
+. ${cbsdinit}
+
+available_properties="bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
+
+. ${distdir}/xen.subr
+. ${distdir}/virtual.subr
+. ${distdir}/share/xen/xen-dsk.subr
+
+dsk_attach()
+{
+	local _val
+
+	if [ -z "${dsk_sectorsize}" ]; then
+		readconf xen-default-default.conf
+		dsk_sectorsize="${default_sectorsize}"
+	fi
+
+	for i in jname controller dsk dsk_size; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	add_dsk -c "${controller}" -d "${dsk}" -s "${dsk_size}" -z "${dsk_sectorsize}"
+}
+
+dsk_detach()
+{
+	local _val
+	local _devpath
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
+	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${N0_COLOR}"
+
+	media mode=detach name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM xendsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+}
+
+dsk_delete()
+{
+	local _val
+	local _devpath
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
+	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${N0_COLOR}"
+
+	media mode=delete name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM xendsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+}
+
+dsk_modify_bootable()
+{
+	local _bootable _res
+	local _old_controller= _old_dsk=
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_bootable error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+
+	case "${bootable}" in
+		[Nn][Oo] | [Ff][Aa][Ll][Ss][Ee] | 0)
+			_bootable="false"
+			;;
+		[Yy][Ee][Ss] | [Tt][Rr][Uu][Ee] | 1)
+			_bootable="true"
+			;;
+		*)
+			err 1 "${N1_COLOR}dsk_modify_bootable: unknown bootable: ${N2_COLOR}${bootable}. ${N1_COLOR}Valid: [1|true|yes] and [0|false|no]${N0_COLOR}"
+			;;
+	esac
+
+	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path FROM xendsk WHERE bootable=${_bootable} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	sqllist "${_res}" _old_controller _old_dsk
+
+	case "${_bootable}" in
+		true)
+			if [ "${_old_controller}" = "${controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk}" ]; then
+					${ECHO} "${N1_COLOR}${jname}: ${controller} ${dsk} already bootable${N0_COLOR}"
+					return 0
+				fi
+			fi
+
+			# currently only one device can be bootable, so set false for all devices first
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET bootable=false
+			[ -n "${_res}" ] && ${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${_old_controller}:${_old_dsk} -> false${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${controller}:${dsk} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
+			;;
+		false)
+			if [ "${_old_controller}" = "${controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk}" ]; then
+					${ECHO} "${N1_COLOR}${jname}: ${controller} ${dsk} already not bootable${N0_COLOR}"
+					return 0
+				fi
+			fi
+			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${controller}:${dsk} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
+			;;
+	esac
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET bootable=${_bootable} WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+	return 0
+}
+
+dsk_modify_dsk_sectorsize()
+{
+	local _res _old_val
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_dsk_sectorsize error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_sectorsize FROM xendsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_sectorsize values for: dsk_controller=${N2_COLOR}${controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk}${N0_COLOR}"
+	[ "${_old_val}" = "${dsk_sectorsize}" ] && return 0
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET dsk_sectorsize=\"${dsk_sectorsize}\" WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+
+	cbsdlogger NOTICE "${CBSD_APP}: modify sectorsize ${_old_val} -> ${dsk_sectorsize} (controller: ${controller}, dsk: ${dsk})"
+	${ECHO} "${N1_COLOR}dsk_sectorsize: ${N2_COLOR}changed${N0_COLOR}"
+	return 0
+}
+
+dsk_modify_dsk_zfs_guid()
+{
+	local _res _old_val tmp_zvol= _is_zvol
+	local _dsk_fullpath _zvol_pref= _ret
+
+	[ ${zfsfeat} -ne 1 ] && err 1 "${N1_COLOR}zfsfeat disabled${N0_COLOR}"
+	[ "${dsk_zfs_guid}" != "auto" ] && err 1 "${N1_COLOR}dsk_zfs_guid valid values: 'auto'${N0_COLOR}"
+
+	for i in jname controller dsk; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_dsk_zfs_guid error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_zfs_guid FROM xendsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_zfs_guid values for: dsk_controller=${N2_COLOR}${controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk}${N0_COLOR}"
+
+	_dsk_fullpath="${jaildatadir}/${jname}-${jaildatapref}/${dsk}"
+
+	. ${zfstool}
+
+	_res=$( get_dsk_zfs_guid -p ${_dsk_fullpath} )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 0 "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}"
+	[ -z "${_res}" ] && err 0 "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}"
+	[ "${_old_val}" = "${_res}" ] && return 0
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET dsk_zfs_guid=\"${_res}\" WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+	cbsdlogger NOTICE "${CBSD_APP}: modify dsk_zfs_guid ${_old_val} -> ${dsk_sectorsize} (controller: ${controller}, dsk: ${dsk})"
+	${ECHO} "${N1_COLOR}dsk_zfs_guid: ${N2_COLOR}changed${N0_COLOR}"
+	return 0
+}
+
+dsk_modify()
+{
+	local _val
+	local _devpath _prop_num=0
+
+	# determine properties
+	for i in ${available_properties}; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		dsk_modify_${i}
+		_prop_num=$(( _prop_num + 1 ))
+	done
+
+	[ ${_prop_num} -eq 0 ] && ${ECHO} "${N1_COLOR}available properties: ${N2_COLOR}${available_properties}${N0_COLOR}"
+}
+
+dsk_get()
+{
+	local _val
+	local _devpath _prop_num=0
+	local _filter=
+
+	# determine properties
+	for i in ${available_properties}; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		if [ -z "${_filter}" ]; then
+			_filter="WHERE ${i}=\"${_val}\""
+		else
+			_filter="${_filter} AND ${i}=\"${_val}\""
+		fi
+		_prop_num=$(( _prop_num + 1 ))
+	done
+
+	if [ ${_prop_num} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}set filter from available properties (select .. WHERE): ${N2_COLOR}${available_properties}${N0_COLOR}"
+		return 1
+	fi
+
+	echo "${_filter}"
+
+}
+
+case "${mode}" in
+	attach)
+		dsk_attach
+		;;
+	delete)
+		dsk_delete
+		;;
+	detach)
+		dsk_detach
+		;;
+	list)
+		[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit"
+		[ -z "${header}" ] && header="1"
+		xen-dsk-list header="${header}" display="${display}"
+		;;
+	modify)
+		dsk_modify
+		;;
+	get)
+		dsk_get
+		;;
+	*)
+		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
+esac

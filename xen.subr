@@ -25,7 +25,7 @@ init_xen_usage()
 	${ECHO} "${H1_COLOR}*${N0_COLOR} mkdir -p /var/lock /var/run/xen${N0_COLOR}"
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline="dom0_mem=${H3_COLOR}2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh com1=115200,8n1 guest_loglvl=all loglvl=all vga=keep noreboot"' >> /boot/loader.conf${N0_COLOR}"
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_kernel="/boot/xen"' >> /boot/loader.conf${N0_COLOR}"
-	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'hw.pci.mcfg=0' >> /boot/loader.conf${N0_COLOR}"
+	#${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'hw.pci.mcfg=0' >> /boot/loader.conf${N0_COLOR}"
 	#${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'try-include /boot/xen.4th' >> /boot/menu.rc.local${N0_COLOR}"
 	echo
 	${ECHO} "${N1_COLOR}Where ${H3_COLOR}bge0${N1_COLOR} is your uplink interface${N0_COLOR}"
@@ -48,6 +48,8 @@ init_xen()
 {
 	local _host_ready=1
 	local _i _res
+
+	[ "${skip_xen_check_env}" = "1" ] && return 0		# all fine!
 
 	if is_xen_dom0; then
 		_host_ready=1
@@ -87,7 +89,7 @@ init_xen()
 		exit 1
 	fi
 
-	tmuxcmd=$(which tmux)
+	tmuxcmd=$( which tmux )
 	[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}Current version required for ${N2_COLOR}tmux${N1_COLOR}\nPlease ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
 }
 
@@ -186,7 +188,7 @@ compile_dsk_args()
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
-	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot; do
+	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" | while read dsk_controller dsk_path dsk_slot; do
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -203,7 +205,9 @@ compile_dsk_args()
 
 		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
 		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="hd${_dev_letter}"
+		#_dev="hd${_dev_letter}"
+		[ -z "${dsk_controller}" ] && dsk_controller="hd"
+		_dev="${dsk_controller}${_dev_letter}"
 
 		if [ ${first_count} -eq 0 ]; then
 			# first record
@@ -218,14 +222,16 @@ compile_dsk_args()
 
 	_ascii=$(( 97 + dsk_count ))	# started by 'a' (97 ascii code), skip all hdd and set next letter for disk id
 	_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-	_dev="hd${_dev_letter}"
+#	_dev="hd${_dev_letter}"
+	[ -z "${dsk_controller}" ] && dsk_controller="hd"		# cdrom ?
+	_dev="${dsk_controller}${_dev_letter}"
 
 	if [ -n "${iso_img2}" ]; then
 		printf ", '${iso_img2},raw,${_dev}:cdrom,r'" >> ${XENCFG}
 		first_count=$(( first_count + 1 ))
 		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
 		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="hd${_dev_letter}"
+		_dev="${dsk_controller}${_dev_letter}"
 	fi
 
 	[ -n "${iso_img}" ] && printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
@@ -478,13 +484,13 @@ compile_vnc_args()
 		xen_vnc_tcp_ipconnect="${vnc_bind}"
 	fi
 
-	#if [ -n "${xen_vnc_resolution}" ]; then
-	#	width=${xen_vnc_resolution%%x*}
-	#	height=${xen_vnc_resolution##*x}
-	#else
-	#	width="${default_vnc_width}"
-	#	heigh="${default_vnc_height}"
-	#fi
+	if [ -n "${xen_vnc_resolution}" ]; then
+		width=${xen_vnc_resolution%%x*}
+		height=${xen_vnc_resolution##*x}
+	else
+		width="${default_vnc_width}"
+		heigh="${default_vnc_height}"
+	fi
 
 	${ECHO} "${N1_COLOR}VRDP is enabled. VNC bind/port: ${N2_COLOR}${xen_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${xen_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
@@ -551,9 +557,16 @@ compile_spice_args()
 		xen_spice_tcp_ipconnect="${spice_bind}"
 	fi
 
+#	if [ -n "${xen_vnc_resolution}" ]; then
+#		width=${xen_vnc_resolution%%x*}
+#		height=${xen_vnc_resolution##*x}
+#	else
+#		width="${default_vnc_width}"
+#		heigh="${default_vnc_height}"
+#	fi
+
 	${ECHO} "${N1_COLOR}VRDP is enabled. SPICE bind/port: ${N2_COLOR}${xen_spice_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}spicy -h ${xen_spice_tcp_ipconnect} -p ${vm_port}${N0_COLOR}"
-	${ECHO} "${N1_COLOR}Resolution: ${N2_COLOR}${width}x${height}.${N0_COLOR}"
 	[ -n "${spice_password}" ] && ${ECHO} "${N1_COLOR}SPICE pass: ${N2_COLOR}${spice_password}${N0_COLOR}"
 
 	if [ "${spice_bind}" = "0.0.0.0" ]; then
