@@ -599,5 +599,123 @@ get_vm_cores_by_topology()
 	return 0
 }
 
+# create new disk image for bhyve/XEN VMs
+# -b volblocksize ( must be power of 2 from 512B to 128KB, e.g: 128K)
+# -f fsfeat ( 1 or 0 ) - use of skip FS features
+# -p full path
+# -s size (eg: 1g)
+# -t type (zvol, md)
+#
+# if ! virtual_create_dsk -p /tmp/olala.vhd -s 10g -f 0; then
+#    echo ";=("
+# fi
+virtual_create_dsk()
+{
+	local newdsk imgsize fsfeat imgtype _msg volblocksize= sectorsize=
+	local _zvol_rec_size _res
+
+	while getopts "b:f:p:s:t:z:" opt; do
+		case "${opt}" in
+			b) volblocksize="${OPTARG}" ;;
+			f) feat="${OPTARG}" ;;
+			p) newdsk="${OPTARG}" ;;
+			s) imgsize="${OPTARG}" ;;
+			t) imgtype="${OPTARG}" ;;
+			z) sectorsize="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ "${fsfeat}" = "0" ]; then
+		zfsfeat=0
+		hammerfeat=0
+	fi
+
+	local lunname=$( /usr/bin/basename ${newdsk} ) # for ZFS vol
+	local datadir=$( /usr/bin/dirname ${newdsk} )  # for ZFS vol
+
+	local convval imgbytes blockcount
+
+	if [ -f "${newdsk}" ]; then
+		echo "disk ${newdsk} already exist"
+		return 1
+	fi
+
+	# test for human
+	if is_number ${imgsize}; then
+		conv2bytes ${imgsize} || err 1 "${N1_COLOR}conv2bytes from virtual_create_dsk error for: ${N2_COLOR}${imgsize}${N0_COLOR}"
+		imgbytes="${convval}"
+	else
+		imgbytes=${imgsize}
+	fi
+
+	[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
+	if [ -z "${imgtype}" ]; then
+		case ${zfsfeat} in
+			1)
+				imgtype="zvol"
+				;;
+			*)
+				imgtype="md"
+				;;
+		esac
+	fi
+
+	if [ "${zfsfeat}" = "1" -a "${imgtype}" = "zvol" ]; then
+		readconf zfs.conf
+		. ${zfstool}
+
+		[ -z "${vm_zvol_volmode}" ] && vm_zvol_volmode="${default_vm_zvol_volmode}"
+		[ -z "${vm_zvol_volmode}" ] && vm_zvol_volmode="dev"
+		if [ -z "${volblocksize}" ]; then
+			[ -z "${vm_zvol_volblocksize}" ] && vm_zvol_volblocksize="${default_vm_zvol_volblocksize}"
+			[ -z "${vm_zvol_volblocksize}" ] && vm_zvol_volblocksize="128K"
+			volblocksize="${vm_zvol_volblocksize}"
+		fi
+
+		DATA=$( /sbin/zfs get -Ho value name ${datadir} )
+
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
+		# volume size must be a multiple of volume block size
+		imgbytes=$( roundup --num=${imgbytes} --multiple=${_zvol_rec_size} 2>/dev/null )
+		cbsdlogger NOTICE ${CBSD_APP}: virtual_create_dsk: roundup by recsize ${_zvol_rec_size}: [${imgbytes}]
+
+		# zfs_create_sparse defined via zfs.conf
+		if [ "${zfs_create_sparse}" = "0" ]; then
+			local _sparse_args=
+		else
+			local _sparse_args="-s"
+		fi
+
+		_msg=$( /sbin/zfs create -V ${imgbytes} ${_sparse_args} -o volmode=${vm_zvol_volmode} -o volblocksize=${volblocksize} ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
+		_res=$?
+
+		if [ ${_res} -ne 0 ]; then
+			echo "${_msg}"
+			return ${_res}
+		fi
+
+		/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-${lunname} ${newdsk}
+
+	elif [ "${hammerfeat}" = "1" ]; then
+		err 1 "Hammer not supported yet"
+	else
+		blockcount=$(( imgbytes  / 1048576 ))
+		[ ! -f "${newdsk}" -a ! -h "${newdsk}" ] && /usr/bin/touch "${newdsk}"
+		_msg=$( /bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 2>&1 )
+		_res=$?
+		[ ${_res} -ne 0 ] && echo "${_msg}"
+		return ${_res}
+	fi
+
+	if [ -z "${sectorsize}" ]; then
+		[ -n "${default_sectorsize}" ] && sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="512"
+	fi
+
+	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}" sectorsize="${sectorsize}"
+	return 0
+}
+
 ###
 fi
