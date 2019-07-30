@@ -10,6 +10,7 @@ ADDHELP="mode=attach,detach,remove,list,modify\n\
   - detach - detach disk from controller (without removing dsk)\n\
   - delete - detach and remove disk\n\
   - modify - modify disk properties (e.g: bootable=, dsk_sectorsize=)\n\
+  - get_next_free_dsk - out next available dsk name for jname\n\
  modify properties:\n\
   - bootable - set bootable flag (1 - true, - false)\n\
   - dsk_sectorsize - set sectorsize (e.g: 512, 4096, 512/4096)\n\
@@ -37,20 +38,37 @@ available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid dsk_iops
 
 dsk_attach()
 {
-	local _val
+	local _val _ret
 
 	if [ -z "${dsk_sectorsize}" ]; then
 		readconf bhyve-default-default.conf
 		dsk_sectorsize="${default_sectorsize}"
 	fi
 
+	# get next free disk
+	if [ -z "${dsk}" ]; then
+		dsk=$( get_next_free_dsk -j ${jname} -e bhyve )
+		[ $? -ne 0 ] && dsk=
+	fi
+
 	for i in jname controller dsk dsk_size dsk_sectorsize; do
 		_val=
 		eval _val="\$$i"
+		if [ "${i}" = "dsk" ]; then
+			# trim .vhd if necessary
+			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+		fi
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
 	add_dsk -c "${controller}" -d "${dsk}" -s "${dsk_size}" -z "${dsk_sectorsize}"
+	_ret=$?
+	if [ ${_ret} -eq 0 ]; then
+		${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} attached${N0_COLOR}"
+	else
+		${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} attach failed${N0_COLOR}"
+	fi
+	return ${_ret}
 }
 
 dsk_detach()
@@ -61,6 +79,10 @@ dsk_detach()
 	for i in jname controller dsk; do
 		_val=
 		eval _val="\$$i"
+		if [ "${i}" = "dsk" ]; then
+			# trim .vhd if necessary
+			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+		fi
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -69,6 +91,7 @@ dsk_detach()
 
 	media mode=detach name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+	[ $? -eq 1 ] && ${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
 }
 
 dsk_delete()
@@ -79,6 +102,10 @@ dsk_delete()
 	for i in jname controller dsk; do
 		_val=
 		eval _val="\$$i"
+		if [ "${i}" = "dsk" ]; then
+			# trim .vhd if necessary
+			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+		fi
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -246,13 +273,12 @@ dsk_get()
 	_mysql="SELECT ${get_value} FROM bhyvedsk WHERE ${_filter}"
 	# echo "${_mysql}"
 	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_mysql}
-	#echo "SELECT ${get_value} FROM bhyvedsk WHERE ${_filter}"
-
 }
 
 case "${mode}" in
 	attach)
 		dsk_attach
+		exit $?
 		;;
 	delete)
 		dsk_delete
@@ -291,7 +317,13 @@ case "${mode}" in
 			exit 1
 		fi
 		dsk_get
-
+		;;
+	get_next_free_dsk)
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= is mandatory${N0_COLOR}"
+		next_dsk=$( get_next_free_dsk -j ${jname} -e bhyve )
+		[ $? -ne 0 ] && return 1
+		printf "${next_dsk}"
+		return 0
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
