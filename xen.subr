@@ -159,9 +159,12 @@ compile_dsk_args()
 	local dsk_count=0
 	local iso_count=0
 	local iso_img2=
-	local media_count=0
+	local _media_count=0
 	local first_count=0
 	local _ascii _dev_letter _dev
+
+	local xvd_num=0		# vxd + hd have same counter
+	local sd_num=0
 
 	dsk_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM xendsk' )
 
@@ -179,16 +182,16 @@ compile_dsk_args()
 		iso_img=
 	fi
 
-	media_count=$(( iso_count + dsk_count ))
+	_media_count=$(( iso_count + dsk_count ))
 
-	[ ${media_count} -eq 0 ] && return 0
+	[ ${_media_count} -eq 0 ] && return 0
 
 	# open disk brackets
 	echo "disk = [" >> ${XENCFG}
 
 	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
-	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" | while read dsk_controller dsk_path dsk_slot; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type=\"vhd\" | while read dsk_controller dsk_path dsk_slot; do
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
@@ -203,10 +206,19 @@ compile_dsk_args()
 		# for zvol
 		# phy:${full_dsk_path} ?
 
-		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
+		# detect proper drive letter (abc..)
+		case "${dsk_controller}" in
+			xvd|hd)
+				_ascii=$(( 97 + xvd_num ))
+				xvd_num=$(( xvd_num + 1 ))
+				;;
+			sd)
+				_ascii=$(( 97 + sd_num ))
+				sd_num=$(( sd_num + 1 ))
+				;;
+		esac
+
 		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		#_dev="hd${_dev_letter}"
-		[ -z "${dsk_controller}" ] && dsk_controller="hd"
 		_dev="${dsk_controller}${_dev_letter}"
 
 		if [ ${first_count} -eq 0 ]; then
@@ -216,25 +228,40 @@ compile_dsk_args()
 			printf ", '${full_dsk_path},raw,${_dev},rw'" >> ${XENCFG}
 		fi
 		first_count=$(( first_count + 1 ))
-		media_count=$(( media_count - 1 ))
 
-	done || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+		echo "xvd_num=${xvd_num}"
+		echo "sd_num=${sd_num}"
 
-	_ascii=$(( 97 + dsk_count ))	# started by 'a' (97 ascii code), skip all hdd and set next letter for disk id
-	_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-#	_dev="hd${_dev_letter}"
-	[ -z "${dsk_controller}" ] && dsk_controller="hd"		# cdrom ?
-	_dev="${dsk_controller}${_dev_letter}"
+	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
-	if [ -n "${iso_img2}" ]; then
-		printf ", '${iso_img2},raw,${_dev}:cdrom,r'" >> ${XENCFG}
-		first_count=$(( first_count + 1 ))
-		_ascii=$(( 97 + first_count ))	# started by 'a' (97 ascii code)
+	if [ -n "${iso_img}" ]; then
+		# cdrom
+		dsk_controller="hd"		# always hd
+		_ascii=$(( 97 + xvd_num ))
+		xvd_num=$(( xvd_num + 1 ))
 		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
 		_dev="${dsk_controller}${_dev_letter}"
+		printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
 	fi
-
-	[ -n "${iso_img}" ] && printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+	if [ -n "${iso_img2}" ]; then
+		# secondary cdrom
+		dsk_controller="hd"		# always hd
+		_ascii=$(( 97 + xvd_num ))
+		xvd_num=$(( xvd_num + 1 ))
+		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+		_dev="${dsk_controller}${_dev_letter}"
+		printf ", '${iso_img2},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+	fi
+	# Cloud-init support. Looking for seed.iso in sysdir
+	if [ -r ${jailsysdir}/${jname}/seed.iso ]; then
+		# cdrom for cloud-init
+		dsk_controller="hd"		# always hd
+		_ascii=$(( 97 + xvd_num ))
+		xvd_num=$(( xvd_num + 1 ))
+		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+		_dev="${dsk_controller}${_dev_letter}"
+		printf ", '${jailsysdir}/${jname}/seed.iso,raw,${_dev}:cdrom,r'" >> ${XENCFG}
+	fi
 
 	# close disk brackets
 	printf "\n]\n" >> ${XENCFG}

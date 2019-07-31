@@ -10,6 +10,7 @@ ADDHELP="mode=attach,detach,remove,list,modify\n\
   - detach - detach disk from controller (without removing dsk)\n\
   - delete - detach and remove disk\n\
   - modify - modify disk properties (e.g: bootable=)\n\
+  - get_next_free_dsk - out next available dsk name for jname\n\
  modify properties:\n\
   - bootable - set bootable flag (1 - true, - false)\n\
   - dsk_zfs_guid - can be: 'auto'\n\
@@ -27,7 +28,8 @@ dsk_iops_limit=
 dsk_mbps_limit=
 . ${cbsdinit}
 
-available_properties="bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
+available_properties="bootable dsk_zfs_guid"
+available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid"
 
 . ${distdir}/xen.subr
 . ${distdir}/virtual.subr
@@ -35,20 +37,51 @@ available_properties="bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
 
 dsk_attach()
 {
-	local _val
+	local _val _ret
 
 	if [ -z "${dsk_sectorsize}" ]; then
 		readconf xen-default-default.conf
 		dsk_sectorsize="${default_sectorsize}"
 	fi
 
+	# get next free disk
+	if [ -z "${dsk}" ]; then
+		dsk=$( get_next_free_dsk -j ${jname} -e xen )
+		[ $? -ne 0 ] && dsk=
+	fi
+
 	for i in jname controller dsk dsk_size; do
 		_val=
 		eval _val="\$$i"
+
+		case "${i}" in
+			dsk)
+				# trim .vhd if necessary
+				dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			controller)
+				# check for valid controller
+				case "${_val}" in
+					xvd|sd|hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}xen-dsk: unknown controller ${_val}, valid: ${N1_COLOR}xvd, sd, hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
 	add_dsk -c "${controller}" -d "${dsk}" -s "${dsk_size}" -z "${dsk_sectorsize}"
+	_ret=$?
+	if [ ${_ret} -eq 0 ]; then
+		${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} attached${N0_COLOR}"
+	else
+		${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} attach failed${N0_COLOR}"
+	fi
+	return ${_ret}
 }
 
 dsk_detach()
@@ -59,6 +92,10 @@ dsk_detach()
 	for i in jname controller dsk; do
 		_val=
 		eval _val="\$$i"
+		if [ "${i}" = "dsk" ]; then
+			# trim .vhd if necessary
+			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+		fi
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}xen-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -67,6 +104,7 @@ dsk_detach()
 
 	media mode=detach name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM xendsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+	[ $? -eq 1 ] && ${ECHO} "${N2_COLOR}${dsk}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
 }
 
 dsk_delete()
@@ -95,6 +133,10 @@ dsk_modify_bootable()
 	for i in jname controller dsk; do
 		_val=
 		eval _val="\$$i"
+		if [ "${i}" = "dsk" ]; then
+			# trim .vhd if necessary
+			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+		fi
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_bootable error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -221,15 +263,22 @@ dsk_get()
 {
 	local _val
 	local _devpath _prop_num=0
-	local _filter=
+	local _filter= _mysql=
 
 	# determine properties
-	for i in ${available_properties}; do
+	for i in ${available_get_properties}; do
 		_val=
 		eval _val="\$$i"
+
+		if [ "${i}" = "dsk_path" ]; then
+			# trim/cast .vhd if necessary
+			_val=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+			_val="${_val}.vhd"
+		fi
+
 		[ -z "${_val}" ] && continue
 		if [ -z "${_filter}" ]; then
-			_filter="WHERE ${i}=\"${_val}\""
+			_filter="${i}=\"${_val}\""
 		else
 			_filter="${_filter} AND ${i}=\"${_val}\""
 		fi
@@ -241,9 +290,16 @@ dsk_get()
 		return 1
 	fi
 
-	echo "${_filter}"
-
+	_mysql="SELECT ${get_value} FROM xendsk WHERE ${_filter}"
+	# echo "${_mysql}"
+	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_mysql}
 }
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}xen-dsk: no such domain here: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "xen" ] && err 1 "${N1_COLOR}xen-dsk: not in XEN mode: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
 
 case "${mode}" in
 	attach)
@@ -264,7 +320,35 @@ case "${mode}" in
 		dsk_modify
 		;;
 	get)
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= is mandatory${N0_COLOR}"
+		. ${distsharedir}/xendsk.conf
+		# filter params=val and $argx value
+		get_value=
+		for i in $*; do
+			# jname=XX dsk=YY test
+			strpos --str="${i}" --search="="
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				if [ -z "${get_value}" ]; then
+					get_value="${i}"
+				else
+					get_value="${get_value},${i}"
+				fi
+			fi
+		done
+		if [ -z "${get_value}" ]; then
+			${ECHO} "${N1_COLOR}Empty value for get. Use: cbsd xen-dsk mode=get <filter> XXX, where XXX from:${N0_COLOR}"
+			${ECHO} "   ${N2_COLOR}${MYCOL}${N0_COLOR}"
+			exit 1
+		fi
 		dsk_get
+		;;
+	get_next_free_dsk)
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= is mandatory${N0_COLOR}"
+		next_dsk=$( get_next_free_dsk -j ${jname} -e xen )
+		[ $? -ne 0 ] && return 1
+		printf "${next_dsk}"
+		return 0
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"

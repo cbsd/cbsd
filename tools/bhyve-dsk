@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.6
 MYARG="mode"
-MYOPTARG="jname controller dsk dsk_size bootable dsk_sectorsize display header"
+MYOPTARG="jname controller dsk dsk_size bootable dsk_sectorsize display header zvol_opts"
 MYDESC="Manage bhyve ahci/virtio disk"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
@@ -15,6 +15,8 @@ ADDHELP="mode=attach,detach,remove,list,modify\n\
   - bootable - set bootable flag (1 - true, - false)\n\
   - dsk_sectorsize - set sectorsize (e.g: 512, 4096, 512/4096)\n\
   - dsk_zfs_guid - can be: 'auto'\n\
+ mode=attach properties:\n\
+  zvol_opts - pass ZFS volume options, e.g: zvol_opts=\"dedup=on sync=disabled\"\n\
  mode=list properties:\n\
   header=0 don't print header\n\
   display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit\n\
@@ -27,6 +29,7 @@ ADDHELP="mode=attach,detach,remove,list,modify\n\
 bootable=
 dsk_iops_limit=
 dsk_mbps_limit=
+zvol_opts=
 . ${cbsdinit}
 
 available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
@@ -54,10 +57,24 @@ dsk_attach()
 	for i in jname controller dsk dsk_size dsk_sectorsize; do
 		_val=
 		eval _val="\$$i"
-		if [ "${i}" = "dsk" ]; then
-			# trim .vhd if necessary
-			dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
-		fi
+
+		case "${i}" in
+			dsk)
+				# trim .vhd if necessary
+				dsk=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			controller)
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}bhyve-dsk: unknown controller ${_val}, valid: ${N1_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -256,6 +273,13 @@ dsk_get()
 	for i in ${available_get_properties}; do
 		_val=
 		eval _val="\$$i"
+
+		if [ "${i}" = "dsk_path" ]; then
+			# trim/cast .vhd if necessary
+			_val=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+			_val="${_val}.vhd"
+		fi
+
 		[ -z "${_val}" ] && continue
 		if [ -z "${_filter}" ]; then
 			_filter="${i}=\"${_val}\""
@@ -274,6 +298,12 @@ dsk_get()
 	# echo "${_mysql}"
 	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_mysql}
 }
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}bhyve-dsk: no such domain here: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}bhyve-dsk: not in bhyve mode: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
 
 case "${mode}" in
 	attach)
