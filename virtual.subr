@@ -537,7 +537,6 @@ init_systap()
 # $dsk_size can in form: "100M/200G"
 # $dsk_bsize - size in bytes
 # require: dsk_path as "dsk1.vhd" or $1 as full path
-# require . tools
 populate_dsk_size()
 {
 	local dsk_fullpath
@@ -578,6 +577,124 @@ populate_dsk_size()
 	fi
 
 	[ -n "${dsk_realsize}" ] && dsk_size="${dsk_realsize}/${dsk_size}"
+}
+
+# require: dsk_path as "dsk1.vhd" or -f<arg> as full filename path
+# return 0 when ok
+# return 1 when error
+modify_dsk_size()
+{
+	local _dsk_fullpath _res
+	local _old_dsk_bsize _zvol_rec_size
+	local _new_dsk_bsize _zvol_rec_bsize
+	local _new_dsk_bdiff _new_dsk_diff
+	local tmp_zvol _zvol_pref _is_zvol
+
+	while getopts "f:s:" opt; do
+		case "${opt}" in
+			f) _dsk_fullpath="${OPTARG}" ;;
+			s) _new_size="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# md/vnode ?
+	if [ -f "${_dsk_fullpath}" ]; then
+		_old_dsk_bsize=$( /usr/bin/stat -f "%z" ${_dsk_fullpath} 2>/dev/null )
+		_is_zvol=
+	elif [ -h "${_dsk_fullpath}" ]; then
+		tmp_zvol=$( /usr/bin/readlink ${_dsk_fullpath} 2>/dev/null )
+		_zvol_pref=$( substr --pos=0 --len=10 --str=${tmp_zvol} )
+		# not started with /dev/zvol ?
+		if [ "${_zvol_pref}" != "/dev/zvol/" ]; then
+			# not zvol
+			_dsk_fullpath="${tmp_zvol}"
+			_old_dsk_bsize=$( /usr/bin/stat -f "%z" ${_dsk_fullpath} 2>/dev/null )
+			_is_zvol=
+		else
+			_is_zvol=$( echo ${tmp_zvol} | /usr/bin/sed s:/dev/zvol/::g )
+			_old_dsk_bsize=$( /sbin/zfs get -Hp -o value volsize ${_is_zvol} )
+		fi
+	else
+		# no such file or symlink
+		${ECHO} "${N1_COLOR}not a file or symlink: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ -z "${_old_dsk_bsize}" -o "${_old_dsk_bsize}" = "1" ]; then
+		${ECHO} "${N1_COLOR}unable to calculate current disk size in bytes for ${_dsk_fullpath}: ${N2_COLOR}${_old_dsk_bsize}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if is_number "${_new_size}"; then
+		if conv2bytes ${_new_size}; then
+			_new_dsk_bsize="${convval}"
+		else
+			${ECHO} "${N1_COLOR}unable to convert into bytes: ${N2_COLOR}${_new_size}${N0_COLOR}" 1>&2
+			return 1
+		fi
+	else
+		# already on bytes?
+		_new_dsk_bsize="${_new_size}"
+	fi
+
+	if [ -z "${_new_dsk_bsize}" -o "${_new_dsk_bsize}" = "1" ]; then
+		${ECHO} "${N1_COLOR}unable to calculate new disk size in bytes for ${_dsk_fullpath}: ${N2_COLOR}${_new_dsk_bsize}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ ${_old_dsk_bsize} -gt ${_new_dsk_bsize} ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: disk reduction is not yet supported (${_old_dsk_bsize} > ${_new_dsk_bsize})${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ -n "${_is_zvol}" ]; then
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value volblocksize ${_is_zvol} )
+
+		if is_number "${_zvol_rec_size}"; then
+			if conv2bytes ${_zvol_rec_size}; then
+				_zvol_rec_bsize="${convval}"
+			else
+				${ECHO} "${N1_COLOR}unable to convert into bytes: ${N2_COLOR}${_zvol_rec_size}${N0_COLOR}" 1>&2
+				return 1
+			fi
+		else
+			# already on bytes?
+			_zvol_rec_bsize="${_zvol_rec_size}"
+		fi
+
+		# volume size must be a multiple of volume block size
+		_new_dsk_bsize=$( roundup --num=${_new_dsk_bsize} --multiple=${_zvol_rec_bsize} 2>/dev/null )
+		_new_dsk_bdiff=$(( _new_dsk_bsize - _old_dsk_bsize ))
+
+		cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size: roundup by recsize ${_zvol_rec_size}: [${_new_dsk_bsize}]
+		${ECHO} "${N1_COLOR}resize ${N2_COLOR}${_is_zvol}${N1_COLOR} up to ${N2_COLOR}${_new_dsk_bsize}${N0_COLOR}"
+		_res=$( /sbin/zfs set volsize=${_new_dsk_bsize} ${_is_zvol} )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: modify_dsk_size error: ${_res}${N0_COLOR}" 1>&2
+			cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size error: ${_res}
+			return 1
+		fi
+	else
+		_new_dsk_bdiff=$(( _new_dsk_bsize - _old_dsk_bsize ))
+		_res=$( /usr/bin/truncate -s +${_new_dsk_bdiff} ${_dsk_fullpath} )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: modify_dsk_size error: ${_res}${N0_COLOR}" 1>&2
+			cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size error: ${_res}
+			return 1
+		fi
+	fi
+
+	if conv2human "${_new_dsk_bdiff}"; then
+		_new_dsk_diff="${convval}"
+	else
+		_new_dsk_diff="${_new_dsk_bdiff}"
+	fi
+
+	${ECHO} "${N1_COLOR}modify_dsk_size: volume size increased by: ${N2_COLOR}${_new_dsk_diff}${N0_COLOR}" 1>&2
+	return 0
 }
 
 

@@ -144,12 +144,13 @@ zfs_create_zvol_from_file()
 {
 	local _file= _pool= _zvol_name= DATA= _human_bytes= _res _bar=1 _zvol_rec_size=0
 	local _ebytes _ebytes_data _ebytes_data_orig _human_data_bytes
-	local i _def_val
+	local i _def_val _zvol_opts_merged _zvol_opts zfs_custom_opt
 
-	while getopts "b:f:p:n:" opt; do
+	while getopts "b:f:o:p:n:" opt; do
 		case "${opt}" in
 			b) _bar="${OPTARG}" ;;
 			f) _file="${OPTARG}" ;;
+			o) zfs_custom_opt="${OPTARG}" ;;
 			p) _pool="${OPTARG}" ;;
 			n) _zvol_name="${OPTARG}" ;;
 		esac
@@ -227,6 +228,7 @@ zfs_create_zvol_from_file()
 	readconf zfs.conf
 
 	_zvol_opts=
+	_zvol_opts_merged=
 
 	# lookup for "default_ci_zvol_*" defaults
 	for i in ${default_ci_zvol_managed_feature}; do
@@ -241,17 +243,24 @@ zfs_create_zvol_from_file()
 		fi
 	done
 
-	_msg=$( /sbin/zfs create -V ${_ebytes} ${_zvol_opts} ${DATA}/${_zvol_name} 2>&1 )
+	if [ -z "${zfs_custom_opt}" ]; then
+		# no merge with custom zvol_opts=
+		_zvol_opts_merged="${_zvol_opts}"
+	else
+		_zvol_opts_merged=$( zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}" 2>/dev/null )
+	fi
+
+	_msg=$( /sbin/zfs create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name} 2>&1 )
 	_res=$?
 
 	if [ ${_res} -ne 0 ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} ${_zvol_opts} ${DATA}/${_zvol_name}: ${_msg}
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name}: ${_msg}
 		return 1
 	fi
 
 	if [ ${_bar} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}Original size: ${_human_bytes}, real referenced size/data: ${_human_data_bytes}${N0_COLOR}"
-		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR} (dedup: ${convert_source_image_to_zvol_dedup}): ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR}: ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
 		/usr/bin/nice -n 20 /bin/dd if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
 		echo
 	else
