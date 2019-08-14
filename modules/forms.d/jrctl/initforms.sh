@@ -3,15 +3,17 @@ MYDIR="$( /usr/bin/dirname $0 )"
 MYPATH="$( /bin/realpath ${MYDIR} )"
 HELPER="jrctl"
 
-[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
-if [ -z "${cbsd_workdir}" ]; then
-	echo "no such cbsd_workdir"
-	exit
+: ${distdir="/usr/local/cbsd"}
+# MAIN
+if [ -z "${workdir}" ]; then
+	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
+	[ -z "${cbsd_workdir}" ] && exit 0
+	workdir="${cbsd_workdir}"
 fi
-workdir="${cbsd_workdir}"
 
 set -e
 . ${distdir}/cbsd.conf
+. ${distdir}/tools.subr
 . ${subr}
 set +e
 
@@ -22,7 +24,6 @@ MYPATH="${workdir}/formfile"
 
 /usr/local/bin/cbsd ${miscdir}/updatesql ${MYPATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms.schema forms
 /usr/local/bin/cbsd ${miscdir}/updatesql ${MYPATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms_system.schema system
-
 
 /usr/local/bin/sqlite3 ${MYPATH}/${HELPER}.sqlite << EOF
 BEGIN TRANSACTION;
