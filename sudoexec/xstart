@@ -1,11 +1,16 @@
 #!/usr/local/bin/cbsd
 #v12.0.5
 MYARG=""
-MYOPTARG="jname inter debug"
+MYOPTARG="jname inter debug debug_engine cfg_only"
 MYDESC="Start XEN domain"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n"
+ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
+  debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n\
+  cfg_only=<file_path>  when set, find/create tap/vnc and generate bhyve.conf into <file_path> but without run\n"
 CBSDMODULE="xen"
-EXTHELP="wf_jstop_jstart"
+EXTHELP="wf_xstop_xstart"
+
+odebug_engine=
+cfg_only=		# create a configuration and run immediately
 
 . ${subr}
 . ${tools}		# for select_jail_by_list
@@ -14,6 +19,10 @@ readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
 [ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e xls -r ${sqlreplica}
+
+odebug_engine=		# overwrite debug_engine variable
+debug_engine=		# reset debug_engine before init
+
 . ${cbsdinit}
 
 . ${system}
@@ -21,7 +30,9 @@ readconf jail-freebsd-default.conf
 . ${distdir}/xen.subr
 . ${distdir}/vnet.subr 		# get_vm_uplink_interface
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No domain specified${N0_COLOR}"
+[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No XEN domain specified${N0_COLOR}"
+
+[ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
 . ${distdir}/fetch.subr
 . ${distdir}/jcreate.subr       # for external_exec_master_script
@@ -85,12 +96,98 @@ start_xen()
 	. ${jrcconf}
 
 	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart progress=1
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xstart progress=1 workdir="${workdir}"
 	fi
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
-	manage_boot_by_empty_hdd
+
+	# todo: shared bhyve/xen virtual
+	# Cloud-init init. Cloud init only for empty disk
+	if check_for_empty_hdd path=${data}/dsk1.vhd; then
+		if [ -n "${vm_iso_path}" ]; then
+			local prefix=
+			local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+			if [ "${prefix6}" = "cloud-" ]; then
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${N1_COLOR}No such cloud source: ${N2_COLOR}${vm_iso_path}/${iso_img}${N0_COLOR}"
+				fi
+				vm_boot="hdd"
+				${ECHO} "${N1_COLOR}cloud init image initialization..${N0_COLOR}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: xstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
+
+				. ${zfstool}
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( /usr/bin/stat -f "%z" ${_myfile} 2>/dev/null )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( /usr/bin/stat -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some 
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
+					# to generic clonedata (add dd method)?
+					/usr/bin/nice -n 20 /bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					echo
+					# adjust original image size
+					/usr/bin/truncate -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
+					# to generic clonedata ?
+						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+						echo "/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						_ret=$?
+						if [ ${_ret} -eq 1 ]; then
+							# create cloud snapshot for $jname
+							/sbin/zfs snapshot ${_cloud_source_zvol}@boot-${jname}
+							# destory original zvol disk for vm
+							/sbin/zfs destroy ${_dsk_source_zvol}
+							#/sbin/zfs clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							/sbin/zfs clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							# restore original size
+							# /sbin/zfs set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# bug here, need for atomic ops ^^ in clone action
+							/sbin/zfs set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							/sbin/zfs set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+						else
+							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
+						fi
+				fi
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+			else
+				manage_boot_by_empty_hdd
+			fi
+		fi
+	else
+		manage_boot_by_empty_hdd
+	fi
 
 	if [ "${vm_boot}" = "cd" ]; then
 		init_iso
@@ -163,6 +260,9 @@ start_xen()
 	XENCFG="${jailsysdir}/${jname}/xen.cfg"
 	/usr/bin/truncate -s0 ${XENCFG}
 
+	# restore overwrite debug_engine
+	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
+
 	/bin/cat >> ${XENCFG} << EOF
 name = "${jname}"
 memory = ${xvm_ram}
@@ -180,13 +280,15 @@ ${boot_arg}
 #vncdisplay="${vncdisplay}"
 
 # larger resolution
-stdvga=1
+vga="stdvga"
 videoram=16
 
 #vm_vnc_port='${vm_vnc_port}'
 opengl=1
 vncconsole=1
 vncunused=0
+
+debug_engine='${debug_engine}'
 
 on_poweroff="${on_poweroff}";
 on_reboot="${on_reboot}";
@@ -195,7 +297,6 @@ on_crash="${on_crash}";
 # SPICE
 #vnc=0
 #on_crash="destroy"
-#vga="stdvga"
 #spice=1
 #spicehost='0.0.0.0'
 #spiceport=6000
@@ -210,12 +311,18 @@ on_crash="${on_crash}";
 #soundhw="hda"
 #localtime=1
 
+hap="${xen_hap}"
+nestedhvm="${xen_nestedhvm}"
+# L1
+#cpuid = ['0x1:ecx=0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
+
 EOF
 
 	case ${spice_default} in
 		0)
 			/bin/cat >> ${XENCFG} <<EOF
 vnc = 1
+spice = 0
 vnclisten = "${xen_vnc_tcp_bind}"
 vncpasswd="${vnc_password}"
 vncdisplay="${vncdisplay}"
@@ -223,6 +330,7 @@ EOF
 			;;
 		1)
 			/bin/cat >> ${XENCFG} <<EOF
+vnc = 0
 spice=1
 spicehost="${xen_spice_tcp_bind}"
 spiceport="${vncdisplay}"
@@ -257,22 +365,89 @@ EOF
 			;;
 	esac
 
+	# create a configuration only
+	if [ -n "${cfg_only}" ]; then
+		/bin/mv ${XENCFG} ${cfg_only}
+		err 0 "${N1_COLOR}config created: ${N2_COLOR}${cfg_only}${N0_COLOR}"
+	fi
+
+	# todo: shared bhyve/xen virtual
+	# cloud-init enabled?
+	# this section should be AFTER master_prestart
+	# cloud_init and CLOUD_FILES was initialized earlier
+	if [ ${cloud_init} -eq 1 ]; then
+			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
+			if [ "${vm_os_type}" = "windows" ]; then
+				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
+				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
+				${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+			else
+				GENISOIMAGE_CMD=$( which makefs )
+				${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+				# why upper here, whereis spec?
+				/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+			fi
+	fi
+
 	xl_cmd="${XL_CMD} -vvv create -c ${XENCFG}"
 	echo "[debug]: $xl_cmd"
 	#${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
 
-	${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
+	case "${debug_engine}" in
+		gdb)
+			if [ -x /usr/local/bin/gdb ]; then
+				gdb_cmd="/usr/local/bin/gdb"
+			elif [ -x /usr/libexec/gdb ]; then
+				gdb_cmd="/usr/libexec/gdb"
+			elif [ -x /usr/bin/gdb ]; then
+				gdb_cmd="/usr/bin/gdb"
+			fi
+			# break while loop
+			echo
+			echo "Warning"
+			echo "Run xl throuch GDB. Please execute 'run' to launch XEN instance"
+			echo
+			echo "${gdb_cmd} -batch --args ${xl_cmd}"
+			${gdb_cmd} -ex run --args ${xl_cmd}
+			;;
+		lldb)
+			echo
+			echo "Warning"
+			echo "Run xl throuch LLDB. Please execute 'run' to launch XEN instance"
+			echo
+			echo "/usr/bin/lldb -- ${xl_cmd}"
+			/usr/bin/lldb -- ${xl_cmd}
+			bhyve_exit=$?
+			/bin/rm -f /tmp/cmds.$$
+			;;
+		*)
+			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
+			;;
+	esac
 
-	external_exec_master_script "master_poststart.d"
-
-	# CBSD QUEUE
-	if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-		[ "${cbsd_queue_name}" != "none" ] && cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=xstart progress=100 data_status=1
-	fi
+	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
+	printf "${N1_COLOR}Waiting for PID"
+	for i in $( /usr/bin/seq 10 ); do
+		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+		if [ $? -eq 0 ]; then
+				sleep 1
+				printf "."
+		else
+				break
+		fi
+	done
 
 	[ -z "${vm_pid}" ] && vm_pid="0"
 
 	echo
+
+	external_exec_master_script "master_poststart.d"
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=bstart progress=100 data_status=1 workdir="${workdir}"
+	fi
 
 	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
 	cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
@@ -283,14 +458,17 @@ EOF
 	# update state_time, local SQLite for back compatible
 	cbsdsqlrw local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
 
-	err 0 ""
-
+	exit 0
 }
 
 
 # MAIN for multiple jails
 TRAP=""
-[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/xenvms/"
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
 
 emulator="xen"        # for jname_is_multiple
 jname_is_multiple
@@ -309,11 +487,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/xstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		if [ -n "${cbsd_queue_name}" ]; then
-			/usr/sbin/daemon -p ${ftmpdir}/xstart.${jname}.$$ /usr/local/bin/cbsd xstart inter=${inter} jname=${jname} cbsd_queue_name="${cbsd_queue_name}"
-		else
-			/usr/sbin/daemon -p ${ftmpdir}/xstart.${jname}.$$ /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
-		fi
+		env NOINTER=1 /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
@@ -325,7 +499,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	wait_for_fpid -a start -t ${parallel}
 
-	err 0 "${N1_COLOR}Multiple bstart: ${N2_COLOR}done${N0_COLOR}"
+	err 0 "${N1_COLOR}Multiple xstart: ${N2_COLOR}done${N0_COLOR}"
 fi
 
 # MAIN
@@ -335,7 +509,28 @@ init_xen
 init_systap
 
 st_time=$( /bin/date +%s )
-[ -z "$jname" ] && jname=$1
+. ${distdir}/time.subr
+st_time=$( /bin/date +%s )
+[ -z "${jname}" ] && jname=${1}
+
+# cloud-init enabled?
+# we need this section (besides section cloud-init section in start_xen() to allocate pci bus id via touching seed.iso
+# since some helpers may work with runtime (e.g pcibus + cloudinit) config
+if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
+	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | /usr/bin/xargs )
+	# gen seed only if files exist
+	if [ -n "${CLOUD_FILES}" ]; then
+		cloud_init=1
+		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
+		/usr/bin/touch ${jailsysdir}/${jname}/seed.iso
+	else
+		cloud_init=0
+		unset CLOUD_FILES
+	fi
+else
+	cloud_init=0
+fi
+
 
 default_profile="xen-default-default.conf"
 readconf vnc.conf
@@ -353,6 +548,12 @@ readconf ${default_profile}
 [ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${N1_COLOR}Parameter is mandatory: ${N2_COLOR}vm_ram, vm_cpus, vm_os_type${N0_COLOR}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
+
+if [ ${vm_cpus} -gt ${ncpu} -a ${vm_cpus} -lt 16 ]; then
+	${ECHO} "${N1_COLOR}Warning! Current node cpu: ${N2_COLOR}${ncpu}${N1_COLOR}, guest cpu: ${N2_COLOR}${vm_cpus}. ${N1_COLOR}Overcommitting vCPUs can hurt perfomance.${N0_COLOR}"
+elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt 16 ]; then
+	err 1 "${N1_COLOR}Valid number of guest CPUs within 1 - 16 range. Current vm_cpus: ${N2_COLOR}${vm_cpus}${N0_COLOR}"
+fi
 
 main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
 
@@ -405,7 +606,10 @@ if [ ${status} -eq 3 ]; then
 fi
 
 start_xen
+
 end_time=$( /bin/date +%s )
-cbsdlogger NOTICE ${CBSD_APP}: bhyve domain ${jname} started in $(( end_time - st_time ))s
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+cbsdlogger NOTICE ${CBSD_APP}: XEN domain ${jname} started in ${diff_time}
 
 exit 0

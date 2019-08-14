@@ -1,0 +1,218 @@
+# Generic xen dsk function
+
+if [ ! "$_CBSD_XEN_DSK_SUBR" ]; then
+_CBSD_XEN_DSK_SUBR=1
+###
+
+load_dsk_info()
+{
+	dsk_last_id=1
+	local sqldelimer=" "
+
+	unset dsklist
+
+	for last_disk in $( /usr/bin/seq 1 16 ); do
+		unset dsk_controller${last_disk}
+	done
+
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_type,controller_id FROM xendsk WHERE jname=\"${jname}\" | while read dsk_controller dsk_path dsk_slot dsk_type controller_id; do
+		echo "export dsk_controller${dsk_last_id}=\"${dsk_controller}\""
+		echo "export dsk_path${dsk_last_id}=\"${dsk_path}\""
+		echo "export dsk_slot${dsk_last_id}=\"${dsk_slot}\""
+		echo "export dsk_type${dsk_last_id}=\"${dsk_type}\""
+		echo "export controller_id${dsk_last_id}=\"${controller_id}\""
+		dsk_last_id=$(( dsk_last_id + 1 ))
+	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+}
+
+# form for $new_dsk_controller
+get_dsk_controller()
+{
+	local _input _retval
+	local title=" Controller type for ${mtag} "
+	hline=
+	local i _dsk_controller_name _dsk_controller_type
+
+	if [ -n "${new_dsk_controller}" ]; then
+		defaultitem="${new_dsk_controller}"
+	else
+		defaultitem="${dsk_controller}"
+	fi
+
+	local menu_list="
+		'xvd'	'Xen virtual disk, direct'		'direct attached to motherboard'
+		'sd'	'SCSI virtual disk, direct'		'direct attached to motherboard'
+		'hd'	'IDE or AHCI virtual disk, direct'	'direct attached to motherboard'
+	" # END-QUOTE
+
+	if [ -n "${jname}" ]; then
+		_dsk_controller_name=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM xen_dskcontroller WHERE name != "0" | /usr/bin/xargs )
+		for i in ${_dsk_controller_name}; do
+			_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM xen_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+			menu_list="${menu_list} '${i}'	'${_dsk_controller_type} controller'	'controller attached to arbitrary devices'"
+		done
+	fi
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			new_dsk_controller="${mtag}"
+			return 0
+			;;
+	esac
+
+	return $retval
+}
+
+# form for $new_controller_id
+get_controller_id()
+{
+	local _input _retval
+
+	local title=" Select and attach to controller ${mtag} "
+	hline=
+
+	local menu_list="'0'	'no controller'	'Attach to BUS directrly'"
+	[ -n "${new_controller_id}" ] && defaultitem="${new_controller_id}"
+
+	. $BSDCFG_LIBE/$APP_DIR/include/xen-dskcontroller.subr
+	load_ctr_info
+
+	for last_ctr in $( /usr/bin/seq 1 16 ); do
+		unset id name type count cache
+		eval id="\$ctr_id$last_ctr"
+		[ -z "${id}" ] && break
+		eval ctr_name="\$ctr_name$last_ctr"
+		eval ctr_type="\$ctr_type$last_ctr"
+		eval ctr_count="\$ctr_count$last_ctr"
+		eval ctr_cache="\$ctr_cache$last_ctr"
+
+		menu_list="${menu_list} '${ctr_name}'	'${ctr_type}'	'count=${ctr_count},cache=${ctr_cache}'"
+	done
+
+	cbsd_menubox
+	retval=$?
+	new_controller_id=
+
+	case ${retval} in
+		${DIALOG_OK})
+			new_controller_id="${mtag}"
+			return 0
+			;;
+	esac
+
+	return $retval
+}
+
+# form for $new_dsk_size
+get_dsk_size()
+{
+	local _input _defsize="20g"
+
+	f_dialog_title " image size "
+
+	[ -n "${new_dsk_size}" ] && _defsize="${new_dsk_size}"
+
+	f_dialog_input _input "Input size, eg: 20g" "${_defsize}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && new_dsk_size="${_input}"
+}
+
+
+# form for new dsk
+# -c controller -d dskname (dsk1) [-o zfs_options] -s 10g -z sectorsize
+# e.g: -c xvd -d dsk1 -o "-o readonly=no -o dedup=yes" -s 10g -z 512
+add_dsk()
+{
+	local controller=
+	local dsk=
+	local size=
+	local newdsk=
+	local sectorsize=
+	local _res _msg i _zvol_opt=
+	local _ctr_list= _ctr_exist=0
+	local data
+
+	while getopts "c:d:o:s:z:" opt; do
+		case "${opt}" in
+			c) controller="${OPTARG}" ;;
+			d) dsk="${OPTARG}" ;;
+			o) _zvol_opt="${OPTARG}" ;;
+			s) size="${OPTARG}" ;;
+			z) sectorsize="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${controller}" ] && err 1 "${N1_COLOR}Empty controller${N0_COLOR}"
+	[ -z "${dsk}" ] && err 1 "${N1_COLOR}Empty dsk${N0_COLOR}"
+	[ -z "${size}" ] && err 1 "${N1_COLOR}Empty size${N0_COLOR}"
+
+	if [ -z "${sectorsize}" ]; then
+		readconf xen-default-default.conf
+		sectorsize="${default_sectorsize}"
+	fi
+
+	# check for controller exist
+	_ctr_list=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM xen_dskcontroller WHERE name!=\"0\"" | /usr/bin/xargs )
+	for i in ${_ctr_list} xvd sd hd; do
+		if [ "${i}" = "${controller}" ]; then
+			_ctr_exist=1
+			break
+		fi
+	done
+
+	if [ ${_ctr_exist} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}${jname} does not have controller ${controller}. valid list: ${N2_COLOR}${_ctr_list}${N0_COLOR}"
+		return 1
+	fi
+
+	# check for disk exist
+	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM xendsk WHERE dsk_path LIKE \"${dsk}.%\" OR dsk_path=\"${dsk}\"" )
+
+	if [ -n "${_res}" ]; then
+		${ECHO} "${N1_COLOR}disk already exist for ${jname}: ${N2_COLOR}${dsk}${N0_COLOR}"
+		return 1
+	fi
+
+	if [ "${controller}" = "nvme" ]; then
+		newdsk="${dsk}"
+	else
+		newdsk="${dsk}.vhd"
+
+		data="${jaildatadir}/${jname}-${jaildatapref}"
+
+		if [ -h ${data}/${newdsk} -o -f ${data}/${newdsk} ]; then
+			${ECHO} "${N1_COLOR}${newdsk} file already exist: ${N2_COLOR}${data}/${newdsk}${N0_COLOR}"
+			return 1
+		fi
+
+		if [ -n "${_zvol_opt}" ]; then
+			_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} -o "${_zvol_opt}" 2>&1 )
+			_res=$?
+		else
+			_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} 2>&1 )
+			_res=$?
+		fi
+
+		if [ ${_res} -ne 0 ]; then
+			echo "xendsk.subr error: Couldn't create the image file. ${_msg}"
+			sleep 5
+			return 1
+		fi
+	fi
+
+	if [ -n "${controller}" ]; then
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${controller}\",\"${newdsk}\","0",\"${sectorsize}\" )"
+	else
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${newdsk}\","0",\"${sectorsize}\" )"
+	fi
+
+	return 0
+}
+
+###
+fi

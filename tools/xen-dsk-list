@@ -1,38 +1,36 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v12.0.4
 MYARG=""
 MYOPTARG="alljails shownode display node header mode jname"
-MYDESC="Operate with xen disk images and databse"
+MYDESC="Show disk images from database"
 CBSDMODULE="xen"
 EXTHELP="wf_xen"
 ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size\n\
+display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,bootable\n\
+    also available: dsk_zfs_guid\n\
 mode=rescan - rescan vhd and sync info in sql base\n"
 
 . ${subr}
+. ${system}
 
 . ${cbsdinit}
-
-. ${system}
 . ${distdir}/xen.subr
 . ${distdir}/virtual.subr
-
-[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size"
-#[ "${shownode}" = "1" ] && display="nodename,${display}"
+[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,bootable"
 
 #remove commas for loop action on header
-mydisplay=$(echo ${display} |/usr/bin/tr ',' '  ')
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
 
 # upper for header
-myheader=$(echo ${mydisplay} |/usr/bin/tr '[:lower:]' '[:upper:]')
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
 
 show_header()
 {
-	local _header="${BOLD}${myheader}${N0_COLOR}"
-	[ ${header} -ne 0 ] && $ECHO ${_header}
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
 }
 
 # if $1 = "Unregister" then overwrite status to "Unregister"
@@ -49,8 +47,21 @@ populate_output_data()
 		[ -z "${_val}" ] && _val="-"
 
 		if [ "${_i}" = "dsk_size" ]; then
-			populate_dsk_size
-			_val="${dsk_size}"
+			if [ "${_val}" = "0" ]; then
+				# no size in table? retrieve and update it
+				populate_dsk_size
+				_val="${dsk_size}"                      # already in human
+				# update values in table
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+			else
+				# convert ${dsk_bsize} for human
+				if conv2human "${dsk_bsize}"; then
+					_val=${convval}
+				else
+					populate_dsk_size
+					_val="${dsk_size}"
+				fi
+			fi
 		fi
 
 		if [ -z "${_status}" ]; then
@@ -77,12 +88,13 @@ show_jaildata_from_sql()
 	[ -n "${2}" ] && local jname="${2}"
 
 	_status=
-	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size FROM xendsk WHERE jname=\"${jname}\""
-	cbsdsqlro ${sqlfile} ${_sql}| while read jname dsk_controller dsk_path dsk_slot dsk_size; do
+	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,bootable,dsk_zfs_guid FROM xendsk WHERE jname=\"${jname}\""
+	cbsdsqlro ${sqlfile} ${_sql}| while read jname dsk_controller dsk_path dsk_slot dsk_size bootable dsk_zfs_guid; do
 		populate_output_data
-		${ECHO} ${_status}
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
 	done
-
 }
 
 show_remote()
@@ -108,12 +120,10 @@ show_local()
 #		echo ${_lvm}
 		[ -r "${_lvm}" ] && show_jaildata_from_sql ${_lvm} ${_vm}
 	done
-
 }
 
 show_dsk()
 {
-
 	if [ -n "${node}" ]; then
 		show_remote
 		exit
@@ -126,7 +136,6 @@ show_dsk()
 	else
 		show_local
 	fi
-
 }
 
 vm_list()
@@ -134,7 +143,7 @@ vm_list()
 	if [ -n "${jname}" ]; then
 		vms="${jname}"
 	else
-		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"xen\"" |/usr/bin/xargs )
+		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"xen\"" | /usr/bin/xargs )
 	fi
 }
 
@@ -149,7 +158,7 @@ rescan_dsk()
 		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_path=\"${_dsk}\"" 2>/dev/null );
 		if [ -z "${_res}" ]; then
 			${ECHO} "${N1_COLOR}Found new disk: ${N2_COLOR}${_dsk}${N1_COLOR} for ${N2_COLOR}${jname}${N0_COLOR}"
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"virtio-blk\",\"${_dsk}\","0" )"
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"${_dsk}\","0" )"
 		fi
 	done
 }

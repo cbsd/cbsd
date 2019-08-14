@@ -3,11 +3,11 @@
 MYARG=""
 MYOPTARG="jconf inter removejconf"
 # allow all bhyve settings
-BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr zfs_snapsrc runasap interface rctl_nice emulator imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi \
+BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi \
 iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile swapsize vm_iso_path vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory \
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver \
 vnc_password media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr \
-ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root"
+ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root dsk_iops_limit dsk_mbps_limit"
 MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 MYDESC="Create bhyve from config file"
 ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
@@ -18,7 +18,6 @@ EXTHELP="wf_bcreate"
 . ${subr}
 
 readconf buildworld.conf
-#readconf bhyve-default-default.conf
 readconf zfs.conf
 
 . ${distdir}/universe.subr
@@ -113,7 +112,7 @@ really_create_vm()
 		${SYSRC_CMD} -qf ${jconf_tmp} ver="${ver}" > /dev/null
 		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
-		_msg=$( bhyve_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} 2>&1 )
+		_msg=$( virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} 2>&1 )
 		_res=$?
 		if [ ${_res} -ne 0 ]; then
 			bremove ${jname}
@@ -199,15 +198,18 @@ if [ "${zfsfeat}" = "1" ]; then
 		echo "${_msg}"
 		exit ${_res}
 	fi
-	vm_zfs_guid=$( /sbin/zfs get -Ho value guid ${DATA}/${jname} )
+
+	vm_zfs_guid=$( /sbin/zfs get -Ho value guid ${DATA}/${jname} 2>/dev/null )
+	[ -z "${vm_zfs_guid}" ] && vm_zfs_guid="0"
+
 	[ -z "${data}" ] && data="${jaildatadir}/${jname}-${jaildatapref}"
 	olddata="${data}"
 	data="${workdir}/vm/${jname}"
 	${SYSRC_CMD} -qf ${temprcconf} data="${data}" > /dev/null 2>&1
-	#set -o xtrace
+#	set -o xtrace
 	/bin/ln -sf ${data} ${olddata}
 	/bin/ln -sf ${data} ${jailsysdir}/${jname}
-	#set +o xtrace
+#	set +o xtrace
 else
 	#removedata ${data}
 	[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
@@ -309,7 +311,7 @@ fi
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' progress=1
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' progress=1
 fi
 
 # ip validate
@@ -413,6 +415,8 @@ fi
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-settings.schema settings
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-soundhw.schema bhyve_soundhw
 
+${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyve_soundhw ( soundhw_play, soundhw_rec ) VALUES ( '/dev/dsp', '/dev/dsp' )"
+
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
 /bin/cp ${jconf_tmp} ${rcconf}
@@ -458,19 +462,32 @@ if [ -z "${sectorsize}" ]; then
 	[ -z "${sectorsize}" ] && sectorsize="4096"
 fi
 
-if [ ${zfsfeat} -eq 1 ]; then
+if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
 	. ${zfstool}
-	dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} )
+	dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
 	_ret=$?
-	[ $? -ne 0 ] && dsk_zfs_guid="0"
+	[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
 fi
 
 [ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
 
-if [ -n "${virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
+dsk_bsize=0
+
+if is_number "${imgsize}"; then
+	if conv2bytes ${imgsize}; then
+		dsk_bsize="${convval}"
+	else
+		dsk_bsize=0
+	fi
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0", \"${sectorsize}\", \"${dsk_zfs_guid}\" )"
+	# already on bytes ?
+	dsk_bsize="${imgsize}"
+fi
+
+if [ -n "${virtio_type}" ]; then
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
+else
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\",\"${dsk_zfs_guid}\" )"
 fi
 
 if [ -n "${nic_driver}" ]; then
@@ -478,6 +495,32 @@ if [ -n "${nic_driver}" ]; then
 else
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( \"${jname}\", \"${interface}\" )"
 fi
+
+[ -z "${nic_ratelimit}" ] && nic_ratelimit="0"
+
+#if [ "${bhyve_have_net_ratelimit}" = "1" ]; then
+#	if [ "${nic_ratelimit}" != "0" ]; then
+#		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: nic_ratelimit for nic id 1: ${nic_ratelimit}
+#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_ratelimit=\"${nic_ratelimit}\" WHERE id=\"1\""
+#		/usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} nic_ratelimit="${nic_ratelimit}" > /dev/null 2>&1
+#	fi
+#fi
+
+[ -z "${dsk_iops_limit}" ] && dsk_iops_limit="0"
+[ -z "${dsk_mbps_limit}" ] && dsk_mbps_limit="0"
+
+#if [ "${bhyve_have_dsk_ratelimit}" = "1" ]; then
+#	if [ "${dsk_iops_limit}" != "0" ]; then
+#		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: dsk_iops_limit for dsk ${defdsk}: ${dsk_iops_limit}
+#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_iops_limit=\"${dsk_iops_limit}\" WHERE dsk_path=\"${defdsk}\""
+#		/usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} dsk_iops_limit="${dsk_iops_limit}" > /dev/null 2>&1
+#	fi
+#	if [ "${dsk_mbps_limit}" != "0" ]; then
+#		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: dsk_mbps_limit for dsk ${defdsk}: ${dsk_mbps_limit}
+#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_mbps_limit=\"${dsk_mbps_limit}\" WHERE dsk_path=\"${defdsk}\""
+#		/usr/sbin/sysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} dsk_mbps_limit="${dsk_mbps_limit}" > /dev/null 2>&1
+#	fi
+#fi
 
 # update state_time
 cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
@@ -608,11 +651,12 @@ cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='tru
 [ "${vnc_password}" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
 
 # rctl
-. ${sharedir}/rctl.conf
+. ${distsharedir}/rctl.conf
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
 	eval _val="\$rctl_${i}"
 	if [ -n "${_val}" ]; then
+		#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
 		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || /usr/bin/true
 	fi
 done
@@ -630,7 +674,7 @@ EOF
 jcleanup jname=${jname}
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_bhyve_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate progress=100 data_status=0
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate progress=100 data_status=0
 fi
 
 end_time=$( /bin/date +%s )

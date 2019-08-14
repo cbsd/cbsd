@@ -9,7 +9,7 @@ ADDHELP="alljails=1 - get jaillist from remote node\n\
 shownode=1 - show nodename for jails\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable\n\
+display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit\n\
     also available: dsk_zfs_guid\n\
 mode=rescan - rescan vhd and sync info in sql base\n"
 
@@ -19,7 +19,7 @@ mode=rescan - rescan vhd and sync info in sql base\n"
 . ${cbsdinit}
 . ${distdir}/bhyve.subr
 . ${distdir}/virtual.subr
-[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable"
+[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit"
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
@@ -47,8 +47,21 @@ populate_output_data()
 		[ -z "${_val}" ] && _val="-"
 
 		if [ "${_i}" = "dsk_size" ]; then
-			populate_dsk_size
-			_val="${dsk_size}"
+			if [ "${_val}" = "0" ]; then
+				# no size in table? retrieve and update it
+				populate_dsk_size
+				_val="${dsk_size}"			# already in human
+				# update values in table
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+			else
+				# convert ${dsk_bsize} for human
+				if conv2human "${dsk_bsize}"; then
+					_val=${convval}
+				else
+					populate_dsk_size
+					_val="${dsk_size}"
+				fi
+			fi
 		fi
 
 		if [ -z "${_status}" ]; then
@@ -75,8 +88,8 @@ show_jaildata_from_sql()
 	[ -n "${2}" ] && local jname="${2}"
 
 	_status=
-	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid FROM bhyvedsk WHERE jname=\"${jname}\""
-	cbsdsqlro ${sqlfile} ${_sql}| while read jname dsk_controller dsk_path dsk_slot dsk_size dsk_sectorsize bootable dsk_zfs_guid; do
+	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid,dsk_iops_limit,dsk_mbps_limit FROM bhyvedsk WHERE jname=\"${jname}\""
+	cbsdsqlro ${sqlfile} ${_sql}| while read jname dsk_controller dsk_path dsk_slot dsk_size dsk_sectorsize bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit; do
 		populate_output_data
 		printf "${N2_COLOR}"
 		printf "${_status}"
@@ -130,7 +143,7 @@ vm_list()
 	if [ -n "${jname}" ]; then
 		vms="${jname}"
 	else
-		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" |/usr/bin/xargs )
+		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" | /usr/bin/xargs )
 	fi
 }
 

@@ -144,11 +144,13 @@ zfs_create_zvol_from_file()
 {
 	local _file= _pool= _zvol_name= DATA= _human_bytes= _res _bar=1 _zvol_rec_size=0
 	local _ebytes _ebytes_data _ebytes_data_orig _human_data_bytes
+	local i _def_val _zvol_opts_merged _zvol_opts zfs_custom_opt
 
-	while getopts "b:f:p:n:" opt; do
+	while getopts "b:f:o:p:n:" opt; do
 		case "${opt}" in
 			b) _bar="${OPTARG}" ;;
 			f) _file="${OPTARG}" ;;
+			o) zfs_custom_opt="${OPTARG}" ;;
 			p) _pool="${OPTARG}" ;;
 			n) _zvol_name="${OPTARG}" ;;
 		esac
@@ -222,32 +224,52 @@ zfs_create_zvol_from_file()
 		return 1
 	fi
 
+	# default_vm_zvol_volblocksize etc...
 	readconf zfs.conf
 
-	if [ "${convert_source_image_to_zvol_dedup}" = "1" ]; then
-		# debup
-		_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev -o dedup=on ${DATA}/${_zvol_name} 2>&1 )
-		_res=$?
+	_zvol_opts=
+	_zvol_opts_merged=
+
+	# lookup for "default_ci_zvol_*" defaults
+	for i in ${default_ci_zvol_managed_feature}; do
+		eval _def_val="\$default_ci_zvol_$i"
+
+		if [ -n "${_def_val}" ]; then
+			if [ -z "${_zvol_opts}" ]; then
+				_zvol_opts="-o ${i}=${_def_val}"
+			else
+				_zvol_opts="${_zvol_opts} -o ${i}=${_def_val}"
+			fi
+		fi
+	done
+
+	if [ -z "${zfs_custom_opt}" ]; then
+		# no merge with custom zvol_opts=
+		_zvol_opts_merged="${_zvol_opts}"
 	else
-		# no dedup
-		_msg=$( /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name} 2>&1 )
-		_res=$?
+		_zvol_opts_merged=$( zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}" 2>/dev/null )
 	fi
 
+	_msg=$( /sbin/zfs create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name} 2>&1 )
+	_res=$?
+
 	if [ ${_res} -ne 0 ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} -o volmode=dev ${DATA}/${_zvol_name}: ${_msg}
+		cbsdlogger NOTICE ${CBSD_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: /sbin/zfs create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name}: ${_msg}
 		return 1
 	fi
 
 	if [ ${_bar} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}Original size: ${_human_bytes}, real referenced size/data: ${_human_data_bytes}${N0_COLOR}"
-		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR} (dedup: ${convert_source_image_to_zvol_dedup}): ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR}: ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
 		/usr/bin/nice -n 20 /bin/dd if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
 		echo
 	else
 		/usr/bin/nice -n 20 /bin/dd if=${_file} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
 		echo
 	fi
+
+	# set readonly for gold volume
+	/sbin/zfs set readonly=on ${DATA}/${_zvol_name}
 
 	return 0
 }
@@ -341,11 +363,11 @@ get_dsk_zfs_guid()
 
 	if [ -z "${_is_zvol}" ]; then
 		if [ -z "${_dsk_fullpath}" ]; then
-			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: empty fullpath via -p${N0_COLOR}"
+			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: empty fullpath via -p${N0_COLOR}" 1>&2		# to stderr
 			return 1
 		fi
 		if [ ! -h "${_dsk_fullpath}" ]; then
-			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: not symlink to zvol: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: not symlink to zvol: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}" 1>&2		# to stderr
 			return 1
 		fi
 
@@ -354,7 +376,7 @@ get_dsk_zfs_guid()
 
 		# not started with /dev/zvol ?
 		if [ "${_zvol_pref}" != "/dev/zvol/" ]; then
-			${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: no /dev/zvol/ prefix: ${N2_COLOR}${_zvol_pref}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: no /dev/zvol/ prefix: ${N2_COLOR}${_zvol_pref}${N0_COLOR}" 1>&2		# to stderr
 			return 1
 		fi
 
@@ -362,11 +384,53 @@ get_dsk_zfs_guid()
 	fi
 	_res=$( /sbin/zfs get -Hp -o value guid ${_is_zvol} 2>/dev/null )
 	if [ -z "${_res}" ]; then
-		${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}" 1>&2		# to stderr
 		return 1
 	fi
 	printf "${_res}"
 	return 0
+}
+
+# merge two (source and destination) args string "-o arg1=x arg2=y"
+# into one with duplicate removal ( destination args/val win )
+zfs_merge_opts()
+{
+	local _source _source2 _dest i j _s1 _s2 _sfeat _pos _exist
+
+	while getopts "d:s:" opt; do
+		case "${opt}" in
+			d)
+				_dest="${OPTARG}"
+				;;
+			s)
+				_source="${OPTARG}"
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	for i in ${_source}; do
+		if [ "${i}" != "-o" ]; then
+			strpos --str="${i}" --search="="
+			_pos=$?
+			[ ${_pos} -eq 0 ] && continue				# not param=val args?!
+			_sfeat=$( substr --pos=0 --len=${_pos} --str=${i} )	# now we have source param
+			_exist=0
+			for j in ${_dest}; do
+				[ "${j}" = "-o" ] && continue
+				strpos --str="${j}" --search="="
+				_pos=$?
+				[ ${_pos} -eq 0 ] && continue				# not param=val args?!
+				_dfeat=$( substr --pos=0 --len=${_pos} --str=${j} )	# now we have dest param
+				if [ "${_sfeat}" = "${_dfeat}" ]; then
+					_exist=1
+					break
+				fi
+			done
+			[ ${_exist} -eq 0 ] && _source2="-o ${i} ${_source2}"
+		fi
+	done
+	echo -n "${_dest} ${_source2}"
 }
 
 ###

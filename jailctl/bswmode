@@ -1,0 +1,104 @@
+#!/usr/local/bin/cbsd
+#v11.1.20
+MYARG="jname mode"
+MYOPTARG="comment"
+MYDESC="Jail switch mode between master/slave"
+ADDHELP="mode=master,slave,maintenance\n\
+comment='some test' set text as comment for maintenance mode\n"
+CBSDMODULE="jail"
+
+. ${subr}
+. ${strings}
+
+. ${cbsdinit}
+
+[ -z "${mode}" ] && err 1 "${N1_COLOR}Give me mode: ${N2_COLOR}master or slave${N0_COLOR}"
+emulator="bhyve"	# for jname_is_multiple
+jname_is_multiple
+
+# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
+# -o uniq_name_of_the_task (one world)
+bswmode_multi_init()
+{
+	local _jname _res
+
+	while getopts "c:n:o:" opt; do
+		case "${opt}" in
+			c) cmd="${OPTARG}" ;;
+			n) _multiple_consumer_name="${OPTARG}" ;;
+			o) task_owner="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${task_owner}" ] && err 1 "${N1_COLOR}multiple_processing_spawn: empty -o multiple_task_owner${N0_COLOR}"
+
+	. ${distdir}/multiple.subr
+	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+	task_id=
+	task_id_cur=
+	task_owner="${task_owner}"
+	# spawn command for all jail
+	for _jname in ${jail_list}; do
+        _res=$( /usr/bin/basename ${_jname} )
+		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_res}.log.$$ client_id=${_res} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bswmode rcfile=${_jname} jname=${_res} ${cmd} 2>/dev/null )
+		sleep 0.1               # dont brute taskdb
+		if ! is_number "${task_id_cur}"; then
+			task_id="${task_id} ${task_id_cur}"
+		fi
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | /usr/bin/tr " " "," )
+	sleep 0.5
+	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
+}
+
+# MAIN for multiple bswmode
+if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+	# multiple bswmode always non interactive
+	export inter=0
+	# recursive
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	else
+		JLIST=$*
+	fi
+
+	for jname in ${JLIST}; do
+		[ "${jname}" = "inter=0" ] && continue
+		/usr/sbin/daemon -p ${ftmpdir}/bswmode.${jname}.$$ /usr/local/bin/cbsd bswmode inter=0 mode="${mode}" jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/bswmode.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/bswmode.${jname}.$$ ) --timeout=${parallel}
+	done
+
+	wait_for_fpid -a start -t ${parallel}
+
+	err 0 "${N1_COLOR}Multiple bswmode: ${N2_COLOR}done${N0_COLOR}"
+fi
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+case "${mode}" in
+	"master")
+		[ ${jid} -gt 0 ] && ${ECHO} "${N1_COLOR}Warning: jail is online${N0_COLOR}"
+		cbsdsqlrw local "UPDATE jails SET status=0 WHERE jname='${jname}'"
+		;;
+	"slave")
+		[ ${jid} -gt 0 ] && ${ECHO} "${N1_COLOR}Warning: jail is online${N0_COLOR}"
+		cbsdsqlrw local "UPDATE jails SET status=2 WHERE jname='${jname}'"
+		;;
+	"maintenance")
+		cbsdsqlrw local "UPDATE jails SET status=3 WHERE jname='${jname}'"
+		;;
+	*)
+		err 1 "${N1_COLOR}Unknown status${N0_COLOR}"
+		;;
+esac
+
+cbsdlogger NOTICE ${CBSD_APP}: switch ${jname} mode to ${mode}. ${comment}
+
+if [ -n "${comment}" ]; then
+	cbsdsqlrw local "UPDATE jails SET maintenance=\"${comment}\" WHERE jname='${jname}'"
+fi

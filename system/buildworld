@@ -15,7 +15,6 @@ ccache=1 - enable ccache\n"
 . ${system}
 
 # MAIN
-[ -z "${cbsd_queue_name}" ] && cbsd_queue_name="/clonos/bases/"
 over="${ver}"
 oarch="${arch}"
 [ -z "${NICE}" ] && NICE="0"
@@ -70,8 +69,13 @@ makelock ${LOCKFILE} "rm -f ${__MAKE_CONF} ${BLDLOG}; cleanup_bases"
 register_base arch=${arch} ver=${ver} source="buildworld"
 
 # CBSD QUEUE
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=world id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="-" elf="-" progress=1
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_bases_queue_name}" ] && ${cbsd_bases_queue_name} cbsd_bases_queue_name=${cbsd_bases_queue_name} cmd=world id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="-" elf="-" progress=1
 fi
 
 if [ -x "${BASE_DIR}/bin/sh" ]; then
@@ -123,24 +127,28 @@ cleanup_bases
 DT_END=$( /bin/date +%s )
 init_scm_and_version
 
-if [ $res -ne 0 ]; then
-	[ $notify -eq 1 ] && send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
-	exit 1
+if [ ${res} -ne 0 ]; then
+	[ ${notify} -eq 1 ] && send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} failed." -b "`tail -n${TAILSTRING} ${BLDLOG}`"
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_bases_queue_name}" ] && ${cbsd_bases_queue_name} cbsd_bases_queue_name=${cbsd_bases_queue_name} cmd=world id=base${ver}-${arch}-${stable} progress=100
+	fi
+
+	exit ${res}
 fi
 
-if [ $res -eq 0 -a $notify -eq 1 ]; then
+if [ ${res} -eq 0 -a ${notify} -eq 1 ]; then
 	send_notification -s "[CBSD ${nodename}] buildworld ${basename} ${ver} ${arch} ${target_arch} r${svnrev} complete in ${run_time}" -f ${BLDLOG}
-	return 0
 fi
 
 # CBSD QUEUE
-if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
-
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	baseelf=
 	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
-
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=update id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="${DT_END}" elf="${baseelf}" progress=1
-
+	[ -n "${cbsd_bases_queue_name}" ] && ${cbsd_bases_queue_name} cbsd_bases_queue_name=${cbsd_bases_queue_name} cmd=update id=base${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="${DT_END}" elf="${baseelf}" progress=50
 	sleep 2
-	[ "${cbsd_queue_name}" != "none" ] && cbsd_queue_sys cbsd_queue_name=${cbsd_queue_name} cmd=world id=base${ver}-${arch}-${stable} progress=100
+	[ -n "${cbsd_bases_queue_name}" ] && ${cbsd_bases_queue_name} cbsd_bases_queue_name=${cbsd_bases_queue_name} cmd=world id=base${ver}-${arch}-${stable} progress=100
 fi
+
+exit 0

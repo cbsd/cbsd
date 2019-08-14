@@ -537,7 +537,6 @@ init_systap()
 # $dsk_size can in form: "100M/200G"
 # $dsk_bsize - size in bytes
 # require: dsk_path as "dsk1.vhd" or $1 as full path
-# require . tools
 populate_dsk_size()
 {
 	local dsk_fullpath
@@ -580,6 +579,124 @@ populate_dsk_size()
 	[ -n "${dsk_realsize}" ] && dsk_size="${dsk_realsize}/${dsk_size}"
 }
 
+# require: dsk_path as "dsk1.vhd" or -f<arg> as full filename path
+# return 0 when ok
+# return 1 when error
+modify_dsk_size()
+{
+	local _dsk_fullpath _res
+	local _old_dsk_bsize _zvol_rec_size
+	local _new_dsk_bsize _zvol_rec_bsize
+	local _new_dsk_bdiff _new_dsk_diff
+	local tmp_zvol _zvol_pref _is_zvol
+
+	while getopts "f:s:" opt; do
+		case "${opt}" in
+			f) _dsk_fullpath="${OPTARG}" ;;
+			s) _new_size="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# md/vnode ?
+	if [ -f "${_dsk_fullpath}" ]; then
+		_old_dsk_bsize=$( /usr/bin/stat -f "%z" ${_dsk_fullpath} 2>/dev/null )
+		_is_zvol=
+	elif [ -h "${_dsk_fullpath}" ]; then
+		tmp_zvol=$( /usr/bin/readlink ${_dsk_fullpath} 2>/dev/null )
+		_zvol_pref=$( substr --pos=0 --len=10 --str=${tmp_zvol} )
+		# not started with /dev/zvol ?
+		if [ "${_zvol_pref}" != "/dev/zvol/" ]; then
+			# not zvol
+			_dsk_fullpath="${tmp_zvol}"
+			_old_dsk_bsize=$( /usr/bin/stat -f "%z" ${_dsk_fullpath} 2>/dev/null )
+			_is_zvol=
+		else
+			_is_zvol=$( echo ${tmp_zvol} | /usr/bin/sed s:/dev/zvol/::g )
+			_old_dsk_bsize=$( /sbin/zfs get -Hp -o value volsize ${_is_zvol} )
+		fi
+	else
+		# no such file or symlink
+		${ECHO} "${N1_COLOR}not a file or symlink: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ -z "${_old_dsk_bsize}" -o "${_old_dsk_bsize}" = "1" ]; then
+		${ECHO} "${N1_COLOR}unable to calculate current disk size in bytes for ${_dsk_fullpath}: ${N2_COLOR}${_old_dsk_bsize}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if is_number "${_new_size}"; then
+		if conv2bytes ${_new_size}; then
+			_new_dsk_bsize="${convval}"
+		else
+			${ECHO} "${N1_COLOR}unable to convert into bytes: ${N2_COLOR}${_new_size}${N0_COLOR}" 1>&2
+			return 1
+		fi
+	else
+		# already on bytes?
+		_new_dsk_bsize="${_new_size}"
+	fi
+
+	if [ -z "${_new_dsk_bsize}" -o "${_new_dsk_bsize}" = "1" ]; then
+		${ECHO} "${N1_COLOR}unable to calculate new disk size in bytes for ${_dsk_fullpath}: ${N2_COLOR}${_new_dsk_bsize}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ ${_old_dsk_bsize} -gt ${_new_dsk_bsize} ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: disk reduction is not yet supported (${_old_dsk_bsize} > ${_new_dsk_bsize})${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ -n "${_is_zvol}" ]; then
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value volblocksize ${_is_zvol} )
+
+		if is_number "${_zvol_rec_size}"; then
+			if conv2bytes ${_zvol_rec_size}; then
+				_zvol_rec_bsize="${convval}"
+			else
+				${ECHO} "${N1_COLOR}unable to convert into bytes: ${N2_COLOR}${_zvol_rec_size}${N0_COLOR}" 1>&2
+				return 1
+			fi
+		else
+			# already on bytes?
+			_zvol_rec_bsize="${_zvol_rec_size}"
+		fi
+
+		# volume size must be a multiple of volume block size
+		_new_dsk_bsize=$( roundup --num=${_new_dsk_bsize} --multiple=${_zvol_rec_bsize} 2>/dev/null )
+		_new_dsk_bdiff=$(( _new_dsk_bsize - _old_dsk_bsize ))
+
+		cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size: roundup by recsize ${_zvol_rec_size}: [${_new_dsk_bsize}]
+		${ECHO} "${N1_COLOR}resize ${N2_COLOR}${_is_zvol}${N1_COLOR} up to ${N2_COLOR}${_new_dsk_bsize}${N0_COLOR}"
+		_res=$( /sbin/zfs set volsize=${_new_dsk_bsize} ${_is_zvol} )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: modify_dsk_size error: ${_res}${N0_COLOR}" 1>&2
+			cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size error: ${_res}
+			return 1
+		fi
+	else
+		_new_dsk_bdiff=$(( _new_dsk_bsize - _old_dsk_bsize ))
+		_res=$( /usr/bin/truncate -s +${_new_dsk_bdiff} ${_dsk_fullpath} )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: modify_dsk_size error: ${_res}${N0_COLOR}" 1>&2
+			cbsdlogger NOTICE ${CBSD_APP}: modify_dsk_size error: ${_res}
+			return 1
+		fi
+	fi
+
+	if conv2human "${_new_dsk_bdiff}"; then
+		_new_dsk_diff="${convval}"
+	else
+		_new_dsk_diff="${_new_dsk_bdiff}"
+	fi
+
+	${ECHO} "${N1_COLOR}modify_dsk_size: volume size increased by: ${N2_COLOR}${_new_dsk_diff}${N0_COLOR}" 1>&2
+	return 0
+}
+
 
 # print to stdout core count by topology
 # $1 - ${_sockets}
@@ -597,6 +714,180 @@ get_vm_cores_by_topology()
 	_vm_cpus=$(( _sockets * _cores * _threads ))
 	printf "${_vm_cpus}"
 	return 0
+}
+
+# create new disk image for bhyve/XEN VMs
+# -b volblocksize ( must be power of 2 from 512B to 128KB, e.g: 128K)
+# -f fsfeat ( 1 or 0 ) - use of skip FS features
+# -p full path
+# -o (opt) zvol_options (e.g: -o "-o readonly=yes -o dedup=yes")
+# -s size (eg: 1g)
+# -t type (zvol, md)
+#
+# if ! virtual_create_dsk -p /tmp/olala.vhd -s 10g -f 0; then
+#    echo ";=("
+# fi
+virtual_create_dsk()
+{
+	local newdsk imgsize fsfeat imgtype _msg volblocksize= sectorsize=
+	local _zvol_rec_size _res zfs_custom_opt
+	local _zvol_opts _zvol_opts_merged=
+
+	while getopts "b:f:o:p:s:t:z:" opt; do
+		case "${opt}" in
+			b) volblocksize="${OPTARG}" ;;
+			f) feat="${OPTARG}" ;;
+			o) zfs_custom_opt="${OPTARG}" ;;
+			p) newdsk="${OPTARG}" ;;
+			s) imgsize="${OPTARG}" ;;
+			t) imgtype="${OPTARG}" ;;
+			z) sectorsize="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ "${fsfeat}" = "0" ]; then
+		zfsfeat=0
+		hammerfeat=0
+		zfs_custom_opt=
+	fi
+
+	local lunname=$( /usr/bin/basename ${newdsk} ) # for ZFS vol
+	local datadir=$( /usr/bin/dirname ${newdsk} )  # for ZFS vol
+
+	local convval imgbytes blockcount
+
+	if [ -f "${newdsk}" ]; then
+		echo "disk ${newdsk} already exist"
+		return 1
+	fi
+
+	# test for human
+	if is_number ${imgsize}; then
+		conv2bytes ${imgsize} || err 1 "${N1_COLOR}conv2bytes from virtual_create_dsk error for: ${N2_COLOR}${imgsize}${N0_COLOR}"
+		imgbytes="${convval}"
+	else
+		imgbytes=${imgsize}
+	fi
+
+	[ ! -d "${datadir}" ] && /bin/mkdir -p ${datadir}
+	if [ -z "${imgtype}" ]; then
+		case ${zfsfeat} in
+			1)
+				imgtype="zvol"
+				;;
+			*)
+				imgtype="md"
+				;;
+		esac
+	fi
+
+	if [ "${zfsfeat}" = "1" -a "${imgtype}" = "zvol" ]; then
+		# default_vm_zvol_volblocksize etc...
+		readconf zfs.conf
+		. ${zfstool}
+
+		_zvol_opts=
+		_zvol_opts_merged=
+
+		# TODO! check and remove dup with zfs_custom_opt (which is high prio)
+		# lookup for "default_vm_zvol_*" defaults
+		for i in ${default_vm_zvol_managed_feature}; do
+			eval _def_val="\$default_vm_zvol_$i"
+			if [ -n "${_def_val}" ]; then
+				if [ -z "${_zvol_opts}" ]; then
+					_zvol_opts="-o ${i}=${_def_val}"
+				else
+					_zvol_opts="${_zvol_opts} -o ${i}=${_def_val}"
+				fi
+			fi
+		done
+
+		if [ -z "${zfs_custom_opt}" ]; then
+			# no merge with custom zvol_opts=
+			_zvol_opts_merged="${_zvol_opts}"
+		else
+			_zvol_opts_merged=$( zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}" 2>/dev/null )
+		fi
+
+		DATA=$( /sbin/zfs get -Ho value name ${datadir} )
+
+		_zvol_rec_size=$( /sbin/zfs get -Hp -o value recordsize ${DATA} )
+		# volume size must be a multiple of volume block size
+		imgbytes=$( roundup --num=${imgbytes} --multiple=${_zvol_rec_size} 2>/dev/null )
+		cbsdlogger NOTICE ${CBSD_APP}: virtual_create_dsk: roundup by recsize ${_zvol_rec_size}: [${imgbytes}]
+
+		# zfs_create_sparse defined via zfs.conf
+		if [ "${zfs_create_sparse}" = "0" ]; then
+			local _sparse_args=
+		else
+			local _sparse_args="-s"
+		fi
+
+		_msg=$( /sbin/zfs create -V ${imgbytes} ${_sparse_args} ${_zvol_opts_merged} ${DATA}/bcbsd-${jname}-${lunname} 2>&1 )
+		_res=$?
+
+		if [ ${_res} -ne 0 ]; then
+			echo "${_msg}"
+			return ${_res}
+		fi
+
+		/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-${lunname} ${newdsk}
+
+	elif [ "${hammerfeat}" = "1" ]; then
+		err 1 "Hammer not supported yet"
+	else
+		blockcount=$(( imgbytes  / 1048576 ))
+		[ ! -f "${newdsk}" -a ! -h "${newdsk}" ] && /usr/bin/touch "${newdsk}"
+		_msg=$( /bin/dd if=/dev/zero of="${newdsk}" bs=1m count=0 seek=${blockcount} 2>&1 )
+		_res=$?
+		[ ${_res} -ne 0 ] && echo "${_msg}"
+		return ${_res}
+	fi
+
+	if [ -z "${sectorsize}" ]; then
+		[ -n "${default_sectorsize}" ] && sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="512"
+	fi
+
+	media mode=register name="hdd-${lunname}" path="${newdsk}" type="hdd" jname="${jname}" sectorsize="${sectorsize}"
+	return 0
+}
+
+# return 0 when free disk name available + print dsk name
+# return 1 when no free disk name available
+# -j specify jname ( otherwise $jname variable will used )
+# -e specify emulator engine ( otherwise $emulator variable will used)
+get_next_free_dsk()
+{
+	local _num=0
+	local _jname= _emulator=
+	local _freename= _ret=
+
+	[ -n "${jname}" ] && _jname="${jname}"
+	[ -n "${emulator}" ] && _emulator="${emulator}"
+
+	while getopts "e:j:" opt; do
+		case "${opt}" in
+			e) _emulator="${OPTARG}" ;;
+			j) _jail="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_jname}" -o -z "${_emulator}" ] && return 1
+
+	for _num in $( /usr/bin/seq 1 16 ); do
+		_freename="dsk${_num}.vhd"
+		_ret=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM ${emulator}dsk WHERE dsk_path=\"${_freename}\" 2>/dev/null )
+		if [ -z "${_ret}" ]; then
+			printf "${_freename}"
+			return 0
+		fi
+	done
+
+	# loop/dsk num exhausted
+	return 1
 }
 
 ###

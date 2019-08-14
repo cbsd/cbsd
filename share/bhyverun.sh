@@ -105,6 +105,7 @@ exit_action_mode()
 	return ${_ret}
 }
 
+
 while getopts "c:d:e:g:l:r:w:" opt; do
 	case "${opt}" in
 		c) conf="${OPTARG}" ;;
@@ -165,6 +166,13 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
+[ -z "${bhyve_cmd}" ] && bhyve_cmd="/usr/sbin/bhyve"
+
+if [ ! -x "${bhyve_cmd}" ]; then
+	echo "bhyverun.sh: bhyve cmd not executable: ${bhyve_cmd}. Please set proper bhyve_cmd"
+	exit 1
+fi
+
 while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	vnc_args="${orig_vnc_args}"
@@ -174,11 +182,11 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 
 	if [ ${cd_boot_once} -eq 0 ]; then
 		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
-		eval "${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}" 2>&1 | /usr/bin/tee -a ${vm_logfile}
 	else
 		echo "Boot from CD" | /usr/bin/tee -a ${vm_logfile}
 		echo "DEBUG: ${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
-		eval "${bhyveload_cmd}" | /usr/bin/tee -a ${vm_logfile}
+		eval "${bhyveload_cmd}" 2>&1 | /usr/bin/tee -a ${vm_logfile}
 	fi
 
 	case "${vm_boot}" in
@@ -251,7 +259,6 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-
 	checkpoint_args=
 
 	[ -n "${restore_checkpoint}" ] && checkpoint_args="-r ${restore_checkpoint}"
@@ -274,12 +281,12 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-	bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/bin/nice -n ${nice} /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
-	debug_bhyve_cmd="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/sbin/bhyve ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	bhyve_cmd_run="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log /usr/bin/nice -n ${nice} ${bhyve_cmd} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	debug_bhyve_cmd_run="env LIB9P_LOGGING=/tmp/cbsd_lib9p.log ${bhyve_cmd} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
-	echo "[debug] ${bhyve_cmd}"
-	logger -t bhyverun.sh "[debug] ${bhyve_cmd}"
-	echo "cmd: ${bhyve_cmd}" >> ${vm_logfile}
+	echo "[debug] ${bhyve_cmd_run}"
+	logger -t bhyverun.sh "[debug] ${bhyve_cmd_run}"
+	echo "cmd: ${bhyve_cmd_run}" >> ${vm_logfile}
 	echo "-----" >>  ${vm_logfile}
 
 	bhyve_exit=0
@@ -302,10 +309,9 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -batch -x /tmp/cmds.$$ --args ${debug_bhyve_cmd}"
-			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -ex run --args ${debug_bhyve_cmd}
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -batch --args ${debug_bhyve_cmd_run}"
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${gdb_cmd} -ex run --args ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
-			/bin/rm -f /tmp/cmds.$$
 			;;
 		lldb)
 			# break while loop
@@ -314,17 +320,15 @@ while [ ! -f /tmp/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch LLDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}"
-			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd}
+			echo "/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd_run}"
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
-			/bin/rm -f /tmp/cmds.$$
 			;;
 		*)
-			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd} >> ${vm_logfile} 2>&1
+			/usr/bin/lockf -s -t0 /tmp/bhyveload.${jname}.lock ${bhyve_cmd_run} >> ${vm_logfile} 2>&1
 			bhyve_exit=$?
 			;;
 	esac
-
 
 	ret=0
 	exit_action_mode

@@ -1,31 +1,40 @@
 #!/usr/local/bin/cbsd
 #v12.0.6
 MYARG="mode"
-MYOPTARG="jname controller dsk dsk_size bootable dsk_sectorsize display header"
+MYOPTARG="jname dsk_controller dsk_path dsk_size bootable dsk_sectorsize display header zvol_opts"
 MYDESC="Manage bhyve ahci/virtio disk"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
 ADDHELP="mode=attach,detach,remove,list,modify\n\
   - attach - create and attach new disk\n\
   - detach - detach disk from controller (without removing dsk)\n\
-  - delete - detach and remove disk\n\
-  - modify - modify disk properties (e.g: bootable=, dsk_sectorsize=)\n\
+  - delete|remove - detach and remove disk\n\
+  - modify - modify disk properties (e.g: bootable=, dsk_sectorsize=, dsk_size=, ..)\n\
+  - get_next_free_dsk - out next available dsk name for jname\n\
  modify properties:\n\
   - bootable - set bootable flag (1 - true, - false)\n\
   - dsk_sectorsize - set sectorsize (e.g: 512, 4096, 512/4096)\n\
+  - dsk_size - increase disk size (e.g: 20g, +30g )\n\
   - dsk_zfs_guid - can be: 'auto'\n\
+ mode=attach properties:\n\
+  zvol_opts - pass ZFS volume options, e.g: zvol_opts=\"dedup=on sync=disabled\"\n\
  mode=list properties:\n\
   header=0 don't print header\n\
-  display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable\n\
-    also available: dsk_zfs_guid\n"
+  display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit\n\
+    also available: dsk_zfs_guid\n\
+  mode=get properties\n"
 
 . ${subr}
 . ${system}
 
 bootable=
+dsk_iops_limit=
+dsk_mbps_limit=
+zvol_opts=
 . ${cbsdinit}
 
-available_properties="bootable dsk_sectorsize dsk_zfs_guid"
+available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_iops_limit dsk_mbps_limit dsk_size"
+available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
 
 . ${distdir}/bhyve.subr
 . ${distdir}/virtual.subr
@@ -33,20 +42,70 @@ available_properties="bootable dsk_sectorsize dsk_zfs_guid"
 
 dsk_attach()
 {
-	local _val
+	local _val _ret _zvol_opts _zvol_args
 
 	if [ -z "${dsk_sectorsize}" ]; then
 		readconf bhyve-default-default.conf
 		dsk_sectorsize="${default_sectorsize}"
 	fi
 
-	for i in jname controller dsk dsk_size dsk_sectorsize; do
+	# get next free disk
+	if [ -z "${dsk_path}" ]; then
+		dsk_path=$( get_next_free_dsk -j ${jname} -e bhyve )
+		[ $? -ne 0 ] && dsk_path=
+	fi
+
+	for i in jname dsk_controller dsk_path dsk_size dsk_sectorsize; do
 		_val=
 		eval _val="\$$i"
+
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	add_dsk -c "${controller}" -d "${dsk}" -s "${dsk_size}" -z "${dsk_sectorsize}"
+	if [ -n "${zvol_opts}" ]; then
+		for i in ${zvol_opts}; do
+			if [ -z "${_zvol_opts}" ]; then
+				_zvol_opts="-o ${i}"
+			else
+				_zvol_opts="${_zvol_opts} -o ${i}"
+			fi
+		done
+	else
+		_zvol_opts=
+	fi
+
+	if [ -n "${_zvol_opts}" ]; then
+		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -s "${dsk_size}" -z "${dsk_sectorsize}" -o "${_zvol_opts}"
+		_ret=$?
+	else
+		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -s "${dsk_size}" -z "${dsk_sectorsize}"
+		_ret=$?
+	fi
+	if [ ${_ret} -eq 0 ]; then
+		${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} attached${N0_COLOR}"
+	else
+		${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} attach failed${N0_COLOR}"
+	fi
+	return ${_ret}
 }
 
 dsk_detach()
@@ -54,17 +113,41 @@ dsk_detach()
 	local _val
 	local _devpath
 
-	for i in jname controller dsk; do
+	for i in jname dsk_controller dsk_path; do
 		_val=
 		eval _val="\$$i"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
-	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${N0_COLOR}"
+	# check in media table
+	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
+	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
 
-	media mode=detach name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+	_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
+	[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
+
+	media mode=detach name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
+	[ $? -eq 1 ] && ${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
 }
 
 dsk_delete()
@@ -72,17 +155,40 @@ dsk_delete()
 	local _val
 	local _devpath
 
-	for i in jname controller dsk; do
+	for i in jname dsk_controller dsk_path; do
 		_val=
 		eval _val="\$$i"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\" LIMIT 1 )
-	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk}.vhd\"${N0_COLOR}"
+	# check in media table
+	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
+	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
 
-	media mode=delete name=hdd-${dsk}.vhd path=${_devpath} type=hdd jname=${jname}
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}.vhd\" AND dsk_type=\"vhd\"
+	_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
+	[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
+
+	media mode=delete name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
 }
 
 dsk_modify_bootable()
@@ -90,10 +196,29 @@ dsk_modify_bootable()
 	local _bootable _res
 	local _old_controller= _old_dsk=
 
-	for i in jname controller dsk; do
+	for i in jname dsk_controller dsk_path; do
 		_val=
 		eval _val="\$$i"
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_bootable error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
 	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
@@ -115,9 +240,9 @@ dsk_modify_bootable()
 
 	case "${_bootable}" in
 		true)
-			if [ "${_old_controller}" = "${controller}" ]; then
-				if [ "${_old_dsk}" = "${dsk}" ]; then
-					${ECHO} "${N1_COLOR}${jname}: ${controller} ${dsk} already bootable${N0_COLOR}"
+			if [ "${_old_controller}" = "${dsk_controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk_path}" ]; then
+					${ECHO} "${N1_COLOR}${jname}: ${dsk_controller} ${dsk_path} already bootable${N0_COLOR}"
 					return 0
 				fi
 			fi
@@ -125,20 +250,20 @@ dsk_modify_bootable()
 			# currently only one device can be bootable, so set false for all devices first
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET bootable=false
 			[ -n "${_res}" ] && ${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${_old_controller}:${_old_dsk} -> false${N0_COLOR}"
-			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${controller}:${dsk} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${dsk_controller}:${dsk_path} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
 			;;
 		false)
-			if [ "${_old_controller}" = "${controller}" ]; then
-				if [ "${_old_dsk}" = "${dsk}" ]; then
-					${ECHO} "${N1_COLOR}${jname}: ${controller} ${dsk} already not bootable${N0_COLOR}"
+			if [ "${_old_controller}" = "${dsk_controller}" ]; then
+				if [ "${_old_dsk}" = "${dsk_path}" ]; then
+					${ECHO} "${N1_COLOR}${jname}: ${dsk_controller} ${dsk_path} already not bootable${N0_COLOR}"
 					return 0
 				fi
 			fi
-			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${controller}:${dsk} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Update bootable flag for ${jname}:${dsk_controller}:${dsk_path} -> ${N2_COLOR}${_bootable}${N0_COLOR}"
 			;;
 	esac
 
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET bootable=${_bootable} WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET bootable=${_bootable} WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\"
 	return 0
 }
 
@@ -146,20 +271,39 @@ dsk_modify_dsk_sectorsize()
 {
 	local _res _old_val
 
-	for i in jname controller dsk; do
+	for i in jname dsk_controller dsk_path; do
 		_val=
 		eval _val="\$$i"
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_dsk_sectorsize error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
 	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
 
-	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_sectorsize FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
-	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_sectorsize values for: dsk_controller=${N2_COLOR}${controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk}${N0_COLOR}"
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_sectorsize FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_sectorsize values for: dsk_controller=${N2_COLOR}${dsk_controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk_path}${N0_COLOR}"
 	[ "${_old_val}" = "${dsk_sectorsize}" ] && return 0
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_sectorsize=\"${dsk_sectorsize}\" WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_sectorsize=\"${dsk_sectorsize}\" WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\"
 
-	cbsdlogger NOTICE "${CBSD_APP}: modify sectorsize ${_old_val} -> ${dsk_sectorsize} (controller: ${controller}, dsk: ${dsk})"
+	cbsdlogger NOTICE "${CBSD_APP}: modify sectorsize ${_old_val} -> ${dsk_sectorsize} (controller: ${dsk_controller}, dsk: ${dsk_path})"
 	${ECHO} "${N1_COLOR}dsk_sectorsize: ${N2_COLOR}changed${N0_COLOR}"
 	return 0
 }
@@ -172,29 +316,115 @@ dsk_modify_dsk_zfs_guid()
 	[ ${zfsfeat} -ne 1 ] && err 1 "${N1_COLOR}zfsfeat disabled${N0_COLOR}"
 	[ "${dsk_zfs_guid}" != "auto" ] && err 1 "${N1_COLOR}dsk_zfs_guid valid values: 'auto'${N0_COLOR}"
 
-	for i in jname controller dsk; do
+	for i in jname dsk_controller dsk_path; do
 		_val=
 		eval _val="\$$i"
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}dsk_modify_dsk_zfs_guid error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
 	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
 
-	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_zfs_guid FROM bhyvedsk WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
-	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_zfs_guid values for: dsk_controller=${N2_COLOR}${controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk}${N0_COLOR}"
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_zfs_guid FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_zfs_guid values for: dsk_controller=${N2_COLOR}${dsk_controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk_path}${N0_COLOR}"
 
-	_dsk_fullpath="${jaildatadir}/${jname}-${jaildatapref}/${dsk}"
+	_dsk_fullpath="${jaildatadir}/${jname}-${jaildatapref}/${dsk_path}.vhd"
 
 	. ${zfstool}
 
-	_res=$( get_dsk_zfs_guid -p ${_dsk_fullpath} )
+	_res=$( get_dsk_zfs_guid -p ${_dsk_fullpath} 2>/dev/null )
 	_ret=$?
 	[ ${_ret} -ne 0 ] && err 0 "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}"
 	[ -z "${_res}" ] && err 0 "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}"
 	[ "${_old_val}" = "${_res}" ] && return 0
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_zfs_guid=\"${_res}\" WHERE dsk_controller=\"${controller}\" AND dsk_path=\"${dsk}\"
-	cbsdlogger NOTICE "${CBSD_APP}: modify dsk_zfs_guid ${_old_val} -> ${dsk_sectorsize} (controller: ${controller}, dsk: ${dsk})"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_zfs_guid=\"${_res}\" WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\"
+	cbsdlogger NOTICE "${CBSD_APP}: modify dsk_zfs_guid ${_old_val} -> ${dsk_sectorsize} (controller: ${dsk_controller}, dsk: ${dsk_path})"
 	${ECHO} "${N1_COLOR}dsk_zfs_guid: ${N2_COLOR}changed${N0_COLOR}"
+	return 0
+}
+
+dsk_modify_dsk_size()
+{
+	local _res _old_val _new_val tmp_zvol= _is_zvol
+	local _dsk_fullpath _zvol_pref= _ret
+
+	[ ${zfsfeat} -ne 1 ] && err 1 "${N1_COLOR}zfsfeat disabled${N0_COLOR}"
+
+	for i in jname dsk_controller dsk_path; do
+		_val=
+		eval _val="\$$i"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_size FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_size values for: dsk_controller=${N2_COLOR}${dsk_controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk_path}${N0_COLOR}"
+
+	if is_number "${dsk_size}"; then
+		if conv2bytes ${dsk_size}; then
+			_new_val="${convval}"
+		else
+			err 1 "${N1_COLOR}${CBSD_APP}: unable convert values to bytes: ${N2_COLOR}${dsk_size}${N0_COLOR}"
+		fi
+	else
+		# already in bytes?
+		_new_val="${dsk_size}"
+	fi
+
+	if [ ${_old_val} -gt ${_new_val} ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: disk reduction is not yet supported${N0_COLOR}"
+		err 1 "${N1_COLOR}new dsk_size must be larger than the old values ( >${N2_COLOR}${_old_val}${N1_COLOR} bytes )${N0_COLOR}"
+	fi
+
+	# check for available disksize/overcommiting ?
+	_dsk_fullpath="${jaildatadir}/${jname}-${jaildatapref}/${dsk_path}.vhd"
+
+	modify_dsk_size -f ${_dsk_fullpath} -s "${_new_val}"
+	_ret=$?
+	[ ${_ret} -ne 0 ] && return ${_ret}
+
+	# update
+	populate_dsk_size
+	# update values in table
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+	${ECHO} "${N1_COLOR}dsk_size: ${N2_COLOR}changed${N0_COLOR}"
 	return 0
 }
 
@@ -215,23 +445,97 @@ dsk_modify()
 	[ ${_prop_num} -eq 0 ] && ${ECHO} "${N1_COLOR}available properties: ${N2_COLOR}${available_properties}${N0_COLOR}"
 }
 
+dsk_get()
+{
+	local _val
+	local _devpath _prop_num=0
+	local _filter= _mysql=
+
+	# determine properties
+	for i in ${available_get_properties}; do
+		_val=
+		eval _val="\$$i"
+
+		if [ "${i}" = "dsk_path" ]; then
+			# trim/cast .vhd if necessary
+			_val=$( echo ${_val} | /usr/bin/sed 's:\.vhd::g' )
+			_val="${_val}.vhd"
+		fi
+
+		[ -z "${_val}" ] && continue
+		if [ -z "${_filter}" ]; then
+			_filter="${i}=\"${_val}\""
+		else
+			_filter="${_filter} AND ${i}=\"${_val}\""
+		fi
+		_prop_num=$(( _prop_num + 1 ))
+	done
+
+	if [ ${_prop_num} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}set filter from available properties (select .. WHERE): ${N2_COLOR}${available_properties}${N0_COLOR}"
+		return 1
+	fi
+
+	_mysql="SELECT ${get_value} FROM bhyvedsk WHERE ${_filter}"
+	# echo "${_mysql}"
+	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_mysql}
+}
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}bhyve-dsk: no such domain here: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}bhyve-dsk: not in bhyve mode: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
+
 case "${mode}" in
 	attach)
 		dsk_attach
+		exit $?
 		;;
-	delete)
+	delete|remove)
 		dsk_delete
 		;;
 	detach)
 		dsk_detach
 		;;
 	list)
-		[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable"
+		[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit"
 		[ -z "${header}" ] && header="1"
 		bhyve-dsk-list header="${header}" display="${display}"
 		;;
 	modify)
 		dsk_modify
+		;;
+	get)
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= is mandatory${N0_COLOR}"
+		. ${distsharedir}/bhyvedsk.conf
+		# filter params=val and $argx value
+		get_value=
+		for i in $*; do
+			# jname=XX dsk=YY test
+			strpos --str="${i}" --search="="
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				if [ -z "${get_value}" ]; then
+					get_value="${i}"
+				else
+					get_value="${get_value},${i}"
+				fi
+			fi
+		done
+		if [ -z "${get_value}" ]; then
+			${ECHO} "${N1_COLOR}Empty value for get. Use: cbsd bhyve-dsk mode=get <filter> XXX, where XXX from:${N0_COLOR}"
+			${ECHO} "   ${N2_COLOR}${MYCOL}${N0_COLOR}"
+			exit 1
+		fi
+		dsk_get
+		;;
+	get_next_free_dsk)
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= is mandatory${N0_COLOR}"
+		next_dsk=$( get_next_free_dsk -j ${jname} -e bhyve )
+		[ $? -ne 0 ] && return 1
+		printf "${next_dsk}"
+		return 0
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"

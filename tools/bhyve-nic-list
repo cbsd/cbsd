@@ -1,0 +1,139 @@
+#!/usr/local/bin/cbsd
+#v12.0.4
+MYARG=""
+MYOPTARG="alljails shownode display node header mode jname"
+MYDESC="Show disk images from database"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="alljails=1 - get jaillist from remote node\n\
+shownode=1 - show nodename for jails\n\
+node= only for current node\n\
+header=0 don't print header\n\
+display= list by comma for column. Default: jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit\n\
+    also available: dsk_zfs_guid\n\
+mode=rescan - rescan vhd and sync info in sql base\n"
+
+. ${subr}
+. ${system}
+
+. ${cbsdinit}
+. ${distdir}/bhyve.subr
+. ${distdir}/virtual.subr
+[ -z "${display}" ] && display="jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | /usr/bin/tr ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | /usr/bin/tr '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ -z "${_status}" ]; then
+			_status="${N0_COLOR}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	[ -n "${2}" ] && local jname="${2}"
+
+	_status=
+	_sql="SELECT jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit FROM bhyvenic"
+	cbsdsqlro ${sqlfile} ${_sql} | while read jname nic_driver nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit; do
+		populate_output_data
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
+	done
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && node=$(cbsd node mode=list header=0 allinfo=0)
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode _status _vm _lvm
+
+	show_header
+
+	for _vm in ${vms}; do
+		_lvm="${jailsysdir}/${_vm}/local.sqlite"
+#		echo ${_lvm}
+		[ -r "${_lvm}" ] && show_jaildata_from_sql ${_lvm} ${_vm}
+	done
+}
+
+show_nic()
+{
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	if [ -n "${alljails}" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+}
+
+vm_list()
+{
+	if [ -n "${jname}" ]; then
+		vms="${jname}"
+	else
+		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" | /usr/bin/xargs )
+	fi
+}
+
+
+vms=
+vm_list
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_nic | /usr/bin/column -t

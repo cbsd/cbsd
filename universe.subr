@@ -63,25 +63,45 @@ init_srcdir()
 # require: $arch, $target_arch, $ver
 # optional: $basename, $destdir
 # SKIP_CHECK_DIR=1 - do not exit if dir not exist, just init path variable
+# -b: set alternative basename ( same is $basename variable )
 init_basedir()
 {
 	local _basename
+	local _arch _ver _sver _idx
+
+	while getopts "b:" opt; do
+		case "${opt}" in
+			b) _basename="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	[ -z "${target_arch}" ] && target_arch="${arch}"
 
-	if [ -n "${basename}" ]; then
+	if [ -n "${basename}" -a -z "${_basename}" ]; then
 		[ "${basename}" != "0" ] && _basename="${basename}"
 	fi
 
 	if [ -n "${destdir}" ]; then
 		BASE_DIR="${destdir}"
+		BASE_DIR_LOCKFILE="${BASE_DIR}.lock"
 		return 0
 	fi
 
 	if [ -z "${_basename}" ]; then
 		BASE_DIR="${basejaildir}/${basejailpref}_${arch}_${target_arch}_${ver}"
 	else
-		BASE_DIR="${basejaildir}/${basejailpref}_${_basename}_${arch}_${target_arch}_${ver}"
+		[ -z "${_arch}" ] && _arch="${arch}"
+		[ -z "${_ver}" ] && _ver="${ver}"
+		_sver=${_ver%%.*}
+		_idx=$( cbsdsqlro ${dbdir}/local.sqlite SELECT idx FROM bsdbase WHERE basename=\"${_basename}\" AND \( ver=\"${_ver}\" OR ver=\"${_sver}\" \) AND arch=\"${_arch}\" 2>/dev/null )
+		# base with custom basename may registered with stable/unstable $ver - get this version to determine correct base path
+		if [ -n "${_idx}" ]; then
+			_ver=$( cbsdsqlro ${dbdir}/local.sqlite SELECT ver FROM bsdbase WHERE idx="${_idx}" 2>/dev/null )
+			BASE_DIR="${basejaildir}/${basejailpref}_${_basename}_${arch}_${target_arch}_${_ver}"
+		else
+			BASE_DIR="${basejaildir}/${basejailpref}_${_basename}_${arch}_${target_arch}_${ver}"
+		fi
 	fi
 
 	BASE_DIR_LOCKFILE="${BASE_DIR}.lock"
@@ -247,14 +267,15 @@ init_make_flags()
 
 
 # return idx from sql for base
-# args, e.g: -a amd64 -p FreeBSD -s 0 -t amd64 -v 12
+# args, e.g: -a amd64 -p FreeBSD -s 0 -t amd64 -v 12 [-b basename]
 get_baseidx()
 {
-	local arch platform stable target_arch ver idx
+	local arch platform stable target_arch ver idx basename
 
-	while getopts "a:p:s:t:v:" opt; do
+	while getopts "a:b:p:s:t:v:" opt; do
 		case "${opt}" in
 			a) arch="${OPTARG}" ;;
+			a) basename="${OPTARG}" ;;
 			p) platform="${OPTARG}" ;;
 			s) stable="${OPTARG}" ;;
 			t) target_arch="${OPTARG}" ;;
@@ -263,7 +284,9 @@ get_baseidx()
 		shift $(($OPTIND - 1))
 	done
 
-	idx=$( cbsdsqlro local SELECT idx FROM bsdbase WHERE platform=\"${platform}\" AND arch=\"${arch}\" AND targetarch=\"${target_arch}\" AND ver=\"${ver}\" AND stable=\"${stable}\" 2>/dev/null )
+	[ -z "${basename}" ] && basename="0"
+
+	idx=$( cbsdsqlro local SELECT idx FROM bsdbase WHERE platform=\"${platform}\" AND arch=\"${arch}\" AND targetarch=\"${target_arch}\" AND ver=\"${ver}\" AND stable=\"${stable}\" AND basename=\"${basename}\" 2>/dev/null )
 	echo "${idx}"
 }
 

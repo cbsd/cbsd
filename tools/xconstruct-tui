@@ -22,6 +22,10 @@ gen_newjail_conf()
 
 	_required="jname host_hostname ip4_addr ver arch imgsize"
 
+	if [ ${is_cloud} -eq 1 ]; then
+		_required="${_required} cloud_init_options"
+	fi
+
 	msg_ok="ok"
 
 	for _i in ${_required}; do
@@ -31,6 +35,11 @@ gen_newjail_conf()
 			return 0
 		fi
 	done
+
+	if [ -z "${sectorsize}" ]; then
+		sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="4096"
+	fi
 
 	#check for ip if oninterface
 	if [ "${interface}" != "0" -a -n "${ip4_addr}" ]; then
@@ -94,6 +103,7 @@ dialog_menu_main()
 	menu_list="${menu_list}	'${item_let} vm_os_type'	'$(curval vm_os_type)'		'Guest OS type'"
 	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} vm_os_profile'	'$(curval vm_os_profile)'	'Guest OS profile'"
+	inc_menu_index item_let
 
 	if [ "${from_jail}" = "1" -a "${xen_profile}" != "FreeBSD-bsdinstall-jail" ]; then
 		menu_list="${menu_list}	'${item_let} jprofile'	'$(curval jprofile)'		'Select jail profile for jcreate'"
@@ -108,20 +118,30 @@ dialog_menu_main()
 		fi
 	fi
 
-	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} jname'		'$(curval jname)'		'A short jail name'"
 	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} host_hostname'	'$(curval host_hostname)'	'Full (FQDN) jail hostname'"
+	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} imgsize'		'$(curval imgsize)'		'reserved (expand) X size for free space'"
 	inc_menu_index item_let
-	menu_list="${menu_list}	'${item_let} ip4_addr'		'$(curval ip4_addr)'		'Assing IP address'"
-	inc_menu_index item_let
+
+	if [ ${is_cloud} -eq 0 ]; then
+		# moved to cloud-init helper for cloud host
+		menu_list="${menu_list}	'${item_let} ip4_addr'	'$(curval ip4_addr)'	'Assing IP address'"
+		inc_menu_index item_let
+	fi
+
 	menu_list="${menu_list}	'${item_let} vm_ram'		'$(curval vm_ram)'		'RAM'"
 	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} vm_cpus'		'$(curval vm_cpus)'		'CPUs number'"
 	inc_menu_index item_let
-	menu_list="${menu_list}	'${item_let} vm_iso_path'	'$(curval vm_iso_path)'		'ISO Path for CD-ROM'"
-	inc_menu_index item_let
+
+	if [ ${is_cloud} -eq 0 ]; then
+		# not for cloud
+		menu_list="${menu_list}	'${item_let} vm_iso_path'	'$(curval vm_iso_path)'	'ISO Path for CD-ROM'"
+		inc_menu_index item_let
+	fi
+
 	menu_list="${menu_list}	'${item_let} astart'		'[${astart_mark}]'		'Autostart with system'"
 	inc_menu_index item_let
 	menu_list="${menu_list}	'${item_let} interface'		'$(curval interface)'		'Interface selection and aliasing mode'"
@@ -129,6 +149,14 @@ dialog_menu_main()
 	# todo
 	inc_menu_index item_let
 	menu_list="${menu_list} '${item_let} vm_vnc_port'	'$(curval vm_vnc_port)'		'VNC port'"
+
+	if [ ${is_cloud} -eq 1 ]; then
+		menu_list="${menu_list} '${item_let} cloud_init_options'        '$(curval cloud_init_options)'  'cloud-init settings'"
+		inc_menu_index item_let
+	fi
+
+	menu_list="${menu_list} '${item_let} debug_engine'		'$(curval debug_engine)'	'Run in debugger?'"
+	inc_menu_index item_let
 
 	if [ "${zfsfeat}" = "1" ]; then
 		menu_list="${menu_list} '-'			'-'				''"
@@ -140,8 +168,15 @@ dialog_menu_main()
 
 	inc_menu_index item_num
 	menu_list="${menu_list} '${item_num} xen_vnc_options'	'VNC options >>'		'VNC opt: bind:${xen_vnc_tcp_bind} vnc_password:XXX'"
+	inc_menu_index item_num
 	menu_list="${menu_list} '${item_num} xen_spice_options'	'SPICE options >>'		'SPICE opt: bind:${xen_spice_tcp_bind} spice_password:XXX'"
+	inc_menu_index item_num
 	menu_list="${menu_list} '${item_num} xen_audio_options'	'Audio options >>'		'Audio opt: ${soundhw}'"
+	inc_menu_index item_num
+
+	menu_list="${menu_list} '${item_num} xen_options'	'Xen options >>'	'Customize xen options: xen_hap:${xen_hap} xen_nestedhvm:${xen_nestedhvm}'"
+	inc_menu_index item_num
+
 	menu_list="${menu_list} '${item_num} exit_behavior'	'Exit behavior settings'	'Exit behavior settings: poweroff:${on_poweroff},reboot:${on_reboot},crash:${on_crash}'"
 	inc_menu_index item_num
 
@@ -199,8 +234,9 @@ default_profile="xen-default-default.conf"
 #defaults
 . ${buildconf}
 
-init_xen
+# read for skip_xen_init_warning
 readconf ${default_profile}
+init_xen
 readconf vnc.conf
 readconf spice.conf
 
@@ -220,12 +256,22 @@ get_construct_profile ${default_profile}
 baserw=1
 ip4_addr="DHCP"
 jprofile="default"
+cloud_init_options=
 
 f_dialog_title "$msg_system_console_configuration"
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
 
+# init first bconstruct settings
+if [ ! -r ${tmpdir}/xconstruct.conf ]; then
+	/bin/cat > ${tmpdir}/xconstruct.conf <<EOF
+last_vm_os_type="freebsd"
+last_vm_os_profile="FreeBSD-x64-12.0"
+EOF
+fi
+
 if [ "${default_profile}" = "default" -a -r ${tmpdir}/xconstruct.conf ]; then
+	[ -r ${tmpdir}/get_construct_vm_os_profile.menu ] && /bin/rm -f ${tmpdir}/get_construct_vm_os_profile.menu
 	. ${tmpdir}/xconstruct.conf
 	if [ -n "${last_vm_os_type}" ]; then
 		vm_os_type="${last_vm_os_type}"
@@ -263,8 +309,8 @@ while [ 1 ]; do
 			;;
 		"GO")
 			# store last choices
-			sysrc -qf ${tmpdir}/xconstruct.conf last_vm_os_type="${vm_os_type}" > /dev/null 2>&1
-			sysrc -qf ${tmpdir}/xconstruct.conf last_vm_os_profile="${vm_os_profile}" > /dev/null 2>&1
+			${SYSRC_CMD} -qf ${tmpdir}/xconstruct.conf last_vm_os_type="${vm_os_type}" > /dev/null 2>&1
+			${SYSRC_CMD} -qf ${tmpdir}/xconstruct.conf last_vm_os_profile="${vm_os_profile}" > /dev/null 2>&1
 			gen_newjail_conf
 			;;
 		"-")
