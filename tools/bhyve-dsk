@@ -20,7 +20,7 @@ ADDHELP="mode=attach,detach,remove,list,modify\n\
   zvol_opts - pass ZFS volume options, e.g: zvol_opts=\"dedup=on sync=disabled\"\n\
  mode=list properties:\n\
   header=0 don't print header\n\
-  display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit\n\
+  display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable\n\
     also available: dsk_zfs_guid\n\
   mode=get properties\n"
 
@@ -33,8 +33,8 @@ dsk_mbps_limit=
 zvol_opts=
 . ${cbsdinit}
 
-available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_iops_limit dsk_mbps_limit dsk_size"
-available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid dsk_iops_limit dsk_mbps_limit"
+available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_size"
+available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid"
 
 . ${distdir}/bhyve.subr
 . ${distdir}/virtual.subr
@@ -481,6 +481,44 @@ dsk_get()
 	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_mysql}
 }
 
+emulator="bhyve" # for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	TMP_JLIST="${jail_list}"
+else
+	TMP_JLIST=$*
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		jail_num=$(( jail_num + 1 ))
+	fi
+done
+
+# this is multiple list, split it by parallel bhyve-dsk execution
+if [ ${jail_num} -gt 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple bhyve-dsk: ${JLIST}
+	new_arg=
+
+	for i in $*; do
+		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+		[ "${_is_jname}" = "jname" ] && continue
+		new_arg="${new_arg} ${i}"
+	done
+
+	for jname in ${JLIST}; do
+		bhyve-dsk jname=${jname} ${new_arg}
+	done
+	exit 0
+fi
+
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}bhyve-dsk: no such domain here: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -499,9 +537,13 @@ case "${mode}" in
 		dsk_detach
 		;;
 	list)
-		[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable,dsk_iops_limit,dsk_mbps_limit"
+		[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable"
 		[ -z "${header}" ] && header="1"
-		bhyve-dsk-list header="${header}" display="${display}"
+		if [ -n "${jname}" ]; then
+			bhyve-dsk-list header="${header}" display="${display}" jname="${jname}"
+		else
+			bhyve-dsk-list header="${header}" display="${display}"
+		fi
 		;;
 	modify)
 		dsk_modify
