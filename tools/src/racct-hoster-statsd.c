@@ -179,7 +179,7 @@ int sum_data_hoster()
 			strcat(json_str,",");
 			strcat(json_str,json_buf);
 		} else {
-			strcpy(json_str,"{ \"tube\":\"racct-system\", \"node\":\"electrode.alicorn.lv\", \"data\":[");
+			strcpy(json_str,"{ \"tube\":\"racct-system\", \"node\":\"clonos.bsdstore.ru\", \"data\":[");
 			strcat(json_str,json_buf);
 		}
 		
