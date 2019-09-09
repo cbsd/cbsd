@@ -115,55 +115,107 @@ if [ -n "${host_hostname_new}" ]; then
 fi
 
 jname=${new}
-mvdata ${SRC} ${DST}
-dot "mvdata"
 
-#rename zfs fs source
 case ${zfsfeat} in
-	1) . ${zfstool}
-		zfsmnt ${DST}
-		_err=$?
-		if [ ${_err} -eq 2 -o ${_err} -eq 1 ]; then
-			OLDPOOL=${ZPOOL}
-			DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-			NEWPOOL="${DATA}/${new}"
-			if [ ${_err} -eq 1 ]; then
-				# we need unmount this first
-				/sbin/zfs unmount -f ${DST}
-				sleep 5  #Hack - sometimes we got "cannot rename: dataset is busy"
-				/sbin/zfs unmount -f ${DST} >/dev/null 2>&1
-			fi
-			cbsdlogger NOTICE ${CBSD_APP}: rename zfs from ${OLDPOOL} to ${NEWPOOL}
-			/sbin/zfs rename ${OLDPOOL} ${NEWPOOL}
-			if [ $? -eq 0 ]; then
-				/sbin/zfs mount ${NEWPOOL}
-				[ -d ${SRC} ] && /bin/rmdir ${SRC}
-			fi
+	1)
+		. ${zfstool}
+		[ ! -d ${workdir}/vm ] && ${MKDIR_CMD} -p ${workdir}/vm
+		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+		_old_mpt=$( /sbin/zfs get -Ho value mountpoint ${DATA}/${old} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -eq 0 -a -n "${_old_mpt}" ]; then
+			/sbin/zfs unmount -f ${_old_mpt} > /dev/null 2>&1
+			/sbin/zfs rename ${DATA}/${old} ${DATA}/${new}
+			/sbin/zfs set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
+			/sbin/zfs mount ${DATA}/${new}
+		fi
+		if [ -h ${SRC} ]; then
+			${RM_CMD} ${SRC}
+			${LN_CMD} -sf ${workdir}/vm/${new} ${DST}
+		else
+			# todo: mixed content? symlink + md?
+			mvdata ${SRC} ${DST}
+			dot "mvdata"
 		fi
 
 		# additional loop to check for symlink and zvol
 		for i in $( /usr/bin/find ${DST}/ -type l -depth 1 -maxdepth 1 ); do
 			if is_getzvol ${i}; then
 				old_zvol="${is_zvol}"
-				new_zvol=$( echo ${is_zvol} |${SED_CMD} s:${old}:${new}:g )
-				/sbin/zfs rename ${old_zvol} ${new_zvol}
-				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
+				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
+				/sbin/zfs get -Ho value name ${old_zvol} > /dev/null 2>&1
+				_ret=$?
+				[ ${_ret} -eq 0 ] && /sbin/zfs rename ${old_zvol} ${new_zvol}
+				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
 			fi
 		done
-	;;
+		;;
+	*)
+		mvdata ${SRC} ${DST}
+		dot "mvdata"
+		;;
 esac
 
+#rename zfs fs source
+#case ${zfsfeat} in
+#	1)
+#		zfsmnt ${DST}
+#		_err=$?
+#		if [ ${_err} -eq 2 -o ${_err} -eq 1 ]; then
+#			OLDPOOL=${ZPOOL}
+#			DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+#			NEWPOOL="${DATA}/${new}"
+#			if [ ${_err} -eq 1 ]; then
+#				# we need unmount this first
+#				/sbin/zfs unmount -f ${DST}
+#				sleep 5  #Hack - sometimes we got "cannot rename: dataset is busy"
+#				/sbin/zfs unmount -f ${DST} >/dev/null 2>&1
+#			fi
+#			cbsdlogger NOTICE ${CBSD_APP}: rename zfs from ${OLDPOOL} to ${NEWPOOL}
+#			/sbin/zfs rename ${OLDPOOL} ${NEWPOOL}
+#			if [ $? -eq 0 ]; then
+#				/sbin/zfs mount ${NEWPOOL}
+#				[ -d ${SRC} ] && /bin/rmdir ${SRC}
+#			fi
+#		fi
+#
+#		# additional loop to check for symlink and zvol
+#		for i in $( /usr/bin/find ${DST}/ -type l -depth 1 -maxdepth 1 ); do
+#			if is_getzvol ${i}; then
+#				old_zvol="${is_zvol}"
+#				new_zvol=$( echo ${is_zvol} |${SED_CMD} s:${old}:${new}:g )
+#				/sbin/zfs rename ${old_zvol} ${new_zvol}
+#				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
+#			fi
+#		done
+#	;;
+#esac
+
+
+case ${zfsfeat} in
+	1)
+		if [ -h "${SYSDIROLD}" ]; then
+			${RM_CMD} -f ${SYSDIROLD}
+			${LN_CMD} -sf ${workdir}/vm/${new} ${SYSDIRNEW}
+		elif [ -d "${SYSDIROLD}" ]; then
+			/bin/mv ${SYSDIROLD} ${SYSDIRNEW}
+		fi
+		;;
+	*)
+		if [ -d "${SYSDIROLD}" ]; then
+			/bin/mv ${SYSDIROLD} ${SYSDIRNEW}
+		fi
+esac
+
+[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${new}\""
+[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${new}\""
+
+# todo: update via SQL!
 for i in $( /usr/bin/find ${DST}/ -type l -or -type f -depth 1 -maxdepth 1 -name dsk\* ); do
 	mydsk=$( /usr/bin/basename ${i} );
 	[ -z "${mydsk}" ] && continue
 	media mode=register name="hdd-${mydsk}" path="${i}" type="hdd" jname="${jname}"
 done
-
-if [ -d "$SYSDIROLD" ]; then
-	/bin/mv $SYSDIROLD ${SYSDIRNEW}
-	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${jname}\""
-	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${jname}\""
-fi
 
 if [ ${restart} -eq 1 -a ${oldjid} -ne 0 ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: vm ${jname} will be started due to restart flags on
