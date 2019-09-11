@@ -34,6 +34,42 @@ nm(void)
 }
 
 int
+sql_exec(sqlite3 *s, const char *sql, ...)
+{
+	va_list          ap;
+	const char      *sql_to_exec;
+	char            *sqlbuf = NULL;
+	char            *errmsg;
+	int              ret = 0;
+
+	if(s == NULL) return 1;
+	if(sql == NULL) return 1;
+
+	if (strchr(sql, '%') != NULL) {
+		va_start(ap, sql);
+		sqlbuf = sqlite3_vmprintf(sql, ap);
+		va_end(ap);
+		sql_to_exec = sqlbuf;
+	} else {
+		sql_to_exec = sql;
+	}
+
+	if (sqlite3_exec(s, sql_to_exec, NULL, NULL, &errmsg) != SQLITE_OK) {
+		ERROR_SQLITE(s, sql_to_exec);
+		sqlite3_free(errmsg);
+		goto cleanup;
+	}
+
+	ret = 1;
+
+	cleanup:
+	if (sqlbuf != NULL)
+		sqlite3_free(sqlbuf);
+
+	return (ret);
+}
+
+int
 sqlCB(sqlite3_stmt * stmt)
 {
 	int		icol;
@@ -116,7 +152,7 @@ sqlitecmdrw(int argc, char **argv)
 		sprintf(dbfile,"%s",argv[1]);
 	}
 
-	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL))) {
+	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_SHAREDCACHE, NULL))) {
 //	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
 		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
 		free(dbfile);
@@ -124,9 +160,14 @@ sqlitecmdrw(int argc, char **argv)
 	}
 	free(dbfile);
 
+	sql_exec(db, "PRAGMA mmap_size = 209715200;");
 //	sqlite3_busy_timeout(db, SQLITE_BUSY_TIMEOUT);
-	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
-	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
+	sql_exec(db, "PRAGMA journal_mode = WAL;");
+	sql_exec(db, "PRAGMA synchronous = NORMAL;");
+//	sql_exec(db, "PRAGMA journal_mode=DELETE;");
+//	sql_exec(db,"PRAGMA journal_mode = OFF;");
+//	sql_exec(db,"PRAGMA journal_mode = TRUNCATE;");
+
 
 	res = 0;
 	for (i = 2; i < argc; i++)
@@ -177,7 +218,7 @@ sqlitecmdrw(int argc, char **argv)
 int
 sqlitecmdro(int argc, char **argv)
 {
-	sqlite3        *db;
+	sqlite3		*db;
 	int		res;
 	int		i;
 	char		*query;
@@ -191,7 +232,7 @@ sqlitecmdro(int argc, char **argv)
 	int		retry = 0;
 
 //	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
-//	const char journal_mode_sql[] = "PRAGMA journal_mode = WAL;";
+//	const char journal_mode_sql[] = "PRAGMA journal_mode=DELETE;";
 
 	if ((cp = lookupvar("sqldelimer")) == NULL)
 		delim = DEFSQLDELIMER;
@@ -219,7 +260,7 @@ sqlitecmdro(int argc, char **argv)
 		sprintf(dbfile,"%s",argv[1]);
 	}
 
-	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READONLY, NULL))) {
+	if (SQLITE_OK != (res = sqlite3_open_v2(dbfile, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE, NULL))) {
 		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
 		free(dbfile);
 		return 1;
@@ -240,6 +281,8 @@ sqlitecmdro(int argc, char **argv)
 		}
 		tmp[-1] = 0;
 	}
+
+	sql_exec(db, "PRAGMA mmap_size = 209715200;");
 
 	do {
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);

@@ -53,7 +53,7 @@ usage()
 	printf("require:\n");
 	printf("opt: 192.168.0.1 port user password /remote/file /local/file\n\n");
 	printf("return 0 if success\n");
-	printf("Example: cbsd cbsdsftp 192.168.0.1 22 cbsd password /bin/date /tmp/date\n");
+	printf("Example: cbsd cbsdsftp 192.168.0.1 22 cbsd password ${DATE_CMD} /tmp/date\n");
 	exit(0);
 }
 

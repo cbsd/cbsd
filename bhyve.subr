@@ -13,6 +13,8 @@ init_bhyve()
 {
 	local _i _res
 
+	[ "${skip_bhyve_check_env}" = "1" ] && return 0			# all fine!
+
 	if [ ${freebsdhostversion} -lt 1300021 ]; then
 		local _required_kmods="vmm if_tap if_bridge nmdm"
 	else
@@ -59,7 +61,7 @@ init_bhyve()
 				if [ -z "${cbsd_queue_backend}" ]; then
 					MOD_CBSD_QUEUE_DISABLED="1"
 				else
-					[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart progress=100 data_status=1
+					[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1
 				fi
 			fi
 
@@ -67,9 +69,10 @@ init_bhyve()
 		fi
 	done
 
-	tmuxcmd=$(which tmux)
-	[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}The current version requires ${N2_COLOR}tmux${N1_COLOR}\nPlease run ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
-	tmuxcmd="/usr/local/bin/tmux -Lcbsd-${jname}"
+	tmuxcmd=$( which tmux )
+	[ -z "${tmuxcmd}" -o ! -x "${tmuxcmd}" ] && err 1 "${N1_COLOR}The current version requires ${N2_COLOR}tmux${N1_COLOR}\nPlease run ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
+	tmuxcmd="${TMUX_CMD} -Lcbsd-${jname}"
+	return 0
 }
 
 # return 0 or 1 if $1 bus id exist in global $bhyve_pci_id_busy_list
@@ -116,7 +119,7 @@ add_bhyve_pci_id_busy()
 
 	# use $_buf_file as an intermediate buffer for share
 	# and exchange $bhyve_pci_id_busy_list vars
-	/usr/sbin/sysrc -qf ${_buf_file} bhyve_pci_id_busy_list="${bhyve_pci_id_busy_list}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${_buf_file} bhyve_pci_id_busy_list="${bhyve_pci_id_busy_list}" > /dev/null 2>&1
 
 	return 0
 }
@@ -165,7 +168,7 @@ store_bhyve_pci_slot()
 
 	_search_condition="pcislot_name=\"${_pcislot_name}\""
 	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
-	_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+	_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | ${AWK_CMD} '{printf $1}' )
 
 	if [ -n "${_tmp_bhyve_pci_index}" ]; then
 		# update modified flags
@@ -230,7 +233,7 @@ next_pci_id()
 		_search_condition="pcislot_name=\"${_pcislot_name}\""
 		[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
 		#echo "x: ${_search_condition}" >> /tmp/query.txt
-		_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | /usr/bin/awk '{printf $1}' )
+		_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | ${AWK_CMD} '{printf $1}' )
 		if [ -n "${_tmp_bhyve_pci_index}" ]; then
 			#echo "found!!: ${_tmp_bhyve_pci_index}" >> /tmp/query.txt
 
@@ -272,7 +275,7 @@ next_nmdm_id()
 	nmdm_index=0
 
 	for _i in $( /usr/bin/seq 0 500 ); do
-		/bin/ls /dev/nmdm${_i}A* > /dev/null 2>&1
+		${LS_CMD} /dev/nmdm${_i}A* > /dev/null 2>&1
 		if [ $? -ne 0 ]; then
 			nmdm_index=${_i}
 			return 0
@@ -681,7 +684,7 @@ compile_dsk_controller_args()
 
 	dsk_controller_args="-s ${_pcislot_args},${_dsk_controller_type}"
 
-	_dsk_path=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | /usr/bin/xargs )
+	_dsk_path=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | ${XARGS_CMD} )
 
 	for dsk_path in ${_dsk_path}; do
 		# test for full path. If path not started from '/' - append $data dir
@@ -712,7 +715,7 @@ compile_nvme_args()
 
 	nvme_args=
 
-	cur_nvme_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | /usr/bin/awk '{printf $1}' )
+	cur_nvme_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(id) FROM bhyve_nvme' | ${AWK_CMD} '{printf $1}' )
 
 	[ "${cur_nvme_count}" = "0" ] && return 1
 
@@ -767,7 +770,7 @@ normalize_nic_hwaddr()
 	local _hwaddr
 	[ -z "${1}" ] && return 0
 
-	_hwaddr=$( echo "${1}" | /usr/bin/tr -d ":" | /usr/bin/sed -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	_hwaddr=$( echo "${1}" | ${TR_CMD} -d ":" | ${SED_CMD} -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
 	printf ${_hwaddr}
 }
 
@@ -790,7 +793,7 @@ compile_nic_args()
 	local _parent_mtu
 	local _ret=
 	local _is_bridge=
-	local autoconn_iface=$( /usr/sbin/sysrc -n cbsd_autoconnect_bridge 2>&1 )
+	local autoconn_iface=$( ${SYSRC_CMD} -n cbsd_autoconnect_bridge 2>&1 )
 	local _pcislot_args= _pref
 	local IFS OIFS
 
@@ -818,7 +821,7 @@ compile_nic_args()
 		if [ ${nic_persistent} -eq 1 ]; then
 			_pref3=$( substr --pos=0 --len=3 --str=${nic_parent} )
 			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
-			/sbin/ifconfig ${nic_parent} > /dev/null 2>&1
+			${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
 			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
 			nic_hwaddr="0"
 			mytap="${nic_parent}"
@@ -839,7 +842,7 @@ compile_nic_args()
 							cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic_parent is auto, detected by default gateway: ${nic_parent}
 						fi
 
-						_is_bridge=$( /sbin/ifconfig ${nic_parent} | /usr/bin/awk '/groups:/{print $2}' | /usr/bin/grep -o bridge )
+						_is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
 						if [ "${_is_bridge}" != "bridge" ]; then
 							# this is not bridge, detect uplink iface
 							cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
@@ -848,7 +851,7 @@ compile_nic_args()
 
 							if [ "${interface}" != "disable" ]; then
 								# always up parent device
-								/sbin/ifconfig ${interface} up
+								${IFCONFIG_CMD} ${interface} up
 								if ! mybridge=$( get_my_device bridge ${interface} ); then
 									err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
 								fi
@@ -857,7 +860,7 @@ compile_nic_args()
 								mybridge="disable"
 							fi
 						else
-							/sbin/ifconfig ${nic_parent} > /dev/null 2>&1
+							${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
 							_ret=$?
 							[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
 							mybridge="${nic_parent}"
@@ -880,7 +883,7 @@ compile_nic_args()
 						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
 
 						if [ ${_ret} -eq 0 ]; then
-							[ -n "${_parent_mtu}" ] && _ret=$( /sbin/ifconfig ${mytap} mtu ${_parent_mtu} )
+							[ -n "${_parent_mtu}" ] && _ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} )
 						fi
 					else
 						# Get parent MTU size
@@ -891,17 +894,17 @@ compile_nic_args()
 						#	[ ${nic_mtu} -gt ${_parent_mtu} ]
 						#fi
 						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
-						_ret=$( /sbin/ifconfig ${mytap} mtu ${nic_mtu} )
+						_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} )
 						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
 
-					/sbin/ifconfig ${mytap} description "${jname}-nic${_id}" group vm-port up
+					${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
 
 					if [ "${mybridge}" != "disable" ]; then
 						if [ "${autoconn_iface}" = "NO" ]; then
-							/sbin/ifconfig ${mybridge} addm ${mytap} >/dev/null 2>&1
+							${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
 						else
-							/sbin/ifconfig ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+							${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
 						fi
 					fi
 
@@ -930,7 +933,7 @@ compile_nic_args()
 										;;
 								esac
 								# ipv type + mask
-								/sbin/ifconfig ${mytap} ${proto} ${ip} alias
+								${IFCONFIG_CMD} ${mytap} ${proto} ${ip} alias
 							IFS=","
 						done
 						IFS="${OIFS}"
@@ -947,7 +950,7 @@ compile_nic_args()
 		fi
 
 		if [ "${clean_arp_table_by_vm}" = "1" ]; then
-			/usr/sbin/arp -an | /usr/bin/awk -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | /usr/bin/sort | /usr/bin/tr -d '()' | while read _ip; do
+			/usr/sbin/arp -an | ${AWK_CMD} -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | /usr/bin/sort | ${TR_CMD} -d '()' | while read _ip; do
 				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
 				/usr/sbin/arp -n -d ${_ip} > /dev/null 2>&1 || true
 			done
@@ -1409,7 +1412,7 @@ compile_live_migration_args()
 	fi
 
 	# store info into ascii files
-	/bin/cat > ${jailsysdir}/${jname}/live_migration.conf << EOF
+	${CAT_CMD} > ${jailsysdir}/${jname}/live_migration.conf << EOF
 live_migration_src_nodename="${_src_nodename}"		# nodename of the CBSD source node
 live_migration_dst_nodename="${_dst_nodename}"		# nodename of the CBSD destination node
 live_migration_dst_port="${_dst_port}"			# port for migration data exchange on destination node
@@ -1625,11 +1628,11 @@ check_for_bhyve_process()
 		esac
 
 		cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
-		b_jname=$( echo "${command}" | /usr/bin/awk '/bhyve: /{print $2}' )
+		b_jname=$( echo "${command}" | ${AWK_CMD} '/bhyve: /{print $2}' )
 		if [ -z "${b_jname}" ]; then
 			# second change: find for: /usr/sbin/bhyve -c ... <jname>
 			# this is bhyve stage on early start (e.g vncwait)
-			b_jname=$( echo "${command}" | /usr/bin/awk '/bhyve/{print $NF}' )
+			b_jname=$( echo "${command}" | ${AWK_CMD} '/bhyve/{print $NF}' )
 		fi
 		[ -z "${b_jname}" ] && continue
 		[ "${b_jname}" != "${jname}" ] && continue

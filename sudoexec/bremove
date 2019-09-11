@@ -44,7 +44,7 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 fi
 
 . ${distdir}/time.subr
-st_time=$( /bin/date +%s )
+st_time=$( ${DATE_CMD} +%s )
 
 for jname in ${JLIST}; do
 	DST="${jaildatadir}/${jname}-${jaildatapref}"
@@ -95,7 +95,7 @@ for jname in ${JLIST}; do
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove progress=1
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=1
 	fi
 
 	. ${distdir}/jcreate.subr
@@ -124,16 +124,16 @@ for jname in ${JLIST}; do
 		if [ ${zfsfeat} -eq 1 ]; then
 			base_vm_disks=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
 			for vm_item in $( cbsdsqlro storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
-				vm=$( echo ${vm_item} | /usr/bin/cut -f 1 -d '|' )
-				disk_path=$( echo ${vm_item} | /usr/bin/cut -f 2 -d '|' )
-				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | /usr/bin/sed 's;^/dev/zvol/;;' )
+				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
+				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
+				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
 				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
 				if [ "${parent_snapshot}" = "-" ]; then
 					continue
 				fi
 
-				original_disk=$( echo ${parent_snapshot} | /usr/bin/sed "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
+				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
 				for _disk_path in ${base_vm_disks}; do
 					original_disk_path=$( /usr/bin/readlink -f ${_disk_path} )
 					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
@@ -146,10 +146,9 @@ for jname in ${JLIST}; do
 				dep_vms=$( echo ${DEPENDENT_VMS} | /usr/bin/sort | /usr/bin/uniq )
 				err 1 "${N1_COLOR}The following machines depend on ${jname}:${N0_COLOR} ${dep_vms}" >&2
 			fi
-
 			for disk_path in ${base_vm_disks}; do
 				[ ! -r ${disk_path} ] && continue
-				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | /usr/bin/sed 's;^/dev/zvol/;;' )
+				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
 				PARENT_ZVOL="${PARENT_ZVOL} ${disk_zvol}"
 				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
@@ -170,7 +169,7 @@ for jname in ${JLIST}; do
 	# jailed process?
 	# if we are not inside jail then check for jailed bhyve and remove hoster jail
 	_jailed="0"	# no hoster jail
-	pjailed=$( /sbin/sysctl -qn security.jail.jailed 2>/dev/null )
+	pjailed=$( ${SYSCTL_CMD} -qn security.jail.jailed 2>/dev/null )
 	[ -z "${pjailed}" ] && pjailed=0
 
 	if [ "${pjailed}" = "0" ]; then
@@ -184,6 +183,7 @@ for jname in ${JLIST}; do
 	[ -d "${DST}" ] && removedata ${DST} force
 	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
 	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
+
 	[ -f "${JAILFSTAB}" ] && /bin/rm -f ${JAILFSTAB}
 	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
 	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
@@ -198,8 +198,9 @@ for jname in ${JLIST}; do
 	for parent_snapshot in ${PARENT_SNAPSHOTS}; do
 		/sbin/zfs destroy ${parent_snapshot}
 	done
+
 	for parent_zvol in ${PARENT_ZVOL}; do
-		/sbin/zfs destroy ${parent_zvol}
+		/sbin/zfs get -Ho value name ${parent_zvol} > /dev/null 2>&1 && /sbin/zfs destroy ${parent_zvol}
 	done
 
 	vmdir="${workdir}/vm/${jname}"
@@ -247,7 +248,7 @@ for jname in ${JLIST}; do
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove progress=100
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=2
 	fi
 
 	if [ "${_jailed}" != "0" ]; then
@@ -258,7 +259,7 @@ for jname in ${JLIST}; do
 	fi
 done
 
-end_time=$( /bin/date +%s )
+end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))
 diff_time=$( displaytime ${diff_time} )
 ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"

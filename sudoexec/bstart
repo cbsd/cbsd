@@ -92,7 +92,7 @@ start_bhyve()
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart progress=1 workdir="${workdir}"
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=1 workdir="${workdir}"
 	fi
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
@@ -158,7 +158,7 @@ start_bhyve()
 					/usr/bin/nice -n 20 /bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
 					echo
 					# adjust original image size
-					/usr/bin/truncate -s${_dsk_ebytes} ${data}/dsk1.vhd
+					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
 				else
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
@@ -275,7 +275,7 @@ start_bhyve()
 					${ECHO} "${H5_COLOR}Notice: ${N1_COLOR}no hard disk, boot from CD...${N0_COLOR}"
 					vm_boot="cd"
 				else
-					_err=$( /usr/bin/file -s ${data}/${MDFILE} | /usr/bin/cut -d":" -f2 | /usr/bin/xargs )
+					_err=$( /usr/bin/file -s ${data}/${MDFILE} | ${CUT_CMD} -d":" -f2 | ${XARGS_CMD} )
 					# live migration todo: skipp this >> ?
 					if [ "${_err}" = "data" ]; then
 						${ECHO} "${N1_COLOR}Looks like ${N2_COLOR}${data}/${MDFILE}${N1_COLOR} is empty.${N0_COLOR}"
@@ -489,7 +489,7 @@ start_bhyve()
 	# restore overwrite debug_engine
 	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
 
-/bin/cat > ${jailsysdir}/${jname}/bhyve.conf <<EOF
+${CAT_CMD} > ${jailsysdir}/${jname}/bhyve.conf <<EOF
 vm_boot='${vm_boot}'
 bhyveload_cmd='${bhyveload_cmd}'
 tmuxcmd='${tmuxcmd}'
@@ -597,7 +597,7 @@ EOF
 				${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
 				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
 				# why upper here, whereis spec?
-				/usr/bin/sed -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+				${SED_CMD} -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
 			fi
 	fi
 
@@ -608,17 +608,20 @@ EOF
 		gdb|lldb)
 			if [ "${lm}" = "1" ]; then
 				# for live migration always run in tmux due to non-interactive commands from remote side
+				[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
 				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}"
 			else
 				env cbsd_workdir="${workdir}" /bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}
 			fi
 			;;
 		*)
+			[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
 			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args}"
 			;;
 	esac
 
 	if [ -n "${console_nmdm}" ]; then
+		[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
 		${tmuxcmd} select-window -t 0
 
 		for i in ${console_nmdm}; do
@@ -658,7 +661,7 @@ EOF
 	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
 
 	if [ "${vm_pid}" = "0" ]; then
-		[ -r ${bstart_logfile} ] && /bin/cat ${bstart_logfile}
+		[ -r ${bstart_logfile} ] && ${CAT_CMD} ${bstart_logfile}
 		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}sh /usr/local/cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
 	fi
 
@@ -678,7 +681,7 @@ EOF
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart progress=100 data_status=1 workdir="${workdir}"
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}"
 	fi
 
 	exit 0
@@ -711,7 +714,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		env NOINTER=1 /usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
 		#lets save .pid file
 		sleep 1
-		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( /bin/cat ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
+		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
 		trap "" HUP INT ABRT BUS TERM EXIT
 		# Artificial delay to create a sequence (for order compliance)
 		# todo: determine VM complete starting
@@ -726,14 +729,14 @@ fi
 # MAIN
 . ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 . ${distdir}/time.subr
-st_time=$( /bin/date +%s )
+st_time=$( ${DATE_CMD} +%s )
 [ -z "${jname}" ] && jname=${1}
 
 # cloud-init enabled?
 # we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
 # since some helpers may work with runtime (e.g pcibus + cloudinit) config
 if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
-	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | /usr/bin/xargs )
+	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
 	# gen seed only if files exist
 	if [ -n "${CLOUD_FILES}" ]; then
 		cloud_init=1
@@ -817,7 +820,7 @@ if [ "${_jailed}" != "0" ]; then
 		1)
 			_jname=$( freejname default_jailname=J${jname} )
 			${ECHO} "${N1_COLOR}Jailed bhyve. Create temporary jail: ${N2_COLOR}${_jname}${N0_COLOR}"
-			/usr/bin/sed -e "s:%%jname%%:${_jname}:g" \
+			${SED_CMD} -e "s:%%jname%%:${_jname}:g" \
 			-e "s:%%workdir%%:${workdir}:g" \
 			-e "s:%%domain%%#:my.domain:g" ${distdir}/share/jail.jconf > /tmp/jail.$$
 			jcreate jconf=/tmp/jail.$$
@@ -887,8 +890,8 @@ else
 
 		[ -z "${DATA}" ] && break
 
-		for lunname in $( /usr/bin/seq 0 10 ); do
-			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
+		for lunname in $( /usr/bin/seq 0 16 ); do
+			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then				# back compatible for CBSD <= 12.0.14
 				/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
 				${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
@@ -922,7 +925,7 @@ fi
 
 start_bhyve
 
-end_time=$( /bin/date +%s )
+end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))
 diff_time=$( displaytime ${diff_time} )
 
