@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.10
+#v12.1.0
 MYARG="old new"
 MYOPTARG="host_hostname restart"
 MYDESC="Rename bhyve"
@@ -75,21 +75,21 @@ esac
 [ ! -d "${SRC}" ] && log_err 1 "${N1_COLOR}No VM data: ${N2_COLOR}${SRC}${N0_COLOR}"
 
 if [ -d "${DST}" ]; then
-	/bin/rmdir ${DST} >/dev/null 2>&1
+	${RMDIR_CMD} ${DST} >/dev/null 2>&1
 	[ -d "${DST}" ] && log_err 1 "${N1_COLOR}VM data already exist and it not empty: ${N2_COLOR}${DST}${N0_COLOR}"
 fi
 
-[ ! -d "${JAILDIR}" ] && /bin/mkdir -p ${JAILDIR}
-[ ! -d "${jailfstab}"  ] && /bin/mkdir -p ${jailfstabdir}
+[ ! -d "${JAILDIR}" ] && ${MKDIR_CMD} -p ${JAILDIR}
+[ ! -d "${jailfstab}"  ] && ${MKDIR_CMD} -p ${jailfstabdir}
 
 printf "${N1_COLOR}Rename${N0_COLOR}"
 
 if [ -f "${JAILFSTABORIG}" ]; then
-	/bin/mv ${JAILFSTABORIG} ${JAILFSTAB}
+	${MV_CMD} ${JAILFSTABORIG} ${JAILFSTAB}
 	${SED_CMD} -i '' s:/${old}:/${new}:g ${JAILFSTAB}
 fi
 
-[ -f "${JAILLOCALFSTABORIG}" ] && /bin/mv ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
+[ -f "${JAILLOCALFSTABORIG}" ] && ${MV_CMD} ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
 
 cbsdsqlrw local UPDATE jails SET jname=\"${new}\",path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\" WHERE jname=\"${old}\"
 cbsdsqlrw local UPDATE rctl SET jname=\"${new}\" WHERE jname=\"${old}\" 2>/dev/null
@@ -116,6 +116,20 @@ fi
 
 jname=${new}
 
+# Update in media table: vhd and ISO
+# Update records only for vhd + (/jails-data/|/vm/) location, don't touch/manage disks outside jails-data/vm dir or /dev/RAW devices
+for i in $( ${FIND_CMD} ${SRC}/ -type l -or -type f -depth 1 -maxdepth 1 -name dsk\* ); do
+	dskname=$( ${BASENAME_CMD} ${i} )
+	idx=$( cbsdsqlro storage_media "SELECT idx FROM media WHERE path=\"${workdir}/jails-data/${old}-data/${dskname}\" OR path=\"${workdir}/vm/${old}/${dskname}\" AND jname=\"${old}\"" 2>/dev/null )
+	[ -z "${idx}" ] && continue
+	_old_path=$( cbsdsqlro storage_media "SELECT path FROM media WHERE idx=${idx}" 2>/dev/null )
+	_new_path=$( echo ${_old_path} | ${SED_CMD} -e s:${old}-data:${new}-data:g -e s:vm/${old}/:vm/${new}/:g )		# change datadir name, old and new style
+	cbsdlogger NOTICE ${CBSD_APP}: update storage: path:${_new_path},jname=${new} for idx:${idx}
+	cbsdsqlrw storage_media UPDATE media SET path=\"${_new_path}\",jname=\"${new}\" WHERE idx=${idx}
+done
+# update ISO
+cbsdsqlrw storage_media UPDATE media SET jname=\"${new}\" WHERE jname=\"${old}\" AND type=\"iso\"
+
 case ${zfsfeat} in
 	1)
 		. ${zfstool}
@@ -124,8 +138,34 @@ case ${zfsfeat} in
 		_old_mpt=$( /sbin/zfs get -Ho value mountpoint ${DATA}/${old} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -eq 0 -a -n "${_old_mpt}" ]; then
+
+			# loop to check for symlink and zvol
+			for i in $( ${FIND_CMD} ${SRC}/ -type l -depth 1 -maxdepth 1 ); do
+				if is_getzvol ${i}; then
+					# back compatible for CBSD <= 12.1.0
+					_new_zvol_dsk_name=$( echo ${is_zvol} | ${SED_CMD} s:bcbsd-${old}-dsk:bcbsd-${new}-dsk:g )
+					if [ -n "${_new_zvol_dsk_name}" -a "${_new_zvol_dsk_name}" != "${is_zvol}" ]; then
+						_new_zvol_dsk_name_full=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )		# valid name for symlink
+																	# (after renaming parent vol)
+						cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name}
+						/sbin/zfs rename ${is_zvol} ${_new_zvol_dsk_name}
+						_ret=$?
+						if [ ${_ret} -ne 0 ]; then
+							${ECHO} "${LRED}Error: ${MAGENTA}/sbin/zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed${NORMAL}"
+							cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed
+						else
+							# re-link
+							${LN_CMD} -sf /dev/zvol/${_new_zvol_dsk_name_full} ${i}
+						fi
+					fi
+				fi
+			done
+
+			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs unmount -f ${_old_mpt}
 			/sbin/zfs unmount -f ${_old_mpt} > /dev/null 2>&1
+			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs rename ${DATA}/${old} ${DATA}/${new}
 			/sbin/zfs rename ${DATA}/${old} ${DATA}/${new}
+			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
 			/sbin/zfs set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
 			/sbin/zfs mount ${DATA}/${new}
 		fi
@@ -138,17 +178,17 @@ case ${zfsfeat} in
 			dot "mvdata"
 		fi
 
-		# additional loop to check for symlink and zvol
-		for i in $( /usr/bin/find ${DST}/ -type l -depth 1 -maxdepth 1 ); do
-			if is_getzvol ${i}; then
-				old_zvol="${is_zvol}"
-				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
-				/sbin/zfs get -Ho value name ${old_zvol} > /dev/null 2>&1
-				_ret=$?
-				[ ${_ret} -eq 0 ] && /sbin/zfs rename ${old_zvol} ${new_zvol}
-				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
-			fi
-		done
+#		# additional loop to check for symlink and zvol
+#		for i in $( ${FIND_CMD} ${DST}/ -type l -depth 1 -maxdepth 1 ); do
+#			if is_getzvol ${i}; then
+#				old_zvol="${is_zvol}"
+#				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
+#				/sbin/zfs get -Ho value name ${old_zvol} > /dev/null 2>&1
+#				_ret=$?
+#				[ ${_ret} -eq 0 ] && /sbin/zfs rename ${old_zvol} ${new_zvol}
+#				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
+#			fi
+#		done
 		;;
 	*)
 		mvdata ${SRC} ${DST}
@@ -175,12 +215,12 @@ esac
 #			/sbin/zfs rename ${OLDPOOL} ${NEWPOOL}
 #			if [ $? -eq 0 ]; then
 #				/sbin/zfs mount ${NEWPOOL}
-#				[ -d ${SRC} ] && /bin/rmdir ${SRC}
+#				[ -d ${SRC} ] && ${RMDIR_CMD} ${SRC}
 #			fi
 #		fi
 #
 #		# additional loop to check for symlink and zvol
-#		for i in $( /usr/bin/find ${DST}/ -type l -depth 1 -maxdepth 1 ); do
+#		for i in $( ${FIND_CMD} ${DST}/ -type l -depth 1 -maxdepth 1 ); do
 #			if is_getzvol ${i}; then
 #				old_zvol="${is_zvol}"
 #				new_zvol=$( echo ${is_zvol} |${SED_CMD} s:${old}:${new}:g )
@@ -198,24 +238,17 @@ case ${zfsfeat} in
 			${RM_CMD} -f ${SYSDIROLD}
 			${LN_CMD} -sf ${workdir}/vm/${new} ${SYSDIRNEW}
 		elif [ -d "${SYSDIROLD}" ]; then
-			/bin/mv ${SYSDIROLD} ${SYSDIRNEW}
+			${MV_CMD} ${SYSDIROLD} ${SYSDIRNEW}
 		fi
 		;;
 	*)
 		if [ -d "${SYSDIROLD}" ]; then
-			/bin/mv ${SYSDIROLD} ${SYSDIRNEW}
+			${MV_CMD} ${SYSDIROLD} ${SYSDIRNEW}
 		fi
 esac
 
 [ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk set jname=\"${new}\""
 [ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic set jname=\"${new}\""
-
-# todo: update via SQL!
-for i in $( /usr/bin/find ${DST}/ -type l -or -type f -depth 1 -maxdepth 1 -name dsk\* ); do
-	mydsk=$( /usr/bin/basename ${i} );
-	[ -z "${mydsk}" ] && continue
-	media mode=register name="hdd-${mydsk}" path="${i}" type="hdd" jname="${jname}"
-done
 
 if [ ${restart} -eq 1 -a ${oldjid} -ne 0 ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: vm ${jname} will be started due to restart flags on
@@ -229,12 +262,12 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${new}" cmd=brename status=2 data_status=${data_status}
 fi
 
-[ -d "${SRC}" ] && /bin/rmdir ${SRC}
+[ -d "${SRC}" ] && ${RMDIR_CMD} ${SRC}
 
 end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))
 diff_time=$( displaytime ${diff_time} )
-${ECHO} "${N2_COLOR}ok${N0_COLOR}"
+${ECHO} " ${N2_COLOR}ok${N0_COLOR}"
 
 ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 cbsdlogger NOTICE ${CBSD_APP}: vm ${old} has been renamed to ${new} in ${diff_time}
