@@ -32,7 +32,11 @@
 
 
 #ifdef CBSD
+#ifdef __DragonFly__
+#include <histedit.h>
+#else
 #include "/usr/include/histedit.h"
+#endif
 #else
 #include <histedit.h>
 #endif
