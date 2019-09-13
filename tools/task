@@ -58,12 +58,38 @@ try_remote()
 
 shift ## mode=xxx
 
+
+# Pass '"' as ' in cmd
+INIT_IFS="${IFS}"
+IFS="~"
+cmd="$@"
+IFS="${INIT_IFS}"
+cmd=$( while [ -n "${1}" ]; do
+	IFS="~"
+	strpos --str="${1}" --search="="
+	_pos=$?
+	if [ ${_pos} -eq 0 ]; then
+		# not params=value form
+		printf "${1} "
+		shift
+		continue
+	fi
+
+	_arg_len=$( strlen ${1} )
+	_pref=$(( _arg_len - _pos ))
+	ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+	VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+
+	printf "${ARG}='${VAL}' "
+	shift
+done )
+
 ## place for default of all variables for remote node?
 [ -z "${notify}" ] && notify=1
 [ -z "${after}" ] && after=0
 [ -z "${client_id}" ] && client_id=0
 [ -z "${owner}" ] && owner=$( /usr/bin/whoami )
-[ -n "${nodetask}" ] && try_remote $@
+[ -n "${nodetask}" ] && try_remote "${cmd}"
 
 case "${mode}" in
 	"new")
@@ -71,20 +97,20 @@ case "${mode}" in
 
 		# test for exclusive
 		if [ ${exclusive} -eq 1 ]; then
-			_excl_test=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"$@\" AND status != 2 AND owner=\"${owner}\" AND jname=\"${jname}\" ORDER BY id DESC LIMIT 1" )
+			_excl_test=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"${cmd}\" AND status != 2 AND owner=\"${owner}\" AND jname=\"${jname}\" ORDER BY id DESC LIMIT 1" )
 			[ -n "${_excl_test}" ] && err 1 "${N1_COLOR}This job is exclusive, waiting to complete: ${N2_COLOR}${_excl_test}${N0_COLOR}"
 		fi
 
 		if [ -n "${logfile}" ]; then
-			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"$@\", 0, \"$logfile\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
+			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"${cmd}\", 0, \"$logfile\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
 		else
-			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"$@\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
+			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"${cmd}\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
 		fi
 
-		[ $? -ne 0 ] && err 1 "${N1_COLOR}Error: ${_err}${N0_COLOR}"
-		tid=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"$@\" AND status=0 ORDER BY id DESC LIMIT 1" )
+		[ $? -ne 0 ] && err 1 "${N1_COLOR}task mode=new error: ${_err}${N0_COLOR}"
+		tid=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"${cmd}\" AND status=0 ORDER BY id DESC LIMIT 1" )
 		/usr/bin/touch ${workdir}/var/db/cbsdtaskd.sqlite
-		[ -z "${tid}" ] && err 1 "${N1_COLOR}Error: ${_err}${N0_COLOR}"
+		[ -z "${tid}" ] && err 1 "${N1_COLOR}task mode=new tid error: ${_err}${N0_COLOR}"
 		echo "${tid}"
 		;;
 	"cancel")
