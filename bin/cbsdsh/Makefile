@@ -4,7 +4,10 @@ INSTALLFLAGS=	-S -m 500
 SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c cbsd_pwait.c cd.c echo.c \
 	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c logger.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
-	test.c trap.c var.c jail.c
+	test.c trap.c var.c
+
+# HBSD/FBSD/TrueOS...
+SHSRCS+=	jail.c
 
 # WITH_LUA
 #SHSRCS+=	cbsdlua.c
@@ -20,8 +23,10 @@ WITHOUT_MAN=	yes
 NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-#LDADD= -ledit -ltermcap -lsqlite3 -lm -pthread -ljail
+# HBSD/FBSD/TrueOS...
 LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
+# Dfly
+#LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
 #CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
 CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib

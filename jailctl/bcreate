@@ -37,7 +37,7 @@ done
 . ${jfs}
 
 if [ -z "${jconf}" ]; then
-	jconf=$( /usr/bin/mktemp )
+	jconf=$( ${MKTEMP_CMD} )
 	export CBSD_INIT_SAVE2FILE=${jconf}		# save args and generate jconf
 	. ${cbsdinit}
 	unset CBSD_INIT_SAVE2FILE
@@ -234,7 +234,7 @@ ${TRUNCATE_CMD} -s0 ${jconf_tmp}
 
 for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/${template_profile} ${temprcconf}; do
 	[ ! -r "${merge_me}" ] && continue;
-	tmp_merge=$( /usr/bin/mktemp )
+	tmp_merge=$( ${MKTEMP_CMD} )
 	merge from=${jconf_tmp} to=${merge_me} out=${tmp_merge}
 	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${jconf_tmp}
 done
@@ -586,23 +586,30 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ -z "${ci_jname}" ] && ${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_jname="${jname}" > /dev/null 2>&1
 	[ -z "${ci_fqdn}" ] && ${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_fqdn="${host_hostname}" > /dev/null 2>&1
 
-	case "${ip4_addr}" in
+	case "${ci_ip4_addr}" in
 		[Dd][Hh][Cc][Pp])
-
-			iptype ${ci_ip4_addr}
-			_ret=$?
-			case ${_ret} in
-			1)
-				ip4_addr="${IWM}"
-				;;
-			*)
-				ip4_addr="${ci_ip4_addr}"
-				;;
-			esac
-
-			bset jname="${jname}" ip4_addr="${ip4_addr}" > /dev/null 2>&1
+			ci_ip4_addr=$( dhcpd 2>/dev/null )
+			if [ $? -eq 2 ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: no free IP address for DHCP in nodeippool
+				err 1 "${N1_COLOR}${CBSD_APP}: no free IP address for DHCP in nodeippool${N0_COLOR}"
+			fi
+			ci_ip4_addr="${ci_ip4_addr}/24"		# todo: hardcoded mask
+			${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr="${ci_ip4_addr}" > /dev/null 2>&1
 			;;
 	esac
+
+	iptype ${ci_ip4_addr}
+	_ret=$?
+
+	case ${_ret} in
+		1)
+			ip4_addr="${IWM}"
+			;;
+		*)
+			ip4_addr="${ci_ip4_addr}"
+			;;
+	esac
+	bset jname="${jname}" ip4_addr="${ip4_addr}" > /dev/null 2>&1
 
 	readconf cloud-init.conf
 
@@ -626,11 +633,7 @@ if [ ${is_cloud} -eq 1 ]; then
 
 	[ -z "${ci_nic_hwaddr0}" ] && ${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nic_hwaddr0="${nic_hwaddr0}" > /dev/null 2>&1
 
-	case "${ip4_addr}" in
-		[Dd][Hh][Cc][Pp])
-			${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ip4_addr="${ci_ip4_addr}" > /dev/null 2>&1
-			;;
-	esac
+	#${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ip4_addr="${ip4_addr}" > /dev/null 2>&1
 
 	case "${vm_os_type}" in
 		windows)
