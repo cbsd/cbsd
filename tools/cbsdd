@@ -45,7 +45,7 @@ update_jaillock()
 
 	for jname in $( cbsdsqlro local SELECT jname FROM jails WHERE status=1 ); do
 		jaillock="${jailsysdir}/${jname}/locked"
-		/usr/sbin/daemon -f -u ${cbsduser} /usr/bin/lockf -s -t0 ${ftmpdir}/update_jaillock.lock /usr/bin/touch ${jaillock}
+		${DAEMON_CMD} -f -u ${cbsduser} /usr/bin/lockf -s -t0 ${ftmpdir}/update_jaillock.lock /usr/bin/touch ${jaillock}
 	done
 }
 
@@ -55,7 +55,7 @@ update_fw_counters()
 
 	[ "${_curhour}" = "${last_hour_fwupdate}" ] && return 0
 	last_hour_fwupdate="${_curhour}"
-	/usr/sbin/daemon /usr/bin/lockf -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
+	${DAEMON_CMD} /usr/bin/lockf -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
 }
 
 # if $1 = "force" skip for cbsd_dot check
@@ -68,7 +68,7 @@ update_inventory()
 	fi
 	${TRUNCATE_CMD} -s0 ${tmpdir}/inv.${_ip}.updated
 	task mode=new exclusive=1 autoflush=2 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename} >/dev/null 2>&1
-	/usr/sbin/daemon -f nexttask
+	${DAEMON_CMD} -f nexttask
 }
 
 if [ -z "${workdir}" ]; then
@@ -90,16 +90,19 @@ retrinv_loop=0
 
 #store pid
 echo $$ > ${workdir}/var/run/cbsdd.pid
-trap "/bin/rm -f ${workdir}/var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
+trap "${RM_CMD} -f ${workdir}/var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 
 cbsdsqlrw cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
 
 # remove stale lock and trash files
-/usr/bin/find -E ${ftmpdir} -depth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
-/usr/bin/find ${tmpdir} -depth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
+${FIND_CMD} -E ${ftmpdir} -depth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
+${FIND_CMD} ${tmpdir} -depth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
 
 # retrinv
-[ ${sqlreplica} -eq 1 ] && /usr/sbin/daemon -f /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+[ ${sqlreplica} -eq 1 ] && ${DAEMON_CMD} -f /usr/bin/lockf -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+
+cbsdlogger NOTICE ${CBSD_APP}: cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeout:${loop_timeout}
+echo "cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeout:${loop_timeout}"
 
 while [ 1 ]; do
 	# internal tasks:
@@ -130,8 +133,10 @@ while [ 1 ]; do
 		fi
 	fi
 
+	echo "WATCH"
 	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
 	_err=0
+	echo "WAKE"
 	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
 
 	if [ -z "${queue}" -o "${queue}" = "0" ]; then
@@ -151,9 +156,9 @@ while [ 1 ]; do
 		exit 1
 	fi
 
-	for i in $( /usr/bin/seq 1 ${max} ); do
+	for i in $( ${SEQ_CMD} 1 ${max} ); do
 		cbsdlogger NOTICE ${CBSD_APP}: runtask ${i}/${max} [$max_simul_jobs max]
-		env workdir=${workdir} /usr/sbin/daemon -f nexttask
+		${ENV_CMD} workdir=${workdir} ${DAEMON_CMD} -f nexttask
 		# wait for pid of daemon here!!!
 		sleep 1
 	done

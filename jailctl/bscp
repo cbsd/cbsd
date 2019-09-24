@@ -1,0 +1,130 @@
+#!/usr/local/bin/cbsd
+#v12.1.3
+CBSDMODULE="bhyve"
+MYARG=""
+MYOPTARG="verbose"
+MYDESC="get put file to remove nodes"
+ADDHELP="[verbose=1] bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ]\n\
+verbose=1 for debug information\n"
+EXTHELP="wf_jailscp"
+
+# ToDo:
+# Instead of this need one jailscp daemon/services with one lock and which will work on AMQP queue
+# where executing
+#     % cbsd jailscp XXX YYY
+# just add job to queue
+
+. ${subr}
+. ${tools}
+. ${strings}
+
+. ${cbsdinit}
+
+getjname()
+{
+	local _t
+
+	_t=$( echo ${1} | ${GREP_CMD} ":")
+
+	[ $? -ne 0 ] && return 1
+
+	jname=${1%%:*}
+	rfile=${1##*:}
+}
+
+try_remote()
+{
+	# this is only wrapper for compile correct arguments for cbsd nodescp
+
+	node=$( jwhereis ${jname} )
+
+	[ -z "${node}" ] && log_err 1 "Node not found for jail ${jname}"
+
+	cbsdlogger NOTICE ${CBSD_APP}: try to get remote jstatus for ${jname} on ${node}
+	status=$( rexe node=${node} cbsd jstatus ${jname} )
+	[ "${status}" = "0" ] && log_err 1 "jail ${jname} not running on ${node}"
+	sqlfile="${node}"
+	. ${jrcconf}
+	[ "${baserw}" = "1" ] && path=${data}
+	[ -z "${path}" ] && log_err 1 "path not found"
+}
+
+
+### MAIN ###
+if [ -n "${verbose}" ]; then
+	shift
+else
+	verbose=0
+fi
+
+if [ "${verbose}" = "0" ]; then
+	quiet="-q"
+else
+	quiet=""
+fi
+
+[ $# -ne 2 ] && err 1 "${N1_COLOR}$0 bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ]${N0_COLOR}"
+jname=""
+rfile=""
+rarg=0
+
+if getjname $1; then
+	if getjname $2; then
+		log_err 1 "${N1_COLOR}Only one remote path${N0_COLOR}"
+	fi
+	rarg=1
+else
+	if getjname $2; then
+		rarg=2
+	fi
+fi
+
+[ -z "${jname}" -o -z "${rfile}" ] && log_err 1 "${N1_COLOR}jail path via jail:path records not determine${N0_COLOR}"
+
+validate_jname ${jname}
+[ $? -ne 1 ] && log_err 1 "${N1_COLOR}Bad jname: ${jname}${N0_COLOR}"
+
+RSYNC=$( which rsync )
+
+. ${jrcconf}
+if [ $? -eq 1 ]; then
+	try_remote
+
+	if [ ${rarg} -eq 1 ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${2} from ${node}:${path}${rfile}
+		nodescp root=1 ${node}:${path}${rfile} ${2}
+		err=$?
+	else
+		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${1} to ${node}:${path}${rfile}
+		nodescp root=1 $1 ${node}:${path}${rfile}
+		err=$?
+	fi
+	exit $err
+fi
+
+[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}bhyve not active: ${jname}${N0_COLOR}"
+
+if [ ${rarg} -eq 1 ]; then
+
+	echo "OK1"
+
+	if [ -n "${RSYNC}" ]; then
+		#we have rsync for that
+		[ ${verbose} -eq 1 ] && set -o xtrace
+		cbsdlogger NOTICE ${CBSD_APP}: rsync ${path}${rfile} ${2}
+		${RSYNC} -azzlH ${path}${rfile} ${2}
+		[ ${verbose} -eq 1 ] && set +o xtrace
+	else
+		#no rsync, just scp
+		[ ${verbose} -eq 1 ] && set -o xtrace
+		cbsdlogger NOTICE ${CBSD_APP}: cp for ${path}${rfile} to ${2}
+		/bin/cp -a ${path}${rfile} ${2}
+		[ ${verbose} -eq 1 ] && set +o xtrace
+	fi
+else
+	DIR=$( dirname ${path}${rfile} )
+	readconf blogin.conf
+	dst=$( ${BASENAME_CMD} ${1} )
+	echo "scp -i ${workdir}/.ssh/id_rsa ${1} ${ci_user_add}@${ip4_addr}:${dst}"
+	scp -i ${workdir}/.ssh/id_rsa ${1} ${ci_user_add}@${ip4_addr}:${dst}
+fi
