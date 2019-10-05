@@ -119,7 +119,11 @@ main(int argc, char *argv[])
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv
+
+	// store original CWD in CBSD_PWD vars
+	cbsd_pwd_init();
 	chdir("/var/empty");
+
 	/* Only use history when stdin is a tty. */
 	if ( isatty(0) && isatty(1) ) {
 		cbsd_enable_history = 1;
