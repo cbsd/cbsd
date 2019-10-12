@@ -134,8 +134,8 @@ case ${zfsfeat} in
 	1)
 		. ${zfstool}
 		[ ! -d ${workdir}/vm ] && ${MKDIR_CMD} -p ${workdir}/vm
-		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-		_old_mpt=$( /sbin/zfs get -Ho value mountpoint ${DATA}/${old} 2>&1 )
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+		_old_mpt=$( ${ZFS_CMD} get -Ho value mountpoint ${DATA}/${old} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -eq 0 -a -n "${_old_mpt}" ]; then
 
@@ -144,30 +144,35 @@ case ${zfsfeat} in
 				if is_getzvol ${i}; then
 					# back compatible for CBSD <= 12.1.0
 					_new_zvol_dsk_name=$( echo ${is_zvol} | ${SED_CMD} s:bcbsd-${old}-dsk:bcbsd-${new}-dsk:g )
-					if [ -n "${_new_zvol_dsk_name}" -a "${_new_zvol_dsk_name}" != "${is_zvol}" ]; then
-						_new_zvol_dsk_name_full=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )		# valid name for symlink
+					# replace "jails/OLDVM/dskX.vhd" path
+					_new_zvol_dsk_name=$( echo ${_new_zvol_dsk_name} | ${SED_CMD} s:/${old}/:/${new}/:g )		# valid name for symlink
 																	# (after renaming parent vol)
-						cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name}
-						/sbin/zfs rename ${is_zvol} ${_new_zvol_dsk_name}
-						_ret=$?
-						if [ ${_ret} -ne 0 ]; then
-							${ECHO} "${LRED}Error: ${MAGENTA}/sbin/zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed${NORMAL}"
-							cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed
-						else
-							# re-link
-							${LN_CMD} -sf /dev/zvol/${_new_zvol_dsk_name_full} ${i}
+					if [ -n "${_new_zvol_dsk_name}" -a "${_new_zvol_dsk_name}" != "${is_zvol}" ]; then
+						_ret=$( echo "${is_zvol}" | ${GREP_CMD} "bcbsd-" )
+						if [ $? -eq 0 ]; then
+							# back compatible for CBSD <= 12.1.0
+							# rename from bcbsd- to new form
+							cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name}
+							${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} > /dev/null 2>&1
+							_ret=$?
+							if [ ${_ret} -ne 0 ]; then
+								${ECHO} "${LRED}Error: ${MAGENTA}${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} failed${NORMAL}"
+								cbsdlogger NOTICE ${CBSD_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed
+							fi
 						fi
+						# re-link
+						${LN_CMD} -sf /dev/zvol/${_new_zvol_dsk_name} ${i}
 					fi
 				fi
 			done
 
-			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs unmount -f ${_old_mpt}
-			/sbin/zfs unmount -f ${_old_mpt} > /dev/null 2>&1
-			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs rename ${DATA}/${old} ${DATA}/${new}
-			/sbin/zfs rename ${DATA}/${old} ${DATA}/${new}
-			cbsdlogger NOTICE ${CBSD_APP}: /sbin/zfs set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
-			/sbin/zfs set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
-			/sbin/zfs mount ${DATA}/${new}
+			cbsdlogger NOTICE ${CBSD_APP}: ${ZFS_CMD} unmount -f ${_old_mpt}
+			${ZFS_CMD} unmount -f ${_old_mpt} > /dev/null 2>&1
+			cbsdlogger NOTICE ${CBSD_APP}: ${ZFS_CMD} rename ${DATA}/${old} ${DATA}/${new}
+			${ZFS_CMD} rename ${DATA}/${old} ${DATA}/${new}
+			cbsdlogger NOTICE ${CBSD_APP}: ${ZFS_CMD} set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
+			${ZFS_CMD} set mountpoint=${workdir}/vm/${new} ${DATA}/${new}
+			${ZFS_CMD} mount ${DATA}/${new}
 		fi
 		if [ -h ${SRC} ]; then
 			${RM_CMD} ${SRC}
@@ -183,9 +188,9 @@ case ${zfsfeat} in
 #			if is_getzvol ${i}; then
 #				old_zvol="${is_zvol}"
 #				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
-#				/sbin/zfs get -Ho value name ${old_zvol} > /dev/null 2>&1
+#				${ZFS_CMD} get -Ho value name ${old_zvol} > /dev/null 2>&1
 #				_ret=$?
-#				[ ${_ret} -eq 0 ] && /sbin/zfs rename ${old_zvol} ${new_zvol}
+#				[ ${_ret} -eq 0 ] && ${ZFS_CMD} rename ${old_zvol} ${new_zvol}
 #				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
 #			fi
 #		done
@@ -203,18 +208,18 @@ esac
 #		_err=$?
 #		if [ ${_err} -eq 2 -o ${_err} -eq 1 ]; then
 #			OLDPOOL=${ZPOOL}
-#			DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+#			DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 #			NEWPOOL="${DATA}/${new}"
 #			if [ ${_err} -eq 1 ]; then
 #				# we need unmount this first
-#				/sbin/zfs unmount -f ${DST}
+#				${ZFS_CMD} unmount -f ${DST}
 #				sleep 5  #Hack - sometimes we got "cannot rename: dataset is busy"
-#				/sbin/zfs unmount -f ${DST} >/dev/null 2>&1
+#				${ZFS_CMD} unmount -f ${DST} >/dev/null 2>&1
 #			fi
 #			cbsdlogger NOTICE ${CBSD_APP}: rename zfs from ${OLDPOOL} to ${NEWPOOL}
-#			/sbin/zfs rename ${OLDPOOL} ${NEWPOOL}
+#			${ZFS_CMD} rename ${OLDPOOL} ${NEWPOOL}
 #			if [ $? -eq 0 ]; then
-#				/sbin/zfs mount ${NEWPOOL}
+#				${ZFS_CMD} mount ${NEWPOOL}
 #				[ -d ${SRC} ] && ${RMDIR_CMD} ${SRC}
 #			fi
 #		fi
@@ -224,7 +229,7 @@ esac
 #			if is_getzvol ${i}; then
 #				old_zvol="${is_zvol}"
 #				new_zvol=$( echo ${is_zvol} |${SED_CMD} s:${old}:${new}:g )
-#				/sbin/zfs rename ${old_zvol} ${new_zvol}
+#				${ZFS_CMD} rename ${old_zvol} ${new_zvol}
 #				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
 #			fi
 #		done

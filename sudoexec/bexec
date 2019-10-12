@@ -1,0 +1,65 @@
+#!/usr/local/bin/cbsd
+#v12.1.2
+MYARG="jname"
+MYOPTARG="cmd user"
+MYDESC="Execution for command inside cloud-based vm"
+ADDHELP="if jname='*' then execute command on all vms\n\
+    cmd - command to execute inside VM, e.g\n\
+    bexec jname=centos1 sudo yum update -y\n"
+CBSDMODULE="bhyve"
+
+. ${subr}
+
+. ${cbsdinit}
+
+[ -z "${jname}" ] && err 1 "Give me jname"
+
+shift  # todo: jname and cmd may have reverse order
+
+if [ -n "${user}" ]; then
+	shift
+else
+	user="root"
+fi
+
+[ -z "${cmd}" ] && cmd="${@}"
+[ -z "${cmd}" ] && err 1 "Empty command"
+
+emulator="bhyve"	# for jname_is_multiple
+jname_is_multiple	# import jail_list if jname is mask
+
+if [ -n "${jail_list}" ]; then
+	. ${distdir}/multiple.subr
+
+	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+	task_owner="bexec_multiple"
+
+	task_id=
+	task_id_cur=
+
+	# spawn command for all jail
+	for jname in ${jail_list}; do
+		. ${jrcconf}
+		[ ${myjid} -eq 0 ] && continue
+		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
+		task_id="${task_id} ${task_id_cur}"
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	sleep 1
+	multiple_processing_spawn -o ${task_owner} -n "bexec"
+	echo
+	exit 0
+fi
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+
+[ ${jid} -ne 0 ] || err 1 "Not running"
+
+readconf bexec.conf
+
+exec ${bexec_cmd} <<CBSD_EOF
+${cmd}
+CBSD_EOF
