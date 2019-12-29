@@ -6,22 +6,29 @@ MYOPTARG="alljails shownode display node header order"
 MYDESC="List XEN domain and status"
 ADDHELP="alljails=1 - (0 or 1): force to display foreign/remote resources\n\
   when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
+shownode=1 - show nodename for domains\n\
 node= only for current node\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
-     If RCTL unavailable: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port
-     If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
+display= list by comma for column. Default: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+     If ZFS features on: vm_zfs_guid\n\
+     If RCTL unavailable: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc
+     If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
          additional field: path\n\
+     Notes: vnc data is meta info from: xen_vnc_tcp_bind:vnc_port\n\
 order= asc (default) or desc\n"
 EXTHELP="wf_xls"
 
 . ${subr}
 . ${strings}
+. ${tools}
 . ${nodes}
 
 readconf xls.conf
 . ${cbsdinit}
 
+[ ! -d "${workdir}" ] && err 1 "${N1_COLOR}jls: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
+
+[ -n "${display}" ] && odisplay="${display}"	# store original display settings
 oalljails="${alljails}"		# store original settings, they have more weight vs auto
 oshownode="${shownode}"		# store original settings, they have more weight vs auto
 
@@ -30,26 +37,28 @@ is_cluster_mode
 cluster_mode=$?         # cluster_mode=0 when we have any node
 
 if [ ${cluster_mode} -eq 0 ]; then
-	alljails=1
-	shownode=1
+	if [ "${oshownode}" != "0" ]; then
+		alljails=1
+		shownode=1
+	fi
 fi
 
 # restore manual settings
 [ -n "${oalljails}" ] && alljails="${oalljails}"
 [ -n "${oshownode}" ] && alljails="${oshownode}"
 
-if [ -z "${display}" ]; then
+if [ -z "${display}" -a -z "${odisplay}" ]; then
 	case "${racct}" in
 		1)
-			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc_port"
+			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc"
 			;;
 		*)
-			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port"
+			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc"
 			;;
 	esac
 fi
 
-[ "${shownode}" = "1" ] && display="nodename,${display}"
+[ "${shownode}" = "1" -a -z "${odisplay}" ] && display="nodename,${display}"
 [ -z "${order}" ] && order="asc"
 
 #remove commas for loop action on header
@@ -58,7 +67,7 @@ mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
 # upper for header
 myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
 
-JLS=""
+JLS=
 
 conv_status()
 {
@@ -170,7 +179,7 @@ populate_output_data()
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
-		_val=""
+		_val=
 		eval _val=\$$_i
 		[ -z "${_val}" ] && _val="0"
 
@@ -184,12 +193,20 @@ populate_output_data()
 		case "${_i}" in
 			vm_ram)
 				# convert to MB
-				_val=$(( _val / 1024 / 1024 ))
+				if ! is_number "${_val}"; then
+					_val=$(( _val / 1024 / 1024 ))
+				else
+					_val="0"
+				fi
 				;;
 			vm_curmem)
 				# convert to MB
 				if [ "${_pid}" != "0" ]; then
-					_val=$(( memoryuse / 1024 / 1024 ))
+					if ! is_number "${memoryuse}"; then
+						_val=$(( memoryuse / 1024 / 1024 ))
+					else
+						_val=0
+					fi
 					[ -z "${_val}" ] && _val=0
 				else
 					_val="0"
@@ -197,25 +214,38 @@ populate_output_data()
 				;;
 			pcpu)
 				if [ "${_pid}" != "0" ]; then
-					_val="${pcpu}"
+					if ! is_number "${pcpu}"; then
+						_val="${pcpu}"
+					else
+						_val=0
+					fi
 					[ -z "${_val}" ] && _val=0
 				else
 					_val="0"
 				fi
 				;;
 			vnc_port)
-				if [ -r "${sqlfile_sysdir}/${jname}/vnc_port" ]; then
-					_tmpport=$( ${CAT_CMD} ${sqlfile_sysdir}/${jname}/vnc_port )
+				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
+					_val="${_tmpport}"
+				else
+					_val="0"
+				fi
+				;;
+			vnc)
+				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
 					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-						_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT xen_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
-						# we need for special route of tcpbind presentation for foreign bhyve. replace 0.0.0.0 by nodeip
+						# we need for special route of tcpbind presentation for foreign xen. replace 0.0.0.0 by nodeip
 						if [ "${sqlfile}" != "local" ]; then
 							_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+						else
+							_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT xen_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
 						fi
-						_val="${_tmpbind}:${_tmpport}"
 					else
-						_val="Unk"
+						_tmpbind="Unk"
 					fi
+					_val="${_tmpbind}:${_tmpport}"
 				else
 					_val="0"
 				fi
@@ -225,6 +255,14 @@ populate_output_data()
 					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
 				else
 					_val="Unk"
+				fi
+				[ "${_val}" = "(null)" ] && _val="DHCP"
+				;;
+			vm_zfs_guid)
+				if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
+				else
+					_val="0"
 				fi
 				[ "${_val}" = "(null)" ] && _val="DHCP"
 				;;
@@ -261,7 +299,7 @@ show_jaildata_from_sql()
 	fi
 
 	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"xen\" ORDER BY jname ASC | while read jname; do
-		_status=""
+		_status=
 
 		if [ "${sqlfile}" = "local" ]; then
 			. ${jrcconf}
@@ -301,11 +339,11 @@ show_local()
 	vm_os_type="-"
 	path="-"
 	status="-"
-	vnc_port="-"
+	vnc="-"
 
 	for J in $( ${LS_CMD} ${jailrcconfdir} ); do
 		[ "${J}" = "dir.id" ] && continue
-		jname=""
+		jname=
 		[ ! -r ${jailrcconfdir}/${J} ] && continue
 		. ${jailrcconfdir}/${J}
 		# for XEN vm only
@@ -354,12 +392,12 @@ show_jails()
 sqldelimer=" "
 
 my_err_file="${ftmpdir}/ls.$$"
-show_jails | /usr/bin/column -t
+show_jails | ${COLUMN_CMD} -t
 
 if [ -r ${my_err_file} ]; then
 	${ECHO} "${N1_COLOR}Error:${N0_COLOR}" 1>&2
 	${CAT_CMD} ${my_err_file} 1>&2
-	/bin/rm -f ${my_err_file}
+	${RM_CMD} -f ${my_err_file}
 fi
 
 exit 0
