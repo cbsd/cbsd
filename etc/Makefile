@@ -14,7 +14,7 @@ help all:
 
 git-clean:
 	@/bin/test ! -d ${.CURDIR}/.git || \
-		(rm -rf ${.CURDIR}/.git; /usr/bin/true)
+		(cd ${.CURDIR} && git ls-files | xargs rm -f; rm -rf ${.CURDIR}/.git; /usr/bin/true)
 
 git-check:
 	@/usr/bin/which -s git || \

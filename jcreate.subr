@@ -11,23 +11,26 @@ _CBSD_JCREATE_SUBR=1
 # $2 - jconf (for fromfile)
 postcreate_module_action()
 {
-	local jname jconf
+	local jname jconf _ret=0 _logfile
 
 	[ -n "${1}" ] && jname="${1}"
 	[ -n "${2}" ] && jconf="${2}"
 
 	[ -n "${orig_pkg_bootstrap}" ] && pkg_bootstrap="${orig_pkg_bootstrap}"
 
+	_logfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_logfile}" HUP INT ABRT BUS TERM EXIT
+
 	if [ -n "${user_pw_root_crypt}" ]; then
-		passwd jname=${jname} login="root" epw="${user_pw_root_crypt}"
+		passwd jname=${jname} login="root" epw="${user_pw_root_crypt}" > ${_logfile} 2>&1
 	elif [ -n "${user_pw_root}" ]; then
-		passwd jname=${jname} login="root" pw="${user_pw_root}"
+		passwd jname=${jname} login="root" pw="${user_pw_root}" > ${_logfile} 2>&1
 	fi
 
 	if [ -n "${sysrc_enable}" ]; then
 		for i in ${sysrc_enable}; do
 			# use CBSD sysrc from bsdconf.d
-			sysrc jname=${jname} ${i}_enable="YES"
+			sysrc jname=${jname} ${i}_enable="YES" > ${_logfile} 2>&1
 		done
 	fi
 
@@ -35,7 +38,7 @@ postcreate_module_action()
 		if [ -n "${jconf}" ]; then
 			${ECHO} "${N1_COLOR}Adding users: ${N2_COLOR}${user_add}${N0_COLOR}"
 			# use CBSD adduser from bsdconf.d
-			adduser jname=${jname} mode=add fromfile="${jconf}"
+			adduser jname=${jname} mode=add fromfile="${jconf}" > ${_logfile} 2>&1
 		fi
 	fi
 
@@ -45,20 +48,47 @@ postcreate_module_action()
 	#[ ${applytpl} -eq 1 ] && ${miscdir}/config_pkgrepo -t ${etcdir}/pkg.conf -v ${ver} -a ${arch} ${data}
 	# pkg area
 	if [ "${pkg_bootstrap}" = "1" ]; then
-		[ "${ver}" != "empty" ] && pkg mode=bootstrap jname=${jname} ||true
+		if [ "${ver}" != "empty" ]; then
+			pkg mode=bootstrap jname=${jname} cbsd_pkg_verbose=0 > ${_logfile} 2>&1
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				${CAT_CMD} ${_logfile}
+				${RM_CMD} -f ${_logfile}
+				return ${_ret}
+			fi
+		fi
+
 		if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
 			if [ ! -f "${pkglist}" ]; then
 				# use CBSD pkg from pkg.d
-				pkg mode=install jname=${jname} ${pkglist}
+				pkg mode=install jname=${jname} ${pkglist} cbsd_pkg_verbose=1 > ${_logfile} 2>&1
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					${CAT_CMD} ${_logfile}
+					${RM_CMD} -f ${_logfile}
+					return ${_ret}
+				else
+					${CAT_CMD} ${_logfile}
+				fi
 			else
 				# use CBSD pkg from pkg.d
-				pkg mode=install pkglist="${pkglist}" jname=${jname}
-				[ ${delpkglist} -eq 1 ] && /bin/rm -f ${pkglist}
+				pkg mode=install pkglist="${pkglist}" jname=${jname} cbsd_pkg_verbose=1 > ${_logfile} 2>&1
+				_ret=$?
+				[ ${delpkglist} -eq 1 ] && ${RM_CMD} -f ${pkglist}
+				if [ ${_ret} -ne 0 ]; then
+					${CAT_CMD} ${_logfile}
+					${RM_CMD} -f ${_logfile}
+					return ${_ret}
+				else
+					${CAT_CMD} ${_logfile}
+				fi
 			fi
 		fi
 	fi
-}
 
+	${RM_CMD} -f ${_logfile}
+	return ${_ret}
+}
 
 # users custom stop script
 # -s - is source dir (stop.d start.d)
@@ -82,10 +112,10 @@ external_exec_script()
 	[ -z "${_dir}" ] && return 1
 
 	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
-	_fexist=$( /usr/bin/find ${jailsysdir}/${jname}/${_dir}/ -depth 1 -maxdepth 1 -type f -and -not -name placeholder -exec /usr/bin/basename {} \; )
+	_fexist=$( ${FIND_CMD} ${jailsysdir}/${jname}/${_dir}/ -depth 1 -maxdepth 1 -type f -and -not -name placeholder -exec ${BASENAME_CMD} {} \; )
 	[ -z "${_fexist}"  ] && return 0
-	[ -d "${data}/tmp/${_dir}" ] && /bin/rm -rf "${data}/tmp/${_dir}"
-	/bin/cp -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
+	[ -d "${data}/tmp/${_dir}" ] && ${RM_CMD} -rf "${data}/tmp/${_dir}"
+	${CP_CMD} -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
 
 	. ${jrcconf}
 
@@ -96,7 +126,7 @@ external_exec_script()
 		jstart ${jname}
 	fi
 
-	/usr/bin/find "${data}/tmp/${_dir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+	${FIND_CMD} "${data}/tmp/${_dir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
 		${ECHO} "${N1_COLOR}Execute script: ${N2_COLOR}${_file}${N0_COLOR}"
 		jexec jname="${jname}" /tmp/${_dir}/${_file}
 	done
@@ -106,7 +136,7 @@ external_exec_script()
 		jstop ${jname}
 	fi
 
-	/bin/rm -rf "${data}/tmp/${_dir}"
+	${RM_CMD} -rf "${data}/tmp/${_dir}"
 }
 
 # users custom stop for executing in master host
@@ -129,7 +159,7 @@ external_exec_master_script()
 	# does not conflict with the same CBSD commands that the user does not expect
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 
-	/usr/bin/find "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+	${FIND_CMD} "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
 		${ECHO} "${N1_COLOR}Execute master script: ${N2_COLOR}${_file}${N0_COLOR}"
 		${ECHO} "${N1_COLOR} :: ${_srcdir}/${_file}${N0_COLOR}"
 		${_srcdir}/${_file}
@@ -138,7 +168,6 @@ external_exec_master_script()
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
 }
-
 
 # users custom local script for external operate with data
 # $1 - is source dir name ( clone.d rename.d .. )
@@ -165,7 +194,7 @@ external_exec_local_script()
 	# does not conflict with the same CBSD commands that the user does not expect
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 
-	/usr/bin/find "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+	${FIND_CMD} "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
 		${ECHO} "${N1_COLOR}Execute local script: ${N2_COLOR}${_file}${N0_COLOR}"
 		${ECHO} "${N1_COLOR} :: ${_srcdir}/${_file}${N0_COLOR}"
 		${_srcdir}/${_file}
@@ -179,10 +208,6 @@ external_exec_local_script()
 	export PATH="${CBSDPATH}"
 	return ${_ret}
 }
-
-
-
-
 
 exec_master_prestop()
 {
@@ -284,7 +309,7 @@ exec_cbsdjail_first_boot()
 {
 	if [ -f ${path}/etc/rc.cbsdjail_first_boot ]; then
 		jexec jname=${jname} /bin/sh /etc/rc.cbsdjail_first_boot
-		/bin/rm -f ${path}/etc/rc.cbsdjail_first_boot
+		${RM_CMD} -f ${path}/etc/rc.cbsdjail_first_boot
 	fi
 }
 

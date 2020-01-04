@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v11.1.0
 MYARG="mode"
-MYOPTARG="logfile notify autoflush nodetask owner after client_id jname jconf exclusive"
+MYOPTARG="logfile notify autoflush nodetask owner after client_id jname jconf exclusive cast_args"
 MYDESC="Task queue management"
 CBSDMODULE="taskd"
 ADDHELP="mode=new <cmd>, mode=cancel <jobid>, mode=cancelall, mode=flushall\n\
@@ -35,7 +35,7 @@ try_remote()
 		err 1 "${N1_COLOR}Node is offline: ${N2_COLOR}${node}${N0_COLOR}"
 	fi
 
-	rexe node=${node} cbsd task autoflush=2 mode=new owner=${nodename} $@
+	rexe node=${node} /usr/local/bin/cbsd task autoflush=2 mode=new owner=${nodename} $@
 	echo "NODE: ${node}"
 	echo "TASK STR: $@"
 	owner="${nodename}"
@@ -53,42 +53,49 @@ try_remote()
 [ -n "${owner}" ] && shift
 [ -n "${after}" ] && shift
 [ -n "${client_id}" ] && shift
+[ -n "${cast_args}" ] && shift
+
+# cast param=" ss val" into param=' ss val' by default
+[ -z "${cast_args}" ] && cast_args=1
 
 [ -n "${jconf}" -a -r "${jconf}" ] && . ${jconf}
 
 shift ## mode=xxx
 
-
-# Pass '"' as ' in cmd
-INIT_IFS="${IFS}"
-IFS="~"
-cmd="$@"
-IFS="${INIT_IFS}"
-cmd=$( while [ -n "${1}" ]; do
+if [ ${cast_args} -eq 1 ]; then
+	# Pass '"' as ' in cmd
+	INIT_IFS="${IFS}"
 	IFS="~"
-	strpos --str="${1}" --search="="
-	_pos=$?
-	if [ ${_pos} -eq 0 ]; then
-		# not params=value form
-		printf "${1} "
+	cmd="$@"
+	IFS="${INIT_IFS}"
+	cmd=$( while [ -n "${1}" ]; do
+		IFS="~"
+		strpos --str="${1}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			# not params=value form
+			printf "${1} "
+			shift
+			continue
+		fi
+
+		_arg_len=$( strlen ${1} )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+
+		printf "${ARG}='${VAL}' "
 		shift
-		continue
-	fi
-
-	_arg_len=$( strlen ${1} )
-	_pref=$(( _arg_len - _pos ))
-	ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-	VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
-
-	printf "${ARG}='${VAL}' "
-	shift
-done )
+	done )
+else
+	cmd="$@"
+fi
 
 ## place for default of all variables for remote node?
 [ -z "${notify}" ] && notify=1
 [ -z "${after}" ] && after=0
 [ -z "${client_id}" ] && client_id=0
-[ -z "${owner}" ] && owner=$( /usr/bin/whoami )
+[ -z "${owner}" ] && owner=$( ${WHOAMI_CMD} )
 [ -n "${nodetask}" ] && try_remote "${cmd}"
 
 case "${mode}" in
@@ -109,7 +116,7 @@ case "${mode}" in
 
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}task mode=new error: ${_err}${N0_COLOR}"
 		tid=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"${cmd}\" AND status=0 ORDER BY id DESC LIMIT 1" )
-		/usr/bin/touch ${workdir}/var/db/cbsdtaskd.sqlite
+		${TOUCH_CMD} ${workdir}/var/db/cbsdtaskd.sqlite
 		[ -z "${tid}" ] && err 1 "${N1_COLOR}task mode=new tid error: ${_err}${N0_COLOR}"
 		echo "${tid}"
 		;;
@@ -120,7 +127,7 @@ case "${mode}" in
 		;;
 	"flushall")
 		for i in $( cbsdsqlro cbsdtaskd SELECT logfile FROM taskd WHERE status='2' ); do
-			[ -f "${i}" ] && /bin/rm -f "${i}"
+			[ -f "${i}" ] && ${RM_CMD} -f "${i}"
 		done
 		cbsdsqlrw cbsdtaskd DELETE FROM taskd WHERE status='2'
 		x=$( cbsdsqlro cbsdtaskd "SELECT COUNT(id) FROM taskd" )

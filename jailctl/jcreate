@@ -59,7 +59,7 @@ ${data}/var /var ${NULLFS} rw 0 0
 EOF
 	fi
 
-	/usr/bin/touch ${mount_fstab}.local
+	${TOUCH_CMD} ${mount_fstab}.local
 }
 
 install_and_apply_helpers()
@@ -72,12 +72,12 @@ install_and_apply_helpers()
 
 	local helperdir="${jailsysdir}/${jname}/helpers"
 
-	[ ! -d "${helperdir}" ] && /bin/mkdir -p ${helperdir}
+	[ ! -d "${helperdir}" ] && ${MKDIR_CMD} -p ${helperdir}
 
 	local formfile="${helperdir}/${module}.sqlite"
 
-	echo ":: /bin/cp -a ${_srcfile} ${formfile}"
-	/bin/cp -a ${_srcfile} ${formfile}
+	echo ":: ${CP_CMD} -a ${_srcfile} ${formfile}"
+	${CP_CMD} -a ${_srcfile} ${formfile}
 
 	echo ":: forms module=${module} mode=apply jname=${jname} inter=0"
 	forms module=${module} mode=apply jname=${jname} inter=0
@@ -101,6 +101,9 @@ readconf zfs.conf
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
+# set default nice from rctl_nice
+[ -n "${rctl_nice}" ] && nice="${rctl_nice}"
+
 . ${distdir}/universe.subr
 . ${distdir}/freebsd_world.subr
 
@@ -119,9 +122,9 @@ ${CAT_CMD} ${temprcconf} >${jconf}
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
 if [ ${removejconf} = "1" ]; then
-	trap "/bin/rm -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "${RM_CMD} -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM  EXIT
 else
-	trap "/bin/rm -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
+	trap "${RM_CMD} -f ${temprcconf}" HUP INT ABRT BUS TERM  EXIT
 fi
 
 . ${temprcconf}
@@ -210,19 +213,38 @@ get_base -v ${ver} ${_basename_args}
 ${ECHO} "${N1_COLOR}Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
 
 [ -d "${data}" ] && removedata ${data}
-[ ! -d ${path} -a "${baserw}" -eq 0 ] && /bin/mkdir -m 0755 -p ${path}
+[ ! -d ${path} -a "${baserw}" -eq 0 ] && ${MKDIR_CMD} -m 0755 -p ${path}
+[ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}
 
+if [ "${mnt_start}" != "0" ]; then
+	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
+		err 1 "mnt_start script not exist or not executable: ${mnt_start}"
+	fi
+	${ECHO} "${N1_COLOR}Execute mnt_start script: ${N2_COLOR}${mnt_start}${N0_COLOR}..."
+	# external mount, reset zfsfeat
+	zfsfeat=0
+	create_fs ${data}
+	[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+	${mnt_start} -d ${data} -j ${jname} -s ${jailsysdir}/${jname}
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		err 1 "${W1_COLOR}error: ${N1_COLOR}mnt_start script failed: ${N2_COLOR}${mnt_start} ${jname}${N0_COLOR}"
+	fi
+else
+	create_fs ${data}
+	[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+fi
+
+[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
 [ -z "${jailsysskeldir}" ] && jailsysskeldir="${sharedir}/${platform}-${emulator}-${jail_profile}-system-skel"
 
 if [ -d "${jailsysskeldir}" ]; then
 	# we have custom skeldir. copy
 	${ECHO} "${N1_COLOR}Applying custom skel system dir template from: ${N2_COLOR}${jailsysskeldir}${N1_COLOR}"
-	/bin/cp -a ${jailsysskeldir} ${jailsysdir}/${jname}
+	${RSYNC_CMD} -a ${jailsysskeldir} ${jailsysdir}/${jname}/
 	# local fstab ?
 	[ -f "${jailsysskeldir}/fstab.local" ] && fstablocal="${jailsysskeldir}/fstab.local"
 fi
-
-[ ! -d ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
 
 system_dir="clone-local.d \
 clone.d \
@@ -240,14 +262,14 @@ stop.d"
 for i in ${system_dir}; do
 	if [ -n "${systemskeldir}" ]; then
 		if [ -d "${systemskeldir}/${i}" ]; then
-			/bin/cp -a ${systemskeldir}/${i} ${jailsysdir}/${jname}/${i} > /dev/null 2>&1
+			${CP_CMD} -a ${systemskeldir}/${i} ${jailsysdir}/${jname}/${i} > /dev/null 2>&1
 		else
-			[ ! -d "${jailsysdir}/${jname}/${i}"  ] && /bin/mkdir -m 0775 -p ${jailsysdir}/${jname}/${i}
+			[ ! -d "${jailsysdir}/${jname}/${i}"  ] && ${MKDIR_CMD} -m 0775 -p ${jailsysdir}/${jname}/${i}
 		fi
 	else
-		[ ! -d "${jailsysdir}/${jname}/${i}"  ] && /bin/mkdir -m 0775 -p ${jailsysdir}/${jname}/${i}
+		[ ! -d "${jailsysdir}/${jname}/${i}"  ] && ${MKDIR_CMD} -m 0775 -p ${jailsysdir}/${jname}/${i}
 	fi
-	[ -d ${jailsysdir}/${jname}/${i} ] && /usr/sbin/chown ${cbsduser}:${cbsduser} ${jailsysdir}/${jname}/${i}
+	[ -d ${jailsysdir}/${jname}/${i} ] && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${jailsysdir}/${jname}/${i}
 done
 
 ## MD backend place
@@ -256,22 +278,17 @@ if [ "${mdsize}" != "0" ]; then
 	imgbytes=${convval}
 	blockcount=$(( imgbytes  / 1048576 ))
 	mdimage="${jailsysdir}/${jname}/image.dat"
-	/usr/bin/touch "${mdimage}"
-	/bin/dd if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "jcreate error: couldn't create the image file. ${mdimage}"
+	${TOUCH_CMD} "${mdimage}"
+	${DD_CMD} if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "jcreate error: couldn't create the image file. ${mdimage}"
 	# Attach the .img file as a memory disk.
-	mdimagedevice=$( /sbin/mdconfig -a -t vnode -f "${mdimage}" )
+	mdimagedevice=$( ${MDCONFIG_CMD} -a -t vnode -f "${mdimage}" )
 	[ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
-	/sbin/newfs -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || /sbin/mdconfig -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
-	/sbin/mdconfig -d -u ${mdimagedevice}
+	${NEWFS_CMD} -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || ${MDCONFIG_CMD} -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
+	${MDCONFIG_CMD} -d -u ${mdimagedevice}
 	# mount here
 	mountmd jroot=${data} mdfile=${mdimage}
 fi
 ## MD backend
-
-create_fs ${data}
-
-[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
-[ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
 
 if [ -z "${zfs_snapsrc}" ]; then
 	populate_freebsd_world
@@ -302,9 +319,9 @@ ${SYSRC_CMD} -qf ${temprcconf} mount_fstab="${mount_fstab}" > /dev/null
 ${SYSRC_CMD} -qf ${temprcconf} rcconf="${rcconf}" > /dev/null
 ${SYSRC_CMD} -qf ${temprcconf} data="${data}" > /dev/null
 
-/bin/cp ${temprcconf} ${rcconf}
+${CP_CMD} ${temprcconf} ${rcconf}
 
-[ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
+[ -n "${fstablocal}" -a -f "${fstablocal}" ] && ${CP_CMD} ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new progress=3
@@ -318,6 +335,16 @@ if [ ${res} -eq 0 ]; then
 	# pkg bootstrap && user accounting
 	if [ "${ver}" != "empty" ]; then
 		postcreate_module_action ${jname} ${jconf}
+		ret=$?
+		# if ret != 0, remove jail: something wrong
+		if [ ${ret} -ne 0 ]; then
+			${ECHO}
+			${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}postcreate_module_action${N0_COLOR}"
+			# cleanup
+			[ -f "${mount_fstab}" ] && ${RM_CMD} -f ${mount_fstab}
+			jremove jname=${jname}
+			exit ${ret}
+		fi
 	fi
 
 	echo
@@ -329,16 +356,15 @@ if [ ${res} -eq 0 ]; then
 	echo
 	${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
 
-	/bin/rm -f ${rcconf}
-
+	${RM_CMD} -f ${rcconf}
 	[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
 else
 	${ECHO}
 	${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}cbsd jregister${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Please review bad config file: ${N2_COLOR}/tmp/rc.conf_${jname}${N0_COLOR}"
-	/bin/mv ${rcconf} /tmp
+	${MV_CMD} ${rcconf} /tmp
 	#cleanup
-	[ -f "${mount_fstab}" ] && /bin/rm -f ${mount_fstab}
+	[ -f "${mount_fstab}" ] && ${RM_CMD} -f ${mount_fstab}
 	removedata ${data}
 	exit 1
 fi
@@ -362,7 +388,6 @@ if [ -n "${with_img_helpers}" ]; then
 fi
 
 [ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
-
 
 # rctl
 . ${distsharedir}/rctl.conf

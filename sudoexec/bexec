@@ -1,0 +1,101 @@
+#!/usr/local/bin/cbsd
+#v12.1.2
+MYARG="jname"
+MYOPTARG="cmd user script"
+MYDESC="Execution for command inside cloud-based vm"
+ADDHELP="if jname='*' then execute command on all vms\n\
+  cmd - command to execute inside VM, e.g\n\
+    bexec jname=centos1 sudo yum update -y\n\n\
+  script - path to script instead of command\n"
+CBSDMODULE="bhyve"
+
+. ${subr}
+script=
+. ${cbsdinit}
+
+[ -z "${jname}" ] && err 1 "Give me jname"
+
+if [ -z "${script}" ]; then
+	# Pass '"' as ' in cmd
+	#INIT_IFS="${IFS}"
+	#IFS="~"
+	cmd="$@"
+#	IFS="${INIT_IFS}"
+#	cmd=$( while [ -n "${1}" ]; do
+#		#IFS="~"
+#		strpos --str="${1}" --search="="
+#		_pos=$?
+#		if [ ${_pos} -eq 0 ]; then
+#			# not params=value form
+#			printf "${1} "
+#			shift
+#			continue
+#		fi
+#
+#		#_arg_len=$( strlen ${1} )
+#		#_pref=$(( _arg_len - _pos ))
+#		#ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+#		#VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+#
+#		printf "${1} "
+#		shift
+#	done )
+else
+	unset cmd
+fi
+
+#echo "OK: ${cmd}"
+#exit 0
+
+emulator="bhyve"	# for jname_is_multiple
+jname_is_multiple	# import jail_list if jname is mask
+
+if [ -n "${jail_list}" ]; then
+	. ${distdir}/multiple.subr
+
+	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+	task_owner="bexec_multiple"
+
+	task_id=
+	task_id_cur=
+
+	# spawn command for all jail
+	for jname in ${jail_list}; do
+		. ${jrcconf}
+		[ ${myjid} -eq 0 ] && continue
+		if [ -n "${script}" ]; then
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
+		else
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
+		fi
+		task_id="${task_id} ${task_id_cur}"
+	done
+
+	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	sleep 1
+	multiple_processing_spawn -o ${task_owner} -n "bexec"
+	echo
+	exit 0
+fi
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+
+[ ${jid} -ne 0 ] || err 1 "Not running"
+
+readconf bexec.conf
+
+if [ -n "${cmd}" ]; then
+	exec ${bexec_cmd} <<CBSD_EOF
+${cmd}
+CBSD_EOF
+elif [ -n "${script}" ]; then
+	[ ! -r "${script}" ] && err 1 "${N1_COLOR}No such script: ${N2_COLOR}${script}${N0_COLOR}"
+	scr_name=$( ${BASENAME_CMD} ${script} )
+	orig_path=$( ${REALPATH_CMD} ${script} )
+	[ ! -x "${orig_path}" ] && err 1 "${N1_COLOR}not executable: ${N2_COLOR}${orig_path}${N0_COLOR}"
+	echo "bscp ${orig_path} ${jname}:${scr_name}"
+	bscp ${orig_path} ${jname}:${scr_name}
+	bexec jname=${jname} ./${scr_name}
+fi

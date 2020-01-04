@@ -405,6 +405,29 @@ getpwd2(void)
 	return NULL;
 }
 
+#ifdef CBSD
+/*
+ * Store CBSD original current directory.
+ */
+int
+cbsd_pwd_init(void)
+{
+	char *pwd;
+	int i;
+
+	for (i = MAXPWD;; i *= 2) {
+		pwd = stalloc(i);
+		if (getcwd(pwd, i) != NULL)
+			setvar("CBSD_PWD", pwd, VEXPORT);
+		stunalloc(pwd);
+		if (errno != ERANGE)
+			break;
+	}
+
+	return 0;
+}
+#endif
+
 /*
  * Initialize PWD in a new shell.
  * If the shell is interactive, we need to warn if this fails.

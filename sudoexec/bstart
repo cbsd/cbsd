@@ -3,7 +3,7 @@
 MYARG=""
 MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
 MYDESC="Start bhyve domain"
-ADDHELP="checkpoint   - start from specified checkpoint name\n\
+ADDHELP="  checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
   lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
   lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for auto port, by default.\n\
@@ -421,7 +421,7 @@ start_bhyve()
 		unset vnc_args
 	else
 		case "${bhyve_vnc_tcp_bind}" in
-			127.0.0.1|0.0.0.0)
+			127.0.0.1|0.0.0.0|::|\[::\]|::1|\[::1\])
 				;;
 			*)
 				getnics-by-ip ip=${bhyve_vnc_tcp_bind} mode=strict
@@ -557,6 +557,14 @@ bhyve_cmd='${bhyve_cmd}'
 
 EOF
 
+	# export all tap bridges
+	for i in ${mytap}; do
+		T=
+		eval T="\$mytap_${i}_bridge"
+		[ -z "${T}" ] && break
+		${SYSRC_CMD} -qf ${jailsysdir}/${jname}/bhyve.conf mytap_${i}_members="${T}" >/dev/null
+	done
+
 	# create a configuration only
 	if [ -n "${cfg_only}" ]; then
 		/bin/mv ${jailsysdir}/${jname}/bhyve.conf ${cfg_only}
@@ -601,7 +609,7 @@ EOF
 			fi
 	fi
 
-	bstart_logfile="${tmpdir}/cbsd-bstart-${jname}.log"
+	bstart_logfile="${jailsysdir}/${jname}/bstart.log"
 	logfile_args="-l ${bstart_logfile}"
 
 	case "${debug_engine}" in
@@ -616,7 +624,9 @@ EOF
 			;;
 		*)
 			[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
-			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args}"
+			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new-session -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args}"
+			# ? when "daemon -f": got: Error return from kevent change + no network  ( or > /dev/null 2>&1 )
+			#env cbsd_workdir="${workdir}" ${DAEMON_CMD} /bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args} > ${bstart_logfile} 2>&1
 			;;
 	esac
 
@@ -865,10 +875,10 @@ bcleanup jname="${jname}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
 
-if [ ${vm_cpus} -gt ${ncpu} -a ${vm_cpus} -lt 16 ]; then
+if [ ${vm_cpus} -gt ${ncpu} -a ${vm_cpus} -lt ${vm_cpus_max} ]; then
 	${ECHO} "${N1_COLOR}Warning! Current node cpu: ${N2_COLOR}${ncpu}${N1_COLOR}, guest cpu: ${N2_COLOR}${vm_cpus}. ${N1_COLOR}Overcommitting vCPUs can hurt perfomance.${N0_COLOR}"
-elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt 16 ]; then
-	err 1 "${N1_COLOR}Valid number of guest CPUs within 1 - 16 range. Current vm_cpus: ${N2_COLOR}${vm_cpus}${N0_COLOR}"
+elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt ${vm_cpus_max} ]; then
+	err 1 "${N1_COLOR}Valid number of guest CPUs within 1 - ${vm_cpus_max} range. Current vm_cpus: ${N2_COLOR}${vm_cpus}${N0_COLOR}"
 fi
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)

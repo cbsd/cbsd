@@ -30,3 +30,6 @@
  */
 
 void	 pwd_init(int);
+#ifdef CBSD
+int	cbsd_pwd_init(void);
+#endif

@@ -4,7 +4,7 @@
 globalconf="${distdir}/cbsd.conf"
 CBSDMODULE="helpers"
 MYARG="mode"
-MYOPTARG="jname pkglist name repodir pkgconf chroot nomount"
+MYOPTARG="jname pkglist name repodir pkgconf chroot nomount cbsd_pkg_verbose cbsd_pkg_retry cbsd_pkg_interrupt_on_error cbsd_pkg_bootstrap_interrupt_on_error"
 MYDESC="cbsd pkg wrapper"
 ADDHELP="jname= work in with jail, can be mask, e.g: '*', 'jail*'\n\
 pkglist= use package list from file\n\
@@ -12,12 +12,21 @@ name= name of pkg\n\
 repodir= repository configuration directory\n\
 pkgconf= specify pkg.conf to use for pkg\n\
 nomount=1 do not mount/unmount jail fs\n\
-mode=add,bootstrap,install,info,query,remove,update,upgrade,clean\n"
+mode=add,bootstrap,install,info,query,remove,update,upgrade,clean\n\
+cbsd_pkg_retry - overwrite number of retry when pkg failed (def: 2)\n\
+cbsd_pkg_interrupt_on_error - regulate behavior/errcode upon pkg failed (def: 1)\n\
+cbsd_pkg_bootstrap_interrupt_on_error - regulate behavior upon pkg bootstrap failed (def: 0)\n"
 EXTHELP="modules/pkg.d"
 
 . ${subr}
 
 . ${cbsdinit}
+
+# store values from args to overwrite config
+[ -n "${cbsd_pkg_retry}" ] && ocbsd_pkg_retry="${cbsd_pkg_retry}"
+[ -n "${cbsd_pkg_interrupt_on_error}" ] && ocbsd_pkg_interrupt_on_error="${cbsd_pkg_interrupt_on_error}"
+[ -n "${cbsd_pkg_bootstrap_interrupt_on_error}" ] && ocbsd_pkg_bootstrap_interrupt_on_error="${cbsd_pkg_bootstrap_interrupt_on_error}"
+[ -n "${cbsd_pkg_verbose}" ] && ocbsd_pkg_verbose="${cbsd_pkg_verbose=0}"
 
 . ${system}
 
@@ -28,6 +37,22 @@ noname=0
 set -e
 	. ${_MYDIR}/pkg.subr
 set +e
+
+# read CBSD pkg defaults
+readconf pkg.conf
+
+# init defaults when pkg.conf is absent
+# see: /usr/local/cbsd/modules/pkg.d/etc-sample/pkg.conf for detauls
+[ -z "${cbsd_pkg_retry}" ] && cbsd_pkg_retry=2
+[ -z "${cbsd_pkg_interrupt_on_error}" ] && cbsd_pkg_interrupt_on_error=1
+[ -z "${cbsd_pkg_bootstrap_interrupt_on_error}" ] && cbsd_pkg_bootstrap_interrupt_on_error=0
+[ -z "${cbsd_pkg_verbose}" ] && cbsd_pkg_verbose=0
+
+# restore args values if they set
+[ -n "${ocbsd_pkg_retry}" ] && cbsd_pkg_retry="${ocbsd_pkg_retry}"
+[ -n "${ocbsd_pkg_interrupt_on_error}" ] && cbsd_pkg_interrupt_on_error="${ocbsd_pkg_interrupt_on_error}"
+[ -n "${ocbsd_pkg_bootstrap_interrupt_on_error}" ] && cbsd_pkg_bootstrap_interrupt_on_error="${ocbsd_pkg_bootstrap_interrupt_on_error}"
+[ -n "${ocbsd_pkg_verbose}" ] && cbsd_pkg_verbose="${ocbsd_pkg_verbose=0}"
 
 if [ -n "${nomount}" ]; then
 	shift
@@ -92,6 +117,15 @@ if [ -n "${jail_list}" ]; then
 		prefix=
 		prefix6=$( substr --pos=0 --len=6 --str="${i}" )
 		prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+		prefix15=$( substr --pos=0 --len=15 --str="${i}" )
+		prefix17=$( substr --pos=0 --len=17 --str="${i}" )
+		prefix28=$( substr --pos=0 --len=28 --str="${i}" )
+		prefix38=$( substr --pos=0 --len=38 --str="${i}" )
+
+		[ "${prefix15}" = "cbsd_pkg_retry=" ] && continue
+		[ "${prefix17}" = "cbsd_pkg_verbose=" ] && continue
+		[ "${prefix28}" = "cbsd_pkg_interrupt_on_error=" ] && continue
+		[ "${prefix38}" = "cbsd_pkg_bootstrap_interrupt_on_error=" ] && continue
 		[ "${prefix6}" = "jname=" ] && continue
 		[ "${prefix5}" = "mode=" ] && continue
 		if [ -n "${_args}" ]; then
@@ -178,7 +212,7 @@ if [ -n "${jname}" ]; then
 	PKG_PRE="${CHROOT_EXEC}"
 	shift
 else
-	path=""
+	path=
 fi
 
 # trim special args
@@ -187,6 +221,14 @@ for i in $*; do
 	prefix=
 	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
 	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+	prefix15=$( substr --pos=0 --len=15 --str="${i}" )
+	prefix17=$( substr --pos=0 --len=17 --str="${i}" )
+	prefix28=$( substr --pos=0 --len=28 --str="${i}" )
+	prefix38=$( substr --pos=0 --len=38 --str="${i}" )
+	[ "${prefix15}" = "cbsd_pkg_retry=" ] && continue
+	[ "${prefix17}" = "cbsd_pkg_verbose=" ] && continue
+	[ "${prefix28}" = "cbsd_pkg_interrupt_on_error=" ] && continue
+	[ "${prefix38}" = "cbsd_pkg_bootstrap_interrupt_on_error=" ] && continue
 	[ "${prefix6}" = "jname=" ] && continue
 	[ "${prefix5}" = "mode=" ] && continue
 	if [ -n "${_args}" ]; then
@@ -212,42 +254,59 @@ init_path
 
 res=0
 
+logfile=$( ${MKTEMP_CMD} )
+trap "${RM_CMD} -f ${logfile}" HUP INT ABRT BUS TERM EXIT
+
 case "${mode}" in
 	bootstrap)
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}bootstrap for jail only${N0_COLOR}"
-		pkg_bootstrap
+		pkg_bootstrap > ${logfile} 2>&1
 		res=$?
 		;;
 	clean)
-		pkg_clean "${pkgtarget}"
+		pkg_clean "${pkgtarget}" > ${logfile} 2>&1
 		res=$?
 		;;
 	install|add)
-		pkg_install "${pkgtarget}"
+		pkg_install "${pkgtarget}" > ${logfile} 2>&1
 		res=$?
 		;;
-	"remove")
-		pkg_remove "${pkgtarget}"
+	remove)
+		pkg_remove "${pkgtarget}" > ${logfile} 2>&1
 		res=$?
 		;;
-	"info")
+	info)
 		pkg_info "${pkgtarget}"
 		res=$?
 		;;
-	"query")
+	query)
 		pkg_query "${pkgtarget}"
 		res=$?
 		;;
-	"update")
-		pkg_update "${pkgtarget}"
+	update)
+		pkg_update "${pkgtarget}" > ${logfile} 2>&1
 		res=$?
 		;;
-	"upgrade")
-		pkg_upgrade "${pkgtarget}"
+	upgrade)
+		pkg_upgrade "${pkgtarget}" > ${logfile} 2>&1
 		res=$?
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode${N0_COLOR}"
 esac
+
+if [ ${cbsd_pkg_verbose} -eq 1 ]; then
+	if [ -r ${logfile} ]; then
+		logfile_bsize=$( ${STAT_CMD} -f "%z" ${logfile} 2>/dev/null )
+		[ ${logfile_bsize} -gt 0 ] && ${CAT_CMD} ${logfile}
+	fi
+else
+	if [ ${res} -ne 0 ]; then
+		if [ -r ${logfile} ]; then
+			logfile_bsize=$( ${STAT_CMD} -f "%z" ${logfile} 2>/dev/null )
+			[ ${logfile_bsize} -gt 0 ] && ${CAT_CMD} ${logfile}
+		fi
+	fi
+fi
 
 exit ${res}

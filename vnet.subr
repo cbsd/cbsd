@@ -9,9 +9,9 @@ MAC_PREFIX="02:00:c0"
 
 init_vnet()
 {
-	if ! /sbin/kldstat -qm if_bridge; then
+	if ! ${KLDSTAT_CMD} -qm if_bridge; then
 		${ECHO} "${N1_COLOR}Loading if_bridge.ko...${N0_COLOR}"
-		/sbin/kldload if_bridge
+		${KLDLOAD_CMD} if_bridge
 	fi
 
 	gw_enable
@@ -25,7 +25,7 @@ init_vnet()
 # return 1 when error
 find_first_freenic()
 {
-	local _i _epair _A 
+	local _i _epair _A
 	local _num=1 # begin from 1, due to 0 often used for system usage ( e.g: virbr0 on Xen )
 
 	[ -z $1 ] && return 1
@@ -145,7 +145,7 @@ get_my_device()
 	_dev=$1
 	_desc=$2
 
-	for _i in $( show_all_nic_by_name ${_dev} ); do
+	for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
 		_uplink=$( get_device_uplink ${_i} ${_desc} )
 		[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
 	done
@@ -326,23 +326,32 @@ get_vm_uplink_interface()
 			return 0
 			;;
 		*)
-			case ${ip4_addr} in
-				[Dd][Hh][Cc][Pp])
-					_get_by_route=0
-					;;
-				*)
-					iptype ${ip4_addr}
-					case $? in
-						1)
-							_get_by_route=1
-							;;
-						*)
-							_get_by_route=0
-							;;
-					esac
-					;;
-			esac
-
+			if [ "${tmp_nic_parent}" = "0" -o "${tmp_nic_parent}" = "auto" ]; then
+				case ${ip4_addr} in
+					[Dd][Hh][Cc][Pp])
+						_get_by_route=0
+						;;
+					*)
+						iptype ${ip4_addr}
+						case $? in
+							1)
+								cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: has valid IP address: ${ip4_addr}, parent auto: get_by_route=1
+								_get_by_route=1
+								;;
+							2)
+								# IPv6 here: WIP
+								_get_by_route=0
+								;;
+							*)
+								_get_by_route=0
+								;;
+						esac
+						;;
+				esac
+			else
+				# no auto
+				_get_by_route=0
+			fi
 			case ${_get_by_route} in
 				0)
 					# when ip=0 and interface=auto we must use default interface for upstream
@@ -361,13 +370,17 @@ get_vm_uplink_interface()
 					cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${ip4_addr}, determine uplink method: by uplink, interface: ${interface}
 					;;
 				1)
-					interface=$( /sbin/route -n -4 get ${IWM} 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+					interface=$( ${ROUTE_CMD} -n -4 get ${IWM} 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
 					cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${IWM}, determine uplink method: by route, interface: ${interface}
 					case "${interface}" in
 						lo*)
 							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${IWM}, iface: ${interface} is loopback. force to 0.0.0.0 route
-							interface=$( /sbin/route -n -4 get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+							interface=$( ${ROUTE_CMD} -n -4 get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
 							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: 0.0.0.0, determine uplink method: by route, interface: ${interface}
+							;;
+						*)
+							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: interface by route detected: ${interface}
+							;;
 					esac
 					;;
 			esac

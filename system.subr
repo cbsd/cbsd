@@ -14,12 +14,12 @@ is_mounted()
 
 	# test for destrination is directory ?
 	if [ -d "${1}" ]; then
-		_tst=$( /bin/df -l ${1} | /usr/bin/tail +2 | ${AWK_CMD} '{ print $6 }' )
+		_tst=$( ${DF_CMD} -l ${1} | ${TAIL_CMD} +2 | ${AWK_CMD} '{ print $6 }' )
 		[ "${_tst}" = "${1}" ] && return 0
 	else
 		# is ZFS?
 		if [ "${zfsfeat}" = "1" ]; then
-			_tst=$( /sbin/zfs get -Ho value mounted ${1} 2>/dev/null )
+			_tst=$( ${ZFS_CMD} get -Ho value mounted ${1} 2>/dev/null )
 			[ "${_tst}" = "yes" ] && return 0
 		fi
 	fi
@@ -32,7 +32,7 @@ is_mounted()
 on_mounted()
 {
 	[ ! -d "${1}" ] && return 1
-	mount |grep " on " | while read _device on _mountpt; do
+	${MOUNT_CMD} | ${GREP_CMD} " on " | while read _device on _mountpt; do
 		[ "$_device" != "$1" ] || exit 2
 	done
 
@@ -45,10 +45,11 @@ on_mounted()
 # $ver variable must be filled
 get_base_from_current()
 {
-	local _elf_ver
+	local _elf_ver _elf_stable
 
 	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
-	_jail_ver=${ver%%.*}
+	#_jail_ver=${ver%%.*}
+	_jail_ver=${ver}
 
 	# get BASE_DIR
 	init_basedir
@@ -56,15 +57,16 @@ get_base_from_current()
 	[ -z "${BASE_DIR}" ] && return 0
 
 	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
-		_filelist="${distdir}/share/${platform}-filebases_${_elf_ver}.txt.xz"
+		_elf_stable=${ver%%.*}
+		_filelist="${distdir}/share/${platform}-filebases_${_elf_stable}.txt.xz"
 		${ECHO} "${N1_COLOR}Trying to populate ${N2_COLOR}${BASE_DIR}${N1_COLOR} from current system.${N0_COLOR}"
-		${ECHO} "${N1_COLOR}IDX for:${N2_COLOR}${_elf_ver}${N1_COLOR},platform:${N2_COLOR}${platform}${N1_COLOR},index:${N2_COLOR}${_filelist}${N1_COLOR}. Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
+		${ECHO} "${N1_COLOR}IDX for:${N2_COLOR}${_elf_stable}${N1_COLOR},platform:${N2_COLOR}${platform}${N1_COLOR},index:${N2_COLOR}${_filelist}${N1_COLOR}. Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
 		if [ ! -f "${_filelist}" ]; then
 				${ECHO} "${N1_COLOR}Error: no index file: ${N2_COLOR}${_filelist}${N0_COLOR}"
 		else
 			copy-binlib filelist=${_filelist} dstdir=${BASE_DIR} basedir=/
 			${TRUNCATE_CMD} -s0 ${BASE_DIR}/etc/sysctl.conf ${BASE_DIR}/etc/fstab ${BASE_DIR}/etc/rc.conf ${BASE_DIR}/etc/rc.conf.local
-			[ -d "${BASE_DIR}/rc.conf.d" ] && /bin/rm -f ${BASE_DIR}/etc/rc.conf.d
+			[ -d "${BASE_DIR}/rc.conf.d" ] && ${RM_CMD} -f ${BASE_DIR}/etc/rc.conf.d
 		fi
 	else
 		${ECHO} "${N1_COLOR}Base version not equal (${N2_COLOR}base: ${_elf_ver}, jail: ${_jail_ver}${N1_COLOR}) with jail, populate base from current system impossible${N0_COLOR}"
@@ -85,14 +87,14 @@ get_kernel_from_current()
 
 	[ -z "${KERNEL_DIR}" ] && return 0
 
-	[ ! -d "${KERNEL_DIR}/boot" ] && /bin/mkdir -p ${KERNEL_DIR}/boot
+	[ ! -d "${KERNEL_DIR}/boot" ] && ${MKDIR_CMD} -p ${KERNEL_DIR}/boot
 
 	# kernel already exist?
 	[ -x "${KERNEL_DIR}/boot/kernel/kernel" ] && return 0
 
 	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
 		${ECHO} "${N1_COLOR}Take kernel from current system for ${N2_COLOR}${KERNEL_DIR}${N1_COLOR}. Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
-		/bin/cp -a /boot/kernel ${KERNEL_DIR}/boot/
+		${CP_CMD} -a /boot/kernel ${KERNEL_DIR}/boot/
 	else
 		${ECHO} "${N1_COLOR}Base version not equal (${N2_COLOR}base: ${_elf_ver}, jail: ${_jail_ver}${N1_COLOR}) with jail, populate kernel from current system impossible${N0_COLOR}"
 	fi
@@ -252,7 +254,7 @@ mountbase()
 				. ${zfstool}
 				[ ${baserw} -eq 1 ] && path=${data}
 				zfsmnt ${path}
-				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+				[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
 			;;
 		esac
 
@@ -262,7 +264,7 @@ mountbase()
 			[ ! -f "${path}/bin/sh" ] && get_base -v ${ver}
 		fi
 
-		[ ! -d "${path}" ] && /bin/mkdir -p ${path}
+		[ ! -d "${path}" ] && ${MKDIR_CMD} -p ${path}
 
 		if [ "${baserw}" = "0" ]; then
 			#check for md-based base location (postfix -md)
@@ -280,50 +282,50 @@ mountbase()
 	if [ "${mount_kernel}" != "0" ]; then
 		# Other part
 		if [ -n "${kernelpath}" -a -d "${kernelpath}" ]; then
-			[ ! -d "${path}/boot/kernel" ] && mkdir -p ${path}/boot/kernel
-			${MOUNT_NULL_CMD} -oro ${kernelpath}  ${path}/boot/kernel
+			[ ! -d "${path}/boot/kernel" ] && ${MKDIR_CMD} -p ${path}/boot/kernel
+			${MOUNT_NULL_CMD} -oro ${kernelpath} ${path}/boot/kernel
 		fi
 	fi
 
 	if [ "${mount_source}" != "0" ]; then
 		if [ -n "${sourcepath}" -a -d "${sourcepath}" ]; then
-			[ ! -d "${path}/usr/src" ] && mkdir -p ${path}/usr/src
+			[ ! -d "${path}/usr/src" ] && ${MKDIR_CMD} -p ${path}/usr/src
 			${MOUNT_NULL_CMD} -oro ${sourcepath} ${path}/usr/src
 		fi
 	fi
 
 	if [ "${mount_obj}" != "0" ]; then
 		if [ -n "${objpath}" -a -d "${objpath}" ]; then
-			[ ! -d "${path}/usr/obj" ] && mkdir -p ${path}/usr/obj
+			[ ! -d "${path}/usr/obj" ] && ${MKDIR_CMD} -p ${path}/usr/obj
 			${MOUNT_NULL_CMD} -orw ${objpath} ${path}/usr/obj
 		fi
 	fi
 
 	if [ "${mount_ports}" != "0" ]; then
 		if [ -n "${portspath}" ]; then
-			[ ! -d "${portspath}" ] && mkdir -p ${portspath}
-			[ ! -d "${path}/usr/ports" ] && mkdir -p ${path}/usr/ports
+			[ ! -d "${portspath}" ] && ${MKDIR_CMD} -p ${portspath}
+			[ ! -d "${path}/usr/ports" ] && ${MKDIR_CMD} -p ${path}/usr/ports
 			${MOUNT_NULL_CMD} -oro ${portspath} ${path}/usr/ports
 		fi
 
 		if [ -n "${distfilespath}" ]; then
 			# we need for valid mount point on /usr/ports/distifles
-			[ ! -d /usr/ports/distfiles ] && /bin/mkdir -p /usr/ports/distfiles
-			[ ! -d /usr/ports/packages ] && /bin/mkdir -p /usr/ports/packages
+			[ ! -d /usr/ports/distfiles ] && ${MKDIR_CMD} -p /usr/ports/distfiles
+			[ ! -d /usr/ports/packages ] && ${MKDIR_CMD} -p /usr/ports/packages
 
-			[ ! -d "${distfilespath}" ] && /bin/mkdir -p ${distfilespath}
-			[ ! -d "${distpackagepath}" ] && /bin/mkdir -p ${distpackagepath}
+			[ ! -d "${distfilespath}" ] && ${MKDIR_CMD} -p ${distfilespath}
+			[ ! -d "${distpackagepath}" ] && ${MKDIR_CMD} -p ${distpackagepath}
 
-			[ ! -d "${path}/usr/ports/distfiles" ] && /bin/mkdir -p ${path}/usr/ports/distfiles
-			[ ! -d "${path}/usr/ports/packages" ] && /bin/mkdir -p ${path}/usr/ports/packages
+			[ ! -d "${path}/usr/ports/distfiles" ] && ${MKDIR_CMD} -p ${path}/usr/ports/distfiles
+			[ ! -d "${path}/usr/ports/packages" ] && ${MKDIR_CMD} -p ${path}/usr/ports/packages
 			${MOUNT_NULL_CMD} -orw ${distfilespath} ${path}/usr/ports/distfiles
 			${MOUNT_NULL_CMD} -orw ${distpackagepath} ${path}/usr/ports/packages
 		fi
 	fi
 
 	if [ -f "${xfstab}" ]; then
-		mountfstab jroot="${path}" fstab="${xfstab}" jname="${jname}"
-		/bin/rm -f "${xfstab}"
+		mountfstab jroot="${path}" fstab="${xfstab}" jname="${jname}" 2>/dev/null
+		${RM_CMD} -f "${xfstab}"
 	fi
 
 	return ${MNTCODE}
@@ -365,7 +367,7 @@ umount_cdirs()
 	# when error before path, we do not have any mounts by scripts
 	[ -z "${path}" ] && return 0
 
-	MOUNT_LIST=$( /sbin/mount |/usr/bin/sort -r| ${AWK_CMD} -F" on " '{print $2}' )
+	MOUNT_LIST=$( ${MOUNT_CMD} | ${SORT_CMD} -r | ${AWK_CMD} -F" on " '{print $2}' )
 
 	MPATH=""
 	for mount_point in $MOUNT_LIST; do
@@ -379,7 +381,7 @@ umount_cdirs()
 	[ -n "${MPATH}" ] && umount -f ${MPATH}
 	#finaly unmount cdir
 	if [ ${_unmount_root} -eq 1 ]; then
-		is_mounted ${path} && /sbin/umount -f ${path}
+		is_mounted ${path} && ${UMOUNT_CMD} -f ${path}
 	fi
 }
 
@@ -437,10 +439,10 @@ ${_dir}/COPYRIGHT"
 		cd ${_dir} && /bin/pax -p eme -rw . ${_dst}
 	else
 		if [ -n "${JAILNODATA}" ]; then
-			cd ${_dir} && /usr/bin/find -E ${_dir} \( -type f -or -type d -or -type l \) -and -not -regex \"$JAILNODATA\" -print |${SED_CMD} s:${_dir}:./:g | /usr/bin/cpio -pdmu ${_dst}
+			cd ${_dir} && ${FIND_CMD} -E ${_dir} \( -type f -or -type d -or -type l \) -and -not -regex \"$JAILNODATA\" -print | ${SED_CMD} s:${_dir}:./:g | ${CPIO_CMD} -pdmu ${_dst}
 		elif [ -n "${JAILDATA}" ]; then
 			for _i in ${JAILDATA}; do
-				/bin/cp -a ${_i} ${_dst}
+				${CP_CMD} -a ${_i} ${_dst}
 			done
 		fi
 	fi
@@ -472,7 +474,7 @@ ${BASE_DIR}/root.*|"
 
 		${ECHO} "${N1_COLOR}Populate jail data from: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
 		[ ! -d "${BASE_DIR}" ] && return 0
-		cd ${BASE_DIR} && /usr/bin/find -E ${BASE_DIR} \( -type f -or -type d -or -type l \) -and -not -regex \"${JAILNODATA}\" -print | ${SED_CMD} s:${BASE_DIR}:./:g | /usr/bin/cpio -pdmu ${_dst}
+		cd ${BASE_DIR} && ${FIND_CMD} -E ${BASE_DIR} \( -type f -or -type d -or -type l \) -and -not -regex \"${JAILNODATA}\" -print | ${SED_CMD} s:${BASE_DIR}:./:g | ${CPIO_CMD} -pdmu ${_dst}
 
 #		todo: migrate to copy-binlib
 #		base_ver=${ver%%.*}
@@ -484,9 +486,9 @@ ${BASE_DIR}/root.*|"
 #		fi
 #		copy-binlib filelist=${index_file} dstdir=${1} basedir=${BASE_DIR} excludedir="/dev|/etc|/sys|/proc|/root"
 
-		[ ! -d "${1}/dev" ] && /bin/mkdir "${1}/dev"
+		[ ! -d "${1}/dev" ] && ${MKDIR_CMD} "${1}/dev"
 		#remove system fstab
-		[ -f "${jailfstabdir}/${jailfstabpref}${jname}" ] && /bin/rm -f "${jailfstabdir}/${jailfstabpref}${jname}"
+		[ -f "${jailfstabdir}/${jailfstabpref}${jname}" ] && ${RM_CMD} -f "${jailfstabdir}/${jailfstabpref}${jname}"
 	elif [ "$2" = "2" ]; then
 		# switch to basero
 		# create system fstab
@@ -524,7 +526,7 @@ usr/share"
 
 		${ECHO} "${N1_COLOR}Reduce jail data by switching from baserw -> basero: ${N2_COLOR}${data}${N0_COLOR}"
 		for i in ${REMOVEDIR}; do
-			[ -d "${data}/${i}" ] && ${CHFLAGS_CMD} -R noschg ${data}/${i} && /bin/rm -rf ${data}/${i}
+			[ -d "${data}/${i}" ] && ${CHFLAGS_CMD} -R noschg ${data}/${i} && ${RM_CMD} -rf ${data}/${i}
 		done
 	fi
 	# populate
@@ -580,7 +582,8 @@ select_getbase_source_by_list()
 	local _elf_ver
 
 	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
-	_jail_ver=${ver%%.*}
+	#_jail_ver=${ver%%.*}
+	_jail_ver=${ver}
 
 	local subject="Select base sources:"
 
@@ -620,7 +623,7 @@ select_getbase_source_by_list()
 	# todo: rename select_jail to something neutral, due to not only for jail selector
 	select_jail ${_tmpdir} ${_tmpfile} item ${_def_method} 2>/dev/null
 	_ret=$?
-	/bin/rm -rf ${_tmpdir}
+	${RM_CMD} -rf ${_tmpdir}
 
 	getbase_source=
 
@@ -638,7 +641,7 @@ select_getbase_source_by_list()
 			;;
 	esac
 
-	/bin/rm -f ${_tmpfile}
+	${RM_CMD} -f ${_tmpfile}
 	[ -z "${getbase_source}" ] && return 1
 	return 0
 }
@@ -657,10 +660,10 @@ extract_base_archive()
 		return 1
 	fi
 
-	[ ! -d "${BASE_DIR}" ] && /bin/mkdir -p ${BASE_DIR}
+	[ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
 	cd ${BASE_DIR}
 	set -e
-	/usr/bin/tar vxfz ${_path}
+	${TAR_CMD} vxfz ${_path}
 	set +e
 
 	preparebase dst=${BASE_DIR}
