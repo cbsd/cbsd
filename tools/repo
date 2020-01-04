@@ -75,49 +75,6 @@ checkrepo()
 	done
 }
 
-getsrc()
-{
-	init_srcdir
-
-	[ ! -f "${srcdir}/${DIR}/Makefile" -a ${upgrade} -ne 1 ] && err 1 "${N0_COLOR}repo: you already have ${ver}: ${N2_COLOR}${srcdir}/${DIR}${N0_COLOR}"
-
-	for MYREPO in ${repo}; do
-		${ECHO} "${N1_COLOR}REPO${N0_COLOR}:${N2_COLOR}${MYREPO}${N0_COLOR}"
-		MIRROR="${MYREPO}/src_${ver}/mirror.html"
-		fetchme -q 1 -u "${MIRROR}"
-		if [ $? -eq 0 ]; then
-			MYREPO=$( ${CAT_CMD} ${TF} )
-			${ECHO} "${N1_COLOR}Found new mirror for ${ver}${N0_COLOR}:${N2_COLOR}${MYREPO}${N0_COLOR}"
-		fi
-		fetchme -o ${MYDIR}/src.txz -u ${MYREPO}/${DIR}/src.txz
-		[ $? -eq 0 ] || ${ECHO} "${N1_COLOR}Not found: ${N2_COLOR}${MYREPO}/${DIR}/src.txz${N0_COLOR}" && icontinue
-		fetchme -o ${MYDIR}/src.txz.md5 -u ${MYREPO}/${DIR}/src.txz.md5
-		[ $? -eq 0 ] || ${ECHO} "${N1_COLOR}Not found: ${N2_COLOR}${MYREPO}/${DIR}/src.txz.md5${N0_COLOR}" && continue
-	done
-
-	[ -f "${MYDIR}/src.txz" -a -f "${MYDIR}/src.txz.md5" ] || err 1 "No sources found"
-
-	if checkmd5 ${MYDIR}; then
-		${ECHO} "${N1_COLOR}MD5sum correct.${N0_COLOR}"
-	else
-		err 1 "${N1_COLOR}MD5sum incorrect.${N0_COLOR}"
-	fi
-
-	ARCHIVE="${tmpdir}/src_${ver}.txz"
-	[ -f "${ARCHIVE}" ] && ${RM_CMD} -f ${ARCHIVE}
-
-	${ECHO} "${N1_COLOR}Extracting...${N0_COLOR}"
-	cd ${tmpdir}
-	set -e
-	${TAR_CMD} xfz ${MYDIR}/src.txz
-	set +e
-	${RM_CMD} -f ${MYDIR}/src.txz
-	${MKDIR_CMD} -p ${srcdir}/src_${ver}
-	${MV_CMD} ${tmpdir}/src_${ver} ${srcdir}/
-	${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
-	DT=$( ${DATE_CMD} "+%Y%m%d" )
-}
-
 register_fetched_base()
 {
 	local _basename_args=
@@ -149,6 +106,25 @@ register_fetched_base()
 	fi
 
 	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${source}" ${_basename_args}
+}
+
+register_fetched_source()
+{
+	local source="${1}"
+	[ -z "${source}" ] && source="unknown"
+
+	#todo: SCM
+
+	strpos --str="${ver}" --search="."
+
+	pos=$?
+	if [ ${pos} -eq 0 ]; then
+		stable=1
+	else
+		stable=0
+	fi
+
+	register_source ver=${ver} stable=${stable} platform="${platform}" source="${source}"
 }
 
 getbase()
@@ -484,6 +460,229 @@ getobj()
 	set +e
 	${RM_CMD} -f ${MYDIR}/obj_${arch}_${ver}.txz
 	${ECHO} "Done..."
+}
+
+getsrc()
+{
+	local _srcmd5_found _src_found _majorver _release _rel_postfix
+	local win_mirror win_rate t_size BDIR
+	local _mirror_num=0 _mirror_cur=0
+
+	BDIR="${srcdir}/src_${ver}/src"
+
+	if [ -r "${BDIR}/Makefile" ]; then
+		[ ${upgrade} -eq 1 ] || err 1 "${N1_COLOR}You already have ${ver}: ${N2_COLOR}${BDIR}${N0_COLOR}"
+	fi
+
+	if [ -n "${url}" ]; then
+		OIFS="${IFS}"
+		IFS=","
+		for i in ${url}; do
+			if [ -z "${i}" ]; then
+				BSDSRC_DISTSITE="${i}"
+			else
+				BSDSRC_DISTSITE="${BSDSRC_DISTSITE} ${i}"
+			fi
+		done
+		IFS="${OIFS}"
+	else
+		case "${platform}" in
+			DragonFly)
+				err 1 "${N1_COLOR}${platform} unsupported yet${N0_COLOR}"
+				;;
+			FreeBSD)
+				case "${ver}" in
+					13*)
+						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
+						_release="snapshots"
+						_rel_postfix="CURRENT"
+						URL_HIER="${arch}/${target_arch}/13.0"
+						;;
+					*)
+						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/src.txz"
+						_release="releases"
+						_rel_postfix="RELEASE"
+						URL_HIER="${arch}/${target_arch}/${ver}"
+						;;
+				esac
+				BSDSRC_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/src.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/src.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/src.txz"
+				;;
+			HardenedBSD)
+				# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
+				# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
+				_majorver=${ver%%.*}
+				URL_HIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
+				BSDSRC_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${URL_HIER}/src.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${URL_HIER}/src.txz http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/src.txz"
+				;;
+		esac
+	fi
+
+	strpos --str="${ver}" --search="."
+
+	pos=$?
+	if [ ${pos} -eq 0 ]; then
+		stable=1
+	else
+		stable=0
+	fi
+
+	init_target_arch
+
+	trap "cleanup_srcs" HUP INT ABRT BUS TERM EXIT
+	register_src ver=${ver} platform="${platform}"
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo elf="-" id=src${ver} platform=${platform} ver=${ver} stable="${stable}" date="-" status=1
+	fi
+
+	if [ -r "${BDIR}/Makefile" ]; then
+		source_status_is_maintenance_soft
+	else
+		source_status_is_maintenance_hard
+	fi
+
+	win_mirror=
+	win_rate=0
+	t_size=0
+
+	if [ "${fbsdrepo}" = "1" ]; then
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
+
+		_mirror_num=$( echo "${BSDSRC_DISTSITE}" | ${WC_CMD} -w | ${AWK_CMD} {'printf $1'} )
+
+		local max_url_len=0
+		local cur_url_len=0
+		local free_len=0
+
+		# determine longest url
+		for i in ${BSDSRC_DISTSITE}; do
+			cur_url_len=$( strlen ${i} )
+			[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
+		done
+
+		max_url_len=$(( max_url_len + 1 ))
+
+		for i in ${BSDSRC_DISTSITE}; do
+			_mirror_cur=$(( _mirror_cur + 1 ))
+			cur_url_len=$( strlen ${i} )
+			free_len=$(( max_url_len - cur_url_len ))
+			printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
+			t_size=$( ${TIMEOUT_CMD} -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${i} 2>/dev/null )
+			if [ -z "${t_size}" ]; then
+				${ECHO} "${W1_COLOR}failed${N0_COLOR}"
+			else
+				${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
+				if ! is_number ${t_size}; then
+					if [ ${t_size} -gt ${win_rate} ]; then
+						win_rate=${t_size}
+						win_mirror="${i}"
+					fi
+				else
+					${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
+				fi
+			fi
+		done
+		[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
+		iso_site="${win_mirror} ${BSDSRC_DISTSITE}"
+	fi
+
+	if [ "${fbsdrepo}" = "1" -a -z "${basename}" ]; then
+		## Official fbsd repo
+		${ECHO} "${N1_COLOR}Looking for official ${platform} mirror:${N0_COLOR}"
+		ARCHIVE="${MYDIR}/src.txz"
+		for MIRROR in ${iso_site}; do
+			fetchme -u ${MIRROR} -o ${ARCHIVE}
+			if [ $? -eq 0 ]; then
+				break
+			else
+				[ -r ${ARCHIVE} ] && ${RM_CMD} -f ${ARCHIVE}
+			fi
+		done
+		if [ -r ${ARCHIVE} ]; then
+			printf "\n${N1_COLOR}Extracting source...${N0_COLOR}\n"
+			[ ! -d "${BDIR}" ] && ${MKDIR_CMD} -p ${BDIR}
+			cd ${BDIR}
+			set -e
+			${TAR_CMD} xfz ${ARCHIVE}
+			set +e
+			${RM_CMD} -f ${ARCHIVE}
+			# src.txz from official repo contain /usr path, check this
+			if [ -d "${BDIR}/usr/src" ]; then
+				${MV_CMD} ${BDIR}/usr/src ${BDIR}/src
+				${RMDIR_CMD} ${BDIR}/usr
+			fi
+			register_fetched_source ${MIRROR}
+			# CBSD QUEUE
+			if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+				date=$( ${DATE_CMD} +%s )
+				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=source${ver}-${stable}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=source${ver}-${stable} status=2
+			fi
+
+			${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+			return 0
+		fi
+		printf "${N2_COLOR} Not found${N0_COLOR}\n"
+		### Official fbsd repo end ###
+	fi
+
+	# _srcmd5_found=0
+	_src_found=0
+
+	for MYREPO in ${repo}; do
+		${ECHO} "${N1_COLOR}REPO: ${N2_COLOR}${MYREPO}${N0_COLOR}"
+		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html";
+		fetchme -q1 -u ${MIRROR} -o ${TF}
+
+		if [ $? -eq 0 ]; then
+			MYREPO=$( ${CAT_CMD} ${TF} )
+			${ECHO} "${N1_COLOR}Found new mirror for ${ver}: ${N2_COLOR}${MYREPO}${N0_COLOR}"
+		fi
+
+		${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/src.txz${N0_COLOR}"
+		fetchme -o ${MYDIR}/source_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/src.txz
+
+		if [ $? -ne 0 ]; then
+			${ECHO} "${N1_COLOR}source not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/src.txz${N0_COLOR}"
+			continue
+		else
+			_src_found=1
+		fi
+		_srcmd5_found=1
+
+		[ ${_srcmd5_found} -eq 1 -a ${_src_found} -eq 1 ] && break
+	done
+
+	[ ${_src_found} -ne 1 ] && err 1 "${N1_COLOR}Not found data${N0_COLOR}"
+
+	${ECHO} "${N1_COLOR}Extracting...${N0_COLOR}"
+	[ ! -d "${BDIR}" ] && ${MKDIR_CMD} -p ${BDIR}
+	cd ${BDIR}
+
+	set -e
+	${TAR_CMD} xfz ${MYDIR}/source_${ver}.txz
+	set +e
+
+	# src.txz from official repo contain /usr path, check this
+	if [ -d "${BDIR}/usr/src" ]; then
+		${MV_CMD} ${BDIR}/usr/src ${BDIR}/src
+		${RMDIR_CMD} ${BDIR}/usr
+	fi
+
+	register_fetched_source ${MIRROR}
+	cleanup_sources
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		date=$( ${DATE_CMD} +%s )
+		[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=source${ver}-${stable} platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+		[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=source${ver}-${stable} status=2
+	fi
+
+	${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+
+	return 0
 }
 
 getkernel()
