@@ -18,6 +18,7 @@ readconf jail-freebsd-default.conf
 . ${cbsdinit}
 . ${system}
 . ${distdir}/universe.subr
+. ${distdir}/ipfw.subr	# fwcounter
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
 
@@ -40,7 +41,7 @@ check_environment_script()
 	[ ! -d "${_srcdir}" ] && return 0
 	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
 
-	_testfiles=$( /usr/bin/find "${_srcdir}" -type l -or -type f -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; )
+	_testfiles=$( ${FIND_CMD} "${_srcdir}" -type l -or -type f -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; )
 
 	for _file in ${_testfiles}; do
 		${ECHO} "${N1_COLOR}Check environment script: ${N2_COLOR}${_file}${N0_COLOR}"
@@ -58,66 +59,8 @@ exec_cbsdjail_first_boot()
 		/usr/local/bin/cbsd jexec jname=${jname} /bin/sh /etc/rc.cbsdjail_first_boot
 		# restore CBSD PATH
 		export PATH="${CBSDPATH}"
-		/bin/rm -f ${path}/etc/rc.cbsdjail_first_boot
+		${RM_CMD} -f ${path}/etc/rc.cbsdjail_first_boot
 	fi
-}
-
-# return in $FWNUM first free ipfw num
-# return 0 if not available
-get_first_available_fwcount()
-{
-	for i in $( /usr/bin/seq ${fwcount_st} ${fwcount_end} ); do
-		/sbin/ipfw -q show ${i} > /dev/null 2>&1
-		if [ $? -ne 0 ]; then
-			FWNUM=$i
-			return 0
-		fi
-	done
-
-	[ $i -eq ${fwcount_end} ] && FWNUM=0
-}
-
-fwcounter()
-{
-	local _in _out
-
-	[ ${myjid} -eq 0 ] && return 0
-	if [ "${ipfw_enable}" = "0" -a -z "`sysctl -n net.inet.ip.fw.enable 2>/dev/null`" ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: skip for fwcounter setup: ipfw is not enabled
-		return 0
-	fi
-
-	if [ ${freebsdhostversion} -gt 1100120 ]; then
-		COMMENT="// Setup by CBSD jstart: ${jname}"
-	else
-		COMMENT=
-	fi
-
-	${ECHO} "${N1_COLOR}Setup: ${N2_COLOR}FW counter${N0_COLOR}"
-
-	# FWIN
-	get_first_available_fwcount
-	if [ ${FWNUM} -eq 0 ]; then
-		cbsdlogger WARNING ${CBSD_APP}: jail ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
-		${ECHO} "${N1_COLOR}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${N0_COLOR}"
-		_in=
-	else
-		_in=${FWNUM}
-		/sbin/ipfw -q add ${FWNUM} count ip from any to me jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwin
-	fi
-
-	#FWOUT
-	get_first_available_fwcount
-	if [ ${FWNUM} -eq 0 ]; then
-		cbsdlogger WARNING ${CBSD_APP}: jail ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
-		${ECHO} "${N1_COLOR}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${N0_COLOR}"
-		_out=
-	else
-		_out=${FWNUM}
-		/sbin/ipfw -q add ${FWNUM} count ip from me to any jail ${myjid} ${COMMENT} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwout
-	fi
-
-	[ -n "${_in}" -o -n "${_out}" ] && cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: setup IPFW rule counter for in/out with follow ipfw rule number: ${_in}/${_out}
 }
 
 # prepare symlink for emulator and
@@ -133,7 +76,7 @@ emulator_exec_check()
 
 	preparebase dst=${BASE_DIR} emulator=${emulator}
 
-	_res=$( /usr/sbin/chroot ${path} /usr/local/bin/${emulator} /bin/sh -c "echo ping" 2>&1 )
+	_res=$( ${CHROOT_CMD} ${path} /usr/local/bin/${emulator} /bin/sh -c "echo ping" 2>&1 )
 	_ret=$?
 	[ ${_ret} -ne 0 ] && printf "${_res}"
 	return ${_ret}
@@ -168,7 +111,7 @@ set_changes_20140930()
 	set_bsdenv_by_path -p ${path} -v ${ver}
 
 	# make backup and add records
-	[ -f "${data}/etc/make.conf" ] && /bin/cp ${data}/etc/make.conf ${data}/etc/make.conf.bak
+	[ -f "${data}/etc/make.conf" ] && ${CP_CMD} ${data}/etc/make.conf ${data}/etc/make.conf.bak
 
 	${CAT_CMD} >> ${data}/etc/make.conf <<EOF
 
@@ -209,17 +152,17 @@ unset_changes_20140930()
 	local _tpl="CBSD autotpl for CHANGES 20140930"
 
 	if ${GREP_CMD} "${_tpl}" ${data}/etc/make.conf >/dev/null 2>&1; then
-		/bin/cp -a ${data}/etc/make.conf ${data}/etc/make.conf.bak
+		${CP_CMD} -a ${data}/etc/make.conf ${data}/etc/make.conf.bak
 		${GREP_CMD} -v "${_tpl}" ${data}/etc/make.conf.bak | ${GREP_CMD} "." > ${data}/etc/make.conf
 	fi
 
 	if ${GREP_CMD} "${_tpl}" ${data}/etc/profile >/dev/null 2>&1; then
-		/bin/cp -a ${data}/etc/profile ${data}/etc/profile.bak
+		${CP_CMD} -a ${data}/etc/profile ${data}/etc/profile.bak
 		${GREP_CMD} -v "${_tpl}" ${data}/etc/profile.bak | ${GREP_CMD} "." > ${data}/etc/profile
 	fi
 
 	if ${GREP_CMD} "${_tpl}" ${data}/etc/csh.cshrc >/dev/null 2>&1; then
-		/bin/cp -a ${data}/etc/csh.cshrc ${data}/etc/csh.cshrc.bak
+		${CP_CMD} -a ${data}/etc/csh.cshrc ${data}/etc/csh.cshrc.bak
 		${GREP_CMD} -v "${_tpl}" ${data}/etc/csh.cshrc.bak | ${GREP_CMD} "." > ${data}/etc/csh.cshrc
 	fi
 }
@@ -241,7 +184,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
-		/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname}
+		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
@@ -281,7 +224,7 @@ if [ $? -eq 1 ]; then
 fi
 
 if [  "${ver}" = "native" ]; then
-	tmpver=$( /usr/bin/uname -r )
+	tmpver=$( ${UNAME_CMD} -r )
 	ver=${tmpver%%-*}
 	unset tmpver
 	[ "${stable}" = "1" ] && ver=${ver%%.*}
@@ -290,7 +233,7 @@ if [  "${ver}" = "native" ]; then
 fi
 
 if [ "${arch}" = "native" ]; then
-	arch=$( /usr/bin/uname -m )
+	arch=$( ${UNAME_CMD} -m )
 	target_arch="${arch}"
 	cbsdsqlrw local "UPDATE jails SET arch=\"${arch}\" WHERE jname=\"${jname}\""
 	${ECHO} "${N1_COLOR}adjust version: ${N2_COLOR}native -> ${ver}${N0_COLOR}"
@@ -333,10 +276,10 @@ if [ -f "${jaillock}" ]; then
 	if [ "${masterhost}" = "${nodename}" -o -z "${masterhost}" ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: remove my stale lock file: ${jaillock}
 		${ECHO} "${N1_COLOR}Remove my stale lock file: ${N2_COLOR}${jaillock}${N0_COLOR}"
-		/bin/rm -f ${jaillock}
+		${RM_CMD} -f ${jaillock}
 	else
 		cur_time=$( ${DATE_CMD} +%s )
-		eval $( /usr/bin/stat -s ${jaillock} )
+		eval $( ${STAT_CMD} -s ${jaillock} )
 		difftime=$(( ( cur_time - st_mtime ) / 60 ))
 
 		# 30 minutes outdated lock
@@ -344,7 +287,7 @@ if [ -f "${jaillock}" ]; then
 			cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: locked by ${masterhost} node via ${jaillock} file but lock file age is too old: ${difftime}. Removing!
 			${ECHO} "${N1_COLOR}Jail ${N2_COLOR}${jname}${N1_COLOR} locked by ${N2_COLOR}${masterhost}${N1_COLOR} node${N0_COLOR}"
 			${ECHO} "${N1_COLOR}But lock age is too old: ${difftime} min. Removing!!!${N0_COLOR}"
-			/bin/rm -f ${jaillock}
+			${RM_CMD} -f ${jaillock}
 		else
 			# still fresh
 			cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: locked by ${masterhost} node via ${jaillock} file and lock file age time is fresh: ${difftime}.
@@ -354,7 +297,7 @@ if [ -f "${jaillock}" ]; then
 	fi
 fi
 
-TRAP="${TRAP} /bin/rm -f ${jaillock};"
+TRAP="${TRAP} ${RM_CMD} -f ${jaillock};"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
 #Check for md vnode backend
@@ -389,7 +332,7 @@ if [ ${baserw} -eq 0 ]; then
 fi
 
 jcleanup jname=${jname}
-[ ! -d "${path}" ] && /bin/mkdir ${path}
+[ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
 
 check_environment_script "tests"
 
@@ -513,7 +456,7 @@ case ${zfsfeat} in
 	1)
 		. ${zfstool}
 		zfsmnt ${data}
-		[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+		[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
 	;;
 esac
 
@@ -521,7 +464,7 @@ if [ "${ver}" != "empty" ]; then
 	if [ ${baserw} -eq 1 ]; then
 		path=${data}
 		[ ! -f "${path}/bin/sh" ] && switch_baserw ${path} 1
-		[ -f ${mount_fstab} ] && /bin/rm -f ${mount_fstab}
+		[ -f ${mount_fstab} ] && ${RM_CMD} -f ${mount_fstab}
 	fi
 
 	if [ ${baserw} -eq 0 -a ! -f "${mount_fstab}" ]; then
@@ -575,7 +518,7 @@ fi
 # sign of zfs attach inside jail: we need special route for this case
 # remove orphaned sign if exist: then touched it by mountfstab script
 with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
-[ -r ${with_zfs_attach} ] && /bin/rm -f ${with_zfs_attach}
+[ -r ${with_zfs_attach} ] && ${RM_CMD} -f ${with_zfs_attach}
 
 mount_jail_fstab
 export_jail_data_for_external_hook
@@ -585,7 +528,7 @@ if [ "${ver}" = "empty" ]; then
 	path="/"
 	exec_start="${jailsysdir}/${jname}/run.sh"
 else
-	[ ! -d "${data}/var/cache/pkg" ] && /bin/mkdir -p "${data}/var/cache/pkg"
+	[ ! -d "${data}/var/cache/pkg" ] && ${MKDIR_CMD} -p "${data}/var/cache/pkg"
 fi
 
 #determine that jail is FreeBSD. Useful for vnet operation in makejconf and
@@ -627,7 +570,7 @@ unset_changes_20140930
 set_changes_20140930
 
 ${ECHO} "${N1_COLOR}Starting jail: ${N2_COLOR}${jname}, parallel timeout=${parallel}${N0_COLOR}"
-TRAP="${TRAP} /bin/rm -f ${ftmpdir}/jstart.${jname}.$$;"
+TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/jstart.${jname}.$$;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
 # check that the emulator is able to execute commands
@@ -641,7 +584,7 @@ if [ ${ret} -ne 0 ]; then
 	exit 0
 fi
 
-/usr/sbin/daemon -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
+${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
 trap "" HUP INT ABRT BUS TERM EXIT
 
 [ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
@@ -658,7 +601,7 @@ if [ -r ${with_zfs_attach} -a ${is_freebsd} -eq 1 ]; then
 	[ -r ${mount_fstab} ] && attachzfs fstab=${mount_fstab} jname=${jname}
 	[ -r ${mount_fstab}.local ] && attachzfs fstab=${mount_fstab}.local jname=${jname}
 	# real exec_start for zfs attached jail
-	/usr/sbin/jexec ${jname} /sbin/zfs mount -a
+	${JEXEC_CMD} ${jname} ${ZFS_CMD} mount -a
 	late_start="${exec_start}"
 fi
 
@@ -681,10 +624,10 @@ if [ ${vnet} -eq 1 ]; then
 		echo "${jname}" > ${tmpdir}/eth${eth_seq}.locked
 		${IFCONFIG_CMD} ${i} name eth${eth_seq} && ${IFCONFIG_CMD} eth${eth_seq} vnet ${jname}
 		if [ "${ip4_addr}" = "REALDHCP" ]; then
-			/usr/sbin/jexec ${jname} /sbin/dhclient eth${eth_seq}
+			${JEXEC_CMD} ${jname} /sbin/dhclient eth${eth_seq}
 		fi
 		# release lock
-		/bin/rm -f ${tmpdir}/eth${eth_seq}.locked
+		${RM_CMD} -f ${tmpdir}/eth${eth_seq}.locked
 		eth_seq=$(( eth_seq + 1 ))
 		IFS=","
 	done
@@ -693,7 +636,7 @@ if [ ${vnet} -eq 1 ]; then
 fi
 
 if [ -n "${late_start}" ]; then
-	/usr/sbin/jexec ${jname} ${late_start}
+	${JEXEC_CMD} ${jname} ${late_start}
 fi
 ### /late start ###
 
@@ -716,7 +659,7 @@ if [ ${myjid} -gt 0 ]; then
 	status="1"
 	# make shared lock
 	echo "${nodename}" > ${jaillock}
-	/usr/sbin/chown ${cbsduser}:${cbsduser} ${jaillock}
+	${CHOWN_CMD} ${cbsduser}:${cbsduser} ${jaillock}
 else
 	status="0"
 	# looks like jail start is failed, execute post script
@@ -727,15 +670,15 @@ else
 fi
 
 cbsdsqlrw local UPDATE jails SET jid=${myjid},status=${status} where jname=\"${jname}\"
-/bin/rm -f ${ftmpdir}/${jname}.conf
+${RM_CMD} -f ${ftmpdir}/${jname}.conf
 fwcounter
 expose jname=${jname} mode=apply
-[ ${myjid} -gt 0 -a ${cpuset} != "0" ] && /usr/bin/cpuset -c -l ${cpuset} -j ${myjid}
+[ ${myjid} -gt 0 -a ${cpuset} != "0" ] && ${CPUSET_CMD} -c -l ${cpuset} -j ${myjid}
 
 # VNC auto start
 if [ -x "${distmoduledir}/vncterm.d/cbsdvnc" ]; then
 	${ECHO} "${N1_COLOR}vncterm is installed, launch vncterm session...${N0_COLOR}"
-	/usr/sbin/daemon -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
+	${DAEMON_CMD} -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
 fi
 
 # CBSD QUEUE

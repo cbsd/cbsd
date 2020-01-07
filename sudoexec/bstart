@@ -22,6 +22,7 @@ cfg_only=		# create a configuration and run immediately
 
 . ${subr}
 . ${tools}		# for select_jail_by_list
+. ${distdir}/ipfw.subr	# fwcounter
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -58,7 +59,7 @@ create_from_jail()
 			bhyveload_cmd=""
 		;;
 		*)
-			bhyveload_cmd="/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+			bhyveload_cmd="${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 		;;
 	esac
 }
@@ -126,22 +127,22 @@ start_bhyve()
 				. ${zfstool}
 
 				if is_getzvol ${_myfile}; then
-					_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
 					_cloud_source_is_zvol=1
 					_cloud_source_zvol="${is_zvol}"
 				else
 					_cloud_source_is_zvol=0
 					_cloud_source_zvol=
-					_ebytes=$( /usr/bin/stat -f "%z" ${_myfile} 2>/dev/null )
+					_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
 				fi
 
 				# store original disk size to restore them after replace by cloud image
 				if is_getzvol ${data}/dsk1.vhd; then
-					_dsk_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
 					_dsk_source_zvol="${is_zvol}"
 					_cloud_truncate=0
 				else
-					_dsk_ebytes=$( /usr/bin/stat -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
 					_cloud_truncate=1
 					_dsk_source_zvol=
 				fi
@@ -155,7 +156,7 @@ start_bhyve()
 				if [ ${_cloud_truncate} -eq 1 ]; then
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
 					# to generic clonedata (add dd method)?
-					/usr/bin/nice -n 20 /bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
 					echo
 					# adjust original image size
 					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
@@ -163,21 +164,21 @@ start_bhyve()
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
 						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
-						echo "/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name}"
-						/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
 						_ret=$?
 						if [ ${_ret} -eq 1 ]; then
 							# create cloud snapshot for $jname
-							/sbin/zfs snapshot ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} snapshot ${_cloud_source_zvol}@boot-${jname}
 							# destory original zvol disk for vm
-							/sbin/zfs destroy ${_dsk_source_zvol}
-							#/sbin/zfs clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
-							/sbin/zfs clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} destroy ${_dsk_source_zvol}
+							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
 							# restore original size
-							# /sbin/zfs set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
 							# bug here, need for atomic ops ^^ in clone action
-							/sbin/zfs set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
-							/sbin/zfs set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
 						else
 							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
 						fi
@@ -199,7 +200,7 @@ start_bhyve()
 					init_iso
 					if [ $? -eq 1 ]; then
 						printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
-						for i in $( /usr/bin/jot 5 ); do
+						for i in $( ${JOT_CMD} 5 ); do
 							printf "."
 							sleep 1
 						done
@@ -213,10 +214,10 @@ start_bhyve()
 						;;
 					*)
 						if [ "${vm_boot}" = "cd" ]; then
-							bhyveload_cmd="/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -d ${iso_img} -m ${vm_ram} ${jname}"
-							bhyveload_cmd_once="/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+							bhyveload_cmd="${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -d ${iso_img} -m ${vm_ram} ${jname}"
+							bhyveload_cmd_once="${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 						else
-							bhyveload_cmd="/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
+							bhyveload_cmd="${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/sbin/bhyveload ${passt_args} -m ${vm_ram} -d ${data}/${MDFILE} ${jname}"
 						fi
 						;;
 				esac
@@ -235,7 +236,7 @@ start_bhyve()
 				init_iso
 				if [ $? -eq 1 ]; then
 					printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
-					for i in $( /usr/bin/jot 5 ); do
+					for i in $( ${JOT_CMD} 5 ); do
 						printf "."
 						sleep 1
 					done
@@ -262,7 +263,7 @@ start_bhyve()
 				init_iso
 				if [ $? -eq 1 ]; then
 					printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
-					for i in $( /usr/bin/jot 5 ); do
+					for i in $( ${JOT_CMD} 5 ); do
 						printf "."
 						sleep 1
 					done
@@ -275,7 +276,7 @@ start_bhyve()
 					${ECHO} "${H5_COLOR}Notice: ${N1_COLOR}no hard disk, boot from CD...${N0_COLOR}"
 					vm_boot="cd"
 				else
-					_err=$( /usr/bin/file -s ${data}/${MDFILE} | ${CUT_CMD} -d":" -f2 | ${XARGS_CMD} )
+					_err=$( ${FILE_CMD} -s ${data}/${MDFILE} | ${CUT_CMD} -d":" -f2 | ${XARGS_CMD} )
 					# live migration todo: skipp this >> ?
 					if [ "${_err}" = "data" ]; then
 						${ECHO} "${N1_COLOR}Looks like ${N2_COLOR}${data}/${MDFILE}${N1_COLOR} is empty.${N0_COLOR}"
@@ -302,7 +303,7 @@ start_bhyve()
 	# reset global bhyve_pci_id_busy_list (used by compile_ func via next_pci_id()
 	# and remove buffer file with old $bhyve_pci_id_busy_list ( used by add_bhyve_pci_id_busy )
 	bhyve_pci_id_busy_list=
-	[ -f ${jailsysdir}/${jname}/bhyve_pciid ] && /bin/rm -f ${jailsysdir}/${jname}/bhyve_pciid
+	[ -f ${jailsysdir}/${jname}/bhyve_pciid ] && ${RM_CMD} -f ${jailsysdir}/${jname}/bhyve_pciid
 
 	# mark modified field to FALSE in pcibus table to find unmodified entries for pciid cleanup
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
@@ -567,7 +568,7 @@ EOF
 
 	# create a configuration only
 	if [ -n "${cfg_only}" ]; then
-		/bin/mv ${jailsysdir}/${jname}/bhyve.conf ${cfg_only}
+		${MV_CMD} ${jailsysdir}/${jname}/bhyve.conf ${cfg_only}
 		err 0 "${N1_COLOR}config created: ${N2_COLOR}${cfg_only}${N0_COLOR}"
 	fi
 
@@ -595,7 +596,7 @@ EOF
 	# this section should be AFTER master_prestart
 	# cloud_init and CLOUD_FILES was initialized earlier
 	if [ ${cloud_init} -eq 1 ]; then
-			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
+			${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
 			if [ "${vm_os_type}" = "windows" ]; then
 				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
 				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
@@ -657,7 +658,7 @@ EOF
 
 	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
 	printf "${N1_COLOR}Waiting for PID"
-	for i in $( /usr/bin/seq 10 ); do
+	for i in $( ${SEQ_CMD} 10 ); do
 		check_for_bhyve_process -j ${jname}
 		[ -n "${vm_pid}" ] && break
 		sleep 1
@@ -694,6 +695,8 @@ EOF
 		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}"
 	fi
 
+	fwcounter
+
 	exit 0
 }
 
@@ -719,7 +722,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
-		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/bstart.${jname}.$$;"
+		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		env NOINTER=1 /usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
 		#lets save .pid file
@@ -746,12 +749,12 @@ st_time=$( ${DATE_CMD} +%s )
 # we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
 # since some helpers may work with runtime (e.g pcibus + cloudinit) config
 if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
-	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
+	CLOUD_FILES=$( ${FIND_CMD} ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
 	# gen seed only if files exist
 	if [ -n "${CLOUD_FILES}" ]; then
 		cloud_init=1
 		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
-		/usr/bin/touch ${jailsysdir}/${jname}/seed.iso
+		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
 	else
 		cloud_init=0
 		unset CLOUD_FILES
@@ -794,7 +797,7 @@ else
 
 	if [ -z "${lm_rnodename}" ]; then
 		# detect remote hoster name by $jname in cluster
-		RHST=$( bwhereis ${jname} | /usr/bin/head -n1 )
+		RHST=$( bwhereis ${jname} | ${HEAD_CMD} -n1 )
 		[ -z "${RHST}" ] && err 1 "${N1_COLOR}No such domain in the current CBSD cluster: ${N2_COLOR}${jname}${N0_COLOR}"
 		lm_rnodename="${RHST}"	# for rjrcconf
 	else
@@ -834,7 +837,7 @@ if [ "${_jailed}" != "0" ]; then
 			-e "s:%%workdir%%:${workdir}:g" \
 			-e "s:%%domain%%#:my.domain:g" ${distdir}/share/jail.jconf > ${tmpdir}/jail.$$
 			jcreate jconf=${tmpdir}/jail.$$
-			/bin/rm -f ${tmpdir}/jail.$$
+			${RM_CMD} -f ${tmpdir}/jail.$$
 			exec bjail jname=${_jname} bname=${jname}
 			;;
 		*)
@@ -896,13 +899,13 @@ else
 
 		readconf zfs.conf
 		. ${zfstool}
-		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
 		[ -z "${DATA}" ] && break
 
-		for lunname in $( /usr/bin/seq 0 16 ); do
+		for lunname in $( ${SEQ_CMD} 0 16 ); do
 			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then				# back compatible for CBSD <= 12.0.14
-				/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
+				${LN_CMD} -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
 				${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
 		done
