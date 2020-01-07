@@ -1,0 +1,112 @@
+if [ ! "$_CBSD_IPFW_SUBR" ]; then
+_CBSD_IPFW_SUBR=1
+###
+
+# return in $FWNUM first free ipfw num
+# return 0 if not available
+get_first_available_fwcount()
+{
+	local _i
+
+	for _i in $( ${SEQ_CMD} ${fwcount_st} ${fwcount_end} ); do
+		${IPFW_CMD} -q show ${_i} > /dev/null 2>&1
+		if [ $? -ne 0 ]; then
+			FWNUM=${_i}
+			return 0
+		fi
+	done
+
+	[ ${_i} -eq ${fwcount_end} ] && FWNUM=0
+}
+
+fwcounter()
+{
+	local _in _out _tap _ret
+	local _in_rule _out_rule
+
+	[ -z ${jname} ] && return 0
+
+	case "${emulator}" in
+		jail)
+			if [ ${myjid} -eq 0 ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: fwcounter: no jid for ${jname}
+				return 0
+			fi
+			;;
+		bhyve)
+			# tap check
+			if [ -z "${mytap}" ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: fwcounter: no mytap for ${jname}, skip
+				return 0
+			fi
+			# todo: only first tap support at the moment
+			_tap=$( echo ${mytap} | ${AWK_CMD} '{printf $1}' )
+			;;
+		*)
+			cbsdlogger NOTICE ${CBSD_APP}: fwcounter not support emulator: ${emulator}
+			${ECHO} "${N1_COLOR}fwcounter not support emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+			return 1
+			;;
+	esac
+
+	if [ "${ipfw_enable}" = "0" -a -z "$( ${SYSCTL_CMD} -n net.inet.ip.fw.enable 2>/dev/null )" ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: ${emulator} ${jname}: skip for fwcounter setup: ipfw is not enabled
+			return 0
+	fi
+
+	if [ ${freebsdhostversion} -gt 1100120 ]; then
+		COMMENT="// Setup by CBSD ${emulator} start: ${jname}"
+	else
+		COMMENT=
+	fi
+
+	# depending on the emulator, we generate different rules
+	case "${emulator}" in
+		bhyve)
+			[ -z "${_tap}" ] && return 0
+			${IFCONFIG_CMD} ${_tap} > /dev/null 2>&1
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: fwcounter no such interface for ${jname}: ${_tap}, skip traffic count
+				${ECHO} "${N1_COLOR}fwcounter no such interface for ${jname}: ${N2_COLOR}${_tap}${N1_COLOR}, skip traffic count${N0_COLOR}"
+				return 1
+			fi
+			_in_rule="count ip from any to any out via ${_tap} ${COMMENT}"		# ipfw rules for bhyve incoming traffic
+			_out_rule="count ip from any to any in via ${_tap} ${COMMENT}"		# ipfw rules for bhyve outgoing traffic
+			;;
+		jail)
+			_in_rule="count ip from any to me jail ${myjid} ${COMMENT}"		# ipfw rules for jail incoming traffic
+			_out_rule="count ip from me to any jail ${myjid} ${COMMENT}"		# ipfw rules for jail outgoing traffic
+			;;
+	esac
+
+	# init FWIN
+	get_first_available_fwcount
+	if [ ${FWNUM} -eq 0 ]; then
+		cbsdlogger WARNING ${CBSD_APP}: ${emulator} ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
+		${ECHO} "${N1_COLOR}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${N0_COLOR}"
+		return 1
+	fi
+	_in=${FWNUM}
+
+	${IPFW_CMD} -q add ${_in} ${_in_rule} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwin
+
+	# init FWOUT
+	get_first_available_fwcount
+	if [ ${FWNUM} -eq 0 ]; then
+		cbsdlogger WARNING ${CBSD_APP}: ${emulator} ${jname} warning: FW counter is not available in ${fwcount_st}-${fwcount_end} range. skip for fwcounter setup
+		${ECHO} "${N1_COLOR}Warning: FW counter not available in ${fwcount_st}-${fwcount_end} range. Skip${N0_COLOR}"
+		return 1
+	fi
+	_out=${FWNUM}
+
+	${IPFW_CMD} -q add ${_out} ${_out_rule} && echo ${FWNUM} > ${ftmpdir}/${jname}-fwout
+
+	[ -n "${_in}" -o -n "${_out}" ] && cbsdlogger NOTICE ${CBSD_APP}: ${emulator} ${jname}: setup IPFW rule counter for in/out with follow ipfw rule number: ${_in}/${_out}
+	${ECHO} "${N1_COLOR}CBSD setup: ${emulator} ipfw counters num: ${N2_COLOR}${_in}/${_out}${N0_COLOR}"
+
+	return 0
+}
+
+###
+fi

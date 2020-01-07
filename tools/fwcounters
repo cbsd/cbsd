@@ -2,10 +2,10 @@
 #v9.2.2
 MYARG="jname"
 MYOPTARG="mode"
-MYDESC="Collect IPFW count for jail if availeble\n"
+MYDESC="Collect IPFW count for virtual env if availeble\n"
 ADDHELP="jname = alljails for cyclic collect via all online jails\n\
-mode = nozero - skip for ipfw zero for counters\n\
-mode = remove - remove counters after collect info\n"
+mode=nozero - skip for ipfw zero for counters\n\
+mode=remove - remove counters after collect info\n"
 
 . ${subr}
 
@@ -14,9 +14,9 @@ mode = remove - remove counters after collect info\n"
 getalljails()
 {
 	# select only active jail and not VMs
-	cbsdsqlro local "SELECT jname FROM jails WHERE emulator != 'bhyve' AND status=1" |while read jname; do
+	cbsdsqlro local "SELECT jname FROM jails WHERE emulator != 'xen' AND jid > 0" | while read jname; do
 		fwinit
-		insert
+		do_fw_count
 	done
 }
 
@@ -24,67 +24,82 @@ getalljails()
 fwinit()
 {
 	TRAFDIR="${jailsysdir}/${jname}/traffic"
-	[ ! -d "${TRAFDIR}" ] && mkdir -p ${TRAFDIR} && chown $cbsduser:$cbsduser ${TRAFDIR}
-	CURDATE=$( date "+%Y-%m" )
+	[ ! -d "${TRAFDIR}" ] && ${MKDIR_CMD} -p ${TRAFDIR} && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${TRAFDIR}
+	CURDATE=$( ${DATE_CMD} "+%Y-%m" )
 	TRAFFILE="${TRAFDIR}/${CURDATE}.sqlite"
 
 	if [ ! -f "${TRAFFILE}" ]; then
 		/usr/local/bin/cbsd ${miscdir}/updatesql ${TRAFFILE} ${distdir}/share/local-fwcounters.schema traffic
-		chown $cbsduser:$cbsduser ${TRAFFILE}
+		${CHOWN_CMD} ${cbsduser}:${cbsduser} ${TRAFFILE}
 	fi
 }
 
-checkjail()
+do_fw_count()
 {
-	A=$( cbsdsqlro local select status from jails where jname=\"$jname\" )
-	[ "${A}" = "1" ] && return 1
-	return 0
-}
+	local _comment= _ret _i
+	local _fwin _fwout _incode _outcode _bin _bout
 
-
-insert()
-{
 	[ ! -f "${ftmpdir}/${jname}-fwin" -o ! -f "${ftmpdir}/${jname}-fwout" ] && return 0
 
-	FWIN=$( ${CAT_CMD} ${ftmpdir}/${jname}-fwin 2>/dev/null )
-	FWOUT=$( ${CAT_CMD} ${ftmpdir}/${jname}-fwout 2>/dev/null )
+	. ${jrcconf}				# init $emulator vars
+	[ $? -eq 1 ] && return 1		# no such env
 
-	### FWIN
-	BIN=$( /sbin/ipfw show ${FWIN} 2>/dev/null | ${AWK_CMD} '/count /{print $3"\n"}' 2>/dev/null )
-	INCODE=$?
+	_fwin=$( ${CAT_CMD} ${ftmpdir}/${jname}-fwin 2>/dev/null )
+	_fwout=$( ${CAT_CMD} ${ftmpdir}/${jname}-fwout 2>/dev/null )
+	_comment="// Setup by CBSD ${emulator} start: ${jname}"
 
-	### FWOUT
-	BOUT=$( /sbin/ipfw show ${FWOUT} 2>/dev/null | ${AWK_CMD} '/count /{print $3"\n"}' 2>/dev/null )
-	OUTCODE=$?
+	${IPFW_CMD} show ${_fwin} | ${GREP_CMD} -q "${_comment}"$
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}fwcounters: env ${jname}: not my IN rules: ${N2_COLOR} ${_fwin}${N0_COLOR}"
+		cbsdlogger NOTICE ${CBSD_APP}: env ${jname}: fwcounters: not my IN rules: ${_fwin}
+		_bin=0
+		_incode=1
+	else
+		_bin=$( ${IPFW_CMD} show ${_fwin} 2>/dev/null | ${AWK_CMD} '/count /{print $3"\n"}' 2>/dev/null )
+		_incode=0
+	fi
 
-	if [ ${INCODE} -eq 0 -a ${OUTCODE} -eq 0 ]; then
+	${IPFW_CMD} show ${_fwout} | ${GREP_CMD} -q "${_comment}"$
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}fwcounters: env ${jname}: not my OUT rules: ${N2_COLOR} ${_fwout}${N0_COLOR}"
+		cbsdlogger NOTICE ${CBSD_APP}: env ${jname}: fwcounters: not my OUT rules: ${_fwin}
+		_bout=0
+		_outcode=1
+	else
+		_bout=$( ${IPFW_CMD} show ${_fwout} 2>/dev/null | ${AWK_CMD} '/count /{print $3"\n"}' 2>/dev/null )
+		_outcode=0
+	fi
+
+	if [ ${_incode} -eq 0 -a ${_outcode} -eq 0 ]; then
 		# do not insert when counters is zero
-		if [ ${BIN} -ne 0 -a ${BOUT} -ne 0 ]; then
-			[ "${mode}" != "nozero" ] && /sbin/ipfw -q zero ${FWIN} ${FWOUT} 2>/dev/null
-			[ -f "${TRAFFILE}" ] && ${miscdir}/sqlcli ${TRAFFILE} "INSERT INTO traffic ( incoming, outgoing ) VALUES ( \"${BIN}\" , \"${BOUT}\" )"
+		if [ ${_bin} -ne 0 -a ${_bout} -ne 0 ]; then
+			[ "${mode}" != "nozero" ] && ${IPFW_CMD} -q zero ${_fwin} ${_fwout} 2>/dev/null
+			[ -f "${TRAFFILE}" ] && ${miscdir}/sqlcli ${TRAFFILE} "INSERT INTO traffic ( incoming, outgoing ) VALUES ( \"${_bin}\" , \"${_bout}\" )"
 		fi
 	fi
 
+	# remove rules when mode=remove
 	if [ "${mode}" = "remove" ]; then
-		/sbin/ipfw -q delete `/sbin/ipfw show | ${GREP_CMD} "jail ${jid} " | ${CUT_CMD} -f 1 -d ' '`
-		#/sbin/ipfw -q delete ${FWIN} ${FWOUT}
-		rm -f "${ftmpdir}/${jname}-fwout" "${ftmpdir}/${jname}-fwin"
+		[ ${_incode} -eq 0 ] && ${IPFW_CMD} -q delete ${_fwin}
+		[ ${_outcode} -eq 0 ] && ${IPFW_CMD} -q delete ${_fwout}
+		#${IPFW_CMD} -q delete `${IPFW_CMD} show | ${GREP_CMD} "jail ${jid} " | ${CUT_CMD} -f 1 -d ' '`
+		${RM_CMD} -f "${ftmpdir}/${jname}-fwout" "${ftmpdir}/${jname}-fwin"
 	fi
 }
 
-
-
 #MAIN
-[ ${ipfw_enable} -eq 0 -a -z "$( sysctl -n net.inet.ip.fw.enable 2>/dev/null )" ] && exit 0
+[ ${ipfw_enable} -eq 0 -a -z "$( ${SYSCTL_CMD} -n net.inet.ip.fw.enable 2>/dev/null )" ] && exit 0
 
 case "${jname}" in
-	"alljails")
+	alljails)
 		getalljails
 		;;
 	*)
-		if ! checkjail; then
-			fwinit
-			insert
-		fi
+		fwinit
+		do_fw_count
 		;;
 esac
+
+exit 0
