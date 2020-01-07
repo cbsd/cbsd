@@ -1,19 +1,33 @@
 #!/usr/local/bin/cbsd
 #v11.1.0
 MYARG=""
-MYOPTARG="mode jname human full prometheus"
+MYOPTARG="mode jname human full prometheus header summary"
 MYDESC="Show traffic statistics for the virtual environment"
-ADDHELP="human= show output to: b - bytes, m - megabytes, g - gigabytes\n\
+ADDHELP="human=0,1 - show output in bytes or convert to human-friendly\n\
 mode=sum,average,min,max\n\
 full=0,1 - print all records. Default - 0 when no jail specified\n\
-prometheus=0,1 - output in prometheus format\n"
+prometheus=0,1 - output in prometheus format\n\
+header=0,1 - show header\n\
+summary=0,1 - show summary\n\
+display=dt,incoming,outgoing\n"
 
 . ${subr}
+
+human=1
+header=1
+summary=1
+display="dt,incoming,outgoing"
+
 . ${cbsdinit}
 
 . ${system}
 
-#
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | ${TR_CMD} ',' '|' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
 jaillist=$( cbsdsqlro local SELECT jname FROM jails )
 [ -n "${prometheus}" ] && prometheus=0
 
@@ -21,6 +35,7 @@ jaillist=$( cbsdsqlro local SELECT jname FROM jails )
 init_jail_dbpath()
 {
 	local _res
+
 	TRAFDIR="${jailsysdir}/${jname}/traffic"
 	CURDATE=$( ${DATE_CMD} "+%Y-%m" )
 	TRAFFILE="${TRAFDIR}/${CURDATE}.sqlite"
@@ -33,12 +48,47 @@ init_jail_dbpath()
 	return 0
 }
 
+show_header()
+{
+	local _header="${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -eq 1 ] && ${ECHO} ${_header}
+}
+
 jail_in_month()
 {
-	header="${BOLD}Time|Incoming bytes|Outgoing bytes${N0_COLOR}"
-	trafdata=$( /usr/local/bin/sqlite3 ${TRAFFILE} "SELECT * FROM traffic" )
+	local _my_header IFS OIFS _res _val
 
-	${ECHO} "${header}\n${trafdata}"| ${COLUMN_CMD} -s "|" -t
+	show_header
+
+	OIFS="${IFS}"
+	IFS="|"
+	/usr/local/bin/sqlite3 ${TRAFFILE} "SELECT dt,incoming,outgoing FROM traffic" | while read dt incoming outgoing; do
+		_res=
+		IFS=","
+		for _i in ${display}; do
+			eval _val="\$${_i}"
+			case "${_i}" in
+				incoming|outgoing)
+					if [ ${human} -eq 1 ]; then
+						if conv2human "${_val}"; then
+							_val=${convval}
+						fi
+					fi
+					;;
+				*)
+					;;
+			esac
+			if [ -z "${_res}" ]; then
+				_res="${N0_COLOR}${_val}"
+			else
+				_res="${_res}|${_val}"
+			fi
+		done
+		IFS="${OIFS}"
+		${ECHO} "${_res}"
+		IFS="|"
+	done
+	IFS="${OIFS}"
 }
 
 jail_in_month_full()
@@ -46,20 +96,22 @@ jail_in_month_full()
 	sum_in=$( /usr/local/bin/sqlite3 ${TRAFFILE} 'SELECT sum(incoming) FROM traffic' )
 	sum_out=$( /usr/local/bin/sqlite3 ${TRAFFILE} 'SELECT sum(outgoing) from traffic' )
 
-	if conv2human "${sum_in}"; then
-		sum_in=${convval}
-	fi
+	if [ ${human} -eq 1 ]; then
+		if conv2human "${sum_in}"; then
+			sum_in=${convval}
+		fi
 
-	if conv2human "${sum_out}"; then
-		sum_out=${convval}
+		if conv2human "${sum_out}"; then
+			sum_out=${convval}
+		fi
 	fi
-
 	${ECHO} "${N1_COLOR}Incoming: ${N2_COLOR}${sum_in}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Outgoing: ${N2_COLOR}${sum_out}${N0_COLOR}"
 }
 
 jail_in_month_full_header()
 {
+	[ ${header} -eq 0 ] && return 0
 	CURDATE=$( ${DATE_CMD} "+%Y-%m" )
 	${ECHO} "${BOLD}Summary traffic stats for ${jname} in ${CURDATE} ${N0_COLOR}"
 	${ECHO} "${BOLD}=================================================${N0_COLOR}"
@@ -76,7 +128,13 @@ fi
 
 for jname in ${jaillist}; do
 	init_jail_dbpath || continue
-	[ ${full} -eq 1 ] && jail_in_month
-	jail_in_month_full_header
-	jail_in_month_full
+
+	if [ ${full} -eq 1 ]; then
+		jail_in_month | ${COLUMN_CMD} -s "|" -t
+	fi
+
+	if [ ${summary} -eq 1 ]; then
+		jail_in_month_full_header
+		jail_in_month_full
+	fi
 done
