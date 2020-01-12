@@ -55,6 +55,7 @@ while getopts "d:f:j:r:s:" opt; do
 	shift $(( ${OPTIND} - 1 ))
 done
 
+
 if [ -z "${data}" ]; then
 	echo "Empty data, use -d <datadir>"
 fi

@@ -108,10 +108,10 @@ for jname in ${JLIST}; do
 	if [ ${unregister} -eq 0 ] ; then
 		if [  ${jid} -ne 0 ]; then
 			case "${emulator}" in
-				"bhyve")
+				bhyve)
 					bstop jname=${jname}
 					;;
-				"virtualbox")
+				virtualbox)
 					. ${distdir}/virtualbox.subr
 					vstop jname=${jname}
 					;;
@@ -126,16 +126,16 @@ for jname in ${JLIST}; do
 			for vm_item in $( cbsdsqlro storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
 				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
 				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
-				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
-				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
 				if [ "${parent_snapshot}" = "-" ]; then
 					continue
 				fi
 
 				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
 				for _disk_path in ${base_vm_disks}; do
-					original_disk_path=$( /usr/bin/readlink -f ${_disk_path} )
+					original_disk_path=$( ${READLINK_CMD} -f ${_disk_path} )
 					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
 						DEPENDENT_VMS="${DEPENDENT_VMS}\n${vm}"
 					fi
@@ -143,21 +143,21 @@ for jname in ${JLIST}; do
 			done
 
 			if [ ! -z "${DEPENDENT_VMS}" ]; then
-				dep_vms=$( echo ${DEPENDENT_VMS} | /usr/bin/sort | /usr/bin/uniq )
+				dep_vms=$( echo ${DEPENDENT_VMS} | ${SORT_CMD} -u )
 				err 1 "${N1_COLOR}The following machines depend on ${jname}:${N0_COLOR} ${dep_vms}" >&2
 			fi
 			for disk_path in ${base_vm_disks}; do
 				[ ! -r ${disk_path} ] && continue
-				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
 				PARENT_ZVOL="${PARENT_ZVOL} ${disk_zvol}"
-				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
 				if [ "${parent_snapshot}" != "-" ]; then
 					PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${parent_snapshot}"
 				fi
 			done
 
-			path_parent=$( /sbin/zfs get -Ho value origin ${DST} )
+			path_parent=$( ${ZFS_CMD} get -Ho value origin ${DST} )
 			if [ "${path_parent}" != "-" ]; then
 				PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${path_parent}"
 			fi
@@ -180,27 +180,27 @@ for jname in ${JLIST}; do
 		# when _jailed != 0 use this variable to jremove at the end of the scenatio
 	fi
 
-	[ -d "${DST}" ] && removedata ${DST} force
+	[ -d "${DST}" ] && remove_data_dir ${DST}
 	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
 	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
 
-	[ -f "${JAILFSTAB}" ] && /bin/rm -f ${JAILFSTAB}
-	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
-	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
-	[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && /bin/rm -f "${jailrcconfdir}/rc.conf_${jname}"
+	[ -f "${JAILFSTAB}" ] && ${RM_CMD} -f ${JAILFSTAB}
+	[ -f "${JAILFSTAB}.local" ] && ${RM_CMD} -f "${JAILFSTAB}.local"
+	[ -f "${JAILRCCONF}" ] && ${RM_CMD} -f ${JAILRCCONF}
+	[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && ${RM_CMD} -f "${jailrcconfdir}/rc.conf_${jname}"
 	if [ -d "${jailsysdir}/${jname}" ]; then
-		/bin/rm -rf "${jailsysdir}/${jname}"
+		${RM_CMD} -rf "${jailsysdir}/${jname}"
 	elif [ -h "${jailsysdir}/${jname}" ]; then
-		/bin/rm -f "${jailsysdir}/${jname}"
+		${RM_CMD} -f "${jailsysdir}/${jname}"
 	fi
-	[ -f "${logdir}/${jname}.log" ] && /bin/rm -f "${logdir}/${jname}.log"
+	[ -f "${logdir}/${jname}.log" ] && ${RM_CMD} -f "${logdir}/${jname}.log"
 	[ -d "${jaildir}/${jname}" ] && /bin/rmdir "${jaildir}/${jname}"
 	for parent_snapshot in ${PARENT_SNAPSHOTS}; do
-		/sbin/zfs destroy ${parent_snapshot}
+		${ZFS_CMD} destroy ${parent_snapshot}
 	done
 
 	for parent_zvol in ${PARENT_ZVOL}; do
-		/sbin/zfs get -Ho value name ${parent_zvol} > /dev/null 2>&1 && /sbin/zfs destroy ${parent_zvol}
+		${ZFS_CMD} get -Ho value name ${parent_zvol} > /dev/null 2>&1 && ${ZFS_CMD} destroy ${parent_zvol}
 	done
 
 	vmdir="${workdir}/vm/${jname}"
@@ -212,7 +212,7 @@ for jname in ${JLIST}; do
 		zfsmnt "${vmdir}"
 		_ret=$?
 		if [ ${_ret} -eq 1 -o ${_ret} -eq 2 ]; then
-			_msg=$( /sbin/zfs destroy ${ZPOOL} )
+			_msg=$( ${ZFS_CMD} destroy ${ZPOOL} )
 			_ret=$?
 			if [ ${_ret} -ne 0 ]; then
 				${ECHO} "${N1_COLOR}bremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"
@@ -220,7 +220,7 @@ for jname in ${JLIST}; do
 		fi
 	fi
 
-	[ -d "${vmdir}" ] && /bin/rm -rf ${vmdir}
+	[ -d "${vmdir}" ] && ${RM_CMD} -rf ${vmdir}
 
 	# detach ppt
 	cbsdsqlrw local "DELETE FROM bhyveppt WHERE jname=\"${jname}\""
@@ -243,7 +243,7 @@ for jname in ${JLIST}; do
 	if [ "${emulator}" = "virtualbox" ]; then
 		. ${distdir}/virtualbox.subr
 		${VBOX_MGMT_CMD} unregistervm ${jname}
-		[ -d "/root/VirtualBox VMs/${jname}" ] && /bin/rm -rf "/root/VirtualBox VMs/${jname}"
+		[ -d "/root/VirtualBox VMs/${jname}" ] && ${RM_CMD} -rf "/root/VirtualBox VMs/${jname}"
 	fi
 
 	# CBSD QUEUE
