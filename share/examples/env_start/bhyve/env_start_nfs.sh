@@ -2,11 +2,11 @@
 # CBSD Project
 
 # read config from /root/etc/env_start_nfs.conf if file exist
-# see /usr/local/cbsd/share/examples/env_start/env_start_nfs.conf as sample
+# see /usr/local/cbsd/share/examples/env_start/jail/env_start_nfs.conf as sample
 [ -r /root/etc/env_start_nfs.conf ] && . /root/etc/env_start_nfs.conf
 
 # NFS server 127.0.0.1 as default: change this ( e.g via /root/etc/env_start.nfs.conf
-# see /usr/local/cbsd/share/examples/env_start/env_start_nfs.conf as sample
+# see /usr/local/cbsd/share/examples/env_start/jail/env_start_nfs.conf as sample
 : ${NFS_SERVER:=127.0.0.1}
 : ${NFS_SERVER_ROOT_DIR:=/nfs}
 
