@@ -745,24 +745,6 @@ fi
 st_time=$( ${DATE_CMD} +%s )
 [ -z "${jname}" ] && jname=${1}
 
-# cloud-init enabled?
-# we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
-# since some helpers may work with runtime (e.g pcibus + cloudinit) config
-if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
-	CLOUD_FILES=$( ${FIND_CMD} ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
-	# gen seed only if files exist
-	if [ -n "${CLOUD_FILES}" ]; then
-		cloud_init=1
-		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
-		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
-	else
-		cloud_init=0
-		unset CLOUD_FILES
-	fi
-else
-	cloud_init=0
-fi
-
 if [ "${lm}" = "0" ]; then
 	. ${jrcconf}
 	if [ $? -eq 1 ]; then
@@ -784,6 +766,23 @@ if [ "${lm}" = "0" ]; then
 			fi
 		done
 		exit 0
+	fi
+
+	[ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
+	if [ "${mnt_start}" != "0" ]; then
+		if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
+			err 1 "mnt_start script not exist or not executable: ${mnt_start}"
+		fi
+		${ECHO} "${N1_COLOR}Execute mnt_start script: ${N2_COLOR}${mnt_start}${N0_COLOR}..."
+		# external mount, reset zfsfeat
+		zfsfeat=0
+		[ ! -d ${data} ] && ${MKDIR_CMD} -p ${data}
+		[ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}
+		${mnt_start} -d ${data} -j ${jname} -r ${jailrcconfdir} -s ${jailsysdir}/${jname}
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			err 1 "${W1_COLOR}error: ${N1_COLOR}mnt_start script failed: ${N2_COLOR}${mnt_start} ${jname}${N0_COLOR}"
+		fi
 	fi
 else
 	# Request for live migration start
@@ -824,6 +823,25 @@ else
 	. ${rjrcconf}
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}Request for live migration: no such VM in cluster: ${N2_COLOR}${jname}${N1_COLOR}. Perhaps you forget to: ${N2_COLOR}cbsd node mode=add${N1_COLOR} ?${N0_COLOR}"
 fi
+
+# cloud-init enabled?
+# we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
+# since some helpers may work with runtime (e.g pcibus + cloudinit) config
+if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
+	CLOUD_FILES=$( ${FIND_CMD} ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
+	# gen seed only if files exist
+	if [ -n "${CLOUD_FILES}" ]; then
+		cloud_init=1
+		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
+		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
+	else
+		cloud_init=0
+		unset CLOUD_FILES
+	fi
+else
+	cloud_init=0
+fi
+
 
 # jailed bhyve?
 _jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
