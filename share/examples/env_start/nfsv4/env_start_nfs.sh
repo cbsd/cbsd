@@ -13,7 +13,7 @@
 : ${MOUNT_RCCONF:=0}
 : ${MOUNT_FSTAB:=0}
 
-[ -z "${MOUNT_NFS_OPT}" ] && MOUNT_NFS_OPT="-orw -overs=4"
+[ -z "${MOUNT_NFS_OPT}" ] && MOUNT_NFS_OPT="-orw -overs=4 -ointr -orsize=32768 -owsize=32768 -oacregmax=3 -oacdirmin=3 -oacdirmax=3 -ohard -oproto=tcp -otimeout=300"
 [ -z "${NFS_SERVER_DATA_DIR}" ] && NFS_SERVER_DATA_DIR="${NFS_SERVER_ROOT_DIR}/data"
 [ -z "${NFS_SERVER_RCCONF_DIR}" ] && NFS_SERVER_RCCONF_DIR="${NFS_SERVER_ROOT_DIR}/rcconf"
 [ -z "${NFS_SERVER_FSTAB_DIR}" ] && NFS_SERVER_FSTAB_DIR="${NFS_SERVER_ROOT_DIR}/fstab"
