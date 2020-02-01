@@ -159,7 +159,7 @@ populate_output_data()
 		fi
 	else
 		# pop status variable from node_is_online()
-		_md5_node_name=$( /sbin/md5 -q -s ${sqlfile} )
+		_md5_node_name=$( ${MD5_CMD} -q -s ${sqlfile} )
 		eval _node_is_online=\$node_${_md5_node_name}_online
 		if [ "${_node_is_online}" = "1" ]; then
 			# retr from sql
@@ -190,111 +190,117 @@ populate_output_data()
 		#	continue
 		#fi
 
-		case "${_i}" in
-			vm_ram)
-				# convert to MB
-				if ! is_number "${_val}"; then
-					_val=$(( _val / 1024 / 1024 ))
-				else
-					_val="0"
-				fi
-				;;
-			vm_curmem)
-				# convert to MB
-				if [ "${_pid}" != "0" ]; then
-					if ! is_number "${memoryuse}"; then
-						_val=$(( memoryuse / 1024 / 1024 ))
+		# search for custom column output helper first
+		if [ -x "${jailsysdir}/${jname}/facts.d/${_i}" ]; then
+			. ${distdir}/jcreate.subr               # for export_jail_data_for_external_hook
+			geniplist ${ip4_addr}                   # for ipvX_first_public-like vars
+			export_jail_data_for_external_hook
+			_val=$( ${jailsysdir}/${jname}/facts.d/${_i} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
+		else
+			case "${_i}" in
+				vm_ram)
+					# convert to MB
+					if ! is_number "${_val}"; then
+						_val=$(( _val / 1024 / 1024 ))
 					else
-						_val=0
+						_val="0"
 					fi
-					[ -z "${_val}" ] && _val=0
-				else
-					_val="0"
-				fi
-				;;
-			pcpu)
-				if [ "${_pid}" != "0" ]; then
-					if ! is_number "${pcpu}"; then
-						_val="${pcpu}"
-					else
-						_val=0
-					fi
-					[ -z "${_val}" ] && _val=0
-				else
-					_val="0"
-				fi
-				;;
-			vnc_port)
-				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
-				if [ -n "${_tmpport}" ]; then
-					_val="${_tmpport}"
-				else
-					_val="0"
-				fi
-				;;
-			vnc)
-				_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
-				if [ -n "${_tmpport}" ]; then
-					# jailed?
-					_jailed=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
-					[ -z "${_jailed}" ] && _jailed="0"
-					if [ "${_jailed}" != "0" ]; then
-						# this is jailed bhyve, try to obtain jail IPs
-						_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
-						iptype ${_jip} >/dev/null 2>&1
-						_ret=$?
-
-						case ${_ret} in
-						1)
-							# jail have valid IPv4
-							_tmpbind="${_jip}"
-							;;
-						*)
-							# ipv6 or invalid IP
-							_tmpbind="Unk"
-							;;
-						esac
-					else
-						# not jailed
-						if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-							# we need for special route of tcpbind presentation for foreign bhyve. replace 0.0.0.0 by nodeip
-							if [ "${sqlfile}" != "local" ]; then
-								_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
-							else
-								_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT bhyve_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
-							fi
+					;;
+				vm_curmem)
+					# convert to MB
+					if [ "${_pid}" != "0" ]; then
+						if ! is_number "${memoryuse}"; then
+							_val=$(( memoryuse / 1024 / 1024 ))
 						else
-							_tmpbind="Unk"
+							_val=0
 						fi
+						[ -z "${_val}" ] && _val=0
+					else
+						_val="0"
 					fi
-					_val="${_tmpbind}:${_tmpport}"
-				else
-					_val="0"
-				fi
-				;;
-			ip4_addr)
-				if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
-				else
-					_val="Unk"
-				fi
-				[ "${_val}" = "(null)" ] && _val="DHCP"
-				;;
-			vm_zfs_guid)
-				if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-					_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
-				else
-					_val="0"
-				fi
-				[ "${_val}" = "(null)" ] && _val="DHCP"
-				;;
-			status)
-				[ "${unregister}" = "1" ] && _val="Unregister"
-				;;
-		esac
+					;;
+				pcpu)
+					if [ "${_pid}" != "0" ]; then
+						if ! is_number "${pcpu}"; then
+							_val="${pcpu}"
+						else
+							_val=0
+						fi
+						[ -z "${_val}" ] && _val=0
+					else
+						_val="0"
+					fi
+					;;
+				vnc_port)
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+					if [ -n "${_tmpport}" ]; then
+						_val="${_tmpport}"
+					else
+						_val="0"
+					fi
+					;;
+				vnc)
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+					if [ -n "${_tmpport}" ]; then
+						# jailed?
+						_jailed=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+						[ -z "${_jailed}" ] && _jailed="0"
+						if [ "${_jailed}" != "0" ]; then
+							# this is jailed bhyve, try to obtain jail IPs
+							_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
+							iptype ${_jip} >/dev/null 2>&1
+							_ret=$?
 
+							case ${_ret} in
+							1)
+								# jail have valid IPv4
+								_tmpbind="${_jip}"
+								;;
+							*)
+								# ipv6 or invalid IP
+								_tmpbind="Unk"
+								;;
+							esac
+						else
+							# not jailed
+							if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+								# we need for special route of tcpbind presentation for foreign bhyve. replace 0.0.0.0 by nodeip
+								if [ "${sqlfile}" != "local" ]; then
+									_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+								else
+									_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT bhyve_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+								fi
+							else
+								_tmpbind="Unk"
+							fi
+						fi
+						_val="${_tmpbind}:${_tmpport}"
+					else
+						_val="0"
+					fi
+					;;
+				ip4_addr)
+					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+					else
+						_val="Unk"
+					fi
+					[ "${_val}" = "(null)" ] && _val="DHCP"
+					;;
+				vm_zfs_guid)
+					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
+					else
+						_val="0"
+					fi
+					[ "${_val}" = "(null)" ] && _val="DHCP"
+					;;
+				status)
+					[ "${unregister}" = "1" ] && _val="Unregister"
+					;;
+			esac
+		fi
 		[ -z "${_val}" ] && _val="\-"
-
 		printf "${_val} "
 	done
 
