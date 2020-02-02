@@ -38,27 +38,26 @@ mvdata()
 		0)
 			echo "Switch to ZFS pool"
 			zfsmnt ${workdir}
-			/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} "${ZPOOL}${_dst}"
-			/sbin/zfs mount "${ZPOOL}${_dst}"
+			${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_dst} "${ZPOOL}${_dst}"
+			${ZFS_CMD} mount "${ZPOOL}${_dst}"
 			${MKDIR_CMD} ${_dst}
-			cd ${_src} && /bin/pax -p eme -rw . ${_dst} && ${CHFLAGS_CMD} -R noschg ${_src} && /bin/rm -rf ${_src}
+			cd ${_src} && ${PAX_CMD} -p eme -rw . ${_dst} && ${CHFLAGS_CMD} -R noschg ${_src} && ${RM_CMD} -rf ${_src}
 		;;
 		1)
-			/sbin/zfs umount -f ${_src} > /dev/null 2>&1
-			/sbin/zfs set mountpoint=${_dst} ${ZPOOL}
-			/sbin/zfs mount ${ZPOOL}
-			/bin/rmdir ${_src}
+			${ZFS_CMD} umount -f ${_src} > /dev/null 2>&1
+			${ZFS_CMD} set mountpoint=${_dst} ${ZPOOL}
+			${ZFS_CMD} mount ${ZPOOL}
+			${RMDIR_CMD} ${_src}
 		;;
 		2)
-			/sbin/zfs set mountpoint=${_dst} ${ZPOOL}
-			/sbin/zfs mount ${ZPOOL}
-			/bin/rmdir ${_src}
+			${ZFS_CMD} set mountpoint=${_dst} ${ZPOOL}
+			${ZFS_CMD} mount ${ZPOOL}
+			${RMDIR_CMD} ${_src}
 		;;
 	esac
 
 	return 0
 }
-
 
 # clone data
 # -d <path> - destination dir
@@ -78,7 +77,7 @@ clonedata()
 	_force=0
 
 	while getopts "d:fj:m:n:p:s:" opt; do
-		case "$opt" in
+		case "${opt}" in
 			d) _dst="${OPTARG}" ;;
 			f) force=1 ;;
 			m) _mode="${OPTARG}" ;;
@@ -120,7 +119,7 @@ clonedata()
 					_mode="rsync"
 					;;
 				1|2)
-					local _origdata=$( /sbin/zfs get -Ho value name ${_src} 2>/dev/null )
+					local _origdata=$( ${ZFS_CMD} get -Ho value name ${_src} 2>/dev/null )
 					if [ -z "${_origdata}" ]; then
 						${ECHO} "${N1_COLOR}${_src} is not ZFS dataset, force to rsync clone method${N0_COLOR}"
 						cbsdlogger NOTICE ${CBSD_APP}: ${_src} is not ZFS dataset, force to rsync clone method
@@ -128,9 +127,9 @@ clonedata()
 					else
 						local _createtime=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
 						cbsdlogger NOTICE ${CBSD_APP}: clonedata: zfs snapshot ${_origdata}@cbsd-original-${_new_name}
-						/sbin/zfs snapshot ${_origdata}@cbsd-original-${_new_name}
-						/sbin/zfs set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
-						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
+						${ZFS_CMD} snapshot ${_origdata}@cbsd-original-${_new_name}
+						${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
+						${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
 						create_zfs_fs -d "${_src}" -m "${_dst}" -n "${_new_name}" -p ${_promote} -z "${_origdata}@cbsd-original-${_new_name}"
 					fi
 					;;
@@ -142,7 +141,7 @@ clonedata()
 
 	case "${_mode}" in
 		"cp")
-			_go="/bin/cp -Rp "
+			_go="${CP_CMD} -Rp "
 			;;
 		"rsync")
 			_go="/usr/local/bin/rsync -avzz --devices --numeric-ids --delete --recursive --partial "
@@ -166,12 +165,12 @@ clonedata()
 	if [ -n "${_go}" ]; then
 		if [ ! -d "${_dst}" ]; then
 			if [ ${zfsfeat} -eq 1 ]; then
-				_zpool=$( /sbin/zfs list ${jaildatadir} | /usr/bin/tail +2 | ${AWK_CMD} '{printf $1}' )
-				/sbin/zfs create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
+				_zpool=$( ${ZFS_CMD} list ${jaildatadir} | ${TAIL_CMD} +2 | ${AWK_CMD} '{printf $1}' )
+				${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_dst} ${_zpool}/${jname}
 				. ${system}	# for is_mounted
 				if ! is_mounted ${_zpool}/${jname}; then
 					cbsdlogger NOTICE ${CBSD_APP}: zfs not mounted, mount: ${_zpool}/${jname}
-					/sbin/zfs mount ${_zpool}/${jname}
+					${ZFS_CMD} mount ${_zpool}/${jname}
 				fi
 			else
 				${MKDIR_CMD} -p ${_dst}
@@ -184,12 +183,12 @@ clonedata()
 
 	# additional loop to check for symlink and zvol
 	if [ ${zfsfeat} -eq 1 ]; then
-		for i in $( /usr/bin/find ${_dst}/ -type l -depth 1 -maxdepth 1 ); do
+		for i in $( ${FIND_CMD} ${_dst}/ -type l -depth 1 -maxdepth 1 ); do
 			if is_getzvol ${i}; then
-				_dskname=$( /usr/bin/basename ${i} )
-				imgbytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+				_dskname=$( ${BASENAME_CMD} ${i} )
+				imgbytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
 				# create_bhyvedsk ?
-#				DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+#				DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
 
 				case "${_orig_mode}" in
@@ -197,11 +196,11 @@ clonedata()
 						local _createtime=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
 						cbsdlogger NOTICE ${CBSD_APP}: clonedata: create zfs snapshot: ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
 						# this command produces ZFS WARNING: Unable to create ZVOL in syslog messages
-						/sbin/zfs snapshot ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
-						/sbin/zfs set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
-						/sbin/zfs set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						${ZFS_CMD} snapshot ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
 						cbsdlogger NOTICE ${CBSD_APP}: clonedata: clone zfs snapshot: ${is_zvol}@cbsd-original-${_new_name}-${_dskname} to ${new_zvol}
-						/sbin/zfs clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name}-${_dskname} ${new_zvol}
+						${ZFS_CMD} clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name}-${_dskname} ${new_zvol}
 #						create_zfs_fs -d "${_src}" -n "${_new_name}" -p ${_promote} -z "${is_zvol}@cbsd-original-${_new_name}-${_dskname}"
 						;;
 					*)
@@ -218,33 +217,65 @@ clonedata()
 							fi
 						done
 
-						/sbin/zfs create -V ${imgbytes} ${_zvol_opts} ${new_zvol}
-						/bin/dd if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
+						${ZFS_CMD} create -V ${imgbytes} ${_zvol_opts} ${new_zvol}
+						${DD_CMD} if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
 						;;
 				esac
 				cbsdlogger NOTICE ${CBSD_APP}: clonedata: create ${i} symlink to ZVOL: /dev/zvol/${new_zvol}
-				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
+				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
 			fi
 		done
 	fi
 
-	for i in $( /usr/bin/find ${_dst}/ -type l -or -type f -depth 1 -maxdepth 1 -name dsk\* ); do
-		mydsk=$( /usr/bin/basename ${i} );
+	for i in $( ${FIND_CMD} ${_dst}/ -type l -or -type f -depth 1 -maxdepth 1 -name dsk\* ); do
+		mydsk=$( ${BASENAME_CMD} ${i} );
 		[ -z "${mydsk}" ] && continue
 		media mode=register name="hdd-${mydsk}" path="${i}" type="hdd" jname="${jname}"
 	done
-
 }
 
 # remove data from disk
-# $jname must be set
-# if "$2" = "force" then force to remove non-empty dir
-removedata()
+# return 1 if failed
+removedir()
 {
-	local _data _test _res _jaildatadir ZPOOL _jailfs data
+	local _data data
 
-	[ -z "${1}"  ] && err 1 "removedata: empty arguments"
-	[ -z "${jname}"  ] && err 1 "removedata: jname variable must be set"
+	[ -z "${1}"  ] && err 1 "removedir: empty arguments"
+	data="${1}"
+	# not dir and not link?
+	[ ! -d "${data}" -a ! -h "${data}" ] && return 0
+	_data=$( ${REALPATH_CMD} ${data} )
+	[ ! -d "${_data}" ] && return 0
+	nice -n 19 ${IDPRIO_CMD} 29 ${CHFLAGS_CMD} -R noschg ${_data}
+	# determine if ${_data} is mountpoint and try to remove content inside dir first, 
+	# then - unmount and rmdir
+	. ${system}		# is_mounted func
+	if is_mounted "${_data}"; then
+		# remove dir first
+		nice -n 19 ${IDPRIO_CMD} 29 ${FIND_CMD} ${_data}/ -depth 1 -maxdepth 1 -type d -exec ${RM_CMD} -rf {} \;
+		# then remove file
+		nice -n 19 ${IDPRIO_CMD} 29 ${FIND_CMD} ${_data}/ -depth 1 -maxdepth 1 -exec ${RM_CMD} -f {} \;
+		# finaly try to unmount and remove
+		${UMOUNT_CMD} -f ${_data}
+		${RM_CMD} -rf ${_data}
+	else
+		${RM_CMD} -rf ${_data}
+	fi
+
+	[ -h "${data}" ] && ${RM_CMD} -f ${data}
+	[ -d "${data}" ] && ${RMDIR_CMD} ${data}
+	[ -d "${_data}" -o -d "${data}" ] && return 1
+	return 0
+}
+
+# remove environment data directory from disk
+# $jname must be set
+remove_data_dir()
+{
+	local _data _test _res _jaildatadir ZPOOL _jailfs data _ret
+
+	[ -z "${1}"  ] && err 1 "remove_data_dir: empty arguments"
+	[ -z "${jname}"  ] && err 1 "remove_data_dir: jname variable must be set"
 
 	data="${1}"
 
@@ -255,81 +286,82 @@ removedata()
 	if [ "${zfsfeat}" = "1" ]; then
 		case "${emulator}" in
 			bhyve|xen)
-				for i in $( /usr/bin/find ${_data}/ -type l -depth 1 -maxdepth 1 ); do
+				for i in $( ${FIND_CMD} ${_data}/ -type l -depth 1 -maxdepth 1 ); do
 					if is_getzvol ${i}; then
-						#echo "/sbin/zfs destroy ${is_zvol} (for is_getzvol ${i})"
-						/sbin/zfs destroy ${is_zvol}
+						#echo "${ZFS_CMD} destroy ${is_zvol} (for is_getzvol ${i})"
+						${ZFS_CMD} destroy ${is_zvol}
 					fi
-					/bin/rm -f ${i}
+					${RM_CMD} -f ${i}
 				done
 				;;
 			*)
 				;;
 		esac
-
 		# extra check if zfs still exist
 		_jaildatadir=$( ${REALPATH_CMD} ${jaildatadir} )
-		ZPOOL=$( /sbin/zfs get -Ho value name ${_jaildatadir} 2>/dev/null )
+		ZPOOL=$( ${ZFS_CMD} get -Ho value name ${_jaildatadir} 2>/dev/null )
 		if [ -n "${ZPOOL}" ]; then
-			local _jailfs="${ZPOOL}/bcbsd-${jname}-dsk1.vhd ${ZPOOL}/${jname}"		# back compatible for CBSD <=12.0.14
-			local i
-			for i in ${_jailfs}; do
-				for try in 1 2 3; do
-					# workaround for dataset busy, give the pause with three attempts
-					/sbin/zfs list ${i} >/dev/null 2>/dev/null
-					if [ $? -eq 0 ]; then
-						sleep 1
-						/sbin/zfs destroy ${i} > /dev/null 2>&1
-					fi
-				done
-			done
+			case "${emulator}" in
+				bhyve|xen)
+					local _jailfs="${ZPOOL}/bcbsd-${jname}-dsk1.vhd ${ZPOOL}/${jname}"		# back compatible for CBSD <=12.0.14
+					local i
+					for i in ${_jailfs}; do
+						for try in 1 2 3; do
+							# workaround for dataset busy, give the pause with three attempts
+							${ZFS_CMD} list ${i} >/dev/null 2>/dev/null
+							if [ $? -eq 0 ]; then
+								sleep 1
+								${ZFS_CMD} destroy ${i} > /dev/null 2>&1
+							fi
+						done
+					done
+					;;
+				*)
+					;;
+			esac
+			unmountdata ${_data}
+			${ZFS_CMD} list ${ZPOOL}/${jname} >/dev/null 2>/dev/null
+			if [ $? -eq 0 ]; then
+				${ZFS_CMD} destroy ${ZPOOL}/${jname}
+			fi
 		fi
-
-		unmountdata ${_data}
-		[ -d "${_data}" ] && /bin/rm -rf ${_data}
 	elif [ "${hammerfeat}" = "1" ]; then
 		destroy_hammer_fs ${jname}
-	else
-		if [ "$2" = "force" ]; then
-			${CHFLAGS_CMD} -R noschg ${_data}
-			/bin/rm -rf ${_data}
-		else
-			/bin/rmdir ${_data}
-		fi
 	fi
+	# remove directory
+	removedir ${data}
+	_ret=$?
 
-	# $1 - original dst
-	[ -h "${data}" ] && /bin/rm -f ${data}
-	[ -d "${data}" ] && /bin/rmdir ${data}
-	[ -d "${_data}" ] && err 1 "${N1_COLOR}Directory not empty or busy: ${_data}${N0_COLOR}"
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}Directory not empty or busy: ${_data}${N0_COLOR}"
 	return 0
 }
-
 
 # unmount if mount
 unmountdata()
 {
-	local _data
+	local _data OZPOOL
 
 	[ -z "$1" ] && err 1 "unmountdata: no arguments"
 	_data=$1
 
 	[ ! -d "${_data}" ] && return 1
 
+	# store and restore old ZPOOL value after zfsmnt
+	OZPOOL="${ZPOOL}"
 	zfsmnt ${_data}
+	ZPOOL="${OZPOOL}"
 
 	if [ $? -eq 1 ]; then
-		/sbin/zfs unmount -f ${_data}
-		rmdir ${_data}
+		${ZFS_CMD} unmount -f ${_data}
+		${RMDIR_CMD} ${_data}
 	fi
 }
-
 
 create_fs()
 {
 	local data="${1}"
 
-	[ -z "${data}" ] && return 0
+	[ -z "${data}" ] && return 1
 
 	if [ "${zfsfeat}" = "1" ]; then
 		create_zfs_fs -d ${data}
@@ -338,8 +370,9 @@ create_fs()
 	else
 		[ ! -d ${data} ] && ${MKDIR_CMD} -p ${data}
 	fi
-}
 
+	return 0
+}
 
 # -d data
 # -m mount_point, can be: none
@@ -370,26 +403,26 @@ create_zfs_fs()
 
 	local ZPOOL
 
-	ZPOOL=$( /sbin/zfs get -Ho value name ${jaildatadir} )
+	ZPOOL=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 
 	if zfsroot ${_name}; then
 		log_err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
 	fi
 
 	if [ -z "${_zfs_snapsrc}" ]; then
-		res=$( /sbin/zfs create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
+		res=$( ${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
 		[ $? -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs: ZFS ${ZPOOL}/${_name} has been created with mountpoint: ${_data}, opt: ${zfs_create_flags}
 	else
-		/sbin/zfs clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
+		${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
 		[ $? -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs clone failed: ${res}${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: ZFS cloned: ${_zfs_snapsrc} to ${ZPOOL}/${_name}
 
 		if [ "${_mount_point}" != "none" ]; then
 			if [ -n "${_mount_point}" ]; then
-				/sbin/zfs set mountpoint=${_mount_point} ${ZPOOL}/${_name}
+				${ZFS_CMD} set mountpoint=${_mount_point} ${ZPOOL}/${_name}
 			else
-				/sbin/zfs set mountpoint=${_data} ${ZPOOL}/${_name}
+				${ZFS_CMD} set mountpoint=${_data} ${ZPOOL}/${_name}
 			fi
 		fi
 	fi
@@ -397,7 +430,7 @@ create_zfs_fs()
 	if [ ${_promote} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}ZFS promoting for: ${N2_COLOR}${ZPOOL}/${_name}${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: zfs promoting for: ${ZPOOL}/${_name}
-		/sbin/zfs promote ${ZPOOL}/${_name}
+		${ZFS_CMD} promote ${ZPOOL}/${_name}
 	fi
 
 	return 0

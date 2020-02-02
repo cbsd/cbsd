@@ -106,12 +106,12 @@ really_create_vm()
 			1)
 				. ${zfstool}
 				zfsmnt ${data}
-				[ $? -eq 2 ] && /sbin/zfs mount "${ZPOOL}"
+				[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
 				;;
 		esac
 
 		${SYSRC_CMD} -qf ${jconf_tmp} ver="${ver}" > /dev/null
-		/bin/mv /tmp/${jname}.$$.img ${data}/${defdsk}
+		${MV_CMD} /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
 		_msg=$( virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} 2>&1 )
 		_res=$?
@@ -130,11 +130,15 @@ over="${ver}"
 oarch="${arch}"
 jconf=$( ${REALPATH_CMD} ${jconf} )
 
+# several defaults
+[ -z "${mnt_start}" ] && mnt_start="0"
+[ -z "${mnt_stop}" ] && mnt_stop="0"
+
 # make tmp jconf and work with it, insofar CBSD can
 # change content of jconf in the course of their work
 # we must leave the original file intact
 jconf_tmp="${jconf}.tmp"
-/bin/cp -a ${jconf} ${jconf_tmp}
+${CP_CMD} -a ${jconf} ${jconf_tmp}
 
 if [ -z "${delpkglist}" ]; then
 	delpkglist=0
@@ -189,31 +193,47 @@ jstatus jname=${jname} > /dev/null 2>&1
 vm_os_type=$( echo "${vm_os_type}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
 ${SYSRC_CMD} -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
 
-if [ "${zfsfeat}" = "1" ]; then
+if [ "${mnt_start}" != "0" ]; then
+	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
+		err 1 "mnt_start script not exist or not executable: ${mnt_start}"
+	fi
+	${ECHO} "${N1_COLOR}Execute mnt_start script: ${N2_COLOR}${mnt_start}${N0_COLOR}..."
+	# external mount, reset zfsfeat
+	zfsfeat=0
+	[ ! -d "${data}" ] && ${MKDIR_CMD} ${data}
+	[ ! -d ${jailfstabdir}/${jname} ] && ${MKDIR_CMD} -p ${jailfstabdir}/${jname}
+	[ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}
+	${mnt_start} -d ${data} -j ${jname} -r ${jailrcconfdir} -s ${jailsysdir}/${jname}
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		err 1 "${W1_COLOR}error: ${N1_COLOR}mnt_start script failed: ${N2_COLOR}${mnt_start} -d ${data} -f ${jailfstabdir} -j ${jname} -r ${jailrcconfdir} -s ${jailsysdir}/${jname}${N0_COLOR}"
+	fi
+	create_fs ${data}
+	[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+	vm_zfs_guid="0"
+fi
+
+if [ "${zfsfeat}" = "1" -a "${mnt_start}" = "0" ]; then
 	readconf zfs.conf
 	. ${zfstool}
-	DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} )
-	_msg=$( /sbin/zfs create -o mountpoint=${workdir}/vm/${jname} ${DATA}/${jname} )
+	DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+	_msg=$( ${ZFS_CMD} create -o mountpoint=${workdir}/vm/${jname} ${DATA}/${jname} )
 	_res=$?
 	if [ ${_res} -ne 0 ]; then
 		echo "${_msg}"
 		exit ${_res}
 	fi
 
-	vm_zfs_guid=$( /sbin/zfs get -Ho value guid ${DATA}/${jname} 2>/dev/null )
+	vm_zfs_guid=$( ${ZFS_CMD} get -Ho value guid ${DATA}/${jname} 2>/dev/null )
 	[ -z "${vm_zfs_guid}" ] && vm_zfs_guid="0"
 
 	[ -z "${data}" ] && data="${jaildatadir}/${jname}-${jaildatapref}"
 	olddata="${data}"
 	data="${workdir}/vm/${jname}"
 	${SYSRC_CMD} -qf ${temprcconf} data="${data}" > /dev/null 2>&1
-#	set -o xtrace
-	/bin/ln -sf ${data} ${olddata}
-	/bin/ln -sf ${data} ${jailsysdir}/${jname}
-#	set +o xtrace
+	${LN_CMD} -sf ${data} ${olddata}
+	${LN_CMD} -sf ${data} ${jailsysdir}/${jname}
 else
-	#removedata ${data}
-	[ ! -d "${jailsysdir}/${jname}" ] && /bin/mkdir -p ${jailsysdir}/${jname}
 	vm_zfs_guid="0"
 fi
 
@@ -228,8 +248,8 @@ template_profile=
 # Merge with default and profile settings
 [ -n "${vm_os_profile}" -a -n "${vm_os_type}" ] && template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
 
-conf_owner=$( /usr/bin/stat -f "%u" ${jconf_tmp} )
-conf_group=$( /usr/bin/stat -f "%g" ${jconf_tmp} )
+conf_owner=$( ${STAT_CMD} -f "%u" ${jconf_tmp} )
+conf_group=$( ${STAT_CMD} -f "%g" ${jconf_tmp} )
 
 ${TRUNCATE_CMD} -s0 ${jconf_tmp}
 
@@ -237,11 +257,11 @@ for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults
 	[ ! -r "${merge_me}" ] && continue;
 	tmp_merge=$( ${MKTEMP_CMD} )
 	merge from=${jconf_tmp} to=${merge_me} out=${tmp_merge}
-	[ -f ${tmp_merge} ] && /bin/mv ${tmp_merge} ${jconf_tmp}
+	[ -f ${tmp_merge} ] && ${MV_CMD} ${tmp_merge} ${jconf_tmp}
 done
 
 # make permission for group write
-/usr/sbin/chown ${conf_owner}:${conf_group} ${jconf_tmp}
+${CHOWN_CMD} ${conf_owner}:${conf_group} ${jconf_tmp}
 
 . ${jconf_tmp}
 
@@ -256,9 +276,9 @@ done
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
 if [ ${removejconf} = "1" ]; then
-	trap "/bin/rm -f ${temprcconf} ${jconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
+	trap "${RM_CMD} -f ${temprcconf} ${jconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
 else
-	trap "/bin/rm -f ${temprcconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
+	trap "${RM_CMD} -f ${temprcconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
 fi
 
 [ -z "${jname}" ] && log_err 1 "${N1_COLOR}No such jname variable${N0_COLOR}"
@@ -356,7 +376,7 @@ if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
 
 	if [ ${imgsize_bytes} -lt ${imgsize_min_bytes} ]; then
 		if [ "${zfsfeat}" = "1" ]; then
-			/sbin/zfs destroy ${DATA}/${jname}
+			${ZFS_CMD} destroy ${DATA}/${jname}
 		fi
 		err 1 "${N1_COLOR}imgsize too small: ${N2_COLOR}${imgsize_bytes} ( ${imgsize_human_mb}mb ) < ${imgsize_min_bytes} ( ${imgsize_min_human_mb}mb )${N0_COLOR}"
 	fi
@@ -385,7 +405,7 @@ if [ -n "${vm_ram_min}" -a -n "${vm_ram}" ]; then
 
 	if [ ${vm_ram_bytes} -lt ${vm_ram_min_bytes} ]; then
 		if [ "${zfsfeat}" = "1" ]; then
-			/sbin/zfs destroy ${DATA}/${jname}
+			${ZFS_CMD} destroy ${DATA}/${jname}
 		fi
 		err 1 "${N1_COLOR}vm_ram too small: ${N2_COLOR}${vm_ram_bytes} ( ${vm_ram_human_mb}mb ) < ${vm_ram_min_bytes} ( ${vm_ram_min_human_mb}mb )${N0_COLOR}"
 	fi
@@ -397,13 +417,16 @@ defnic="nic1.vhd"
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
 	really_create_vm
-	/bin/cp ${jconf_tmp} ${rcconf}
+	${CP_CMD} ${jconf_tmp} ${rcconf}
 else
-	create_fs ${data}
+	if [ ! -d ${data} ]; then
+		create_fs ${data}
+		[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+	fi
 fi
 
 [ ! -d "${data}" ] && log_err 1 "Can't create datadir ${data}"
-[ ! -d ${jailfstabdir}  ] && /bin/mkdir -p ${jailfstabdir}
+[ ! -d ${jailfstabdir}  ] && ${MKDIR_CMD} -p ${jailfstabdir}
 
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyvedsk.schema bhyvedsk
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-bhyve-dskcontroller.schema bhyve_dskcontroller
@@ -418,9 +441,9 @@ fi
 
 ${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyve_soundhw ( soundhw_play, soundhw_rec ) VALUES ( '/dev/dsp', '/dev/dsp' )"
 
-[ -n "${fstablocal}" -a -f "${fstablocal}" ] && /bin/cp ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
+[ -n "${fstablocal}" -a -f "${fstablocal}" ] && ${CP_CMD} ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
-/bin/cp ${jconf_tmp} ${rcconf}
+${CP_CMD} ${jconf_tmp} ${rcconf}
 . ${rcconf}
 
 # Finnaly export to SQLite
@@ -432,10 +455,10 @@ if [ ${_res} -ne 0 ]; then
 	${ECHO}
 	${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}cbsd jregister${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Please review bad config file: ${N2_COLOR}/tmp/rc.conf_${jname}${N0_COLOR}"
-	/bin/mv ${rcconf} /tmp
+	${MV_CMD} ${rcconf} /tmp
 	#cleanup
-	[ -f "${mount_fstab}" ] && /bin/rm -f ${mount_fstab}
-	removedata ${data}
+	[ -f "${mount_fstab}" ] && ${RM_CMD} -f ${mount_fstab}
+	remove_data_dir ${data}
 	exit 1
 fi
 
@@ -456,7 +479,7 @@ if [ -z "${NOINTER}" ]; then
 	${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
 fi
 
-/bin/rm -f ${rcconf}
+${RM_CMD} -f ${rcconf}
 
 if [ -z "${sectorsize}" ]; then
 	sectorsize="${default_sectorsize}"
@@ -554,10 +577,11 @@ if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 	fi
 fi
 
-[ ! -d ${jailsysdir}/${jname} ] && /bin/mkdir -p ${jailsysdir}/${jname}
-[ ! -d ${jailsysdir}/${jname}/etc ] && /bin/mkdir -p ${jailsysdir}/${jname}/etc
+[ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}
+[ ! -d ${jailsysdir}/${jname}/etc ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}/etc
 
-system_dir="stop.d \
+system_dir="facts.d \
+stop.d \
 start.d \
 master_prestop.d \
 master_prestart.d \
@@ -569,15 +593,15 @@ remove.d"
 for i in ${system_dir}; do
 	if [ -n "${systemskeldir}" -a "${systemskeldir}/${i}" ]; then
 		if [ -d ${systemskeldir}/${i} ]; then
-			/bin/cp -a ${systemskeldir}/${i} ${jailsysdir}/${jname}/${i}
+			${CP_CMD} -a ${systemskeldir}/${i} ${jailsysdir}/${jname}/${i}
 		else
 			${ECHO} "${N1_COLOR}bcreate: warning: no such dir: ${N2_COLOR}${systemskeldir}/${i}${N0_COLOR}"
 			continue
 		fi
 	else
-		[ ! -d "${i}"  ] && /bin/mkdir -m 0775 -p ${jailsysdir}/${jname}/${i}
+		[ ! -d "${i}"  ] && ${MKDIR_CMD} -m 0775 -p ${jailsysdir}/${jname}/${i}
 	fi
-	/usr/sbin/chown ${cbsduser}:${cbsduser} ${jailsysdir}/${jname}/${i}
+	${CHOWN_CMD} ${cbsduser}:${cbsduser} ${jailsysdir}/${jname}/${i}
 done
 
 # is cloud-init-based ?

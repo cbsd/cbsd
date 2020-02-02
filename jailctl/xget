@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.1.3
+#v12.1.5
 CBSDMODULE="xen"
 MYARG="jname"
 
@@ -14,7 +14,8 @@ ALL_ARGS="${MYCOL}"
 
 MYOPTARG="${MYCOL} mode"
 MYDESC="Get info related to xen domain"
-ADDHELP="mode=quiet - return only value, without other string\nall - Returns all settings\n"
+ADDHELP="mode=quiet - return only value, without other string\n\
+all - Returns all settings\n"
 . ${cbsdinit}
 
 [ -z "${jname}" ] && err 1 "Give me jname"
@@ -34,32 +35,44 @@ else
 	QUIET=0
 fi
 
-ARGS=
+ARGS=				# known args ( MYCOL)
+UNKNOWN_ARGS=			# unknown args ( external/custom ? )
+ALL=0				# show all items
 
 # exclude jname= and mode= params from args str
-for i in ${@}; do
-	_pref5=$( substr --pos=0 --len=5 --str=${i} )
-	_pref6=$( substr --pos=0 --len=6 --str=${i} )
-	[ "${_pref5}" = "mode=" ] && continue
-	[ "${_pref6}" = "jname=" ] && continue
-	if [ "${i}" = "all" ]; then
-		ARGS=${ALL_ARGS}
-		break
+for i in $*; do
+	prefix3=$( substr --pos=0 --len=3 --str=${i} )
+	prefix5=$( substr --pos=0 --len=5 --str=${i} )
+	prefix6=$( substr --pos=0 --len=6 --str=${i} )
+	if [ "${prefix3}" = "all" ]; then
+			ALL=1
+			ARGS="${ALL_ARGS}"
+			continue
 	fi
-	if [ -n "${args}" ]; then
-		ARGS="${i}"
-	else
-		ARGS="${ARGS} ${i}"
+	[ "${prefix5}" = "mode=" ] && continue
+	[ "${prefix6}" = "jname=" ] && continue
+
+	[ ${ALL} -eq 1 ] && continue
+
+	is_known_args=0
+
+	for _jarg in ${MYCOL}; do
+		if [ "${_jarg}" = "${i}" ]; then
+			ARGS="${ARGS} ${i}"
+			is_known_args=1
+			break
+		fi
+	done
+
+	if [ ${is_known_args} -eq 0 ]; then
+		UNKNOWN_ARGS="${UNKNOWN_ARGS} ${i}"
 	fi
 done
 
 # empty params. return all
-[ -z "${ARGS}" ] && ARGS=${ALL_ARGS}
+[ -z "${ARGS}" -a -z "${UNKNOWN_ARGS}" ] && ARGS=${ALL_ARGS}
 
 for OID in ${ARGS}; do
-
-	[ "${OID}" = "jname" ] && continue		# skip jname
-
 	case "${OID}" in
 		vnc)
 			_vnc_port=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
@@ -79,3 +92,19 @@ for OID in ${ARGS}; do
 		echo "${OID}: ${val}"
 	fi
 done
+
+# search for custom column output helper first
+for OID in ${UNKNOWN_ARGS}; do
+	[ ! -x ${jailsysdir}/${jname}/facts.d/${OID} ] && continue
+	. ${distdir}/jcreate.subr		# for export_jail_data_for_external_hook
+	geniplist ${ip4_addr}                   # for ipvX_first_public-like vars
+	export_jail_data_for_external_hook
+	val=$( ${jailsysdir}/${jname}/facts.d/${OID} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
+	if [ ${QUIET} -eq 1 ]; then
+		echo "${val}"
+	else
+		echo "${OID}: ${val}"
+	fi
+done
+
+exit 0

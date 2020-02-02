@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.5
+#v12.1.5
 CBSDMODULE="jail"
 MYARG="jname"
 
@@ -8,33 +8,70 @@ unset jname
 . ${subr}
 . ${strings}
 
-[ -f ${distsharedir}/jail-arg ] || err 1 "no jail-arg file";
+[ ! -r ${distsharedir}/jail-arg ] && err 1 "no jail-arg file";
 . ${distsharedir}/jail-arg
-
-MYOPTARG="$JARG mode"
-#mode=quiet
+ALL_ARGS="${JARG}"
+MYOPTARG="${JARG} mode"
 MYDESC="Get info related to jail"
-ADDHELP="mode=quiet - return only value, without other string\n"
+ADDHELP="mode=quiet - return only value, without other string\n\
+all - Returns all settings\n"
 . ${cbsdinit}
 
 [ -z "${jname}" ] && err 1 "Give me jname"
 . ${jrcconf}
 [ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 [ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}not jail engine, emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
-QUIET=0
-[ "${mode}" = "quiet" ] && QUIET=1
+if [ "${mode}" = "quiet" ]; then
+	QUIET=1
+else
+	QUIET=0
+fi
 
-shift
-ARGS=${@}
+ARGS=				# known args ( JARG)
+UNKNOWN_ARGS=			# unknown args ( external/custom ? )
+ALL=0				# show all items
 
-[ $baserw -eq 1 ] && path="${data}"
+# exclude jname= and mode= params from args str
+for i in $*; do
+	prefix3=$( substr --pos=0 --len=3 --str=${i} )
+	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	if [ "${prefix3}" = "all" ]; then
+			ARGS=${ALL_ARGS}
+			ARGS="${ALL_ARGS}"
+			continue
+	fi
+	[ "${prefix5}" = "mode=" ] && continue
+	[ "${prefix6}" = "jname=" ] && continue
+
+	[ ${ALL} -eq 1 ] && continue
+
+	is_known_args=0
+
+	for _jarg in ${JARG}; do
+		if [ "${_jarg}" = "${i}" ]; then
+			ARGS="${ARGS} ${i}"
+			is_known_args=1
+			break
+		fi
+	done
+
+	if [ ${is_known_args} -eq 0 ]; then
+		UNKNOWN_ARGS="${UNKNOWN_ARGS} ${i}"
+	fi
+done
+
+# empty params. return all
+[ -z "${ARGS}" -a -z "${UNKNOWN_ARGS}" ] && ARGS=${ALL_ARGS}
+
+[ ${baserw} -eq 1 ] && path="${data}"
 
 for OID in ${ARGS}; do
 	for _jarg in ${JARG}; do
 		case ${OID} in
 			"${_jarg}")
 				eval val=\"\$${_jarg}\"
-				if [ $QUIET -eq 1 ]; then
+				if [ ${QUIET} -eq 1 ]; then
 					echo "${val}"
 				else
 					echo "${OID}: ${val}"
@@ -42,7 +79,7 @@ for OID in ${ARGS}; do
 				break
 				;;
 			"${ST}")
-				if [ $QUIET -eq 1 ]; then
+				if [ ${QUIET} -eq 1 ]; then
 					echo "${ST}"
 				else
 					echo "${OID}: ${ST}"
@@ -52,3 +89,19 @@ for OID in ${ARGS}; do
 		esac
 	done
 done
+
+# search for custom column output helper first
+for OID in ${UNKNOWN_ARGS}; do
+	[ ! -x ${jailsysdir}/${jname}/facts.d/${OID} ] && continue
+	. ${distdir}/jcreate.subr		# for export_jail_data_for_external_hook
+	geniplist ${ip4_addr}                   # for ipvX_first_public-like vars
+	export_jail_data_for_external_hook
+	val=$( ${jailsysdir}/${jname}/facts.d/${OID} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
+	if [ ${QUIET} -eq 1 ]; then
+		echo "${val}"
+	else
+		echo "${OID}: ${val}"
+	fi
+done
+
+exit 0
