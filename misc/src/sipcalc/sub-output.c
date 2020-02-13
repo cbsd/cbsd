@@ -482,7 +482,7 @@ print_rev_v6 (struct if_info *ifi)
 }
 
 void
-print_v6 (struct if_info *ifi)
+print_v6_orig (struct if_info *ifi)
 {
 	printf ("[IPV6 INFO]\n");
 	printf ("Expanded Address	- ");
@@ -513,6 +513,38 @@ print_v6 (struct if_info *ifi)
 
 	printf ("\n");
 
+	return;
+}
+
+void
+print_v6 (struct if_info *ifi)
+{
+	printf ("_expanded_ipv6_address=\"");
+	print_exp_v6 (ifi->v6ad.haddr);
+	printf ("\"\n");
+	printf ("_compressed_ipv6_address=\"");
+	print_comp_v6 (ifi->v6ad.haddr);
+	printf ("\"\n");
+	printf ("_subnet_ipv6_prefix=\"");
+	print_mixed_v6 (ifi->v6ad.prefix);
+	printf ("/%d\"\n", ifi->v6ad.nmaskbits);
+	printf ("_address_ipv6_id=\"");
+	print_mixed_v6 (ifi->v6ad.suffix);
+	printf ("/%d\"\n", ifi->v6ad.nmaskbits);
+	printf ("_prefix_ipv6_address=\"");
+	print_mixed_v6 (ifi->v6ad.nmask);
+	printf ("\"\n");
+	printf ("_prefix_ipv6_length=\"%d\"\n", ifi->v6ad.nmaskbits);
+	printf ("_address_ipv6_type=\"%s\"\n", ifi->v6ad.class_remark);
+//	if (ifi->v6ad.comment[0])
+//		printf ("Comment			- %s\n",
+//			ifi->v6ad.comment);
+	printf ("_prefix_ipv6_range_start=\"");
+	print_exp_v6 (ifi->v6ad.prefix);
+	printf ("\"\n");
+	printf ("_prefix_ipv6_range_end=\"");
+	print_exp_v6 (ifi->v6ad.broadcast);
+	printf ("\"\n");
 	return;
 }
 

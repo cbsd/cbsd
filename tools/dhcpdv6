@@ -26,19 +26,40 @@ case $? in
 		;;
 esac
 
-echo "${nodeip6pool}"
-exit 0
+eval $( ${miscdir}/sipcalc ${nodeip6pool} )
 
-#ST6=$( sipcalc -i ${ip6pool} | grep 'Network range' | cut -d "-" -f 2 |awk '{printf $1}' )
+[ $? -ne 0 ] && err 1 "${N1_COLOR}sipcalc: error for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
+[ -z "${_prefix_ipv6_range_start}" -o -z "${_prefix_ipv6_range_end}" ] && 1 "${N1_COLOR}sipcalc: no range for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
 
-s="fde4:8dba:82e1::1"
-e="fde4:8dba:82e1::00ff"
 
-ip=$( ipv6range ${s} ${e} | while read _ip; do
-	ping6 -c1 -i1 -t2 -W1.1 ${_ip} > /dev/null 2>&1
+# normalize range from network/broadcast to first/latest usable IP
+# todo: implement in sipcalc!
+sqllistdelimer=":"
+sqllist "${_prefix_ipv6_range_start}" s1 s2 s3 s4 s5 s6 s7 s8
+sqllist "${_prefix_ipv6_range_end}" e1 e2 e3 e4 e5 e6 e7 e8
+unset sqllistdelimer
+if [ "${s8}" = "0000" ]; then
+	if [ "${s7}" = "0000" ]; then
+		if [ "${s6}" = "0000" ]; then
+			if [ "${s5}" = "0000" ]; then
+				_prefix_ipv6_range_start="${s1}:${s2}:${s3}:${s4}:${s5}:${s6}:${s7}:0001"
+			fi
+		fi
+	fi
+fi
+[ "${e7}" = "ffff" ] && _prefix_ipv6_range_end="${e1}:${e2}:${e3}:${e4}:${e5}:${e6}:${e7}:fffc"
+
+# check jail&bhyve first
+
+ip=$( ${miscdir}/ipv6range ${_prefix_ipv6_range_start} ${_prefix_ipv6_range_end} | while read _ip; do
+	/sbin/ping6 -c1 -i1 -t2 -W1.1 ${_ip} > /dev/null 2>&1
 	ret=$?
+	if [ ${ret} -eq 0 ]; then
+		# second check via NDP
+		/usr/sbin/ndp ${_ip} > /dev/null 2>&1
+		ret=$?
+	fi
 	[ ${ret} -eq 0 ] && continue
-	#echo "${_ip} - ${ret}"
 	printf "${_ip}" && exit 0
 done )
 

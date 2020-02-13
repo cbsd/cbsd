@@ -112,6 +112,6 @@ cbsd: pkg-config-check
 
 install:
 	${INSTALL} man/cbsd.8 ${DESTDIR}${PREFIX}/man/man8/cbsd.8
-	${INSTALL} -m 555 misc/src/sipcalc/sipcalc ${PREFIX}/cbsd/misc/sipcalc
+	${INSTALL} -o cbsd -g cbsd -m 555 misc/src/sipcalc/sipcalc ${PREFIX}/cbsd/misc/sipcalc
 	${ENV} BINDIR=${PREFIX}/bin ${MAKE} -C bin/cbsdsh install
 	${MAKE} -C share/bsdconfig/cbsd install
