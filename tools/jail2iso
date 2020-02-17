@@ -439,7 +439,7 @@ check_for_external_mount()
 	done
 }
 
-
+# Create full FS/data hier in ${TMP_DIR} directory
 make_ufs()
 {
 	${ECHO} "${N1_COLOR}kernel required: ${ver}${N0_COLOR}"
@@ -535,8 +535,9 @@ EOF
 			#ROOTFS="gpt/${LABEL} / ufs rw 1 1"
 			;;
 		bhyve)
+			ROOTFS="/dev/ufs/${LABEL} / ufs rw,noatime 1 1"
 			#ROOTFS="/dev/ufs/${LABEL} / ufs rw,noatime 1 1"
-			ROOTFS="/dev/vtbd0p2    /               ufs     rw,noatime      1       1"
+			#ROOTFS="/dev/vtbd0p2    /               ufs     rw,noatime      1       1"
 			#ROOTFS="gpt/${LABEL} / ufs rw,noatime 1 1"
 			# cloud init doesn't like '/dev' - /dev/dev/gpt/LABEL as result
 			;;
@@ -554,7 +555,7 @@ ${CAT_CMD} > ${TMP_DIR}/etc/fstab <<EOF
 ${ROOTFS}
 EOF
 
-		[ "${swap_size}" != "0" ] && ${CAT_CMD} >> ${TMP_DIR}/etc/fstab <<EOF
+		[ "${swapsize}" != "0" ] && ${CAT_CMD} >> ${TMP_DIR}/etc/fstab <<EOF
 /dev/gpt/swap	none	swap	sw	0	0
 EOF
 	fi
@@ -647,6 +648,8 @@ if [ "${nobase}" != "1" ]; then
 	[ ! -d "${BASE_DIR}" ] && err 1 "${N1_COLOR}No base data on: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
 fi
 
+[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
+
 case "${media}" in
 	iso)
 		make_ufs
@@ -655,133 +658,50 @@ case "${media}" in
 		;;
 	memstick)
 		make_ufs
-		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
 
 		${MAKEFS_CMD} -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
 		[ $? -ne 0 ] && err 1 "makefs failed"
 
-		# use mkimg on 10.1+ and gpart+mbr for 10.0-
-		if [ ${freebsdhostversion} -lt 1000730 ]; then
-			##
-			unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${dstdir}/${dstname} )
-			[ $? -ne 0 ] && err 1 "mdconfig failed"
-			${GPART_CMD} create -s BSD ${unit}
-			${GPART_CMD} bootcode -b ${TMP_DIR}/boot/boot ${unit}
-			${GPART_CMD} add -t freebsd-ufs ${unit}
-			${MDCONFIG_CMD} -d -u ${unit}
+		if [ ${efi} -eq 1 ]; then
+			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 		else
-			if [ ${efi} -eq 1 ]; then
-				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-			else
-				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-			fi
-			${RM_CMD} -f ${dstdir}/${dstname}.part
+			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 		fi
+		${RM_CMD} -f ${dstdir}/${dstname}.part
 
 		${ECHO} "${N1_COLOR}Now you can burn image to USB memstick via\n ${N2_COLOR}dd if=${dstdir}/${dstname} of=/dev/da${W2_COLOR}X${N2_COLOR} bs=1m conv=\"sync\"${N0_COLOR}"
 		;;
 	bhyve|livecd)
-		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.img"
-		# bad behaviour of makefs: http://www.freebsd.org/cgi/query-pr.cgi?pr=188762
-		#	makefs -o version=2 -o label="${LABEL}" ${dstdir}/${dstname} ${TMP_DIR}
-
-		if [ "${vm_guestfs}" = "ufs" ]; then
-			# create_img_for_dir /usr/jails/tmp/jail1-iso.94915 /tmp/jail1-12.1_amd64.img
-			echo "[debug] create_img_for_dir ${TMP_DIR} ${dstdir}/${dstname}"
-			create_img_for_dir ${TMP_DIR} ${dstdir}/${dstname}
-			echo "[debug] done"
-		else
-			create_img_for_dir ${data} ${dstdir}/${dstname}
-		fi
-
-		if [ "${swapsize}" != "0" ]; then
-			if conv2human "${swapsize}"; then
-				swapsize=${convval}
-			fi
-		fi
-
-		if [ "${fs_size}" != "0" ]; then
-			if conv2human "${fs_size}"; then
-				fs_size=${convval}
-			fi
-		fi
-
-		unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${dstdir}/${dstname} )
-
-		[ $? -ne 0 ] && err 1 "mdconfig failed"
-		${ECHO} "${N1_COLOR}guest os: ${vm_guestfs}${N0_COLOR}"
-
 		case "${vm_guestfs}" in
 			ufs)
-				echo "[debug] make_ufs"
 				make_ufs
-				echo "[debug] done"
-				${ECHO} "${N1_COLOR}gpart create...${N0_COLOR}"
-				${GPART_CMD} create -s gpt ${unit}
-				#${ECHO} "${N1_COLOR}gpart freebsd-boot...${N0_COLOR}"
-				#${GPART_CMD} add -t freebsd-boot -l gpboot -b 40 -s 512K ${unit}	# p1
-				${ECHO} "${N1_COLOR}gpart efi...${N0_COLOR}"
-				${GPART_CMD} add -t efi -s ${EFI_PART_SIZE} ${unit}	# p1
-
-#				if [ ${efi} -eq 1 ]; then
-#				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-#			else
-#				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-#			fi
-
-				${ECHO} "${N1_COLOR}gpart bootcode...${N0_COLOR}"
-				${GPART_CMD} bootcode -b ${TMP_DIR}/boot/pmbr -p ${TMP_DIR}/boot/gptboot -i 1 ${unit}
-				# bug? not more than 9g?
-				${ECHO} "${N1_COLOR}gpart freebsd-ufs...${N0_COLOR}"
-
-#				echo "${GPART_CMD} add -t freebsd-ufs -l ${LABEL} -s ${fs_size} ${unit}"
-#				ufspart=$( ${GPART_CMD} add -t freebsd-ufs -l ${LABEL} -s ${fs_size} ${unit} | ${AWK_CMD} '/ added/{print $1}' )		# p2
-# no label: cloud init  doesnt like: /dev/dev/gpt/label
-				echo "${GPART_CMD} add -t freebsd-ufs -s ${fs_size} ${unit}"
-				ufspart=$( ${GPART_CMD} add -t freebsd-ufs -s ${fs_size} ${unit} | ${AWK_CMD} '/ added/{print $1}' )		# p2
-
-				[ -z "${ufspart}" ] && err 1 "${N1_COLOR}unable to determine ufspart${N0_COLOR}"
-
-				if [ "${swapsize}" != "0" ]; then
-					${ECHO} "${N1_COLOR}gpart freebsd-swap...${N0_COLOR}"
-					${GPART_CMD} add -t freebsd-swap -l swap ${unit}		# p3
+				echo "${MAKEFS_CMD} -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}"
+				${MAKEFS_CMD} -B little -o version=2 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
+				[ $? -ne 0 ] && err 1 "makefs failed"
+				if [ -n "${swapsize}" -a "${swapsize}" != "0" ]; then
+					_swap_args="-p freebsd-swap::${swapsize}"
+				else
+					_swap_args=
+			fi
+				if [ ${efi} -eq 1 ]; then
+					${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot ${_swap_args} -p freebsd-ufs:=${dstdir}/${dstname}.part -o ${dstdir}/${dstname}
+				else
+					${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot ${_swap_args} -p freebsd-ufs:=${dstdir}/${dstname}.part -o ${dstdir}/${dstname}
 				fi
-
-				${ECHO} "${N1_COLOR}stamp efiboot...${N0_COLOR}"
-
-				${NEWFS_MSDOS_CMD} -F 32 -c 1 /dev/${unit}p1
-
-				_ret=$?
-				[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}unable to newfs_msdos ${unit}p1${N0_COLOR}"
-
-				tdir=$( ${MKTEMP_CMD} -d )
-				${MOUNT_CMD} -t msdosfs /dev/${unit}p1 ${tdir}
-
-				_ret=$?
-				[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}unable to mount ${unit}p1 -> ${tdir}${N0_COLOR}"
-
-				${MKDIR_CMD} -p ${tdir}/EFI/BOOT
-				${CP_CMD} -a /boot/loader.efi ${tdir}/EFI/BOOT/BOOTX64.efi
-				${UMOUNT_CMD} ${tdir}
-
-				if [ -z "${ufspart}" ]; then
-					${ECHO} "${N1_COLOR}${MDCONFIG_CMD} -d -u ${unit}...${N0_COLOR}"
+				if [ -n "${freesize}" ]; then
+					${TRUNCATE_CMD} -s+"${freesize}" ${dstdir}/${dstname}
+					unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${dstdir}/${dstname} )
+					echo "U: ${unit}"
+					${GPART_CMD} recover ${unit}
+					if [ -n "${_swap_args}" ]; then
+						${GPART_CMD} resize -i4 ${unit}
+						${GROWFS_CMD} -y /dev/${unit}p4
+					else
+						${GPART_CMD} resize -i3 ${unit}
+						${GROWFS_CMD} -y /dev/${unit}p3
+					fi
 					${MDCONFIG_CMD} -d -u ${unit}
-					err 1 "Can't create UFS part for ${unit}"
 				fi
-
-				echo "${NEWFS_CMD} -U -n -L "${LABEL}" /dev/${ufspart}"
-				${NEWFS_CMD} -U -n -L "${LABEL}" /dev/${ufspart}
-				tdir=$( ${MKTEMP_CMD} -d )
-
-				${MOUNT_CMD} /dev/${ufspart} ${tdir}
-				echo "[debug] cd ${TMP_DIR} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${tdir}"
-				cd ${TMP_DIR} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${tdir}
-				sync
-				echo "[debug] done"
-				${UMOUNT_CMD} ${tdir} && ${RMDIR_CMD} ${tdir}
-				# mkimg -s gpt -b ${1}/boot/pmbr -p efi:=${1}/boot/boot1.efifat -p freebsd-boot:=${1}/boot/gptboot -p freebsd-ufs:=${2}.part -p freebsd-swap::1M -o ${2}
-				# mkimg -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname} -p freebsd-swap::1M -o ${tmpdir}/test.img
 				;;
 			zfs)
 				bhyve_zfs_install
@@ -791,7 +711,7 @@ case "${media}" in
 		mynic=$( getnics-by-ip ip=0.0.0.0 2>/dev/null skip=bridge )
 		[ -z "${mynic}" ] && mynic="em0"
 		[ ${quiet} -eq 0 ] && show_bhyve_message
-		${MDCONFIG_CMD} -d -u ${unit}
+		#${MDCONFIG_CMD} -d -u ${unit}
 		;;
 	*)
 		err 1 "${N1_COLOR}unknown media, valid: ${N2_COLOR}iso${N1_COLOR}, ${N2_COLOR}memstick ${N1_COLOR}or ${N2_COLOR}bhyve${N0_COLOR}"
