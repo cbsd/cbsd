@@ -180,11 +180,6 @@ get_construct_ip4_addr()
 		# 1) via sqlite database for other's jails ips
 		# 2) for ip in LAN
 
-		if [ -z "${_input}" -a "${_input}" = "0" -a "{_input}" = "DHCP" ]; then
-			ip4_addr="${_input}"
-			return 0
-		fi
-
 		# Yes, we wrote in the example that the valid separator between NIC and address
 		# is '#' and not '|' as experienced jail.conf users can get used to.
 		# But we will still try to convert the input with '|' to correct form
@@ -202,15 +197,26 @@ get_construct_ip4_addr()
 		IFS=","
 		for _i in ${_input}; do
 
-			if [ "${_i}" = "DHCP" ]; then
-				_i=$( dhcpd 2>/dev/null )
-				if [ $? -eq 2 ]; then
-					local msg_ok="It's a pity"
-					f_dialog_msgbox "No free IP address for DHCP in nodeippool"
-					return 0
-				fi
-				_mod=1		# modify real input by _tmp_input string ( with DHCP-obtained IP address )
-			fi
+			case "${_i}" in
+				[Dd][Hh][Cc][Pp])
+					_i=$( dhcpd 2>/dev/null )
+					if [ $? -eq 2 ]; then
+						local msg_ok="It's a pity"
+						f_dialog_msgbox "No free IP address for DHCP in nodeippool"
+						return 0
+					fi
+					_mod=1		# modify real input by _tmp_input string ( with DHCP-obtained IP address )
+					;;
+				[Dd][Hh][Cc][Pp][vV]6)
+					_i=$( dhcpdv6 2>/dev/null )
+					if [ $? -eq 2 ]; then
+						local msg_ok="It's a pity"
+						f_dialog_msgbox "No free IP address for DHCP in nodeippool"
+						return 0
+					fi
+					_mod=1		# modify real input by _tmp_input string ( with DHCP-obtained IP address )
+					;;
+			esac
 
 			if [ -z "${_tmp_input}" ]; then
 				_tmp_input="${_i}"
@@ -222,18 +228,31 @@ get_construct_ip4_addr()
 			[ -z "${IWM}" -o "${_i}" = "0" ] && continue
 
 			iptype ${IWM}
-			if [ $? -ne 0 ]; then
-				if [ -n "${V_INTERFACE}" -a -n "${V_IP}" ]; then
-					if ! is_nic_exist -n ${V_INTERFACE}; then
-						local msg_ok="I was wrong"
-						f_dialog_msgbox "Interface ${V_INTERFACE} not exist!"
-						return 0
+			_ret=$?
+			case ${_ret} in
+				0)
+					# unknown ip
+					;;
+				1|2)
+					if [ ${_ret} -eq 2 ]; then
+						# normalize IPv6 to compressed form
+						eval $( ${miscdir}/sipcalc ${nodeip6pool} )
+						IWM="${_compressed_ipv6_address}"
 					fi
-					_myip="${_myip} ${V_IP}"
-				else
-					_myip="${_myip} ${IWM}"
-				fi
-			fi
+
+					# IPv4 or IPv6
+					if [ -n "${V_INTERFACE}" -a -n "${V_IP}" ]; then
+						if ! is_nic_exist -n ${V_INTERFACE}; then
+							local msg_ok="I was wrong"
+							f_dialog_msgbox "Interface ${V_INTERFACE} not exist!"
+							return 0
+						fi
+						_myip="${_myip} ${V_IP}"
+					else
+						_myip="${_myip} ${IWM}"
+					fi
+					;;
+			esac
 		done
 
 		[ ${_mod} -eq 1 ] && _input="${_tmp_input}"
@@ -241,7 +260,7 @@ get_construct_ip4_addr()
 		# check for other jail
 		IFS="|"
 		_i=0
-		eval $( cbsdsqlro local SELECT jname,ip4_addr FROM jails WHERE ip4_addr!="0" 2>/dev/null |while read _jname _ips; do
+		eval $( cbsdsqlro local SELECT jname,ip4_addr FROM jails WHERE ip4_addr!="0" 2>/dev/null | while read _jname _ips; do
 			echo jname${_i}=\"$_jname\"
 			echo ips${_i}=\"${_ips}\"
 			_i=$(( _i + 1 ))
@@ -250,7 +269,7 @@ get_construct_ip4_addr()
 
 		_ok=1
 
-		for _i in $( /usr/bin/seq 0 255 ); do
+		for _i in $( ${SEQ_CMD} 0 255 ); do
 			unset _existing_ipjail _existing_ip
 			eval _jname="\$jname$_i"
 			[ -z "${_jname}" ] && break
@@ -262,7 +281,11 @@ get_construct_ip4_addr()
 			_existing_ipjail=$( echo ${_existing_ipjail} | ${TR_CMD} "," " " )
 
 			for _x in ${_existing_ipjail}; do
-				[ "${_x}" = "DHCP" ] && continue
+				case "${_x}" in
+					[Dd][Hh][Cc][Pp]|[Hh][Cc][Pp][Vv]6)
+						continue
+						;;
+				esac
 				ipwmask ${_x}
 				[ -z "${IWM}" ] && continue
 				iptype ${IWM}
@@ -420,7 +443,7 @@ get_construct_interface()
 
 	[ -n "${_choose}" ] && defaultitem="${_choose}"
 
-	for _num in $( /usr/bin/seq 1 9999 ); do
+	for _num in $( ${SEQ_CMD} 1 9999 ); do
 		unset _mynic _mydesc _mystatus
 		eval _mynic="\$nic${_num}_name"
 		[ -z "${_mynic}" ] && break
