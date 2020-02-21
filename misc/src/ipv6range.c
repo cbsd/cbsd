@@ -44,5 +44,5 @@ int main(int argc, char *argv[])
 
 		if (octet < 0) break; /* top of logical address range */
 	}
-
+	return 0;
 }
