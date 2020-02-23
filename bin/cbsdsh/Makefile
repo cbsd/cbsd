@@ -12,6 +12,13 @@ SHSRCS+=	jail.c
 # WITH_LUA
 #SHSRCS+=	cbsdlua.c
 
+.if defined(WITH_REDIS)
+SHSRCS+=	cbsdredis.c contrib/credis.c
+CFLAGS+=	-DWITH_REDIS
+.endif
+
+
+
 GENSRCS= builtins.c nodes.c syntax.c
 GENHDRS= builtins.h nodes.h syntax.h token.h
 SRCS= ${SHSRCS} ${GENSRCS} ${GENHDRS}
@@ -42,14 +49,21 @@ CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 	${.CURDIR}/test \
 	${.CURDIR}/printf
 
-CLEANFILES+= mknodes mknodes.o \
+CLEANFILES+= mknodes mknodes.o builtins.def.o \
 	mksyntax mksyntax.o
 CLEANFILES+= ${GENSRCS} ${GENHDRS}
+
+builtins.def.o:
+	cp	builtins.def builtins.def.o
+.if defined(WITH_REDIS)
+	cat	builtins.redis >> builtins.def.o
+.endif
+
 
 build-tools: mknodes mksyntax
 
 .ORDER: builtins.c builtins.h
-builtins.c builtins.h: mkbuiltins builtins.def
+builtins.c builtins.h: mkbuiltins builtins.def.o
 	sh ${.CURDIR}/mkbuiltins ${.CURDIR}
 
 # XXX this is just to stop the default .c rule being used, so that the

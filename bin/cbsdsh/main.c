@@ -46,6 +46,7 @@ static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/28/95";
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 
+
 #include <stdio.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -83,6 +84,11 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "redir.h"
 #include "builtins.h"
 
+#ifdef WITH_REDIS
+#include "cbsdredis.h"
+#endif
+
+
 int rootpid;
 int rootshell;
 struct jmploc main_handler;
@@ -92,6 +98,10 @@ int localeisutf8, initial_localeisutf8;
 char *cbsd_history_file = NULL;
 int cbsd_enable_history=0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
+#endif
+
+#ifdef WITH_REDIS
+cbsdredis_t      *redis;
 #endif
 
 static void reset(void);
@@ -114,6 +124,10 @@ main(int argc, char *argv[])
 	volatile int state;
 	char *shinit;
 
+#ifdef WITH_REDIS
+	redis_load_config();
+#endif
+
 #ifdef CBSD
 	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
@@ -129,6 +143,8 @@ main(int argc, char *argv[])
 		cbsd_enable_history = 1;
 	}
 #endif
+
+
 
 	(void) setlocale(LC_ALL, "");
 	initcharset();
@@ -286,6 +302,12 @@ state4:
 	if (sflag || minusc == NULL) {
 		cmdloop(1);
 	}
+
+#ifdef WITH_REDIS
+	redis_free();
+#endif
+
+
 	exitshell(exitstatus);
 	/*NOTREACHED*/
 	return 0;
