@@ -203,14 +203,31 @@ int redis_hget(int argc, char **argv) {
 }
 
 int redis_hset(int argc, char **argv) {
-//	int	skip=0;
+	if(argc > 3 && strncmp(argv[1], "-env", 4) == 0){ 
+		char **vals;
+		int valc=2, rc, i;
+
+		// Todo: Make this a bit cleaner..
+
+		if((vals=malloc(sizeof(void *)*(argc-1)*2))==NULL) return(-1); 
+		vals[1]=argv[2];
+		for(i=3; i<argc; i++){
+			vals[valc++]=argv[i];
+			char *tmp=lookupvar(argv[i]);
+			if(tmp) vals[valc++]=tmp; else vals[valc++]=""; // Should we delete missing vars from the store?
+		}
+		if (valc > 4) rc=redis_do("HMSET", CR_INLINE, 0, 0, valc, vals);
+		else rc=redis_do("HSET", CR_INT, 0, 0, valc, vals);
+		free(vals);
+		return(rc);
+	}
 	if (argc < 4) {
 		printf("format: hset hash key value [key value] [key value]\n");
 		return(1);
 	}
 
 	if (argc > 4) return(redis_do("HMSET", CR_INLINE, 0, 0, argc, argv));
-	return(redis_do("HSET", CR_INT, skip, 0, argc, argv));
+	return(redis_do("HSET", CR_INT, 0, 0, argc, argv));
 
 }
 
