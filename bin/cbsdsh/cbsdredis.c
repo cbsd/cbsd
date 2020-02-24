@@ -38,6 +38,7 @@
 #include "var.h"
 #include "cbsdredis.h"
 
+#define DEBUG_REDIS
 #ifdef DEBUG_REDIS
 #define DEBUG_PRINTF(...) printf(__VA_ARGS__);
 #else
@@ -60,6 +61,14 @@ int	redis_error(REDIS res, int num){
 			}
 			return(-1); // retry
 
+		case CREDIS_ERR_PROTOCOL:
+			if(strncmp("WRONGTYPE", credis_errorreply(res), 8) == 0){
+				printf("Invalid data type!\n");
+			}else if(strncmp("ERR ", credis_errorreply(res), 4) == 0){
+				printf("Error with command, check you parameters!\n");
+			}else{
+				DEBUG_PRINTF("REDIS: error %d!\n%s\n", num, credis_errorreply(res));
+			}
 		case -1: return(1); // Empty
 
 		default:
@@ -118,10 +127,10 @@ int redis_do(const char *cmd, char ret_type, unsigned int skip, unsigned int fla
 
 	for(rc=-1; rc==-1;){
 		if((res=redis_connect(true))==NULL) return(2);
+
 		cr_buffer *buf = &(redis->res->buf);
-
-
 		buf->len = 0;
+
 		if ((rc = credis_raw_append(buf, "*%zu\r\n$%zu\r\n%s\r\n", argc-skip, strlen(cmd), cmd)) != 0) return(rc);
 		for (i = skip+1; i < argc; i++) {
 			if ((rc = credis_raw_append(buf, "$%zu\r\n%s\r\n", strlen(argv[i]), argv[i])) != 0) return(rc);
@@ -131,25 +140,32 @@ int redis_do(const char *cmd, char ret_type, unsigned int skip, unsigned int fla
 		if((rc=redis_error(redis->res, rc)) == 0){
 			switch(ret_type){
 				case CR_BULK:
-					if(NULL != redis->res->reply.bulk) printf("%s\n",redis->res->reply.bulk);
+					if(NULL == redis->res->reply.bulk) return(1);
+
+					printf("%s\n",redis->res->reply.bulk);
 					return(0);
 
 				case CR_MULTIBULK:
 					if(0 != redis->res->reply.multibulk.len){
 						for(i=0; i<redis->res->reply.multibulk.len; i++){
 							if(1 & flags) setvarsafe(argv[2+i+skip], redis->res->reply.multibulk.bulks[i], 0);
-
 							if(4 & flags) printf("%s=%s\n",argv[2+i+skip], redis->res->reply.multibulk.bulks[i]);
 							else if(2 & flags) printf("%s\n",redis->res->reply.multibulk.bulks[i]);
 						}
-					}
-					return(0);
+						return(0);
+					}else return(1);
 
 				case CR_INT:
-					return(redis->res->reply.integer);
+					if(16 & flags) printf("%i\n",redis->res->reply.integer);
+					if(32 & flags){
+						if(redis->res->reply.integer == 0) return(1); else return(0);
+					}else return(redis->res->reply.integer);
+			
+				case CR_INLINE: return(0); 
+					break;
 
 				default:
-					printf("-- %d\n", redis->res->reply.multibulk.len);
+					printf("REDIS RESPONSE ERROR: %d/%i\n", redis->res->reply.multibulk.len, redis->res->reply.integer);
 					break;
 
 			}
@@ -157,14 +173,6 @@ int redis_do(const char *cmd, char ret_type, unsigned int skip, unsigned int fla
 		}
 	}
 	return rc;
-}
-
-int redis_hset(int argc, char **argv) {
-	if (argc < 3) {
-		printf("format: hset hash key value [key2 value2]\n");
-		return(1);
-	}
-	return(redis_do("HSET", CR_INT, 0, 0, argc, argv));
 }
 
 int redis_hget(int argc, char **argv) {
@@ -187,53 +195,46 @@ int redis_hget(int argc, char **argv) {
 
 }
 
-int redis_hdel(int argc, char **argv) {
-	if (argc < 3) {
-		printf("format: hdel hash key\n");
-		return 1;
+int redis_hset(int argc, char **argv) {
+	if (argc < 4) {
+		printf("format: hset hash key value [key value] [key value]\n");
+		return(1);
 	}
-	return(redis_do("HDEL", CR_INT, 0, 0, argc, argv));
+
+	if (argc > 4) return(redis_do("HMSET", CR_INLINE, 0, 0, argc, argv));
+	return(redis_do("HSET", CR_INT, 0, 0, argc, argv));
+
 }
 
-int redis_kdel(int argc, char **argv) {
-	if (argc < 2) {
-		printf("format: kdel hash\n");
-		return 1;
-	}
-	return(redis_do("DEL", CR_INT, 0, 0, argc, argv));
+#define REDIS_SIMPLE(f_name,o_name,rettype,flags,params,msg) \
+int redis_##f_name(int argc, char **argv) { \
+	if(argc < params){ printf("format: %s %s\n", argv[0], #msg); return(1); } \
+	return(redis_do(o_name, rettype, 0, flags, argc, argv)); \
 }
 
-int redis_lpush(int argc, char **argv) {
-	if (argc < 3) {
-		printf("format: %s list item\n", argv[0]);
-		return 1;
-	}
-	return(redis_do("LPUSH", CR_INT, 0, 0, argc, argv));
-}
+REDIS_SIMPLE(hdel,   "HDEL",     CR_INT,    0, 3, "hash key");
+REDIS_SIMPLE(kdel,   "DEL",      CR_INT,    0, 2, "item");
+REDIS_SIMPLE(lpush,  "LPUSH",    CR_INT,    0, 3, "list item");
+REDIS_SIMPLE(rpush,  "RPUSH",    CR_INT,    0, 3, "list item");
+REDIS_SIMPLE(lpop,   "LPOP",     CR_BULK,   0, 2, "list");
+REDIS_SIMPLE(rpop,   "RPOP",     CR_BULK,   0, 2, "list");
+REDIS_SIMPLE(exists, "EXISTS",   CR_INT,   32, 2, "item");
+REDIS_SIMPLE(hexists,"HEXISTS",  CR_INT,   32, 3, "hash key");
+REDIS_SIMPLE(ttl,    "TTL",      CR_INT,   48, 2, "item");
+REDIS_SIMPLE(expire, "EXPIRE",   CR_INT,   32, 3, "item timeout");
+REDIS_SIMPLE(publish,"PUBLISH",  CR_INT,   48, 3, "channel data");
+REDIS_SIMPLE(ltrim,  "LTRIM",    CR_INLINE, 0, 4, "list from to");
+REDIS_SIMPLE(lindex, "LINDEX",   CR_BULK,   0, 3, "list index");
+REDIS_SIMPLE(llen,   "LLEN",     CR_INT,   48, 2, "list");
+REDIS_SIMPLE(sadd,   "SADD",     CR_INT,   32, 3, "set item");
+REDIS_SIMPLE(srem,   "SREM",     CR_INT,   32, 3, "set item");
+REDIS_SIMPLE(sexists,"SISMEMBER",CR_INT,   32, 3, "set item");
+REDIS_SIMPLE(slen,   "SCARD",    CR_INT,   48, 2, "set");
+REDIS_SIMPLE(smove,  "SMOVE",    CR_INT,   32, 4, "from-set to-set item");
 
-int redis_lpop(int argc, char **argv) {
-	if (argc < 2) {
-		printf("format: %s list\n", argv[0]);
-		return 1;
-	}
-	return(redis_do("LPOP", CR_BULK, 0, 0, argc, argv));
-}
 
-int redis_rpush(int argc, char **argv) {
-	if (argc < 3) {
-		printf("format: %s list item\n", argv[0]);
-		return 1;
-	}
-	return(redis_do("RPUSH", CR_INT, 0, 0, argc, argv));
-}
+#undef REDIS_SIMPLE
 
-int redis_rpop(int argc, char **argv) {
-	if (argc < 2) {
-		printf("format: %s list\n", argv[0]);
-		return 1;
-	}
-	return(redis_do("RPOP", CR_BULK, 0, 0, argc, argv));
-}
 
 int redis_blpop(int argc, char **argv) {
 	REDIS	res;
