@@ -38,7 +38,6 @@
 #include "var.h"
 #include "cbsdredis.h"
 
-#define DEBUG_REDIS
 #ifdef DEBUG_REDIS
 #define DEBUG_PRINTF(...) printf(__VA_ARGS__);
 #else
@@ -148,16 +147,23 @@ int redis_do(const char *cmd, char ret_type, unsigned int skip, unsigned int fla
 				case CR_MULTIBULK:
 					if(0 != redis->res->reply.multibulk.len){
 						for(i=0; i<redis->res->reply.multibulk.len; i++){
-							if(1 & flags) setvarsafe(argv[2+i+skip], redis->res->reply.multibulk.bulks[i], 0);
-							if(4 & flags) printf("%s=%s\n",argv[2+i+skip], redis->res->reply.multibulk.bulks[i]);
-							else if(2 & flags) printf("%s\n",redis->res->reply.multibulk.bulks[i]);
+							if(RF_KEYLIST & flags){
+								if(RF_SETENV & flags) setvarsafe(redis->res->reply.multibulk.bulks[i],redis->res->reply.multibulk.bulks[i+1], 0);
+								if(RF_WITHKEYS & flags) printf("%s=%s\n",redis->res->reply.multibulk.bulks[i],redis->res->reply.multibulk.bulks[i+1]);
+								else if(RF_PRINT & flags) printf("%s\n",redis->res->reply.multibulk.bulks[i+1]);
+								i++;
+							}else{
+								if(RF_SETENV & flags) setvarsafe(argv[2+i+skip], redis->res->reply.multibulk.bulks[i], 0);
+								if(RF_WITHKEYS & flags) printf("%s=%s\n",argv[2+i+skip], redis->res->reply.multibulk.bulks[i]);
+								else if(RF_PRINT & flags) printf("%s\n",redis->res->reply.multibulk.bulks[i]);
+							}
 						}
 						return(0);
 					}else return(1);
 
 				case CR_INT:
-					if(16 & flags) printf("%i\n",redis->res->reply.integer);
-					if(32 & flags){
+					if(RF_PRINT & flags) printf("%i\n",redis->res->reply.integer);
+					if(RF_INVERT & flags){
 						if(redis->res->reply.integer == 0) return(1); else return(0);
 					}else return(redis->res->reply.integer);
 			
@@ -185,24 +191,44 @@ int redis_hget(int argc, char **argv) {
 		else if(strncmp(argv[1], "-all", 4) == 0){ skip=1; flags=7; }
 		else{ flags=2; }
 	}
-	if (argc-skip < 3) {
-		printf("format: hget [-env|-keys|-show|-all] hash key [key]\n");
+	if (argc-skip < 2) {
+		printf("format: hget [-env|-keys|-show|-all] hash [key] [key]\n");
 		return(1);
 	}
 
-	if (argc > 3) return(redis_do("HMGET", CR_MULTIBULK, skip, flags, argc, argv));
+	if (argc-skip > 3) return(redis_do("HMGET", CR_MULTIBULK, skip, flags, argc, argv));
+	if (argc-skip < 3) return(redis_do("HGETALL", CR_MULTIBULK, skip, 128 | flags, argc, argv));
 	return(redis_do("HGET", CR_BULK, skip, flags, argc, argv));
 
 }
 
 int redis_hset(int argc, char **argv) {
+	int	skip=0;
+
+	if(argc > 3 && strncmp(argv[1], "-env", 4) == 0){ 
+		char **keys, **vals;
+		int valc=0;
+		if((keys=malloc(sizeof(void *)*400))==NULL) return(-1);
+		if((vals=malloc(sizeof(void *)*400))==NULL){ free(keys); return(-1); }
+
+		for(int i=2; i<argc, i++){
+			
+//			RFC208147
+//			10.110.15.41 -> 6010 \
+//			10.110.15.42 -> 6010 /			
+//			10.110.15.43 -> 6010 - acc			
+		}
+		free(vals);
+		free(keys);
+		return(0);
+	}
 	if (argc < 4) {
 		printf("format: hset hash key value [key value] [key value]\n");
 		return(1);
 	}
 
 	if (argc > 4) return(redis_do("HMSET", CR_INLINE, 0, 0, argc, argv));
-	return(redis_do("HSET", CR_INT, 0, 0, argc, argv));
+	return(redis_do("HSET", CR_INT, skip, 0, argc, argv));
 
 }
 
@@ -220,19 +246,17 @@ REDIS_SIMPLE(lpop,   "LPOP",     CR_BULK,   0, 2, "list");
 REDIS_SIMPLE(rpop,   "RPOP",     CR_BULK,   0, 2, "list");
 REDIS_SIMPLE(exists, "EXISTS",   CR_INT,   32, 2, "item");
 REDIS_SIMPLE(hexists,"HEXISTS",  CR_INT,   32, 3, "hash key");
-REDIS_SIMPLE(ttl,    "TTL",      CR_INT,   48, 2, "item");
+REDIS_SIMPLE(ttl,    "TTL",      CR_INT,   36, 2, "item");
 REDIS_SIMPLE(expire, "EXPIRE",   CR_INT,   32, 3, "item timeout");
 REDIS_SIMPLE(publish,"PUBLISH",  CR_INT,   48, 3, "channel data");
 REDIS_SIMPLE(ltrim,  "LTRIM",    CR_INLINE, 0, 4, "list from to");
 REDIS_SIMPLE(lindex, "LINDEX",   CR_BULK,   0, 3, "list index");
-REDIS_SIMPLE(llen,   "LLEN",     CR_INT,   48, 2, "list");
+REDIS_SIMPLE(llen,   "LLEN",     CR_INT,   36, 2, "list");
 REDIS_SIMPLE(sadd,   "SADD",     CR_INT,   32, 3, "set item");
 REDIS_SIMPLE(srem,   "SREM",     CR_INT,   32, 3, "set item");
 REDIS_SIMPLE(sexists,"SISMEMBER",CR_INT,   32, 3, "set item");
-REDIS_SIMPLE(slen,   "SCARD",    CR_INT,   48, 2, "set");
+REDIS_SIMPLE(slen,   "SCARD",    CR_INT,   36, 2, "set");
 REDIS_SIMPLE(smove,  "SMOVE",    CR_INT,   32, 4, "from-set to-set item");
-
-
 #undef REDIS_SIMPLE
 
 
