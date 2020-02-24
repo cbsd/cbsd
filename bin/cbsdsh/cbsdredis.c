@@ -203,25 +203,7 @@ int redis_hget(int argc, char **argv) {
 }
 
 int redis_hset(int argc, char **argv) {
-	int	skip=0;
-
-	if(argc > 3 && strncmp(argv[1], "-env", 4) == 0){ 
-		char **keys, **vals;
-		int valc=0;
-		if((keys=malloc(sizeof(void *)*400))==NULL) return(-1);
-		if((vals=malloc(sizeof(void *)*400))==NULL){ free(keys); return(-1); }
-
-		for(int i=2; i<argc, i++){
-			
-//			RFC208147
-//			10.110.15.41 -> 6010 \
-//			10.110.15.42 -> 6010 /			
-//			10.110.15.43 -> 6010 - acc			
-		}
-		free(vals);
-		free(keys);
-		return(0);
-	}
+//	int	skip=0;
 	if (argc < 4) {
 		printf("format: hset hash key value [key value] [key value]\n");
 		return(1);
