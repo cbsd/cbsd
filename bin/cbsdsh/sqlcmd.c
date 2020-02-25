@@ -531,7 +531,7 @@ static int config_handler(void* user, const char* section, const char* name, con
 			if(strlen(seek->name) == strlen(section+4) && strcmp(seek->name, section+4) == 0) break; 	
 
 		if(!seek){
-			printf("sql: added database settings '%s'\n",section+4);
+//			printf("sql: added database settings '%s'\n",section+4);
 
 			seek=malloc(sizeof(sql_database_t));
 			if(!seek){ fprintf(stderr, "sqlcmd.c: Memory error!"); return(0); }

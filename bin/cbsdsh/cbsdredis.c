@@ -34,6 +34,7 @@
 
 #include "var.h"
 #include "contrib/ini.h"
+#include "mystring.h"
 #include "cbsdredis.h"
 
 #ifdef DEBUG_REDIS
@@ -134,7 +135,13 @@ int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char 
 
 		if ((rc = credis_raw_append(buf, "*%zu\r\n$%zu\r\n%s\r\n", argc+1, strlen(cmd), cmd)) != 0) return(rc);
 		for (i = 0; i < argc; i++) {
-			if ((rc = credis_raw_append(buf, "$%zu\r\n%s\r\n", strlen(argv[i]), argv[i])) != 0) return(rc);
+
+		//	-- Does not seem to work..
+		//	if(is_number(argv[i])){	
+		//		if ((rc = credis_raw_append(buf, ":%s\r\n", argv[i])) != 0) return(rc);
+		//	}else{
+				if ((rc = credis_raw_append(buf, "$%zu\r\n%s\r\n", strlen(argv[i]), argv[i])) != 0) return(rc);
+		//	}
 		}
 
 //		printf("[%s]\n",buf->data);
@@ -208,7 +215,6 @@ int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char 
 int redis_bpop(uint8_t left, char *key, char *seconds) {
 	REDIS	res;
 	int	rc=-1;
-	char 	*val;
 
 	while(rc == -1){
 		if(NULL == (res=redis_connect(false))) return(2);
@@ -286,10 +292,10 @@ int redis_cmd(int argc, char **argv) {
 
 			// Todo: Make this a bit cleaner..
 
-			if((vals=malloc(sizeof(void *)*items*2))==NULL) return(-1); 
+			if((vals=malloc((sizeof(void *)*items*2)+sizeof(void *)))==NULL) return(-1); 
 
-			vals[0]=argv[item++]; // Hash
-			for(; items>0; items++){
+			vals[0]=argv[item++]; items--; // Hash
+			for(; items>0; items--){
 				vals[valc++]=argv[item];
 				char *tmp=lookupvar(argv[item++]);
 				if(tmp) vals[valc++]=tmp; else vals[valc++]=""; // Should we delete missing vars from the store?
@@ -315,7 +321,7 @@ int redis_cmd(int argc, char **argv) {
 	}
 
 REDIS_SIMPLE("hdel",   "HDEL",     CR_INT,    0, 2, "hash key");
-REDIS_SIMPLE("kdel",   "DEL",      CR_INT,    0, 1, "item");
+REDIS_SIMPLE("del",    "DEL",      CR_INT,    0, 1, "item");
 REDIS_SIMPLE("lpush",  "LPUSH",    CR_INT,    0, 2, "list item");
 REDIS_SIMPLE("rpush",  "RPUSH",    CR_INT,    0, 2, "list item");
 REDIS_SIMPLE("lpop",   "LPOP",     CR_BULK,   0, 1, "list");
