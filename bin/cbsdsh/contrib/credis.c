@@ -105,8 +105,7 @@ static char * cr_findnl(char *buf, int len) {
  * Returns:
  *   0  on success
  *  -1  on error, i.e. more memory not available */
-static int cr_moremem(cr_buffer *buf, int size)
-{
+static int cr_moremem(cr_buffer *buf, int size) {
   char *ptr;
   int total, n;
 
@@ -129,8 +128,7 @@ static int cr_moremem(cr_buffer *buf, int size)
  * Returns:
  *   0  on success
  *  -1  on error, i.e. more memory not available */
-static int cr_morebulk(cr_multibulk *mb, int size) 
-{
+static int cr_morebulk(cr_multibulk *mb, int size) {
   char **cptr;
   int *iptr;
   int total, n;
@@ -152,14 +150,14 @@ static int cr_morebulk(cr_multibulk *mb, int size)
   return 0;
 }
 
-/* Splits string `str' on character `token' builds a multi-bulk array from 
- * the items. This function will modify the contents of what `str' points
- * to.
- * Returns:
- *   0  on success
- *  <0  on error, i.e. more memory not available */
-static int cr_splitstrtromultibulk(REDIS rhnd, char *str, const char token)
-{
+/*
+// Splits string `str' on character `token' builds a multi-bulk array from 
+// the items. This function will modify the contents of what `str' points
+// to.
+// Returns:
+//   0  on success
+//  <0  on error, i.e. more memory not available
+static int cr_splitstrtromultibulk(REDIS rhnd, char *str, const char token) {
   int i = 0;
 
   if (str != NULL) {
@@ -176,13 +174,15 @@ static int cr_splitstrtromultibulk(REDIS rhnd, char *str, const char token)
   rhnd->reply.multibulk.len = i;  
   return 0;
 }
+*/
 
-/* Appends a printf style formatted to the end of buffer `buf'. If available
- * memory in buffer is not enough to hold `str' more memory is allocated to 
- * the buffer. 
- * Returns:
- *   0  on success
- *  <0  on error, i.e. more memory not available */
+
+// Appends a printf style formatted to the end of buffer `buf'. If available
+// memory in buffer is not enough to hold `str' more memory is allocated to 
+// the buffer. 
+// Returns:
+//   0  on success
+//  <0  on error, i.e. more memory not available 
 int cr_appendstrf(cr_buffer *buf, const char *format, ...){
   int rc, avail;
   va_list ap;
@@ -209,20 +209,21 @@ int cr_appendstrf(cr_buffer *buf, const char *format, ...){
   return 0;
 }
 
+/*
 
-/* Appends a zero-terminated string `str' to the end of buffer `buf'. If 
- * available memory in buffer is not enough to hold `str' more memory is 
- * allocated to the buffer. If `space' is not 0 `str' is padded with a space.
- * Returns:
- *   0  on success
- *  <0  on error, i.e. more memory not available */
+// Appends a zero-terminated string `str' to the end of buffer `buf'. If 
+// available memory in buffer is not enough to hold `str' more memory is 
+// allocated to the buffer. If `space' is not 0 `str' is padded with a space.
+// Returns:
+//   0  on success
+//  <0  on error, i.e. more memory not available 
 static int cr_appendstr(cr_buffer *buf, const char *str, int space) {
   int avail, len, reqd;
 
   len = strlen(str);
   avail = buf->size - buf->len;
 
-  /* required memory: len, terminating zero and possibly a space */
+  // required memory: len, terminating zero and possibly a space
   reqd = len + 1;
   if (space)
     reqd++;
@@ -242,12 +243,12 @@ static int cr_appendstr(cr_buffer *buf, const char *str, int space) {
   return 0;
 }
 
-/* Appends an array of strings `strv' to the end of buffer `buf', each 
- * separated with a space. If `newline' is not 0 "\r\n" is added last 
- * to buffer.
- * Returns:
- *   0  on success
- *  <0  on error, i.e. more memory not available */
+// Appends an array of strings `strv' to the end of buffer `buf', each 
+// separated with a space. If `newline' is not 0 "\r\n" is added last 
+// to buffer.
+// Returns:
+//   0  on success
+//  <0  on error, i.e. more memory not available
 static int cr_appendstrarray(cr_buffer *buf, int strc, const char **strv, int newline) {
   int rc, i;
 
@@ -263,6 +264,7 @@ static int cr_appendstrarray(cr_buffer *buf, int strc, const char **strv, int ne
 
   return 0;
 }
+*/
 
 /* Helper function for select that waits for `timeout' milliseconds 
  * for `fd' to become readable (`readable' == 1) or writable.
@@ -313,8 +315,7 @@ static int cr_receivedata(int fd, unsigned int msecs, char *buf, int size)
  * Returns:
  *  >0  number of bytes sent; if less than `size' it means that timeout occurred
  *  -1  on error */
-static int cr_senddata(int fd, unsigned int msecs, char *buf, int size)
-{
+static int cr_senddata(int fd, unsigned int msecs, char *buf, int size) {
   fd_set fds;
   struct timeval tv;
   int rc, sent=0;
@@ -354,8 +355,7 @@ static int cr_senddata(int fd, unsigned int msecs, char *buf, int size)
  *      respect to buffer.
  *   0  connection to Redis server was closed
  *  -1  on error, i.e. a string is not available */
-static int cr_readln(REDIS rhnd, int start, char **line, int *idx)
-{
+static int cr_readln(REDIS rhnd, int start, char **line, int *idx) {
   cr_buffer *buf = &(rhnd->buf);
   char *nl;
   int rc, len, avail, more;
@@ -404,8 +404,7 @@ static int cr_readln(REDIS rhnd, int start, char **line, int *idx)
   return len;
 }
 
-static int cr_receivemultibulk(REDIS rhnd, char *line) 
-{
+static int cr_receivemultibulk(REDIS rhnd, char *line) {
   int bnum, blen, i, rc=0, idx;
 
   bnum = atoi(line);
@@ -576,8 +575,7 @@ int credis_raw_sendandreceive(REDIS rhnd, char recvtype){
 
 /* Prepare message buffer for sending using a printf()-style formatting. */
 __attribute__ ((format(printf,3,4)))
-static int cr_sendfandreceive(REDIS rhnd, char recvtype, const char *format, ...)
-{
+static int cr_sendfandreceive(REDIS rhnd, char recvtype, const char *format, ...) {
   int rc;
   va_list ap;
   cr_buffer *buf = &(rhnd->buf);
@@ -747,6 +745,7 @@ void credis_settimeout(REDIS rhnd, int timeout)
   rhnd->timeout = timeout;
 }
 
+/*
 int credis_set(REDIS rhnd, const char *key, const char *val) {
   return cr_sendfandreceive(rhnd, CR_INLINE, "*3\r\n$3SET\r\n$%zu\r\n%s\r\n$%zu\r\n%s\r\n", strlen(key), key, strlen(val), val);
 }
@@ -783,6 +782,7 @@ int credis_getset(REDIS rhnd, const char *key, const char *set_val, char **get_v
 int credis_ping(REDIS rhnd) {
   return cr_sendfandreceive(rhnd, CR_INLINE, "PING\r\n");
 }
+*/
 
 int credis_auth(REDIS rhnd, const char *password){
   int rc;
@@ -801,6 +801,7 @@ int credis_auth(REDIS rhnd, const char *password){
   return cr_receivereply(rhnd, CR_INLINE);
 }
 
+/*
 static int cr_multikeybulkcommand(REDIS rhnd, const char *cmd, int keyc, const char **keyv, char ***valv){
   cr_buffer *buf = &(rhnd->buf);
   int rc;
@@ -817,7 +818,6 @@ static int cr_multikeybulkcommand(REDIS rhnd, const char *cmd, int keyc, const c
 
   return rc;
 }
-
 
 static int cr_multikeybulkcommand2(REDIS rhnd, const char *cmd, const char *hash, int keyc, const char **keyv, char ***valv){
   cr_buffer *buf = &(rhnd->buf);
@@ -916,8 +916,7 @@ int credis_substr(REDIS rhnd, const char *key, int start, int end, char **substr
   return rc;                            
 }
 
-int credis_exists(REDIS rhnd, const char *key)
-{
+int credis_exists(REDIS rhnd, const char *key) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "*2\r\n$6\r\nEXISTS\r\n$%zu\r\n%s\r\n", strlen(key), key);
 
   if (rc == 0 && rhnd->reply.integer == 0)
@@ -968,8 +967,8 @@ int credis_keys(REDIS rhnd, const char *pattern, char ***keyv) {
   int rc = cr_sendfandreceive(rhnd, CR_BULK, "KEYS %s\r\n", pattern);
 
   if (rc == 0) {
-    /* server returns keys as space-separated strings, use multi-bulk 
-     * storage to store keys */
+    // server returns keys as space-separated strings, use multi-bulk 
+    // storage to store keys
     if ((rc = cr_splitstrtromultibulk(rhnd, rhnd->reply.bulk, ' ')) == 0) {
       *keyv = rhnd->reply.multibulk.bulks;
       rc = rhnd->reply.multibulk.len;
@@ -1097,6 +1096,7 @@ static int cr_pop(REDIS rhnd, int left, const char *key, char **val) {
 
   return rc;
 }
+*/
 
 static int cr_bpop(REDIS rhnd, int left, const char *key, const char *seconds, char **val) {
   int rc = cr_sendfandreceive(rhnd, CR_MULTIBULK, "*3\r\n$5\r\n%s\r\n$%zu\r\n%s\r\n$%zu\r\n%s\r\n", left==1?"BLPOP":"BRPOP", strlen(key), key, strlen(seconds), seconds);
@@ -1116,17 +1116,20 @@ int credis_blpop(REDIS rhnd, const char *key, const char *seconds, char **val) {
   return cr_bpop(rhnd, 1, key, seconds, val);
 }
 
-int credis_lpop(REDIS rhnd, const char *key, char **val) {
-  return cr_pop(rhnd, 1, key, val);
-}
-
 int credis_brpop(REDIS rhnd, const char *key, const char *seconds, char **val) {
   return cr_bpop(rhnd, 0, key, seconds, val);
+}
+
+
+/*
+int credis_lpop(REDIS rhnd, const char *key, char **val) {
+  return cr_pop(rhnd, 1, key, val);
 }
 
 int credis_rpop(REDIS rhnd, const char *key, char **val) {
   return cr_pop(rhnd, 0, key, val);
 }
+*/
 
 int credis_select(REDIS rhnd, int index) {
   int rc;
@@ -1144,6 +1147,7 @@ int credis_select(REDIS rhnd, int index) {
   return cr_receivereply(rhnd, CR_INLINE);
 }
 
+/*
 int credis_move(REDIS rhnd, const char *key, int index) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "MOVE %s %d\r\n", key, index);
 
@@ -1171,44 +1175,39 @@ int credis_sort(REDIS rhnd, const char *query, char ***elementv) {
   return rc;
 }
 
-int credis_save(REDIS rhnd)
-{
+int credis_save(REDIS rhnd){
   return cr_sendfandreceive(rhnd, CR_INLINE, "SAVE\r\n");
 }
 
-int credis_bgsave(REDIS rhnd)
-{
+int credis_bgsave(REDIS rhnd){
   return cr_sendfandreceive(rhnd, CR_INLINE, "BGSAVE\r\n");
 }
 
-int credis_lastsave(REDIS rhnd)
-{
+int credis_lastsave(REDIS rhnd) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "LASTSAVE\r\n");
 
-  if (rc == 0)
-    rc = rhnd->reply.integer;
+  if (rc == 0) rc = rhnd->reply.integer;
 
   return rc;
 }
 
-int credis_shutdown(REDIS rhnd)
-{
+int credis_shutdown(REDIS rhnd) {
   return cr_sendfandreceive(rhnd, CR_INLINE, "SHUTDOWN\r\n");
 }
 
-int credis_bgrewriteaof(REDIS rhnd)
-{
+int credis_bgrewriteaof(REDIS rhnd) {
   return cr_sendfandreceive(rhnd, CR_INLINE, "BGREWRITEAOF\r\n");
 }
 
-/* Parse Redis `info' string for a particular `field', storing its value to 
- * `storage' according to `format'.
- */
+
+// Parse Redis `info' string for a particular `field', storing its value to 
+// `storage' according to `format'.
+//
 void cr_parseinfo(const char *info, const char *field, const char *format, void *storage)
 {
   char *str = strstr(info, field);
   if (str) {
-    str += strlen(field) + 1; /* also skip the ':' */
+    str += strlen(field) + 1; // also skip the ':' 
     sscanf(str, format, storage); 
   }
 }
@@ -1263,120 +1262,95 @@ int credis_slaveof(REDIS rhnd, const char *host, int port) {
 }
 
 static int cr_setaddrem(REDIS rhnd, const char *cmd, const char *key, const char *member) {
-  int rc = cr_sendfandreceive(rhnd, CR_INT, "%s %s %zu\r\n%s\r\n", 
-                              cmd, key, strlen(member), member);
+  int rc = cr_sendfandreceive(rhnd, CR_INT, "%s %s %zu\r\n%s\r\n", cmd, key, strlen(member), member);
 
-  if (rc == 0 && rhnd->reply.integer == 0)
-    rc = -1;
+  if (rc == 0 && rhnd->reply.integer == 0) rc = -1;
 
   return rc;
 }
 
-int credis_sadd(REDIS rhnd, const char *key, const char *member)
-{
+int credis_sadd(REDIS rhnd, const char *key, const char *member) {
   return cr_setaddrem(rhnd, "SADD", key, member);
 }
 
-int credis_srem(REDIS rhnd, const char *key, const char *member)
-{
+int credis_srem(REDIS rhnd, const char *key, const char *member) {
   return cr_setaddrem(rhnd, "SREM", key, member);
 }
 
-int credis_spop(REDIS rhnd, const char *key, char **member)
-{
+int credis_spop(REDIS rhnd, const char *key, char **member) {
   int rc = cr_sendfandreceive(rhnd, CR_BULK, "SPOP %s\r\n", key);
 
-  if (rc == 0 && (*member = rhnd->reply.bulk) == NULL)
-    rc = -1;
+  if (rc == 0 && (*member = rhnd->reply.bulk) == NULL) rc = -1;
 
   return rc;
 }
 
-int credis_smove(REDIS rhnd, const char *sourcekey, const char *destkey, 
-                 const char *member)
-{
+int credis_smove(REDIS rhnd, const char *sourcekey, const char *destkey,  const char *member) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "SMOVE %s %s %s\r\n", 
                               sourcekey, destkey, member);
 
-  if (rc == 0 && rhnd->reply.integer == 0)
-    rc = -1;
+  if (rc == 0 && rhnd->reply.integer == 0) rc = -1;
 
   return rc;
 }
 
-int credis_scard(REDIS rhnd, const char *key) 
-{
+int credis_scard(REDIS rhnd, const char *key) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "SCARD %s\r\n", key);
 
-  if (rc == 0)
-    rc = rhnd->reply.integer;
+  if (rc == 0) rc = rhnd->reply.integer;
 
   return rc;
 }
 
-int credis_sinter(REDIS rhnd, int keyc, const char **keyv, char ***members)
-{
+int credis_sinter(REDIS rhnd, int keyc, const char **keyv, char ***members) {
   return cr_multikeybulkcommand(rhnd, "SINTER", keyc, keyv, members);
 }
 
-int credis_sunion(REDIS rhnd, int keyc, const char **keyv, char ***members)
-{
+int credis_sunion(REDIS rhnd, int keyc, const char **keyv, char ***members) {
   return cr_multikeybulkcommand(rhnd, "SUNION", keyc, keyv, members);
 }
 
-int credis_sdiff(REDIS rhnd, int keyc, const char **keyv, char ***members)
-{
+int credis_sdiff(REDIS rhnd, int keyc, const char **keyv, char ***members) {
   return cr_multikeybulkcommand(rhnd, "SDIFF", keyc, keyv, members);
 }
 
-int credis_sinterstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv)
-{
+int credis_sinterstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv) {
   return cr_multikeystorecommand(rhnd, "SINTERSTORE", destkey, keyc, keyv);
 }
 
-int credis_sunionstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv)
-{
+int credis_sunionstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv) {
   return cr_multikeystorecommand(rhnd, "SUNIONSTORE", destkey, keyc, keyv);
 }
 
-int credis_sdiffstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv)
-{
+int credis_sdiffstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv) {
   return cr_multikeystorecommand(rhnd, "SDIFFSTORE", destkey, keyc, keyv);
 }
 
-int credis_sismember(REDIS rhnd, const char *key, const char *member)
-{
+int credis_sismember(REDIS rhnd, const char *key, const char *member) {
   return cr_setaddrem(rhnd, "SISMEMBER", key, member);
 }
 
-int credis_smembers(REDIS rhnd, const char *key, char ***members)
-{
+int credis_smembers(REDIS rhnd, const char *key, char ***members) {
   return cr_multikeybulkcommand(rhnd, "SMEMBERS", 1, &key, members);
 }
 
-int credis_zadd(REDIS rhnd, const char *key, double score, const char *member)
-{
-  int rc = cr_sendfandreceive(rhnd, CR_INT, "ZADD %s %f %zu\r\n%s\r\n", 
-                              key, score, strlen(member), member);
+int credis_zadd(REDIS rhnd, const char *key, double score, const char *member) {
+  int rc = cr_sendfandreceive(rhnd, CR_INT, "ZADD %s %f %zu\r\n%s\r\n", key, score, strlen(member), member);
 
-  if (rc == 0 && rhnd->reply.integer == 0)
-    rc = -1;
+  if (rc == 0 && rhnd->reply.integer == 0) rc = -1;
 
   return rc;
 }
 
-int credis_zrem(REDIS rhnd, const char *key, const char *member)
-{
-  int rc = cr_sendfandreceive(rhnd, CR_INT, "ZREM %s %zu\r\n%s\r\n", 
-                              key, strlen(member), member);
+int credis_zrem(REDIS rhnd, const char *key, const char *member) {
+  int rc = cr_sendfandreceive(rhnd, CR_INT, "ZREM %s %zu\r\n%s\r\n", key, strlen(member), member);
 
-  if (rc == 0 && rhnd->reply.integer == 0)
-    rc = -1;
+  if (rc == 0 && rhnd->reply.integer == 0) rc = -1;
 
   return rc;
 }
 
-/* TODO what does Redis return if member is not member of set? */
+// TODO what does Redis return if member is not member of set? 
 int credis_zincrby(REDIS rhnd, const char *key, double incr_score, const char *member, double *new_score)
 {
   int rc = cr_sendfandreceive(rhnd, CR_BULK, "ZINCRBY %s %f %zu\r\n%s\r\n", 
@@ -1388,30 +1362,26 @@ int credis_zincrby(REDIS rhnd, const char *key, double incr_score, const char *m
   return rc;
 }
 
-/* TODO what does Redis return if member is not member of set? */
+// TODO what does Redis return if member is not member of set? 
 static int cr_zrank(REDIS rhnd, int reverse, const char *key, const char *member)
 {
   int rc = cr_sendfandreceive(rhnd, CR_BULK, "%s %s %zu\r\n%s\r\n", 
                               reverse==1?"ZREVRANK":"ZRANK", key, strlen(member), member);
 
-  if (rc == 0)
-    rc = atoi(rhnd->reply.bulk);
+  if (rc == 0) rc = atoi(rhnd->reply.bulk);
 
   return rc;
 }
 
-int credis_zrank(REDIS rhnd, const char *key, const char *member)
-{
+int credis_zrank(REDIS rhnd, const char *key, const char *member) {
   return cr_zrank(rhnd, 0, key, member);
 }
 
-int credis_zrevrank(REDIS rhnd, const char *key, const char *member)
-{
+int credis_zrevrank(REDIS rhnd, const char *key, const char *member) {
   return cr_zrank(rhnd, 1, key, member);
 }
 
-int cr_zrange(REDIS rhnd, int reverse, const char *key, int start, int end, char ***elementv)
-{
+int cr_zrange(REDIS rhnd, int reverse, const char *key, int start, int end, char ***elementv) {
   int rc = cr_sendfandreceive(rhnd, CR_MULTIBULK, "%s %s %d %d\r\n",
                               reverse==1?"ZREVRANGE":"ZRANGE", key, start, end);
 
@@ -1423,18 +1393,15 @@ int cr_zrange(REDIS rhnd, int reverse, const char *key, int start, int end, char
   return rc;
 }
 
-int credis_zrange(REDIS rhnd, const char *key, int start, int end, char ***elementv)
-{
+int credis_zrange(REDIS rhnd, const char *key, int start, int end, char ***elementv) {
   return cr_zrange(rhnd, 0, key, start, end, elementv);
 }
 
-int credis_zrevrange(REDIS rhnd, const char *key, int start, int end, char ***elementv)
-{
+int credis_zrevrange(REDIS rhnd, const char *key, int start, int end, char ***elementv) {
   return cr_zrange(rhnd, 1, key, start, end, elementv);
 }
 
-int credis_zcard(REDIS rhnd, const char *key)
-{
+int credis_zcard(REDIS rhnd, const char *key) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "ZCARD %s\r\n", key);
 
   if (rc == 0) {
@@ -1447,8 +1414,7 @@ int credis_zcard(REDIS rhnd, const char *key)
   return rc;
 }
 
-int credis_zscore(REDIS rhnd, const char *key, const char *member, double *score)
-{
+int credis_zscore(REDIS rhnd, const char *key, const char *member, double *score) {
   int rc = cr_sendfandreceive(rhnd, CR_BULK, "ZSCORE %s %zu\r\n%s\r\n", 
                               key, strlen(member), member);
 
@@ -1462,8 +1428,7 @@ int credis_zscore(REDIS rhnd, const char *key, const char *member, double *score
   return rc;
 }
 
-int credis_zremrangebyscore(REDIS rhnd, const char *key, double min, double max)
-{
+int credis_zremrangebyscore(REDIS rhnd, const char *key, double min, double max) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "ZREMRANGEBYSCORE %s %f %f\r\n", 
                               key, min, max);
 
@@ -1473,8 +1438,7 @@ int credis_zremrangebyscore(REDIS rhnd, const char *key, double min, double max)
   return rc;
 }
 
-int credis_zremrangebyrank(REDIS rhnd, const char *key, int start, int end)
-{
+int credis_zremrangebyrank(REDIS rhnd, const char *key, int start, int end) {
   int rc = cr_sendfandreceive(rhnd, CR_INT, "ZREMRANGEBYRANK %s %d %d\r\n", 
                               key, start, end);
 
@@ -1484,8 +1448,8 @@ int credis_zremrangebyrank(REDIS rhnd, const char *key, int start, int end)
   return rc;
 }
 
-/* TODO add writev() support instead and push strings to send onto a vector of
- * strings to send instead... */
+// TODO add writev() support instead and push strings to send onto a vector of
+// strings to send instead...
 static int cr_zstore(REDIS rhnd, int inter, const char *destkey, int keyc, const char **keyv, 
                      const int *weightv, REDIS_AGGREGATE aggregate)
 {
@@ -1514,7 +1478,7 @@ static int cr_zstore(REDIS rhnd, int inter, const char *destkey, int keyc, const
     rc = cr_appendstr(buf, "AGGREGATE MAX", 0);
     break;
   case NONE:
-    ; /* avoiding compiler warning */
+    ; // avoiding compiler warning 
   }
   if (rc != 0)
     return rc;
@@ -1528,14 +1492,12 @@ static int cr_zstore(REDIS rhnd, int inter, const char *destkey, int keyc, const
   return rc;
 }
 
-int credis_zinterstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv, 
-                       const int *weightv, REDIS_AGGREGATE aggregate)
-{
+int credis_zinterstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv,  const int *weightv, REDIS_AGGREGATE aggregate){
   return cr_zstore(rhnd, 1, destkey, keyc, keyv, weightv, aggregate);
 }
 
-int credis_zunionstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv, 
-                       const int *weightv, REDIS_AGGREGATE aggregate)
-{
+int credis_zunionstore(REDIS rhnd, const char *destkey, int keyc, const char **keyv,  const int *weightv, REDIS_AGGREGATE aggregate){
   return cr_zstore(rhnd, 0, destkey, keyc, keyv, weightv, aggregate);
 }
+
+*/
