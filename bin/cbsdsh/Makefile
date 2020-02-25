@@ -6,18 +6,30 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
 	test.c trap.c var.c
 
+.SILENT:
+
 # HBSD/FBSD/TrueOS...
 SHSRCS+=	jail.c
 
-# WITH_LUA
-#SHSRCS+=	cbsdlua.c
+.if defined(WITH_LUA)
+SHSRCS+=	cbsdlua.c
+CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
+.endif
+
+.if defined(WITH_REDIS)|defined(WITH_DBI)
+SHSRCS+=	contrib/ini.c
+.endif
 
 .if defined(WITH_REDIS)
+.warning	You are building CBSDSH with Redis; This is an experimental feature!
 SHSRCS+=	cbsdredis.c contrib/credis.c
 CFLAGS+=	-DWITH_REDIS
 .endif
 
-
+.if defined(WITH_DBI)
+.warning	You are building CBSDSH with DBI; This is experimental and could be unstable!
+CFLAGS+=	-DWITH_DBI
+.endif
 
 GENSRCS= builtins.c nodes.c syntax.c
 GENHDRS= builtins.h nodes.h syntax.h token.h
@@ -36,10 +48,8 @@ LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
 #LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
 #CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
-CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+CFLAGS+=-Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 
-# WITH LUA
-#CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
 
 # for debug:
 #DEBUG_FLAGS+= -g -DDEBUG=2 -fno-inline
@@ -70,7 +80,7 @@ builtins.c builtins.h: mkbuiltins builtins.def.o
 # intermediate object has a fixed name.
 # XXX we have a default .c rule, but no default .o rule.
 .o:
-	${CC} ${CFLAGS} ${LDFLAGS} ${.IMPSRC} ${LDLIBS} -o ${.TARGET}
+	${CC} ${CFLAGS} ${LDFLAGS} ${.IMPSRC} ${LDLIBS} -o ${.TARGET} 
 mknodes: mknodes.o
 mksyntax: mksyntax.o
 

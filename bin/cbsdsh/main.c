@@ -138,7 +138,7 @@ main(int argc, char *argv[])
 #endif
 
 #ifdef CBSD
-	char *MY_APP = NULL;
+//	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv

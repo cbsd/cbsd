@@ -211,7 +211,7 @@ int sqlitecmdrw(int argc, char **argv) {
 	int		retry = 0;
 
 //	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
-	const char journal_mode_sql[] = "PRAGMA journal_mode = WAL;";
+//	const char journal_mode_sql[] = "PRAGMA journal_mode = WAL;";       // SR - not used?
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
@@ -504,7 +504,7 @@ static int config_handler(void* user, const char* section, const char* name, con
 
 
 void	dbi_load_config(){
-	int	rc;
+//	int	rc;
 
 	// Get some RAM...
 	if((databases=malloc(sizeof(cbsddbi_t)))==NULL) return;
