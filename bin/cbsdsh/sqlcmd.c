@@ -34,7 +34,27 @@ extern cbsddbi_t      *databases;
 #include "cbsdredis.h"
 extern cbsdredis_t      *redis;
 #endif
+
+int (*_dbi_initialize)(const char *driverdir, dbi_inst *pInst);
+void (*_dbi_shutdown)(dbi_inst Inst);
+int (*_dbi_conn_error)(dbi_conn Conn, const char **errmsg_dest);
+dbi_conn (*_dbi_conn_new)(const char *name, dbi_inst Inst);
+int (*_dbi_conn_set_option)(dbi_conn Conn, const char *key, char *value);
+int (*_dbi_conn_connect)(dbi_conn Conn);
+void (*_dbi_conn_close)(dbi_conn Conn);
+dbi_result (*_dbi_conn_query)(dbi_conn Conn, const char *data);
+int (*_dbi_result_next_row)(dbi_result Result);
+int (*_dbi_result_free)(dbi_result Result);
+unsigned int (*_dbi_result_get_numfields)(dbi_result Result);
+const char *(*_dbi_result_get_field_name)(dbi_result Result, unsigned int idx);
+char *(*_dbi_result_get_as_string_copy_idx)(dbi_result Result, unsigned int idx);
+void (*_dbi_conn_error_handler)(dbi_conn Conn, dbi_conn_error_handler_func function, void *user_argument);
+void (*_dbi_set_verbosity)(int verbosity, dbi_inst Inst);
+
 #endif
+
+
+
 
 char * nm(void) {
 	return "cbsdsql";
@@ -113,6 +133,13 @@ int sqlCB(sqlite3_stmt * stmt) {
 // External SQL
 #ifdef WITH_DBI
 
+void	sql_error_handler(dbi_conn conn, void *user){
+	sql_database_t *config=user;
+	const char *msg;
+	_dbi_conn_error(conn, &msg);
+	fprintf(stderr, "SQL error in instance %s: [%s]!\n",config->name, msg);
+}
+
 bool sql_connect(sql_database_t *config){
 	if(DCF_DISABLED & config->flags){ fprintf(stderr, "SQL Instance %s is disabled!\n", config->name); return(false); }
 	if(!config->conn){
@@ -128,6 +155,8 @@ bool sql_connect(sql_database_t *config){
 		_dbi_conn_set_option(config->conn, "dbname", config->database?config->database:"cbsd");
 		_dbi_conn_set_option(config->conn, "encoding", config->encoding?config->encoding:"UTF-8");
 
+		_dbi_conn_error_handler(config->conn, sql_error_handler, (void *)config);
+
 	}
 
 	if(!(DCF_CONNECTED & config->flags) && _dbi_conn_connect(config->conn) < 0) {
@@ -136,6 +165,8 @@ bool sql_connect(sql_database_t *config){
 		fprintf(stderr, "Could not connect to the database. Please check the database settings.\nSQL error: '%s'\n", er);
 		return(false);
 	}
+
+
 	config->flags|=DCF_CONNECTED;
 	return(true);
 }
@@ -150,7 +181,6 @@ int sql_result(dbi_result result) {
 	sqlcolnames = getenv("sqlcolnames");
 	if ((delim = lookupvar("sqldelimer")) == NULL) delim = DEFSQLDELIMER; 
 
-
 	while (_dbi_result_next_row(result)) {
 		unsigned int amount=_dbi_result_get_numfields(result); 
 
@@ -161,8 +191,6 @@ int sql_result(dbi_result result) {
 			}
 			printheader=2;
 		}
-
-
 
 		for (index = 1; index <= amount ; index++) {
 			char *item  =_dbi_result_get_as_string_copy_idx(result, index);
@@ -186,6 +214,7 @@ int sqlcmd(int argc, char **argv) {
 	int	i, rc;
 	char	*query;
 
+
 	for (i = 2; i < argc; i++) len += strlen(argv[i]) + 1;
 	if (len == 0){ fprintf(stderr, "Query is missing!\n"); return(1); }
 
@@ -195,6 +224,9 @@ int sqlcmd(int argc, char **argv) {
 		if(strlen(seek->name) == strlen(argv[1]+1) && strcmp(seek->name, argv[1]+1) == 0) break; 	
 
 	if(!seek){ fprintf(stderr, "Invalid database!\n"); return(1); }
+
+	if(argc == 3 && strcmp(argv[2], "gettype") == 0){ printf("%s\n", seek->type); return(0); }
+
 
 	if(!sql_connect(seek)) return(1);
 
@@ -215,19 +247,6 @@ int sqlcmd(int argc, char **argv) {
 	if((rc=sql_result(result)) != 0){
 		printf("Failed Query: [%s]\n",query); 
 	}
-/*
-	while (_dbi_result_next_row(result)) {
-		unsigned int amount=_dbi_result_get_numfields(result); 
-		for(unsigned int index=1; index <= amount; index++){
-			char *item  =_dbi_result_get_as_string_copy_idx(result, index);
-			const char *field =_dbi_result_get_field_name(result, index);
-
-			printf("%s%s%s\n",field, delim, item);
-
-			free(item);
-		}
-	}
-*/
 
 	free(query);
 	return(rc);
@@ -490,12 +509,15 @@ void	dbi_init(){
 	REGLIB(dbi_result_get_field_name,		"dbi_result_get_field_name")
 	REGLIB(dbi_result_get_as_string_copy_idx,	"dbi_result_get_as_string_copy_idx")
 	REGLIB(dbi_result_get_numfields,		"dbi_result_get_numfields")
+	REGLIB(dbi_conn_error_handler,			"dbi_conn_error_handler")
+	REGLIB(dbi_set_verbosity,			"dbi_set_verbosity_r")
 
 
 	#undef REGLIB
 
 	if((rc=_dbi_initialize(NULL, &databases->instance))<0){ fprintf(stderr, "Problem initializing DBI, did you install the drivers?\n"); dlclose(databases->lib_handle); databases->lib_handle=NULL; return; }
 
+	_dbi_set_verbosity(0, databases->instance);
 
 }
 

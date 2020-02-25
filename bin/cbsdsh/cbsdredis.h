@@ -3,10 +3,14 @@
 
 #include "contrib/credis.h"
 
+#define DEFREDISDELIMER "|"
+
+
 // Filter flags
 #define RF_SETENV	1
 #define RF_PRINT	2
 #define RF_WITHKEYS	4
+#define RF_KEYSONLY	8
 
 //#define RF_SETENV	16
 #define RF_INVERT	32

@@ -37,22 +37,6 @@ typedef struct {
 	sql_database_t	*list;			// Connections
 } cbsddbi_t;
 
-
-int (*_dbi_initialize)(const char *driverdir, dbi_inst *pInst);
-void (*_dbi_shutdown)(dbi_inst Inst);
-int (*_dbi_conn_error)(dbi_conn Conn, const char **errmsg_dest);
-dbi_conn (*_dbi_conn_new)(const char *name, dbi_inst Inst);
-int (*_dbi_conn_set_option)(dbi_conn Conn, const char *key, char *value);
-int (*_dbi_conn_connect)(dbi_conn Conn);
-void (*_dbi_conn_close)(dbi_conn Conn);
-dbi_result (*_dbi_conn_query)(dbi_conn Conn, const char *data);
-int (*_dbi_result_next_row)(dbi_result Result);
-int (*_dbi_result_free)(dbi_result Result);
-unsigned int (*_dbi_result_get_numfields)(dbi_result Result);
-
-const char *(*_dbi_result_get_field_name)(dbi_result Result, unsigned int idx);
-char *(*_dbi_result_get_as_string_copy_idx)(dbi_result Result, unsigned int idx);
-
 #endif        
 
 
