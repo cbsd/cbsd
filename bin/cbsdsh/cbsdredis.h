@@ -3,6 +3,7 @@
 
 #include "contrib/credis.h"
 
+// Filter flags
 #define RF_SETENV	1
 #define RF_PRINT	2
 #define RF_WITHKEYS	4
@@ -11,6 +12,9 @@
 #define RF_INVERT	32
 #define RF_KEYLIST	128
 
+// Connection flags
+#define RCF_DISABLED	1
+
 
 typedef struct { 
 	REDIS res; 
@@ -18,6 +22,7 @@ typedef struct {
 	char *password;
 	uint16_t port;
 	uint16_t database;
+	uint32_t flags;
 } cbsdredis_t;
 
 void	redis_free(void);

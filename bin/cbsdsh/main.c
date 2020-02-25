@@ -87,6 +87,9 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #ifdef WITH_REDIS
 #include "cbsdredis.h"
 #endif
+#ifdef WITH_DBI
+#include "sqlcmd.h"
+#endif
 
 
 int rootpid;
@@ -102,6 +105,9 @@ const char cbsd_distdir[] = "/usr/local/cbsd";
 
 #ifdef WITH_REDIS
 cbsdredis_t      *redis;
+#endif
+#ifdef WITH_DBI
+cbsddbi_t      	 *databases;
 #endif
 
 static void reset(void);
@@ -126,6 +132,9 @@ main(int argc, char *argv[])
 
 #ifdef WITH_REDIS
 	redis_load_config();
+#endif
+#ifdef WITH_DBI
+	dbi_load_config();
 #endif
 
 #ifdef CBSD
@@ -303,10 +312,6 @@ state4:
 		cmdloop(1);
 	}
 
-#ifdef WITH_REDIS
-	redis_free();
-#endif
-
 
 	exitshell(exitstatus);
 	/*NOTREACHED*/
@@ -325,9 +330,7 @@ reset(void)
  * loop; it turns on prompting if the shell is interactive.
  */
 
-static void
-cmdloop(int top)
-{
+static void cmdloop(int top) {
 	union node *n;
 	struct stackmark smark;
 	int inter;
@@ -336,8 +339,8 @@ cmdloop(int top)
 	TRACE(("cmdloop(%d) called\n", top));
 	setstackmark(&smark);
 	for (;;) {
-		if (pendingsig)
-			dotrap();
+		if (pendingsig) dotrap();
+
 		inter = 0;
 		if (iflag && top) {
 			inter++;
@@ -350,11 +353,9 @@ cmdloop(int top)
 		n = parsecmd(inter);
 		/* showtree(n); DEBUG */
 		if (n == NEOF) {
-			if (!top || numeof >= 50)
-				break;
+			if (!top || numeof >= 50) break;
 			if (!stoppedjobs()) {
-				if (!Iflag)
-					break;
+				if (!Iflag) break;
 				out2fmt_flush("\nUse \"exit\" to leave shell.\n");
 			}
 			numeof++;
@@ -366,8 +367,7 @@ cmdloop(int top)
 		popstackmark(&smark);
 		setstackmark(&smark);
 		if (evalskip != 0) {
-			if (evalskip == SKIPRETURN)
-				evalskip = 0;
+			if (evalskip == SKIPRETURN) evalskip = 0;
 			break;
 		}
 	}
@@ -470,9 +470,7 @@ dotcmd(int argc, char **argv)
 }
 
 
-int
-exitcmd(int argc, char **argv)
-{
+int exitcmd(int argc, char **argv) {
 	if (stoppedjobs())
 		return 0;
 	if (argc > 1)

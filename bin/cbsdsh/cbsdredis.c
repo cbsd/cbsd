@@ -36,6 +36,7 @@
 #include <unistd.h>
 
 #include "var.h"
+#include "contrib/ini.h"
 #include "cbsdredis.h"
 
 #ifdef DEBUG_REDIS
@@ -84,6 +85,8 @@ REDIS redis_connect(bool persist){
 	int	rc;
 
 	if(NULL == redis || NULL == redis->hostname) return(NULL);
+	if(RCF_DISABLED & redis->flags) return(NULL); // Redis is disabled!
+
 
 	// Reconnect/persist
 	if(persist && NULL != redis->res){
@@ -330,16 +333,45 @@ int update_idlecmd(int argc, char **argv) {
 #endif
 
 
+#ifndef WITH_DBI
+static int config_handler(void* user, const char* section, const char* name, const char* value){
+	if(strcmp("redis", section) != 0) return(1);
+
+	if(strcmp("host", name) == 0) redis->hostname=strdup(value);
+	else if(strcmp("port", name) == 0) redis->port=atoi(value);
+	else if(strcmp("password", name) == 0) redis->password=strdup(value);
+	else if(strcmp("database", name) == 0) redis->database=atoi(value);
+	else if(strcmp("enabled", name) == 0){
+		if(!(	strcmp("yes",value) == 0 ||  
+			strcmp("YES",value) == 0 ||
+			strcmp("1",value) == 0 ||
+			strcmp("true",value) == 0 ||
+			strcmp("TRUE",value) == 0)) redis->flags|=RCF_DISABLED;
+	}else return(0); // Unknown option
+	
+	return 1;
+}
+#endif
+
 // Used in main()
 int redis_load_config(void){
 	if((redis=malloc(sizeof(cbsdredis_t)))==NULL) return(-1);
 	bzero(redis, sizeof(cbsdredis_t));
-	
-	redis->hostname=strdup("127.0.0.1");
-	redis->password=strdup("password");	
-	redis->port=6379;
-	redis->database=2;
 
+
+// sqlcmd.c is maybe nice enough to load it for us..
+
+#ifndef WITH_DBI
+	if (ini_parse("/usr/local/etc/cbsd-ext.conf", config_handler, NULL) < 0) { 
+	       	fprintf(stderr, "Warning: Can't load '/usr/local/etc/cbsd-ext.conf' using defaults for Redis.\n");
+		redis->hostname=strdup("127.0.0.1");
+		redis->password=strdup("cbsd");	
+		redis->port=6379;
+		redis->database=2;
+//	}else{
+//		printf("host: %s\npass: %s\ndb: %i\nport: %i\n", redis->hostname, redis->password, redis->database, redis->port);
+	}
+#endif
 	return(0);
 }
 
@@ -353,3 +385,4 @@ void redis_free(void){
 
 	free(redis);
 }
+
