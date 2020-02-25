@@ -149,11 +149,16 @@ bool sql_connect(sql_database_t *config){
 			return(false); 
 		}
 
-		_dbi_conn_set_option(config->conn, "host", config->hostname?config->hostname:"");
-		_dbi_conn_set_option(config->conn, "username", config->username?config->username:"cbsd");
-		_dbi_conn_set_option(config->conn, "password", config->password?config->password:"cbsd");
-		_dbi_conn_set_option(config->conn, "dbname", config->database?config->database:"cbsd");
-		_dbi_conn_set_option(config->conn, "encoding", config->encoding?config->encoding:"UTF-8");
+		if(strcmp("sqlite3", config->type) == 0){
+			_dbi_conn_set_option(config->conn, "dbname", config->database?config->database:"local.db");
+			_dbi_conn_set_option(config->conn, "sqlite3_dbdir", config->username?config->username:"/var/db/");
+		}else{
+			_dbi_conn_set_option(config->conn, "host", config->hostname?config->hostname:"");
+			_dbi_conn_set_option(config->conn, "username", config->username?config->username:"cbsd");
+			_dbi_conn_set_option(config->conn, "password", config->password?config->password:"cbsd");
+			_dbi_conn_set_option(config->conn, "dbname", config->database?config->database:"cbsd");
+			_dbi_conn_set_option(config->conn, "encoding", config->encoding?config->encoding:"UTF-8");
+		}
 
 		_dbi_conn_error_handler(config->conn, sql_error_handler, (void *)config);
 
@@ -538,16 +543,18 @@ static int config_handler(void* user, const char* section, const char* name, con
 			bzero(seek, sizeof(sql_database_t));
 			seek->name=strdup(section+4);
 			seek->next=databases->list; databases->list=seek; // Add to the list.
+			seek->flags=DCF_DISABLED;
 		}
 
 		if(strcmp("type", name) == 0) seek->type=strdup(value);
-		else if(strcmp("host", name) == 0) seek->hostname=strdup(value);
-		else if(strcmp("user", name) == 0) seek->username=strdup(value);
-		else if(strcmp("password", name) == 0) seek->password=strdup(value);
-		else if(strcmp("encoding", name) == 0) seek->encoding=strdup(value);
-		else if(strcmp("database", name) == 0) seek->database=strdup(value);
+		else if(!seek->hostname && strcmp("host", name) == 0) seek->hostname=strdup(value);
+		else if(!seek->username && strcmp("user", name) == 0) seek->username=strdup(value);
+		else if(!seek->username && strcmp("dbdir", name) == 0) seek->username=strdup(value);
+		else if(!seek->password && strcmp("password", name) == 0) seek->password=strdup(value);
+		else if(seek->encoding && strcmp("encoding", name) == 0) seek->encoding=strdup(value);
+		else if(seek->database && strcmp("database", name) == 0) seek->database=strdup(value);
 		else if(strcmp("port", name) == 0) seek->port=atoi(value);
-	        else if(strcmp("enabled", name) == 0 && !(strcmp("yes",value) == 0)) seek->flags|=DCF_DISABLED;
+	        else if(strcmp("enabled", name) == 0 && (strcmp("yes",value) == 0)) seek->flags&=~DCF_DISABLED;
 		else return(0);
 		return(1);
 	}
@@ -557,7 +564,7 @@ static int config_handler(void* user, const char* section, const char* name, con
         else if(strcmp("port", name) == 0) redis->port=atoi(value);
         else if(strcmp("password", name) == 0) redis->password=strdup(value);
         else if(strcmp("database", name) == 0) redis->database=atoi(value);
-        else if(strcmp("enabled", name) == 0 && !(strcmp("yes",value) == 0)) redis->flags|=RCF_DISABLED;
+        else if(strcmp("enabled", name) == 0 && !(strcmp("yes",value) == 0)) redis->flags|=RCF_DISABLED; // TODO: Fix this / reverse it.
         else return(0); // Unknown option
         return 1;
 #endif
