@@ -140,9 +140,50 @@ bool sql_connect(sql_database_t *config){
 	return(true);
 }
 
+int sql_result(dbi_result result) {
+	int		index;
+	const char     *colname;
+	int		printheader = 0;
+	char	       *delim;
+	const char     *sqlcolnames = NULL;
+
+	sqlcolnames = getenv("sqlcolnames");
+	if ((delim = lookupvar("sqldelimer")) == NULL) delim = DEFSQLDELIMER; 
+
+
+	while (_dbi_result_next_row(result)) {
+		unsigned int amount=_dbi_result_get_numfields(result); 
+
+		if ((printheader==1) && (sqlcolnames == NULL)) {
+			for (index = 1; index <= amount; index++) {
+				colname =_dbi_result_get_field_name(result, index);
+				if (index != amount) out1fmt("%s%s", colname, delim); else out1fmt("%s\n", colname);
+			}
+			printheader=2;
+		}
+
+
+
+		for (index = 1; index <= amount ; index++) {
+			char *item  =_dbi_result_get_as_string_copy_idx(result, index);
+			if (sqlcolnames)
+				out1fmt("%s=\"%s\"\n", _dbi_result_get_field_name(result, index), item);
+			else if (index == amount) out1fmt("%s\n", item); 
+			else out1fmt("%s%s", item, delim);
+
+			free(item);
+		}
+
+
+	}
+	_dbi_result_free(result);
+
+	return 0;
+}
+
 int sqlcmd(int argc, char **argv) {
 	size_t	len=0;
-	int	i;
+	int	i, rc;
 	char	*query;
 
 	for (i = 2; i < argc; i++) len += strlen(argv[i]) + 1;
@@ -169,29 +210,27 @@ int sqlcmd(int argc, char **argv) {
 	tmp[-1] = 0;
 
 	// Excute query
-	dbi_result result;
-	result = _dbi_conn_query(seek->conn, query); 
-	if(!result){ printf("Failed Query: [%s]\n",query); return(1); }
+	dbi_result result = _dbi_conn_query(seek->conn, query); 
 
+	if((rc=sql_result(result)) != 0){
+		printf("Failed Query: [%s]\n",query); 
+	}
+/*
 	while (_dbi_result_next_row(result)) {
-
-		printf("-----\n");
-
 		unsigned int amount=_dbi_result_get_numfields(result); 
 		for(unsigned int index=1; index <= amount; index++){
 			char *item  =_dbi_result_get_as_string_copy_idx(result, index);
 			const char *field =_dbi_result_get_field_name(result, index);
 
-			printf("%s=%s\n",field, item);
-
+			printf("%s%s%s\n",field, delim, item);
 
 			free(item);
 		}
 	}
-	_dbi_result_free(result);
+*/
 
 	free(query);
-	return(1);
+	return(rc);
 }
 #endif
 

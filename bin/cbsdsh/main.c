@@ -46,7 +46,6 @@ static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/28/95";
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 
-
 #include <stdio.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -115,6 +114,8 @@ static void cmdloop(int);
 static void read_profile(const char *);
 static char *find_dot_file(char *);
 
+#pragma unused(copyright)
+
 /*
  * Main routine.  We initialize things, parse the arguments, execute
  * profiles if we're a login shell, and then call cmdloop to execute
@@ -123,15 +124,13 @@ static char *find_dot_file(char *);
  * is used to figure out how far we had gotten.
  */
 
-int
-main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 	struct stackmark smark, smark2;
 	volatile int state;
 	char *shinit;
 
 #ifdef WITH_REDIS
-	redis_load_config();
+	redis_load_config();		// Need to be before dbi_load_config at the moment!
 #endif
 #ifdef WITH_DBI
 	dbi_load_config();
