@@ -49,6 +49,8 @@ static const char rcsid[] =
   "$FreeBSD: head/usr.bin/printf/printf.c 279503 2015-03-01 21:46:55Z jilles $";
 #endif /* not lint */
 
+#pragma unused(rcsid)
+
 #include <sys/types.h>
 
 #include <ctype.h>
