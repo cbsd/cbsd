@@ -305,10 +305,43 @@ int redis_cmd(int argc, char **argv) {
 			free(vals);
 			return(rc);
 		}
+
 		if (items < 3) {
 			printf("Missing hash/key/value's\n");
 			return(1);
 		}
+
+
+
+//cbsdredis hset test demo, sjaak, joost -vals- joost, sjaak, bla
+		unsigned int center=(items / 2);
+		if(strncmp(argv[item+center], "-vals", 5) == 0){ 
+			int rc;										// Return code (for errors)
+			unsigned int valc=0;								// Value Counter
+			char **vals;									// Value array
+			if((vals=malloc((sizeof(void *)*items)+sizeof(void *)))==NULL) return(-1); 	// Allocate ram
+
+#define removeAfter(what, item) if(item[strlen(item)-1] == what) item[strlen(item)-1]=0;
+
+			vals[valc++]=argv[item];							// Set the hash
+			for(int i=1; i<center; i++){							// Set the rest
+													// Remove trailing ,
+				removeAfter(',', argv[item+i]) removeAfter(',', argv[center+item+i])
+				removeAfter('\'', argv[item+i]) removeAfter('\'', argv[center+item+i])
+
+				if(argv[item+i][0]=='\'') vals[valc++]=&argv[item+i][1]; else vals[valc++]=argv[item+i];
+				if(argv[item+i+center][0]=='\'') vals[valc++]=&argv[item+i+center][1]; else vals[valc++]=argv[item+i+center];
+			}
+
+#undef removeAfter
+
+			if(center > 2) rc=redis_do("HMSET", CR_INLINE, flags, valc, vals);
+			else rc=redis_do("HSET", CR_INT, flags, valc, vals);
+			free(vals);
+
+			return(rc);
+		}
+
 		if (items > 4) return(redis_do("HMSET", CR_INLINE, flags, items, &argv[item]));
 		return(redis_do("HSET", CR_INT, flags, items, &argv[item]));
 	}
