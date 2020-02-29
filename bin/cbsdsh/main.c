@@ -83,6 +83,14 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "redir.h"
 #include "builtins.h"
 
+#ifdef WITH_REDIS
+#include "cbsdredis.h"
+#endif
+#ifdef WITH_DBI
+#include "sqlcmd.h"
+#endif
+
+
 int rootpid;
 int rootshell;
 struct jmploc main_handler;
@@ -94,10 +102,19 @@ int cbsd_enable_history=0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
 #endif
 
+#ifdef WITH_REDIS
+cbsdredis_t      *redis;
+#endif
+#ifdef WITH_DBI
+cbsddbi_t      	 *databases;
+#endif
+
 static void reset(void);
 static void cmdloop(int);
 static void read_profile(const char *);
 static char *find_dot_file(char *);
+
+#pragma unused(copyright)
 
 /*
  * Main routine.  We initialize things, parse the arguments, execute
@@ -107,15 +124,20 @@ static char *find_dot_file(char *);
  * is used to figure out how far we had gotten.
  */
 
-int
-main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 	struct stackmark smark, smark2;
 	volatile int state;
 	char *shinit;
 
+#ifdef WITH_REDIS
+	redis_load_config();		// Need to be before dbi_load_config at the moment!
+#endif
+#ifdef WITH_DBI
+	dbi_load_config();
+#endif
+
 #ifdef CBSD
-	char *MY_APP = NULL;
+//	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv
@@ -129,6 +151,8 @@ main(int argc, char *argv[])
 		cbsd_enable_history = 1;
 	}
 #endif
+
+
 
 	(void) setlocale(LC_ALL, "");
 	initcharset();
@@ -286,6 +310,8 @@ state4:
 	if (sflag || minusc == NULL) {
 		cmdloop(1);
 	}
+
+
 	exitshell(exitstatus);
 	/*NOTREACHED*/
 	return 0;
@@ -303,9 +329,7 @@ reset(void)
  * loop; it turns on prompting if the shell is interactive.
  */
 
-static void
-cmdloop(int top)
-{
+static void cmdloop(int top) {
 	union node *n;
 	struct stackmark smark;
 	int inter;
@@ -314,8 +338,8 @@ cmdloop(int top)
 	TRACE(("cmdloop(%d) called\n", top));
 	setstackmark(&smark);
 	for (;;) {
-		if (pendingsig)
-			dotrap();
+		if (pendingsig) dotrap();
+
 		inter = 0;
 		if (iflag && top) {
 			inter++;
@@ -328,11 +352,9 @@ cmdloop(int top)
 		n = parsecmd(inter);
 		/* showtree(n); DEBUG */
 		if (n == NEOF) {
-			if (!top || numeof >= 50)
-				break;
+			if (!top || numeof >= 50) break;
 			if (!stoppedjobs()) {
-				if (!Iflag)
-					break;
+				if (!Iflag) break;
 				out2fmt_flush("\nUse \"exit\" to leave shell.\n");
 			}
 			numeof++;
@@ -344,8 +366,7 @@ cmdloop(int top)
 		popstackmark(&smark);
 		setstackmark(&smark);
 		if (evalskip != 0) {
-			if (evalskip == SKIPRETURN)
-				evalskip = 0;
+			if (evalskip == SKIPRETURN) evalskip = 0;
 			break;
 		}
 	}
@@ -448,9 +469,7 @@ dotcmd(int argc, char **argv)
 }
 
 
-int
-exitcmd(int argc, char **argv)
-{
+int exitcmd(int argc, char **argv) {
 	if (stoppedjobs())
 		return 0;
 	if (argc > 1)

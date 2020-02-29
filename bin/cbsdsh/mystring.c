@@ -311,11 +311,7 @@ roundup_usage(void)
 // todo: long long? :
 //   roundup --num=1231332132132132132 --multiple=100
 //   roundup --num=12313321321321321321 --multiple=100
-int
-roundupcmd(int argc, char **argv)
-{
-	int pos = 0;
-	int len = 0;
+int roundupcmd(int argc, char **argv) {
 	unsigned long long numtoround = 0;
 	unsigned long long multiple = 0;
 	int optcode = 0;
