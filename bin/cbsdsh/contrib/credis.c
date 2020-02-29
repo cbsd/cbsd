@@ -575,7 +575,7 @@ int credis_raw_sendandreceive(REDIS rhnd, char recvtype){
 
 /* Prepare message buffer for sending using a printf()-style formatting. */
 __attribute__ ((format(printf,3,4)))
-static int cr_sendfandreceive(REDIS rhnd, char recvtype, const char *format, ...) {
+int cr_sendfandreceive(REDIS rhnd, char recvtype, const char *format, ...) {
   int rc;
   va_list ap;
   cr_buffer *buf = &(rhnd->buf);

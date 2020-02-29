@@ -268,6 +268,9 @@ int credis_flushall(REDIS rhnd);
 int credis_set(REDIS rhnd, const char *key, const char *val);
 int credis_hset(REDIS rhnd, const char *hash, const char *key, const char *val);
 
+int cr_sendfandreceive(REDIS rhnd, char recvtype, const char *format, ...);
+
+
 /* returns -1 if the key doesn't exists */
 int credis_get(REDIS rhnd, const char *key, char **val);
 int credis_hget(REDIS rhnd, const char *hash, const char *key, char **val);
