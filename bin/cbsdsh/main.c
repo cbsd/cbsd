@@ -144,9 +144,7 @@ int main(int argc, char *argv[]) {
 	chdir("/var/empty");
 
 	/* Only use history when stdin is a tty. */
-	if ( isatty(0) && isatty(1) ) {
-		cbsd_enable_history = 1;
-	}
+	if ( isatty(0) && isatty(1) ) cbsd_enable_history = 1;
 #endif
 
 

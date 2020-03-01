@@ -143,7 +143,7 @@ int influx_cmd(int argc, char **argv) {
 //				break;
 
 			default:
-				printf("Invalid parameters\n");
+				printf("Invalid parameters\nUse %s -m measurement [-t tag=val [-t tag=val]...] -v key=val [-v key=val]...",argv[0]);
         	                return 1;
 		}
 	}
@@ -210,6 +210,10 @@ void cbsd_influx_free(void){
 	if(NULL != influx->tables.bhyve) free(influx->tables.bhyve);
 	if(NULL != influx->tables.jails) free(influx->tables.jails);
 	if(NULL != influx->tables.nodes) free(influx->tables.nodes);
+	if(NULL != influx->tags.bhyve) free(influx->tags.bhyve);
+	if(NULL != influx->tags.jails) free(influx->tags.jails);
+	if(NULL != influx->tags.nodes) free(influx->tags.nodes);
+
 
 #endif
 	if(NULL != influx->uri) free(influx->uri);
