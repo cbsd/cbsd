@@ -171,11 +171,15 @@ int cbsd_influx_transmit_buffer(){
 	if(rc == 0){
 		influx->items=0;
 		influx->buffer[0]=0; // reset length..
-	}else if(influx->items > 20){	// Drop them anyway
+	}else if(rc == 400 || influx->items > 20){	// Drop them anyway
 		influx->items=0;
 		influx->buffer[0]=0; // reset length..
 
-		fprintf(stderr, "Warning, dropping influx data!\n");
+		if(rc == 400){
+			fprintf(stderr, "Warning, dropping influx data because of errors!\n");
+		}else{
+			fprintf(stderr, "Warning, dropping influx data because of overflow!\n");
+		}
 	}
 	return(rc);
 }
