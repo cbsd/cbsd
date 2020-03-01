@@ -258,7 +258,7 @@ int sum_data_bhyve()
 			strcat(json_str,json_buf);
 		}
 		
-		if (tosqlite3==1) {
+		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql,0,sizeof(sql));
 			memset(stats_file,0,sizeof(stats_file));
 			sprintf(stats_file,"%s/jails-system/%s/racct.sqlite",workdir,sumch->name);
@@ -299,11 +299,8 @@ int sum_data_bhyve()
 	if(cur_round!=save_loop_count)
 		return 0;
 
-	if(tobeanstalkd==0)
-		skip_beanstalk=1;
-
-	if (skip_beanstalk==1)
-		return 0;
+	if(!(OUTPUT_BEANSTALKD & output_flags)) skip_beanstalk=1;
+	if (skip_beanstalk==1)return 0;
     
 	if (strlen(json_str)>3) {
 		tolog(log_level,"bs_put: (%s)\n",json_str);
@@ -650,16 +647,16 @@ main(int argc, char **argv)
 				loop_interval=atoi(optarg);
 				break;
 			case C_PROMETHEUS_EXPORTER:
-				prometheus_exporter=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags |= OUTPUT_PROMETHEUS;
 				break;
 			case C_SAVE_LOOP_COUNT:
 				save_loop_count=atoi(optarg);
 				break;
 			case C_SAVE_BEANSTALKD:
-				tobeanstalkd=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags |= OUTPUT_BEANSTALKD;
 				break;
 			case C_SAVE_SQLITE3:
-				tosqlite3=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags |= OUTPUT_SQLITE3;
 				break;
 		}
 	}
@@ -672,13 +669,13 @@ main(int argc, char **argv)
 	printf("log_level: %d\n",log_level);
 	printf("loop_interval: %d seconds\n",loop_interval);
 	printf("save_loop_count: %d\n",save_loop_count);
-	printf("beanstalkd enabled: %d\n",tobeanstalkd);
-	printf("prometheus enabled: %d\n",prometheus_exporter);
-	printf("sqlite3 enabled: %d\n",tosqlite3);
+	printf("beanstalkd enabled: %s\n",(OUTPUT_BEANSTALKD & output_flags)?"yes":"no");
+	printf("prometheus enabled: %s\n",(OUTPUT_PROMETHEUS & output_flags)?"yes":"no");
+	printf("sqlite3 enabled: %s\n",(OUTPUT_SQLITE3 & output_flags)?"yes":"no");
 
-	if((tosqlite3==0)&&(tobeanstalkd==0)&&(prometheus_exporter==0)) {
-			printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
-			exit(-1);
+	if(output_flags == 0){
+		printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 --save-influx)\n");
+		exit(-1);
 	}
 
 	ncpu_len = sizeof(ncpu);

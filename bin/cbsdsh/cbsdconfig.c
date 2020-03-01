@@ -46,6 +46,9 @@ static int config_handler(void* user, const char* section, const char* name, con
 	if(strcmp("influx", section) == 0){
 		if(strcmp("host", name) == 0) influx->hostname=strdup(value);
 	        else if(strcmp("database", name) == 0) influx->database=strdup(value);
+	        else if(strcmp("table.bhyve", name) == 0) influx->tables.bhyve=strdup(value);
+	        else if(strcmp("table.jails", name) == 0) influx->tables.jails=strdup(value);
+	        else if(strcmp("table.nodex", name) == 0) influx->tables.nodes=strdup(value);
 	        else if(strcmp("token", name) == 0) influx->token=strdup(value);
 		else if(strcmp("port", name) == 0) influx->port=atoi(value);
 	        else if(strcmp("enabled", name) == 0 && !(strcmp("yes",value) == 0)) influx->flags|=ICF_DISABLED; // TODO: Fix this / reverse it.

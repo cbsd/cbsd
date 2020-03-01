@@ -183,7 +183,7 @@ int sum_data_hoster()
 			strcat(json_str,json_buf);
 		}
 		
-		if (tosqlite3==1) {
+		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql,0,sizeof(sql));
 			memset(stats_file,0,sizeof(stats_file));
 			sprintf(stats_file,"%s/jails-system/%s/racct.sqlite",workdir,sumch->name);
@@ -222,14 +222,10 @@ int sum_data_hoster()
 	strcat(json_str,"]}");
 	bs_tick=0;
 
-	if(cur_round!=save_loop_count)
-		return 0;
+	if(cur_round!=save_loop_count) return 0;
+	if(!(OUTPUT_BEANSTALKD & output_flags)) skip_beanstalk=1;
 
-	if(tobeanstalkd==0)
-		skip_beanstalk=1;
-
-	if (skip_beanstalk==1)
-		return 0;
+	if (skip_beanstalk==1) return 0;
 
 	if (strlen(json_str)>3) {
 		tolog(log_level,"bs_put: (%s)\n",json_str);
@@ -243,7 +239,7 @@ int sum_data_hoster()
 			return 1;
 		}
 	} else {
-		tolog(log_level,"skip_beanstalk = 1,skipp\n");
+		tolog(log_level,"Invalid json length\n");
 	}
 	return 0;
 }
@@ -320,6 +316,9 @@ main(int argc, char **argv)
 		{"save_loop_count", required_argument, 0, C_SAVE_LOOP_COUNT},
 		{"save_beanstalkd", required_argument, 0, C_SAVE_BEANSTALKD},
 		{"save_sqlite3", required_argument, 0, C_SAVE_SQLITE3},
+#ifdef WITH_INFLUX
+		{"save_influx", required_argument, 0, C_SAVE_INFLUX},
+#endif
 		/* End of options marker */
 		{0, 0, 0, 0}
 	};
@@ -342,33 +341,42 @@ main(int argc, char **argv)
 				loop_interval=atoi(optarg);
 				break;
 			case C_PROMETHEUS_EXPORTER:
-				prometheus_exporter=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags|=OUTPUT_PROMETHEUS;
 				break;
 			case C_SAVE_LOOP_COUNT:
 				save_loop_count=atoi(optarg);
 				break;
 			case C_SAVE_BEANSTALKD:
-				tobeanstalkd=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags|=OUTPUT_BEANSTALKD;
 				break;
 			case C_SAVE_SQLITE3:
-				tosqlite3=atoi(optarg);
+				if(atoi(optarg) == 1) output_flags|=OUTPUT_SQLITE3;
 				break;
+#ifdef WITH_INFLUX
+			case C_SAVE_INFLUX:
+				if(atoi(optarg) == 1) output_flags|=OUTPUT_INFLUX;
+				break;
+#endif
 		}
 	}
 
 	printf("CBSD hoster racct statistics exporter\n");
-	if(log_file)
-		printf("log_file: %s\n",log_file);
+	if(log_file) printf("log_file: %s\n",log_file);
+
 	printf("log_level: %d\n",log_level);
 	printf("loop_interval: %d seconds\n",loop_interval);
 	printf("save_loop_count: %d\n",save_loop_count);
-	printf("beanstalkd enabled: %d\n",tobeanstalkd);
-	printf("prometheus enabled: %d\n",prometheus_exporter);
-	printf("sqlite3 enabled: %d\n",tosqlite3);
+	printf("beanstalkd enabled: %s\n",(OUTPUT_BEANSTALKD & output_flags)?"yes":"no");
+	printf("prometheus enabled: %s\n",(OUTPUT_PROMETHEUS & output_flags)?"yes":"no");
+	printf("sqlite3 enabled: %s\n",(OUTPUT_SQLITE3 & output_flags)?"yes":"no");
 
-	if((tosqlite3==0)&&(tobeanstalkd==0)&&(prometheus_exporter==0)) {
-			printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
-			exit(-1);
+	if(output_flags == 0) {
+#ifdef WITH_INFLUX
+		printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 | --save_influx )\n");
+#else
+		printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
+#endif
+		exit(-1);
 	}
 
 	int total = 1;

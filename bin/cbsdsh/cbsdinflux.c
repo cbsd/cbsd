@@ -37,7 +37,7 @@
 #include "mystring.h"
 #include "cbsdinflux.h"
 
-// #define DEBUG_INFLUX
+//#define DEBUG_INFLUX
 
 #ifdef DEBUG_INFLUX
 #define DEBUG_PRINTF(...) printf(__VA_ARGS__);
@@ -53,12 +53,12 @@ int function_pt(void *ptr, size_t size, size_t nmemb, void *stream){
     return(0);
 }
 
-int influx_do(char *query){
+int cbsd_influx_do(char *query){
 	CURL	 *curl;		// Can't really persist
 	CURLcode  result;
 	
-	if(NULL == influx || NULL == influx->hostname || NULL == influx->database) return(1);
-	if(ICF_DISABLED & influx->flags) return(1); // Influx is disabled!
+	if(NULL == influx || NULL == influx->hostname || NULL == influx->database) return(-2);
+	if(ICF_DISABLED & influx->flags) return(-3); // Influx is disabled!
 
 	if(NULL == influx->uri){	// Prepare the URI
 		size_t len=strlen(influx->hostname)+strlen(influx->database)+35;
@@ -87,7 +87,7 @@ int influx_do(char *query){
 
 }
 	
-
+#ifdef CBSD
 int influx_cmd(int argc, char **argv) {
 	int		rc=0, c;
 	unsigned int	work_flags=0;
@@ -152,7 +152,7 @@ int influx_cmd(int argc, char **argv) {
 
 	if(rc == 0){
 		DEBUG_PRINTF("DEBUG[Influx-Out]: %s\n", data);
-		rc=influx_do(data);
+		rc=cbsd_influx_do(data);
 	}
 	free(data);
 
@@ -162,16 +162,52 @@ int influx_cmd(int argc, char **argv) {
 	return(1);
 
 }
+#else  // Not CBSD but RACCT
+int cbsd_influx_transmit_buffer(){
+	if(NULL == influx || NULL == influx->buffer || 0 == influx->items) return(0); // We call it a success..
+
+	int rc=cbsd_influx_do(influx->buffer);
+
+	if(rc == 0){
+		influx->items=0;
+		influx->buffer[0]=0; // reset length..
+	}else if(influx->items > 20){	// Drop them anyway
+		influx->items=0;
+		influx->buffer[0]=0; // reset length..
+
+		fprintf(stderr, "Warning, dropping influx data!\n");
+	}
+	return(rc);
+}
+#endif
+
 
 int cbsd_influx_init(void){
 	if((influx=malloc(sizeof(cbsdinflux_t)))==NULL) return(-1);
 	bzero(influx, sizeof(cbsdinflux_t));
+
+#ifndef CBSD
+	// TODO fix buffer size or make it grow if needed.
+
+	if((influx->buffer=malloc(8192))==NULL){ free(influx); influx=NULL; return(-1); }	// We don't have a buffer, we fail!
+	bzero(influx->buffer, 8192); // At least start fresh..
+#endif
 	return(0);
 }
 
 void cbsd_influx_free(void){
 	if(!influx) return;
-	
+
+#ifndef CBSD
+	if(NULL != influx->buffer){
+		if(influx->items > 0) cbsd_influx_transmit_buffer();
+		free(influx->buffer);
+	}
+	if(NULL != influx->tables.bhyve) free(influx->tables.bhyve);
+	if(NULL != influx->tables.jails) free(influx->tables.jails);
+	if(NULL != influx->tables.nodes) free(influx->tables.nodes);
+
+#endif
 	if(NULL != influx->uri) free(influx->uri);
 	if(NULL != influx->token) free(influx->token);
 	if(NULL != influx->hostname) free(influx->hostname);
