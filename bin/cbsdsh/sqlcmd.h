@@ -7,8 +7,8 @@
 #include <dbi/dbi.h>
 #include </usr/include/dlfcn.h>
 
-void dbi_load_config();
-void dbi_free();
+void cbsd_dbi_init();
+void cbsd_dbi_free();
 
 #define DCF_DISABLED	1
 #define DCF_CONNECTED	2

@@ -34,6 +34,10 @@ extern cbsddbi_t      *databases;
 #include "cbsdredis.h"
 extern cbsdredis_t      *redis;
 #endif
+#ifdef WITH_INFLUX
+#include "cbsdinflux.h"
+extern cbsdinflux_t      *influx;
+#endif
 
 int (*_dbi_initialize)(const char *driverdir, dbi_inst *pInst);
 void (*_dbi_shutdown)(dbi_inst Inst);
@@ -526,52 +530,7 @@ void	dbi_init(){
 
 }
 
-static int config_handler(void* user, const char* section, const char* name, const char* value){
-        if(strncmp("sql:", section, 4) == 0 && strlen(section) > 4){
-
-		if(!databases->lib_handle) return(1);
-
-		sql_database_t *seek;
-		for(seek=databases->list; NULL != seek; seek=seek->next) 
-			if(strlen(seek->name) == strlen(section+4) && strcmp(seek->name, section+4) == 0) break; 	
-
-		if(!seek){
-//			printf("sql: added database settings '%s'\n",section+4);
-
-			seek=malloc(sizeof(sql_database_t));
-			if(!seek){ fprintf(stderr, "sqlcmd.c: Memory error!"); return(0); }
-			bzero(seek, sizeof(sql_database_t));
-			seek->name=strdup(section+4);
-			seek->next=databases->list; databases->list=seek; // Add to the list.
-			seek->flags=DCF_DISABLED;
-		}
-
-		if(strcmp("type", name) == 0) seek->type=strdup(value);
-		else if(!seek->hostname && strcmp("host", name) == 0) seek->hostname=strdup(value);
-		else if(!seek->username && strcmp("user", name) == 0) seek->username=strdup(value);
-		else if(!seek->username && strcmp("dbdir", name) == 0) seek->username=strdup(value);
-		else if(!seek->password && strcmp("password", name) == 0) seek->password=strdup(value);
-		else if(seek->encoding && strcmp("encoding", name) == 0) seek->encoding=strdup(value);
-		else if(seek->database && strcmp("database", name) == 0) seek->database=strdup(value);
-		else if(strcmp("port", name) == 0) seek->port=atoi(value);
-	        else if(strcmp("enabled", name) == 0 && (strcmp("yes",value) == 0)) seek->flags&=~DCF_DISABLED;
-		else return(0);
-		return(1);
-	}
-#ifdef WITH_REDIS
-        if(strcmp("redis", section) != 0) return(1);
-        if(strcmp("host", name) == 0) redis->hostname=strdup(value);
-        else if(strcmp("port", name) == 0) redis->port=atoi(value);
-        else if(strcmp("password", name) == 0) redis->password=strdup(value);
-        else if(strcmp("database", name) == 0) redis->database=atoi(value);
-        else if(strcmp("enabled", name) == 0 && !(strcmp("yes",value) == 0)) redis->flags|=RCF_DISABLED; // TODO: Fix this / reverse it.
-        else return(0); // Unknown option
-        return 1;
-#endif
-}
-
-
-void	dbi_load_config(){
+void	cbsd_dbi_init(){
 //	int	rc;
 
 	// Get some RAM...
@@ -580,21 +539,6 @@ void	dbi_load_config(){
 
 	// Try and load the library
 	dbi_init();
-
-	// Parse config
-	if (ini_parse("/usr/local/etc/cbsd-ext.conf", config_handler, NULL) < 0) {
-                fprintf(stderr, "Warning: Can't load '/usr/local/etc/cbsd-ext.conf' using defaults!\n");
-#ifdef WITH_REDIS
-                redis->hostname=strdup("127.0.0.1");
-                redis->password=strdup("cbsd");
-                redis->port=6379;
-                redis->database=2;
-#endif
-//      }else{
-//              printf("host: %s\npass: %s\ndb: %i\nport: %i\n", redis->hostname, redis->password, redis->database, redis->port);
-        }
-
-
 }
 
 void	_dbi_free_db(sql_database_t *item){
@@ -625,7 +569,7 @@ void	_dbi_free_db(sql_database_t *item){
 	free(item);
 }
 
-void	dbi_free(){
+void	cbsd_dbi_free(){
 	// Remove all items..
 	while(databases->list) _dbi_free_db(databases->list);
 

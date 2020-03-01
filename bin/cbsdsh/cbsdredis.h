@@ -29,8 +29,8 @@ typedef struct {
 	uint32_t flags;
 } cbsdredis_t;
 
-void	redis_free(void);
-int redis_load_config(void);
+void	cbsd_redis_free(void);
+int 	cbsd_redis_init(void);
 
 #endif
 
