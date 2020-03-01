@@ -28,16 +28,7 @@
 
 char *delim;
 #ifdef WITH_DBI
-#include "contrib/ini.h"
 extern cbsddbi_t      *databases;
-#ifdef WITH_REDIS
-#include "cbsdredis.h"
-extern cbsdredis_t      *redis;
-#endif
-#ifdef WITH_INFLUX
-#include "cbsdinflux.h"
-extern cbsdinflux_t      *influx;
-#endif
 
 int (*_dbi_initialize)(const char *driverdir, dbi_inst *pInst);
 void (*_dbi_shutdown)(dbi_inst Inst);
