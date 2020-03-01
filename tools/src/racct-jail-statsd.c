@@ -250,7 +250,7 @@ int update_racct_jail(char *jname, char *orig_jname, int jid) {
 	cur_time = (time_t) now_time.tv_sec;
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (!strcmp(jname,ch->name)) {
+		if (strcmp(jname,ch->name) == 0) {
 			tolog(log_level,"update metrics for jail: [%s]\n",jname);
 			//ch->modified = (time_t) now_time.tv_sec;
 			ch->modified = nanoseconds();
@@ -273,6 +273,7 @@ int update_racct_jail(char *jname, char *orig_jname, int jid) {
 			int i = 0;
 			while ((tmp = strsep(&copy, ",")) != NULL) {
 				if (tmp[0] == '\0') break; /* XXX */
+
 				while ((var = strsep(&tmp, "=")) != NULL) {
 					i++;
 					if (var[0] == '\0') break; /* XXX */
@@ -325,7 +326,6 @@ main(int argc, char **argv)
 	size_t ncpu_len = 0;
 	size_t maxmem_len = 0;
 	DIR *dirp = NULL;
-	int jail_exist=1;
 	char *yaml;
 	int current_jobs_ready=0;
 	int jobs_max=2;		// jobs_max per one item, one graph = 25 rec
@@ -536,39 +536,38 @@ main(int argc, char **argv)
 			memset(rnum,0,sizeof(rnum));
 			sprintf(rnum,"%d",cur_round);
 			//jail area
-			if (jail_exist==1) {
-				running_jails=0;
-				for (lastjid=0; lastjid>=0; ) {
-					memset(cur_jname,0,sizeof(cur_jname));
-					lastjid = print_jail(pflags, jflags);
-					if (cur_jid == 0) continue;
-					if (strlen(cur_jname)<1) continue;
+			running_jails=0;
+			for (lastjid=0; lastjid>=0; ) {
+				memset(cur_jname,0,sizeof(cur_jname));
+				lastjid = print_jail(pflags, jflags);
+				if (cur_jid == 0) continue;
+				if (strlen(cur_jname)<1) continue;
 
-					memset(tmpjname,0,sizeof(tmpjname));
-					strcpy(tmpjname,cur_jname);
-					cur_jname[strlen(cur_jname)]='\0';
-					strcat(cur_jname,"_");
-					strcat(cur_jname,rnum);
-					cur_jname[strlen(cur_jname)]='\0';
+				memset(tmpjname,0,sizeof(tmpjname));
+				strcpy(tmpjname,cur_jname);
+				cur_jname[strlen(cur_jname)]='\0';
+				strcat(cur_jname,"_");
+				strcat(cur_jname,rnum);
+				cur_jname[strlen(cur_jname)]='\0';
 
-					i=jname_exist(cur_jname);
+				i=jname_exist(cur_jname);
 
-					if (i) {
-						update_racct_jail(cur_jname,tmpjname,cur_jid);
-						running_jails++;
-						continue;
-					}
-					CREATE(newd, struct item_data, 1);
-					newd->cputime=lastjid;
-					newd->pid=cur_jid;
-					newd->modified = 0; // sign of new jail
-					newd->next = item_list;
-					item_list = newd;
-					strcpy(newd->name,cur_jname);
-					strcpy(newd->orig_name,tmpjname);
-					tolog(log_level,"[JAIL] !! %d [%s (%s)] has beed added\n",cur_jid,cur_jname,tmpjname);
+				if (i) {
+					running_jails++;
+					update_racct_jail(cur_jname,tmpjname,cur_jid);
+					continue;
 				}
+				CREATE(newd, struct item_data, 1);
+				newd->cputime=lastjid;
+				newd->pid=cur_jid;
+				newd->modified = 0; // sign of new jail
+				newd->next = item_list;
+				item_list = newd;
+				strcpy(newd->name,cur_jname);
+				strcpy(newd->orig_name,tmpjname);
+				tolog(log_level,"[JAIL] !! %d [%s (%s)] has beed added\n",cur_jid,cur_jname,tmpjname);
 			}
+			
 
 			c++;
 			list_data();
@@ -759,8 +758,7 @@ print_jail(int pflags, int jflags)
 	return jid;
 }
 
-int list_data()
-{
+int list_data() {
 	struct item_data *target = NULL, *ch, *next_ch;
 	int ret=0;
 
