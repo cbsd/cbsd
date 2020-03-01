@@ -254,18 +254,14 @@ int sum_data_bhyve() {
 		}
 
 #ifdef WITH_INFLUX
-                if (OUTPUT_INFLUX & output_flags) {
-                        //
-                        sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
-                                       influx->tables.bhyve, getenv("HOST"), sumch->name,
-					sumch->memoryuse/round_total,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,
-					sumch->readiops/round_total,sumch->writeiops/round_total,sumch->maxproc/round_total,sumch->openfiles/round_total,nanoseconds());
+		if (OUTPUT_INFLUX & output_flags) {
+			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s%s%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
+				influx->tables.bhyve, getenv("HOST"), sumch->name, (influx->tags.bhyve==NULL?"":","), (influx->tags.bhyve==NULL?"":influx->tags.bhyve),
+				sumch->memoryuse/round_total,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,
+				sumch->readiops/round_total,sumch->writeiops/round_total,sumch->maxproc/round_total,sumch->openfiles/round_total,nanoseconds());
 
-
-                        influx->items++;
-//			tolog(log_level,"%d RACCT items queued for storage\n", influx->items);
-
-                }
+			influx->items++;
+		}
 #endif
 
 		if (OUTPUT_SQLITE3 & output_flags) {

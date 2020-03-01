@@ -161,8 +161,8 @@ int sum_data() {
 #ifdef WITH_INFLUX
 		if (OUTPUT_INFLUX & output_flags) {
 			//
-			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,pmem=%d %lu\n", 
-					influx->tables.jails, getenv("HOST"), sumch->name,
+			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s%s%s memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,pmem=%d %lu\n", 
+					influx->tables.jails, getenv("HOST"), sumch->name, (influx->tags.jails==NULL?"":","), (influx->tags.jails==NULL?"":influx->tags.jails),
 					sumch->memoryuse/round_total, sumch->maxproc/round_total, sumch->openfiles/round_total, sumch->pcpu/round_total, 
 					sumch->readbps/round_total, sumch->writebps/round_total, sumch->readiops/round_total, sumch->writeiops/round_total, 
 					sumch->pmem/round_total, nanoseconds());
