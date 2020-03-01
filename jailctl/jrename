@@ -29,13 +29,18 @@ fi
 
 DST="${jaildatadir}/${new}-${jaildatapref}"
 SRC="${jaildatadir}/${old}-${jaildatapref}"
-JAILDIR="${jaildir}/${new}"
-JAILFSTAB="${jailfstabdir}/${jailfstabpref}${new}"
-JAILFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}"
-JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${new}.local"
-JAILLOCALFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}.local"
-SYSDIROLD="${jailsysdir}/${old}"
-SYSDIRNEW="${jailsysdir}/${new}"
+JAIL_DIR="${jaildir}/${new}"
+
+JAIL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${new}"		# legacy/new fstab location, < CBSD 12.1.5
+JAIL_FSTAB_ORIG_LEGACY="${jailfstabdir}/${jailfstabpref}${old}"		# legacy/old fstab location, < CBSD 12.1.5
+JAIL_LOCAL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${new}.local"	# legacy/new fstab.local location, < CBSD 12.1.5
+JAIL_LOCAL_FSTAB_ORIG="${jailfstabdir}/${jailfstabpref}${old}.local"	# legacy/old fstab.local location, < CBSD 12.1.5
+
+JAIL_FSTAB_DIR_OLD="${jailfstabdir}/${old}"				# old jail fstab dir, CBSD > 12.1.5
+JAIL_FSTAB_DIR_NEW="${jailfstabdir}/${new}"				# new jail fstab dir, CBSD > 12.1.5
+
+JAIL_SYS_DIR_OLD="${jailsysdir}/${old}"					# old jails-system environment directory
+JAIL_SYS_DIR_NEW="${jailsysdir}/${new}"					# new jails-system environment directory
 
 # store new params in tmp variable
 host_hostname_new="${host_hostname}"
@@ -81,14 +86,32 @@ if [ -d "${DST}" ]; then
 	[ -d "${DST}" ] && err 1 "${N1_COLOR}Jail data already exist and it not empty: ${N2_COLOR}${DST}${N0_COLOR}"
 fi
 
-[ ! -d "${JAILDIR}" ] && ${MKDIR_CMD} -p ${JAILDIR}
-[ ! -d "${jailfstab}"  ] && ${MKDIR_CMD} -p ${jailfstabdir}
-
 printf "${N1_COLOR}Rename${N0_COLOR}"
 
-if [ -f "${JAILFSTABORIG}" ]; then
-	${MV_CMD} ${JAILFSTABORIG} ${JAILFSTAB}
-	${SED_CMD} -i '' s:/${old}:/${new}:g ${JAILFSTAB}
+jcleanup jname=${old}
+# todo: cleanup errcode, fstat/lsof check
+# all set for rename
+
+[ ! -d "${JAIL_DIR}" ] && ${MKDIR_CMD} -p ${JAIL_DIR}
+[ ! -d "${jailfstab}"  ] && ${MKDIR_CMD} -p ${jailfstabdir}
+
+# CBSD > 12.1.5
+if [ -d ${JAIL_FSTAB_DIR_OLD} ]; then
+	${MV_CMD} ${JAIL_FSTAB_DIR_OLD} ${JAIL_FSTAB_DIR_NEW}
+	[ -r ${JAIL_FSTAB_DIR_NEW}/fstab ] && ${SED_CMD} -i '' s:/${old}:/${new}:g ${JAIL_FSTAB_DIR_NEW}/fstab
+	[ -r ${JAIL_FSTAB_DIR_NEW}/fstab.local ] && ${SED_CMD} -i '' s:/${old}:/${new}:g ${JAIL_FSTAB_DIR_NEW}/fstab.local
+else
+	[ ! -d ${JAIL_FSTAB_DIR_NEW} ] && ${MKDIR_CMD} -p ${JAIL_FSTAB_DIR_NEW}
+fi
+
+# check for legacy ( CBSD < 12.1.5) fstabs file
+if [ -r "${JAIL_FSTAB_ORIG_LEGACY}" ]; then
+	${SED_CMD} s:/${old}:/${new}:g ${JAIL_FSTAB_ORIG_LEGACY} > ${JAIL_FSTAB_DIR_NEW}/fstab
+	${RM_CMD} ${JAIL_FSTAB_ORIG_LEGACY}
+fi
+if [ -r "${JAIL_LOCAL_FSTAB_ORIG_LEGACY}" ]; then
+	${SED_CMD} s:/${old}:/${new}:g ${JAIL_LOCAL_FSTAB_ORIG_LEGACY} > ${JAIL_FSTAB_DIR_NEW}/fstab.local
+	${RM_CMD} ${JAIL_LOCAL_FSTAB_ORIG_LEGACY}
 fi
 
 case "${ip4_addr_new}" in
@@ -105,9 +128,7 @@ case "${ip4_addr_new}" in
 		;;
 esac
 
-[ -f "${JAILLOCALFSTABORIG}" ] && ${MV_CMD} ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "mv fstablocal"
-
-cbsdsqlrw local UPDATE jails SET jname=\"${new}\",path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\" WHERE jname=\"${old}\"
+cbsdsqlrw local UPDATE jails SET jname=\"${new}\",path=\"${jaildir}/${new}\",mount_fstab=\"${JAIL_FSTAB_DIR_NEW}/fstab\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\" WHERE jname=\"${old}\"
 cbsdsqlrw local UPDATE rctl SET jname=\"${new}\" WHERE jname=\"${old}\" 2>/dev/null
 
 cbsdsqlrw local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
@@ -134,7 +155,7 @@ mvdata ${SRC} ${DST}
 dot "mvdata"
 
 #rename zfs fs source
-case $zfsfeat in
+case ${zfsfeat} in
 	1)
 		zfsmnt ${DST}
 		_err=$?
@@ -157,7 +178,7 @@ case $zfsfeat in
 		;;
 esac
 
-[ -d "${SYSDIROLD}" ] && ${MV_CMD} ${SYSDIROLD} ${SYSDIRNEW}
+[ -d "${JAIL_SYS_DIR_OLD}" ] && ${MV_CMD} ${JAIL_SYS_DIR_OLD} ${JAIL_SYS_DIR_NEW}
 [ -d "${SRC}" ] && ${RMDIR_CMD} ${SRC}
 
 [ ${restart} -eq 1 -a ${oldjid} -ne 0 ] && jstart jname=${new}
