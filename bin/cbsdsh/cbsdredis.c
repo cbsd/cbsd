@@ -35,12 +35,19 @@
 #include "var.h"
 #include "contrib/ini.h"
 #include "mystring.h"
+#include "output.h"
 #include "cbsdredis.h"
 
+// #define DEBUG_REDIS
+
 #ifdef DEBUG_REDIS
-#define DEBUG_PRINTF(...) printf(__VA_ARGS__);
+#define DEBUG_PRINTF(...) fprintf(stderr, __VA_ARGS__);
 #else
 #define DEBUG_PRINTF(...) 
+#endif
+
+#ifndef CBSD
+#define out1fmt(...) fprintf(stderr, __VA_ARGS__)
 #endif
 
 extern cbsdredis_t	*redis;
@@ -82,14 +89,24 @@ REDIS redis_connect(bool persist){
 	REDIS	res=NULL;
 	int	rc;
 
-	if(NULL == redis || NULL == redis->hostname) return(NULL);
-	if(RCF_DISABLED & redis->flags) return(NULL); // Redis is disabled!
+	if(NULL == redis || NULL == redis->hostname){
+		DEBUG_PRINTF("REDIS: Not configures!\n");
+		 return(NULL);
+	}
+	if(RCF_DISABLED & redis->flags){
+		DEBUG_PRINTF("REDIS: Disabled!\n");
+		return(NULL); // Redis is disabled!
+	}
 
+	DEBUG_PRINTF("REDIS: Connecting!\n");
 
 	// Reconnect/persist
 	if(persist && NULL != redis->res){
 		res=redis->res;
-		if(redis->res->fd != 0) return(res);
+		if(redis->res->fd != 0){
+			DEBUG_PRINTF("REDIS: Presisted!\n");
+			return(res);
+		}
 
 		if(credis_reconnect(redis->res) != 0){
 			DEBUG_PRINTF("REDIS: Reconnect failed!\n");
@@ -98,8 +115,10 @@ REDIS redis_connect(bool persist){
 
 	}else{
 		if(NULL == (res = credis_connect(redis->hostname, redis->port, 100000))){
-			printf("REDIS: Error connecting to Redis server\n");
+			fprintf(stderr, "REDIS: Error connecting to Redis server\n");
 			return(NULL);
+		}else{
+			DEBUG_PRINTF("REDIS: Connected!\n");
 		}
 	}
 
@@ -107,31 +126,34 @@ REDIS redis_connect(bool persist){
 		printf("REDIS: Error authenticating to Redis server.\n");
 		credis_close(res); 
 		return(NULL);
+	}else{
+		DEBUG_PRINTF("Authenitated!\n");
 	}
 
 	if((rc = credis_select(res, redis->database)) < 0){
 		printf("REDIS: Error selecting Redis database.\n");
 		credis_close(res); 
 		return(NULL);
+	}else{
+		DEBUG_PRINTF("Database=%d\n", redis->database);
 	}
+
 
 	if(persist && NULL == redis->res) redis->res=res; // Persistent connection
 	return(res);
 }
 
-int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char **argv) {
+int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char **argv, int *valc, char **valv) {
 	REDIS	res;
 	int rc=-1, i;
 	const char	*delim=NULL;
 
 	if(NULL == redis) return(1); // No Redis
 
-
 	for(rc=-1; rc==-1;){
-		if((res=redis_connect(true))==NULL) return(2);
-
-		cr_buffer *buf = &(redis->res->buf);
-		buf->len = 0;
+		if(!(res=redis_connect(true))) return(5);
+		cr_buffer *buf = &(redis->res->buf); 
+		buf->len = 0;	// Reset the buffer
 
 		if ((rc = credis_raw_append(buf, "*%zu\r\n$%zu\r\n%s\r\n", argc+1, strlen(cmd), cmd)) != 0) return(rc);
 		for (i = 0; i < argc; i++) {
@@ -144,10 +166,14 @@ int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char 
 		//	}
 		}
 
-//		printf("[%s]\n",buf->data);
+		DEBUG_PRINTF("[%s]\n",buf->data);
 
 		if(!delim){
+#ifndef CBSD
+			delim=DEFREDISDELIMER;
+#else			
 		        if ((delim = lookupvar("radiusdelimer")) == NULL) delim = DEFREDISDELIMER;
+#endif
 		}
 
 		rc = credis_raw_sendandreceive(redis->res, ret_type);
@@ -155,40 +181,80 @@ int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char 
 			switch(ret_type){
 				case CR_BULK:
 					if(NULL == redis->res->reply.bulk) return(1);
-
+#ifdef CBSD
 					if(RF_SETENV & flags) setvarsafe(argv[1], redis->res->reply.bulk, 0);
-					if(RF_WITHKEYS & flags) printf("%s=%s\n",argv[1], redis->res->reply.bulk);
-					else if(RF_PRINT & flags) printf("%s\n",redis->res->reply.bulk);
+#endif
+					if(RF_WITHKEYS & flags) out1fmt("%s=%s\n",argv[1], redis->res->reply.bulk);
+					else if(RF_PRINT & flags) out1fmt("%s\n",redis->res->reply.bulk);
 					return(0);
 
 				case CR_MULTIBULK:
 					if(0 != redis->res->reply.multibulk.len){
+
+						if(RF_ARRAY & flags){
+							/* Returns an array in a blob with all pointers at the front (blob needs to be freed after use!) */
+							char **ptrs;
+							char  *ptr;
+
+							unsigned int items=redis->res->reply.multibulk.len, item=0;
+							if(RF_KEYLIST & flags) items/=2;
+							size_t ram_needed=items * sizeof(void *);
+
+							for(i=0; i<redis->res->reply.multibulk.len; i++) ram_needed+=strlen(redis->res->reply.multibulk.bulks[i])+1;
+
+							if(!(ptrs=malloc(ram_needed))) return(-1); // TODO: correct error return
+							bzero(ptrs, ram_needed);
+							ptr=(char *)&ptrs[items];
+							
+
+							for(i=0; i<redis->res->reply.multibulk.len; i+=1){
+								if(!(RF_KEYLIST & flags) || !(1 & i)) ptrs[item++]=ptr;
+
+								size_t tlen=strlen(redis->res->reply.multibulk.bulks[i]);
+								memcpy(ptr, redis->res->reply.multibulk.bulks[i], tlen);
+								ptr+=1+tlen;
+							}
+
+							*valv=(char *)&ptrs[0];
+							*valc=items;
+
+							return(0);
+						}
 						for(i=0; i<redis->res->reply.multibulk.len; i++){
 							if(RF_KEYLIST & flags){
 								if(RF_KEYSONLY & flags){
+#ifdef CBSD
 									if(RF_SETENV & flags) setvarsafe(redis->res->reply.multibulk.bulks[i], NULL, 0); 
-									if(RF_PRINT & flags) printf("%s%s",(i==0?"":delim), redis->res->reply.multibulk.bulks[i]);
+#endif
+									if(RF_PRINT & flags) out1fmt("%s%s",(i==0?"":delim), redis->res->reply.multibulk.bulks[i]);
 								}else{
+#ifdef CBSD
 									if(RF_SETENV & flags) setvarsafe(redis->res->reply.multibulk.bulks[i],redis->res->reply.multibulk.bulks[i+1], 0);
-									if(RF_WITHKEYS & flags) printf("%s=\"%s\"\n",redis->res->reply.multibulk.bulks[i],redis->res->reply.multibulk.bulks[i+1]);
-									else if(RF_PRINT & flags) printf("%s%s",(i==0?"":delim),redis->res->reply.multibulk.bulks[i+1]);
+#endif
+									if(RF_WITHKEYS & flags) out1fmt("%s%s%s\n",redis->res->reply.multibulk.bulks[i],delim,redis->res->reply.multibulk.bulks[i+1]);
+									else if(RF_PRINT & flags) out1fmt("%s%s",(i==0?"":delim),redis->res->reply.multibulk.bulks[i+1]);
 								}
-								i++;
+								i++; // We need to skip 1 variable we already parsed above
+
 							}else if(RF_KEYSONLY & flags){
+#ifdef CBSD
 								if(RF_SETENV & flags) setvarsafe(argv[1+i], NULL, 0); 
-								if(RF_PRINT & flags) printf("%s%s", (i==0?"":delim),argv[1+i]);
+#endif
+								if(RF_PRINT & flags) out1fmt("%s%s", (i==0?"":delim),argv[1+i]);
 							}else{
+#ifdef CBSD
 								if(RF_SETENV & flags) setvarsafe(argv[1+i], redis->res->reply.multibulk.bulks[i], 0);
-								if(RF_WITHKEYS & flags) printf("%s=\"%s\"\n",argv[1+i], redis->res->reply.multibulk.bulks[i]);
-								else if(RF_PRINT & flags) printf("%s%s",(i==0?"":delim),redis->res->reply.multibulk.bulks[i]);
+#endif
+								if(RF_WITHKEYS & flags) out1fmt("%s%s%s\n",argv[1+i], delim, redis->res->reply.multibulk.bulks[i]);
+								else if(RF_PRINT & flags) out1fmt("%s%s",(i==0?"":delim),redis->res->reply.multibulk.bulks[i]);
 							}
 						}
-						if(RF_PRINT & flags) printf("\n");
+						if(RF_PRINT & flags && !(RF_WITHKEYS & flags)) out1fmt("\n");
 						return(0);
 					}else return(1);
 
 				case CR_INT:
-					if(RF_PRINT & flags) printf("%i\n",redis->res->reply.integer);
+					if(RF_PRINT & flags) out1fmt("%i\n",redis->res->reply.integer);
 					if(RF_INVERT & flags){
 						if(redis->res->reply.integer == 0) return(1); else return(0);
 					}else return(redis->res->reply.integer);
@@ -206,11 +272,6 @@ int redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char 
 	}
 	return rc;
 }
-
-
-
-
-
 
 int redis_bpop(uint8_t left, char *key, char *seconds) {
 	REDIS	res;
@@ -273,17 +334,18 @@ int redis_cmd(int argc, char **argv) {
 	char *cmd=argv[item];
 	items--; item++;
 	if(strcmp("hget",cmd)==0){
-		if (items < 1) { printf("You at least need to give a hash!\n"); return(1); }
 
+		if (items < 1) { printf("You at least need to give a hash!\n"); return(1); }
 		if(!(RF_SETENV & flags)) flags|=RF_PRINT; // If not to env put it on screen.
 
 		// TODO: make keysonly ask for keys only..
 
-		if (items < 2) return(redis_do("HGETALL", CR_MULTIBULK, RF_KEYLIST | flags, items, &argv[item]));
-		if (items > 2) return(redis_do("HMGET", CR_MULTIBULK, flags, items, &argv[item]));
-		return(redis_do("HGET", CR_BULK, flags, items, &argv[item]));
+		if (items < 2) return(redis_do("HGETALL", CR_MULTIBULK, RF_KEYLIST | flags, items, &argv[item], NULL, NULL));
+		if (items > 2) return(redis_do("HMGET", CR_MULTIBULK, flags, items, &argv[item], NULL, NULL));
+		return(redis_do("HGET", CR_BULK, flags, items, &argv[item], NULL, NULL));
 	}
 	if(strcmp("hset",cmd)==0){
+#ifdef CBSD
 		if(1 & flags){ // ENV
 			if (items < 2) { printf("You at least need to give a hash and key!\n"); return(1); }
 
@@ -300,12 +362,12 @@ int redis_cmd(int argc, char **argv) {
 				char *tmp=lookupvar(argv[item++]);
 				if(tmp) vals[valc++]=tmp; else vals[valc++]=""; // Should we delete missing vars from the store?
 			}
-			if (valc > 4) rc=redis_do("HMSET", CR_INLINE, flags, valc, vals);
-			else rc=redis_do("HSET", CR_INT, flags, valc, vals);
+			if (valc > 4) rc=redis_do("HMSET", CR_INLINE, flags, valc, vals, NULL, NULL);
+			else rc=redis_do("HSET", CR_INT, flags, valc, vals, NULL, NULL);
 			free(vals);
 			return(rc);
 		}
-
+#endif
 		if (items < 3) {
 			printf("Missing hash/key/value's\n");
 			return(1);
@@ -335,22 +397,22 @@ int redis_cmd(int argc, char **argv) {
 
 #undef removeAfter
 
-			if(center > 2) rc=redis_do("HMSET", CR_INLINE, flags, valc, vals);
-			else rc=redis_do("HSET", CR_INT, flags, valc, vals);
+			if(center > 2) rc=redis_do("HMSET", CR_INLINE, flags, valc, vals, NULL, NULL);
+			else rc=redis_do("HSET", CR_INT, flags, valc, vals, NULL, NULL);
 			free(vals);
 
 			return(rc);
 		}
 
-		if (items > 4) return(redis_do("HMSET", CR_INLINE, flags, items, &argv[item]));
-		return(redis_do("HSET", CR_INT, flags, items, &argv[item]));
+		if (items > 4) return(redis_do("HMSET", CR_INLINE, flags, items, &argv[item], NULL, NULL));
+		return(redis_do("HSET", CR_INT, flags, items, &argv[item], NULL, NULL));
 	}
 
 
 #define REDIS_SIMPLE(f_name,o_name,rettype,xflags,params,msg) \
 	if(strcmp(f_name,cmd)==0){ \
 		if(items < params){ printf("format: %s %s\n", argv[0], #msg); return(1); } \
-		return(redis_do(o_name, rettype, flags|xflags, items, &argv[item])); \
+		return(redis_do(o_name, rettype, flags|xflags, items, &argv[item], NULL, NULL)); \
 	}
 
 REDIS_SIMPLE("hdel",   "HDEL",     CR_INT,    0, 2, "hash key");
@@ -368,8 +430,9 @@ REDIS_SIMPLE("ltrim",  "LTRIM",    CR_INLINE, 0, 3, "list from to");
 REDIS_SIMPLE("lindex", "LINDEX",   CR_BULK,   0, 2, "list index");
 REDIS_SIMPLE("llen",   "LLEN",     CR_INT,   36, 1, "list");
 REDIS_SIMPLE("sadd",   "SADD",     CR_INT,   32, 2, "set item");
-REDIS_SIMPLE("srem",   "SREM",     CR_INT,   32, 2, "set item");
+REDIS_SIMPLE("sdel",   "SREM",     CR_INT,   32, 2, "set item");
 REDIS_SIMPLE("sexists","SISMEMBER",CR_INT,   32, 2, "set item");
+REDIS_SIMPLE("sget",   "SMEMBERS", CR_MULTIBULK,   0, 1, "set");
 REDIS_SIMPLE("slen",   "SCARD",    CR_INT,   36, 1, "set");
 REDIS_SIMPLE("smove",  "SMOVE",    CR_INT,   32, 3, "from-set to-set item");
 #undef REDIS_SIMPLE

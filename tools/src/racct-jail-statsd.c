@@ -60,8 +60,7 @@ static struct jailparam *params;
 static int *param_parent;
 static int nparams;
 unsigned int running_jails;
-static int add_param(const char *name, void *value, size_t valuelen,
-		struct jailparam *source, unsigned flags);
+static int add_param(const char *name, void *value, size_t valuelen, struct jailparam *source, unsigned flags);
 static int sort_param(const void *a, const void *b);
 static int print_jail(int pflags, int jflags);
 
@@ -72,10 +71,11 @@ int sum_data() {
 	struct item_data *target = NULL, *ch, *next_ch;
 	char sql[512];
 	char stats_file[1024];
+	const char *hostname=getenv("HOST");	// Still banging the env every second or so, only do this at load? 
 	int ret=0;
 	FILE *fp;
-	char json_str[20000];		// todo: dynamic from number of bhyve/jails
-	char json_buf[1024];		// todo: dynamic from number of bhyve/jails
+	char json_str[20000];			// todo: dynamic from number of bhyve/jails
+	char json_buf[1024];			// todo: dynamic from number of bhyve/jails
 	int i;
 	struct timeval  now_time;
 	int cur_time = 0;
@@ -162,7 +162,7 @@ int sum_data() {
 		if (OUTPUT_INFLUX & output_flags) {
 			//
 			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s%s%s memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,pmem=%d %lu\n", 
-					influx->tables.jails, getenv("HOST"), sumch->name, (influx->tags.jails==NULL?"":","), (influx->tags.jails==NULL?"":influx->tags.jails),
+					influx->tables.jails, hostname, sumch->name, (influx->tags.jails==NULL?"":","), (influx->tags.jails==NULL?"":influx->tags.jails),
 					sumch->memoryuse/round_total, sumch->maxproc/round_total, sumch->openfiles/round_total, sumch->pcpu/round_total, 
 					sumch->readbps/round_total, sumch->writebps/round_total, sumch->readiops/round_total, sumch->writeiops/round_total, 
 					sumch->pmem/round_total, nanoseconds());

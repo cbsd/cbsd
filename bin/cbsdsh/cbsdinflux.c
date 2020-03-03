@@ -144,7 +144,7 @@ int influx_cmd(int argc, char **argv) {
 
 			default:
 				printf("Invalid parameters\nUse %s -m measurement [-t tag=val [-t tag=val]...] -v key=val [-v key=val]...",argv[0]);
-        	                return 1;
+				rc=-1;
 		}
 	}
 

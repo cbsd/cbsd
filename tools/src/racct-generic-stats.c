@@ -187,6 +187,7 @@ struct item_data {
 	unsigned int writebps;
 	unsigned int readiops;
 	unsigned int writeiops;
+	float temperature;
 	int64_t modified;
 	unsigned int cpus;
 	unsigned long maxmem;
@@ -223,6 +224,7 @@ struct sum_item_data {
 	unsigned int writebps;
 	unsigned int readiops;
 	unsigned int writeiops;
+	float temperature;
 	int64_t modified;
 	unsigned int cpus;
 	unsigned long maxmem;
@@ -255,6 +257,10 @@ struct sum_item_data *sum_item_list = NULL;
 	}
 
 
+#ifdef WITH_REDIS
+#include "../../bin/cbsdsh/cbsdredis.h"
+cbsdredis_t      *redis;
+#endif
 
 #ifdef WITH_INFLUX
 #include "../../bin/cbsdsh/cbsdinflux.c"

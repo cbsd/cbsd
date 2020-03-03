@@ -49,10 +49,10 @@ static int config_handler(void* user, const char* section, const char* name, con
 #ifndef CBSD
 	        else if(strcmp("table.bhyve", name) == 0) influx->tables.bhyve=strdup(value);
 	        else if(strcmp("table.jails", name) == 0) influx->tables.jails=strdup(value);
-	        else if(strcmp("table.nodex", name) == 0) influx->tables.nodes=strdup(value);
+	        else if(strcmp("table.nodes", name) == 0) influx->tables.nodes=strdup(value);
 	        else if(strcmp("tags.bhyve", name) == 0) influx->tags.bhyve=strdup(value);
 	        else if(strcmp("tags.jails", name) == 0) influx->tags.jails=strdup(value);
-	        else if(strcmp("tags.nodex", name) == 0) influx->tags.nodes=strdup(value);
+	        else if(strcmp("tags.nodes", name) == 0) influx->tags.nodes=strdup(value);
 #endif
 	        else if(strcmp("token", name) == 0) influx->token=strdup(value);
 		else if(strcmp("port", name) == 0) influx->port=atoi(value);

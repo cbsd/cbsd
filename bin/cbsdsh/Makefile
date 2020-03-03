@@ -17,12 +17,12 @@ CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
 .endif
 
 .if defined(WITH_REDIS) | defined(WITH_DBI) | defined(WITH_INFLUX)
-SHSRCS+=	contrib/ini.c
+SHSRCS+=	contrib/ini.c cbsdcmd.c
 .endif
 
 .if defined(WITH_REDIS)
 SHSRCS+=	cbsdredis.c contrib/credis.c
-CFLAGS+=	-DWITH_REDIS
+CFLAGS+=	-DWITH_REDIS -g 
 .endif
 
 .if defined(WITH_INFLUX)

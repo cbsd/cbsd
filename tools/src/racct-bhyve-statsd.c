@@ -164,6 +164,7 @@ pid_t get_vm_pid(char *vmpath) {
 
 int sum_data_bhyve() {
 	struct item_data *target = NULL, *ch, *next_ch;
+	const char *hostname=getenv("HOST");
 	char sql[512];
 	char stats_file[1024];
 	int ret=0;
@@ -256,7 +257,7 @@ int sum_data_bhyve() {
 #ifdef WITH_INFLUX
 		if (OUTPUT_INFLUX & output_flags) {
 			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s%s%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
-				influx->tables.bhyve, getenv("HOST"), sumch->name, (influx->tags.bhyve==NULL?"":","), (influx->tags.bhyve==NULL?"":influx->tags.bhyve),
+				influx->tables.bhyve, hostname, sumch->name, (influx->tags.bhyve==NULL?"":","), (influx->tags.bhyve==NULL?"":influx->tags.bhyve),
 				sumch->memoryuse/round_total,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,
 				sumch->readiops/round_total,sumch->writeiops/round_total,sumch->maxproc/round_total,sumch->openfiles/round_total,nanoseconds());
 
