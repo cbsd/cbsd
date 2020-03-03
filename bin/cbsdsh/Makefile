@@ -6,14 +6,14 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
 	test.c trap.c var.c
 
-.SILENT:
+# .SILENT:
 
 # HBSD/FBSD/TrueOS...
 SHSRCS+=	jail.c
 
 .if defined(WITH_LUA)
 SHSRCS+=	cbsdlua.c
-CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
+CFLAGS+=	-I/usr/local/include/lua52 -l lua-5.2 -DLUA
 .endif
 
 .if defined(WITH_REDIS) | defined(WITH_DBI) | defined(WITH_INFLUX)
@@ -46,12 +46,12 @@ NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 # HBSD/FBSD/TrueOS...
-LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
+LDADD= -g -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
 # Dfly
 #LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
-#CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
-CFLAGS+=-Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+#CFLAGS+= -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
+CFLAGS+= -Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 
 
 # for debug:
