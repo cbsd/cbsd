@@ -18,7 +18,7 @@ For more information please visit website: https://www.bsdstore.ru
 
 Quick start: https://www.bsdstore.ru/en/cbsd_quickstart.html
 
-For installion and usage see: https://www.bsdstore.ru/en/docs.html
+For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
 ## Limitations
 
