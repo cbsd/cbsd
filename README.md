@@ -27,6 +27,17 @@ Tested with following OSes and distribution:
 - FreeBSD 11.0+
 - HardenedBSD
 
+## Support
+
+* For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
+* Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
+* Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
+* Other contact: https://www.bsdstore.ru/en/feedback.html
+
+## Stargazers over time
+
+[![Stargazers over time](https://starchart.cc/cbsd/cbsd.svg)](https://starchart.cc/cbsd/cbsd)
+
 ## Contributing
 
 * Fork me on GitHub: [https://github.com/cbsd/cbsd.git](https://github.com/cbsd/cbsd.git)
@@ -35,10 +46,14 @@ Tested with following OSes and distribution:
 * Push to the branch (`git push`)
 * Create new Pull Request
 
-# Support
+## Contributors
 
-* For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
-* Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
-* Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
-* Other contact: https://www.bsdstore.ru/en/feedback.html
+### Code Contributors
 
+This project exists thanks to all the people who contribute. [See the contributors list](https://github.com/cbsd/cbsd/graphs/contributors).
+
+### Financial Contributors
+
+Become a financial contributor and help us sustain our community.
+
+<a href="https://www.patreon.com/clonos"><img src="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png" alt="Patreon donate button" /> </a>
