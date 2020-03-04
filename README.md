@@ -1,5 +1,8 @@
 # CBSD Project
 
+Yet one more wrapper around jail, XEN and bhyve for FreeBSD.
+For more information please visit website: https://www.bsdstore.ru
+
 ![demo](https://www.bsdstore.ru/gif/jdemo.gif)
 ![demo](https://www.bsdstore.ru/gif/bdemo.gif)
 
@@ -10,11 +13,6 @@
 3. [Limitations - OS compatibility, etc.](#limitations)
 4. [Contributing - Contribute to the project](#contributing)
 5. [Support - Mailing List, Talks, Contacts](#support)
-
-## project description
-
-Yet one more wrapper around jail, XEN and bhyve for FreeBSD.
-For more information please visit website: https://www.bsdstore.ru
 
 ## Usage
 
