@@ -98,16 +98,18 @@ SECFILE="${workdir}/etc/${jname}.secrets"
 
 printf "${N1_COLOR}Preparing.${N0_COLOR}"
 
-JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
-RJAILRCCONF="jails-rcconf/rc.conf_${jname}"
+JAIL_RCCONF="${ftmpdir}/rc.conf_${jname}"
+REMOTE_JAIL_RCCONF="jails-rcconf/rc.conf_${jname}"
 
-JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
-JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+JAIL_DIR="${jaildatadir}/${jname}-${jaildatapref}"
+JAIL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${jname}"
+JAIL_FSTAB_DIR="${jailfstabdir}/${jname}"
 
-RJAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
-RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}"
+REMOTE_JAIL_DIR="jails-data/${jname}-${jaildatapref}"
+REMOTE_FSTAB_LEGACY="jails-fstab/${jailfstabpref}${jname}"
+REMOTE_JAIL_FSTAB_DIR="jails-fstab/${jname}"
 
-[ ! -d ${JAILDIR} ] && err 1 "No jail data for ${jname}"
+[ ! -d ${JAIL_DIR} ] && err 1 "No jail data for ${jname}"
 
 # Update Redis
 if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
@@ -148,13 +150,49 @@ not_sharedfs_action()
 	if [ "${mkdatadir}" = "1" ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: create datadir for ${jname} on ${node}
 		rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd mkdatadir jname=${jname} > ${DEBLOG} 2>&1
-		dot "rexe_3"
+		dot "rexe_mkdatadir"
 	fi
 
-	if [ -f ${JAILFSTAB} ]; then
+	# Legacy/old fstab location, < CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_LEGACY} ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: copy fstabs for ${jname} to ${node}
-		nodescp tryoffline=${tryoffline} ${JAILFSTAB} ${node}:${RJAILFSTAB} > ${DEBLOG} 2>&1
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_LEGACY} ${node}:${REMOTE_FSTAB_LEGACY} > ${DEBLOG} 2>&1
+		dot "scp legacy fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_FSTAB_LEGACY} > ${DEBLOG} 2>&1
+		dot "rexe_fstab_legacy"
+	fi
+	# Legacy/old fstab.local location, < CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_LEGACY}.local ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy local fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_LEGACY}.local ${node}:${REMOTE_FSTAB_LEGACY}.local > ${DEBLOG} 2>&1
+		dot "scp legacy local fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab.local on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_FSTAB_LEGACY}.local > ${DEBLOG} 2>&1
+		dot "rexe_fstab_legacy_local"
+	fi
+
+	# New fstab location, > CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_DIR}/fstab ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_DIR}/fstab ${node}:${REMOTE_JAIL_FSTAB_DIR}/fstab > ${DEBLOG} 2>&1
 		dot "scp fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_JAIL_FSTAB_DIR}/fstab > ${DEBLOG} 2>&1
+		dot "rexe_fstab"
+	fi
+	# New fstab location, > CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_DIR}.local ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy local fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_DIR}.local ${node}:${JAIL_FSTAB_DIR}.local > ${DEBLOG} 2>&1
+		dot "scp fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab.local on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${JAIL_FSTAB_DIR}.local > ${DEBLOG} 2>&1
+		dot "rexe_fstab_local"
 	fi
 
 	cbsdlogger NOTICE ${CBSD_APP}: extract sysdata for ${jname} on ${node}
@@ -180,18 +218,18 @@ if [ ${sharedfs} -eq 0 ]; then
 	not_sharedfs_action
 fi
 
-jmkrcconf jname=${jname} > ${JAILRCCONF}
+jmkrcconf jname=${jname} > ${JAIL_RCCONF}
 cbsdlogger NOTICE ${CBSD_APP}: copy rcconf for ${jname} to ${node}
-nodescp tryoffline=${tryoffline} ${JAILRCCONF} ${node}:${RJAILRCCONF} > ${DEBLOG} 2>&1
+nodescp tryoffline=${tryoffline} ${JAIL_RCCONF} ${node}:${REMOTE_JAIL_RCCONF} > ${DEBLOG} 2>&1
 dot "scp rcconf"
-${RM_CMD} -f ${JAILRCCONF}
+${RM_CMD} -f ${JAIL_RCCONF}
 
 cbsdlogger NOTICE ${CBSD_APP}: jrsyncconf for ${jname} on ${node}
 rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd jrsyncconf jname=${jname} > ${DEBLOG} 2>&1
 dot "rexe_jrsyncconf"
 
 cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} on ${node}
-rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > ${DEBLOG} 2>&1
+rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} > ${DEBLOG} 2>&1
 dot "rexe_4"
 
 # Update Redis
