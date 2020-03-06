@@ -6,7 +6,7 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 	mystring.c options.c output.c parser.c printf.c redir.c show.c sqlcmd.c spawn_task.c \
 	test.c trap.c var.c
 
-# .SILENT:
+.SILENT:
 
 # HBSD/FBSD/TrueOS...
 SHSRCS+=	jail.c
@@ -22,7 +22,7 @@ SHSRCS+=	contrib/ini.c cbsdcmd.c
 
 .if defined(WITH_REDIS)
 SHSRCS+=	cbsdredis.c contrib/credis.c
-CFLAGS+=	-DWITH_REDIS -g 
+CFLAGS+=	-DWITH_REDIS 
 .endif
 
 .if defined(WITH_INFLUX)
@@ -46,7 +46,7 @@ NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
 # HBSD/FBSD/TrueOS...
-LDADD= -g -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
+LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
 # Dfly
 #LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
