@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.10
+#v12.1.6
 MYARG="old new host_hostname"
 MYOPTARG="ip4_addr checkstate verbose promote clone_method mac_reinit"
 MYDESC="Jail cloning"
@@ -36,7 +36,7 @@ myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/nul
 [ -z "${myjid}" ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${old}${N0_COLOR}"
 
 if [ ${checkstate} -eq 1 ]; then
-	[ $myjid -ne 0 ] && err 1 "${N1_COLOR}Jail is online. Please stop them: ${N2_COLOR}${old}${N0_COLOR}"
+	[ ${myjid} -ne 0 ] && err 1 "${N1_COLOR}Jail is online. Please stop them: ${N2_COLOR}${old}${N0_COLOR}"
 fi
 
 myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
@@ -54,14 +54,33 @@ fi
 case "${ip4_addr}" in
 	[Dd][Hh][Cc][Pp])
 		dhcpip=$( dhcpd )
-		[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
-		[ -z "${dhcpip}" ] && err 1 "${N1_COLOR}Unable to dhcpd${N0_COLOR}"
+		if [ $? -eq 2 ]; then
+			cbsdlogger WARNING ${CBSD_APP}: no free IPv4 address for DHCP in nodeippool
+			err 1 "${N1_COLOR}no free IPv4 address for DHCP in nodeippool${N0_COLOR}"
+		fi
+		[ -z "${dhcpip}" ] && err 1 "${N1_COLOR}unable to dhcpd${N0_COLOR}"
 		ipwmask ${dhcpip}
 		[ -z "${IWM}" ] && err 1 "${N1_COLOR}Unable IWM for dhcpd${N0_COLOR}"
 		iptype ${IWM}
 		[ $? -eq 0 ] && err 1 "${N1_COLOR}Not ip from dhcpd?: ${dhcpip} / ${IWM}"
 		ip4_addr="${dhcpip}"
-		${ECHO} "${N1_COLOR}Selected IP: ${N2_COLOR}${ip4_addr}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Selected IPv4: ${N2_COLOR}${ip4_addr}${N0_COLOR}"
+		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+			[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr}" status=1
+		fi
+		;;
+	[Dd][Hh][Cc][Pp][Vv][6])
+		dhcpip=$( dhcpdv6 )
+		if [ $? -eq 2 ]; then
+			cbsdlogger WARNING ${CBSD_APP}:no free IPv6 address for DHCP in nodeippool
+			err 1 "${N1_COLOR}no free IPv6 address for DHCP in nodeippool${N0_COLOR}"
+		fi
+		[ -z "${dhcpip}" ] && err 1 "${N1_COLOR}unable to dhcpdv6${N0_COLOR}"
+		# normalize IPv6 to compressed form
+		eval $( ${miscdir}/sipcalc ${dhcpip} )
+		dhcpip="${_compressed_ipv6_address}"
+		ip4_addr="${dhcpip}"
+		${ECHO} "${N1_COLOR}Selected IPv6: ${N2_COLOR}${ip4_addr}${N0_COLOR}"
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 			[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr}" status=1
 		fi
@@ -83,14 +102,19 @@ host_hostname_new="${host_hostname}"
 DST="${jaildatadir}/${new}-${jaildatapref}"
 SRC="${jaildatadir}/${old}-${jaildatapref}"
 JAILDIR="${jaildir}/${new}"
-JAILFSTAB="${jailfstabdir}/${jailfstabpref}${new}"
-JAILLOCALFSTAB="${jailfstabdir}/${jailfstabpref}${new}.local"
-JAILFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}"
-JAILLOCALFSTABORIG="${jailfstabdir}/${jailfstabpref}${old}.local"
+JAIL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${new}"		# legacy/new fstab location, < CBSD 12.1.5
+JAIL_FSTAB_ORIG_LEGACY="${jailfstabdir}/${jailfstabpref}${old}"		# legacy/old fstab location, < CBSD 12.1.5
+JAIL_LOCAL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${new}.local"	# legacy/new fstab.local location, < CBSD 12.1.5
+JAIL_LOCAL_FSTAB_ORIG="${jailfstabdir}/${jailfstabpref}${old}.local"	# legacy/old fstab.local location, < CBSD 12.1.5
+
+JAIL_FSTAB_DIR_OLD="${jailfstabdir}/${old}"				# old jail fstab dir, CBSD > 12.1.5
+JAIL_FSTAB_DIR_NEW="${jailfstabdir}/${new}"				# new jail fstab dir, CBSD > 12.1.5
+
 JAILRCCONF="${jailrcconfdir}/rc.conf_${new}"
 JAILRCCONFORIG="${jailrcconfdir}/rc.conf_${old}"
-SYSDIROLD="${jailsysdir}/${old}"
-SYSDIRNEW="${jailsysdir}/${new}"
+
+JAIL_SYS_DIR_OLD="${jailsysdir}/${old}"
+JAIL_SYS_DIR_NEW="${jailsysdir}/${new}"
 
 . ${distdir}/jcreate.subr
 geniplist ${ip4_addr}				# for ipvX_first_public-like vars
@@ -128,14 +152,14 @@ case ${zfsfeat} in
 	1)
 		. ${zfstool}
 		zfsmnt ${SRC}
-		[ $? -eq 2  ] && /sbin/zfs mount ${ZPOOL}
+		[ $? -eq 2  ] && ${ZFS_CMD} mount ${ZPOOL}
 	;;
 esac
 
 [ ! -d "${SRC}" ] && err 1 "${N1_COLOR}No jail data: ${N2_COLOR}${SRC}${N0_COLOR}"
 
 if [ -d "${DST}" -a ${skip_data_operation} -eq 0 ]; then
-	/bin/rmdir ${DST} >/dev/null 2>&1
+	${RMDIR_CMD} ${DST} >/dev/null 2>&1
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -146,7 +170,7 @@ if [ -d "${DST}" -a ${skip_data_operation} -eq 0 ]; then
 fi
 
 for i in ${JAILDIR} ${jailfstab} ${jailrcconf}; do
-	[ ! -d "${i}" ] && /bin/mkdir -p ${i}
+	[ ! -d "${i}" ] && ${MKDIR_CMD} -p ${i}
 done
 
 printf "${N1_COLOR}Cloning.${N0_COLOR}"
@@ -158,16 +182,27 @@ ${SYSRC_CMD} -qf ${JAILRCCONF} status="0" > /dev/null 2>&1
 
 jregister jname=${new}
 
-/bin/rm -f ${JAILRCCONF}
+${RM_CMD} -f ${JAILRCCONF}
 
-if [ -f "${JAILFSTABORIG}" ]; then
-	${SED_CMD} "s/\/${old}/\/${new}/g" ${JAILFSTABORIG} > ${JAILFSTAB}
-	dot "fstab"
+# CBSD > 12.1.5
+if [ -d ${JAIL_FSTAB_DIR_OLD} ]; then
+	${CP_CMD} -a ${JAIL_FSTAB_DIR_OLD} ${JAIL_FSTAB_DIR_NEW}
+	[ -r ${JAIL_FSTAB_DIR_NEW}/fstab ] && ${SED_CMD} -i '' s:/${old}:/${new}:g ${JAIL_FSTAB_DIR_NEW}/fstab
+	[ -r ${JAIL_FSTAB_DIR_NEW}/fstab.local ] && ${SED_CMD} -i '' s:/${old}:/${new}:g ${JAIL_FSTAB_DIR_NEW}/fstab.local
+else
+	[ ! -d ${JAIL_FSTAB_DIR_NEW} ] && ${MKDIR_CMD} -p ${JAIL_FSTAB_DIR_NEW}
 fi
 
-[ -f "${JAILLOCALFSTABORIG}" ] && /bin/cp ${JAILLOCALFSTABORIG} ${JAILLOCALFSTAB} && dot "cp fstablocal"
+# check for legacy ( CBSD < 12.1.5) fstabs file
+if [ -r "${JAIL_FSTAB_ORIG_LEGACY}" ]; then
+	${SED_CMD} s:/${old}:/${new}:g ${JAIL_FSTAB_ORIG_LEGACY} > ${JAIL_FSTAB_DIR_NEW}/fstab
+fi
+if [ -r "${JAIL_LOCAL_FSTAB_ORIG_LEGACY}" ]; then
+	${SED_CMD} s:/${old}:/${new}:g ${JAIL_LOCAL_FSTAB_ORIG_LEGACY} > ${JAIL_FSTAB_DIR_NEW}/fstab.local
+fi
+dot "fstab"
 
-cbsdsqlrw local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${jailfstabdir}/${jailfstabpref}${new}\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname}\" WHERE jname=\"${new}\"
+cbsdsqlrw local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${JAIL_FSTAB_DIR_NEW}/fstab\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname}\" WHERE jname=\"${new}\"
 
 [ -n "${ip4_addr_new}" ] && cbsdsqlrw local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
 [ -n "${host_hostname_new}" ] && cbsdsqlrw local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
@@ -200,12 +235,12 @@ fi
 
 dot "clone rsync"
 
-if [ -d "${SYSDIROLD}" ]; then
-	[ -d "${SYSDIRNEW}" ] && /bin/rm -rf ${SYSDIRNEW}
-	/bin/cp -Rp ${SYSDIROLD} ${SYSDIRNEW}
-#	if [ -d ${SYSDIRNEW}/clone-local.d ]; then
-#		printf "${N1_COLOR}.[purge ${SYSDIRNEW}/clone-local.d/ entry].${N0_COLOR}"
-#		/usr/bin/find ${SYSDIRNEW}/clone-local.d/ -type f -delete
+if [ -d "${JAIL_SYS_DIR_OLD}" ]; then
+	[ -d "${JAIL_SYS_DIR_NEW}" ] && ${RM_CMD} -rf ${JAIL_SYS_DIR_NEW}
+	${CP_CMD} -Rp ${JAIL_SYS_DIR_OLD} ${JAIL_SYS_DIR_NEW}
+#	if [ -d ${JAIL_SYS_DIR_NEW}/clone-local.d ]; then
+#		printf "${N1_COLOR}.[purge ${JAIL_SYS_DIR_NEW}/clone-local.d/ entry].${N0_COLOR}"
+#		${FIND_CMD} ${JAIL_SYS_DIR_NEW}/clone-local.d/ -type f -delete
 #	fi
 	dot "cp sysdir"
 fi
