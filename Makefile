@@ -13,6 +13,8 @@ SIMPLEXMLHEADER = lib/simplexml/simplexml.h
 DUMPCPUTOPOLOGYOBJECT = misc/src/dump_cpu_topology.o
 DUMPISCSIDISCOVERYOBJECT = misc/src/dump_iscsi_discovery.o
 
+.SILENT:
+
 all:	cbsd dump_cpu_topology dump_iscsi_discovery
 
 clean:
@@ -102,9 +104,18 @@ cbsd: pkg-config-check
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
 	${CC} tools/src/nic_info.c -o tools/nic_info && ${STRIP} tools/nic_info
-	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
-	${CC} tools/src/racct-bhyve-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-bhyve-statsd && ${STRIP} tools/racct-bhyve-statsd
-	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
+
+.if defined(WITH_INFLUX)
+	EXTRAC=" ../../bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX"
+.endif
+
+	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
+	${CC} tools/src/racct-bhyve-statsd.c lib/beanstalk-client/beanstalk.c  ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-bhyve-statsd && ${STRIP} tools/racct-bhyve-statsd
+
+.if defined(WITH_REDIS)
+	EXTRAC+=" ../../bin/cbsdsh/cbsdredis.c ../../bin/cbsdsh/contrib/credis.c -DWITH_REDIS"
+.endif
+	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C misc/src/sipcalc && ${STRIP} misc/src/sipcalc/sipcalc

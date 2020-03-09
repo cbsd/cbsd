@@ -2,6 +2,7 @@ PROG=		sipcalc
 SRCS=		sub-func.c interface.c sipcalc.c sub-output.c
 CFLAGS+=	-O2 -pipe -fstack-protector-strong -fno-strict-aliasing
 MAN=
+.SILENT:
 
 clean:
 	rm -f .depend* sipcalc sipcalc.debug sipcalc.full *.o

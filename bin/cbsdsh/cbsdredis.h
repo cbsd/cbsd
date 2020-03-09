@@ -11,9 +11,8 @@
 #define RF_PRINT	2
 #define RF_WITHKEYS	4
 #define RF_KEYSONLY	8
-
-//#define RF_SETENV	16
 #define RF_INVERT	32
+#define RF_ARRAY	64
 #define RF_KEYLIST	128
 
 // Connection flags
@@ -29,8 +28,10 @@ typedef struct {
 	uint32_t flags;
 } cbsdredis_t;
 
-void	redis_free(void);
-int redis_load_config(void);
+void	cbsd_redis_free(void);
+int 	cbsd_redis_init(void);
+int 	redis_do(const char *cmd, char ret_type, unsigned int flags, int argc, char **argv, int *valc, char **valv);
+
 
 #endif
 

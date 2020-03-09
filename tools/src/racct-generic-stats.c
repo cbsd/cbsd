@@ -81,6 +81,9 @@ enum {
 	C_SAVE_LOOP_COUNT,
 	C_SAVE_BEANSTALKD,
 	C_SAVE_SQLITE3,
+#ifdef WITH_INFLUX
+	C_SAVE_INFLUX,
+#endif
 };
 
 //
@@ -89,7 +92,6 @@ int log_level=0;    // default log_level
 
 char *log_file = NULL;     // logfile
 int save_loop_count=5;        // save_loop_count by default
-int prometheus_exporter=0; // no prometheus_exporter by default
 int loop_interval=1; // loop 1 seconds by default
 
 static struct jailparam *params;
@@ -112,8 +114,13 @@ int sum_jname_exist(char *);
 int jname_exist(char *);
 int remove_data_by_jname(char *);
 
-int tosqlite3=0;			// by default: sqlite3 disabled, 0
-int tobeanstalkd=0;			// by default: beanstalkd disabled, 0
+unsigned int output_flags=0;		// Where to dump our data
+#define OUTPUT_SQLITE3		1
+#define OUTPUT_BEANSTALKD	2
+#define OUTPUT_PROMETHEUS	4
+#ifdef WITH_INFLUX
+#define OUTPUT_INFLUX		8
+#endif
 int skip_beanstalk=0;			// skip for bs_put (no current-waiting)
 
 int	bs_socket=-1;
@@ -180,6 +187,7 @@ struct item_data {
 	unsigned int writebps;
 	unsigned int readiops;
 	unsigned int writeiops;
+	float temperature;
 	int64_t modified;
 	unsigned int cpus;
 	unsigned long maxmem;
@@ -216,6 +224,7 @@ struct sum_item_data {
 	unsigned int writebps;
 	unsigned int readiops;
 	unsigned int writeiops;
+	float temperature;
 	int64_t modified;
 	unsigned int cpus;
 	unsigned long maxmem;
@@ -247,6 +256,18 @@ struct sum_item_data *sum_item_list = NULL;
 			temp->next = (item)->next;     \
 	}
 
+
+#ifdef WITH_REDIS
+#include "../../bin/cbsdsh/cbsdredis.h"
+cbsdredis_t      *redis;
+#endif
+
+#ifdef WITH_INFLUX
+#include "../../bin/cbsdsh/cbsdinflux.c"
+cbsdinflux_t     *influx=NULL;
+#include "../../bin/cbsdsh/cbsdconfig.c"
+#endif
+
 int tolog(int level, const char *fmt, ...) {
 	va_list ap;
 	char msg[LOG_MAX_LEN];
@@ -269,15 +290,11 @@ int tolog(int level, const char *fmt, ...) {
 	return 0;
 }
 
-char *
-nm(void)
-{
+char *nm(void) {
 	return "sqlcli";
 }
 
-int
-sqlitecmd(char *dbfile, char *query)
-{
+int sqlitecmd(char *dbfile, char *query) {
 	sqlite3        *db;
 	int             ret = 0;
 	sqlite3_stmt   *stmt;
@@ -296,9 +313,7 @@ sqlitecmd(char *dbfile, char *query)
 	return ret;
 }
 
-int
-sql_get_int(sqlite3_stmt * stmt)
-{
+int sql_get_int(sqlite3_stmt * stmt) {
 	int		icol, irow;
 	const char	*colname;
 	int		allcol;
@@ -327,9 +342,7 @@ sql_get_int(sqlite3_stmt * stmt)
 	return 0;
 }
 
-unsigned long
-sql_get_int64(sqlite3_stmt * stmt)
-{
+unsigned long sql_get_int64(sqlite3_stmt * stmt) {
 	int		icol, irow;
 	const char	*colname;
 	int		allcol;
@@ -358,8 +371,7 @@ sql_get_int64(sqlite3_stmt * stmt)
 	return 0;
 }
 
-int get_bs_stats(char *yaml,const char *str)
-{
+int get_bs_stats(char *yaml,const char *str) {
 	char *pch;
 	int str_len=0;
 	int str_with_val_len=0;
@@ -422,9 +434,7 @@ int get_bs_stats(char *yaml,const char *str)
 	return values;
 }
 
-static void
-enosys(void)
-{
+static void enosys(void) {
 	int error, racct_enable;
 	size_t racct_enable_len;
 
@@ -445,40 +455,31 @@ enosys(void)
 
 
 /* release memory allocated for a item struct */
-void free_item(struct item_data * ch)
-{
+void free_item(struct item_data * ch) {
 	free(ch);
 }
 
 // avg
-int sum_jname_exist(char *jname)
-{
+int sum_jname_exist(char *jname) {
 	struct sum_item_data *ch, *next_ch;
 
 	for (ch = sum_item_list; ch; ch = ch->next) {
-		if (!strcmp(jname,ch->name)) {
-			return 1;
-		}
+		if (!strcmp(jname,ch->name)) return 1;
 	}
 
 	return 0;
 }
 
-int jname_exist(char *jname)
-{
+int jname_exist(char *jname) {
 	struct item_data *target = NULL, *ch, *next_ch;
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (!strcmp(jname,ch->name)) {
-			return 1;
-		}
+		if (!strcmp(jname,ch->name)) return 1;
 	}
-
 	return 0;
 }
 
-int remove_data()
-{
+int remove_data() {
 	struct item_data *target = NULL, *ch, *next_ch;
 	struct item_data *temp;
 
@@ -491,8 +492,7 @@ int remove_data()
 }
 
 
-int remove_data_by_jname(char *jname)
-{
+int remove_data_by_jname(char *jname) {
 	struct item_data *target = NULL, *ch, *next_ch;
 	struct item_data *temp;
 
@@ -507,8 +507,7 @@ int remove_data_by_jname(char *jname)
 }
 
 
-int prune_inactive_env()
-{
+int prune_inactive_env() {
 	struct item_data *target = NULL, *ch, *next_ch;
 	struct timeval  now_time;
 	int cur_time = 0;
@@ -529,8 +528,7 @@ int prune_inactive_env()
 	return 0;
 }
 
-int get_pid_by_name(char *jname)
-{
+int get_pid_by_name(char *jname) {
 	struct item_data *target = NULL, *ch, *next_ch;
 
 	for (ch = item_list; ch; ch = ch->next) {
@@ -542,19 +540,19 @@ int get_pid_by_name(char *jname)
 }
 
 
-static void
-usage(void)
-{
+static void usage(void) {
 	printf("CBSD racct statistics exporter\n");
 	printf("require: --nic\n");
+#ifdef WITH_INFLUX
+	printf("optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1] --save_influx=[0|1]\n");
+#else
 	printf("optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1]\n");
+#endif
 	exit(1);
 }
 
 
-int
-init_bs(char *tube)
-{
+int init_bs(char *tube) {
 	int a,b,c;
 	int socket = BS_STATUS_FAIL;
 	bs_connected=0;
@@ -582,9 +580,7 @@ init_bs(char *tube)
 // return time in nanoseconds
 // to convert to integrer/seconds:
 // printf("%d\n",(int)( nanoseconds() / 1000000000));
-int64_t
-nanoseconds(void)
-{
+int64_t nanoseconds(void) {
 	int r;
 	struct timeval tv;
 

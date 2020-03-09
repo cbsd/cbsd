@@ -6,8 +6,6 @@ MYDESC="Destroy jail"
 CBSDMODULE="jail"
 EXTHELP="wf_jremove"
 
-my_name="jremove"
-
 . ${subr}
 . ${tools}	# for select_jail_by_list
 
@@ -57,17 +55,28 @@ for jname in ${JLIST}; do
 	JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
 	unregister=0
 
+	# Redis
+	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+		cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":1}'
+	fi
+
 	. ${jrcconf}
 	if [ $? -eq 1 ]; then
 		if [ ! -f "${JAILRCCONF}" ]; then
 			# remote?
 			if [ ${sqlreplica} -eq 0 ]; then
 				${ECHO} "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+				if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+					cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":2}'
+				fi
 				continue
 			fi
 			remotenode=$( jwhereis ${jname} )
 			if [ -z "${remotenode}" ]; then
 				${ECHO} "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+				if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+					cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":2}'
+				fi
 				continue
 			fi
 			for i in ${remotenode}; do
@@ -83,6 +92,9 @@ for jname in ${JLIST}; do
 					task autoflush=2 mode=new retrinv node=${i} data=db tryoffline=1 > /dev/null 2>&1
 				fi
 			done
+			if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+				cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":2}'
+			fi
 			continue
 		else
 			. ${JAILRCCONF}
@@ -90,16 +102,37 @@ for jname in ${JLIST}; do
 		fi
 	fi
 
+
+	# getJailID()
+#	if [ "${mod_cbsd_cluster_enabled}" = "YES" -a -z "${MOD_CBSD_CLUSTER_DISABLED}" ]; then
+#
+#		if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+#			cbsdredis hget -env "jail:${jname}" jail_id
+#		fi
+#
+#		if [ -z "${jail_id}"]; then
+#			cbsdsqlrw @cluster SELECT "jail_id FROM tbl_jails WHERE jail_name='${jname}'" || read jail_id
+#		fi
+#
+#		if [ -z "${jail_id}"]; then
+#			if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+#				cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":6}'
+#			fi
+#			${ECHO} "${N1_COLOR}WARNING could not find jail in cluster. ${N2_COLOR}${jname}${N0_COLOR}"	
+#			continue
+#		fi
+#
+#	fi
+
+
 	if [ "${protected}" = "1" ]; then
 		${ECHO} "${N1_COLOR}Protected/locked jail. Skip for remove: ${N2_COLOR}${jname}${N0_COLOR}"
+		# Redis
+		if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+			cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":5}'
+		fi
 		continue
 	fi
-
-	# Redis
-	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
-		cbsdredis publish cbsd_events '{"cmd":"jremove", "node":"'${nodename}'", "jail":"'${jname}'", "status":1}'
-	fi
-
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -177,7 +210,6 @@ for jname in ${JLIST}; do
 		[ -d "/root/VirtualBox VMs/${jname}" ] && ${RM_CMD} -rf "/root/VirtualBox VMs/${jname}"
 	fi
 
-
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 		[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jremove status=2 
@@ -186,14 +218,25 @@ for jname in ${JLIST}; do
 	end_time=$( ${DATE_CMD} +%s )
 	diff_time=$(( end_time - st_time ))
 
+	#clustering
+# - We only need to try and delete it when it's deleted on all nodes?!
+#	if [ -n "${jail_id}" -a "${mod_cbsd_cluster_enabled}" = "YES" -a -z "${MOD_CBSD_CLUSTER_DISABLED}" ]; then
+#		cbsdsqlrw @cluster DELETE FROM tbl_jails WHERE jail_id=${jail_id} || [
+#			if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+#				cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":4, "duration":'${diff_time}'}'
+#				CBSD_SKIP_REDIS=1
+#			fi
+#		]
+#	fi
+
 	# Redis
-	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
-		cbsdredis publish cbsd_events '{"cmd":"jremove", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
+	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" -a -z "${CBSD_SKIP_REDIS}" ]; then
+		cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
                 cbsdredis del "jail:${jname}"
 	fi
+
 	diff_time=$( displaytime ${diff_time} )
 	cbsdlogger NOTICE ${CBSD_APP}: jail ${jname} removed in ${diff_time}
-
 
 done
 

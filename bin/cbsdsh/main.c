@@ -82,14 +82,7 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "cd.h"
 #include "redir.h"
 #include "builtins.h"
-
-#ifdef WITH_REDIS
-#include "cbsdredis.h"
-#endif
-#ifdef WITH_DBI
-#include "sqlcmd.h"
-#endif
-
+#include "extensions.h"
 
 int rootpid;
 int rootshell;
@@ -102,12 +95,9 @@ int cbsd_enable_history=0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
 #endif
 
-#ifdef WITH_REDIS
-cbsdredis_t      *redis;
-#endif
-#ifdef WITH_DBI
-cbsddbi_t      	 *databases;
-#endif
+_REDIS(	cbsdredis_t      *redis;)
+_INFLUX(cbsdinflux_t     *influx;)
+_DBI(	cbsddbi_t      	 *databases;)
 
 static void reset(void);
 static void cmdloop(int);
@@ -115,6 +105,11 @@ static void read_profile(const char *);
 static char *find_dot_file(char *);
 
 #pragma unused(copyright)
+
+#if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
+#include "contrib/ini.h"
+#include "cbsdconfig.c"		/* Not the best way to do this but will do for now */
+#endif
 
 /*
  * Main routine.  We initialize things, parse the arguments, execute
@@ -129,11 +124,13 @@ int main(int argc, char *argv[]) {
 	volatile int state;
 	char *shinit;
 
-#ifdef WITH_REDIS
-	redis_load_config();		// Need to be before dbi_load_config at the moment!
-#endif
-#ifdef WITH_DBI
-	dbi_load_config();
+	_REDIS(cbsd_redis_init();  )
+	_INFLUX(cbsd_influx_init();)
+	_DBI(cbsd_dbi_init();)
+
+
+#if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
+	load_config();
 #endif
 
 #ifdef CBSD
@@ -147,9 +144,7 @@ int main(int argc, char *argv[]) {
 	chdir("/var/empty");
 
 	/* Only use history when stdin is a tty. */
-	if ( isatty(0) && isatty(1) ) {
-		cbsd_enable_history = 1;
-	}
+	if ( isatty(0) && isatty(1) ) cbsd_enable_history = 1;
 #endif
 
 

@@ -169,6 +169,13 @@ desc_question()
 			[ -z "${answ}" ] && answ="${_DEFAULT}"
 			return 0
 			;;
+		"clustering")
+			${ECHO} "${BOLD}${1}: ${_DESC} ?${N0_COLOR}"
+			${ECHO} "${N1_COLOR}(0 - no experimental clustering options, 1 - implement the stable ones) e.g: ${N2_COLOR}${_DEFAULT}${N0_COLOR}"
+			read answ
+			[ -z "${answ}" ] && answ="${_DEFAULT}"
+			return 0
+			;;
 		"zfsfeat")
 			if getyesno "${1}: You are running on a ZFS-based system. ${_DESC}"; then
 				answ=1
@@ -276,15 +283,30 @@ phase1()
 	. ${workdir}/cmd.subr
 	make_fs_id
 	printf "${N0_COLOR}"
+
+#	if [ -z "${clustering_enabled}" ]; then
+#		desc_question clustering
+#		clustering_enabled=${answ}
+#	fi
+#	cbsd_initenv_clustering_enabled=${clustering_enabled}
+	cbsd_initenv_clustering_enabled=0
+
 }
 
 phase2()
 {
-	local _dir _ldir _rdir _file _dirhier _d platform
+	local _dir _ldir _rdir _file _dirhier _d platform 
 
 	${ECHO} "${N1_COLOR}[Stage 2: ${N2_COLOR}build tools${N1_COLOR}]${N0_COLOR}"
 
 	platform=$( uname -s )
+
+	if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
+		echo "Clustering modus enabled, building Redis, Influx and DBI connectors!"
+		mod_cbsd_redis_enabled=YES
+		mod_cbsd_influx_enabled=YES
+		mod_cbsd_dbi_enabled=YES
+	fi
 
 	[ ! -f "${distdir}/bin/cbsdsftp" ] && ${CC_CMD} ${distdir}/bin/cbsdsftp.c -o ${distdir}/bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
 	[ ! -f "${distdir}/bin/cbsdsftp6" ] && ${CC_CMD} ${distdir}/bin/cbsdsftp6.c -o ${distdir}/bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include
@@ -316,9 +338,15 @@ phase2()
 	[ ! -f "${distdir}/misc/resolv" ] && ${CC_CMD} ${distdir}/misc/src/resolv.c -o ${distdir}/misc/resolv
 	[ ! -f "${distdir}/tools/imghelper" ] && ${CC_CMD} ${distdir}/tools/src/imghelper.c -o ${distdir}/tools/imghelper
 	if [ "${platform}" != "DragonFly" ]; then
-		[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
-		[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
-		[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+		if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
+			${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+			${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+			${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c ${distdir}/bin/cbsdsh/cbsdredis.c ${distdir}/bin/cbsdsh/contrib/credis.c -DWITH_REDIS -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+		else
+			[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+			[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+			[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+		fi
 	fi
 	[ ! -f "${distdir}/tools/select_jail.c" ] && ${CC_CMD} ${distdir}/tools/src/select_jail.c -o ${distdir}/tools/select_jail
 
@@ -354,16 +382,26 @@ phase2()
 		[ ! -f "${distdir}/tools/bridge" ] && ${CC_CMD} ${distdir}/tools/src/bridge.c -o ${distdir}/tools/bridge
 	fi
 
-	if [ -f "/usr/local/bin/cbsd" ]; then
-		CURVERSION=$( env workdir=${workdir} /usr/local/bin/cbsd -c version )
-		if [ "${CURVERSION}" != "${myversion}" ]; then
-			make -C ${distdir}/bin/cbsdsh clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
-			# force rebuild sqlscli too to avoid possible SQLite3 link error
-			${CC_CMD} ${distdir}/misc/src/sqlcli.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${distdir}/misc/sqlcli
-		fi
-	else
-		make -C ${distdir}/bin/cbsdsh clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
-	fi
+#	if [ -f "/usr/local/bin/cbsd" ]; then
+#
+# SR: Always rebuild, options may have changed
+#
+#		CURVERSION=$( env workdir=${workdir} /usr/local/bin/cbsd -c version )
+#		if [ "${CURVERSION}" != "${myversion}" ]; then
+#			make -C ${distdir}/bin/cbsdsh clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
+#		fi
+#	else
+		_build_options=""
+
+		[ "${mod_cbsd_redis_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_REDIS"
+		[ "${mod_cbsd_influx_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_INFLUX"
+		[ "${mod_cbsd_dbi_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_DBI"
+
+		make -C ${distdir}/bin/cbsdsh clean && make ${_build_options} -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
+		# force rebuild sqlscli too to avoid possible SQLite3 link error
+		${CC_CMD} ${distdir}/misc/src/sqlcli.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${distdir}/misc/sqlcli
+
+#	fi
 
 	[ -d "${distdir}/bin/cbsd" ] && /bin/rm -rf "${distfir}/bin/cbsd"
 	[ -f "${distdir}/bin/cbsdsh/cbsd" ] && /usr/bin/install -s -o ${cbsduser} -g ${cbsduser} -m 500 ${distdir}/bin/cbsdsh/cbsd /usr/local/bin/cbsd

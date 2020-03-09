@@ -13,21 +13,24 @@ SHSRCS+=	jail.c
 
 .if defined(WITH_LUA)
 SHSRCS+=	cbsdlua.c
-CFLAGS+=-I/usr/local/include/lua52 -l lua-5.2 -DLUA
+CFLAGS+=	-I/usr/local/include/lua52 -l lua-5.2 -DLUA
 .endif
 
-.if defined(WITH_REDIS)|defined(WITH_DBI)
-SHSRCS+=	contrib/ini.c
+.if defined(WITH_REDIS) | defined(WITH_DBI) | defined(WITH_INFLUX)
+SHSRCS+=	contrib/ini.c cbsdcmd.c
 .endif
 
 .if defined(WITH_REDIS)
-.warning	You are building CBSDSH with Redis; This is an experimental feature!
 SHSRCS+=	cbsdredis.c contrib/credis.c
-CFLAGS+=	-DWITH_REDIS
+CFLAGS+=	-DWITH_REDIS 
+.endif
+
+.if defined(WITH_INFLUX)
+SHSRCS+=	cbsdinflux.c
+CFLAGS+=	-DWITH_INFLUX -lcurl
 .endif
 
 .if defined(WITH_DBI)
-.warning	You are building CBSDSH with DBI; This is experimental and could be unstable!
 CFLAGS+=	-DWITH_DBI
 .endif
 
@@ -47,8 +50,8 @@ LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
 # Dfly
 #LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
-#CFLAGS+=-DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
-CFLAGS+=-Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
+#CFLAGS+= -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib
+CFLAGS+= -Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local/lib
 
 
 # for debug:
@@ -66,7 +69,15 @@ CLEANFILES+= ${GENSRCS} ${GENHDRS}
 builtins.def.o:
 	cp	builtins.def builtins.def.o
 .if defined(WITH_REDIS)
+	echo 	" -- You are building CBSDSH with Redis; This is an experimental feature however it should be stable!"
 	cat	builtins.redis >> builtins.def.o
+.endif
+.if defined(WITH_INFLUX)
+	echo	" -- You are building CBSDSH with Influx; This is an experimental feature!"
+	cat	builtins.influx >> builtins.def.o
+.endif
+.if defined(WITH_DBI)
+	echo	" -- You are building CBSDSH with DBI; This is experimental and could be unstable!"
 .endif
 
 

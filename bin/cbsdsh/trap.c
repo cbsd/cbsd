@@ -59,13 +59,7 @@ __FBSDID("$FreeBSD: head/bin/sh/trap.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "mystring.h"
 #include "builtins.h"
 #include "myhistedit.h"
-
-#ifdef WITH_DBI
-#include "sqlcmd.h"
-#endif
-#ifdef WITH_REDIS
-#include "cbsdredis.h"
-#endif
+#include "extensions.h"
 
 /*
  * Sigmode records the current value of the signal handlers for the various
@@ -555,12 +549,8 @@ exitshell_savedstatus(void)
 		/* If the default action is to ignore, fall back to _exit(). */
 	}
 	
-#ifdef WITH_DBI
-	if (!exiting) dbi_free();
-#endif
-#ifdef WITH_REDIS
-        if (!exiting) redis_free();
-#endif
-
+	_DBI(	if (!exiting) cbsd_dbi_free();	 )
+	_REDIS( if (!exiting) cbsd_redis_free(); )
+        _INFLUX(if (!exiting) cbsd_influx_free();)
 	_exit(exiting_exitstatus);
 }
