@@ -1,0 +1,66 @@
+#!/usr/local/bin/cbsd
+#v12.1.6
+# Detect first available IPv6 from ippool's
+MYARG=""
+MYOPTARG="ip6pool"
+MYDESC="Detect first available IPv6 from pools"
+ADDHELP="ip6pool = alternative pool, comma-separated if multiple\n\
+ errcode:\n\
+   0 - IP found\n\
+   1 - Unknown error\n\
+   3 - All pools are exhausted\n"
+
+. ${subr}
+
+. ${cbsdinit}
+
+[ -z "${nodeip6pool}" ] && err 1 "${N1_COLOR}no nodeip6pool${N0_COLOR}"
+[ "${nodeip6pool}" = "0" -o "${nodeip6pool}" = "(null)" ] && err 1 "${N1_COLOR}no nodeip6pool${N0_COLOR}"
+
+iptype ${nodeip6pool} in
+case $? in
+	2)
+		;;
+	*)
+		err 1 "${N1_COLOR}not IPv6?: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
+		;;
+esac
+
+eval $( ${miscdir}/sipcalc ${nodeip6pool} )
+
+[ $? -ne 0 ] && err 1 "${N1_COLOR}sipcalc: error for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
+[ -z "${_prefix_ipv6_range_start}" -o -z "${_prefix_ipv6_range_end}" ] && 1 "${N1_COLOR}sipcalc: no range for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
+
+
+# normalize range from network/broadcast to first/latest usable IP
+# todo: implement in sipcalc!
+sqllistdelimer=":"
+sqllist "${_prefix_ipv6_range_start}" s1 s2 s3 s4 s5 s6 s7 s8
+sqllist "${_prefix_ipv6_range_end}" e1 e2 e3 e4 e5 e6 e7 e8
+unset sqllistdelimer
+if [ "${s8}" = "0000" ]; then
+	if [ "${s7}" = "0000" ]; then
+		if [ "${s6}" = "0000" ]; then
+			if [ "${s5}" = "0000" ]; then
+				_prefix_ipv6_range_start="${s1}:${s2}:${s3}:${s4}:${s5}:${s6}:${s7}:0001"
+			fi
+		fi
+	fi
+fi
+[ "${e7}" = "ffff" ] && _prefix_ipv6_range_end="${e1}:${e2}:${e3}:${e4}:${e5}:${e6}:${e7}:fffc"
+
+# check jail&bhyve first
+
+ip=$( ${miscdir}/ipv6range ${_prefix_ipv6_range_start} ${_prefix_ipv6_range_end} | while read _ip; do
+	${PING6_CMD} -n -t1 -i0.3 -W 300 -c2 -q ${_ip} > /dev/null 2>&1
+	ret=$?
+	if [ ${ret} -eq 0 ]; then
+		# second check via NDP
+		${NDP_CMD} ${_ip} > /dev/null 2>&1
+		ret=$?
+	fi
+	[ ${ret} -eq 0 ] && continue
+	printf "${_ip}" && exit 0
+done )
+
+echo "${ip}"

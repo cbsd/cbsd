@@ -34,7 +34,7 @@ void serverLogRaw(int level, const char *msg) {
 		} else {
 			int off;
 			struct timeval tv;
-			pid_t pid = getpid();
+			//pid_t pid = getpid();
 
 			gettimeofday(&tv,NULL);
 			off = strftime(buf,sizeof(buf),"%d %b %H:%M:%S.",localtime(&tv.tv_sec));
@@ -92,7 +92,6 @@ int init_logvars()
  * the INFO output on crash.
  */
 int cbsdloggercmd(int argc, char **argv) {
-	va_list ap;
 	int level=0;
 	char msg[LOG_MAX_LEN];
 	int i;

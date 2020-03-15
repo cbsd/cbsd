@@ -82,6 +82,7 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "cd.h"
 #include "redir.h"
 #include "builtins.h"
+#include "extensions.h"
 
 int rootpid;
 int rootshell;
@@ -94,10 +95,21 @@ int cbsd_enable_history=0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
 #endif
 
+_REDIS(	cbsdredis_t      *redis;)
+_INFLUX(cbsdinflux_t     *influx;)
+_DBI(	cbsddbi_t      	 *databases;)
+
 static void reset(void);
 static void cmdloop(int);
 static void read_profile(const char *);
 static char *find_dot_file(char *);
+
+#pragma unused(copyright)
+
+#if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
+#include "contrib/ini.h"
+#include "cbsdconfig.c"		/* Not the best way to do this but will do for now */
+#endif
 
 /*
  * Main routine.  We initialize things, parse the arguments, execute
@@ -107,15 +119,22 @@ static char *find_dot_file(char *);
  * is used to figure out how far we had gotten.
  */
 
-int
-main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 	struct stackmark smark, smark2;
 	volatile int state;
 	char *shinit;
 
+	_REDIS(cbsd_redis_init();  )
+	_INFLUX(cbsd_influx_init();)
+	_DBI(cbsd_dbi_init();)
+
+
+#if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
+	load_config();
+#endif
+
 #ifdef CBSD
-	char *MY_APP = NULL;
+//	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv
@@ -125,10 +144,10 @@ main(int argc, char *argv[])
 	chdir("/var/empty");
 
 	/* Only use history when stdin is a tty. */
-	if ( isatty(0) && isatty(1) ) {
-		cbsd_enable_history = 1;
-	}
+	if ( isatty(0) && isatty(1) ) cbsd_enable_history = 1;
 #endif
+
+
 
 	(void) setlocale(LC_ALL, "");
 	initcharset();
@@ -286,6 +305,8 @@ state4:
 	if (sflag || minusc == NULL) {
 		cmdloop(1);
 	}
+
+
 	exitshell(exitstatus);
 	/*NOTREACHED*/
 	return 0;
@@ -303,9 +324,7 @@ reset(void)
  * loop; it turns on prompting if the shell is interactive.
  */
 
-static void
-cmdloop(int top)
-{
+static void cmdloop(int top) {
 	union node *n;
 	struct stackmark smark;
 	int inter;
@@ -314,8 +333,8 @@ cmdloop(int top)
 	TRACE(("cmdloop(%d) called\n", top));
 	setstackmark(&smark);
 	for (;;) {
-		if (pendingsig)
-			dotrap();
+		if (pendingsig) dotrap();
+
 		inter = 0;
 		if (iflag && top) {
 			inter++;
@@ -328,11 +347,9 @@ cmdloop(int top)
 		n = parsecmd(inter);
 		/* showtree(n); DEBUG */
 		if (n == NEOF) {
-			if (!top || numeof >= 50)
-				break;
+			if (!top || numeof >= 50) break;
 			if (!stoppedjobs()) {
-				if (!Iflag)
-					break;
+				if (!Iflag) break;
 				out2fmt_flush("\nUse \"exit\" to leave shell.\n");
 			}
 			numeof++;
@@ -344,8 +361,7 @@ cmdloop(int top)
 		popstackmark(&smark);
 		setstackmark(&smark);
 		if (evalskip != 0) {
-			if (evalskip == SKIPRETURN)
-				evalskip = 0;
+			if (evalskip == SKIPRETURN) evalskip = 0;
 			break;
 		}
 	}
@@ -448,9 +464,7 @@ dotcmd(int argc, char **argv)
 }
 
 
-int
-exitcmd(int argc, char **argv)
-{
+int exitcmd(int argc, char **argv) {
 	if (stoppedjobs())
 		return 0;
 	if (argc > 1)

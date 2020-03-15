@@ -59,7 +59,7 @@ __FBSDID("$FreeBSD: head/bin/sh/trap.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "mystring.h"
 #include "builtins.h"
 #include "myhistedit.h"
-
+#include "extensions.h"
 
 /*
  * Sigmode records the current value of the signal handlers for the various
@@ -494,13 +494,12 @@ setinteractive(void)
 /*
  * Called to exit the shell.
  */
-void
-exitshell(int status)
-{
+void exitshell(int status) {
 	TRACE(("exitshell(%d) pid=%d\n", status, getpid()));
 	exiting = 1;
 	exiting_exitstatus = status;
 	exitshell_savedstatus();
+
 }
 
 void
@@ -549,5 +548,9 @@ exitshell_savedstatus(void)
 		kill(getpid(), sig);
 		/* If the default action is to ignore, fall back to _exit(). */
 	}
+	
+	_DBI(	if (!exiting) cbsd_dbi_free();	 )
+	_REDIS( if (!exiting) cbsd_redis_free(); )
+        _INFLUX(if (!exiting) cbsd_influx_free();)
 	_exit(exiting_exitstatus);
 }

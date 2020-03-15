@@ -25,6 +25,8 @@ readconf jail-freebsd-default.conf
 # for external_exec-related command
 . ${distdir}/jcreate.subr
 
+my_name="jstart"
+
 # check environment scripts from tests dir
 # when error code != 0 - exit
 # $1 - is source dir name ( tests )
@@ -309,6 +311,13 @@ if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	fi
 fi
 
+
+# Update Redis
+if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+	cbsdredis hset "jail:${jname}" node "${nodename}" status 1 || echo "WARNING: failed to update Redis!"
+	cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":1}'
+fi
+
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
@@ -541,11 +550,13 @@ mount_jail_fstab
 export_jail_data_for_external_hook
 external_exec_master_script "master_prestart.d"
 
+
 if [ "${ver}" = "empty" ]; then
 	path="/"
 	exec_start="${jailsysdir}/${jname}/run.sh"
 else
 	[ ! -d "${data}/var/cache/pkg" ] && ${MKDIR_CMD} -p "${data}/var/cache/pkg"
+	exec_start=""
 fi
 
 #determine that jail is FreeBSD. Useful for vnet operation in makejconf and
@@ -600,6 +611,12 @@ if [ ${ret} -ne 0 ]; then
 	jcleanup jname="${jname}"
 	exit 0
 fi
+
+# TODO/NOTES:
+# when path have no /var and/or /tmp (e.g empty fstab file), after jail start we have
+# undesirable/undesirable tmpfs! bug/issue ?
+# tmpfs on /usr/jails/jails/jail2/var (tmpfs, local)
+# tmpfs on /usr/jails/jails/jail2/tmp (tmpfs, local)
 
 ${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} /usr/sbin/jail -f ${ftmpdir}/${jname}.conf -c ${jname}
 trap "" HUP INT ABRT BUS TERM EXIT
@@ -684,6 +701,13 @@ else
 	external_exec_master_script "master_poststop.d"
 	exec_poststop
 	jcleanup jname=${jname}
+
+	# redis
+	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+		cbasredis hset "jail:${jname}" status -1 || echo "WARNING: Failed to update Redis"
+		cbasredis hdel "jail:${jname}" jid || echo "WARNING: Failed to update Redis"
+        	cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":-1}'
+	fi
 fi
 
 cbsdsqlrw local UPDATE jails SET jid=${myjid},status=${status} where jname=\"${jname}\"
@@ -698,6 +722,7 @@ if [ -x "${distmoduledir}/vncterm.d/cbsdvnc" ]; then
 	${DAEMON_CMD} -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
 fi
 
+
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jstart status=2 data_status=1 workdir="${workdir}"
@@ -705,6 +730,11 @@ fi
 
 end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))
+# redis
+if [ ${myjid} -gt 0 -a "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+	cbsdredis hset "jail:${jname}" status 2 jid ${myjid} started ${st_time} echo "WARNING: Failed to update Redis"
+        cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
+fi
 diff_time=$( displaytime ${diff_time} )
 ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 cbsdlogger NOTICE ${CBSD_APP}: jail ${jname} started in ${diff_time}

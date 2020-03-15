@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.0.6
+#v12.1.6
 CBSDMODULE="jail"
 MYARG="node jname mkdatadir"
 MYOPTARG="verbose sharedfs tryoffline"
@@ -20,6 +20,9 @@ tryoffline=0
 emulator="jail" # for jname_is_multiple
 jail_list=
 jname_is_multiple
+
+. ${distdir}/time.subr
+st_time=$( ${DATE_CMD} +%s )
 
 # -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
 # -o uniq_name_of_the_task (one world)
@@ -85,7 +88,6 @@ if [ -n "${jail_list}" ]; then
 	err 0 "${N1_COLOR}Multiple j2prepare: ${N2_COLOR}done${N0_COLOR}"
 fi
 
-
 ## MAIN
 [ -z "${jname}" ] && log_err 1 "${N1_COLOR}Give me jname${N0_COLOR}"
 
@@ -96,16 +98,23 @@ SECFILE="${workdir}/etc/${jname}.secrets"
 
 printf "${N1_COLOR}Preparing.${N0_COLOR}"
 
-JAILRCCONF="${ftmpdir}/rc.conf_${jname}"
-RJAILRCCONF="jails-rcconf/rc.conf_${jname}"
+JAIL_RCCONF="${ftmpdir}/rc.conf_${jname}"
+REMOTE_JAIL_RCCONF="jails-rcconf/rc.conf_${jname}"
 
-JAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
-JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+JAIL_DIR="${jaildatadir}/${jname}-${jaildatapref}"
+JAIL_FSTAB_LEGACY="${jailfstabdir}/${jailfstabpref}${jname}"
+JAIL_FSTAB_DIR="${jailfstabdir}/${jname}"
 
-RJAILDIR="${jaildatadir}/${jname}-${jaildatapref}"
-RJAILFSTAB="jails-fstab/${jailfstabpref}${jname}"
+REMOTE_JAIL_DIR="jails-data/${jname}-${jaildatapref}"
+REMOTE_FSTAB_LEGACY="jails-fstab/${jailfstabpref}${jname}"
+REMOTE_JAIL_FSTAB_DIR="jails-fstab/${jname}"
 
-[ ! -d ${JAILDIR} ] && err 1 "No jail data for ${jname}"
+[ ! -d ${JAIL_DIR} ] && err 1 "No jail data for ${jname}"
+
+# Update Redis
+if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+	cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "dest":"'${node}'", "jail":"'${jname}'", "status":1}'
+fi
 
 not_sharedfs_action()
 {
@@ -129,7 +138,7 @@ not_sharedfs_action()
 	nodescp tryoffline=${tryoffline} ${SECFILE} ${node}:etc > ${DEBLOG} 2>&1
 	dot "scp_secfile"
 	imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
-	trap "/bin/rm -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+	trap "${RM_CMD} -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
 
 	cbsdlogger NOTICE ${CBSD_APP}: copy sysdata for ${jname} to ${node}
 	nodescp tryoffline=${tryoffline} ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > ${DEBLOG} 2>&1
@@ -141,39 +150,93 @@ not_sharedfs_action()
 	if [ "${mkdatadir}" = "1" ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: create datadir for ${jname} on ${node}
 		rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd mkdatadir jname=${jname} > ${DEBLOG} 2>&1
-		dot "rexe_3"
+		dot "rexe_mkdatadir"
 	fi
 
-	if [ -f ${JAILFSTAB} ]; then
+	# Legacy/old fstab location, < CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_LEGACY} ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: copy fstabs for ${jname} to ${node}
-		nodescp tryoffline=${tryoffline} ${JAILFSTAB} ${node}:${RJAILFSTAB} > ${DEBLOG} 2>&1
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_LEGACY} ${node}:${REMOTE_FSTAB_LEGACY} > ${DEBLOG} 2>&1
+		dot "scp legacy fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_FSTAB_LEGACY} > ${DEBLOG} 2>&1
+		dot "rexe_fstab_legacy"
+	fi
+	# Legacy/old fstab.local location, < CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_LEGACY}.local ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy local fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_LEGACY}.local ${node}:${REMOTE_FSTAB_LEGACY}.local > ${DEBLOG} 2>&1
+		dot "scp legacy local fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab.local on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_FSTAB_LEGACY}.local > ${DEBLOG} 2>&1
+		dot "rexe_fstab_legacy_local"
+	fi
+
+	# New fstab location, > CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_DIR}/fstab ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_DIR}/fstab ${node}:${REMOTE_JAIL_FSTAB_DIR}/fstab > ${DEBLOG} 2>&1
 		dot "scp fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${REMOTE_JAIL_FSTAB_DIR}/fstab > ${DEBLOG} 2>&1
+		dot "rexe_fstab"
+	fi
+	# New fstab location, > CBSD 12.1.5
+	if [ -r ${JAIL_FSTAB_DIR}.local ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: copy local fstabs for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${JAIL_FSTAB_DIR}.local ${node}:${JAIL_FSTAB_DIR}.local > ${DEBLOG} 2>&1
+		dot "scp fstab"
+
+		cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} fstab.local on ${node}
+		rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${JAIL_FSTAB_DIR}.local > ${DEBLOG} 2>&1
+		dot "rexe_fstab_local"
 	fi
 
 	cbsdlogger NOTICE ${CBSD_APP}: extract sysdata for ${jname} on ${node}
 	rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd imgpart mode=extract jname=jails-system/${jname}-sysdata.tgz part=sysdata out=jails-system > ${DEBLOG} 2>&1
 	dot "rexe_img_extract_sysdata"
 
-	rexe tryoffline=${tryoffline} node=${node} rm -f jails-system/${jname}-sysdata.tgz jails-system/${jname}/locked > ${DEBLOG} 2>&1
+	rexe tryoffline=${tryoffline} node=${node} ${RM_CMD} -f jails-system/${jname}-sysdata.tgz jails-system/${jname}/locked > ${DEBLOG} 2>&1
 	dot "rexe_rm-f-sysdata"
 }
+
+printf "   ${H5_COLOR}* ${N1_COLOR}check for remote CBSD version: ${N0_COLOR}"
+# todo: we can get this version from the nodes database (from retrinv task)
+d_cbsd_ver=$( rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd -c version 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: failed: rexe node=${node}${N0_COLOR}"
+printf "${H3_COLOR}${d_cbsd_ver}${N0_COLOR}"
+echo
+s_cbsd_ver=$( version | ${AWK_CMD} '/./{print $1}' )
+
+[ "${s_cbsd_ver}" != "${d_cbsd_ver}" ] && err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}CBSD version not equal: ${s_cbsd_ver} != ${d_cbsd_ver}${N0_COLOR}"
 
 if [ ${sharedfs} -eq 0 ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: not shared fs with ${node}, perform not_sharedfs_action
 	not_sharedfs_action
 fi
 
-jmkrcconf jname=${jname} > ${JAILRCCONF}
+jmkrcconf jname=${jname} > ${JAIL_RCCONF}
 cbsdlogger NOTICE ${CBSD_APP}: copy rcconf for ${jname} to ${node}
-nodescp tryoffline=${tryoffline} ${JAILRCCONF} ${node}:${RJAILRCCONF} > ${DEBLOG} 2>&1
+nodescp tryoffline=${tryoffline} ${JAIL_RCCONF} ${node}:${REMOTE_JAIL_RCCONF} > ${DEBLOG} 2>&1
 dot "scp rcconf"
-/bin/rm -f ${JAILRCCONF}
+${RM_CMD} -f ${JAIL_RCCONF}
 
 cbsdlogger NOTICE ${CBSD_APP}: jrsyncconf for ${jname} on ${node}
 rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd jrsyncconf jname=${jname} > ${DEBLOG} 2>&1
 dot "rexe_jrsyncconf"
 
 cbsdlogger NOTICE ${CBSD_APP}: replacewdir for ${jname} on ${node}
-rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} file1=${RJAILFSTAB} > ${DEBLOG} 2>&1
+rexe tryoffline=${tryoffline} node=${node} cbsd replacewdir old=${workdir} file0=${RJAILRCCONF} > ${DEBLOG} 2>&1
 dot "rexe_4"
+
+# Update Redis
+if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "dest":"'${node}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
+fi
+
 err 0 "${N2_COLOR}ok${N0_COLOR}"

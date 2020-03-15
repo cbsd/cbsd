@@ -43,13 +43,12 @@
 
 #include "racct-generic-stats.c"
 
+unsigned int running_bhyves;
 int update_racct_bhyve(char *, char *, char *);
 int sum_data_bhyve();
 int list_data();
 
-pid_t
-dofiles(struct procstat *procstat, struct kinfo_proc *kp)
-{
+pid_t dofiles(struct procstat *procstat, struct kinfo_proc *kp) {
 	const char *cmd;
 	// const char *uname;
 	//at the moment, only root user can run bhyve
@@ -65,8 +64,8 @@ dofiles(struct procstat *procstat, struct kinfo_proc *kp)
 
 	head = procstat_getfiles(procstat, kp, mflg);
 
-	if (head == NULL)
-		return -1;
+	if (head == NULL) return -1;
+
 	STAILQ_FOREACH(fst, head, next) {
 		//processing only for bhyve command
 		if (!strcmp(cmd,"bhyve")) {
@@ -80,19 +79,15 @@ dofiles(struct procstat *procstat, struct kinfo_proc *kp)
 }
 
 
-pid_t print_file_info(struct procstat *procstat, struct filestat *fst, const char *uname, const char *cmd, int pid)
-{
+pid_t print_file_info(struct procstat *procstat, struct filestat *fst, const char *uname, const char *cmd, int pid) {
 	struct vnstat vn;
 	int error, fsmatch = 0;
 
-	if (checkfile == 0)
-		return 0;
+	if (checkfile == 0) return 0;
+	if (fst->fs_type != PS_FST_TYPE_VNODE && fst->fs_type != PS_FST_TYPE_FIFO) return -1;
 
-	if (fst->fs_type != PS_FST_TYPE_VNODE && fst->fs_type != PS_FST_TYPE_FIFO)
-		return -1;
 	error = procstat_get_vnode_info(procstat, fst, &vn, NULL);
-	if (error != 0)
-		return -1;
+	if (error != 0) return -1;
 
 	if (fsid == vn.vn_fsid) {
 		if (ino == vn.vn_fileid) {
@@ -108,8 +103,7 @@ pid_t print_file_info(struct procstat *procstat, struct filestat *fst, const cha
 }
 
 // store filename data (inode, fsid)
-int getfname(char *filename)
-{
+int getfname(char *filename) {
 	struct stat statbuf;
 	ino = 0;
 	fsid = 0;
@@ -128,8 +122,7 @@ int getfname(char *filename)
 }
 
 
-pid_t get_vm_pid(char *vmpath)
-{
+pid_t get_vm_pid(char *vmpath) {
 	struct kinfo_proc *p;
 	struct procstat *procstat = NULL;
 	int arg, ch, what;
@@ -169,9 +162,9 @@ pid_t get_vm_pid(char *vmpath)
 	return vmpid;
 }
 
-int sum_data_bhyve()
-{
+int sum_data_bhyve() {
 	struct item_data *target = NULL, *ch, *next_ch;
+	const char *hostname=getenv("HOST");
 	char sql[512];
 	char stats_file[1024];
 	int ret=0;
@@ -246,19 +239,33 @@ int sum_data_bhyve()
 		sumch->writeiops/round_total,
 		sumch->pmem/round_total,
 		sumch->modified/round_total);
-		memset(json_buf,0,sizeof(json_buf));
-		sprintf(json_buf,"{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",sumch->name,
-		cur_time,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,sumch->readiops/round_total,sumch->writeiops/round_total);
 
-		if (strlen(json_str)>2) {
-			strcat(json_str,",");
-			strcat(json_str,json_buf);
-		} else {
-			strcpy(json_str,"{ \"tube\":\"racct-bhyve\", \"data\":[");
-			strcat(json_str,json_buf);
+		if(OUTPUT_BEANSTALKD & output_flags){
+			memset(json_buf,0,sizeof(json_buf));
+			sprintf(json_buf,"{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",sumch->name,
+			cur_time,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,sumch->readiops/round_total,sumch->writeiops/round_total);
+
+			if (strlen(json_str)>2) {
+				strcat(json_str,",");
+				strcat(json_str,json_buf);
+			} else {
+				strcpy(json_str,"{ \"tube\":\"racct-bhyve\", \"data\":[");
+				strcat(json_str,json_buf);
+			}
 		}
-		
-		if (tosqlite3==1) {
+
+#ifdef WITH_INFLUX
+		if (OUTPUT_INFLUX & output_flags) {
+			sprintf(influx->buffer+strlen(influx->buffer),"%s,node=%s,host=%s%s%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
+				influx->tables.bhyve, hostname, sumch->name, (influx->tags.bhyve==NULL?"":","), (influx->tags.bhyve==NULL?"":influx->tags.bhyve),
+				sumch->memoryuse/round_total,sumch->pcpu/round_total,sumch->pmem/round_total,sumch->readbps/round_total,sumch->writebps/round_total,
+				sumch->readiops/round_total,sumch->writeiops/round_total,sumch->maxproc/round_total,sumch->openfiles/round_total,nanoseconds());
+
+			influx->items++;
+		}
+#endif
+
+		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql,0,sizeof(sql));
 			memset(stats_file,0,sizeof(stats_file));
 			sprintf(stats_file,"%s/jails-system/%s/racct.sqlite",workdir,sumch->name);
@@ -293,17 +300,13 @@ int sum_data_bhyve()
 		remove_data_by_jname(sumch->name);
 	}
 
-	strcat(json_str,"]}");
+	if(OUTPUT_BEANSTALKD & output_flags){
+		strcat(json_str,"]}");
+	}else skip_beanstalk=1;
 	bs_tick=0;
 
-	if(cur_round!=save_loop_count)
-		return 0;
 
-	if(tobeanstalkd==0)
-		skip_beanstalk=1;
-
-	if (skip_beanstalk==1)
-		return 0;
+	if(cur_round!=save_loop_count || skip_beanstalk==1) return(0);
     
 	if (strlen(json_str)>3) {
 		tolog(log_level,"bs_put: (%s)\n",json_str);
@@ -322,9 +325,7 @@ int sum_data_bhyve()
 	return 0;
 }
 
-int
-get_bhyve_cpus(char *vmname)
-{
+int get_bhyve_cpus(char *vmname) {
 	sqlite3		*db;
 	char		query[40];
 	char		*err = NULL;
@@ -361,9 +362,7 @@ get_bhyve_cpus(char *vmname)
 	return vm_cpus;
 }
 
-unsigned long
-get_vm_pid_from_sql(char *vmname)
-{
+unsigned long get_vm_pid_from_sql(char *vmname) {
 	sqlite3		*db;
 	char		query[100];
 	char		*err = NULL;
@@ -402,9 +401,7 @@ get_vm_pid_from_sql(char *vmname)
 	return jid;
 }
 
-unsigned long
-get_bhyve_maxmem(char *vmname)
-{
+unsigned long get_bhyve_maxmem(char *vmname) {
 	sqlite3		*db;
 	int		res;
 	int		i;
@@ -445,8 +442,7 @@ get_bhyve_maxmem(char *vmname)
 }
 
 
-int update_racct_bhyve(char *vmname, char *orig_jname, char *vmpath)
-{
+int update_racct_bhyve(char *vmname, char *orig_jname, char *vmpath) {
 	struct item_data *target = NULL, *ch, *next_ch;
 	struct timeval  now_time;
 	int cur_time = 0;
@@ -481,36 +477,34 @@ int update_racct_bhyve(char *vmname, char *orig_jname, char *vmpath)
 				// if PID change, get CPUs from bhyve table for ncpu value
 				vm_cpus=get_bhyve_cpus(orig_jname);
 				if (vm_cpus == 0) return 0;
+
 				maxmem=get_bhyve_maxmem(orig_jname);
 				if (maxmem == 0) return 0;
+
 				tolog(log_level,"* VM PID WAS CHANGES, UPDATE CPUS: %d, UPDATE MAXMEM: %lu\n", vm_cpus,maxmem);
 
 				ch->cpus = vm_cpus;
 				ch->maxmem = maxmem;
 			} else {
-				if (ch->cpus == 0) {
-					ch->cpus=get_bhyve_cpus(orig_jname);
-				}
+				if (ch->cpus == 0) ch->cpus=get_bhyve_cpus(orig_jname);
 				vm_cpus = ch->cpus;
-				if (ch->maxmem == 0) {
-					ch->maxmem=get_bhyve_maxmem(orig_jname);
-				}
+
+				if (ch->maxmem == 0) ch->maxmem=get_bhyve_maxmem(orig_jname);
 				maxmem = ch->maxmem;
 			}
 
 		for (;;) {
 			outbuflen *= 4;
 			outbuf = realloc(outbuf, outbuflen);
-			if (outbuf == NULL)
-				err(1, "realloc");
+			if (outbuf == NULL) err(1, "realloc");
+
 			error = rctl_get_racct(filter, strlen(filter) + 1, outbuf, outbuflen);
-			if (error == 0)
-				break;
-			if (errno == ERANGE)
-				continue;
-			if (errno == ENOSYS)
-				enosys();
+			if (error == 0) break;
+			if (errno == ERANGE) continue;
+			if (errno == ENOSYS) enosys();
+
 			warn("failed to show resource consumption for '%s'",unexpanded_rule);
+
 			free(outbuf);
 			return (error);
 		}
@@ -519,64 +513,42 @@ int update_racct_bhyve(char *vmname, char *orig_jname, char *vmpath)
 		int i = 0;
 
 		while ((tmp = strsep(&copy, ",")) != NULL) {
-			if (tmp[0] == '\0')
-				break;
+			if (tmp[0] == '\0') break;
+
 			while ((var = strsep(&tmp, "=")) != NULL) {
 				i++;
-				if (var[0] == '\0') {
-					free(tmp);
-					break;
-					}
+				if (var[0] == '\0') { free(tmp); break; }
 				if (i==1) {
 					memset(param_name,0,sizeof(param_name));
 					strcpy(param_name,var);
 				}
 				if (i==2) {
 					//printf("val* %s\n",var);
-					if (!strcmp(param_name,"cputime")) {
-						ch->cputime=atoi(var);
-					} else if (!strcmp(param_name,"datasize")) {
-						ch->datasize=atoi(var);
-					} else if (!strcmp(param_name,"stacksize")) {
-						ch->stacksize=atoi(var);
-					} else if (!strcmp(param_name,"memoryuse")) {
-						ch->memoryuse=atol(var);
-					} else if (!strcmp(param_name,"memorylocked")) {
-						ch->memorylocked=atoi(var);
-					} else if (!strcmp(param_name,"maxproc")) {
-						ch->maxproc=atoi(var);
-					} else if (!strcmp(param_name,"openfiles")) {
-						ch->openfiles=atoi(var);
-					} else if (!strcmp(param_name,"vmemoryuse")) {
-						ch->vmemoryuse=atol(var);
-					} else if (!strcmp(param_name,"swapuse")) {
-						ch->swapuse=atoi(var);
-					} else if (!strcmp(param_name,"nthr")) {
-						ch->nthr=atoi(var);
-					} else if (!strcmp(param_name,"pcpu")) {
-						if (vm_cpus>1) {
-							ch->pcpu=( atoi(var) / vm_cpus );
-						} else {
-							ch->pcpu=atoi(var);
-						}
-						if (ch->pcpu>100)
-							ch->pcpu=100;
-					} else if (!strcmp(param_name,"readbps")) {
-						ch->readbps=atoi(var);
-					} else if (!strcmp(param_name,"writebps")) {
-						ch->writebps=atoi(var);
-					} else if (!strcmp(param_name,"readiops")) {
-						ch->readiops=atoi(var);
-					} else if (!strcmp(param_name,"writeiops")) {
-						ch->writeiops=atoi(var);
+					if (!strcmp(param_name,"cputime")) ch->cputime=atoi(var);
+					else if (!strcmp(param_name,"datasize")) ch->datasize=atoi(var);
+					else if (!strcmp(param_name,"stacksize")) ch->stacksize=atoi(var);
+					else if (!strcmp(param_name,"memoryuse")) ch->memoryuse=atol(var);
+					else if (!strcmp(param_name,"memorylocked")) ch->memorylocked=atoi(var);
+					else if (!strcmp(param_name,"maxproc")) ch->maxproc=atoi(var);
+					else if (!strcmp(param_name,"openfiles")) ch->openfiles=atoi(var);
+					else if (!strcmp(param_name,"vmemoryuse")) ch->vmemoryuse=atol(var);
+					else if (!strcmp(param_name,"swapuse")) ch->swapuse=atoi(var);
+					else if (!strcmp(param_name,"nthr")) ch->nthr=atoi(var);
+					else if (!strcmp(param_name,"readbps")) ch->readbps=atoi(var);
+					else if (!strcmp(param_name,"writebps")) ch->writebps=atoi(var);
+					else if (!strcmp(param_name,"readiops"))  ch->readiops=atoi(var);
+					else if (!strcmp(param_name,"writeiops")) ch->writeiops=atoi(var);
+					else if (!strcmp(param_name,"pcpu")){
+						if (vm_cpus>1) ch->pcpu=( atoi(var) / vm_cpus );
+						else ch->pcpu=atoi(var);
+						if (ch->pcpu>100) ch->pcpu=100;
 					} else {
 						//calculate pmem
 						ch->pmem = 100.0 * ch->memoryuse / ch->maxmem;
-						if (ch->pmem>100)
-							ch->pmem=100;
+						if (ch->pmem>100) ch->pmem=100;
 					}
 					i=0;
-					}
+				}
 			}
 		}
 
@@ -613,6 +585,8 @@ main(int argc, char **argv)
 	int optcode = 0;
 	int option_index = 0;
 
+	running_bhyves=0;
+
 	struct dirent *dp;
 	char vmname[MAXJNAME];
 	char vmpath[MAXJNAME];
@@ -628,6 +602,9 @@ main(int argc, char **argv)
 		{"save_loop_count", required_argument, 0, C_SAVE_LOOP_COUNT},
 		{"save_beanstalkd", required_argument, 0, C_SAVE_BEANSTALKD},
 		{"save_sqlite3", required_argument, 0, C_SAVE_SQLITE3},
+#ifdef WITH_INFLUX
+		{"save_influx", required_argument, 0, C_SAVE_INFLUX},
+#endif
 		/* End of options marker */
 		{0, 0, 0, 0}
 	};
@@ -650,17 +627,23 @@ main(int argc, char **argv)
 				loop_interval=atoi(optarg);
 				break;
 			case C_PROMETHEUS_EXPORTER:
-				prometheus_exporter=atoi(optarg);
+				if(atoi(optarg) != 0) output_flags |= OUTPUT_PROMETHEUS;
 				break;
 			case C_SAVE_LOOP_COUNT:
 				save_loop_count=atoi(optarg);
 				break;
 			case C_SAVE_BEANSTALKD:
-				tobeanstalkd=atoi(optarg);
+				if(atoi(optarg) != 0) output_flags |= OUTPUT_BEANSTALKD;
 				break;
 			case C_SAVE_SQLITE3:
-				tosqlite3=atoi(optarg);
+				if(atoi(optarg) != 0) output_flags |= OUTPUT_SQLITE3;
 				break;
+#ifdef WITH_INFLUX
+                        case C_SAVE_INFLUX:
+                                if(atoi(optarg) != 0) output_flags |= OUTPUT_INFLUX;
+                                break;
+#endif
+
 		}
 	}
 
@@ -672,13 +655,20 @@ main(int argc, char **argv)
 	printf("log_level: %d\n",log_level);
 	printf("loop_interval: %d seconds\n",loop_interval);
 	printf("save_loop_count: %d\n",save_loop_count);
-	printf("beanstalkd enabled: %d\n",tobeanstalkd);
-	printf("prometheus enabled: %d\n",prometheus_exporter);
-	printf("sqlite3 enabled: %d\n",tosqlite3);
+	printf("beanstalkd enabled: %s\n",(OUTPUT_BEANSTALKD & output_flags)?"yes":"no");
+	printf("prometheus enabled: %s\n",(OUTPUT_PROMETHEUS & output_flags)?"yes":"no");
+	printf("sqlite3 enabled: %s\n",(OUTPUT_SQLITE3 & output_flags)?"yes":"no");
+#ifdef WITH_INFLUX
+	printf("influx enabled: %s\n",(OUTPUT_INFLUX & output_flags)?"yes":"no");
+#endif
 
-	if((tosqlite3==0)&&(tobeanstalkd==0)&&(prometheus_exporter==0)) {
-			printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
-			exit(-1);
+	if(output_flags == 0){
+#ifdef WITH_INFLUX
+		printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 --save_influx )\n");
+#else
+		printf("Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
+#endif
+		exit(-1);
 	}
 
 	ncpu_len = sizeof(ncpu);
@@ -745,34 +735,51 @@ main(int argc, char **argv)
 		printf("Cannot open or create pidfile: %s",path_my_pidfile);
 	}
 
-	if (pidfile != NULL)
-		pidfile_write(pidfile);
+	if (pidfile != NULL) pidfile_write(pidfile);
 
 	i = sysctlbyname("hw.physmem",&maxmem, &maxmem_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
-			errx(1, "Unable to determine hoster physical memory via sysctl hw.physmem");
+		if (errno == ENOENT) errx(1, "Unable to determine hoster physical memory via sysctl hw.physmem");
 		err(1, "sysctlbyname");
 	}
 
 	i = sysctlbyname("hw.ncpu",&ncpu, &ncpu_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
-			errx(1, "Unable to determine CPU count via hw.ncpu");
+		if (errno == ENOENT) errx(1, "Unable to determine CPU count via hw.ncpu");
 		err(1, "sysctlbyname");
 	}
 
 	c=0;
 
+#ifdef WITH_INFLUX
+	cbsd_influx_init();
+	load_config();
+#endif
+
 	while(1) {
 		tolog(log_level,"main loop\n");
-		if (bs_socket!=-1)
-			bs_disconnect(bs_socket);
-		bs_socket=init_bs("racct-bhyve");
+		if((OUTPUT_BEANSTALKD & output_flags) && bs_connected!=1){
+			if (bs_socket!=-1) bs_disconnect(bs_socket);
+			bs_socket=init_bs("racct-jail");
+		}else if(!(OUTPUT_BEANSTALKD & output_flags)){
+			bs_connected=0;
+		}
 
-		while ( bs_connected==1 ) {
+		while ( true ) {
+			if((OUTPUT_BEANSTALKD & output_flags) && bs_connected!=1) break;
+
+#ifdef WITH_INFLUX
+			if(OUTPUT_INFLUX & output_flags){
+				if (influx->items > (4*(1+running_bhyves)) || influx->items > 50){ // 50 rows max to be sure we don't overflow the buffer.
+					int rc;
+					if((rc=cbsd_influx_transmit_buffer()) != 0) tolog(log_level,"RACCT to Influx failed! [code:%d]\n", rc);
+				}
+			}
+#endif
+
+
 			tolog(log_level," round %d/%d\n ---------------- \n",cur_round,save_loop_count);
 			//convert round integer to string
 			memset(rnum,0,sizeof(rnum));
@@ -784,8 +791,7 @@ main(int argc, char **argv)
 				sleep(60);
 				bhyve_exist=0;
 				continue;
-				}
-			else {
+			} else {
 				tolog(log_level,"vmm exist in /dev/vmm\n");
 				bhyve_exist=1;
 			}
@@ -793,6 +799,7 @@ main(int argc, char **argv)
 			if (bhyve_exist==1) {
 				tolog(log_level,"scan for /dev/vmm\n");
 				//rewinddir(dirp);
+				running_bhyves=0;		// We count the items fou automatic scaling transmission to influx
 				while ((dp = readdir(dirp)) != NULL) {
 					if (dp->d_name[0]=='.') continue;
 					tolog(log_level,"/dev/vmm found: %s\n",dp->d_name);
@@ -813,6 +820,7 @@ main(int argc, char **argv)
 					vmname[strlen(vmname)]='\0';
 					i=jname_exist(vmname);
 					if (i) {
+						running_bhyves++;
 						update_racct_bhyve(vmname,tmpjname,vmpath);
 						continue;
 					}
@@ -842,34 +850,35 @@ main(int argc, char **argv)
 				c=0;
 			}
 
-			i=bs_stats_tube(bs_socket, "racct-bhyve", &yaml);
-			if(yaml) {
-				current_jobs_ready=get_bs_stats(yaml,current_jobs_ready_str);
-				current_waiting=get_bs_stats(yaml,current_waiting_str);
-				free(yaml);
-				if (current_jobs_ready<0) {
-					tolog(log_level,"get_bs_stats failed for current-jobs-ready\n");
+			if((OUTPUT_BEANSTALKD & output_flags) && bs_connected==1){
+				i=bs_stats_tube(bs_socket, "racct-bhyve", &yaml);
+				if(yaml) {
+					current_jobs_ready=get_bs_stats(yaml,current_jobs_ready_str);
+					current_waiting=get_bs_stats(yaml,current_waiting_str);
+					free(yaml);
+					if (current_jobs_ready<0) {
+						tolog(log_level,"get_bs_stats failed for current-jobs-ready\n");
+						bs_connected=0;
+						sleep(loop_interval);
+						break;
+					}
+					if (current_waiting<0) {
+						tolog(log_level,"get_bs_stats failed for current-waiting\n");
+						bs_connected=0;
+						sleep(loop_interval);
+						break;
+					}
+					tolog(log_level,"current-jobs: %d, jobs_max_all: %d, current-waiting: %d\n",current_jobs_ready,jobs_max_all_items,current_waiting);
+				} else {
+					current_waiting=-1;
+					current_jobs_ready=-1;
 					bs_connected=0;
-					sleep(loop_interval);
+					tolog(log_level,"bs_stats_tube yaml error,reset bs connection\n");
+					sleep(1);
 					break;
 				}
-				if (current_waiting<0) {
-					tolog(log_level,"get_bs_stats failed for current-waiting\n");
-					bs_connected=0;
-					sleep(loop_interval);
-					break;
-				}
-				tolog(log_level,"current-jobs: %d, jobs_max_all: %d, current-waiting: %d\n",current_jobs_ready,jobs_max_all_items,current_waiting);
-			} else {
-				current_waiting=-1;
-				current_jobs_ready=-1;
-				bs_connected=0;
-				tolog(log_level,"bs_stats_tube yaml error,reset bs connection\n");
-				sleep(1);
-				break;
-			}
 
-			if (current_waiting==0) {
+				if (current_waiting==0) {
 					skip_beanstalk=1;
 					//no consumer, (flush old data?)
 					tolog(log_level,"[debug]no waiting consumer anymore, clear/flush old jobs: %d\n",current_jobs_ready);
@@ -881,11 +890,12 @@ main(int argc, char **argv)
 //						bs_delete(bs_socket, job->id);
 //						bs_free_job(job);
 //					}
-			} else if (current_jobs_ready>20) {
+				} else if (current_jobs_ready>20) {
 					skip_beanstalk=1;
 					tolog(log_level,"[debug]too many ready jobs in bs: %d. skip for beanstalk\n",current_jobs_ready);
-			} else {
-				skip_beanstalk=0;
+				} else {
+					skip_beanstalk=0;
+				}
 			}
 
 			// giant cycle sleep
@@ -893,20 +903,17 @@ main(int argc, char **argv)
 //			usleep(100000);
 			sleep(loop_interval);
 			cur_round++;
-			if(cur_round>save_loop_count) {
-				cur_round=0;
-			}
-			if(cur_round==save_loop_count) {
-				sum_data_bhyve();
-			}
+			if(cur_round>save_loop_count) cur_round=0;
+			if(cur_round==save_loop_count) sum_data_bhyve();
 		}
 	}
 
-	if (dirp != NULL)
-		(void)closedir(dirp);
+	if (dirp != NULL) (void)closedir(dirp);
+	if (pidfile != NULL) pidfile_remove(pidfile);
+#ifdef WITH_INFLUX
+        cbsd_influx_free();
+#endif
 
-	if (pidfile != NULL)
-		pidfile_remove(pidfile);
 	return 0;
 }
 

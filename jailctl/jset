@@ -88,7 +88,7 @@ validate_ipaddr()
 	done )
 	unset IFS
 
-	for _i in $( /usr/bin/seq 0 255 ); do
+	for _i in $( ${SEQ_CMD} 0 255 ); do
 		_ok=1
 		unset _existing_ipjail _existing_ip
 		eval _jname="\$jname$_i"
@@ -102,7 +102,11 @@ validate_ipaddr()
 		_existing_ipjail=$( echo ${_existing_ipjail} | ${TR_CMD} "," " " )
 
 		for _x in ${_existing_ipjail}; do
-			[ "${_x}" = "DHCP" ] && continue
+			case "${_x}" in
+				[Dd][Hh][Cc][Pp]|[Dd][Hh][Cc][Pp][Vv]6)
+					continue
+					;;
+			esac
 			ipwmask ${_x}
 			[ -z "${IWM}" ] && continue
 			iptype ${IWM}
@@ -166,23 +170,36 @@ modify_ipaddr()
 		fi
 	done
 
-	_IP4=""
-	_IP6=""
+	_IP4=
+	_IP6=
 
 	for _pureip in ${ip4_addr}; do
-		if [ "${_pureip}" = "DHCP" ]; then
-			_dhcp=$( dhcpd )
-			if [ $? -eq 2 ]; then
-				cbsdlogger WARNING ${CBSD_APP}: modify_ipaddr: No free IP address for DHCP in nodeippool
-				err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
-			fi
-			_pureip="${_dhcp}"
-		fi
+		case "${_pureip}" in
+			[Dd][Hh][Cc][Pp])
+				_dhcp=$( dhcpd )
+				if [ $? -eq 2 ]; then
+					cbsdlogger WARNING ${CBSD_APP}: modify_ipaddr: No free IP address for DHCP in nodeippool
+					err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
+				fi
+				_pureip="${_dhcp}"
+				;;
+			[Dd][Hh][Cc][Pp][Vv][6])
+				_dhcp=$( dhcpdv6 )
+				if [ $? -eq 2 ]; then
+					cbsdlogger WARNING ${CBSD_APP}: modify_ipaddr: No free IPv6 address for DHCP in nodeippool
+					err 1 "${N1_COLOR}No free IPv6 address for DHCP in nodeippool${N0_COLOR}"
+				fi
+				# normalize IPv6 to compressed form
+				eval $( ${miscdir}/sipcalc ${_dhcp} )
+				_dhcp="${_compressed_ipv6_address}"
+				_pureip="${_dhcp}"
+				;;
+		esac
 		iptype ${_pureip}
 		_inet=$?
 		_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
 		ipwmask ${_pureip}
-		if [ -n "$IWM" ]; then
+		if [ -n "${IWM}" ]; then
 			case ${_inet} in
 				1)
 					_MODIF="inet"
@@ -212,13 +229,16 @@ modify_ipaddr()
 
 	IFS=" "
 
-	[ -n "${_dhcp}" ] && ip4_addr=$( echo ${ip4_addr} | ${SED_CMD} s:DHCP:${_dhcp}:g )
+	# replace old value by IP
+	if [ -n "${_dhcp}" ]; then
+		ip4_addr=$( echo ${ip4_addr} | ${SED_CMD} -e "s#DHCPv6#${_dhcp}#g" -e "s#DHCP#${_dhcp}#g" )
+	fi
 
 	#construct ipX.addr string 
 	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
 
-	cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: /usr/sbin/jail -m ${_nIPs} jid=${jid}
-	/usr/sbin/jail -m ${_nIPs} jid=${jid}
+	cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: ${JAIL_CMD} -m ${_nIPs} jid=${jid}
+	${JAIL_CMD} -m ${_nIPs} jid=${jid}
 
 	cbsdsqlrw local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
 	${ECHO} "${argpart}: ${N1_COLOR}${ip4_addr}${N0_COLOR}"
@@ -232,7 +252,7 @@ modify_ipaddr()
 modify_allow_mount()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_mount}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount=${allow_mount} jid=${jid}
+	${JAIL_CMD} -m allow.mount=${allow_mount} jid=${jid}
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_mount}${N0_COLOR}"
 }
 
@@ -240,7 +260,7 @@ modify_allow_mount()
 modify_allow_raw_sockets()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_raw_sockets}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.raw_sockets=${allow_raw_sockets} jid=${jid}
+	${JAIL_CMD} -m allow.raw_sockets=${allow_raw_sockets} jid=${jid}
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_raw_sockets}${N0_COLOR}"
 }
 
@@ -248,7 +268,7 @@ modify_allow_raw_sockets()
 modify_allow_read_msgbuf()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_read_msgbuf}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.read_msgbuf=${allow_read_msgbuf} jid=${jid}
+	${JAIL_CMD} -m allow.read_msgbuf=${allow_read_msgbuf} jid=${jid}
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_read_msgbuf}${N0_COLOR}"
 }
 
@@ -256,7 +276,7 @@ modify_allow_read_msgbuf()
 modify_allow_vmm()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_vmm}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.vmm=${allow_vmm} jid=${jid}
+	${JAIL_CMD} -m allow.vmm=${allow_vmm} jid=${jid}
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_vmm}${N0_COLOR}"
 }
 
@@ -264,7 +284,7 @@ modify_allow_vmm()
 modify_allow_mlock()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_mlock}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mlock=${allow_vmm} jid=${jid}
+	${JAIL_CMD} -m allow.mlock=${allow_vmm} jid=${jid}
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_mlock}${N0_COLOR}"
 }
 
@@ -274,7 +294,7 @@ modify_allow_nullfs()
 	local allow_mount
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_nullfs}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount.nullfs=${allow_nullfs} jid=${jid}
+	${JAIL_CMD} -m allow.mount.nullfs=${allow_nullfs} jid=${jid}
 
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_nullfs}${N0_COLOR}"
 	[ ${allow_nullfs} -eq 0 ] && return 0
@@ -283,7 +303,7 @@ modify_allow_nullfs()
 	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
-		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
@@ -294,7 +314,7 @@ modify_allow_fusefs()
 	local allow_mount
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_fusefs}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount.fusefs=${allow_fusefs} jid=${jid}
+	${JAIL_CMD} -m allow.mount.fusefs=${allow_fusefs} jid=${jid}
 
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_fusefs}${N0_COLOR}"
 	[ ${allow_fusefs} -eq 0 ] && return 0
@@ -303,7 +323,7 @@ modify_allow_fusefs()
 	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
-		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
@@ -314,7 +334,7 @@ modify_allow_procfs()
 	local allow_mount
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_procfs}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount.procfs=${allow_procfs} jid=${jid}
+	${JAIL_CMD} -m allow.mount.procfs=${allow_procfs} jid=${jid}
 
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_procfs}${N0_COLOR}"
 	[ ${allow_procfs} -eq 0 ] && return 0
@@ -323,7 +343,7 @@ modify_allow_procfs()
 	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
-		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
@@ -333,7 +353,7 @@ modify_allow_procfs()
 modify_allow_tmpfs()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_tmpfs}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount.tmpfs=${allow_tmpfs} jid=${jid}
+	${JAIL_CMD} -m allow.mount.tmpfs=${allow_tmpfs} jid=${jid}
 
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_tmpfs}${N0_COLOR}"
 	[ ${allow_tmpfs} -eq 0 ] && return 0
@@ -342,7 +362,7 @@ modify_allow_tmpfs()
 	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
-		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
@@ -352,7 +372,7 @@ modify_allow_tmpfs()
 modify_allow_fdescfs()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_fdescfs}\" WHERE jname=\"${jname}\""
-	/usr/sbin/jail -m allow.mount.fdescfs=${allow_fdescfs} jid=${jid}
+	${JAIL_CMD} -m allow.mount.fdescfs=${allow_fdescfs} jid=${jid}
 
 	${ECHO} "${argpart}: ${N1_COLOR}${allow_fdescfs}${N0_COLOR}"
 	[ ${allow_fdescfs} -eq 0 ] && return 0
@@ -361,7 +381,7 @@ modify_allow_fdescfs()
 	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
-		/usr/sbin/jail -m allow.mount=1 jid=${jid}
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
@@ -417,7 +437,7 @@ modify_mount_src()
 
 	case "${mount_src}" in
 		0)
-			is_mounted ${_dst} && umount -f ${_dst}
+			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
 			;;
 		1)
 			is_mounted ${_dst} && err 1 "${N1_COLOR}Already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
@@ -451,8 +471,8 @@ modify_mount_ports()
 
 	case "${mount_ports}" in
 		0)
-			is_mounted ${_dst}/distfiles && umount -f ${_dst}/distfiles
-			is_mounted ${_dst} && umount -f ${_dst}
+			is_mounted ${_dst}/distfiles && ${UMOUNT_CMD} -f ${_dst}/distfiles
+			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
 		;;
 		1)
 			[ ! -d /usr/ports ] && return 0
@@ -495,11 +515,11 @@ modify_mount_kernel()
 
 	case "${mount_kernel}" in
 		0)
-			is_mounted ${_dst} && umount -f ${_dst}
+			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
 			;;
 		1)
 			is_mounted ${_dst} && err 1 "${N1_COLOR}Already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
-			[ ! -d "${_dst}" ] && /bin/mkdir -p ${_dst}
+			[ ! -d "${_dst}" ] && ${MKDIR_CMD} -p ${_dst}
 			${MOUNT_NULL_CMD} -oro ${_src} ${_dst}
 			;;
 	esac
@@ -535,13 +555,13 @@ update_jails()
 	case "${i}" in
 		arch)
 			if [ "${VAL}" = "native" ]; then
-				VAL=$( /usr/bin/uname -m )
+				VAL=$( ${UNAME_CMD} -m )
 				export $i="${VAL}"
 			fi
 			;;
 		ver)
 			if [ "${VAL}" = "native" ]; then
-				tmpver=$( /usr/bin/uname -r )
+				tmpver=$( ${UNAME_CMD} -r )
 				VAL=${tmpver%%-*}
 				[ "${stable}" = "1" ] && VAL=${VAL%%.*}
 				export $i="${VAL}"
@@ -613,7 +633,7 @@ for n in ${my_arg}; do
 			##### check for already running
 			if [ ${jid} -ne 0  ]; then
 				case "${argpart}" in
-					"ip4_addr")
+					ip4_addr)
 						cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr for ${jname}
 						modify_ipaddr
 						;;

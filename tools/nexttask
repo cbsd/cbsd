@@ -15,7 +15,7 @@ mail_notify()
 	local _msg=$( ${MKTEMP_CMD} /tmp/mymsg.$$ )
 	local _result
 
-	trap "/bin/rm -f ${_msg}" HUP KILL INT ABRT BUS TERM EXIT
+	trap "${RM_CMD} -f ${_msg}" HUP KILL INT ABRT BUS TERM EXIT
 
 	[ -z "${lastoutput_num}" ] && lastoutput_num=0
 
@@ -30,7 +30,7 @@ EOF
 
 last ${lastoutput_num} lines of task log (${logfile}):
 
-$( /usr/bin/tail -n${lastoutput_num} ${logfile} )
+$( ${TAIL_CMD} -n${lastoutput_num} ${logfile} )
 EOF
 	fi
 
@@ -44,7 +44,7 @@ EOF
 $( ${CAT_CMD} ${_msg} )
 EOF
 
-	/bin/rm -f ${_msg}
+	${RM_CMD} -f ${_msg}
 	trap "" HUP KILL INT ABRT BUS TERM EXIT
 }
 
@@ -92,7 +92,7 @@ check_for_depend()
 		cbsdsqlrw cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${deperrcode}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
 		runtime=$(( ( _end_time - _st_time ) / 60 ))
 		readconf task.conf
-		[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
+		[ -n "${CBSDRCPT}" -a ${notify} -eq 1 ] && mail_notify
 		exit 0
 	fi
 }
@@ -127,11 +127,17 @@ fi
 _st_time=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
 cbsdsqlrw cbsdtaskd "UPDATE taskd SET status=\"1\",st_time=\"${_st_time}\",logfile=\"${logfile}\" WHERE id=\"${id}\""
 echo "spawntask ${id} ${logfile} ${cmd}"
-spawntask ${id} ${logfile} ${cmd}
+spawntask ${id} ${logfile} ${cmd} > /dev/null 2>&1
 _err=$?
 _end_time=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
 
-cbsdsqlrw cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${_err}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
+# SQLite3 locking? try to restry
+for i in $( ${JOT_CMD} 5 ); do
+	cbsdsqlrw cbsdtaskd "UPDATE taskd SET status=\"2\",errcode=\"${_err}\",end_time=\"${_end_time}\" WHERE id=\"${id}\""
+	sleep 0.5
+	A=$( cbsdsqlro cbsdtaskd SELECT status FROM taskd WHERE id=\"${id}\" LIMIT 1 | ${AWK_CMD} '{printf $1}' )
+	[ "${A}" = "2" ] && break
+done
 
 runtime=$(( ( _end_time - _st_time ) / 60 ))
 
@@ -139,7 +145,7 @@ readconf task.conf
 
 #determine email for this owner
 eval CBSDRCPT=\${${owner}_rcpt}
-[ -n "${CBSDRCPT}" -a $notify -eq 1 ] && mail_notify
+[ -n "${CBSDRCPT}" -a ${notify} -eq 1 ] && mail_notify
 
 case "${autoflush}" in
 	0)
@@ -147,13 +153,13 @@ case "${autoflush}" in
 	1)
 		if [ ${_err} -eq 0 ]; then
 			cbsdsqlrw cbsdtaskd DELETE FROM taskd WHERE id=\"${id}\"
-			[ -r "${logfile}" ] && /bin/rm -f ${logfile}
+			[ -r "${logfile}" ] && ${RM_CMD} -f ${logfile}
 		fi
 		;;
 	2)
 		echo "Remove $id"
 		cbsdsqlrw cbsdtaskd DELETE FROM taskd WHERE id=\"${id}\"
-		[ -r "${logfile}" ] && /bin/rm -f ${logfile}
+		[ -r "${logfile}" ] && ${RM_CMD} -f ${logfile}
 		;;
 esac
 

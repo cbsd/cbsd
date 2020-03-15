@@ -32,8 +32,8 @@ static int print_jail(int pflags, int jflags);
 int
 cbsdjlscmd(int argc, char **argv)
 {
-	char *dot, *ep, *jname, *pname;
-	int c, i, jflags, jid, lastjid, pflags, spc;
+	char *ep, *jname;
+	int c, jflags, jid, lastjid, pflags;
 
 	jname = NULL;
 	pflags = jflags = jid = 0;
@@ -81,6 +81,7 @@ cbsdjlscmd(int argc, char **argv)
 
 	/* Fetch the jail(s) and print the parameters. */
 	for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
+
 	}
 
 	return 0;
@@ -186,18 +187,11 @@ sort_param(const void *a, const void *b)
 	return (strcmp(parama->jp_name, paramb->jp_name));
 }
 
-static int
-print_jail(int pflags, int jflags)
-{
-	char *nname;
-	char **param_values;
-	int i, ai, jid, count, n, spc;
+static int print_jail(int pflags, int jflags) {
+	int jid = jailparam_get(params, nparams, jflags);
 
-	jid = jailparam_get(params, nparams, jflags);
-	if (jid < 0)
-		return jid;
+	if (jid < 0) return jid;
 	out1fmt("%d %s\n",*(int *)params[0].jp_value,(char *)params[1].jp_value);
 
-	n = 6;
 	return (jid);
 }
