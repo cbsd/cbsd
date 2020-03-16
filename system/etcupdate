@@ -1,0 +1,103 @@
+#!/usr/local/bin/cbsd
+#v12.1.7
+# Open task:
+#  - why re@ at freebsd.org does not generate etcupdate files, e.g: https://download.freebsd.org/ftp/releases/amd64/12.1-RELEASE/
+#  - why etcupdate used for source and destionation different presentations of the same hierarchy, e.g.
+#     we can use -t for TGZ-archive while source tree cannot be an archive? the contents are the same!
+#  - CBSD can generate result for etcupdate [extract|build] without source tree for old/new ver, from ~cbsd/basejail ?
+#  - what we do with patch-level ? generate each time ?
+#  - how can we facilitate pointing for from= and to= values/version? E.g, when etcupdate executed after version change, 
+#    we can take/detect to= version automatically by elf from /bin/sh in jail (or take from= before update )
+#    May be etcupdate should executed automatically with change/baseupdate/jupgrade script ? In this case we control old/new version
+#  - create backup in ${jailsysdir}/${jname}/ ?
+#  - extrnal etcupdate.conf file for custom excludes, e.g:
+#      etcupdate_excludes="-I '/root/*' -I '/etc/hosts'" ?
+MYARG="mode"
+MYOPTARG="from to jname ver"
+MYDESC="Upgrade jail base data when baserw=1"
+CBSDMODULE="jail"
+
+. ${subr}
+. ${strings}
+. ${distdir}/universe.subr
+readconf buildworld.conf
+
+. ${cbsdinit}
+etcupdate_ver="${ver}"
+
+if [ -n "${jname}" ]; then
+	. ${jrcconf}
+	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
+	etcupdate_jail_root="${jailsysdir}/${jname}/etcupdate"
+fi
+
+case "${mode}" in
+	extract)
+		# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
+		[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
+		ver="${etcupdate_ver}"
+		init_target_arch
+		init_srcdir
+		etcupdate_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
+		etcupdate_dir="${etcupdate_dir_root}/etcupdate"
+		[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
+		[ -d ${etcupdate_dir}/current ] && ${RM_CMD} -rf ${etcupdate_dir}/current
+		${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}extract...${N0_COLOR}"
+		${ETCUPDATE_CMD} extract -d ${etcupdate_dir} -s ${SRC_DIR}
+		[ ! -d ${etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} failed to extract: ${N1_COLOR}${etcupdate_dir}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP} updated: ${N2_COLOR}${etcupdate_dir}${N0_COLOR}"
+		;;
+	build)
+		# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
+		[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
+		ver="${etcupdate_ver}"
+		init_target_arch
+		init_srcdir
+		etcupdate_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
+		etcupdate_dir="${etcupdate_dir_root}"
+		[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}build...${N0_COLOR}"
+		${ETCUPDATE_CMD} build -s ${SRC_DIR} ${etcupdate_dir}/etcupdate.tgz
+		if [ -r ${etcupdate_dir}/etcupdate.tgz ]; then
+			# done
+		else
+			err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
+		fi
+		;;
+	update)
+		. ${jrcconf}
+		[ $? -eq 1 ] && log_err 1 "${N1_COLOR}${CBSD_APP}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+		[ -z "${from}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}from=${N0_COLOR}"
+		[ -z "${to}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}to=${N0_COLOR}"
+		ver="${from}"
+		init_target_arch
+		init_srcdir
+		etcupdate_from_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
+		etcupdate_from_dir="${etcupdate_from_dir_root}/etcupdate"
+		[ ! -d ${etcupdate_from_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}${etcupdate_from_dir}/current${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP} source hier: ${N2_COLOR}${etcupdate_from_dir}/current${N0_COLOR}"
+
+		ver="${to}"
+		init_target_arch
+		init_srcdir
+		etcupdate_to_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
+		etcupdate_to_dir="${etcupdate_to_dir_root}"
+
+		if [ ! -r ${etcupdate_to_dir}/etcupdate.tgz ]; then
+			err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+		fi
+		${ECHO} "${N1_COLOR}${CBSD_APP} destination hier: ${N2_COLOR}${etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+
+		# autostart/stop?
+		[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}jail not running: ${N2_COLOR}${jname}${N0_COLOR}"
+
+		[ ! -d ${etcupdate_jail_root} ] && ${MKDIR_CMD} -p ${etcupdate_jail_root}
+		# we need RW place for log? redefine log path and use nullfs in RO?
+		${CP_CMD} -a ${etcupdate_from_dir}/current ${etcupdate_jail_root}
+		${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${etcupdate_to_dir}/etcupdate.tgz -D ${path}
+		;;
+	*)
+		err 1 "${N1_COLOR}${CBSD_APP} error: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
+esac
