@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.16
+#v12.1.7
 MYARG="jname out"
 MYOPTARG="ip6wa epair fbsd is_stop"
 MYDESC="Make jailv2 config file"
@@ -7,7 +7,6 @@ ADDHELP="ip6wa - ip6 work-around (sleep 3 seconds) enabled\n\
 epair - this is mandatory for vnet=1 type jail. Sets for jail vnic, separated by ','\n"
 
 . ${subr}
-
 . ${cbsdinit}
 
 # fill $interface variable by physical NIC
@@ -97,54 +96,52 @@ fi
 # ip6 work around: sleep for 3 seconds in prestart
 [ "${ip6wa}" = "1" ] && exec_prestart="sleep 3; ${exec_prestart}"
 
-# attach and detach ZFS mount inside jail
-if [ "${fbsd}" -eq 1 -a "${allow_zfs}" = "1" ]; then
-	for _zfsfstab in "${jailfstabdir}/${jailfstabpref}${jname}" "${jailfstabdir}/${jailfstabpref}${jname}.local"; do
-		[ ! -f "${_zfsfstab}" ] && continue
-		ret=0
-		${EGREP_CMD} -v "^#" "${_zfsfstab}" | ${GREP_CMD} -q '[[:space:]]zfs[[:space:]]'
-		ret=$?
-		if [ ${ret} -eq 0 ]; then
+# special route for ZFS-attach and VNET-based jail: manage exec_start
+#attach and detach ZFS mount inside jail
+if [ "${fbsd}" -eq 1 ]; then
+	# ZFS
+	if [ "${allow_zfs}" = "1" ]; then
+		# with_zfs_attach managed by mountfstab
+		if [ -r ${with_zfs_attach} ]; then
 			exec_poststop="/usr/local/bin/cbsd detachzfs fstab=${_zfsfstab} jname=${jname}; ${exec_poststop}"
 			# we need special route for this case: real exec_start command
-			# will be executed via jstart after attachzfs script. Also we need persist mode
+			# will be executed via jstart after attachzfs script. See late_start in jstart.
+			# also we need persist mode
 			${ECHO} "${N1_COLOR}persist mode: ${N2_COLOR}${N0_COLOR}"
-			exec_start=""
+			exec_start=
 			persist=1
 		fi
-	done
-fi
+	fi
 
-# rename interface only for FreeBSD jail, not for Linux jail
-# since it overwrite exec_start, must follow 
-# after "attach and detach ZFS mount inside jail" where 
-# exec_start variables is cleaned
-if [ "${vnet}" = "1" -a -n "${epair}" -a ${fbsd} -eq 1 ]; then
-	# we need special route for this case: real exec_start command
-	# will be executed via jstart after ifconfig vnet initialization. Also we need persist mode
-	exec_start=""
-	persist=1
+	# VNET
+	# rename interface only for FreeBSD jail, not for Linux jail
+	# since it overwrite exec_start, must follow 
+	# after "attach and detach ZFS mount inside jail" where 
+	# exec_start variables is cleaned
+	if [ "${vnet}" = "1" ]; then
+		# we need special route for this case: real exec_start command
+		# will be executed via jstart after ifconfig vnet initialization. See late_start in jstart.
+		# also we need persist mode
+		exec_start=
+		persist=1
 
-	my_epair_ifaces=
-	OIFS="${IFS}"
-	IFS=","
-	eth_seq=0
-	for i in ${epair}; do
-		[ -z "${i}" ] && continue
-		if [ -z "${my_epair_ifaces}" ]; then
-			my_epair_ifaces="${i}"
-		else
-			my_epair_ifaces="${my_epair_ifaces},${i}"
+		if [ -n "${epair}" ]; then
+			my_epair_ifaces=
+			OIFS="${IFS}"
+			IFS=","
+			eth_seq=0
+			for i in ${epair}; do
+				[ -z "${i}" ] && continue
+				if [ -z "${my_epair_ifaces}" ]; then
+					my_epair_ifaces="${i}"
+				else
+					my_epair_ifaces="${my_epair_ifaces},${i}"
+				fi
+				eth_seq=$(( eth_seq + 1 ))
+			done
+			IFS="${OIFS}"
 		fi
-		#exec_start="${IFCONFIG_CMD} ${i} vnet ${jname}; ${IFCONFIG_CMD} ${i} name eth${eth_seq} up; ${exec_start}"
-		#if [ -n "${exec_stop}" ]; then
-		#	exec_stop="${exec_stop}; ${IFCONFIG_CMD} ${i} -vnet ${jname};"
-		#else
-		#	exec_stop="${IFCONFIG_CMD} ${i} -vnet ${jname};"
-		#fi
-		eth_seq=$(( eth_seq + 1 ))
-	done
-	IFS="${OIFS}"
+	fi
 fi
 
 #exec.clean is dangerous with infinity exec.timeout and exec.stop and external password backend (login_getpwclass with broken ldap for example)
