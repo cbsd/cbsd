@@ -1,14 +1,15 @@
 #!/usr/local/bin/cbsd
-#v11.1.0
+#v12.1.7
 CBSDMODULE="build"
 MYARG="filelist dstdir basedir"
-MYOPTARG="prunelist verbose chaselibs excludedir"
-MYDESC="Copy bin/lib files by filelist{.xz} from basedir to dstdir"
-ADDHELP="filelist - source with file list to copy\n\
+MYOPTARG="prunelist verbose chaselibs excludedir mtree"
+MYDESC="Copy files by index file from basedir to dstdir"
+ADDHELP="filelist - xz-archived source with file list to copy\n\
 dstdir - destination dir\n\
 basedir - copy file from this dir\n\
 prunelist - source with file list to exclude\n\
-excludedir - skip manage files from this directories list (use pipe as delimer, e.g: /dev|/root\n"
+excludedir - skip manage files from this directories list (use pipe as delimer, e.g: /dev|/root\n\
+mtree - create hier by mtree first, default=0 (no)\n"
 
 . ${subr}
 
@@ -17,7 +18,9 @@ chaselibs=0
 
 . ${cbsdinit}
 
-[ -n "${excludedir}" ] && excludedir=$( echo ${excludedir} |${TR_CMD} '|' ' ' )
+[ -z "${mtree}" ] && mtree=0
+
+[ -n "${excludedir}" ] && excludedir=$( echo ${excludedir} | ${TR_CMD} '|' ' ' )
 
 BASE_DIR="${basedir}"
 FILES="${filelist}"
@@ -25,34 +28,34 @@ DST_DIR="${dstdir}"
 
 make_mtree()
 {
-	[ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
-	[ -f ${BASE_DIR}/etc/mtree/BSD.include.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.include.dist -p ${DST_DIR}/usr/include >/dev/null
-	[ ! -d "${DST_DIR}/usr/tests" ] && /bin/mkdir -p "${DST_DIR}/usr/tests"
-	[ -f ${BASE_DIR}/etc/mtree/BSD.tests.dist ] && /usr/sbin/mtree -deU -f ${BASE_DIR}/etc/mtree/BSD.tests.dist -p ${DST_DIR}/usr/tests >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.root.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.root.dist -p ${DST_DIR} >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.usr.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.usr.dist -p ${DST_DIR}/usr >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.var.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.var.dist -p ${DST_DIR}/var >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BIND.chroot.dist -p ${DST_DIR}/var/named >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.sendmail.dist -p ${DST_DIR} >/dev/null
+	[ -f ${BASE_DIR}/etc/mtree/BSD.include.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.include.dist -p ${DST_DIR}/usr/include >/dev/null
+	[ ! -d "${DST_DIR}/usr/tests" ] && ${MKDIR_CMD} -p "${DST_DIR}/usr/tests"
+	[ -f ${BASE_DIR}/etc/mtree/BSD.tests.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.tests.dist -p ${DST_DIR}/usr/tests >/dev/null
 }
 
 make_libmap()
 {
 	A=$( ${MKTEMP_CMD} ${tmpdir}/libtxt.XXX )
 	B=$( ${MKTEMP_CMD} ${tmpdir}/libtxtsort.XXX )
-	TRAP="${TRAP} /bin/rm -f ${A} ${B};"
+	TRAP="${TRAP} ${RM_CMD} -f ${A} ${B};"
 	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
-	/usr/bin/xzcat ${FILES} |while read line; do
+	${XZCAT_CMD} ${FILES} |while read line; do
 		[ -z "${line}" ] && continue
 		case ":${line}" in
 			:#*)
 				continue
 				;;
 		esac
-		[ -r "${BASE_DIR}${line}" ] && /usr/bin/ldd -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
+		[ -r "${BASE_DIR}${line}" ] && ${LDD_CMD} -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
 	done
-	/usr/bin/sort -u ${A} > ${B}
-	/bin/rm -f ${A}
+	${SORT_CMD} -u ${A} > ${B}
+	${RM_CMD} -f ${A}
 }
 
 copy_binlib()
@@ -63,7 +66,7 @@ copy_binlib()
 	local _skip
 
 	# pass one: copy files
-	/usr/bin/xzcat ${FILES}| while read line; do
+	${XZCAT_CMD} ${FILES} | while read line; do
 		[ -z "${line}" ] && continue
 
 		_prefix=$( substr --pos=0 --len=1 --str="${line}" )
@@ -90,7 +93,6 @@ copy_binlib()
 		_skip=0
 
 		for i in ${_all_files}; do
-
 			if [ -n "${excludedir}" ]; then
 				for skipdir in ${excludedir}; do
 					_strlen=$( strlen ${skipdir} )
@@ -114,10 +116,10 @@ copy_binlib()
 		[ ${_skip} -eq 1 ] && continue
 
 		if [ ${_hard_link} -eq 0 ]; then
-			D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
-			[ ! -d "{DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
+			D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
+			[ ! -d "{DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
 			if [ -r ${BASE_DIR}${line} -o -h ${BASE_DIR}${line} ]; then
-				/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}
+				${CP_CMD} -a ${BASE_DIR}${line} ${DST_DIR}${D}
 			else
 				${ECHO} "${N1_COLOR}No such file from index in source, skipp: ${N2_COLOR}${BASE_DIR}${line}${N0_COLOR}"
 			fi
@@ -126,16 +128,16 @@ copy_binlib()
 			_hard_dst=		# store destination for hard links
 
 			for i in ${_all_files}; do
-				D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${i} )
-				[ ! -d "{DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
+				D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${i} )
+				[ ! -d "{DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
 
 				if [ ${_hard_count} -eq 0 ]; then
 					_hard_dst="${DST_DIR}${i}"
-					/bin/cp -a ${BASE_DIR}${i} ${DST_DIR}${D}
+					${CP_CMD} -a ${BASE_DIR}${i} ${DST_DIR}${D}
 					_hard_count=1
 				else
 					_hard_src="${DST_DIR}${i}"
-					cd ${DST_DIR}${D} && /bin/ln -f ${_hard_dst} ${_hard_src}
+					cd ${DST_DIR}${D} && ${LN_CMD} -f ${_hard_dst} ${_hard_src}
 				fi
 			done
 		fi
@@ -151,14 +153,14 @@ copy_binlib()
 	_dotnum=0
 
 	# necessary libs
-	${CAT_CMD} ${B}| while read line; do
+	${CAT_CMD} ${B} | while read line; do
 		[ -z "${line}" ] && continue
 		[ -f "${DST_DIR}${line}" ] && continue
 		[ ! -r "${BASE_DIR}${line}" -a ${verbose} -eq 1 ] && ${ECHO} "\n${N1_COLOR}Notice: exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${line}${N0_COLOR}\n" && continue
-		D=$( /usr/sbin/chroot ${BASE_DIR} dirname ${line} )
-		[ ! -d "${DST_DIR}${D}" ] && /bin/mkdir -p ${DST_DIR}${D}
-		[ ${verbose} -eq 1 ] && echo "/bin/cp -a ${BASE_DIR}${line} ${DST_DIR}${D}"
-		/usr/local/bin/rsync -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${BASE_DIR}${line} ${DST_DIR}${D}
+		D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
+		[ ! -d "${DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
+		[ ${verbose} -eq 1 ] && echo "${CP_CMD} -a ${BASE_DIR}${line} ${DST_DIR}${D}"
+		${RSYNC_CMD} -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${BASE_DIR}${line} ${DST_DIR}${D}
 		_dotnum=$(( _dotnum + 1 ))
 		if [ ${_dotnum} -gt 100 -a ${verbose} -eq 0 ]; then
 			printf "."
@@ -166,17 +168,14 @@ copy_binlib()
 		fi
 
 		_dotnum=$(( _dotnum + 1 ))
-
 	done
 
-	/bin/rm -f ${B}
+	${RM_CMD} -f ${B}
 }
-
-
 
 prunelist()
 {
-	[ ! -f "${prunelist}" -o -z "${prunelist}" ] && return 0 # no prune
+	[ ! -f "${prunelist}" -o -z "${prunelist}" ] && return 0		# no prune
 	[ -z "${1}" ] && return 0 # sanity
 
 	${ECHO} "${N1_COLOR}Prune file by list: ${N2_COLOR}${prunelist}${N0_COLOR}"
@@ -188,7 +187,7 @@ prunelist()
 				continue
 				;;
 		esac
-		/bin/rm -rf ${1}/${FILE} 2>/dev/null
+		${RM_CMD} -rf ${1}/${FILE} 2>/dev/null
 	done
 }
 
@@ -196,16 +195,15 @@ prunelist()
 [ ! -r "${FILES}" ] && err 1 "No such ${FILES}
 
 if [ -d "${DST_DIR}" ]; then
-	/bin/chflags -R noschg ${DST_DIR}
-	/bin/rm -rf ${DST_DIR}
+	${CHFLAGS_CMD} -R noschg ${DST_DIR}
+	${RM_CMD} -rf ${DST_DIR}
 fi
 
-/bin/mkdir -p ${DST_DIR}
+${MKDIR_CMD} -p ${DST_DIR}
 
-make_mtree
+[ ${mtree} -eq 1 ] && make_mtree
 make_libmap
 copy_binlib
 # CRLF after dot:
 [ ${verbose} -eq 0 ] && echo
 prunelist
-preparebase dst=${DST_DIR}
