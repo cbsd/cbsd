@@ -13,7 +13,7 @@
 #  - extrnal etcupdate.conf file for custom excludes, e.g:
 #      etcupdate_excludes="-I '/root/*' -I '/etc/hosts'" ?
 MYARG="mode"
-MYOPTARG="from to jname ver"
+MYOPTARG="from to jname ver default_obtain_etcupdate_method"
 MYDESC="Upgrade jail base data when baserw=1"
 CBSDMODULE="jail"
 
@@ -23,6 +23,14 @@ CBSDMODULE="jail"
 readconf buildworld.conf
 
 . ${cbsdinit}
+
+odefault_obtain_etcupdate_method=
+[ -n "${default_obtain_etcupdate_method}" ] && odefault_obtain_etcupdate_method="${default_obtain_etcupdate_method}"
+
+readconf etcupdate.conf
+
+[ -n "${odefault_obtain_etcupdate_method}" ] && default_obtain_etcupdate_method="${odefault_obtain_etcupdate_method}"
+
 etcupdate_ver="${ver}"
 
 if [ -n "${jname}" ]; then
@@ -36,33 +44,77 @@ case "${mode}" in
 		# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
 		[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
 		ver="${etcupdate_ver}"
+
 		init_target_arch
 		init_srcdir
+
 		etcupdate_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
 		etcupdate_dir="${etcupdate_dir_root}/etcupdate"
-		[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
-		[ -d ${etcupdate_dir}/current ] && ${RM_CMD} -rf ${etcupdate_dir}/current
-		${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}extract...${N0_COLOR}"
-		${ETCUPDATE_CMD} extract -d ${etcupdate_dir} -s ${SRC_DIR}
-		[ ! -d ${etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} failed to extract: ${N1_COLOR}${etcupdate_dir}${N0_COLOR}"
-		${ECHO} "${N1_COLOR}${CBSD_APP} updated: ${N2_COLOR}${etcupdate_dir}${N0_COLOR}"
+
+		case "${default_obtain_etcupdate_method}" in
+			build)
+				[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
+				[ -d ${etcupdate_dir}/current ] && ${RM_CMD} -rf ${etcupdate_dir}/current
+				${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${etcupdate_dir}/current${N0_COLOR}"
+				${ETCUPDATE_CMD} extract -d ${etcupdate_dir} -s ${SRC_DIR}
+				[ ! -d ${etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} failed to extract: ${N1_COLOR}${etcupdate_dir}${N0_COLOR}"
+				${ECHO} "${N1_COLOR}${CBSD_APP} updated: ${N2_COLOR}${etcupdate_dir}${N0_COLOR}"
+				;;
+			index)
+				index_ver="${ver}"
+				index_file="${distsharedir}/etcupdate_${index_ver}.txt.xz"
+				if [ ! -r ${index_file} ]; then
+					# cut . in ver
+					index_ver=${ver%%.*}
+					index_file="${distsharedir}/etcupdate_${index_ver}.txt.xz"
+				fi
+				[ ! -r "${index_file}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no index for default_obtain_etcupdate_method=index method: ${N2_COLOR}${index_file}${N0_COLOR}"
+
+				over="${ver}"
+				. ${buildconf}
+				init_target_arch
+				init_basedir
+
+				if [ ! -x "${BASE_DIR}/bin/sh" ]; then
+					${ECHO} "${N1_COLOR}${CBSD_APP}: no such base for default_obtain_etcupdate_method=index method: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
+					err 1 "${N1_COLOR}${CBSD_APP}: please use: ${N2_COLOR}cbsd repo action=get source=base ver=${ver}${N0_COLOR}"
+				fi
+
+				[ -d ${etcupdate_dir}/current ] && ${RM_CMD} -rf ${etcupdate_dir}/current
+				${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${etcupdate_dir}/current${N1_COLOR} (by: ${N2_COLOR}${index_file} <- ${BASE_DIR}${N1_COLOR})${N0_COLOR}"
+				copy-binlib filelist=${index_file} dstdir=${etcupdate_dir}/current basedir=${BASE_DIR}
+				;;
+			*)
+				err 1 "${N1_COLOR}${CBSD_APP}: unknown default_obtain_etcupdate_method: ${N2_COLOR}${default_obtain_etcupdate_method}${N0_COLOR}"
+				;;
+		esac
 		;;
 	build)
 		# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
 		[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
 		ver="${etcupdate_ver}"
+
 		init_target_arch
 		init_srcdir
+
 		etcupdate_dir_root=$( ${REALPATH_CMD} ${SRC_DIR}/../ )
 		etcupdate_dir="${etcupdate_dir_root}"
-		[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
-		${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}build...${N0_COLOR}"
-		${ETCUPDATE_CMD} build -s ${SRC_DIR} ${etcupdate_dir}/etcupdate.tgz
-		if [ -r ${etcupdate_dir}/etcupdate.tgz ]; then
-			# done
-		else
-			err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
-		fi
+
+		case "${default_obtain_etcupdate_method}" in
+			build)
+				[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
+				${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}build...${N0_COLOR}"
+				${ETCUPDATE_CMD} build -s ${SRC_DIR} ${etcupdate_dir}/etcupdate.tgz
+				if [ -r ${etcupdate_dir}/etcupdate.tgz ]; then
+					# done
+				else
+					err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
+				fi
+				;;
+			index)
+				${ECHO} "${N1_COLOR}${CBSD_APP}: build to: ${N2_COLOR}${etcupdate_dir}${N1_COLOR} (by: ${N2_COLOR}${index_file} <- ${BASE_DIR}${N1_COLOR})${N0_COLOR}"
+				;;
+		esac
 		;;
 	update)
 		. ${jrcconf}
