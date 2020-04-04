@@ -17,7 +17,8 @@ MYOPTARG="from to jname ver default_obtain_etcupdate_method force"
 MYDESC="etcupdate helper, manage updates to system files not updated by installworld"
 CBSDMODULE="jail"
 ADDHELP="mode - extract,build,update,purge,resolve\n\
-default_obtain_etcupdate_method= overwrite obtain method, valid: build,index\n\"
+when mode=extract and jname is set, extract etc files for specified jail\n\
+default_obtain_etcupdate_method= overwrite obtain method, valid: build,index\n\
 force=1 - force to extract/build even if resource already exist\n"
 
 . ${subr}
@@ -27,8 +28,10 @@ readconf buildworld.conf
 
 . ${cbsdinit}
 
-etcupdate_extract()
+etcupdate_base_extract()
 {
+	local _etcupdate_dir _index_ver _index_file
+
 	# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
 	[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
 	ver="${etcupdate_ver}"
@@ -36,34 +39,34 @@ etcupdate_extract()
 	init_target_arch
 	init_srcdir
 
-	etcupdate_dir="${srcdir}/src_${ver}/etcupdate"
+	_etcupdate_dir="${srcdir}/src_${ver}/etcupdate"
 
-	if [ -d ${etcupdate_dir}/current ]; then
+	if [ -d ${_etcupdate_dir}/current ]; then
 		if [ ${force} -eq 0 ]; then
-			${ECHO} "${N1_COLOR}${CBSD_APP}: already exist: ${N2_COLOR}${etcupdate_dir}/current${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: already exist: ${N2_COLOR}${_etcupdate_dir}/current${N0_COLOR}"
 			return 0
 		fi
-		${RM_CMD} -rf ${etcupdate_dir}/current
+		${RM_CMD} -rf ${_etcupdate_dir}/current
 	fi
 
 	case "${default_obtain_etcupdate_method}" in
 		build)
 			[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
-			${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${etcupdate_dir}/current${N0_COLOR}"
-			${ETCUPDATE_CMD} extract -d ${etcupdate_dir} -s ${SRC_DIR}
-			[ ! -d ${etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} failed to extract: ${N1_COLOR}${etcupdate_dir}${N0_COLOR}"
-			${ECHO} "${N1_COLOR}${CBSD_APP} updated: ${N2_COLOR}${etcupdate_dir}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${_etcupdate_dir}/current${N0_COLOR}"
+			${ETCUPDATE_CMD} extract -d ${_etcupdate_dir} -s ${SRC_DIR}
+			[ ! -d ${_etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} failed to extract: ${N1_COLOR}${_etcupdate_dir}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP} updated: ${N2_COLOR}${_etcupdate_dir}${N0_COLOR}"
 			;;
 		index)
-			index_ver="${ver}"
-			index_file="${distsharedir}/etcupdate_${index_ver}.txt.xz"
-			if [ ! -r ${index_file} ]; then
+			_index_ver="${ver}"
+			_index_file="${distsharedir}/etcupdate_${_index_ver}.txt.xz"
+			if [ ! -r ${_index_file} ]; then
 				# cut . in ver
-				index_ver=${ver%%.*}
-				index_file="${distsharedir}/etcupdate_${index_ver}.txt.xz"
+				_index_ver=${ver%%.*}
+				_index_file="${distsharedir}/etcupdate_${_index_ver}.txt.xz"
 			fi
-			[ ! -r "${index_file}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no index for default_obtain_etcupdate_method=index method: ${N2_COLOR}${index_file}${N0_COLOR}"
-				over="${ver}"
+			[ ! -r "${_index_file}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no index for default_obtain_etcupdate_method=index method: ${N2_COLOR}${_index_file}${N0_COLOR}"
+			over="${ver}"
 			. ${buildconf}
 			init_target_arch
 			init_basedir
@@ -73,18 +76,53 @@ etcupdate_extract()
 				err 1 "${N1_COLOR}${CBSD_APP}: please use: ${N2_COLOR}cbsd repo action=get source=base ver=${ver}${N0_COLOR}"
 			fi
 
-			[ -d ${etcupdate_dir}/current ] && ${RM_CMD} -rf ${etcupdate_dir}/current
-			${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${etcupdate_dir}/current${N1_COLOR} (by: ${N2_COLOR}${index_file} <- ${BASE_DIR}${N1_COLOR})${N0_COLOR}"
-			copy-binlib filelist=${index_file} dstdir=${etcupdate_dir}/current basedir=${BASE_DIR} 2>/dev/null
+			[ -d ${_etcupdate_dir}/current ] && ${RM_CMD} -rf ${_etcupdate_dir}/current
+			${ECHO} "${N1_COLOR}${CBSD_APP}: extract to: ${N2_COLOR}${_etcupdate_dir}/current${N1_COLOR} (by: ${N2_COLOR}${_index_file} <- ${BASE_DIR}${N1_COLOR})${N0_COLOR}" 1>&2
+			copy-binlib filelist=${_index_file} dstdir=${_etcupdate_dir}/current basedir=${BASE_DIR} 2>/dev/null
 			;;
 		*)
 			err 1 "${N1_COLOR}${CBSD_APP}: unknown default_obtain_etcupdate_method: ${N2_COLOR}${default_obtain_etcupdate_method}${N0_COLOR}"
 			;;
 	esac
+
+	return 0
 }
 
-etcupdate_build()
+etcupdate_jail_extract()
 {
+	local _etcupdate_dir _etcupdate_from_dir
+
+	[ -z "${jail_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
+	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}Please set jset: ${N2_COLOR}jname${N0_COLOR}"
+	. ${jrcconf}
+	[ $? -eq 1 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
+	if [ ! -d ${_etcupdate_from_dir}/current ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}${_etcupdate_from_dir}/current${N0_COLOR}"
+		err 1 "${N1_COLOR}${CBSD_APP}: please run for init: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
+	fi
+
+	[ ! -d ${etcupdate_jail_root} ] && ${MKDIR_CMD} -p ${etcupdate_jail_root}
+
+	if [ -d ${etcupdate_jail_root}/current ]; then
+		[ ${force} -eq 0 ] && return 0
+		${RM_CMD} -rf ${etcupdate_jail_root}/current
+	fi
+
+	[ ! -d ${etcupdate_jail_root}/current ] && ${CP_CMD} -a ${_etcupdate_from_dir}/current ${etcupdate_jail_root}
+
+	# store original version
+	[ ! -r ${etcupdate_jail_root}/ver ] && ${TOUCH_CMD} ${etcupdate_jail_root}/ver
+	${SYSRC_CMD} -qf ${etcupdate_jail_root}/ver etcupdate_current_ver="${ver}" > /dev/null 2>&1
+
+	return 0
+}
+
+etcupdate_base_build()
+{
+	local _etcupdate_dir=
+
 	# todo: generate from ~cbsd/basejail/* ? gen from etcupdate required for source tree!
 	[ -z "${etcupdate_ver}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}ver=${N0_COLOR}"
 	ver="${etcupdate_ver}"
@@ -92,36 +130,38 @@ etcupdate_build()
 	init_target_arch
 	init_srcdir
 
-	etcupdate_dir="${srcdir}/src_${ver}/etcupdate"
+	_etcupdate_dir="${srcdir}/src_${ver}/etcupdate"
 
-	if [ ! -r ${etcupdate_dir}/etcupdate.tgz ]; then
+	if [ ! -r ${_etcupdate_dir}/etcupdate.tgz ]; then
 		if [ ${force} -eq 0 ]; then
-			${ECHO} "${N1_COLOR}${CBSD_APP}: already exist: ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: already exist: ${N2_COLOR}${_etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
 			return 0
 		fi
-		${RM_CMD} -f ${etcupdate_dir}/etcupdate.tgz
+		${RM_CMD} -f ${_etcupdate_dir}/etcupdate.tgz
 	fi
 
 	case "${default_obtain_etcupdate_method}" in
 		build)
 			[ ! -r ${SRC_DIR}/Makefile ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such src hier in ${SRC_DIR}. Please run: ${N2_COLOR}cbsd srcup ver=${ver}${N1_COLOR} first${N0_COLOR}"
 			${ECHO} "${N1_COLOR}${CBSD_APP}: ${N2_COLOR}build...${N0_COLOR}"
-			${ETCUPDATE_CMD} build -s ${SRC_DIR} ${etcupdate_dir}/etcupdate.tgz
-			if [ -r ${etcupdate_dir}/etcupdate.tgz ]; then
+			${ETCUPDATE_CMD} build -s ${SRC_DIR} ${_etcupdate_dir}/etcupdate.tgz
+			if [ -r ${_etcupdate_dir}/etcupdate.tgz ]; then
 				# done
 			else
-				err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
+				err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${_etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
 			fi
 			;;
 		index)
-			[ ! -d ${etcupdate_dir}/current ] && etcupdate mode=extract ver=${ver}
-			[ ! -d ${etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} no dir: ${N1_COLOR}${etcupdate_dir}/current${N1_COLOR}. please run: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
-			${ECHO} "${N1_COLOR}${CBSD_APP}: build to: ${N2_COLOR}${etcupdate_dir}/etcupdate.tgz${N1_COLOR} (from: ${N2_COLOR}${etcupdate_dir}/current${N1_COLOR})${N0_COLOR}"
-			cd ${etcupdate_dir}/current
-			${TAR_CMD} cfz ${etcupdate_dir}/etcupdate.tgz .
-			[ ! -r ${etcupdate_dir}/etcupdate.tgz ] && err 1 "${N1_COLOR}${CBSD_APP} failed to build: ${N1_COLOR}${etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
+			[ ! -d ${_etcupdate_dir}/current ] && etcupdate mode=extract ver=${ver}
+			[ ! -d ${_etcupdate_dir}/current ] && err 1 "${N1_COLOR}${CBSD_APP} no dir: ${N1_COLOR}${_etcupdate_dir}/current${N1_COLOR}. please run: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: build to: ${N2_COLOR}${_etcupdate_dir}/etcupdate.tgz${N1_COLOR} (from: ${N2_COLOR}${_etcupdate_dir}/current${N1_COLOR})${N0_COLOR}"
+			cd ${_etcupdate_dir}/current
+			${TAR_CMD} cfz ${_etcupdate_dir}/etcupdate.tgz .
+			[ ! -r ${_etcupdate_dir}/etcupdate.tgz ] && err 1 "${N1_COLOR}${CBSD_APP} failed to build: ${N1_COLOR}${_etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
 			;;
 	esac
+
+	return 0
 }
 
 etcupdate_update()
@@ -143,52 +183,55 @@ etcupdate_update()
 	init_target_arch
 	init_srcdir
 
-	etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
-	if [ ! -d ${etcupdate_from_dir}/current ]; then
-		${ECHO} "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}${etcupdate_from_dir}/current${N0_COLOR}"
-		err 1 "${N1_COLOR}please run for init: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
+	_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
+	if [ ! -d ${_etcupdate_from_dir}/current ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}${_etcupdate_from_dir}/current${N0_COLOR}"
+		err 1 "${N1_COLOR}${CBSD_APP}: please run for init: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
 	fi
-	${ECHO} "${N1_COLOR}${CBSD_APP} source hier: ${N2_COLOR}${etcupdate_from_dir}/current${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP} source hier: ${N2_COLOR}${_etcupdate_from_dir}/current${N0_COLOR}"
 
 	ver="${to}"
 	init_target_arch
 	init_srcdir
-	etcupdate_to_dir="${srcdir}/src_${ver}"
+	_etcupdate_to_dir="${srcdir}/src_${ver}"
 
-	if [ ! -r ${etcupdate_to_dir}/etcupdate.tgz ]; then
-		err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+	if [ ! -r ${_etcupdate_to_dir}/etcupdate.tgz ]; then
+		err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
 	fi
-	${ECHO} "${N1_COLOR}${CBSD_APP} destination hier: ${N2_COLOR}${etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP} destination hier: ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
 
 	# autostart/stop?
 	[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}jail not running: ${N2_COLOR}${jname}${N0_COLOR}"
 
 	[ ! -d ${etcupdate_jail_root} ] && ${MKDIR_CMD} -p ${etcupdate_jail_root}
 	# we need RW place for log? redefine log path and use nullfs in RO?
-	[ ! -d ${etcupdate_jail_root}/current ] && ${CP_CMD} -a ${etcupdate_from_dir}/current ${etcupdate_jail_root}
+	[ ! -d ${etcupdate_jail_root}/current ] && ${CP_CMD} -a ${_etcupdate_from_dir}/current ${etcupdate_jail_root}
 
 	for i in ${etcupdate_exclude_path}; do
 		_exclude_args="${_exclude_args} -I ${i}"
 	done
 
-	echo "${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}"
-	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
+	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
+
+	return 0
 }
 
 etcupdate_resolve()
 {
+	local _ret
 	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}Please set jset: ${N2_COLOR}jname${N0_COLOR}"
 	. ${jrcconf}
 	[ $? -eq 1 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
-	etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
-	if [ ! -d ${etcupdate_from_dir}/current ]; then
+	_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
+	if [ ! -d ${_etcupdate_from_dir}/current ]; then
 		err 1 "${N1_COLOR}no such workdir, please run: ${N2_COLOR}cbsd etcupdate mode=update jname=${jname} from=${N0_COLOR}"
 	fi
-	${ECHO} "${N1_COLOR}${CBSD_APP} source hier: ${N2_COLOR}${etcupdate_from_dir}/current${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP} source hier: ${N2_COLOR}${_etcupdate_from_dir}/current${N0_COLOR}"
 
-	echo "${ETCUPDATE_CMD} resolve -d ${etcupdate_jail_root} -D ${path}"
 	${ETCUPDATE_CMD} resolve -d ${etcupdate_jail_root} -D ${path}
+	_ret=$?
+	return ${_ret}
 }
 
 odefault_obtain_etcupdate_method=
@@ -217,23 +260,32 @@ jail_ver="${ver}"
 
 case "${mode}" in
 	extract)
-		etcupdate_extract
+		if [ -n "${jname}" ]; then
+			etcupdate_jail_extract
+			ret=$?
+		else
+			etcupdate_base_extract
+			ret=$?
+		fi
 		;;
 	build)
-		etcupdate_build
+		etcupdate_base_build
+		ret=$?
 		;;
 	update)
 		etcupdate_update
+		ret=$?
 		;;
 	purge)
 		[ -d ${etcupdate_jail_root} ] && ${RM_CMD} -rf ${etcupdate_jail_root}
 		;;
 	resolve)
 		etcupdate_resolve
+		ret=$?
 		;;
 	*)
 		err 1 "${N1_COLOR}${CBSD_APP} error: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 		;;
 esac
 
-exit 0
+exit ${ret}
