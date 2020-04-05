@@ -4,13 +4,14 @@ _CBSD_CARP_SUBR=1
 
 carp_init()
 {
-	/sbin/kldstat -qm carp || /sbin/kldload carp
+	${KLDSTAT_CMD} -qm carp || ${KLDLOAD_CMD} carp
 	if [ ! -f "/usr/local/etc/devd/cbsd_carp.conf" ]; then
-			[ ! -d "/usr/local/etc/devd" ] && mkdir -p /usr/local/etc/devd
-			/bin/cp ${sharedir}/cbsd_carp.conf /usr/local/etc/devd/
-			/usr/sbin/service devd restart
-			${ECHO} "${N1_COLOR}DEVD configuration for cbsd carp created: ${N2_COLOR}/usr/local/etc/devd/cbsd_carp.conf${N1_COLOR}"
+			[ ! -d "/usr/local/etc/devd" ] && ${MKDIR_CMD} -p /usr/local/etc/devd
+			${CP_CMD} ${distsharedir}/cbsd_carp.conf /usr/local/etc/devd/
+			${SERVICE_CMD} devd restart
+			${ECHO} "${N1_COLOR}CBSD devd sample rules for CARP was created: ${N2_COLOR}/usr/local/etc/devd/cbsd_carp.conf${N1_COLOR}"
 	fi
+	return 0
 }
 
 # $1 - id
@@ -20,11 +21,11 @@ get_ip4_by_vhid()
 	local _res
 
 	if [ -z "${ip}" ]; then
-		_res=$( ${IFCONFIG_CMD} ${interface}| ${GREP_CMD} "inet *.*.*.* netmask [[:alnum:]]* *.*.*.* vhid ${1} "|${AWK_CMD} {'printf $2" "'} )
+		_res=$( ${IFCONFIG_CMD} ${interface} | ${GREP_CMD} "inet *.*.*.* netmask [[:alnum:]]* *.*.*.* vhid ${1} " | ${AWK_CMD} {'printf $2" "'} )
 	else
 		ipwmask "${ip}"
 		[ -n "${IWM}" ] && ip="${IWM}"
-		_res=$( ${IFCONFIG_CMD} ${interface}| ${GREP_CMD} "inet ${ip} netmask [[:alnum:]]* *.*.*.* vhid ${1} "|${AWK_CMD} {'printf $2" "'} )
+		_res=$( ${IFCONFIG_CMD} ${interface} | ${GREP_CMD} "inet ${ip} netmask [[:alnum:]]* *.*.*.* vhid ${1} " | ${AWK_CMD} {'printf $2" "'} )
 	fi
 
 	[ -z "${_res}" ] && return 0
@@ -42,8 +43,10 @@ carp_unset()
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}vhid not initializated: ${N2_COLOR}${vhid}${N0_COLOR}"
 	# iptype ?
 	for _resip in ${_res}; do
+		cbsdlogger NOTICE ${CBSD_APP}: ${IFCONFIG_CMD} ${interface} inet ${_resip} -alias
 		${IFCONFIG_CMD} ${interface} inet ${_resip} -alias
 	done
+	return 0
 }
 
 
@@ -72,6 +75,7 @@ check_vhid()
 	_res=$( cbsdsqlro local SELECT id,vhid,advskew,pass,interface,state FROM carp WHERE vhid=\"${vhid}\" 2>/dev/null )
 	[ -z "${_res}" ] && err 1 "${MAGETA}Wrong data structure in carp database for vhid: ${N2_COLOR}${vhid}${N0_COLOR}"
 	sqllist "${_res}" id vhid advskew pass interface state
+	return 0
 }
 
 
@@ -83,9 +87,10 @@ get_jname_by_vhid()
 	local pattern="vhid_${vhid}#"
 	local jname
 
-	jname=$( cbsdsqlro local SELECT jname FROM jails WHERE ip4_addr LIKE \"%${pattern}%\" AND emulator != \"bhyve\" | ${XARGS_CMD} )
+	jname=$( cbsdsqlro local SELECT jname FROM jails WHERE ip4_addr LIKE \"%${pattern}%\" AND emulator = \"jail\" | ${XARGS_CMD} )
 
 	[ -n "${jname}" ] && echo "${jname}"
+	return 0
 }
 
 
@@ -95,12 +100,12 @@ check_interface()
 
 	if [ "${interface}" != "auto" ]; then
 		# check for interface exist
-		_res=$( ${miscdir}/nics-list -s "lo" |while read _iface; do
+		_res=$( ${miscdir}/nics-list -s "lo" | while read _iface; do
 			[ "${interface}" = "${_iface}" ] && echo "${_iface}" ] && exit 0
 		done )
 		[ -z "${_res}" ] && err 1 "${N1_COLOR}No such interface: ${N2_COLOR}${interface}${N0_COLOR}"
 	else
-		auto_iface=$( /sbin/route -n get 0.0.0.0 |${AWK_CMD} '/interface/{print $2}' )
+		auto_iface=$( ${ROUTE_CMD} -n get 0.0.0.0 | ${AWK_CMD} '/interface/{print $2}' )
 		[ -z "${auto_iface}" ] && err 1 "${N1_COLOR}Can't determine uplink interface${N0_COLOR}"
 		interface="${auto_iface}"
 	fi
@@ -108,7 +113,6 @@ check_interface()
 
 	return 0
 }
-
 
 carp_set()
 {
@@ -134,12 +138,11 @@ carp_set()
 	if [ ${show} -eq 1 ]; then
 		echo "${interface}|${ip} vhid ${vhid} advskew ${advskew} pass ${pass} ${_state}"
 		return 0
-	else
-		echo "[DEBUG] ${IFCONFIG_CMD} ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} ${_state} alias"
 	fi
 
+	cbsdlogger NOTICE ${CBSD_APP}: ${IFCONFIG_CMD} ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} ${_state} alias
 	${IFCONFIG_CMD} ${interface} vhid ${vhid} advskew ${advskew} pass ${pass} ${ip} ${_state} alias
-
+	return 0
 }
 
 
@@ -156,8 +159,9 @@ carp_update()
 
 	[ -z "${_cmd}" ] && return 1
 
-	echo "${IFCONFIG_CMD} ${interface} vhid ${vhid} ${_cmd}"
+	cbsdlogger NOTICE ${CBSD_APP}: ${IFCONFIG_CMD} ${interface} vhid ${vhid} ${_cmd}
 	${IFCONFIG_CMD} ${interface} vhid ${vhid} ${_cmd}
+	return 0
 }
 
 
@@ -196,6 +200,7 @@ get_construct_carp_vhid()
 	prompt=" Enter vhid "
 	defaultitem="${carp_vhid}"
 	cbsd_inputbox_simple && carp_vhid="${mtag}"
+	return 0
 }
 
 get_construct_carp_advskew()
@@ -204,6 +209,7 @@ get_construct_carp_advskew()
 	prompt=" Enter advskew "
 	defaultitem="${carp_advskew}"
 	cbsd_inputbox_simple && carp_advskew="${mtag}"
+	return 0
 }
 
 get_construct_carp_pass()
@@ -212,6 +218,7 @@ get_construct_carp_pass()
 	prompt=" Enter pass "
 	defaultitem="${carp_pass}"
 	cbsd_inputbox_simple && carp_pass="${mtag}"
+	return 0
 }
 
 get_construct_carp_interface()
@@ -220,6 +227,7 @@ get_construct_carp_interface()
 	prompt=" Enter pass "
 	defaultitem="${carp_pass}"
 	get_construct_interface -d 1 -s "tap bridge vboxnet"
+	return 0
 }
 
 ###
