@@ -132,7 +132,7 @@ etcupdate_base_build()
 
 	_etcupdate_dir="${srcdir}/src_${ver}/etcupdate"
 
-	if [ ! -r ${_etcupdate_dir}/etcupdate.tgz ]; then
+	if [ -r ${_etcupdate_dir}/etcupdate.tgz ]; then
 		if [ ${force} -eq 0 ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP}: already exist: ${N2_COLOR}${_etcupdate_dir}/etcupdate.tgz${N0_COLOR}"
 			return 0
@@ -166,10 +166,10 @@ etcupdate_base_build()
 
 etcupdate_update()
 {
-	local _exclude_args=
-	local i
+	local _exclude_args= i _ret
+	local _files
 
-	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}Please set jset: ${N2_COLOR}jname${N0_COLOR}"
+	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: please set jset: ${N2_COLOR}jname${N0_COLOR}"
 	. ${jrcconf}
 	[ $? -eq 1 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
@@ -193,10 +193,12 @@ etcupdate_update()
 	ver="${to}"
 	init_target_arch
 	init_srcdir
-	_etcupdate_to_dir="${srcdir}/src_${ver}"
+	_etcupdate_to_dir="${srcdir}/src_${ver}/etcupdate"
 
 	if [ ! -r ${_etcupdate_to_dir}/etcupdate.tgz ]; then
-		err 1 "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
+		err 1 "${N1_COLOR}${CBSD_APP}: please run for init: ${N2_COLOR}cbsd etcupdate mode=build ver=${ver}${N0_COLOR}"
+
 	fi
 	${ECHO} "${N1_COLOR}${CBSD_APP} destination hier: ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
 
@@ -212,8 +214,23 @@ etcupdate_update()
 	done
 
 	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
+	_ret=$?
 
-	return 0
+	if [ ${_ret} -ne 0 ]; then
+		if [ -d ${etcupdate_jail_root}/conflicts ]; then
+			_files=$( ${FIND_CMD} ${etcupdate_jail_root}/conflicts -type f | while read a; do
+				p2=${a##*${etcupdate_jail_root}/conflicts}
+				[ -z "${p2}" ] && continue
+				echo "  * ${p2}"
+			done )
+			${ECHO} "${W1_COLOR}${CBSD_APP} warning${N1_COLOR}: confict files:${N0_COLOR}"
+			echo "${_files}"
+			${ECHO} "${N1_COLOR}${CBSD_APP} please run: ${N2_COLOR}cbsd etcupdate mode=resolve jname=${jname}${N1_COLOR} to run etcupdate resolve${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: use ${N2_COLOR}EDITOR=${N1_COLOR} environment variable to use favorite editor${N0_COLOR}"
+		fi
+	fi
+
+	return ${_ret}
 }
 
 etcupdate_resolve()
@@ -252,7 +269,7 @@ etcupdate_ver="${ver}"
 
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
-	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
+	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}${CBSD_APP}: not for bhyve mode${N0_COLOR}"
 	etcupdate_jail_root="${jailsysdir}/${jname}/etcupdate"
 fi
 
@@ -275,6 +292,13 @@ case "${mode}" in
 	update)
 		etcupdate_update
 		ret=$?
+
+		if [ ${ret} -eq 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: update successfull, bootstrap for: ${N1_COLOR}${ver}${N0_COLOR}"
+			etcupdate jname=${jname} mode=extract default_obtain_etcupdate_method=index ver=${to} force=1
+		else
+			${ECHO} "${N1_COLOR}${CBSD_APP}: update failed${N0_COLOR}"
+		fi
 		;;
 	purge)
 		[ -d ${etcupdate_jail_root} ] && ${RM_CMD} -rf ${etcupdate_jail_root}
@@ -282,6 +306,12 @@ case "${mode}" in
 	resolve)
 		etcupdate_resolve
 		ret=$?
+		if [ ${ret} -eq 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: update successfull, bootstrap for: ${N1_COLOR}${ver}${N0_COLOR}"
+			etcupdate jname=${jname} mode=extract default_obtain_etcupdate_method=index ver=${to} force=1
+		else
+			${ECHO} "${N1_COLOR}${CBSD_APP}: update failed${N0_COLOR}"
+		fi
 		;;
 	*)
 		err 1 "${N1_COLOR}${CBSD_APP} error: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
