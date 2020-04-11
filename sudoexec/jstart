@@ -464,9 +464,17 @@ if [ "${vnet}" = "1" ]; then
 
 		# when ip=0 and interface=auto we must use default interface for upstream
 		[ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ] && nic_parent=$( getnics-by-ip ip=0.0.0.0 skip=bridge )
-		if ! mybridge=$( get_my_device bridge ${nic_parent} ); then
-			err 1 "${N1_COLOR}Error: Cant get_my_device for ${nic_parent}: ${mybridge}${N0_COLOR}"
-		fi
+
+		case "${nic_parent}" in
+			cbsdvale*)
+				mybridge="${nic_parent}"
+				;;
+			*)
+				if ! mybridge=$( get_my_device bridge ${nic_parent} ); then
+					err 1 "${N1_COLOR}Error: Cant get_my_device for ${nic_parent}: ${mybridge}${N0_COLOR}"
+				fi
+		esac
+
 		myepair=$( get_my_epair ${mybridge} )
 		[ $? -eq 1 ] && err 1 "${N1_COLOR}Error: Cant get_my_epair by: ${N2_COLOR}${mybridge}${N0_COLOR}"
 		if [ -z "${epairb_list}" ]; then
@@ -474,6 +482,29 @@ if [ "${vnet}" = "1" ]; then
 		else
 			epairb_list="${epairb_list},${myepair}b"
 		fi
+
+		case "${nic_parent}" in
+			cbsdvale*)
+				strpos --str="${nic_parent}" --search="_"
+				_pos=$?
+				if [ ${_pos} -eq 0 ]; then
+					# not vale_XXX form
+					err 1 "${N1_COLOR}${CBSD_APP}: vale switch not vale_XXX form: ${N2_COLOR}${nic_parent}${N0_COLOR}"
+				else
+					_arg_len=$( strlen ${nic_parent} )
+					_pref=$(( _arg_len - _pos ))
+					_vale_arg=$( substr --pos=0 --len=${_pos} --str="${nic_parent}" )
+					_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${nic_parent}" )
+				fi
+				valeid=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"  )
+				[ -z "${valeid}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: can't determine vale nic for: ${nic_parent}, sw: ${_sw}${N0_COLOR}"
+				#mytap="vale${valeid}:${jname}"
+				cbsdlogger NOTICE "${CBSD_APP}: vale switch id: ${valeid} (vale${valeid})"
+				${ECHO} "${N1_COLOR}${CBSD_APP}: attach to vale switch id: ${valeid} (${N2_COLOR}vale${valeid}${N1_COLOR})${N0_COLOR}"
+				${distdir}/tools/vale-ctl -h vale${valeid}:${myepair}a
+		esac
+
+
 		printf "${H3_COLOR}${myepair}:${N2_COLOR}${nic_parent} "
 		${IFCONFIG_CMD} ${myepair}a description ${jname}-eth${eth_seq} up
 		eth_seq=$(( eth_seq + 1 ))
