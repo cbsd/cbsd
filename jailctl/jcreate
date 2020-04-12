@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.1.8
+#v12.1.9
 MYARG=""
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init"
 # allow all jail settings
@@ -176,7 +176,6 @@ if [ -n "${jprofile}" ]; then
 		${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
 		${CAT_CMD} ${etcdir}/defaults/jail-freebsd-${jprofile}.conf >> ${temprcconf}
 	fi
-
 fi
 
 . ${temprcconf}
@@ -426,16 +425,29 @@ if [ -n "${with_img_helpers}" ]; then
 	done
 fi
 
-[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+if [ -n "${jailnic_temp_sql}" ]; then
+	[ ! -r "${jailnic_temp_sql}" ] && err 1 "${N1_COLOR}${CBSD_APP}: jailnic_temp_sql file not readable: ${N2_COLOR}${jailnic_temp_sql}${N0_COLOR}"
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+	# dump and import jailnic table
+	_tmp_table_file=$( ${MKTEMP_CMD} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: import jailnic data from: ${N2_COLOR}${jailnic_temp_sql} ${N1_COLOR}via${N2_COLOR} ${_tmp_table_file}${N1_COLOR} dump${N0_COLOR}"
+	${SQLITE3_CMD} ${jailnic_temp_sql} .dump > ${_tmp_table_file}
+	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite "DROP table jailnic"
+	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite < ${_tmp_table_file}
+	${RM_CMD} -f ${_tmp_table_file} ${jailnic_temp_sql}
+else
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+fi
 
 # rctl
 . ${distsharedir}/rctl.conf
+
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
 	eval _val="\$rctl_${i}"
 	if [ -n "${_val}" ]; then
 		#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
-		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || /usr/bin/true
+		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
 	fi
 done
 

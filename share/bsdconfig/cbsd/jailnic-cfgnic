@@ -1,9 +1,5 @@
 #!/usr/local/bin/cbsd
-. ${subr}
-. ${tools}
-. ${dialog}
-. ${strings}
-
+#
 # dialog_menu_main
 #
 # Display the dialog(1)-based application main menu.
@@ -20,7 +16,7 @@ dialog_menu_main()
 	local prompt="${_desc}"
 	local sqldelimer=" "
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address FROM jailnic WHERE id=\"${nic}\" | while read nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address; do
+	eval $( cbsdsqlro ${mysqlite} SELECT id,name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address FROM jailnic WHERE id=\"${nic}\" | while read nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address; do
 		echo "export nic_id${nic_last_id}=\"${nic_id}\""
 		echo "export nic_name${nic_last_id}=\"${nic_name}\""
 		echo "export nic_order${nic_last_id}=\"${nic_order}\""
@@ -81,28 +77,40 @@ dialog_menu_main()
 export NOCOLOR=1
 
 MYARG="jname nic"
-MYOPTARG=""
-MYDESC="Edit properties for vitual image of VM"
+MYOPTARG="out"
+MYDESC="edit properties for vitual nic of jail vnet"
+ADDHELP="out - generate config only (e.g. for non-existance new jail)\n"
 CBSDMODULE="jail"
 
-globalconf="${distdir}/cbsd.conf";
-
-set -e
-. ${globalconf}
-set +e
+out=
 
 . ${subr}
-. ${strings}
 . ${tools}
+. ${strings}
+. ${dialog}
 . ${vimageconf}
 . ${cbsdinit}
 
 . ${distdir}/bsdconfig.subr
 . $BSDCFG_LIBE/$APP_DIR/include/messages-jailnic.subr
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such VM: ${N2_COLOR}${jname}${N0_COLOR}"
-[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}Not in jail mode${N0_COLOR}"
+if [ -z "${out}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such env: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}not in jail mode${N0_COLOR}"
+	mysqlite="${jailsysdir}/${jname}/local.sqlite"
+else
+	mysqlite="${out}"
+
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		# create new database when jail/db not exist
+		if [ ! -r ${mysqlite} ]; then
+			/usr/local/bin/cbsd ${miscdir}/updatesql ${mysqlite} ${distdir}/share/local-jailnic.schema jailnic
+			cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${nic_hwaddr}\" )"
+		fi
+	fi
+fi
 
 . $BSDCFG_LIBE/$APP_DIR/include/jailnic.subr
 . ${distdir}/jail.subr
@@ -138,10 +146,10 @@ while :; do
 	ret=$?
 
 	command=
-	case $ret in
+	case ${ret} in
 		${DIALOG_OK})
 			f_dialog_menutag_fetch mtag
-			case "$mtag" in
+			case "${mtag}" in
 				?" $msg_exit")
 					break
 					;;
