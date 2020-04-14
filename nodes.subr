@@ -26,7 +26,7 @@ check_locktime()
 
 	[ ! -f "${1}" ] && return 1
 
-	eval $( /usr/bin/stat -s ${1} )
+	eval $( ${STAT_CMD} -s ${1} )
 	difftime=$(( ( cur_time - st_mtime ) / 60 ))
 
 	if [ ${difftime} -lt 1 ]; then
@@ -80,7 +80,7 @@ select_node_by_list()
 		shift $(($OPTIND - 1))
 	done
 
-	eval $( cbsdsqlro nodes SELECT nodename,ip FROM nodelist |while read nodename ip status; do
+	eval $( cbsdsqlro nodes SELECT nodename,ip FROM nodelist | while read nodename ip status; do
 		mystatus=
 
 		if ! check_locktime ${ftmpdir}/shmux_${ip}.lock >/dev/null 2>&1; then
@@ -97,7 +97,7 @@ select_node_by_list()
 		i=$(( i + 1 ))
 	done )
 
-	for i in $( /usr/bin/seq 0 255 ); do
+	for i in $( ${SEQ_CMD} 0 255 ); do
 		eval _mynode="\$nodename${i}"
 		[ -z "${_mynode}" ] && break
 		[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${N0_COLOR}"
@@ -178,7 +178,7 @@ node_is_online()
 	_ret=$?
 	[ ${_md5_export} -eq 0 ] && return ${_ret}
 
-	_md5_node_name=$( /sbin/md5 -q -s ${_node} )
+	_md5_node_name=$( ${MD5_CMD} -q -s ${_node} )
 
 	case ${_ret} in
 		0)
@@ -238,6 +238,52 @@ check_for_shared_dir()
 	else
 		return 1
 	fi
+}
+
+# users custom script for executing in master host with nodes action
+# -a <action> - is source dir name ( add.d remove.d )
+# -n ${nodename}
+# -i ${ip}
+# -p ${port}
+# -k ${keyfile}
+external_exec_master_node_script()
+{
+	local _res
+	local _dir
+	local _nodename _ip _port _keyfile
+
+	while getopts "a:n:i:p:k:" opt; do
+		case "${opt}" in
+			a) _dir="${OPTARG}" ;;
+			n) _nodename="${OPTARG}" ;;
+			i) _ip="${OPTARG}" ;;
+			p) _port="${OPTARG}" ;;
+			k) _keyfile="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_dir}" ] && return 1
+
+	local _srcdir="${nodedir}/${_dir}"
+
+	[ ! -d "${_srcdir}" ] && return 0
+	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
+
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands from external hooks
+	# does not conflict with the same CBSD commands that the user does not expect
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	${FIND_CMD} "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
+		${ECHO} "${N1_COLOR}Execute master node script: ${N2_COLOR}${_file}${N0_COLOR}"
+		${ECHO} "${N1_COLOR} :: ${_srcdir}/${_file} -n ${_nodename} -i ${_ip} -p ${_port} -k ${_keyfile}${N0_COLOR}"
+		${_srcdir}/${_file} -n ${_nodename} -i ${_ip} -p ${_port} -k ${_keyfile}
+	done
+
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
 }
 
 ###
