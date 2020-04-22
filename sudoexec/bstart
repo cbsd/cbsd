@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.0.4
+#v12.1.9
 MYARG=""
 MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
 MYDESC="Start bhyve domain"
@@ -728,7 +728,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		env NOINTER=1 /usr/sbin/daemon -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
@@ -773,6 +773,7 @@ if [ "${lm}" = "0" ]; then
 	fi
 
 	[ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
+	[ -z "${mnt_start}" ] && mnt_start="0"
 	if [ "${mnt_start}" != "0" ]; then
 		if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
 			err 1 "mnt_start script not exist or not executable: ${mnt_start}"
@@ -847,24 +848,27 @@ else
 fi
 
 
-# jailed bhyve?
+# jailed bhyve? chrooted?
 _jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
 [ -z "${_jailed}" ] && _jailed="0"
-if [ "${_jailed}" != "0" ]; then
-	case "${_jailed}" in
-		1)
-			_jname=$( freejname default_jailname=J${jname} )
-			${ECHO} "${N1_COLOR}Jailed bhyve. Create temporary jail: ${N2_COLOR}${_jname}${N0_COLOR}"
-			${SED_CMD} -e "s:%%jname%%:${_jname}:g" \
-			-e "s:%%workdir%%:${workdir}:g" \
-			-e "s:%%domain%%#:my.domain:g" ${distdir}/share/jail.jconf > ${tmpdir}/jail.$$
-			jcreate jconf=${tmpdir}/jail.$$
-			${RM_CMD} -f ${tmpdir}/jail.$$
-			exec bjail jname=${_jname} bname=${jname}
-			;;
-		*)
-			;;
-	esac
+_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" 2>/dev/null )
+[ -z "${_chrooted}" ] && _chrooted="0"
+
+_secured=
+[ "${_jailed}" = "${_chrooted}" -a "${_jailed}" = "1" ] && err 1 "${N1_COLOR}${CBSD_APP}: chrooted=1 and jailed=1 is mutually exclusive. There can be only one${N2_COLOR}"
+
+[ "${_jailed}" != "0" ] && _secured="jail"
+[ "${_chrooted}" != "0" ] && _secured="chroot"
+
+if [ -n "${_secured}" ]; then
+	_jname=$( freejname default_jailname=J${jname} )
+	${ECHO} "${N1_COLOR}${_secured}ed bhyve. create temporary jail: ${N2_COLOR}${_jname}${N0_COLOR}"
+	${SED_CMD} -e "s:%%jname%%:${_jname}:g" \
+	-e "s:%%workdir%%:${workdir}:g" \
+	-e "s:%%domain%%#:my.domain:g" ${distdir}/share/jail.jconf > ${tmpdir}/jail.$$
+	jcreate jconf=${tmpdir}/jail.$$
+	${RM_CMD} -f ${tmpdir}/jail.$$
+	exec b${_secured} jname=${_jname} bname=${jname}
 fi
 
 default_profile="bhyve-default-default.conf"

@@ -129,6 +129,7 @@ done
 # jailed process?
 jailed=$( sysctl -qn security.jail.jailed 2>/dev/null )
 [ -z "${jailed}" ] && jailed=0
+[ -z "${chrooted}" ] && chrooted=0
 
 [ -n "${orig_logfile}" ] && vm_logfile="${orig_logfile}"
 
@@ -215,6 +216,9 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		for i in ${mytap}; do
 			/sbin/ifconfig ${i} up
 		done
+	fi
+	if [ ${chrooted} -eq 1 ]; then
+		echo "CHROOTED"
 	fi
 
 	[ ${freebsdhostversion} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
