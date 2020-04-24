@@ -1,19 +1,7 @@
 #!/usr/local/bin/cbsd
-#v12.1.7
-# Open task:
-#  - why re@ at freebsd.org does not generate etcupdate files, e.g: https://download.freebsd.org/ftp/releases/amd64/12.1-RELEASE/
-#  - why etcupdate used for source and destionation different presentations of the same hierarchy, e.g.
-#     we can use -t for TGZ-archive while source tree cannot be an archive? the contents are the same!
-#  - CBSD can generate result for etcupdate [extract|build] without source tree for old/new ver, from ~cbsd/basejail ?
-#  - what we do with patch-level ? generate each time ?
-#  - how can we facilitate pointing for from= and to= values/version? E.g, when etcupdate executed after version change, 
-#    we can take/detect to= version automatically by elf from /bin/sh in jail (or take from= before update )
-#    May be etcupdate should executed automatically with change/baseupdate/jupgrade script ? In this case we control old/new version
-#  - create backup in ${jailsysdir}/${jname}/ ?
-#  - extrnal etcupdate.conf file for custom excludes, e.g:
-#      etcupdate_excludes="-I '/root/*' -I '/etc/hosts'" ?
+#v12.1.9
 MYARG="mode"
-MYOPTARG="from to jname ver default_obtain_etcupdate_method force arch target_arch"
+MYOPTARG="from to jname ver default_obtain_etcupdate_method force arch target_arch etcupdate_create_backup"
 MYDESC="etcupdate helper, manage updates to system files not updated by installworld"
 CBSDMODULE="jail"
 ADDHELP="mode - extract,build,update,purge,resolve\n\
@@ -23,6 +11,7 @@ force=1 - force to extract/build even if resource already exist\n"
 
 arch=
 target_arch=
+etcupdate_create_backup=
 
 . ${subr}
 . ${strings}
@@ -172,8 +161,8 @@ etcupdate_base_build()
 
 etcupdate_update()
 {
-	local _exclude_args= i _ret
-	local _files
+	local _exclude_args= i _ret _etcupdate_to_current_dir
+	local _files _etcupdate_to_dir _etcupdate_from_dir
 
 	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: please set jset: ${N2_COLOR}jname${N0_COLOR}"
 	. ${jrcconf}
@@ -201,6 +190,7 @@ etcupdate_update()
 	init_srcdir
 
 	_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
+
 	if [ ! -d ${_etcupdate_from_dir}/current ]; then
 		${ECHO} "${N1_COLOR}${CBSD_APP} error: no such ${N2_COLOR}${_etcupdate_from_dir}/current${N0_COLOR}"
 		err 1 "${N1_COLOR}${CBSD_APP}: please run for init: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
@@ -211,6 +201,9 @@ etcupdate_update()
 	init_target_arch
 	init_srcdir
 	_etcupdate_to_dir="${srcdir}/src_${ver}/etcupdate"
+	_etcupdate_to_current_dir="${srcdir}/src_${ver}/etcupdate/current"
+
+	[ ! -d ${_etcupdate_to_current_dir} ] && err 1 "${N1_COLOR}${CBSD_APP} no dir: ${N1_COLOR}${_etcupdate_to_current_dir}${N1_COLOR}. please run: ${N2_COLOR}cbsd etcupdate mode=extract ver=${ver}${N0_COLOR}"
 
 	if [ ! -r ${_etcupdate_to_dir}/etcupdate.tgz ]; then
 		${ECHO} "${N1_COLOR}${CBSD_APP} failed: no ${N2_COLOR}${_etcupdate_to_dir}/etcupdate.tgz${N0_COLOR}"
@@ -230,6 +223,37 @@ etcupdate_update()
 		_exclude_args="${_exclude_args} -I ${i}"
 	done
 
+	if [ -n "${etcupdate_create_backup}" -a "${etcupdate_create_backup}" != "0" ]; then
+		_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
+		# create backup by index file
+		_back_time=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
+		_back_dir="${etcupdate_jail_root}/backup/${_back_time}"
+		[ ! -d ${_back_dir} ] && ${MKDIR_CMD} -p ${_back_dir}
+		_tmp_filelist=$( ${MKTEMP_CMD} )
+		${FIND_CMD} ${_etcupdate_to_current_dir} -type f | while read line; do
+			[ -z "${line}" ] && continue
+			p2=${line##*${_etcupdate_to_current_dir}}
+			[ -z "${p2}" ] && continue
+			echo "${p2}" >> ${_tmp_filelist}
+		done
+		${XZ_CMD} ${_tmp_filelist}
+		copy-binlib filelist=${_tmp_filelist}.xz dstdir=${_back_dir} basedir=${path} 2>/dev/null
+		${RM_CMD} ${_tmp_filelist}.xz
+		cd ${etcupdate_jail_root}/backup
+		nice -n 19 ${IDPRIO_CMD} 29 ${TAR_CMD} cfz ${_back_time}.tgz ${_back_time}
+		${ECHO} "${N1_COLOR}${CBSD_APP}: created backup: ${N2_COLOR}${_back_dir}.tgz${N0_COLOR}"
+		_file_list=$( ${FIND_CMD} ${etcupdate_jail_root}/backup -type f -depth 1 -maxdepth 1 -name \*.tgz -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} -n | ${XARGS_CMD} )
+		_file_num=$( echo ${_file_list} | ${WC_CMD} -w | ${AWK_CMD} '{printf $1}' )
+		if [ ${_file_num} -gt ${etcupdate_create_backup} ]; then
+			_to_remove=$(( _file_num - etcupdate_create_backup ))
+			for i in ${_file_list}; do
+				${ECHO} "  ${N1_COLOR}${CBSD_APP}: prune old backup (max ${etcupdate_create_backup}): ${N2_COLOR}${i}${N0_COLOR}"
+				${RM_CMD} ${etcupdate_jail_root}/backup/${i}
+				_to_remove=$(( _to_remove - 1 ))
+				[ ${_to_remove} -eq 0 ] && break
+			done
+		fi
+	fi
 	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
 	_ret=$?
 
@@ -270,13 +294,16 @@ etcupdate_resolve()
 
 odefault_obtain_etcupdate_method=
 oforce=
+oetcupdate_create_backup=
 
+[ -n "${etcupdate_create_backup}" ] && oetcupdate_create_backup="${etcupdate_create_backup}"
 [ -n "${default_obtain_etcupdate_method}" ] && odefault_obtain_etcupdate_method="${default_obtain_etcupdate_method}"
 [ -n "${force}" ] && oforce="${force}"
 
 readconf etcupdate.conf
 
 [ -n "${odefault_obtain_etcupdate_method}" ] && default_obtain_etcupdate_method="${odefault_obtain_etcupdate_method}"
+[ -n "${oetcupdate_create_backup}" ] && etcupdate_create_backup="${oetcupdate_create_backup}"
 [ -n "${oforce}" ] && force="${oforce}"
 
 # set defaults
