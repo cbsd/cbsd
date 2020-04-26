@@ -8,7 +8,7 @@ dialog_menu_main()
 {
 	local title="$DIALOG_TITLE"
 	local btitle="$DIALOG_BACKTITLE"
-	local prompt=" Jails: ${jname} "
+	local prompt=" jail: ${jname} "
 	local menu_list="
 		'A ${msg_add_new_nic}'	'${msg_add_new_nic_desc}'	'Add and configure new virtual NIC'
 		'-'	'-'	''
@@ -18,7 +18,7 @@ dialog_menu_main()
 
 	local n=1
 
-	for last_nic in $( /usr/bin/seq 1 16 ); do
+	for last_nic in $( ${SEQ_CMD} 1 16 ); do
 		unset nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address
 		eval nic_id="\$nic_id$last_nic"
 		eval nic_name="\$nic_name$last_nic"
@@ -76,15 +76,12 @@ dialog_menu_main()
 export NOCOLOR=1
 
 MYARG="jname"
-MYOPTARG=""
+MYOPTARG="out"
 MYDESC="Jail NIC dialog"
+ADDHELP="out - generate config only (e.g. for non-existance new jail)\n"
 CBSDMODULE="jail"
 
-globalconf="${distdir}/cbsd.conf";
-
-set -e
-. ${globalconf}
-set +e
+out=
 
 . ${subr}
 . ${strings}
@@ -95,21 +92,27 @@ set +e
 . ${distdir}/bsdconfig.subr
 . $BSDCFG_LIBE/$APP_DIR/include/messages-jailnic.subr
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such VM: ${N2_COLOR}${jname}${N0_COLOR}"
-[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}Not in jail mode${N0_COLOR}"
+if [ -z "${out}" ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such env: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}not in jail mode${N0_COLOR}"
+	mysqlite="${jailsysdir}/${jname}/local.sqlite"
+else
+	mysqlite="${out}"
+	if [ ! -r ${mysqlite} ]; then
+		/usr/local/bin/cbsd ${miscdir}/updatesql ${mysqlite} ${distdir}/share/local-jailnic.schema jailnic
+		cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${nic_hwaddr}\" )"
+	fi
+fi
 
 . ${BSDCFG_LIBE}/${APP_DIR}/include/jailnic.subr
-
-# Incorporate rc-file if it exists
-[ -f "${HOME}/.bsdconfigrc" ] && f_include "${HOME}/.bsdconfigrc"
 
 #
 # Process command-line arguments
 #
 while getopts h$GETOPTS_STDARGS flag; do
-	case "$flag" in
-	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	case "${flag}" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "${pgm}" ;;
 	esac
 done
 shift $(( $OPTIND - 1 ))
@@ -117,7 +120,7 @@ shift $(( $OPTIND - 1 ))
 #
 # Initialize
 #
-f_dialog_title " $msg_configure_jailnic "
+f_dialog_title " ${msg_configure_jailnic} "
 f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 f_mustberoot_init
 
@@ -134,26 +137,26 @@ while :; do
 	command=
 
 	case "${mtag}" in
-		?" $msg_exit") break ;;
-		?" $msg_add_new_nic")
+		?" ${msg_exit}") break ;;
+		?" ${msg_add_new_nic}")
 			last_nic=$( find_first_free_nic_id )
 			nic="nic${last_nic}"
-			command="jailnic-newnic jname=${jname} nic=${nic}"
+			command="jailnic-newnic jname=${jname} nic=${nic} out=${mysqlite}"
 			;;
 		*)
 			[ "${mtag}" = "-" ] && continue
 			index=${mtag%% *}
-			command="jailnic-cfgnic jname=${jname} nic=${index}"
+			command="jailnic-cfgnic jname=${jname} nic=${index} out=${mysqlite}"
 			;;
 	esac
 
-	if [ "$command" ]; then
+	if [ "${command}" ]; then
 		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
 	fi
 
 done
 
-return $SUCCESS
+exit ${SUCCESS}
 
 ################################################################################
 # END

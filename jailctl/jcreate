@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.1.8
+#v12.1.9
 MYARG=""
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init"
 # allow all jail settings
@@ -33,7 +33,7 @@ done
 
 if [ -z "${jconf}" ]; then
 	jconf=$( ${MKTEMP_CMD} )
-	export CBSD_INIT_SAVE2FILE=${jconf}             # save args and generate jconf
+	export CBSD_INIT_SAVE2FILE=${jconf}			# save args and generate jconf
 	. ${cbsdinit}
 	unset CBSD_INIT_SAVE2FILE
 fi
@@ -73,7 +73,7 @@ install_and_apply_helpers()
 {
 	local _srcfile="${1}"
 
-	local module=$( cbsdsqlro ${_srcfile} SELECT helpername FROM system |${AWK_CMD} '{printf $1}' )
+	local module=$( cbsdsqlro ${_srcfile} SELECT helpername FROM system | ${AWK_CMD} '{printf $1}' )
 
 	${ECHO} "${N1_COLOR}Install and apply helpers ${_srcfile}: ${N2_COLOR}${module}${N0_COLOR}"
 
@@ -89,7 +89,6 @@ install_and_apply_helpers()
 	echo ":: forms module=${module} mode=apply jname=${jname} inter=0"
 	forms module=${module} mode=apply jname=${jname} inter=0
 }
-
 
 ### MAIN
 . ${distdir}/time.subr
@@ -119,7 +118,7 @@ readconf jail-freebsd-default.conf
 . ${distdir}/universe.subr
 . ${distdir}/freebsd_world.subr
 
-[ ! -f "${jconf}" ] && err 1 "${N1_COLOR}no such jconf file${N0_COLOR}";
+[ ! -f "${jconf}" ] && err 1 "${N1_COLOR}no such jconf file${N0_COLOR}"
 
 jconf=$( ${REALPATH_CMD} ${jconf} )
 
@@ -176,7 +175,6 @@ if [ -n "${jprofile}" ]; then
 		${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
 		${CAT_CMD} ${etcdir}/defaults/jail-freebsd-${jprofile}.conf >> ${temprcconf}
 	fi
-
 fi
 
 . ${temprcconf}
@@ -229,6 +227,10 @@ case "${emulator}" in
 		arch="arm64"
 		target_arch="aarch64"
 		;;
+	qemu-ppc64-static)
+		arch="powerpc"
+		target_arch="powerpc64"
+		;;
 esac
 
 get_base -v ${ver} ${_basename_args}
@@ -238,6 +240,7 @@ ${ECHO} "${N1_COLOR}Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}
 [ -d "${data}" ] && remove_data_dir ${data}
 [ ! -d ${path} -a "${baserw}" -eq 0 ] && ${MKDIR_CMD} -m 0755 -p ${path}
 [ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -p ${jailsysdir}/${jname}
+[ -z "${mnt_start}" ] && mnt_start="0"
 
 if [ "${mnt_start}" != "0" ]; then
 	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
@@ -426,16 +429,29 @@ if [ -n "${with_img_helpers}" ]; then
 	done
 fi
 
-[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+if [ -n "${jailnic_temp_sql}" ]; then
+	[ ! -r "${jailnic_temp_sql}" ] && err 1 "${N1_COLOR}${CBSD_APP}: jailnic_temp_sql file not readable: ${N2_COLOR}${jailnic_temp_sql}${N0_COLOR}"
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+	# dump and import jailnic table
+	_tmp_table_file=$( ${MKTEMP_CMD} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: import jailnic data from: ${N2_COLOR}${jailnic_temp_sql} ${N1_COLOR}via${N2_COLOR} ${_tmp_table_file}${N1_COLOR} dump${N0_COLOR}"
+	${SQLITE3_CMD} ${jailnic_temp_sql} .dump > ${_tmp_table_file}
+	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite "DROP table jailnic"
+	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite < ${_tmp_table_file}
+	${RM_CMD} -f ${_tmp_table_file} ${jailnic_temp_sql} ${jailnic_temp_sql}-shm ${jailnic_temp_sql}-wal
+else
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+fi
 
 # rctl
 . ${distsharedir}/rctl.conf
+
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
 	eval _val="\$rctl_${i}"
 	if [ -n "${_val}" ]; then
 		#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
-		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || /usr/bin/true
+		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
 	fi
 done
 
@@ -460,7 +476,7 @@ fi
 
 if [ "${etcupdate_init}" = "1" ]; then
 	# bootstrap for version
-	etcupdate jname=${jname} mode=extract default_obtain_etcupdate_method=index ver=${ver}
+	etcupdate jname=${jname} mode=extract default_obtain_etcupdate_method=index ver=${ver} arch=${arch} target_arch=${target_arch}
 fi
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then

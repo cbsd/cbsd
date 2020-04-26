@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.16
+#v12.1.9
 # Detect first available IPv6 from ippool's
 MYARG=""
 MYOPTARG="ip4pool"
@@ -378,7 +378,7 @@ get_broadcast()
 
 # Export network calc result
 # $netmask ( 255.255.255.0 )
-# $cidr_mask ( 24 )
+# ${cidr_mask} ( 24 )
 # $network ( 10.0.0.0/24 )
 # $minhost ( 10.0.0.1 )
 # $maxhost (  10.0.0.254 )
@@ -386,7 +386,8 @@ get_broadcast()
 # $numhosts ( 254 )
 init_network()
 {
-	local ip hosts reserve
+	local _ip _hosts _reserve _s1 _s2 _s3 _s4
+	local _is_cidr _is_range _pos _s4s _s4e
 
 	netmask=
 	cidr_mask=
@@ -394,31 +395,62 @@ init_network()
 	minhost=
 	maxhost=
 	broadcast=
-	
+
 	[ $# -ne 1 ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask"
 
-	ip=${1%/*}
+	_ip=${1%/*}
 	cidr_mask=${1#*/}
 
-	[ "$ip" = "$1" -o "$cidr_mask" = "$1" ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask"
+	_is_range=0	# has x.x.x.a-z ?
+	_is_cidr=0	# has /prefix
 
-	if ! get_netmask "$ip/$cidr_mask" "netmask"; then
-		err 1 "dhcpd: init_network: bad netmask $ip/$cidr_mask"
+	if [ "${_ip}" = "${1}" -o "${cidr_mask}" = "${1}" ]; then
+		_is_cidr=0
+	else
+		_is_cidr=1
 	fi
 
-	if ! get_network "$ip/$cidr_mask" "network"; then
-		err 1 "dhcpd: init_network: bad IP $ip/$cidr_mask"
-	fi
-	get_minhost "$network" "minhost"
-	get_maxhost "$network" "maxhost"
-	get_broadcast "$network" "broadcast"
-	hosts=$((1 << $((32 - $cidr_mask))))
-	reserve=2
-	if [ "$cidr_mask" -ge 31 ]; then
-		reserve=0
+	sqllistdelimer="."
+	sqllist "${_ip}" _s1 _s2 _s3 _s4
+	sqllistdelimer=
+
+	strpos --str="${_s4}" --search="-"
+	_pos=$?
+	if [ ${_pos} -eq 0 ]; then
+		_is_range=0
+	else
+		_s4s=${_s4%-*}
+		_s4e=${_s4#*-}
+		[ -z "${_s4s}" -o -z "${_s4e}" ] && err 1 "dhcpd: init_network: last octet range error: ${_s4}"
+		_is_range=1
 	fi
 
-	numhosts=$(($hosts-$reserve))
+	[ ${_is_cidr} -eq 0 -a ${_is_range} -eq 0 ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask or ip.ip.ip.ip1-ip2"
+
+	if [ ${_is_cidr} -eq 1 ]; then
+		if ! get_netmask "${_ip}/${cidr_mask}" "netmask"; then
+			err 1 "dhcpd: init_network: bad netmask ${_ip}/${cidr_mask}"
+		fi
+
+		if ! get_network "${_ip}/${cidr_mask}" "network"; then
+			err 1 "dhcpd: init_network: bad IP ${_ip}/${cidr_mask}"
+		fi
+		get_minhost "${network}" "minhost"
+		get_maxhost "${network}" "maxhost"
+		get_broadcast "${network}" "broadcast"
+		_hosts=$((1 << $((32 - ${cidr_mask}))))
+		_reserve=2
+		if [ "${cidr_mask}" -ge 31 ]; then
+			_reserve=0
+		fi
+		numhosts=$(( _hosts - _reserve ))
+	else
+		minhost="${_s1}.${_s2}.${_s3}.${_s4s}"
+		maxhost="${_s1}.${_s2}.${_s3}.${_s4e}"
+		numhosts=$(( _s4e - _s4s ))
+	fi
+
+	return 0
 }
 
 
@@ -472,11 +504,11 @@ for tmpnet in ${nodeippool}; do
 	found=0
 
 	# assign wanted octet by starting octet
-	for w1 in $( /usr/bin/seq ${s1} ${e1} ); do
-		for w2 in $( /usr/bin/seq ${s2} ${e2} ); do
-			for w3 in $( /usr/bin/seq ${s3} ${e3} ); do
+	for w1 in $( ${SEQ_CMD} ${s1} ${e1} ); do
+		for w2 in $( ${SEQ_CMD} ${s2} ${e2} ); do
+			for w3 in $( ${SEQ_CMD} ${s3} ${e3} ); do
 				# last wanted octet loop
-				for w4 in $( /usr/bin/seq ${s4} ${e4} ); do
+				for w4 in $( ${SEQ_CMD} ${s4} ${e4} ); do
 					skip=0
 					tmpip="${w1}.${w2}.${w3}.${w4}"
 					iptype ${tmpip} >/dev/null 2>&1
@@ -525,3 +557,5 @@ else
 	# looks like all pools are exhausted
 	exit 2
 fi
+
+exit 0

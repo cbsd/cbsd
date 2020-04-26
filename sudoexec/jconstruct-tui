@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.2.1
+#v12.1.9
 MYARG=""
 MYOPTARG="mode"
 MYDESC="Ncurses based jail creation wizard"
@@ -34,11 +34,14 @@ gen_newjail_conf()
 	# init emulator by arch
 	init_target_arch
 
+	# unset temp jailnic vars when no vnet
+	[ "${vnet}" = "0" ] && jailnic_temp_sql=
+
 	gen_jconf
 	ERR=$?
 
 	[ ${ERR} -eq 0 ] || err 1 "${N1_COLOR}Bad conf${N0_COLOR}"
-	err 0 ${A}
+	err 0 "${A}"
 }
 
 dialog_menu_main()
@@ -87,7 +90,12 @@ dialog_menu_main()
 		menu_list="${menu_list} '${item_let} vnet'	'[${vnet_mark}]'	'Enable virtual stack for jail?'"
 	fi
 
-	if [ ${vnet} -eq 1 ]; then
+	if [ "${vnet}" = "1" -a "${vimage_feature}" = "1" ]; then
+		inc_menu_index item_let
+		menu_list="${menu_list} '${item_let} jailnic'		'Network config >>'	'cbsd jailnic-tui'"
+	fi
+
+	if [ "${vnet}" = "1" -a "${vimage_feature}" = "1" ]; then
 		inc_menu_index item_let
 		menu_list="${menu_list} '${item_let} nic_hwaddr'	'[${nic_hwaddr}]'	'Custom vnet MAC address'"
 	fi
@@ -101,7 +109,6 @@ dialog_menu_main()
 
 	# alternative basename available ?
 	if [ -n "${arch}" -a -n "${ver}" ]; then
-
 		if [ "${arch}" = "native" ]; then
 			_arch=$( ${UNAME_CMD}  -m )
 		else
@@ -119,32 +126,32 @@ dialog_menu_main()
 		_basename_list=$( get_basename_list -a "${_arch}" -v "${_ver}" )
 		if [ $? -eq 0 ]; then
 			# inc_menu_index item_let
-			menu_list="${menu_list} '${item_let} basename'		'$(curval basename)'	'alternative base name'"
+			menu_list="${menu_list} '${item_let} basename'	'$(curval basename)'				'alternative base name'"
 		fi
 	fi
 
 	if [ "${mode}" = "full" ]; then
 		inc_menu_index item_let
-		menu_list="${menu_list} '${item_let} path'		'$(curval path)'	'Path to jail mountpoint'"
+		menu_list="${menu_list} '${item_let} path'		'$(curval path)'				'Path to jail mountpoint'"
 		inc_menu_index item_let
-		menu_list="${menu_list} '${item_let} data'		'$(cutval data)'	'alternative path to data directory'"
+		menu_list="${menu_list} '${item_let} data'		'$(cutval data)'				'alternative path to data directory'"
 	fi
 
 	menu_list="${menu_list} '-'	'-'	''"
 	inc_menu_index item_num
 
-	menu_list="${menu_list} '${item_num} jail_options'	'Jail options >>'	'Customize allow_XXX options'"
+	menu_list="${menu_list} '${item_num} jail_options'		'Jail options >>'				'Customize allow_XXX options'"
 	inc_menu_index item_num
-	menu_list="${menu_list} '${item_num} user_pw_root'	'Root Password'	'Change jail root password'"
+	menu_list="${menu_list} '${item_num} user_pw_root'		'Root Password'					'Change jail root password'"
 	inc_menu_index item_num
-	menu_list="${menu_list} '${item_num} add_user'	'$(curval user_add)'	'Create additional account within jail'"
+	menu_list="${menu_list} '${item_num} add_user'			'$(curval user_add)'				'Create additional account within jail'"
 	inc_menu_index item_num
-	menu_list="${menu_list} '${item_num} services'		'Services >>'	'Toggle Startup Services'"
+	menu_list="${menu_list} '${item_num} services'			'Services >>'					'Toggle Startup Services'"
 	inc_menu_index item_num
-	menu_list="${menu_list} '${item_num} pkg_bootstrap'	'[${pkg_bootstrap_mark}] Toggle pkg bootstrap'	'For overwrite default profile behaviour'"
+	menu_list="${menu_list} '${item_num} pkg_bootstrap'		'[${pkg_bootstrap_mark}] Toggle pkg bootstrap'	'For overwrite default profile behaviour'"
 
 	inc_menu_index item_num
-	menu_list="${menu_list} '${item_num} GO'	'PROCEED!'	'PROCEED!'"
+	menu_list="${menu_list} '${item_num} GO'			'PROCEED!'					'PROCEED!'"
 
 	if [ -n "${extra_default_item}" ]; then
 		# scan for extra default item in menu list
@@ -213,13 +220,14 @@ fi
 adduser=
 zfs_snapsrc=
 nic_hwaddr=0
+jailnic_temp_sql=
 
 st_time=$( ${DATE_CMD} +%s )
 cbsdlogger NOTICE ${CBSD_APP}: launched
 
 while [ 1 ]; do
 	pkgnum=0
-	[ "${pkglist}" != "NO" -a -r "${pkglist}" ] && pkgnum=$( ${WC_CMD} -w ${pkglist}|${AWK_CMD} '{printf $1}' )
+	[ "${pkglist}" != "NO" -a -r "${pkglist}" ] && pkgnum=$( ${WC_CMD} -w ${pkglist} | ${AWK_CMD} '{printf $1}' )
 	[ -n "${adduser}" -a -r "${adduser}" ] && . ${adduser}
 
 	dialog_menu_main
@@ -247,7 +255,7 @@ while [ 1 ]; do
 			;;
 		"GO")
 			# store last choices
-			sysrc -qf ${tmpdir}/jconstruct.conf last_profile="${profile}" > /dev/null 2>&1
+			${SYSRC_CMD} -qf ${tmpdir}/jconstruct.conf last_profile="${profile}" > /dev/null 2>&1
 			gen_newjail_conf
 			#end_time=$( ${DATE_CMD} +%s )
 			#cbsdlogger NOTICE ${CBSD_APP}: finished in $(( end_time - st_time ))s
@@ -258,7 +266,20 @@ while [ 1 ]; do
 			continue
 			;;
 		interface)
-			get_construct_interface -d 1 -s "tap bridge vboxnet"
+			get_construct_interface -d 1 -v 1 -s "tap bridge vboxnet"
+			;;
+		jailnic)
+			if [ -z "${jailnic_temp_sql}" ]; then
+				jailnic_temp_sql=$( ${MKTEMP_CMD} )
+				/usr/local/bin/cbsd ${miscdir}/updatesql ${jailnic_temp_sql} ${distdir}/share/local-jailnic.schema jailnic
+				cbsdsqlrw ${jailnic_temp_sql} "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${nic_hwaddr}\" )"
+				trap "${RM_CMD} -f ${jailnic_temp_sql} ${jailnic_temp_sql}-shm ${jailnic_temp_sql}-wal" HUP INT ABRT BUS TERM EXIT
+			fi
+			if [ -z "${jname}" ]; then
+				f_dialog_msgbox "please set jname first" "Error"
+				continue
+			fi
+			jailnic-tui jname=${jname} out=${jailnic_temp_sql}
 			;;
 		"-")
 			continue
@@ -269,3 +290,4 @@ while [ 1 ]; do
 	esac
 done
 
+exit 0

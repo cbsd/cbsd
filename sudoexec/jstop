@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.1.19
+#v12.1.9
 MYARG=""
 MYOPTARG="jname inter"
 MYDESC="Stop jail"
@@ -147,6 +147,29 @@ if [ ${vnet} -eq 1 ]; then
 		myepair=
 		myepair=$( get_my_device epair ${jname}-eth${eth_seq} )
 		if [ -n "${myepair}" ]; then
+
+			# detach from vale if vale used
+			case "${nic_parent}" in
+				cbsdvale*)
+					strpos --str="${nic_parent}" --search="_"
+					_pos=$?
+					if [ ${_pos} -eq 0 ]; then
+						# not vale_XXX form
+						#err 1 "${N1_COLOR}${CBSD_APP}: vale switch not vale_XXX form: ${N2_COLOR}${nic_parent}${N0_COLOR}"
+					else
+						_arg_len=$( strlen ${nic_parent} )
+						_pref=$(( _arg_len - _pos ))
+						_vale_arg=$( substr --pos=0 --len=${_pos} --str="${nic_parent}" )
+						_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${nic_parent}" )
+					fi
+					valeid=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"  )
+					if [ -n "${valeid}" ]; then
+						cbsdlogger NOTICE "${CBSD_APP}: vale switch id: ${valeid} (vale${valeid})"
+						${ECHO} "${N1_COLOR}${CBSD_APP}: detach from vale switch id: ${valeid} (${N2_COLOR}vale${valeid}${N1_COLOR})${N0_COLOR}"
+						${distdir}/tools/vale-ctl -d vale${valeid}:${myepair}
+					fi
+			esac
+
 			myepair_list="${myepair_list} ${myepair}"
 			# returned epairXa, but we need epairXb, so append 'end' to the end of
 			# string and replace 'aend' to 'b'
@@ -197,7 +220,8 @@ geniplist ${ip4_addr}
 # pid not always correct, so just kill it via jexec:
 # roughly, but what to do with FreeBSD ;(
 if [ ${is_freebsd} -eq 1 ]; then
-	${JEXEC_CMD} ${jid} pkill -9 cron
+	#${JEXEC_CMD} ${jid} pkill -9 cron		# need $emulator support. exec via CBSD jexec instead:
+	jexec jname=${jname} pkill -9 cron
 fi
 
 export_jail_data_for_external_hook
@@ -213,15 +237,15 @@ sleep 2
 external_exec_script -s stop.d
 if [ ${vnet} -eq 1 ]; then
 	if [ "${ip4_addr}" = "REALDHCP" ]; then
-		${JEXEC_CMD} ${jname} /bin/pkill -9 dhclient dhcpcd 2>/dev/null 1>&2
+		${JEXEC_CMD} ${jname} /bin/pkill -9 dhclient dhcpcd 2>/dev/null 1>&2		# need $emulator support. exec via CBSD jexec instead:
+		jexec jname=${jname} pkill -9 dhclient dhcpcd 2>/dev/null 1>&2
 	fi
 fi
 ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -r ${jname} >/dev/null 2>&1 || true
 
-for i in $( /bin/ps -J ${jid} -o pid 2>/dev/null | ${GREP_CMD} -v PID ); do
+for i in $( ${PS_CMD} -J ${jid} -o pid 2>/dev/null | ${GREP_CMD} -v PID ); do
 	/bin/kill -9 ${i} > /dev/null 2>&1
 done
-
 
 exec_master_poststop
 external_exec_master_script "master_poststop.d"
