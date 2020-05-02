@@ -229,7 +229,7 @@ print_cf_bitmap_v4 (struct if_info *ifi)
 }
 
 void
-print_cidr_info_v4 (struct if_info *ifi)
+print_cidr_info_v4_orig (struct if_info *ifi)
 {
 	printf ("[CIDR]\n");
 	printf ("Host address		- %s\n", numtoquad (ifi->v4ad.n_haddr));
@@ -258,6 +258,39 @@ print_cidr_info_v4 (struct if_info *ifi)
 		printf ("%s\n", numtoquad (ifi->v4ad.n_broadcast - 1));
 	}
 	printf ("\n");
+
+	return;
+}
+
+void
+print_cidr_info_v4 (struct if_info *ifi)
+{
+//	printf ("[CIDR]\n");
+	printf ("_host_address=\"%s\"\n", numtoquad (ifi->v4ad.n_haddr));
+	printf ("_host_address_decimal=\"%u\"\n", ifi->v4ad.n_haddr);
+	printf ("_host_address_hex=\"%X\"\n", ifi->v4ad.n_haddr);
+	printf ("_network_address=\"%s\"\n",
+		numtoquad (ifi->v4ad.n_naddr));
+	printf ("_network_mask=\"%s\"\n", numtoquad (ifi->v4ad.n_nmask));
+	printf ("_network_mask_bits=\"%d\"\n", ifi->v4ad.n_nmaskbits);
+	printf ("_network_mask_hex=\"%X\"\n", ifi->v4ad.n_nmask);
+	printf ("_broadcast_address=\"%s\"\n",
+		numtoquad (ifi->v4ad.n_broadcast));
+	printf ("_cisco_wildcard=\"%s\"\n",
+		numtoquad (ifi->v4ad.n_nmask ^ 0xffffffff));
+	if (!ifi->v4ad.n_nmask)
+		printf ("_addresses_in_network=\"%u\"\n",
+			(ifi->v4ad.n_broadcast) - (ifi->v4ad.n_naddr));
+	else
+		printf ("_addresses_in_network=\"%u\"\n",
+			(ifi->v4ad.n_broadcast) - (ifi->v4ad.n_naddr) + 1);
+	printf ("_network_range_start=\"%s\"\n", numtoquad (ifi->v4ad.n_naddr));
+	printf ("_network_range_end=\"%s\"\n",numtoquad (ifi->v4ad.n_broadcast));
+	if (ifi->v4ad.n_naddr + 1 <= ifi->v4ad.n_broadcast - 1) {
+		printf ("_usable_range_start=\"%s\"\n", numtoquad (ifi->v4ad.n_naddr + 1));
+		printf ("_usable_range_end=\"%s\"\n", numtoquad (ifi->v4ad.n_broadcast - 1));
+	}
+//	printf ("\n");
 
 	return;
 }
