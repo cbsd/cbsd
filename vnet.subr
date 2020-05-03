@@ -130,7 +130,7 @@ get_device_uplink()
 # function search for available bridges in system who have uplink to ${interface}
 # when not - create one
 # out bridge name when it exist
-# $1 - type (bridge or epair) , $2 - uplink interface
+# $1 - type (bridge, epair or vpc) , $2 - uplink interface
 # return 1 when error
 #   example:
 #    if !  ttt=$( get_my_device bridge nfe0 ); then
@@ -139,11 +139,17 @@ get_device_uplink()
 get_my_device()
 {
 	local _i _uplink _firstfree _ret _test _dev _desc
+	local _vpc=0 _dbpath
 
 	[ -z "${1}" ] && echo "set device" && return 1
 	[ -z "${2}" ] && echo "No uplink" && return 1
 	_dev=$1
 	_desc=$2
+
+	if [ "${_dev}" = "vpc" ]; then
+		_vpc=1
+		_dev="bridge"
+	fi
 
 	for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
 		_uplink=$( get_device_uplink ${_i} ${_desc} )
@@ -155,14 +161,51 @@ get_my_device()
 	[ -z "${_firstfree}" ] && echo "Cant find first available ${_dev}" && return 1
 
 	if [ "${_dev}" = "bridge" ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: get_my_device: ${IFCONFIG_CMD} ${_firstfree} create addm ${_desc} up description ${_desc}
-		_test=$( ${IFCONFIG_CMD} ${_firstfree} create addm ${_desc} up description ${_desc} 2>&1 )
+		# set desciption first
+		_test=$( ${IFCONFIG_CMD} ${_firstfree} create description ${_desc} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			cbsdlogger NOTICE ${CBSD_APP}: get_my_device: error, ret: ${_ret}: ${_test}
+			cbsdlogger NOTICE ${CBSD_APP}: get_my_device: error, unable to create: ${_ret}: ${_test}
 			echo "${_test}"
 			return 1
 		fi
+
+		case "${_vpc}" in
+			0)
+				cbsdlogger NOTICE ${CBSD_APP}: get_my_device: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
+				_test=$( ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up 2>&1 )
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: get_my_device: error, ret: ${_ret}: ${_test}
+					echo "${_test}"
+					return 1
+				fi
+				;;
+			1)
+				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+				[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+				_vxlan_list=$( cbsdsqlro ${_dbpath} "SELECT vxlan_id FROM vpc_peers WHERE src_node=\"${nodename}\"" | ${XARGS_CMD} )
+				if [ -z "${_vxlan_list}" ]; then
+					echo "no vxlan_id in VPC database"
+					return 1
+				fi
+				for i in ${_vxlan_list}; do
+					${IFCONFIG_CMD} vxlan${i} > /dev/null 2>&1
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						echo "vxlan interface not initialized: vxlan${i}"
+						return 1
+					fi
+
+					_test=$( ${IFCONFIG_CMD} ${_firstfree} addm vxlan${i} private vxlan${i} up 2>&1 )
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						echo "ifconfig addm error: ${IFCONFIG_CMD} ${_firstfree} addm vxlan${i}"
+						return 1
+					fi
+				done
+				;;
+		esac
 	fi
 	echo "${_firstfree}"
 }
@@ -250,6 +293,7 @@ get_my_tap()
 	fi
 
 	echo ${_firstfree}
+	return 0
 }
 
 # convert mac to ip
