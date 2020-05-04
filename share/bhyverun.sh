@@ -253,6 +253,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_x2apic_mode}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -x"
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
+	[ -n "${uuid}" -a "${uuid}" != "0" ] && add_bhyve_opts="${add_bhyve_opts} -U ${uuid}"
 
 	if [ -n "${soundhw_args}" ]; then
 		if [ "${soundhw_args}" = "none" -o ${freebsdhostversion} -lt 1300034 ]; then
