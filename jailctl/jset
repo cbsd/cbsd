@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.2.1
+#v12.1.10
 MYARG="jname"
 CBSDMODULE="jail"
 ADDHELP="jconf=<path_to_file> - load and set settings from jconf\n"
@@ -329,6 +329,46 @@ modify_allow_fusefs()
 }
 
 # jid must be set
+modify_allow_linprocfs()
+{
+	local allow_mount
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_linprocfs}\" WHERE jname=\"${jname}\""
+	${JAIL_CMD} -m allow.mount.linprocfs=${allow_linprocfs} jid=${jid}
+
+	${ECHO} "${argpart}: ${N1_COLOR}${allow_linprocfs}${N0_COLOR}"
+	[ ${allow_linprocfs} -eq 0 ] && return 0
+
+	# we need to force allow_mount too when allow_linprocfs sets to 1 and allow_mount is zero
+	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
+	if [ "${allow_mount}" = "0" ]; then
+		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
+		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+	fi
+}
+
+# jid must be set
+modify_allow_linsysfs()
+{
+	local allow_mount
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${allow_linsysfs}\" WHERE jname=\"${jname}\""
+	${JAIL_CMD} -m allow.mount.linsysfs=${allow_linsysfs} jid=${jid}
+
+	${ECHO} "${argpart}: ${N1_COLOR}${allow_linsysfs}${N0_COLOR}"
+	[ ${allow_linsysfs} -eq 0 ] && return 0
+
+	# we need to force allow_mount too when allow_linsysfs sets to 1 and allow_mount is zero
+	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname=\"${jname}\"" )
+	if [ "${allow_mount}" = "0" ]; then
+		cbsdsqlrw local "UPDATE jails SET allow_mount=\"1\" WHERE jname=\"${jname}\""
+		${JAIL_CMD} -m allow.mount=1 jid=${jid}
+		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+	fi
+}
+
+# jid must be set
 modify_allow_procfs()
 {
 	local allow_mount
@@ -348,7 +388,6 @@ modify_allow_procfs()
 	fi
 }
 
-
 # jid must be set
 modify_allow_tmpfs()
 {
@@ -366,7 +405,6 @@ modify_allow_tmpfs()
 		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
-
 
 # jid must be set
 modify_allow_fdescfs()
@@ -424,8 +462,8 @@ modify_mount_src()
 	mount_src="${_mount_src}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_src}\" WHERE jname=\"${jname}\""
-
 	${ECHO} "${argpart}: ${N1_COLOR}${mount_src}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
 
 	. ${distdir}/universe.subr
 
@@ -440,7 +478,7 @@ modify_mount_src()
 			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
 			;;
 		1)
-			is_mounted ${_dst} && err 1 "${N1_COLOR}Already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
+			is_mounted ${_dst} && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
 			[ ! -d "${_dst}" ] && mkdir -p ${_dst}
 			${MOUNT_NULL_CMD} -oro ${SRC_DIR} ${_dst}
 			;;
@@ -463,8 +501,8 @@ modify_mount_ports()
 	mount_ports="${_mount_ports}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_ports}\" WHERE jname=\"${jname}\""
-
 	${ECHO} "${argpart}: ${N1_COLOR}${mount_ports}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
 	_dst="${path}/usr/ports"
@@ -476,7 +514,7 @@ modify_mount_ports()
 		;;
 		1)
 			[ ! -d /usr/ports ] && return 0
-			is_mounted ${_dst} && err 1 "${N1_COLOR}Already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
+			is_mounted ${_dst} && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
 			[ ! -d "${_dst}" ] && mkdir -p ${_dst}
 			${MOUNT_NULL_CMD} -oro /usr/ports ${_dst}
 			[ ! -d /usr/ports/distfiles ] && mkdir -p /usr/ports/distfiles
@@ -484,7 +522,6 @@ modify_mount_ports()
 		;;
 	esac
 }
-
 
 # mount_kernel
 modify_mount_kernel()
@@ -501,8 +538,8 @@ modify_mount_kernel()
 	mount_kernel="${_mount_kernel}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_kernel}\" WHERE jname=\"${jname}\""
-
 	${ECHO} "${argpart}: ${N1_COLOR}${mount_kernel}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
 
 	. ${distdir}/universe.subr
 	init_kerneldir
@@ -518,9 +555,146 @@ modify_mount_kernel()
 			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
 			;;
 		1)
-			is_mounted ${_dst} && err 1 "${N1_COLOR}Already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
+			is_mounted ${_dst} && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
 			[ ! -d "${_dst}" ] && ${MKDIR_CMD} -p ${_dst}
 			${MOUNT_NULL_CMD} -oro ${_src} ${_dst}
+			;;
+	esac
+}
+
+# mount_fdescfs
+modify_mount_fdescfs()
+{
+	local _ver _dst _oldval _src
+
+	#push new variable in tmp stack
+	_oldval="${mount_fdescfs}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_fdescfs="${_oldval}"
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_fdescfs}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${N1_COLOR}${mount_fdescfs}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+
+	# check for online
+	case "${mount_fdescfs}" in
+		0)
+			is_mounted ${path}/dev/fd && ${UMOUNT_CMD} -f ${path}/dev/fd
+			;;
+		1)
+			is_mounted ${path}/dev/fd && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${path}/dev/fd${N0_COLOR}"
+			${MOUNT_CMD} -t fdescfs descfs ${path}/dev/fd
+			;;
+	esac
+}
+
+# mount_procfs
+modify_mount_procfs()
+{
+	local _ver _dst _oldval _src
+
+	#push new variable in tmp stack
+	_oldval="${mount_procfs}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_procfs="${_oldval}"
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_procfs}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${N1_COLOR}${mount_procfs}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+
+	# check for online
+	case "${mount_procfs}" in
+		0)
+			is_mounted ${path}/proc && ${UMOUNT_CMD} -f ${path}/proc
+			;;
+		1)
+			is_mounted ${path}/proc && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${path}/proc${N0_COLOR}"
+			${MOUNT_CMD} -t procfs procfs ${path}/proc
+			;;
+	esac
+}
+
+# mount_linsysfs
+modify_mount_linsysfs()
+{
+	local _ver _dst _oldval _src
+
+	#push new variable in tmp stack
+	_oldval="${mount_linsysfs}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_linsysfs="${_oldval}"
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_linsysfs}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${N1_COLOR}${mount_linsysfs}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+
+	_dst="${path}/compat/linux/sys"
+
+	# check for online
+	case "${mount_linsysfs}" in
+		0)
+			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
+			;;
+		1)
+			is_mounted ${_dst} && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
+			[ ! -d "${_dst}" ] && ${MKDIR_CMD} -p ${_dst}
+			${MOUNT_CMD} -t linsysfs linsysfs ${_dst}
+			;;
+	esac
+}
+
+# mount_linprocfs
+modify_mount_linprocfs()
+{
+	local _ver _dst _oldval _src
+
+	#push new variable in tmp stack
+	_oldval="${mount_linprocfs}"
+
+	. ${system}
+	. ${jrcconf}
+
+	#restore new variable
+	mount_linprocfs="${_oldval}"
+
+	cbsdsqlrw local "UPDATE jails SET ${i}=\"${mount_linprocfs}\" WHERE jname=\"${jname}\""
+
+	${ECHO} "${argpart}: ${N1_COLOR}${mount_linprocfs}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && return 0
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+	_dst="${path}/compat/linux/proc"
+
+	# check for online
+	case "${mount_linprocfs}" in
+		0)
+			is_mounted ${_dst} && ${UMOUNT_CMD} -f ${_dst}
+			;;
+		1)
+			is_mounted ${_dst} && err 1 "${N1_COLOR}already mounted: ${N2_COLOR}${_dst}${N0_COLOR}"
+			[ ! -d "${_dst}" ] && ${MKDIR_CMD} -p ${_dst}
+			${MOUNT_CMD} -t linprocfs linprocfs ${_dst}
 			;;
 	esac
 }
@@ -648,17 +822,9 @@ for n in ${my_arg}; do
 					astart|applytpl|floatresolv|exec_consolelog|devfs_ruleset|protected|hidden)
 						update_jails
 						;;
-					mount_src)
-						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_src for ${jname}
-						modify_mount_src
-						;;
-					mount_ports)
-						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_ports for ${jname}
-						modify_mount_ports
-						;;
-					mount_kernel)
-						cbsdlogger NOTICE ${CBSD_APP}: modify_mount_kernel for ${jname}
-						modify_mount_kernel
+					mount_src|mount_ports|mount_kernel|mount_fdescfs|mount_procfs|mount_linprocfs|mount_linsysfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_${argpart} for ${jname}
+						modify_${argpart}
 						;;
 					allow_mount)
 						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_mount for ${jname}
@@ -675,6 +841,14 @@ for n in ${my_arg}; do
 					allow_fusefs)
 						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_fusefs for ${jname}
 						modify_allow_fusefs
+						;;
+					allow_linprocfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_linprocfs for ${jname}
+						modify_allow_linprocfs
+						;;
+					allow_linsysfs)
+						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_linsysfs for ${jname}
+						modify_allow_linsysfs
 						;;
 					allow_tmpfs)
 						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_tmpfs for ${jname}
