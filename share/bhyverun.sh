@@ -369,6 +369,9 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 				sleep 1
 		esac
 	else
+		/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1
+		# for some reason, not always a virtual machine can start instantly
+		sleep 1
 		echo "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must continue"
 		logger -t bhyverun.sh "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must continue"
 	fi
