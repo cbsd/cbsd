@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.9
 MYARG=""
-MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init"
+MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet"
 # allow all jail settings
 . ${distsharedir}/jail-arg
 JAIL_ARGS="${JARG}"
@@ -13,7 +13,8 @@ fstablocal = additional fstab file stored as fstab.local\n\
 jprofile = specify jail profile for creating jail\n\
 zfs_snapsrc = use ZFS snapshot as data source\n\
 pkg_bootstrap= 0,1; overwrite pkg_bootstrap from conf file.\n\
-removejconf= 0,1: remove jconf after jcreate? 0 - don't remove\n"
+removejconf= 0,1: remove jconf after jcreate? 0 - don't remove\n\
+quiet= 0,1: be quiet, dont output verbose message\n"
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate"
 
@@ -26,10 +27,15 @@ EXTHELP="wf_jcreate"
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
-for i in ${JAIL_ARGS}; do
+for i in ${MYOPTARG}; do
 	unset o${i}
 	eval "o${i}=\$$i"
 done
+
+# jcreate global conf
+readconf jcreate.conf
+
+[ -n "${oquiet}" ] && quiet="${oquiet}"
 
 if [ -z "${jconf}" ]; then
 	jconf=$( ${MKTEMP_CMD} )
@@ -40,6 +46,7 @@ fi
 
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}Please set for jcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -z "${autorestart}" ] && autorestart=0
+[ -z "${quiet}" ] && quiet=0
 [ -n "${etcupdate_init}" ] && oetcupdate_init="${etcupdate_init}"
 [ -n "${removejconf}" ] && oremovejconf="${removejconf}"
 
@@ -75,7 +82,7 @@ install_and_apply_helpers()
 
 	local module=$( cbsdsqlro ${_srcfile} SELECT helpername FROM system | ${AWK_CMD} '{printf $1}' )
 
-	${ECHO} "${N1_COLOR}Install and apply helpers ${_srcfile}: ${N2_COLOR}${module}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Install and apply helpers ${_srcfile}: ${N2_COLOR}${module}${N0_COLOR}"
 
 	local helperdir="${jailsysdir}/${jname}/helpers"
 
@@ -83,10 +90,10 @@ install_and_apply_helpers()
 
 	local formfile="${helperdir}/${module}.sqlite"
 
-	echo ":: ${CP_CMD} -a ${_srcfile} ${formfile}"
+	[ ${quiet} -ne 1 ] && echo ":: ${CP_CMD} -a ${_srcfile} ${formfile}"
 	${CP_CMD} -a ${_srcfile} ${formfile}
 
-	echo ":: forms module=${module} mode=apply jname=${jname} inter=0"
+	[ ${quiet} -ne 1 ] && echo ":: forms module=${module} mode=apply jname=${jname} inter=0"
 	forms module=${module} mode=apply jname=${jname} inter=0
 }
 
@@ -213,7 +220,6 @@ if [ $? -ne 0 ]; then
 	[ ${autorestart} -eq 0 ] && err 1 "${N1_COLOR}Jail with ${jname} already exist. Use autorestart=1 for updating via jset${N0_COLOR}"
 	jset jname=${jname} jconf=${jconf} autorestart=1
 
-
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 		[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} astart=${astart} protected=${protected} vnc_port=0 status=2
@@ -235,7 +241,7 @@ esac
 
 get_base -v ${ver} ${_basename_args}
 
-${ECHO} "${N1_COLOR}Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
+[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
 
 [ -d "${data}" ] && remove_data_dir ${data}
 [ ! -d ${path} -a "${baserw}" -eq 0 ] && ${MKDIR_CMD} -m 0755 -p ${path}
@@ -246,7 +252,7 @@ if [ "${mnt_start}" != "0" ]; then
 	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
 		err 1 "mnt_start script not exist or not executable: ${mnt_start}"
 	fi
-	${ECHO} "${N1_COLOR}Execute mnt_start script: ${N2_COLOR}${mnt_start}${N0_COLOR}..."
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Execute mnt_start script: ${N2_COLOR}${mnt_start}${N0_COLOR}..."
 	# external mount, reset zfsfeat
 	zfsfeat=0
 	[ ! -d "${data}" ] && ${MKDIR_CMD} ${data}
@@ -269,7 +275,7 @@ fi
 
 if [ -d "${jailsysskeldir}" ]; then
 	# we have custom skeldir. copy
-	${ECHO} "${N1_COLOR}Applying custom skel system dir template from: ${N2_COLOR}${jailsysskeldir}${N1_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Applying custom skel system dir template from: ${N2_COLOR}${jailsysskeldir}${N1_COLOR}"
 	${RSYNC_CMD} -a ${jailsysskeldir} ${jailsysdir}/${jname}/
 	# local fstab ?
 	[ -f "${jailsysskeldir}/fstab.local" ] && fstablocal="${jailsysskeldir}/fstab.local"
@@ -380,8 +386,8 @@ if [ ${res} -eq 0 ]; then
 		ret=$?
 		# if ret != 0, remove jail: something wrong
 		if [ ${ret} -ne 0 ]; then
-			${ECHO}
-			${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}postcreate_module_action${N0_COLOR}"
+			[ ${quiet} -ne 1 ] && ${ECHO}
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}postcreate_module_action${N0_COLOR}"
 			# cleanup
 			[ -f "${mount_fstab}" ] && ${RM_CMD} -f ${mount_fstab}
 			jremove jname=${jname}
@@ -389,21 +395,21 @@ if [ ${res} -eq 0 ]; then
 		fi
 	fi
 
-	echo
-	${ECHO} "${N1_COLOR}To edit VM properties use: ${N2_COLOR}cbsd jconfig jname=${jname}${N0_COLOR}"
-	${ECHO} "${N1_COLOR}To start VM use: ${N2_COLOR}cbsd jstart ${jname}${N0_COLOR}"
-	${ECHO} "${N1_COLOR}To stop VM use: ${N2_COLOR}cbsd jstop ${jname}${N0_COLOR}"
-	${ECHO} "${N1_COLOR}To remove VM use: ${N2_COLOR}cbsd jremove ${jname}${N0_COLOR}"
-	${ECHO} "${N1_COLOR}For attach VM console use: ${N2_COLOR}cbsd jlogin ${jname}${N0_COLOR}"
-	echo
-	${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && echo
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}To edit VM properties use: ${N2_COLOR}cbsd jconfig jname=${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}To start VM use: ${N2_COLOR}cbsd jstart ${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}To stop VM use: ${N2_COLOR}cbsd jstop ${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}To remove VM use: ${N2_COLOR}cbsd jremove ${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}For attach VM console use: ${N2_COLOR}cbsd jlogin ${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && echo
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Creating ${jname} complete: ${N2_COLOR}Enjoy!${N0_COLOR}"
 
 	${RM_CMD} -f ${rcconf}
 	[ "${mdsize}" != "0" ] && unmountmd jroot=${data}
 else
-	${ECHO}
-	${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}cbsd jregister${N0_COLOR}"
-	${ECHO} "${N1_COLOR}Please review bad config file: ${N2_COLOR}/tmp/rc.conf_${jname}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO}
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Creating ${jname} failed: ${N2_COLOR}cbsd jregister${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Please review bad config file: ${N2_COLOR}/tmp/rc.conf_${jname}${N0_COLOR}"
 	${MV_CMD} ${rcconf} /tmp
 	#cleanup
 	[ -f "${mount_fstab}" ] && ${RM_CMD} -f ${mount_fstab}
@@ -417,7 +423,7 @@ cbsdsqlrw local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname
 # always start jail when img_helpers exist
 if [ -n "${with_img_helpers}" ]; then
 	jswmode jname=${jname} mode=master comment='0'
-	jstart jname=${jname}
+	jstart jname=${jname} quiet=${quiet}
 
 	for i in ${with_img_helpers}; do
 		if [ ! -r "${i}" ]; then
@@ -470,7 +476,7 @@ jswmode jname=${jname} mode=master comment='0'
 myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 [ -z "${myjid}" ] && myjid=0
 # autostart asap upon jail created
-[ "${runasap}" = "1" -a ${myjid} -eq 0 ] && jstart jname=${jname}
+[ "${runasap}" = "1" -a ${myjid} -eq 0 ] && jstart jname=${jname} quiet=${quiet}
 
 myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 [ -z "${myjid}" ] && myjid=0
@@ -496,7 +502,7 @@ if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; t
 	cbsdredis publish cbsd_events '{"cmd":"jcreate", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "ip4_addr":"'${ip4_addr}'","duration":'${diff_time}'}'
 fi
 diff_time=$( displaytime ${diff_time} )
-${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 cbsdlogger NOTICE ${CBSD_APP}: vm ${jname} has been created in ${diff_time}
 
 # create.d hook

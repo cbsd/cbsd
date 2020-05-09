@@ -1,0 +1,73 @@
+#!/usr/local/bin/cbsd
+#v12.1.11
+. ${subr}
+. ${cbsdinit}
+. ${system}
+. ${strings}
+
+Makefile="${CBSD_PWD}/CBSDfile"
+
+[ ! -r "${Makefile}" ] && err 1 "${N1_COLOR}no such CBSDMake file${N0_COLOR}"
+
+jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+
+quiet="1"
+runasap="1"
+pkg_bootstrap="1"
+ip4_addr="DHCP"
+pkglist=
+NOCOLOR=1
+
+. ${Makefile}
+
+# multiple astart always non interactive
+export inter=0
+
+. ${distdir}/multiple.subr
+
+${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+task_owner="up_multiple"
+
+task_id=
+task_id_cur=
+
+# spawn command for all jail
+for jname in ${jail_list}; do
+	jail_${jname}
+
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd jcreate jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	runasap="${runasap}" \
+	pkg_bootstrap="${pkg_bootstrap}" \
+	host_hostname="${host_hostname}" \
+	pkglist="${pkglist}" \
+	quiet="${quiet}" \
+	)
+	task_id="${task_id} ${task_id_cur}"
+	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	sleep 1
+done
+
+for jname in ${bhyve_list}; do
+	bhyve_${jname}
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd bcreate jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	vm_os_type="${vm_os_type}" \
+	vm_os_profile="${vm_os_profile}" \
+	vm_ram="${vm_ram}" \
+	imgsize="${imgsize}" \
+	vm_cpus="${vm_cpus}" \
+	runasap="0" \
+	pkg_bootstrap="${pkg_bootstrap}" \
+	host_hostname="${host_hostname}" \
+	quiet="${quiet}" \
+	)
+	task_id="${task_id} ${task_id_cur}"
+	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	sleep 1
+done
+
+multiple_processing_spawn -o ${task_owner} -n "jexec"
+echo
+exit 0
