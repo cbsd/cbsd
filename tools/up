@@ -1,29 +1,217 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
+MYARG=""
+MYOPTARG="cbsdfile jname"
+MYDESC="work with CBSDfile, vagrant-like behavior"
+CBSDMODULE="sys"
+ADDHELP=""
+EXTHELP="wf_cbsdfile"
+
 . ${subr}
-. ${cbsdinit}
-. ${system}
 . ${strings}
 
-Makefile="${CBSD_PWD}/CBSDfile"
+. ${cbsdinit}
+
+ARGS=
+# exclude jname= and mode= params from args str
+for i in $*; do
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	prefix9=$( substr --pos=0 --len=9 --str="${i}" )
+	[ "${prefix6}" = "jname=" ] && continue
+	[ "${prefix9}" = "cbsdfile=" ] && continue
+	if [ -z "${ARGS}" ]; then
+		ARGS="${i}"
+	else
+		ARGS="${ARGS} ${i}"
+	fi
+done
+
+# single jname only
+[ -n "${jname}" ] && ARGS="${jname}"
+
+if [ -n "${cbsdfile}" ]; then
+	Makefile="${cbsdfile}"
+	myworkdir=$( ${DIRNAME_CMD} ${cbsdfile} )
+else
+	Makefile="${CBSD_PWD}/CBSDfile"
+	myworkdir="${CBSD_PWD}"
+fi
 
 [ ! -r "${Makefile}" ] && err 1 "${N1_COLOR}no such CBSDMake file${N0_COLOR}"
+cd ${myworkdir}
 
-jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
-bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 
+jail_list=
+jail_num=0
+bhyve_list=
+bhyve_num=0
+
+if [ -n "${ARGS}" ]; then
+	# limit jail env by args ?
+	for i in ${ARGS}; do
+		for j in ${all_jail_list}; do
+			if [ "${i}" = "${j}" ]; then
+				jail_num=$(( jail_num + 1 ))
+				if [ -n "${jail_list}" ]; then
+					jail_list="${jail_list} ${i}"
+				else
+					jail_list="${i}"
+				fi
+			fi
+		done
+		for j in ${all_bhyve_list}; do
+			if [ "${i}" = "${j}" ]; then
+				bhyve_num=$(( bhyve_num + 1 ))
+				if [ -n "${bhyve_list}" ]; then
+					bhyve_list="${bhyve_list} ${i}"
+				else
+					bhyve_list="${i}"
+				fi
+			fi
+		done
+	done
+else
+	jail_list="${all_jail_list}"
+	for i in ${jail_list}; do
+		jail_num=$(( jail_num + 1 ))
+	done
+
+	bhyve_list="${all_bhyve_list}"
+	for i in ${bhyve_list}; do
+		bhyve_num=$(( bhyve_num + 1 ))
+	done
+fi
+
+[ -z "${jail_list}" -a -z "${bhyve_list}" ] && err 1 "${N1_COLOR}empty env list${N0_COLOR}"
+
+num_env=$(( jail_num + bhyve_num ))
+
+[ ${num_env} -gt 1 ] && ${ECHO} "${N1_COLOR}number of environments: ${N2_COLOR}${num_env}${N0_COLOR}" 1>&2
+
+# defaults - to cbsdfile.conf
 quiet="1"
 runasap="1"
 pkg_bootstrap="1"
 ip4_addr="DHCP"
 pkglist=
 NOCOLOR=1
+vm_os_type=
+vm_os_profile=
+vm_ram="1g"
+imgsize="10g"
+vm_cpus=1
+host_hostname=
+ip4_gw=
+interface=
+ci_jname=
+ci_fqdn=
+ci_ip4_addr=
+ci_gw4=
+imgtype=
 
+# read config
 . ${Makefile}
 
-# multiple astart always non interactive
-export inter=0
+bhyve_ssh_wait()
+{
+	local _attempt_max=60 _i _x _y
 
+	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}): ${N2_COLOR}${jname}...${N0_COLOR}"
+	# wait for VM boot
+	_y=2		# test for timeout exceed
+	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
+		[ $? -eq 0 ] && break
+		_y=$(( _y + 1 ))
+		sleep 1
+		# todo: delete only ip
+		arp -adn > /dev/null 2>&1
+		[ ${_y} -eq ${_attempt_max} ] && return 1
+	done
+
+	return 0
+}
+
+run_jail()
+{
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
+	# push old cbsd workdir
+	ocbsd_workdir="${cbsd_workdir}"
+	jail_${jname}
+
+	# todo: test empty/append args
+
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	runasap="${runasap}" \
+	pkg_bootstrap="${pkg_bootstrap}" \
+	host_hostname="${host_hostname}" \
+	pkglist="${pkglist}" \
+	quiet="${quiet}"
+
+	jail_${jname}		# re-read variables
+	postcreate_${jname} 2>/dev/null
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+}
+
+run_bhyve()
+{
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
+	# push old cbsd workdir
+	ocbsd_workdir="${cbsd_workdir}"
+	bhyve_${jname}
+
+	# todo: test empty/append args
+
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} \
+	jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	vm_os_type="${vm_os_type}" \
+	vm_os_profile="${vm_os_profile}" \
+	vm_ram="${vm_ram}" \
+	imgsize="${imgsize}" \
+	vm_cpus="${vm_cpus}" \
+	runasap="${runasap}" \
+	host_hostname="${host_hostname}" \
+	ip4_gw="${ip4_gw}" \
+	interface="${interface}" \
+	ci_jname="${ci_jname}" \
+	ci_fqdn="${ci_fqdn}" \
+	ci_ip4_addr="${ci_ip4_addr}" \
+	ci_gw4="${ci_gw4}" \
+	imgtype="${imgtype}" \
+	quiet="${quiet}"
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+
+	bhyve_ssh_wait
+	ret=$?
+	if [ ${ret} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
+		bhyve_${jname}		# re-read variables
+		postcreate_${jname} 2>/dev/null
+	else
+		${ECHO} "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+}
+
+if [ ${num_env} -eq 1 ]; then
+	if [ ${jail_num} -eq 1 ]; then
+		jname="${jail_list}"
+		run_jail
+	elif [ ${bhyve_num} -eq 1 ]; then
+		jname="${bhyve_list}"
+		run_bhyve
+	fi
+	exit 0
+fi
+
+# multiple run area
 . ${distdir}/multiple.subr
 
 ${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
@@ -33,41 +221,13 @@ task_id=
 task_id_cur=
 
 # spawn command for all jail
-for jname in ${jail_list}; do
-	jail_${jname}
-
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd jcreate jname=${jname} \
-	ip4_addr="${ip4_addr}" \
-	runasap="${runasap}" \
-	pkg_bootstrap="${pkg_bootstrap}" \
-	host_hostname="${host_hostname}" \
-	pkglist="${pkglist}" \
-	quiet="${quiet}" \
-	)
+for jname in ${jail_list} ${bhyve_list}; do
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up cbsdfile=${Makefile} jname=${jname} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
-	sleep 1
+	sleep 2
 done
 
-for jname in ${bhyve_list}; do
-	bhyve_${jname}
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd bcreate jname=${jname} \
-	ip4_addr="${ip4_addr}" \
-	vm_os_type="${vm_os_type}" \
-	vm_os_profile="${vm_os_profile}" \
-	vm_ram="${vm_ram}" \
-	imgsize="${imgsize}" \
-	vm_cpus="${vm_cpus}" \
-	runasap="0" \
-	pkg_bootstrap="${pkg_bootstrap}" \
-	host_hostname="${host_hostname}" \
-	quiet="${quiet}" \
-	)
-	task_id="${task_id} ${task_id_cur}"
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
-	sleep 1
-done
+multiple_processing_spawn -o ${task_owner} -n "up"
 
-multiple_processing_spawn -o ${task_owner} -n "jexec"
-echo
 exit 0
