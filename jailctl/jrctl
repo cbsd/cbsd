@@ -3,7 +3,7 @@
 CBSDMODULE="jail"
 MYARG=""
 . ${distsharedir}/rctl.conf
-MYOPTARG="alljails display emulator header human jname mode node prometheus shownode ${RCTL} ${RCTL_EXTRA}"
+MYOPTARG="alljails display emulator header human jname mode node prometheus shownode ${RCTL} ${RCTL_EXTRA} quiet"
 MYDESC="Set or flush resource limit for jail"
 ADDHELP="\
 alljails=1 - get jaillist from remote node\n\
@@ -17,7 +17,7 @@ node= only for current node\n\
 prometheus=0 or 1 = prometheus metric mode output\n\
 shownode=1 - show nodename for jails\n\
 rctl params: ${RCTL} ${RCTL_EXTRA}\n\
-"
+quiet= 0,1: be quiet, dont output verbose message\n"
 EXTHELP="wf_jrctl"
 
 . ${subr}
@@ -27,6 +27,8 @@ EXTHELP="wf_jrctl"
 . ${distdir}/jrctl.subr
 
 . ${cbsdinit}
+
+[ -z "${quiet}" ] && quiet=1
 
 show_header()
 {
@@ -156,7 +158,6 @@ show_jails()
 	else
 		show_local
 	fi
-
 }
 
 set_limit()
@@ -164,7 +165,7 @@ set_limit()
 	local LIMITS="${jailsysdir}/${jname}/jail.limits"
 	local _formfile _mymodule
 	local _val _valnew
-	local i DATA
+	local i DATA _ret
 
 	case "${emulator}" in
 		jail)
@@ -189,7 +190,6 @@ set_limit()
 	${TRUNCATE_CMD} -s0 ${LIMITS}
 
 	for i in ${RCTL}; do
-
 		# rctl params update if args sets
 		_val=
 
@@ -258,14 +258,14 @@ set_limit()
 					break
 				fi
 
-				DATA=$( /sbin/zfs get -Ho value name ${data} )
+				DATA=$( ${ZFS_CMD} get -Ho value name ${data} )
 				if [ -z "${DATA}" ]; then
 					${ECHO} "${N1_COLOR}Unable to get dataset name for: ${N2_COLOR}${jaildatadir}${N1_COLOR}. Skip set fsquota${N0_COLOR}"
 					break
 				fi
 
 				${ECHO} "${N1_COLOR}Set new quota for ${jname}:${data}: ${N2_COLOR}${_val}${N0_COLOR}"
-				/sbin/zfs set quota=${_val} ${DATA}
+				${ZFS_CMD} set quota=${_val} ${DATA}
 				;;
 			bw)
 				;;
@@ -273,20 +273,25 @@ set_limit()
 	done
 
 	if [ -f "${LIMITS}"  ]; then
-		printf "${N1_COLOR}${mode} resource limit: [ ${N2_COLOR}"
+		[ ${quiet} -ne 1 ] && printf "${N1_COLOR}${mode} resource limit: [ ${N2_COLOR}"
 		${CAT_CMD} ${LIMITS} | while read _p; do
 			case ":${_p}" in
 				:#* | :)
 					continue
 				;;
 			esac
-			_str="/usr/bin/rctl -a jail:${jname}:$_p"
-			_out=$( eval $_str )
-			[ $? -eq 0 ] && printf "${_p} "
+			_str="${RCTL_CMD} -a jail:${jname}:$_p"
+			_out=$( eval ${_str} )
+			_ret=$?
+			if [ ${_ret} -eq 0 ]; then
+				[ ${quiet} -ne 1 ] && printf "${_p} "
+			fi
 		done
-			printf "${N1_COLOR}]${N0_COLOR}\n"
+		_ret=$?
+		[ ${quiet} -ne 1 ] && printf "${N1_COLOR}]${N0_COLOR}\n"
 	fi
 
+	return ${_ret}
 }
 
 
@@ -304,7 +309,7 @@ jail_rctl()
 			;;
 		"unset")
 			[ -z "${jname}" ] && err 1 "${N1_COLOR}jname= must be set${N0_COLOR}"
-			/usr/bin/rctl -r jail:${jname}
+			${RCTL_CMD} -r jail:${jname}
 			return 0
 			;;
 		"show")
@@ -313,12 +318,12 @@ jail_rctl()
 				if [ "${prometheus}" = "0" ]; then
 					case "${emulator}" in
 						jail)
-							/usr/bin/rctl -hu jail:${jname}
+							${RCTL_CMD} -hu jail:${jname}
 							;;
 						bhyve)
 							pid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" )
 							vm_cpus=$( cbsdsqlro local SELECT vm_cpus FROM bhyve WHERE jname=\"${jname}\" )
-							eval $( /usr/bin/rctl -hu process:${pid} )
+							eval $( ${RCTL_CMD} -hu process:${pid} )
 							for res in ${RCTL}; do
 								eval _val=\$${res}
 								if [ "${res}" = "pcpu" -a -n "${_val}" ]; then
@@ -333,12 +338,12 @@ jail_rctl()
 				else
 					case "${emulator}" in
 						jail)
-							eval $( /usr/bin/rctl -u jail:${jname} )
+							eval $( ${RCTL_CMD} -u jail:${jname} )
 							;;
 						bhyve)
 							pid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" )
 							vm_cpus=$( cbsdsqlro local SELECT vm_cpus FROM bhyve WHERE jname=\"${jname}\" )
-							eval $( /usr/bin/rctl -u process:${pid} )
+							eval $( ${RCTL_CMD} -u process:${pid} )
 							# take into account multi-core guest in pcpu value
 							# On multi-core guest we need to: pcpu / vm_cpus
 							[ ${vm_cpus} -gt 1 ] && pcpu=$(( pcpu / vm_cpus ))
@@ -356,13 +361,13 @@ jail_rctl()
 				if [ "${prometheus}" = "0" ]; then
 					for i in $( jorder ); do
 						echo "--- ${i} ---"
-						/usr/bin/rctl -hu jail:${i}
+						${RCTL_CMD} -hu jail:${i}
 					done
 					for i in $( border ); do
 						echo "--- ${i} ---"
 						pid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${i}\" )
 						vm_cpus=$( cbsdsqlro local SELECT vm_cpus FROM bhyve WHERE jname=\"${i}\" )
-						eval $( /usr/bin/rctl -hu process:${pid} )
+						eval $( ${RCTL_CMD} -hu process:${pid} )
 						for res in ${RCTL}; do
 							eval _val=\$${res}
 							if [ "${res}" = "pcpu" -a -n "${_val}" ]; then
@@ -375,7 +380,7 @@ jail_rctl()
 					done
 				else
 					for i in $( jorder ); do
-						eval $( /usr/bin/rctl -u jail:${i} )
+						eval $( ${RCTL_CMD} -u jail:${i} )
 						for res in ${RCTL}; do
 							eval _mydesc="\$${res}_desc"
 							eval _val=\$${res}
@@ -386,7 +391,7 @@ jail_rctl()
 					for i in $( border ); do
 						pid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${i}\" )
 						vm_cpus=$( cbsdsqlro local SELECT vm_cpus FROM bhyve WHERE jname=\"${i}\" )
-						eval $( /usr/bin/rctl -u process:${pid} )
+						eval $( ${RCTL_CMD} -u process:${pid} )
 						# take into account multi-core guest in pcpu value
 						# On multi-core guest we need to: pcpu / vm_cpus
 						[ ${vm_cpus} -gt 1 ] && pcpu=$(( pcpu / vm_cpus ))
@@ -412,7 +417,7 @@ jail_rctl()
 			return 0
 			;;
 		*)
-			show_jails | /usr/bin/column -t
+			show_jails | ${COLUMN_CMD} -t
 			;;
 	esac
 }

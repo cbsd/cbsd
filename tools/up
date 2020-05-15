@@ -1,0 +1,155 @@
+#!/usr/local/bin/cbsd
+#v12.1.11
+MYARG=""
+MYOPTARG="cbsdfile jname"
+MYDESC="work with CBSDfile, vagrant-like behavior"
+CBSDMODULE="sys"
+ADDHELP=""
+EXTHELP="wf_cbsdfile"
+
+. ${subr}
+. ${strings}
+. ${cbsdinit}
+
+# defaults - to cbsdfile.conf
+quiet="1"
+runasap="1"
+pkg_bootstrap="1"
+ip4_addr="DHCP"
+pkglist=
+NOCOLOR=1
+vm_os_type=
+vm_os_profile=
+vm_ram="1g"
+imgsize="10g"
+vm_cpus=1
+host_hostname=
+ip4_gw=
+interface=
+ci_jname=
+ci_fqdn=
+ci_ip4_addr=
+ci_gw4=
+imgtype=
+
+# init CBSDfile data
+. ${distdir}/cbsdfile.subr
+
+bhyve_ssh_wait()
+{
+	local _attempt_max=60 _i _x _y
+
+	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}): ${N2_COLOR}${jname}...${N0_COLOR}"
+	# wait for VM boot
+	_y=2		# test for timeout exceed
+	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
+		[ $? -eq 0 ] && break
+		_y=$(( _y + 1 ))
+		sleep 1
+		# todo: delete only ip
+		${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
+		[ ${_y} -eq ${_attempt_max} ] && return 1
+	done
+
+	return 0
+}
+
+run_jail()
+{
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
+	# push old cbsd workdir
+	ocbsd_workdir="${cbsd_workdir}"
+	jail_${jname}
+
+	# todo: test empty/append args
+
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	runasap="${runasap}" \
+	pkg_bootstrap="${pkg_bootstrap}" \
+	host_hostname="${host_hostname}" \
+	pkglist="${pkglist}" \
+	quiet="${quiet}"
+
+	jail_${jname}		# re-read variables
+	postcreate_${jname} 2>/dev/null
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+}
+
+run_bhyve()
+{
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
+	# push old cbsd workdir
+	ocbsd_workdir="${cbsd_workdir}"
+	bhyve_${jname}
+
+	# todo: test empty/append args
+
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} \
+	jname=${jname} \
+	ip4_addr="${ip4_addr}" \
+	vm_os_type="${vm_os_type}" \
+	vm_os_profile="${vm_os_profile}" \
+	vm_ram="${vm_ram}" \
+	imgsize="${imgsize}" \
+	vm_cpus="${vm_cpus}" \
+	runasap="${runasap}" \
+	host_hostname="${host_hostname}" \
+	ip4_gw="${ip4_gw}" \
+	interface="${interface}" \
+	ci_jname="${ci_jname}" \
+	ci_fqdn="${ci_fqdn}" \
+	ci_ip4_addr="${ci_ip4_addr}" \
+	ci_gw4="${ci_gw4}" \
+	imgtype="${imgtype}" \
+	quiet="${quiet}"
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+
+	bhyve_ssh_wait
+	ret=$?
+	if [ ${ret} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
+		bhyve_${jname}		# re-read variables
+		postcreate_${jname} 2>/dev/null
+	else
+		${ECHO} "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+}
+
+# MAIN
+if [ ${num_env} -eq 1 ]; then
+	if [ ${jail_num} -eq 1 ]; then
+		jname="${jail_list}"
+		run_jail
+	elif [ ${bhyve_num} -eq 1 ]; then
+		jname="${bhyve_list}"
+		run_bhyve
+	fi
+	exit 0
+fi
+
+# multiple run area
+. ${distdir}/multiple.subr
+
+${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+task_owner="up_multiple"
+
+task_id=
+task_id_cur=
+
+# spawn command for all jail
+for jname in ${jail_list} ${bhyve_list}; do
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up cbsdfile=${Makefile} jname=${jname} )
+	task_id="${task_id} ${task_id_cur}"
+	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	sleep 2
+done
+
+multiple_processing_spawn -o ${task_owner} -n "up"
+
+exit 0
