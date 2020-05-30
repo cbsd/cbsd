@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.0.5
+#v12.1.12
 CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="verbose"
@@ -18,7 +18,10 @@ EXTHELP="wf_jscp"
 . ${tools}
 . ${strings}
 
+verbose=0
+
 . ${cbsdinit}
+
 
 getjname()
 {
@@ -49,95 +52,143 @@ try_remote()
 	[ -z "${path}" ] && log_err 1 "path not found"
 }
 
+scp()
+{
+	local _ret _cmd
+
+	[ $# -ne 2 ] && err 1 "${N1_COLOR}$0 jail1:remotefile1 localfile1 [ localfile2 jail2@:remotefile2 ]${N0_COLOR}"
+	jname=
+	rfile=
+	rarg=0
+
+	if getjname $1; then
+		if getjname $2; then
+			log_err 1 "${N1_COLOR}only one remote path${N0_COLOR}"
+		fi
+		rarg=1
+	else
+		if getjname $2; then
+			rarg=2
+		fi
+	fi
+
+	[ -z "${jname}" -o -z "${rfile}" ] && log_err 1 "${N1_COLOR}jail path via jail:path records not determine${N0_COLOR}"
+
+	validate_jname "${jname}" || log_err 1 "${N1_COLOR}bad jname: ${jname}${N0_COLOR}"
+
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		try_remote
+
+		if [ ${rarg} -eq 1 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${2} from ${node}:${path}${rfile}
+			_cmd="nodescp root=1 ${node}:${path}${rfile} ${2}"
+			${_cmd}
+			_ret=$?
+		else
+			cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${1} to ${node}:${path}${rfile}
+			_cmd="nodescp root=1 $1 ${node}:${path}${rfile}"
+			${_cmd}
+			_ret=$?
+		fi
+		[ ${_ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
+		return ${_ret}
+	fi
+
+	[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}jail not active: ${jname}${N0_COLOR}"
+
+	[ ${baserw} -eq 1 ] && path="${data}"
+
+	if [ ${rarg} -eq 1 ]; then
+		DIR=$( ${DIRNAME_CMD} ${2} )
+		[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
+
+		if [ -n "${RSYNC_CMD}" ]; then
+			#we have rsync for that
+			[ ${verbose} -eq 1 ] && set -o xtrace
+			cbsdlogger NOTICE ${CBSD_APP}: rsync ${path}${rfile} ${2}
+			_cmd="${RSYNC_CMD} -azzlH ${path}${rfile} ${2}"
+			${_cmd}
+			_ret=$?
+			case ${_ret} in
+				0|6|24|25)
+					# rsync good codes
+					_ret=0
+					;;
+				*)
+					;;
+			esac
+			[ ${verbose} -eq 1 ] && set +o xtrace
+		else
+			#no rsync, just scp
+			[ ${verbose} -eq 1 ] && set -o xtrace
+			cbsdlogger NOTICE ${CBSD_APP}: cp for ${path}${rfile} to ${2}
+			_cmd="${CP_CMD} -a ${path}${rfile} ${2}"
+			${_cmd}
+			_ret=$?
+			[ ${verbose} -eq 1 ] && set +o xtrace
+		fi
+	else
+		DIR=$( ${DIRNAME_CMD} ${path}${rfile} )
+		[ ${verbose} -eq 1 ] && set -o xtrace
+		[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p "${DIR}"
+		[ ${verbose} -eq 1 ] && set +o xtrace
+		if [ -n "${RSYNC_CMD}" ]; then
+			#we have rsync for that
+			[ ${verbose} -eq 1 ] && set -o xtrace
+			cbsdlogger NOTICE ${CBSD_APP}: rsync for ${1} to ${path}${rfile}
+			_cmd="${RSYNC_CMD} -azzlH ${1} ${path}${rfile}"
+			${_cmd}
+			_ret=$?
+			case ${_ret} in
+				0|6|24|25)
+					# rsync good codes
+					_ret=0
+					;;
+				*)
+					;;
+			esac
+			[ ${verbose} -eq 1 ] && set +o xtrace
+		else
+			#no rsync, just scp
+			[ ${verbose} -eq 1 ] && set -o xtrace
+			cbsdlogger NOTICE ${CBSD_APP}: cp for ${1} to ${path}${rfile}
+			_cmd="${CP_CMD} -a ${1} ${path}${rfile}"
+			${_cmd}
+			_ret=$?
+			[ ${verbose} -eq 1 ] && set +o xtrace
+		fi
+	fi
+
+	[ ${_ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
+	return ${_ret}
+}
 
 ### MAIN ###
-if [ -n "${verbose}" ]; then
-	shift
-else
-	verbose=0
-fi
+# change current dir
+cd ${CBSD_PWD}
+
+ARGS=
+
+# exclude jname= and mode= params from args str
+for i in $*; do
+	prefix8=$( substr --pos=0 --len=7 --str="${i}" )
+	[ "${prefix8}" = "verbose=" ] && continue
+	if [ -z "${ARGS}" ]; then
+		ARGS="${i}"
+	else
+		ARGS="${ARGS} ${i}"
+	fi
+done
 
 if [ "${verbose}" = "0" ]; then
 	quiet="-q"
 else
-	quiet=""
+	quiet=
 fi
 
-[ $# -ne 2 ] && err 1 "${N1_COLOR}$0 jail1:remotefile1 localfile1 [ localfile2 jail2@:remotefile2 ]${N0_COLOR}"
-jname=""
-rfile=""
-rarg=0
+scp ${ARGS}
+ret=$?
+[ ${ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
 
-if getjname $1; then
-	if getjname $2; then
-		log_err 1 "${N1_COLOR}Only one remote path${N0_COLOR}"
-	fi
-	rarg=1
-else
-	if getjname $2; then
-		rarg=2
-	fi
-fi
-
-[ -z "${jname}" -o -z "${rfile}" ] && log_err 1 "${N1_COLOR}jail path via jail:path records not determine${N0_COLOR}"
-
-validate_jname "${jname}" || log_err 1 "${N1_COLOR}Bad jname: ${jname}${N0_COLOR}"
-
-RSYNC=$( which rsync )
-
-. ${jrcconf}
-if [ $? -eq 1 ]; then
-	try_remote
-
-	if [ ${rarg} -eq 1 ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${2} from ${node}:${path}${rfile}
-		nodescp root=1 ${node}:${path}${rfile} ${2}
-		err=$?
-	else
-		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${1} to ${node}:${path}${rfile}
-		nodescp root=1 $1 ${node}:${path}${rfile}
-		err=$?
-	fi
-	exit $err
-fi
-
-[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}jail not active: ${jname}${N0_COLOR}"
-
-[ ${baserw} -eq 1 ] && path="${data}"
-
-if [ ${rarg} -eq 1 ]; then
-	DIR=$( dirname ${2} )
-	[ ! -d "${DIR}" ] && /bin/mkdir -p ${DIR}
-
-	if [ -n "${RSYNC}" ]; then
-		#we have rsync for that
-		[ ${verbose} -eq 1 ] && set -o xtrace
-		cbsdlogger NOTICE ${CBSD_APP}: rsync ${path}${rfile} ${2}
-		${RSYNC} -azzlH ${path}${rfile} ${2}
-		[ ${verbose} -eq 1 ] && set +o xtrace
-	else
-		#no rsync, just scp
-		[ ${verbose} -eq 1 ] && set -o xtrace
-		cbsdlogger NOTICE ${CBSD_APP}: cp for ${path}${rfile} to ${2}
-		/bin/cp -a ${path}${rfile} ${2}
-		[ ${verbose} -eq 1 ] && set +o xtrace
-	fi
-else
-	DIR=$( dirname ${path}${rfile} )
-	[ ${verbose} -eq 1 ] && set -o xtrace
-	[ ! -d "${DIR}" ] && /bin/mkdir -p "${DIR}"
-	[ ${verbose} -eq 1 ] && set +o xtrace
-	if [ -n "${RSYNC}" ]; then
-		#we have rsync for that
-		[ ${verbose} -eq 1 ] && set -o xtrace
-		cbsdlogger NOTICE ${CBSD_APP}: rsync for ${1} to ${path}${rfile}
-		${RSYNC} -azzlH ${1} ${path}${rfile}
-		[ ${verbose} -eq 1 ] && set +o xtrace
-	else
-		#no rsync, just scp
-		[ ${verbose} -eq 1 ] && set -o xtrace
-		cbsdlogger NOTICE ${CBSD_APP}: cp for ${1} to ${path}${rfile}
-		/bin/cp -a ${1} ${path}${rfile}
-		[ ${verbose} -eq 1 ] && set +o xtrace
-	fi
-fi
+exit ${ret}
