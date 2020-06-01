@@ -46,6 +46,7 @@ distclean:
 	${RM} -f misc/daemon
 	${RM} -f misc/resolv
 	${RM} -f misc/ipv6range
+	${RM} -f misc/next-vale-port
 	${RM} -f tools/imghelper
 	${RM} -f tools/xo
 	${RM} -f tools/vale-ctl
@@ -100,6 +101,7 @@ cbsd: pkg-config-check
 	${CC} misc/src/daemon.c -lutil -o misc/daemon && ${STRIP} misc/daemon
 	${CC} misc/src/resolv.c -o misc/resolv && ${STRIP} misc/resolv
 	${CC} misc/src/ipv6range.c -o misc/ipv6range && ${STRIP} misc/ipv6range
+	${CC} misc/src/next-vale-port.c -o misc/next-vale-port && ${STRIP} misc/next-vale-port
 	${CC} tools/src/imghelper.c -o tools/imghelper && ${STRIP} tools/imghelper
 	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl

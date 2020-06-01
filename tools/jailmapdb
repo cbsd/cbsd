@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
-#v10.0.2
+#v12.1.12
 MYARG=""
-MYOPTARG="jname update quiet all node"
-MYDESC="Return or update node for jail map"
+MYOPTARG="jname quiet all node"
+MYDESC="Return or update node for jail map in ASCII file"
 ADDHELP="jname1 [jname2] - return node array\n\
 update=1 for re-generate file\n\
 quiet=1 - no jailname before node ip\n\
@@ -10,54 +10,72 @@ all=1 - list all jails\n\
 node= only for this node\n"
 
 . ${subr}
-
+all=0
 . ${cbsdinit}
 
-update()
-{
-	local _tempmap
+[ -z "${1}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me args${N0_COLOR}"
+[ "${update}" = "1" ] && update
+ARGS=
 
-	_tempmap="${ftmpdir}/jmap.$$"
-	trap "/bin/rm -f ${_tempmap}" 0 1 2
+# exclude jname= and mode= params from args str
+for i in $*; do
+	prefix5=$( substr --pos=0 --len=4 --str="${i}" )
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	prefix7=$( substr --pos=0 --len=7 --str="${i}" )
+	[ "${prefix4}" = "all=" ] && continue
+	[ "${prefix6}" = "quiet=" ] && continue
+	[ "${prefix6}" = "jname=" ] && continue
+	[ "${prefix6}" = "node=" ] && continue
+	[ "${prefix7}" = "update=" ] && continue
+	if [ -z "${ARGS}" ]; then
+		ARGS="${i}"
+	else
+		ARGS="${ARGS} ${i}"
+	fi
+done
 
-	# Get all jaillist from node
-	# uncoment for jail with status On only:
-	#   env NOCOLOR=1 cbsd jls header=0 alljails=1 shownode=1 | ${AWK_CMD} '/On$/{printf $1" "$2"\n"}'| sort -u > ${_tempmap}
-	env NOCOLOR=1 cbsd jls header=0 alljails=1 shownode=1 | ${AWK_CMD} '{printf $1" "$2"\n"}'| /usr/bin/sort -u > ${_tempmap}
+emulator="jail"
+nodelist=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null )
 
-	truncate -s0 ${jailmapdb}
-	# and sort them into par=val form
-	${CAT_CMD} ${_tempmap}|while read _node _jail; do
-		A=`${GREP_CMD} " ${_jail}$" ${_tempmap}|${AWK_CMD} '{printf $1" "'}`
-		echo ${_jail}=\"$A\" >>${jailmapdb}
-		${SED_CMD} -i '' 's/ \"/\"/' ${jailmapdb}
+if [ ${all} -eq 1 ]; then
+	for node in local ${nodelist}; do
+		[ ! -r ${dbdir}/${node}.sqlite ] && continue
+		jails=
+		jails=$( cbsdsqlro ${node} "SELECT jname FROM jails WHERE emulator=\"${emulator}\"" 2>/dev/null | ${XARGS_CMD} )
+
+		[ -z "${jails}" ] && continue
+
+		if [ "${quiet}" = "1" ]; then
+			for i in ${jails}; do
+				echo "${i}"
+			done
+		else
+			for i in ${jails}; do
+				echo "${i}=\"${node}\""
+			done
+		fi
 	done
 
-	/usr/bin/sort -u ${jailmapdb} > ${_tempmap} && mv ${_tempmap} ${jailmapdb}
-	exit 0
-}
-
-[ -z "$1" ] && err 1 "Give me args"
-[ "${update}" = "1" ] && update
-[ -f "${jailmapdb}" ] || err 1 "No map file, run update=1 first"
-
-if [ "$all" = "1" ]; then
-	if [ "${quiet}" = "1" ]; then
-		${CUT_CMD} -d "=" -f1 ${jailmapdb}
-	else
-		${CAT_CMD} ${jailmapdb}
-	fi
 	exit 0
 fi
 
-. ${jailmapdb} 2>/dev/null
 
-for i in $*; do
-	eval node=\"\$${i}\"
-	[ -z "${node}" -o "${i}" = "quiet=1" ] && break
+for jname in ${ARGS}; do
+	jailnode=
+	for node in local ${nodelist}; do
+		[ ! -r ${dbdir}/${node}.sqlite ] && continue
+		exist=
+		exist=$( cbsdsqlro ${node} "SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator=\"${emulator}\" LIMIT 1" 2>/dev/null )
+		if [ -n "${exist}" ]; then
+			jailnode="${node}"
+			break
+		fi
+		[ -n "${jailnode}" ] && break
+	done
+	[ -z "${jailnode}" ] && continue
 	if [ "${quiet}" = "1" ]; then
-		echo "${node}"
+		echo "${jailnode}"
 	else
-		echo "$i: ${node}"
+		echo "${jname}: ${jailnode}"
 	fi
 done

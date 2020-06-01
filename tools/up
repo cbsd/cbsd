@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname"
+MYOPTARG="cbsdfile jname cwd"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP=""
@@ -9,6 +9,7 @@ EXTHELP="wf_cbsdfile"
 
 . ${subr}
 . ${strings}
+cwd=
 . ${cbsdinit}
 
 # defaults - to cbsdfile.conf
@@ -30,6 +31,7 @@ ci_jname=
 ci_fqdn=
 ci_ip4_addr=
 ci_gw4=
+ci_interface_mtu=
 imgtype=
 
 # init CBSDfile data
@@ -73,7 +75,21 @@ run_jail()
 	quiet="${quiet}"
 
 	jail_${jname}		# re-read variables
-	postcreate_${jname} 2>/dev/null
+
+	if fn_exists postcreate_${jname}; then
+		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		# cleanup jail when postcreate action failed
+		trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
+		set -o errexit
+		set -o xtrace
+		postcreate_${jname}
+		set +o xtrace
+		set +o errexit
+		trap "" HUP INT ABRT BUS TERM EXIT
+		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+	else
+		${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+	fi
 
 	# restore old workdir
 	cbsd_workdir="${ocbsd_workdir}"
@@ -104,6 +120,7 @@ run_bhyve()
 	ci_fqdn="${ci_fqdn}" \
 	ci_ip4_addr="${ci_ip4_addr}" \
 	ci_gw4="${ci_gw4}" \
+	ci_interface_mtu="${ci_interface_mtu}" \
 	imgtype="${imgtype}" \
 	quiet="${quiet}"
 
@@ -115,7 +132,22 @@ run_bhyve()
 	if [ ${ret} -eq 0 ]; then
 		${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
 		bhyve_${jname}		# re-read variables
-		postcreate_${jname} 2>/dev/null
+
+		if fn_exists postcreate_${jname}; then
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+			# cleanup bhyve when postcreate action failed
+			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+			postcreate_${jname}
+			set +o xtrace
+			set +o errexit
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
 	else
 		${ECHO} "${N1_COLOR}ssh failed${N0_COLOR}"
 	fi
@@ -144,7 +176,8 @@ task_id_cur=
 
 # spawn command for all jail
 for jname in ${jail_list} ${bhyve_list}; do
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up cbsdfile=${Makefile} jname=${jname} )
+	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
 	sleep 2
