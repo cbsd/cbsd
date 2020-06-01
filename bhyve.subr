@@ -760,7 +760,7 @@ compile_nic_args()
 	local sqldelimer=" "
 	local mybridge
 	local net_emul=
-	local _parent_mtu
+	local _parent_mtu=0
 	local _ret=
 	local _is_bridge
 	local autoconn_iface=$( ${SYSRC_CMD} -n cbsd_autoconnect_bridge 2>&1 )
@@ -826,11 +826,6 @@ compile_nic_args()
 							;;
 						*)
 							if [ "${nic_parent}" != "0" -o "${nic_parent}" = "auto" ]; then
-								# autodetect correct interface when auto by default gateway
-								#if [ "${nic_parent}" = "auto" ]; then
-								#	nic_parent=$( getnics-by-ip ip=0.0.0.0 skip=bridge )
-								#	cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic_parent is auto, interface via default gateway: ${nic_parent}
-								#fi
 								_is_bridge=
 								[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
 								if [ "${_is_bridge}" != "bridge" ]; then
@@ -868,6 +863,7 @@ compile_nic_args()
 
 					# MTU management, should be before addm
 					[ -z "${nic_mtu}" ] && nic_mtu=0	# AUTO
+					_parent_mtu=0
 					if [ ${nic_mtu} -eq 0 -a "${mybridge}" != "disable" ]; then
 						# Get parent MTU size
 						_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
@@ -961,6 +957,21 @@ compile_nic_args()
 		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 
 		myargs="-s ${_pcislot_args},${net_emul},${mytap}"
+
+		# virtio-net support for MTU after r359704
+		if [ ${freebsdhostversion} -gt 1300095 ]; then
+			# manage MTU on bhyve tap/virtio side
+			[ ${nic_mtu} -eq 0 -a ${_parent_mtu} -ne 0 ] && nic_mtu="${_parent_mtu}"		# adjust nic_mtu by parent value
+
+			case "${nic_mtu}" in
+				0)
+					;;
+				*)
+					# virtio-net support for MTU after r359704
+					myargs="${myargs},mtu=${nic_mtu}"
+					;;
+			esac
+		fi
 
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
