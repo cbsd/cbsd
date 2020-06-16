@@ -454,6 +454,8 @@ get_construct_cloud_init_options()
 	local mychoice index
 	local old_defaultitem="${mtag}"
 	local _defaults _pos _keystart= _keytest
+	local _ci_gw4_mod=0 _ci_ip4_addr_mod=0
+	local _i1 _i2 _i3 _i4 _g1 _g2 _g3 _g4 _ip4_addr_with_mask
 
 	while [ 1 ]; do
 		get_construct_cloud_init_menu || break
@@ -462,113 +464,141 @@ get_construct_cloud_init_options()
 		mychoice=${mtag##* }
 
 		case "${mychoice}" in
-		"-")
-			continue
-			;;
-		"Save")
-			break
-			;;
-		ci_jname)
-			title=" ci_jname "
-			prompt=" adjust short host name "
-			eval defaultitem="\$${mychoice}"
-			cbsd_inputbox_simple && ci_jname="${mtag}"
-			;;
-		ci_fqdn)
-			title=" ci_fqdn "
-			prompt=" adjust host FQDN "
-			eval defaultitem="\$${mychoice}"
-			cbsd_inputbox_simple && ci_fqdn="${mtag}"
-			;;
-		ci_user_add|ci_gw4|ci_nameserver_address|ci_nameserver_search|ci_interface_mtu)
-			title=" ${mychoice} "
-			prompt=" adjust ${mychoice} "
-			#eval _defaults="\$default_${mychoice}"
-			eval defaultitem="\$${mychoice}"
-			cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
-			;;
-		ci_ip4_addr)
-			title=" ${mychoice} "
-			prompt=" adjust ${mychoice} "
-			#eval _defaults="\$default_${mychoice}"
-			eval defaultitem="\$${mychoice}"
-			#cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
-			ip4_addr="${defaultitem}"
-			get_construct_ip4_addr && eval ${mychoice}="${ip4_addr}"
-			;;
-		ci_user_pubkey_*)
-			title=" ${mychoice} "
-			prompt=" adjust ${mychoice} (ctrl+u to erase)\n enter ssh key or path to authorized_keys\n use .ssh/authorized_keys for default node key"
-			eval defaultitem="\$${mychoice}"
-			cbsd_inputbox_simple
-			if [ $? -eq 0 ]; then
-				if [ -r "${workdir}/${mtag}" ]; then
-					_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${mtag} | ${GREP_CMD} . | /usr/bin/head -n1 )
-					if ! is_valid_ssh_key "${_keytest}"; then
-						f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-						continue
+			-)
+				continue
+				;;
+			Save)
+				break
+				;;
+			ci_jname)
+				title=" ci_jname "
+				prompt=" adjust short host name "
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && ci_jname="${mtag}"
+				;;
+			ci_fqdn)
+				title=" ci_fqdn "
+				prompt=" adjust host FQDN "
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && ci_fqdn="${mtag}"
+				;;
+			ci_gw4)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
+				_ci_gw4_mod=1			# trigger to re-check IP
+				;;
+			ci_user_add|ci_nameserver_address|ci_nameserver_search|ci_interface_mtu)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
+				;;
+			ci_ip4_addr)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				eval defaultitem="\$${mychoice}"
+				ip4_addr="${defaultitem}"
+				get_construct_ip4_addr && eval ${mychoice}="${ip4_addr}"
+				_ci_ip4_addr_mod=1		# trigger to re-check GW
+
+				# assume new GW4 when ci_gw4 not in ci_ip4_addr network (todo: mask/prefix)
+				if [ ${_ci_gw4_mod} -eq 0 ]; then
+					# GW in network?
+					strpos --str="${ip4_addr}" --search="/"
+					if [ $? -ne 0 ]; then
+						_ip4_addr_with_mast="${ip4_addr}"
+					else
+						_ip4_addr_with_mask="${ip4_addr}/24"		# /24 prefix by default
 					fi
-					eval ${mychoice}="\"${mtag}\""
-				elif [ -r "${mtag}" ]; then
-					_keytest=$( ${GREP_CMD} -v '#' ${mtag} | ${GREP_CMD} . | /usr/bin/head -n1 )
-					if ! is_valid_ssh_key "${_keytest}"; then
-						f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-						continue
+					eval $( ${miscdir}/sipcalc ${_ip4_addr_with_mask} )
+					[ -z "${_usable_range_start}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to determine usable range start: ${_ip4_addr_with_mask}${N0_COLOR}"
+					sqllistdelimer="."
+					sqllist "${_usable_range_start}" _i1 _i2 _i3 _i4
+					sqllist "${ci_gw4}" _g1 _g2 _g3 _g4
+					if [ "${_i}.${_i2}.${_i3}" != "${_g}.${_g2}.${_g3}" ]; then
+						# assume new GW4
+						ci_gw4="${_i1}.${_i2}.${_i3}.${_i4}"
 					fi
-					eval ${mychoice}="\"${mtag}\""
-				else
-					if ! is_valid_ssh_key "${mtag}"; then
-						f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-						continue
-					fi
-					eval ${mychoice}="\"${mtag}\""
 				fi
-			fi
-			;;
-		ci_user_home_*|ci_user_gecos_*|ci_user_pubkey_*)
-			title=" ${mychoice} "
-			prompt=" adjust ${mychoice} (ctrl+u to erase) "
-			#eval _defaults="\$default_${mychoice}"
-			eval defaultitem="\$${mychoice}"
-			cbsd_inputbox_simple && eval ${mychoice}="\"${mtag}\""
-			;;
-		ci_user_pw_user)
-			if get_password; then
-				# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
-				case "${vm_os_type}" in
-					freebsd)
-						ci_user_pw_user=$( ${miscdir}/pwcrypt "${mtag}" )
-						if [ $? -ne 0 ]; then
-							unset ci_user_pw_user
+
+				;;
+			ci_user_pubkey_*)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} (ctrl+u to erase)\n enter ssh key or path to authorized_keys\n use .ssh/authorized_keys for default node key"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple
+				if [ $? -eq 0 ]; then
+					if [ -r "${workdir}/${mtag}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${mtag} | ${GREP_CMD} . | /usr/bin/head -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
 						fi
-					;;
-					*)
-						ci_user_pw_user="${mtag}"
-						;;
-				esac
-			fi
-			;;
-		ci_user_pw_root)
-			if get_password; then
-				# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
-				case "${vm_os_type}" in
-					freebsd)
-						ci_user_pw_root=$( ${miscdir}/pwcrypt "${mtag}" )
-						if [ $? -ne 0 ]; then
-							unset ci_user_pw_root
+						eval ${mychoice}="\"${mtag}\""
+					elif [ -r "${mtag}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${mtag} | ${GREP_CMD} . | /usr/bin/head -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
 						fi
+						eval ${mychoice}="\"${mtag}\""
+					else
+						if ! is_valid_ssh_key "${mtag}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
+						fi
+						eval ${mychoice}="\"${mtag}\""
+					fi
+				fi
+				;;
+			ci_user_home_*|ci_user_gecos_*|ci_user_pubkey_*)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} (ctrl+u to erase) "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="\"${mtag}\""
+				;;
+			ci_user_pw_user)
+				if get_password; then
+					# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
+					case "${vm_os_type}" in
+						freebsd)
+							ci_user_pw_user=$( ${miscdir}/pwcrypt "${mtag}" )
+							if [ $? -ne 0 ]; then
+								unset ci_user_pw_user
+							fi
 						;;
-					*)
-						ci_user_pw_root="${mtag}"
-						;;
-				esac
-			fi
-			;;
-		*)
-			invert_checkbox ${mychoice}
-			continue
-			;;
-		esac
+						*)
+							ci_user_pw_user="${mtag}"
+							;;
+					esac
+				fi
+				;;
+			ci_user_pw_root)
+				if get_password; then
+					# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
+					case "${vm_os_type}" in
+						freebsd)
+							ci_user_pw_root=$( ${miscdir}/pwcrypt "${mtag}" )
+							if [ $? -ne 0 ]; then
+								unset ci_user_pw_root
+							fi
+							;;
+						*)
+							ci_user_pw_root="${mtag}"
+							;;
+					esac
+				fi
+				;;
+			*)
+				invert_checkbox ${mychoice}
+				continue
+				;;
+			esac
 	done
 
 	[ -n "${ci_jname}" ] && cloud_init_options="[configured]"
