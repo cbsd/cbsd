@@ -3,33 +3,43 @@
 . ${subr}
 . ${strings}
 
-jails_stop() {
+jails_stop()
+{
 	local localjails= localvms=
 
 	localjails="$( jorder order=DESC )"
 	localvms="$( border order=DESC )"
 
+	[ -n "${localjails}" ] && cbsdlogger NOTICE ${CBSD_APP}: jail stop order: ${localjails}
+	[ -n "${localvms}" ] && cbsdlogger NOTICE ${CBSD_APP}: bhyve vm stop order: ${localvms}
+
 	for jname in ${localjails} ${localvms}; do
 		. ${jrcconf}
 		[ ${jid} -eq 0 ] && continue
 		stoppid="${ftmpdir}/stop.${jname}.$$"
-		if [ "${emulator}" = "bhyve" ]; then
-			$ECHO "${N1_COLOR}Auto-stop jail: ${N2_COLOR}${jname}${N0_COLOR}"
-			env TERM=xterm /usr/sbin/daemon -p ${stoppid} bstop jname=${jname}
-		else
-			/usr/sbin/daemon -p ${stoppid} jstop jname=${jname}
-		fi
+		${ECHO} "${N1_COLOR}${CBSD_APP}: auto-stop ${emulator}: ${N2_COLOR}${jname}${N0_COLOR}"
+		cbsdlogger NOTICE ${CBSD_APP}: auto-stop ${emulator}: ${jname}
+		case ${emulator} in
+			bhyve)
+				env TERM=xterm ${DAEMON_CMD} -p ${stoppid} bstop jname=${jname}
+				;;
+			jail)
+				env TERM=xterm ${DAEMON_CMD} -p ${stoppid} jstop jname=${jname}
+				;;
+		esac
 		# lets save .pid file
 		sleep 1
 		if [ -f "${stoppid}" ]; then
-			PID=$(cat ${stoppid} 2>/dev/null)
-			[ -n "${PID}" ] && cbsd_pwait --pid=$(cat ${stoppid}) --timeout=${parallel}
+			PID=$( ${CAT_CMD} ${stoppid} 2>/dev/null )
+			[ -n "${PID}" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${stoppid} ) --timeout=${parallel}
 		fi
 	done
 	wait_for_fpid stop
+	return 0
 }
 
-jails_start() {
+jails_start()
+{
 	local jlist
 	local blist
 	local localjails= localvms=
@@ -37,9 +47,17 @@ jails_start() {
 	localjails="$( jorder order=ASC )"
 	localvms="$( border order=ASC )"
 
+	[ -n "${localjails}" ] && cbsdlogger NOTICE ${CBSD_APP}: jail start order: ${localjails}
+	[ -n "${localvms}" ] && cbsdlogger NOTICE ${CBSD_APP}: bhyve vm start order: ${localvms}
+
 	for jname in ${localjails} ${localvms}; do
 		. ${jrcconf}
-		[ ${astart} -ne 1 ] && continue
+		if [ ${astart} -ne 1 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: astart=0, skip: ${jname}
+			continue
+		else
+			cbsdlogger NOTICE ${CBSD_APP}: astart=1, start scheduled: ${jname}
+		fi
 		if [ "${emulator}" = "bhyve" ]; then
 			blist="${blist} ${jname}"
 		else
@@ -47,12 +65,20 @@ jails_start() {
 		fi
 	done
 
-	[ -n "${jlist}" ] && task mode=new autoflush=1 notify=0 owner=syscbsd cbsd jstart inter=0 ${jlist}
-	[ -n "${blist}" ] && task mode=new autoflush=1 notify=0 owner=syscbsd cbsd bstart inter=0 ${blist}
+	[ -n "${jlist}" ] && task mode=new autoflush=0 notify=0 owner=syscbsd /usr/local/bin/cbsd jstart inter=0 ${jlist}
+	[ -n "${blist}" ] && task mode=new autoflush=0 notify=0 owner=syscbsd /usr/local/bin/cbsd bstart inter=0 ${blist}
+
+	return 0
 }
 
 #### MAIN ####
-case $1 in
-	start) jails_start ;;
-	stop) jails_stop ;;
+case ${1} in
+	start)
+		jails_start
+		;;
+	stop)
+		jails_stop
+	;;
 esac
+
+exit 0
