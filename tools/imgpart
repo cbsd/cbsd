@@ -1,20 +1,23 @@
 #!/usr/local/bin/cbsd
 #v12.1.5
 MYARG="jname part mode"
-MYOPTARG="out hdrver compress emulator filestats ebytes"
+MYOPTARG="out hdrver compress emulator filestats ebytes header_extra"
 MYDESC="Pack or extract chunk from from image"
-ADDHELP="out=path_to_file for ascii-part or directory to extract for binary\n\
-or for binary image from pack mode\n\
-part variants: header,rcconf,fstab,pkginfo,descr,info,sysdata,data\n\
-mode=pack,extract\n\
-compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
-filestats - save bytes stats for part=data into file in pack mode\n\
-ebytes - expected bytes (for pass into cbsdtee) in extract mode\n"
+ADDHELP="\
+  out=path_to_file for ascii-part or directory to extract for binary\n\
+  or for binary image from pack mode\n\
+  part variants: header,rcconf,fstab,pkginfo,descr,info,sysdata,data\n\
+  mode=pack,extract\n\
+  compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
+  filestats - save bytes stats for part=data into file in pack mode\n\
+  ebytes - expected bytes (for pass into cbsdtee) in extract mode\n\
+  header_extra - can be as header_extra=\"test4=4,param=val\" or path to file. extra header data\n"
 
 . ${subr}
 
 filestats=
 ebytes=
+header_extra=
 
 . ${cbsdinit}
 
@@ -122,7 +125,8 @@ packme()
 {
 	local _hwnum=$( ${SYSCTL_CMD} -qn hw.ncpu )
 	local _dsk_list _zvol_list _zvol_name _my_nodename
-	local real_jailsysdir real_datadir
+	local real_jailsysdir real_datadir _i _header_extra _pos
+	local _arg_len= _pref= ARG= VAL=
 
 	[ -z "${_hwnum}" ] && _hwnum="0"
 
@@ -155,6 +159,40 @@ host_hostname="${host_hostname}"
 from_nodename="${_my_nodename}"
 img_flat_size= ###########################################################################################
 EOF
+
+			# extra header case
+			if [ -n "${header_extra}" ]; then
+				strpos --str="${header_extra}" --search="="
+				_pos=$?
+				if [ ${_pos} -eq 0 ]; then
+					# its file?
+					if [ ! -r ${header_extra} ]; then
+						err 1 "${N1_COLOR}${CBSD_APP}: header_extra not file and not param=value form: ${N2_COLOR}${header_extra}${N0_COLOR}"
+					else
+						# append extra header
+						${GREP_CMD} . ${header_extra} >> ${out}
+					fi
+				else
+					# find 'param=value' and append to header
+					OIFS="${IFS}"
+					IFS=","
+					for _i in ${header_extra}; do
+						IFS="${OIFS}"
+						strpos --str="${_i}" --search="="
+						_pos=$?
+						if [ ${_pos} -eq 0 ]; then
+							# not params=value form
+							err 1 "${N1_COLOR}${CBSD_APP} error: header_extra not file and not param=value form: ${N2_COLOR}${header_extra}${N0_COLOR}"
+						fi
+						_arg_len=$( strlen ${_i} )
+						_pref=$(( _arg_len - _pos ))
+						ARG=$( substr --pos=0 --len=${_pos} --str="${_i}" )
+						VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${_i}" )
+						printf "${ARG}='${VAL}'\n" >> ${out}
+						IFS=","
+					done
+				fi
+			fi
 
 			# collect storage info
 			case "${emulator}" in

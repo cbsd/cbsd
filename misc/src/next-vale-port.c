@@ -161,12 +161,10 @@ main(int argc, char *argv[])
 							continue;
 						}
 						port=atoi(token);
-						if(port==i) {
-							switch_ports[i]=1;
-							fprintf(stderr,"    already in use: %d\n", port);
-							continue;
-				
-						}
+						//mark port as use
+						switch_ports[port]=1;
+						fprintf(stderr,"    already in use: %d\n", port);
+						continue;
 						break;
 						;;
 					default:
