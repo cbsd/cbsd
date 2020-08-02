@@ -136,7 +136,8 @@ main(int argc, char *argv[])
 			nm_ioctl(&hdr);
 
 			if (hdr.nr_name[0] == 0 || req.nr_port_idx != i) {
-				break;
+				continue;
+//				break;
 			}
 
 			for (j = 0, token = strtok(hdr.nr_name, ":"); token; j++, token = strtok(NULL, ":")) {
