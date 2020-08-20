@@ -38,7 +38,7 @@ static char sccsid[] = "@(#)var.c	8.3 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/var.c 326025 2017-11-20 19:49:47Z pfg $");
+__FBSDID("$FreeBSD: head/bin/sh/var.c 342740 2019-01-03 20:22:35Z jilles $");
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -71,7 +71,9 @@ __FBSDID("$FreeBSD: head/bin/sh/var.c 326025 2017-11-20 19:49:47Z pfg $");
 #endif
 
 
+#ifndef VTABSIZE
 #define VTABSIZE 39
+#endif
 
 
 struct varinit {
@@ -351,6 +353,7 @@ setvareq(char *s, int flags)
 		vp->flags &= ~(VTEXTFIXED|VSTACK|VUNSET);
 		vp->flags |= flags;
 		vp->text = s;
+
 #ifndef CBSD
 		/*
 		 * We could roll this to a function, to handle it as
@@ -557,13 +560,13 @@ environment(void)
 	nenv = 0;
 	for (vpp = vartab ; vpp < vartab + VTABSIZE ; vpp++) {
 		for (vp = *vpp ; vp ; vp = vp->next)
-			if (vp->flags & VEXPORT)
+			if ((vp->flags & (VEXPORT|VUNSET)) == VEXPORT)
 				nenv++;
 	}
 	ep = env = stalloc((nenv + 1) * sizeof *env);
 	for (vpp = vartab ; vpp < vartab + VTABSIZE ; vpp++) {
 		for (vp = *vpp ; vp ; vp = vp->next)
-			if (vp->flags & VEXPORT)
+			if ((vp->flags & (VEXPORT|VUNSET)) == VEXPORT)
 				*ep++ = vp->text;
 	}
 	*ep = NULL;

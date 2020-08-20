@@ -32,13 +32,14 @@
  * SUCH DAMAGE.
  *
  *	@(#)output.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/output.h 326025 2017-11-20 19:49:47Z pfg $
+ * $FreeBSD: head/bin/sh/output.h 344306 2019-02-19 21:27:30Z jilles $
  */
 
 #ifndef OUTPUT_INCL
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdio.h>
 
 struct output {
 	char *nextc;
@@ -75,6 +76,7 @@ void out1fmt(const char *, ...) __printflike(1, 2);
 void out2fmt_flush(const char *, ...) __printflike(1, 2);
 void fmtstr(char *, int, const char *, ...) __printflike(3, 4);
 void doformat(struct output *, const char *, va_list) __printflike(2, 0);
+FILE *out1fp(void);
 int xwrite(int, const char *, int);
 
 #define outc(c, file)	((file)->nextc == (file)->bufend ? (emptyoutbuf(file), *(file)->nextc++ = (c)) : (*(file)->nextc++ = (c)))

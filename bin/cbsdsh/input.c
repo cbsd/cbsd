@@ -36,7 +36,7 @@ static char sccsid[] = "@(#)input.c	8.3 (Berkeley) 6/9/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/input.c 314436 2017-02-28 23:42:47Z imp $");
+__FBSDID("$FreeBSD: head/bin/sh/input.c 359398 2020-03-28 17:02:32Z kevans $");
 
 #include <stdio.h>	/* defines BUFSIZ */
 #include <fcntl.h>
@@ -105,8 +105,6 @@ static struct parsefile basepf = {	/* top level input file */
 };
 static struct parsefile *parsefile = &basepf;	/* current input file */
 int whichprompt;		/* 1 == PS1, 2 == PS2 */
-
-EditLine *el;			/* cookie for editline package */
 
 static void pushfile(void);
 static int preadfd(void);
@@ -364,22 +362,27 @@ popstring(void)
 int
 setinputfile(const char *fname, int push)
 {
-cbsdlog(0,"Input processing: %s",fname);
+	cbsdlog(0,"Input processing: %s",fname);
 #else
 void
 setinputfile(const char *fname, int push)
 {
 #endif
+	int e;
 	int fd;
 	int fd2;
 
 	INTOFF;
-	if ((fd = open(fname, O_RDONLY | O_CLOEXEC)) < 0)
+	if ((fd = open(fname, O_RDONLY | O_CLOEXEC)) < 0) {
 #ifdef CBSD
-		return 2;
+		e = 2;
+		return e;
 #else
-		error("cannot open %s: %s", fname, strerror(errno));
+		e = errno;
+		errorwithstatus(e == ENOENT || e == ENOTDIR ? 127 : 126,
+		    "cannot open %s: %s", fname, strerror(e));
 #endif
+	}
 	if (fd < 10) {
 		fd2 = fcntl(fd, F_DUPFD_CLOEXEC, 10);
 		close(fd);

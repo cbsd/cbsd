@@ -1,4 +1,6 @@
 /*-
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  *
@@ -13,7 +15,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -36,7 +38,7 @@ static char sccsid[] = "@(#)mystring.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/mystring.c 270102 2014-08-17 16:40:29Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/mystring.c 326025 2017-11-20 19:49:47Z pfg $");
 
 /*
  * String functions.
@@ -54,10 +56,6 @@ __FBSDID("$FreeBSD: head/bin/sh/mystring.c 270102 2014-08-17 16:40:29Z jilles $"
 #include <errno.h>
 #include <string.h>
 #include <sysexits.h>
-
-//#include "shell.h"
-//#include "memalloc.h"
-//#include "output.h"
 #endif
 #include <stdlib.h>
 #include "shell.h"
@@ -124,12 +122,9 @@ is_number(const char *p)
 	for (q = p; *q != '\0'; q++)
 		if (! is_digit(*q))
 			return 0;
-//	if (q - p > 1000 ||
-//	    (q - p == 1000 && memcmp(p, "2147483647", 10) > 0))
-//		return 0;
-
-	if (q - p > 10000 ) return 0;
-
+	if (q - p > 10 ||
+	    (q - p == 10 && memcmp(p, "2147483647", 10) > 0))
+		return 0;
 	return 1;
 }
 
@@ -229,14 +224,13 @@ substrcmd(int argc, char **argv)
 	}
 
 	for (c = 0 ; c < pos -1 ; c++)
-		str++; 
+		str++;
 
 	for (c = 0 ; c < len ; c++)
 	{
 		*(pointer+c) = *str;
 		str++;
 	}
-
 	*(pointer+c) = '\0';
 	out1fmt("%s",pointer);
 	free(pointer);

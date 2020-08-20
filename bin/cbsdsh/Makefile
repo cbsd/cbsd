@@ -64,7 +64,7 @@ CFLAGS+= -Wall -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/local
 
 CLEANFILES+= mknodes mknodes.o builtins.def.o \
 	mksyntax mksyntax.o
-CLEANFILES+= ${GENSRCS} ${GENHDRS}
+CLEANFILES+= ${GENSRCS} ${GENHDRS} .depend*
 
 builtins.def.o:
 	cp	builtins.def builtins.def.o

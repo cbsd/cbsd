@@ -38,7 +38,7 @@ static char sccsid[] = "@(#)output.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/output.c 326025 2017-11-20 19:49:47Z pfg $");
+__FBSDID("$FreeBSD: head/bin/sh/output.c 344306 2019-02-19 21:27:30Z jilles $");
 
 /*
  * Shell output routines.  We use our own output routines because:
@@ -338,6 +338,12 @@ doformat(struct output *dest, const char *f, va_list ap)
 		vfprintf(fp, f, ap);
 		fclose(fp);
 	}
+}
+
+FILE *
+out1fp(void)
+{
+	return fwopen(out1, doformat_wr);
 }
 
 /*
