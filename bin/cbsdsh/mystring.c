@@ -122,9 +122,11 @@ is_number(const char *p)
 	for (q = p; *q != '\0'; q++)
 		if (! is_digit(*q))
 			return 0;
+#ifndef CBSD
 	if (q - p > 10 ||
 	    (q - p == 10 && memcmp(p, "2147483647", 10) > 0))
 		return 0;
+#endif
 	return 1;
 }
 
