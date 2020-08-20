@@ -4,6 +4,7 @@ _CBSD_FETCH_SUBR=1
 
 # Wrapper for fetch and dpv
 # fetchme -u URL -o /tmp/out
+# -d - try dpv - 0,1 (1 by default)
 # use optional TF variable for output ( legacy from repo )
 # require: cbsdsh as shell
 #    include: tools for humanize, DIALOG env for dpv
@@ -18,12 +19,14 @@ fetchme()
 	local _filename
 	local _fromrepo
 	local _fetch_current_retry
+	local _try_dpv=1
 
 	# global variable. Need for most dialog-based action
 	[ -n "${quiet}" ] && _quiet="${quiet}"
 
-	while getopts "u:q:o:" opt; do
+	while getopts "d:u:q:o:" opt; do
 		case "${opt}" in
+			d) _try_dpv="${OPTARG}" ;;
 			u) _url="${OPTARG}" ;;
 			q) _quiet="${OPTARG}" ;;
 			o) _out="${OPTARG}" ;;
@@ -54,13 +57,15 @@ fetchme()
 		fi
 	fi
 
-	[ ! -r "${DPV_CMD}" ] && unset ${DPV_CMD}
-	[ -z "${DIALOG}" ] && unset ${DPV_CMD}
+	[ ! -r "${DPV_CMD}" ] && _try_dpv=0
+	[ -z "${DIALOG}" ] && _try_dpv=0
 
 	if [ ${_quiet} -eq 1 ]; then
-		unset ${DPV_CMD}
+		_try_dpv=0
 		fetch_opts="${fetch_opts} -q"
 	fi
+
+	[ ${_try_dpv} -eq 0 ] && unset DPV_CMD
 
 	_filename=$( ${BASENAME_CMD} ${_url} 2>&1 )
 	[ -z "${_filename}" ] && _filename="Resource"
@@ -89,8 +94,8 @@ fetchme()
 
 	while [ ${_fetch_current_retry} -lt ${fetch_max_retry} ]; do
 		_fetch_current_retry=$(( _fetch_current_retry + 1 ))
-		if [ -n "${DPV_CMD}" ]; then
-			${LOCKF_CMD} -s -t0 ${_out}.lock ${FETCH_CMD} ${fetch_opts} -q -o '-' ${_url} | ${DPV_CMD} -b "${product}" -p "Fetching from ${_fromrepo}:" -t " CBSD Repository "  -x "${CAT_CMD} > ${_out}" ${_sizebyte}:${_filename}
+		if [ -n "${DPV_CMD}" -a ${_try_dpv} -eq 1 ]; then
+			${LOCKF_CMD} -s -t0 ${_out}.lock ${FETCH_CMD} ${fetch_opts} -q -o '-' ${_url} | ${DPV_CMD} -b "${product}" -p "fetching from ${_fromrepo}:" -t " fetching " -x "${CAT_CMD} > ${_out}" ${_sizebyte}:${_filename}
 			# check for size, cause "fetch | dpv " is always true
 			if [ -s "${_out}" ]; then
 				_res=0
@@ -99,7 +104,7 @@ fetchme()
 				_res=1
 			fi
 		else
-			[ -n "${_humansize}" ] && ${ECHO} "${N1_COLOR}Retrieve ${H5_COLOR}${_filename}${N1_COLOR} from ${H3_COLOR}${_fromrepo}${N1_COLOR}, size: ${N2_COLOR}${_humansize}${N0_COLOR}"
+			[ -n "${_humansize}" ] && ${ECHO} "${N1_COLOR}retrieve ${H5_COLOR}${_filename}${N1_COLOR} from ${H3_COLOR}${_fromrepo}${N1_COLOR}, size: ${N2_COLOR}${_humansize}${N0_COLOR}"
 			${LOCKF_CMD} -s -t0 ${_out}.lock ${FETCH_CMD} ${fetch_opts} -o ${_out} ${_url} ${_TONULL}
 			_res=$?
 		fi
