@@ -12,36 +12,25 @@ EXTHELP="wf_cbsdfile"
 cwd=
 . ${cbsdinit}
 
-# defaults - to cbsdfile.conf
-quiet="1"
-runasap="1"
-pkg_bootstrap="1"
-ip4_addr="DHCP"
-pkglist=
-NOCOLOR=1
-vm_os_type=
-vm_os_profile=
-vm_ram="1g"
-imgsize="10g"
-vm_cpus=1
-host_hostname=
-ip4_gw=
-interface=
-ci_jname=
-ci_fqdn=
-ci_ip4_addr=
-ci_gw4=
-ci_interface_mtu=
-imgtype=
-
 # init CBSDfile data
 . ${distdir}/cbsdfile.subr
 
 bhyve_ssh_wait()
 {
-	local _attempt_max=60 _i _x _y
+	local _orig_options
+	_orig_options=$( set +o )
 
-	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}): ${N2_COLOR}${jname}...${N0_COLOR}"
+	# disable errexit/xtrace settings for a while..
+	set +o xtrace
+	set +o errexit
+
+	local _attempt_max=60 _i _x _y
+	readconf cbsdfile.conf
+	if [ -n "${bhyve_ssh_wait_timeout}" ]; then
+		_attempt_max="${bhyve_ssh_wait_timeout}"
+	fi
+
+	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}...${N0_COLOR}"
 	# wait for VM boot
 	_y=2		# test for timeout exceed
 	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
@@ -51,37 +40,76 @@ bhyve_ssh_wait()
 		sleep 1
 		# todo: delete only ip
 		${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
-		[ ${_y} -eq ${_attempt_max} ] && return 1
+		if [ ${_y} -eq ${_attempt_max} ]; then
+			# restore old settings
+			set ${_orig_options}
+			return 1
+		fi
 	done
+
+	${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
+	# restore old settings
+	set ${_orig_options}
 
 	return 0
 }
 
 run_jail()
 {
+	local _val _ret MYOPTARG JAIL_ARGS i ojname
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
 	. ${jrcconf}
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 
+	ojname="${jname}"
+
+	# should be in sync with jcreate script
+	MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet"
+	. ${distsharedir}/jail-arg
+	JAIL_ARGS="${JARG}"
+	MYOPTARG="${MYOPTARG} ${JAIL_ARGS}"
+
 	# push old cbsd workdir
-	ocbsd_workdir="${cbsd_workdir}"
+	ocbsd_workdir="${workdir}"
+
+	# unset all
+	for i in ${MYOPTARG}; do
+		unset ${i}
+	done
+
+	jname="${ojname}"
+
+	# defaults
+	readconf jcreate.conf
+	readconf cbsdfile.conf
+
 	jail_${jname}
 
-	# todo: test empty/append args
+	JAIL_ARGS=
 
-	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} \
-	ip4_addr="${ip4_addr}" \
-	runasap="${runasap}" \
-	pkg_bootstrap="${pkg_bootstrap}" \
-	host_hostname="${host_hostname}" \
-	pkglist="${pkglist}" \
-	quiet="${quiet}" \
-	${CBSDFILE_ARGS}
+	# construct non-empty args/params
+	for i in ${MYOPTARG}; do
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		if [ -z "${JAIL_ARGS}" ]; then
+			JAIL_ARGS="${i}=\"${_val}\""
+		else
+			JAIL_ARGS="${JAIL_ARGS} ${i}=\"${_val}\""
+		fi
+	done
 
+	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
+
+	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${N1_COLOR}${JAIL_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
+	set -o errexit
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${JAIL_ARGS} ${CBSDFILE_ARGS}
+	set +o errexit
+
+	. ${jrcconf}
 	jail_${jname}		# re-read variables
 
-	if fn_exists postcreate_${jname}; then
+	if fn_exists postcreate_${jname} 2>/dev/null; then
 		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		# cleanup jail when postcreate action failed
 		trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
@@ -102,47 +130,79 @@ run_jail()
 
 run_bhyve()
 {
+	local MYOPTARG BHYVE_ARGS ojname _ret
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
 	. ${jrcconf}
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 
+	ojname="${jname}"
+
+	# should be in sync with bcreate script (except: jname)
+	MYOPTARG="jconf inter removejconf"
+	# allow all bhyve settings
+	BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator \
+	imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile \
+	swapsize vm_iso_path vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode \
+	bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver vnc_password media_auto_eject \
+	vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface \
+	ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid \
+	ci_interface_mtu"
+	MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
+
 	# push old cbsd workdir
-	ocbsd_workdir="${cbsd_workdir}"
+	ocbsd_workdir="${workdir}"
+
+	# unset all
+	for i in ${MYOPTARG}; do
+		unset ${i}
+	done
+
+	jname="${ojname}"
+
+	# defaults
+	readconf bhyve-freebsd-default.conf
+	readconf cbsdfile.conf
+
 	bhyve_${jname}
 
-	# todo: test empty/append args
+	BHYVE_ARGS=
 
-	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} \
-	jname=${jname} \
-	ip4_addr="${ip4_addr}" \
-	vm_os_type="${vm_os_type}" \
-	vm_os_profile="${vm_os_profile}" \
-	vm_ram="${vm_ram}" \
-	imgsize="${imgsize}" \
-	vm_cpus="${vm_cpus}" \
-	runasap="${runasap}" \
-	host_hostname="${host_hostname}" \
-	ip4_gw="${ip4_gw}" \
-	interface="${interface}" \
-	ci_jname="${ci_jname}" \
-	ci_fqdn="${ci_fqdn}" \
-	ci_ip4_addr="${ci_ip4_addr}" \
-	ci_gw4="${ci_gw4}" \
-	ci_interface_mtu="${ci_interface_mtu}" \
-	imgtype="${imgtype}" \
-	quiet="${quiet}"
+	# construct non-empty args/params
+	for i in ${MYOPTARG}; do
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		if [ -z "${BHYVE_ARGS}" ]; then
+			BHYVE_ARGS="${i}=\"${_val}\""
+		else
+			BHYVE_ARGS="${BHYVE_ARGS} ${i}=\"${_val}\""
+		fi
+	done
+
+	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
+
+	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} ${N1_COLOR}${BHYVE_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
+	set -o errexit
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} ${BHYVE_ARGS} ${CBSDFILE_ARGS}
+	set +o errexit
+
+	# runasap not atomic with bcreate to ignore bhyve_ssh_wait_timeout when/if fetch_iso work
+	[ ${runasap} -eq 1 ] && ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bstart jname=${jname} quiet=1
 
 	# restore old workdir
 	cbsd_workdir="${ocbsd_workdir}"
 
-	bhyve_ssh_wait
-	ret=$?
+	if [ ${ssh_wait} -eq 1 ]; then
+		bhyve_ssh_wait
+		ret=$?
+	else
+		ret=0
+	fi
 	if [ ${ret} -eq 0 ]; then
 		${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
 		bhyve_${jname}		# re-read variables
 
-		if fn_exists postcreate_${jname}; then
+		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 			# cleanup bhyve when postcreate action failed
 			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
@@ -156,13 +216,14 @@ run_bhyve()
 		else
 			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		fi
-
 	else
-		${ECHO} "${N1_COLOR}ssh failed${N0_COLOR}"
+		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
 	fi
+	return 0
 }
 
 # MAIN
+export NOINTER=1
 if [ ${num_env} -eq 1 ]; then
 	if [ ${jail_num} -eq 1 ]; then
 		jname="${jail_list}"

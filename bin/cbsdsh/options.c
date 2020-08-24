@@ -62,10 +62,11 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 326025 2017-11-20 19:49:47Z pfg $");
 #ifndef NO_HISTORY
 #include "myhistedit.h"
 #endif
+
 #ifdef CBSD
 #include "exec.h"
 #include "main.h"
-#endif 
+#endif
 
 char *arg0;			/* value of $0 */
 struct shparam shellparam;	/* current positional parameters */

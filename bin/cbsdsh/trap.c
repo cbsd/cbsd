@@ -38,7 +38,7 @@ static char sccsid[] = "@(#)trap.c	8.5 (Berkeley) 6/5/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/trap.c 326025 2017-11-20 19:49:47Z pfg $");
+__FBSDID("$FreeBSD: head/bin/sh/trap.c 363057 2020-07-09 20:53:56Z jilles $");
 
 #include <signal.h>
 #include <unistd.h>
@@ -59,7 +59,10 @@ __FBSDID("$FreeBSD: head/bin/sh/trap.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "mystring.h"
 #include "builtins.h"
 #include "myhistedit.h"
+
+#ifdef CBSD
 #include "extensions.h"
+#endif
 
 /*
  * Sigmode records the current value of the signal handlers for the various
@@ -382,12 +385,7 @@ onsig(int signo)
 {
 
 	if (signo == SIGINT && trap[SIGINT] == NULL) {
-		/*
-		 * The !in_dotrap here is safe.  The only way we can arrive
-		 * here with in_dotrap set is that a trap handler set SIGINT to
-		 * SIG_DFL and killed itself.
-		 */
-		if (suppressint && !in_dotrap)
+		if (suppressint)
 			SET_PENDING_INT;
 		else
 			onint();
@@ -494,12 +492,13 @@ setinteractive(void)
 /*
  * Called to exit the shell.
  */
-void exitshell(int status) {
+void
+exitshell(int status)
+{
 	TRACE(("exitshell(%d) pid=%d\n", status, getpid()));
 	exiting = 1;
 	exiting_exitstatus = status;
 	exitshell_savedstatus();
-
 }
 
 void
@@ -548,9 +547,12 @@ exitshell_savedstatus(void)
 		kill(getpid(), sig);
 		/* If the default action is to ignore, fall back to _exit(). */
 	}
-	
-	_DBI(	if (!exiting) cbsd_dbi_free();	 )
+
+#ifdef CBSD
+	_DBI(   if (!exiting) cbsd_dbi_free();   )
 	_REDIS( if (!exiting) cbsd_redis_free(); )
-        _INFLUX(if (!exiting) cbsd_influx_free();)
+	_INFLUX(if (!exiting) cbsd_influx_free();)
+#endif
+
 	_exit(exiting_exitstatus);
 }

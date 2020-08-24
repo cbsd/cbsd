@@ -32,11 +32,13 @@
  * SUCH DAMAGE.
  */
 
+#ifndef CBSD
 #ifndef lint
 static char const copyright[] =
 "@(#) Copyright (c) 1991, 1993\n\
 	The Regents of the University of California.  All rights reserved.\n";
 #endif /* not lint */
+#endif
 
 #ifndef lint
 #if 0
@@ -44,7 +46,7 @@ static char sccsid[] = "@(#)main.c	8.6 (Berkeley) 5/28/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
+__FBSDID("$FreeBSD: head/bin/sh/main.c 363621 2020-07-27 18:46:20Z pstef $");
 
 #include <stdio.h>
 #include <signal.h>
@@ -55,10 +57,11 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include <errno.h>
 
 #ifdef CBSD
-#include <sys/param.h> //MAXPATHLEN
-#include <stdlib.h> //setenv
-#include "about.h" //VERSION
-#include <libgen.h> //basename
+#include <sys/param.h>		// MAXPATHLEN
+#include <stdlib.h>		// setenv
+#include "about.h"		// VERSION
+#include <libgen.h>		// basename
+#include "extensions.h"		// DBI/REDIS/INFLUX
 #endif
 
 #include "shell.h"
@@ -82,7 +85,6 @@ __FBSDID("$FreeBSD: head/bin/sh/main.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "cd.h"
 #include "redir.h"
 #include "builtins.h"
-#include "extensions.h"
 
 int rootpid;
 int rootshell;
@@ -91,24 +93,23 @@ int localeisutf8, initial_localeisutf8;
 
 #ifdef CBSD
 char *cbsd_history_file = NULL;
-int cbsd_enable_history=0;
+int cbsd_enable_history = 0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
-#endif
-
-_REDIS(	cbsdredis_t      *redis;)
+_REDIS( cbsdredis_t      *redis;)
 _INFLUX(cbsdinflux_t     *influx;)
-_DBI(	cbsddbi_t      	 *databases;)
+_DBI(   cbsddbi_t        *databases;)
+#endif
 
 static void reset(void);
 static void cmdloop(int);
 static void read_profile(const char *);
 static char *find_dot_file(char *);
 
-#pragma unused(copyright)
-
+#ifdef CBSD
 #if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
 #include "contrib/ini.h"
-#include "cbsdconfig.c"		/* Not the best way to do this but will do for now */
+#include "cbsdconfig.c"         /* Not the best way to do this but will do for now */
+#endif
 #endif
 
 /*
@@ -119,22 +120,21 @@ static char *find_dot_file(char *);
  * is used to figure out how far we had gotten.
  */
 
-int main(int argc, char *argv[]) {
+int
+main(int argc, char *argv[])
+{
 	struct stackmark smark, smark2;
 	volatile int state;
 	char *shinit;
 
+#ifdef CBSD
 	_REDIS(cbsd_redis_init();  )
 	_INFLUX(cbsd_influx_init();)
 	_DBI(cbsd_dbi_init();)
-
-
 #if defined(WITH_REDIS) || defined(WITH_INFLUX) || defined(WITH_DBI)
 	load_config();
 #endif
 
-#ifdef CBSD
-//	char *MY_APP = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; //getenv
@@ -147,27 +147,12 @@ int main(int argc, char *argv[]) {
 	if ( isatty(0) && isatty(1) ) cbsd_enable_history = 1;
 #endif
 
-
-
 	(void) setlocale(LC_ALL, "");
 	initcharset();
 	state = 0;
 	if (setjmp(main_handler.loc)) {
-		switch (exception) {
-		case EXEXEC:
-			exitstatus = exerrno;
-			break;
-
-		case EXERROR:
-			exitstatus = 2;
-			break;
-
-		default:
-			break;
-		}
-
 		if (state == 0 || iflag == 0 || ! rootshell ||
-		    exception == EXEXIT)
+			exception == EXEXIT)
 			exitshell(exitstatus);
 		reset();
 		if (exception == EXINT)
@@ -258,7 +243,6 @@ int main(int argc, char *argv[]) {
 		setvarsafe("inter","1",1);
 		putenv("inter=0");
 	}
-
 	read_profile("/usr/local/cbsd/cbsd.conf");
 	read_profile("${workdir}/etc/defaults/logger.conf");
 	read_profile("${workdir}/etc/logger.conf");
@@ -267,16 +251,17 @@ int main(int argc, char *argv[]) {
 		cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
 		sprintf(cbsd_history_file,"%s/%s",workdir,CBSD_HISTORYFILE);
 	}
-
 #endif
 
 	procargs(argc, argv);
 	pwd_init(iflag);
 	INTON;
+
 #ifndef CBSD
 	if (iflag)
 		chkmail(1);
 #endif
+
 	if (argv[0] && argv[0][0] == '-') {
 		state = 1;
 		read_profile("/etc/profile");
@@ -305,8 +290,6 @@ state4:
 	if (sflag || minusc == NULL) {
 		cmdloop(1);
 	}
-
-
 	exitshell(exitstatus);
 	/*NOTREACHED*/
 	return 0;
@@ -324,7 +307,9 @@ reset(void)
  * loop; it turns on prompting if the shell is interactive.
  */
 
-static void cmdloop(int top) {
+static void
+cmdloop(int top)
+{
 	union node *n;
 	struct stackmark smark;
 	int inter;
@@ -333,8 +318,8 @@ static void cmdloop(int top) {
 	TRACE(("cmdloop(%d) called\n", top));
 	setstackmark(&smark);
 	for (;;) {
-		if (pendingsig) dotrap();
-
+		if (pendingsig)
+			dotrap();
 		inter = 0;
 		if (iflag && top) {
 			inter++;
@@ -347,9 +332,11 @@ static void cmdloop(int top) {
 		n = parsecmd(inter);
 		/* showtree(n); DEBUG */
 		if (n == NEOF) {
-			if (!top || numeof >= 50) break;
+			if (!top || numeof >= 50)
+				break;
 			if (!stoppedjobs()) {
-				if (!Iflag) break;
+				if (!Iflag)
+					break;
 				out2fmt_flush("\nUse \"exit\" to leave shell.\n");
 			}
 			numeof++;
@@ -361,11 +348,16 @@ static void cmdloop(int top) {
 		popstackmark(&smark);
 		setstackmark(&smark);
 		if (evalskip != 0) {
-			if (evalskip == SKIPRETURN) evalskip = 0;
+			if (evalskip == SKIPRETURN)
+				evalskip = 0;
 			break;
 		}
 	}
 	popstackmark(&smark);
+	if (top && iflag) {
+		out2c('\n');
+		flushout(out2);
+	}
 }
 
 
@@ -419,6 +411,7 @@ static char *
 find_dot_file(char *basename)
 {
 	char *fullname;
+	const char *opt;
 	const char *path = pathval();
 	struct stat statb;
 
@@ -426,7 +419,7 @@ find_dot_file(char *basename)
 	if( strchr(basename, '/'))
 		return basename;
 
-	while ((fullname = padvance(&path, basename)) != NULL) {
+	while ((fullname = padvance(&path, &opt, basename)) != NULL) {
 		if ((stat(fullname, &statb) == 0) && S_ISREG(statb.st_mode)) {
 			/*
 			 * Don't bother freeing here, since it will
@@ -464,7 +457,9 @@ dotcmd(int argc, char **argv)
 }
 
 
-int exitcmd(int argc, char **argv) {
+int
+exitcmd(int argc, char **argv)
+{
 	if (stoppedjobs())
 		return 0;
 	if (argc > 1)

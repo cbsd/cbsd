@@ -33,8 +33,10 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 279503 2015-03-01 21:46:55Z jilles $");
+__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 343981 2019-02-10 22:23:05Z jilles $");
 
+#include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,6 +51,32 @@ __FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 279503 2015-03-01 21:46:55Z jilles
 #if ARITH_BOR + 11 != ARITH_BORASS || ARITH_ASS + 11 != ARITH_EQ
 #error Arithmetic tokens are out of order.
 #endif
+
+arith_t
+strtoarith_t(const char *restrict nptr, char **restrict endptr)
+{
+	arith_t val;
+
+	while (isspace((unsigned char)*nptr))
+		nptr++;
+	switch (*nptr) {
+		case '-':
+			return strtoimax(nptr, endptr, 0);
+		case '0':
+			return (arith_t)strtoumax(nptr, endptr, 0);
+		default:
+			val = (arith_t)strtoumax(nptr, endptr, 0);
+			if (val >= 0)
+				return val;
+			else if (val == ARITH_MIN) {
+				errno = ERANGE;
+				return ARITH_MIN;
+			} else {
+				errno = ERANGE;
+				return ARITH_MAX;
+			}
+	}
+}
 
 int
 yylex(void)
@@ -78,7 +106,7 @@ yylex(void)
 		case '7':
 		case '8':
 		case '9':
-			yylval.val = strtoarith_t(buf, &end, 0);
+			yylval.val = strtoarith_t(buf, &end);
 			arith_buf = end;
 			return ARITH_NUM;
 		case 'A':

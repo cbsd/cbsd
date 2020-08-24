@@ -32,7 +32,7 @@
  * SUCH DAMAGE.
  *
  *	@(#)options.h	8.2 (Berkeley) 5/4/95
- * $FreeBSD: head/bin/sh/options.h 326025 2017-11-20 19:49:47Z pfg $
+ * $FreeBSD: head/bin/sh/options.h 344502 2019-02-24 21:05:13Z jilles $
  */
 
 struct shparam {
@@ -67,9 +67,10 @@ struct shparam {
 #define	Pflag optval[17]
 #define	hflag optval[18]
 #define	nologflag optval[19]
+#define	pipefailflag optval[20]
 
 #define NSHORTOPTS	19
-#define NOPTS		20
+#define NOPTS		21
 
 extern char optval[NOPTS];
 extern const char optletter[NSHORTOPTS];
@@ -97,6 +98,7 @@ static const unsigned char optname[] =
 	"\010physical"
 	"\010trackall"
 	"\005nolog"
+	"\010pipefail"
 ;
 #endif
 
