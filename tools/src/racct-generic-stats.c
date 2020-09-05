@@ -48,7 +48,9 @@
 
 #define DEFSQLDELIMER "|"
 
+#ifndef SQLITE_BUSY_TIMEOUT
 #define SQLITE_BUSY_TIMEOUT 5000
+#endif
 
 #define	JP_USER		0x01000000
 #define	JP_OPT		0x02000000
