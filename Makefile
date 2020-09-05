@@ -20,7 +20,7 @@ all:	cbsd dump_cpu_topology dump_iscsi_discovery
 clean:
 	${MAKE} -C bin/cbsdsh clean
 	${MAKE} -C misc/src/sipcalc clean
-	${RM} -f bin/cbsdsh/.depend* misc/src/*.o
+	${RM} -f bin/cbsdsh/.depend* misc/src/*.o ${SIMPLEXMLOBJECT} ${DUMPCPUTOPOLOGYOBJECT} ${DUMPISCSIDISCOVERYOBJECT}
 
 distclean:
 	${MAKE} -C bin/cbsdsh clean
