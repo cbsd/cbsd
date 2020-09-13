@@ -39,6 +39,7 @@ usage(int errcode)
 {
 	fprintf(stderr,
 		"Return next free VALE port. Usage:\n"
+		"\t-e exclude \"1 2 3\"\n"
 		"\t-i target VALE id (0 1 ..)\n");
 	exit(errcode);
 }
@@ -59,6 +60,27 @@ is_number(const char *p)
 	return 1;
 }
 
+// return 1 if port in exclude_list
+// in_exclude_list(2,"1 2 3");
+int
+in_exclude_list(int port, char *exclude_list)
+{
+	int exist=0;
+	int tmp=0;
+	char *pch;
+	char ex[strlen(exclude_list)];
+	strcpy(ex,exclude_list);
+	pch = strtok(ex," ,.-");
+	while (pch != NULL)
+	{
+		tmp=atoi(pch);
+		if (tmp==port)
+			return 1;
+		pch = strtok (NULL, " ,.-");
+	}
+	return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -73,12 +95,12 @@ main(int argc, char *argv[])
 	int first_free = -1;
 	char myswitch[7];		// "vale99" max
 	int switch_ports[255];
+	char *exclude_list = NULL;
 
-	while ((ch = getopt(argc, argv, "i:")) != -1) {
+	while ((ch = getopt(argc, argv, "e:i:")) != -1) {
 		switch (ch) {
-		default:
-			fprintf(stderr, "bad option %c %s", ch, optarg);
-			usage(-1);
+		case 'e':
+			exclude_list = optarg;
 			break;
 		case 'i':
 			target_vale_id = atoi(optarg);
@@ -86,6 +108,10 @@ main(int argc, char *argv[])
 				fprintf(stderr, "id not in range 0-99: %d\n", target_vale_id);
 				exit(-1);
 			}
+			break;
+		default:
+			fprintf(stderr, "bad option %c %s", ch, optarg);
+			usage(-1);
 			break;
 		}
 	}
@@ -100,8 +126,15 @@ main(int argc, char *argv[])
 	sprintf(myswitch,"vale%d",target_vale_id);
 	fprintf(stderr,"Search for SW: [%s]\n",myswitch);
 
-	for (i=0;i<255;i++)
-		switch_ports[i]=0;
+	//mark exclude ports first
+	if (exclude_list) {
+		for (i=0;i<255;i++) {
+			switch_ports[i]=in_exclude_list(i,exclude_list);
+		}
+	} else {
+		for (i=0;i<255;i++)
+			switch_ports[i]=0;
+	}
 
 	//scan for 255 switch ID
 	for (sw_id = 0; sw_id < 64; sw_id++) {
@@ -124,6 +157,7 @@ main(int argc, char *argv[])
 
 		//scan for 255 ports per SW
 		for (i = 0; i < 255; i++) {
+
 			switch_found=0;
 			memset(&hdr, 0, sizeof(hdr));
  
