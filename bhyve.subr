@@ -1474,6 +1474,7 @@ compile_vnc_args()
 	local width height
 	local _pcislot_args=
 	local _vnc_bind=127.0.0.1
+	local _skip_ports i _vms _tmpport
 
 	vnc_args=
 
@@ -1496,9 +1497,27 @@ compile_vnc_args()
 					_vnc_bind="${bhyve_vnc_tcp_bind}"
 					;;
 			esac
-			vm_port=$( get_next_tcp_port -a ${_vnc_bind} -s 5900 -e 6900 )
+			# build skip list
+			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+			for i in ${_vms}; do
+				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
+				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
+					if ! is_number ${_tmpport}; then
+						[ ${_tmpport} -eq 0 ] && continue
+						if [ -z "${_skip_ports}" ]; then
+							_skip_ports="${_tmpport}"
+						else
+							_skip_ports="${_skip_ports} ${_tmpport}"
+						fi
+					else
+						continue
+					fi
+				fi
+			done
+			vm_port=$( get_next_tcp_port -a ${_vnc_bind} -s 5900 -e 6900 -x "${_skip_ports}" )
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
-			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port: ${vm_port} for ${_vnc_bind}
+			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
 			;;
 		1)
 			return 1
