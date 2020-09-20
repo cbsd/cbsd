@@ -105,13 +105,29 @@ exit_action_mode()
 	return ${_ret}
 }
 
+usage()
+{
+	printf "[bhyve] CBSD default run bhyve wrapper\n"
+	printf " -c path to ASCII param=value config file\n"
+	printf " -d debug\n"
+	printf " -e exit_action\n"
+	printf " -g debug_engine - run in gdb/lldb/none..\n"
+	printf " -l logfile\n"
+	printf " -r checkpoint file. run/start bhyve from restore_checkpoint file\n"
+	printf " -w CBSD workdir\n"
+	exit 0
+}
 
-while getopts "c:d:e:g:l:r:w:" opt; do
+[ -z "${1}" -o "${1}" = "--help" ] && usage
+
+# MAIN
+while getopts "c:d:e:g:hl:r:w:" opt; do
 	case "${opt}" in
 		c) conf="${OPTARG}" ;;
 		d) debug="${OPTARG}" ;;
 		e) exit_action="${OPTARG}" ;;
 		g) debug_engine="${OPTARG}" ;;
+		h) usage ;;
 		l) orig_logfile="${OPTARG}" ;;
 		r) restore_checkpoint="${OPTARG}" ;;
 		w) workdir="${OPTARG}" ;;
