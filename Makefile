@@ -15,7 +15,7 @@ DUMPISCSIDISCOVERYOBJECT = misc/src/dump_iscsi_discovery.o
 
 .SILENT:
 
-all:	cbsd dump_cpu_topology dump_iscsi_discovery clean
+all:	cbsd dump_cpu_topology dump_iscsi_discovery
 
 clean:
 	${MAKE} -C bin/cbsdsh clean
