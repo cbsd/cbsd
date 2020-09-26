@@ -402,7 +402,7 @@ compile_dsk_args()
 	local prefix
 	local full_dsk_path
 	local _shared_devs
-	local _pcislot_args=
+	local _pcislot_args= T F
 
 	# temporary workaround for Alex' (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
 	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
@@ -502,19 +502,38 @@ compile_dsk_args()
 			echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path}\" ;"
 		fi
 
+		# export dskX_path
+		echo "export dsk${dsk_id}_path=\"${full_dsk_path}\";"
+
 		dsk_id=$(( dsk_id + 1 ))
 	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
-	dsk_args=""
+	dsk_args=
+	mydsk=
+
 	for i in $( ${SEQ_CMD} 0 31 ); do
+		T=
 		eval T="\$dsk$i"
 		[ -z "${T}" ] && break
+		F=
+		eval F="\$dsk${i}_path"
+		if [ -n "${F}" ]; then
+			if [ -z "${mydsk}" ]; then
+				mydsk="${F}"
+			else
+				mydsk="${mydsk} ${F}"
+			fi
+		fi
 		## make custom argument for bhyve and add count to bhive_pci_index cause increment in while loop we lose
 		#if ! next_pci_id; then
 		#	# no free pci bus
 		#fi
 		#add_bhyve_pci_id_busy ${bhyve_pci_index}
-		dsk_args="${dsk_args} ${T}"
+		if [ -z "${dsk_args}" ]; then
+			dsk_args="${T}"
+		else
+			dsk_args="${dsk_args} ${T}"
+		fi
 	done
 
 	# shared devices
@@ -565,7 +584,7 @@ compile_cd_args()
 	local sqldelimer=" "
 	local _pcislot_args=
 	local _ext
-	local _device
+	local _device T F
 
 	eval $( cbsdsqlro storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
 
@@ -587,6 +606,9 @@ compile_cd_args()
 		store_bhyve_pci_slot -n ${_device} -d ${path}-${idx} -a ${bhyve_pci_index}
 		echo "export cd${cd_id}=\"-s ${_pcislot_args},${_device},${path},ro\" ;"
 
+		# export cdX_path
+		echo "export cd${cd_id}_path=\"${path}\";"
+
 		cd_id=$(( cd_id + 1 ))
 	done ) || err 1 "${N1_COLOR}Error while create cd map${N0_COLOR}"
 
@@ -594,6 +616,15 @@ compile_cd_args()
 	for i in $( ${SEQ_CMD} 0 31 ); do
 		eval T="\$cd$i"
 		[ -z "${T}" ] && break
+		F=
+		eval F="\$cd${i}_path"
+		if [ -n "${F}" ]; then
+			if [ -z "${mydsk}" ]; then
+				mycd="${F}"
+			else
+				mycd="${mydsk} ${F}"
+			fi
+		fi
 		cd_args="${cd_args} ${T}"
 	done
 
@@ -1005,7 +1036,7 @@ compile_nic_args()
 	nic_args=""
 
 	# export in mytap fill list of vm NICs
-	mytap=""
+	mytap=
 
 	for i in $( ${SEQ_CMD} 0 31 ); do
 		eval T="\$nic$i"
@@ -1013,7 +1044,11 @@ compile_nic_args()
 		[ -z "${T}" ] && break
 		[ -z "${taplist}" ] && break
 		nic_args="${nic_args} ${T}"
-		mytap="${mytap} ${taplist}"
+		if [ -z "${mytap}" ]; then
+			mytap="${taplist}"
+		else
+			mytap="${mytap} ${taplist}"
+		fi
 	done
 
 	[ -z "${nic_args}" ] && return 1
@@ -1474,6 +1509,7 @@ compile_vnc_args()
 	local width height
 	local _pcislot_args=
 	local _vnc_bind=127.0.0.1
+	local _skip_ports i _vms _tmpport
 
 	vnc_args=
 
@@ -1496,9 +1532,28 @@ compile_vnc_args()
 					_vnc_bind="${bhyve_vnc_tcp_bind}"
 					;;
 			esac
-			vm_port=$( get_next_tcp_port -a ${_vnc_bind} -s 5900 -e 6900 )
+			# build skip list
+			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
+			for i in ${_vms}; do
+				[ "${i}" = "${jname}" ] && continue		# its me
+				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
+				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
+					if ! is_number ${_tmpport}; then
+						[ ${_tmpport} -eq 0 ] && continue
+						if [ -z "${_skip_ports}" ]; then
+							_skip_ports="${_tmpport}"
+						else
+							_skip_ports="${_skip_ports} ${_tmpport}"
+						fi
+					else
+						continue
+					fi
+				fi
+			done
+			vm_port=$( get_next_tcp_port -a ${_vnc_bind} -s 5900 -e 6900 -x "${_skip_ports}" )
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
-			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port: ${vm_port} for ${_vnc_bind}
+			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
 			;;
 		1)
 			return 1

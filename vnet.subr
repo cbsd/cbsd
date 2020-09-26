@@ -342,6 +342,7 @@ get_vm_uplink_interface()
 	local tmp_nic_parent _jname _update=0
 	local _get_by_route=0	# get upink by IPv4 route ?
 	local _sw _pos _arg_len _pref _vale_arg _vale_id _vale_port
+	local _vale_port_exclude
 
 	tmp_nic_parent="${nic_parent}"
 
@@ -366,17 +367,19 @@ get_vm_uplink_interface()
 				_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${tmp_nic_parent}" )
 			fi
 			_vale_id=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"  )
-			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${nic_parent}\""
+			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${nic_parent}, please run: cbsd valecfg\""
 			# VALE has limits on the length of the port name.
 			# Also, we should avoid ID/GID conflicts with multiple working directories.
 			# Determine next free VALE port, without any reference to id or name.
 			cbsdlogger NOTICE "${CBSD_APP}: looking for next free vale port: ${miscdir}/next-vale-port -i ${_vale_id}"
-			_vale_port=$( ${miscdir}/next-vale-port -i ${_vale_id} 2>/dev/null )
+
+			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			_vale_port=$( ${miscdir}/next-vale-port -i ${_vale_id} -e "${_vale_port_exclude}" 2>/dev/null )
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
 				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: ${miscdir}/next-vale-port -i ${_vale_id}\""
 			fi
 			if [ ${_update} -eq 1 ]; then
-				cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: next-vale-port for ${_vale_id}: ${_vale_port}"
+				cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: update/reservation next-vale-port for ${jname}, valeid: ${_vale_id}: port: ${_vale_port}"
 				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
 			fi
 			mytap="vale${_vale_id}:${_vale_port}"
@@ -389,7 +392,7 @@ get_vm_uplink_interface()
 			# Also, we should avoid ID/GID conflicts with multiple working directories.
 			# Determine next free VALE port, without any reference to id or name.
 			_vale_id=$( echo ${tmp_nic_parent} | ${TR_CMD} -d [:alpha:] )		# remove alpha, get ID only
-			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${tmp_nic_parent}\""
+			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${tmp_nic_parent}, please run: cbsd valecfg\""
 			_vale_port=$( ${miscdir}/next-vale-port -i ${_vale_id} 2>/dev/null )
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
 				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: ${miscdir}/next-vale-port -i ${_vale_id}\""

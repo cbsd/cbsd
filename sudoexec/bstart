@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
-#v12.1.9
+#v12.1.16
 MYARG=""
-MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only"
+MYOPTARG="jname debug checkpoint lm lm_rnodename lm_dport debug_engine cfg_only bhyverun_wrapper"
 MYDESC="Start bhyve domain"
 ADDHELP="  checkpoint   - start from specified checkpoint name\n\
   lm - 0 or 1  - when 1: prepare for acceptance of this domain via live migration request\n\
@@ -31,6 +31,8 @@ readconf jail-freebsd-default.conf
 
 odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
+obhyverun_wrapper=	# reset bhyverun_wrapper
+bhyverun_wrapper=	# reset bhyverun_wrapper
 
 . ${cbsdinit}
 
@@ -41,7 +43,8 @@ debug_engine=		# reset debug_engine before init
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No bhyve specified${N0_COLOR}"
 
-[ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
+[ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"		# store overwrite debug_engine
+[ -n "${bhyverun_wrapper}" ] && obhyverun_wrapper="${bhyverun_wrapper}"	# store overwrite bhyverun_wrapper
 
 . ${distdir}/fetch.subr
 . ${distdir}/jcreate.subr	# for external_exec_master_script
@@ -70,7 +73,7 @@ start_bhyve()
 	local passt_args=
 	local _ebytes _dsk_ebytes _cloud_truncate
 	local _cloud_source_is_zvol
-	local _cloud_source_zvol _dsk_source_zvol
+	local _cloud_source_zvol _dsk_source_zvol _dsk_id
 
 	local is_ppt=$( cbsdsqlro ${main_sqlite_local} SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
 	[ -n "${is_ppt}" ] && passt_args="-S"
@@ -494,6 +497,7 @@ start_bhyve()
 
 	# restore overwrite debug_engine
 	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
+	[ -n "${obhyverun_wrapper}" ] && bhyverun_wrapper="${bhyverun_wrapper}"
 
 ${CAT_CMD} > ${jailsysdir}/${jname}/bhyve.conf <<EOF
 vm_boot='${vm_boot}'
@@ -525,6 +529,8 @@ efi_args='${efi_args}'
 vnc_args='${vnc_args}'
 console_args='${console_args}'
 mytap='${mytap}'
+mydsk='${mydsk}'
+mycd='${mycd}'
 cd_boot_once='${cd_boot_once}'
 bhyveload_cmd_once='${bhyveload_cmd_once}'
 console_nmdm='${console_nmdm}'
@@ -561,7 +567,12 @@ xhci='${xhci}'
 soundhw_args='${soundhw_args}'
 bhyve_cmd='${bhyve_cmd}'
 uuid='${uuid}'
+
+bhyverun_wrapper='${bhyverun_wrapper}'
 EOF
+
+	[ -z "${bhyverun_wrapper}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: empty mandatory param: ${N2_COLOR}bhyverun_wrapper${N0_COLOR}"
+	[ ! -r "${bhyverun_wrapper}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such bhyverun_wrapper script: ${N2_COLOR}${bhyverun_wrapper}${N0_COLOR}"
 
 	# export all tap bridges
 	for i in ${mytap}; do
@@ -573,6 +584,20 @@ EOF
 		# cast ':' to '_' ?
 		i=$( echo ${i} | ${TR_CMD} ":" "_" )
 		${SYSRC_CMD} -qf ${jailsysdir}/${jname}/bhyve.conf mytap_${i}_members="${T}" >/dev/null
+	done
+
+	# export all dsk path as dsk_X_path
+	_dsk_id=0
+	for i in ${mydsk}; do
+		${SYSRC_CMD} -qf ${jailsysdir}/${jname}/bhyve.conf dsk_${_dsk_id}_path="${i}" >/dev/null
+		_dsk_id=$(( _dsk_id + 1 ))
+	done
+
+	# export all cd path as cd_X_path
+	_dsk_id=0
+	for i in ${mycd}; do
+		${SYSRC_CMD} -qf ${jailsysdir}/${jname}/bhyve.conf cd_${_dsk_id}_path="${i}" >/dev/null
+		_dsk_id=$(( _dsk_id + 1 ))
 	done
 
 	# create a configuration only
@@ -627,16 +652,16 @@ EOF
 			if [ "${lm}" = "1" ]; then
 				# for live migration always run in tmux due to non-interactive commands from remote side
 				[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
-				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}"
+				env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "${bhyverun_wrapper} -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}"
 			else
-				env cbsd_workdir="${workdir}" /bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}
+				env cbsd_workdir="${workdir}" ${bhyverun_wrapper} -c ${jailsysdir}/${jname}/bhyve.conf -g ${debug_engine} ${checkpoint_args} ${logfile_args}
 			fi
 			;;
 		*)
 			[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
-			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new-session -d "/bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args}"
+			env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new-session -d "${bhyverun_wrapper} -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args}"
 			# ? when "daemon -f": got: Error return from kevent change + no network  ( or > /dev/null 2>&1 )
-			#env cbsd_workdir="${workdir}" ${DAEMON_CMD} /bin/sh ${distdir}/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args} > ${bstart_logfile} 2>&1
+			#env cbsd_workdir="${workdir}" ${DAEMON_CMD} ${bhyverun_wrapper} -c ${jailsysdir}/${jname}/bhyve.conf -e 1 ${checkpoint_args} ${logfile_args} > ${bstart_logfile} 2>&1
 			;;
 	esac
 
@@ -682,7 +707,7 @@ EOF
 
 	if [ "${vm_pid}" = "0" ]; then
 		[ -r ${bstart_logfile} ] && ${CAT_CMD} ${bstart_logfile}
-		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}sh /usr/local/cbsd/share/bhyverun.sh -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Please use for debug: ${N2_COLOR}${bhyverun_wrapper} -c ${jailsysdir}/${jname}/bhyve.conf${N0_COLOR}"
 	fi
 
 	if [ "${lm}" = "0" ]; then

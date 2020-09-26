@@ -9,7 +9,8 @@ init_items_desc()
 	nodeip_desc="Node management IPv4 address"
 	nodeip6_desc="Node management IPv6 address"
 	nodedescr_desc="Node info/description"
-	jnameserver_desc="Jails default DNS name-server"
+	jnameserver_desc="environment default DNS name-server"
+	jnameserver_desc_full="environment default DNS name-server\ncomma separated when multiple servers, e.g:\n8.8.8.8,4.4.4.4,2001:4860:4860::8888,2001:4860:4860::8844"
 	nodeip4pool_desc="Environment pool IPv4 address range\ncomma separated when mulitple networks\nyou can use range in the last octet. e.g:\n10.0.0.0/24,192.168.0.0/24 or 172.16.0.30-40"
 	nodeip6pool_desc="Environment pool IPv6 address range\ncomma separated when mulitple networks"
 	nat_enable_desc="Enable NAT for RFC1918 networks"
@@ -35,7 +36,7 @@ init_items_default()
 	collect_netinfo
 
 	##default area
-	nodename_default=$( /bin/hostname )
+	nodename_default=$( ${HOSTNAME_CMD} )
 
 	case "${node_ip6_active}" in
 		1)
@@ -159,13 +160,14 @@ make_nat()
 			return 0
 			;;
 		"pf")
-			if [ $( ${GREP_CMD} ^pf_load= /boot/loader.conf /boot/loader.conf.local 2>/dev/null | /usr/bin/wc -l ) = 0 ]; then
+			if [ $( ${GREP_CMD} ^pf_load= /boot/loader.conf /boot/loader.conf.local 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
 				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && ${SYSRC_CMD} -vf /boot/loader.conf pf_load=YES
+				${SYSRC_CMD} -qf ${workdir}/rc.conf pf_load="1" > /dev/null 2>&1
 			fi
 
 			#save other rule, except nat
 			if [ -r "${etcdir}/pfnat.conf" ]; then
-				${GREP_CMD} -E -v "(^nat)|(Setup by CBSD NAT)" ${etcdir}/pfnat.conf |/usr/bin/sort -u > ${tmpdir}/pfnat.conf.bak
+				${GREP_CMD} -E -v "(^nat)|(Setup by CBSD NAT)" ${etcdir}/pfnat.conf | ${SORT_CMD} -u > ${tmpdir}/pfnat.conf.bak
 			fi
 			${TRUNCATE_CMD} -s0 ${etcdir}/pfnat.conf
 
@@ -220,10 +222,17 @@ EOF
 
 			if [ ${fix_mod} -ne 0 ]; then
 				# we need pass inter=0 here for initenv-tui: need for allow accept when we first init ipfw from initenv-tui
-				if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
-					${SYSRC_CMD} -vf /boot/loader.conf net.inet.ip.fw.default_to_accept=1
-					${SYSRC_CMD} -vf /boot/loader.conf ipfw_nat_load=YES
-					${SYSRC_CMD} -vf /boot/loader.conf libalias_load=YES
+				if [ $( ${GREP_CMD} ^ipfw_configured= ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
+					if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
+						# sysrc: net.inet.ip.fw.default_to_accept: name contains characters not allowed in shell
+						echo "net.inet.ip.fw.default_to_accept=1" >> /boot/loader.conf
+						${SYSRC_CMD} -vf /boot/loader.conf ipfw_nat_load=YES
+						${SYSRC_CMD} -vf /boot/loader.conf libalias_load=YES
+					else
+						${ECHO} "${W1_COLOR}!warning!${N1_COLOR} without ${N2_COLOR}net.inet.ip.fw.default_to_accept=1${N1_COLOR} in /boot/loader.conf and/or custom ipfw rules your host will become unavailable via network on restart${N0_COLOR}"
+						${ECHO} "${W1_COLOR}!warning!${N1_COLOR} hope you know what you are doing${N0_COLOR}"
+					fi
+					${SYSRC_CMD} -qf ${workdir}/rc.conf ipfw_configured="1" > /dev/null 2>&1
 				fi
 			fi
 			${TRUNCATE_CMD} -s0 ${etcdir}/ipfw.conf
@@ -291,7 +300,7 @@ configure_nat()
 				nat_selected="1"
 				;;
 			*)
-				${ECHO} "${N1_COLOR}Wrong input: ${N1_COLOR}${ok}${N0_COLOR}"
+				${ECHO} "${N1_COLOR}wrong input: ${N1_COLOR}${ok}${N0_COLOR}"
 				;;
 		esac
 	done
@@ -603,12 +612,32 @@ get_initenv_nodedescr()
 # form for $jnameserver
 get_initenv_jnameserver()
 {
-	local _input _retval
+	local _input _retval _ok=0 _ret
 
 	f_dialog_title " jnameserver "
 
-	f_dialog_input _input "${jnameserver_desc}" "${jnameserver}" \
-		"${_message}" || return $?
+	while [ ${_ok} -ne 1 ]; do
+
+		f_dialog_input _input "${jnameserver_desc_full}" "${jnameserver}" \
+			"${_message}" || return $?
+
+		_ret=$?
+
+		strpos --str="${_input}" --search=" "
+		[ $? -ne 0 ] && _message="use commas when multiple, not spaces" && continue
+
+		# validate_jnameserver_function_here "${_input}"
+		# _ret=$?
+		case ${_ret} in
+			0)
+				_ok=1
+				;;
+			*)
+				_message="ERROR: bad values. choose other one"
+				;;
+		esac
+
+	done
 
 	[ -n "${_input}" ] && jnameserver="${_input}"
 }
@@ -617,9 +646,6 @@ get_initenv_jnameserver()
 get_initenv_nodeippool()
 {
 	local _input _retval
-
-#nodeippool_desc
-
 
 	f_dialog_title " nodeippool "
 	f_dialog_input _input "${nodeip4pool_desc}" "${nodeippool}" \
@@ -883,7 +909,6 @@ get_initenv_parallel()
 	f_dialog_input _input "${parallel_desc}" "${parallel}" \
 		"${_message}" || return $?
 	[ -n "${_input}" ] && parallel="${_input}"
-
 }
 
 
@@ -1023,7 +1048,7 @@ collect_netinfo()
 
 	if [ -n "${uplink_iface6}" ]; then
 		CBSD_UPLINK_IFACE6="${uplink_iface6}"
-		local INITIP6=$( ${IFCONFIG_CMD} ${uplink_iface6} | ${AWK_CMD} '/inet6 *:*+/{print $2}'| ${HEAD_CMD} -n1 | ${GREP_CMD} -v %${uplink_iface6}$ )
+		local INITIP6=$( ${IFCONFIG_CMD} ${uplink_iface6} | ${AWK_CMD} '/inet6 *:*+/{print $2}'| ${GREP_CMD} -v %${uplink_iface6}$ | ${HEAD_CMD} -n1 )
 	else
 		CBSD_UPLINK_IFACE6="lo0"
 		local INITIP6="::1"

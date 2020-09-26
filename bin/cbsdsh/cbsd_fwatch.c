@@ -97,14 +97,16 @@ cbsd_fwatchcmd(int argc, char *argv[])
 
 	if ((fd = open(watchfile, O_RDONLY)) == -1) {
 		out2fmt_flush("Cannot open: %s\n", watchfile);
-		ckfree(watchfile);
+		if (watchfile != NULL)
+			free(watchfile);
 		return(1);
 	}
 
 	if ((kq = kqueue()) == -1) {
 		out2fmt_flush("Cannot create kqueue\n");
 		close(fd);
-		ckfree(watchfile);
+		if (watchfile != NULL)
+			free(watchfile);
 		return 1;
 	}
 
@@ -115,7 +117,8 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
 		out2fmt_flush("kevent\n");
 		close(fd);
-		ckfree(watchfile);
+		if (watchfile != NULL)
+			free(watchfile);
 		close(kq);
 		return 1;
 	}
@@ -133,7 +136,8 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	if (nev == -1) {
 		out2fmt_flush("kevent\n");
 		close(fd);
-		ckfree(watchfile);
+		if (watchfile != NULL)
+			free(watchfile);
 		close(kq);
 		return 1;
 	}
@@ -177,7 +181,9 @@ cbsd_fwatchcmd(int argc, char *argv[])
 			ev.fflags &= ~NOTE_REVOKE;
 		}
 	}
-	
-	ckfree(watchfile);
+
+	if (watchfile != NULL)
+		free(watchfile);
+
 	return 0;
 }
