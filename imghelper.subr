@@ -33,9 +33,20 @@ all_filled()
 	local i _T
 
 	for i in ${param}; do
+		case "${i}" in
+			-*)
+				continue
+				;;
+			Expand)
+				continue
+				;;
+		esac
 		eval _T=\${${i}}
 		eval mandatory=\$${i}_mandatory
-		[ -z "${_T}" -a "${mandatory}" = "1" ] && return 1
+		if [ -z "${_T}" -a "${mandatory}" = "1" ]; then
+			printf "${i}"
+			return 1
+		fi
 	done
 
 	return 0
@@ -56,6 +67,14 @@ update_params()
 	[ "${cfg_existing}" != "1" ] && ${CP_CMD} -aH ${formfile} ${_imgformfile}
 
 	for i in ${param}; do
+		case "${i}" in
+			-*)
+				continue
+				;;
+#			Expand)
+#				continue
+#				;;
+		esac
 		eval _T=\${${i}}
 
 		if [ "${_T}" = "*****" ]; then
@@ -99,7 +118,8 @@ update_params()
 # $formfile and $table must be present
 load_forms()
 {
-	local param _id def def2 link type _env idx lnk
+	local param _id def def2 link type _env idx lnk _vars
+	local _tmpfile
 
 	[ ! -f ${formfile} ] && err 1 "${N1_COLOR}formfile not found: ${N2_COLOR}${formfile}${N0_COLOR}"
 	[ -z "${table}" ] && table="forms"
@@ -124,9 +144,16 @@ load_forms()
 
 	[ "${packages}" = "0" ] && packages=
 
-	_id=0 # First SQL sequence is 1
+	# First SQL sequence is 1
+	_id=0
+	_seq_ind=0
 
-	eval $( for i in ${param}; do
+	_tmpfile="/dev/stdout"			# default
+	_tmpfile=$( ${MKTEMP_CMD} )		# for debuf
+
+	# export params_<ind> variables by sequence, not SQL index
+	for i in ${param}; do
+		_seq_ind=$(( _seq_ind + 1 ))
 		unset _env desc _res cur attr xattr mandatory groupname group_id
 		_id="$( cbsdsqlro ${formfile} SELECT idx FROM ${table} WHERE param=\"${i}\" LIMIT 1 )"
 		desc="$( cbsdsqlro ${formfile} SELECT desc FROM ${table} WHERE idx=\"${_id}\" | ${TR_CMD} -d "'\"")"
@@ -150,10 +177,18 @@ load_forms()
 				;;
 			delimer)
 				is_delimer=1
-				i="forms_delimer_${_id}"
+				is_value=0
+				_vars="forms_delimer_${_seq_ind}"
+				#_vars="forms_delimer_${_seq_ind}"
 				;;
 			group_add|group_del)
-				is_value=0
+				is_value=1
+				is_delimier=1
+				#_vars="forms_group_add_${_seq_ind}"
+				#_vars="forms_delimer_${_seq_ind}"
+				#unset _vars
+				_vars="forms_groupadd_${_seq_ind}"
+				_vars="${i}"
 				;;
 			*)
 				is_value=1
@@ -161,14 +196,21 @@ load_forms()
 		esac
 
 		# check for H_environment
-		[ ${is_value} -eq 1 ] && eval _res="\$H_${i}"
+		if [ ${is_value} -eq 1 ]; then
+			eval _res="\$H_${_vars}"
+			_vars="${i}"
+		else
+			#
+		fi
 
-#		echo " >>> ${i} is value: ${is_value}, IDX = ${_id}, TYPE: ${type}, DESC: [${desc}], RES: ${_res}" >> /tmp/forms.txt
+		[ -z "${_vars}" ] && continue
+
+#		echo " >>> ${_vars} is value: ${is_value}, IDX = ${_id}, TYPE: ${type}, DESC: [${desc}], RES: ${_res}" >> /tmp/forms.txt
 
 		if [ -n "${_res}" ]; then
 			# environment is preferred
-			echo "${i}=\"${_res}\""
-#			echo "${i}=\"${_res}\"" >> /tmp/forms.txt
+			echo "${_vars}=\"${_res}\"" >> ${_tmpfile}
+#			echo "${_vars}=\"${_res}\"" >> /tmp/forms.txt
 
 		elif [ ${is_value} -eq 1 ]; then
 			# preferred for cur value
@@ -190,11 +232,11 @@ load_forms()
 					def="${def2}"
 				fi
 			fi
-			echo "${i}=\"${def}\""
-#			echo "${i}=\"${def}\"" >> /tmp/forms.txt
+			echo "${_vars}=\"${def}\""  >> ${_tmpfile}
+#			echo "${_vars}=\"${def}\"" >> /tmp/forms.txt
 		elif [ ${is_delimer} -eq 1 ]; then
-			echo "${i}=\"${i}\""
-#			echo "${i}=\"${i}\"" >> /tmp/forms.txt
+			echo "${_vars}=\"${_vars}\"" >> ${_tmpfile}
+#			echo "${_vars}=\"${_vars}\"" >> /tmp/forms.txt
 		fi
 
 		# todo: rewrite to sqllist
@@ -204,26 +246,27 @@ load_forms()
 		groupname="$( cbsdsqlro ${formfile} SELECT groupname FROM ${table} WHERE idx=\"${_id}\" )"
 		group_id="$( cbsdsqlro ${formfile} SELECT group_id FROM ${table} WHERE idx=\"${_id}\" )"
 
-${CAT_CMD} <<EOF
-${i}_desc="${desc}"
-${i}_mandatory="${mandatory}"
-${i}_link="${link}"
-${i}_type="${type}"
-${i}_attr="${attr}"
-${i}_groupname="${groupname}"
-${i}_group_id="${group_id}"
+${CAT_CMD} >> ${_tmpfile} <<EOF
+${_vars}_desc="${desc}"
+${_vars}_mandatory="${mandatory}"
+${_vars}_link="${link}"
+${_vars}_type="${type}"
+${_vars}_attr="${attr}"
+${_vars}_groupname="${groupname}"
+${_vars}_group_id="${group_id}"
 EOF
 #${CAT_CMD} >> /tmp/forms.txt <<EOF
-#${i}_desc="${desc}"
-#${i}_mandatory="${mandatory}"
-#${i}_link="${link}"
-#${i}_type="${type}"
-#${i}_attr="${attr}"
-#${i}_groupname="${groupname}"
-#${i}_group_id="${group_id}"
-#EOF
+#${_vars}_desc="${desc}"
+#${_vars}_mandatory="${mandatory}"
+#${_vars}_link="${link}"
+#${_vars}_type="${type}"
+#${_vars}_attr="${attr}"
+#${_vars}_groupname="${groupname}"
+#${_vars}_group_id="${group_id}"
+	done
 
-	done )
+	. ${_tmpfile}
+	${RM_CMD} -f ${_tmpfile}
 }
 
 # $formfile and $table must be present
@@ -237,7 +280,14 @@ load_new()
 	local _env
 
 	eval $( for i in ${param}; do
-		[ "${i}" = "-" ] && continue
+		case "${i}" in
+			-*)
+				continue
+				;;
+#			Expand)
+#				continue
+#				;;
+		esac
 		unset _env new
 		new="$( cbsdsqlro ${formfile} SELECT new FROM ${table} WHERE param=\"${i}\" )"
 		[ -z "${new}" ] && continue
