@@ -1,6 +1,6 @@
 #!/bin/sh
 MYDIR="$( /usr/bin/dirname $0 )"
-MYPATH="$( /bin/realpath ${MYDIR} )"
+FORM_PATH="$( /bin/realpath ${MYDIR} )"
 HELPER="jrctl"
 
 : ${distdir="/usr/local/cbsd"}
@@ -17,15 +17,15 @@ set -e
 . ${subr}
 set +e
 
-MYPATH="${workdir}/formfile"
+FORM_PATH="${workdir}/formfile"
 
-[ ! -d "${MYPATH}" ] && err 1 "No such ${MYPATH}"
-[ -f "${MYPATH}/${HELPER}.sqlite" ] && /bin/rm -f "${MYPATH}/${HELPER}.sqlite"
+[ ! -d "${FORM_PATH}" ] && err 1 "No such ${FORM_PATH}"
+[ -f "${FORM_PATH}/${HELPER}.sqlite" ] && /bin/rm -f "${FORM_PATH}/${HELPER}.sqlite"
 
-/usr/local/bin/cbsd ${miscdir}/updatesql ${MYPATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms.schema forms
-/usr/local/bin/cbsd ${miscdir}/updatesql ${MYPATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms_system.schema system
+/usr/local/bin/cbsd ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms.schema forms
+/usr/local/bin/cbsd ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms_system.schema system
 
-/usr/local/bin/sqlite3 ${MYPATH}/${HELPER}.sqlite << EOF
+${SQLITE3_CMD} ${FORM_PATH}/${HELPER}.sqlite << EOF
 BEGIN TRANSACTION;
 INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,1,"-","RACCT limits",'-','','',1, "maxlen=128", "delimer", "", "" );
 INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,2,"cputime","CPU time, in seconds; default is: 0",'0','','',1, "maxlen=60", "inputbox", "", "" );
@@ -63,14 +63,14 @@ INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,a
 COMMIT;
 EOF
 
-/usr/local/bin/sqlite3 ${MYPATH}/${HELPER}.sqlite << EOF
+${SQLITE3_CMD} ${FORM_PATH}/${HELPER}.sqlite << EOF
 BEGIN TRANSACTION;
 INSERT INTO system ( helpername, version, packages, have_restart ) VALUES ( "${HELPER}", "201607", "", "" );
 COMMIT;
 EOF
 
 # long description
-/usr/local/bin/sqlite3 ${MYPATH}/${HELPER}.sqlite << EOF
+${SQLITE3_CMD} ${FORM_PATH}/${HELPER}.sqlite << EOF
 BEGIN TRANSACTION;
 UPDATE system SET longdesc='\
 Jail resource limit control module \
