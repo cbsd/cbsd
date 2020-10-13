@@ -14,7 +14,7 @@ _cbsd () {
     elif [ ${#COMP_WORDS[@]} -eq 3 ]; then
         case ${COMP_WORDS[1]} in
             bconfig)
-                VMS=$(env NOCOLOR=1 cbsd bls display=jname header=0|tr -s '\n' ' ')
+                VMS=$(env NOCOLOR=1 cbsd bls display=jname header=0|awk '{print"jname="$1}'|tr -s '\n' ' ')
                 COMPREPLY=( $( compgen -W "$VMS" -- $cur ) )
                 ;;
             blogin)
@@ -63,6 +63,10 @@ _cbsd () {
                         fi
                     fi
                 done
+                COMPREPLY=( $( compgen -W "$VMS" -- $cur ) )
+                ;;
+            bremove)
+                VMS=$(env NOCOLOR=1 cbsd bls display=jname header=0|tr -s '\n' ' ')
                 COMPREPLY=( $( compgen -W "$VMS" -- $cur ) )
                 ;;
             jconfig)
@@ -115,6 +119,10 @@ _cbsd () {
                             fi
                         fi
                 done
+                COMPREPLY=( $( compgen -W "$JAILS" -- $cur ) )
+                ;;
+            jremove)
+                JAILS=$(env NOCOLOR=1 cbsd jls display=jname header=0|tr -s '\n' ' ')
                 COMPREPLY=( $( compgen -W "$JAILS" -- $cur ) )
                 ;;
             *)
