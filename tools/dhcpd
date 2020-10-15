@@ -1,17 +1,25 @@
 #!/usr/local/bin/cbsd
-#v12.1.9
+#v12.2.0
 # Detect first available IPv6 from ippool's
 MYARG=""
-MYOPTARG="ip4pool"
+MYOPTARG="ip4pool lock pass lease_time=30"
 MYDESC="Detect first available IPv4 from pools"
 ADDHELP="ip4pool = alternative pool, comma-separated if multiple\n\
+  valid value sample: \n\
+    ip4pool=\"192.168.0.0/24\" \n\
+    ip4pool=\"192.168.0.5-10\" \n\
+    ip4pool=\"10.0.0.3 10.0.0.4 10.0.0.250 10.0.0.251\" \n\
+    ip4pool=\"10.0.0.2 10.0.0.3 10.0.0.200-204 192.168.0.20/29\" \n\
+lease_time= lock/lease for X seconds,default is: 30\n\
  errcode:\n\
    0 - IP found\n\
    1 - Unknown error\n\
    3 - All pools are exhausted\n"
 
 . ${subr}
-
+lock=1
+pass=
+lease_time=30
 . ${cbsdinit}
 
 #
@@ -425,7 +433,7 @@ init_network()
 		_is_range=1
 	fi
 
-	[ ${_is_cidr} -eq 0 -a ${_is_range} -eq 0 ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask or ip.ip.ip.ip1-ip2"
+#	[ ${_is_cidr} -eq 0 -a ${_is_range} -eq 0 ] && err 1 "dhcpd: init_network: usage: $0 ip.ip.ip.ip/mask or ip.ip.ip.ip1-ip2"
 
 	if [ ${_is_cidr} -eq 1 ]; then
 		if ! get_netmask "${_ip}/${cidr_mask}" "netmask"; then
@@ -444,15 +452,89 @@ init_network()
 			_reserve=0
 		fi
 		numhosts=$(( _hosts - _reserve ))
-	else
+	elif [ ${_is_range} -eq 1 ]; then
 		minhost="${_s1}.${_s2}.${_s3}.${_s4s}"
 		maxhost="${_s1}.${_s2}.${_s3}.${_s4e}"
 		numhosts=$(( _s4e - _s4s ))
+	else
+		# just IP sequence: 10.0.0.1 10.0.0.5 10.0.0.100 ..
+		minhost="${_s1}.${_s2}.${_s3}.${_s4}"
+		maxhost="${_s1}.${_s2}.${_s3}.${_s4}"
+		numhosts=1
 	fi
 
 	return 0
 }
 
+DHCPD_LOCKFILE="${ftmpdir}/dhcpd.lock"
+DHCPD_LEASE_FILE="${tmpdir}/dhcpd.lease"
+# list of locked/skip IPS
+DHCPD_LOCKFILE_SKIPLIST=
+
+
+# use args network instead of global CBSD settings/variable
+if [ -n "${ip4pool}" ]; then
+	# we need the atomicity of the operation to exclude
+	# the simultaneous selection of the same free IP
+	# use file as lock and temp database in
+	# <ip>:<end_lease_time>
+	# <ip>:<end_lease_time>
+	if [ -z "${pass}" ]; then
+		if [ "${lock}" = "1" ]; then
+			# rebuild arg list ( + add pass )
+			# Pass '"' as \" in cmd
+			INIT_IFS="${IFS}"
+			IFS="~"
+			cmd="$@"
+			IFS="${INIT_IFS}"
+			while [ -n "${1}" ]; do
+				IFS="~"
+				strpos --str="${1}" --search="="
+				_pos=$?
+				if [ ${_pos} -eq 0 ]; then
+					# not params=value form
+					#printf "${1} "         # (printf handles -args (with dashes)
+					#echo -n "${1} "
+					shift
+					continue
+				fi
+				_arg_len=$( strlen ${1} )
+				_pref=$(( _arg_len - _pos ))
+				ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+				VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+				[ -z "${ARG}" -o -z "${VAL}" ] && continue
+				#printf "${ARG}='${VAL}' "
+				shift
+			done
+			exec ${LOCKF_CMD} -s -t60 ${DHCPD_LOCKFILE} /usr/local/bin/cbsd dhcpd ${cmd} pass=1
+			ret=$?
+			exit ${ret}
+		fi
+	fi
+	nodeippool=$( echo ${ip4pool} | ${TR_CMD} "," " " )
+fi
+
+# prune/purge old records
+if [ -r ${DHCPD_LEASE_FILE} ]; then
+	${TRUNCATE_CMD} -s0 ${DHCPD_LEASE_FILE}.swap
+	cur_time=$( ${DATE_CMD} +%s )
+	eval $( ${CAT_CMD} ${DHCPD_LEASE_FILE} | while read items; do
+		p1=${items%%:*}
+		p2=${items##*:}
+		[ -z "${p1}" -o -z "${p2}" ] && continue
+		if [ ${p2} -gt ${cur_time} ]; then
+			# still valid
+			echo "${items}" >> ${DHCPD_LEASE_FILE}.swap
+			if [ -z "${DHCPD_LOCKFILE_SKIPLIST}" ]; then
+				DHCPD_LOCKFILE_SKIPLIST="${p1}"
+			else
+				DHCPD_LOCKFILE_SKIPLIST="${DHCPD_LOCKFILE_SKIPLIST} ${p1}"
+			fi
+		fi
+	echo "DHCPD_LOCKFILE_SKIPLIST=\"${DHCPD_LOCKFILE_SKIPLIST}\""
+	done )
+	${MV_CMD} ${DHCPD_LEASE_FILE}.swap ${DHCPD_LEASE_FILE}
+fi
 
 ### MAIN
 pow32=$((1 << 32))
@@ -461,9 +543,9 @@ pow16=$((1 << 16))
 pow8=$((1 << 8))
 
 # use args network instead of global CBSD settings/variable
-if [ -n "${ip4pool}" ]; then
-	nodeippool=$( echo ${ip4pool} | ${TR_CMD} "," " " )
-fi
+#if [ -n "${ip4pool}" ]; then
+#	nodeippool=$( echo ${ip4pool} | ${TR_CMD} "," " " )
+#fi
 
 # Multiple network loop
 for tmpnet in ${nodeippool}; do
@@ -514,12 +596,12 @@ for tmpnet in ${nodeippool}; do
 					iptype ${tmpip} >/dev/null 2>&1
 					[ $? -ne 1 ] && continue
 
-					for n in ${skip_ip}; do
+					for n in ${skip_ip} ${DHCPD_LOCKFILE_SKIPLIST}; do
 						[ "${n}" = "${tmpip}" ] && skip=1
 					done
-
 					[ ${skip} -eq 1 ] && continue
-
+					# regulate via conf ?
+					${ARP_CMD} -dn ${tmpip} > /dev/null 2>&1
 					${miscdir}/chk_arp_byip --pingnum=1 --pingtimeout=0.001 --ip=${tmpip}
 					case $? in
 					0)
@@ -546,16 +628,18 @@ if [ -n "${tmpip}" -a ${found} -eq 1 ]; then
 	if [ -n "${mycidr}" ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: found next available IP: ${tmpip}/${mycidr}
 		echo "${tmpip}/${mycidr}"
-		exit 0
 	else
 		cbsdlogger NOTICE ${CBSD_APP}: found next available IP: ${tmpip}
 		echo ${tmpip}
-		exit 0
 	fi
 else
 	cbsdlogger WARNING ${CBSD_APP}: no free IP: all pools are exhausted? ${nodeippool}
 	# looks like all pools are exhausted
 	exit 2
 fi
+
+cur_time=$( ${DATE_CMD} +%s )
+lease_time_end=$(( cur_time + lease_time ))
+echo "${tmpip}:${lease_time_end}" >> ${DHCPD_LEASE_FILE}
 
 exit 0
