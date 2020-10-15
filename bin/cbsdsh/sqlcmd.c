@@ -24,7 +24,7 @@
 #include "sqlcmd.h"
 
 
-//#define SQLITE_BUSY_TIMEOUT	5000
+#define CBSD_SQLITE_BUSY_TIMEOUT	25000
 
 char *delim;
 #ifdef WITH_DBI
@@ -265,7 +265,7 @@ int sqlitecmdrw(int argc, char **argv) {
 	int		ret = 0;
 	sqlite3_stmt   *stmt;
 	char		*cp;
-	int		maxretry = 20;
+	int		maxretry = 50;
 	int		retry = 0;
 
 //	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
@@ -309,7 +309,7 @@ int sqlitecmdrw(int argc, char **argv) {
 	free(dbfile);
 
 	sql_exec(db, "PRAGMA mmap_size = 209715200;");
-//	sqlite3_busy_timeout(db, SQLITE_BUSY_TIMEOUT);
+	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
 	sql_exec(db, "PRAGMA journal_mode = WAL;");
 	sql_exec(db, "PRAGMA synchronous = NORMAL;");
 //	sql_exec(db, "PRAGMA journal_mode=DELETE;");
@@ -337,12 +337,12 @@ int sqlitecmdrw(int argc, char **argv) {
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 		sqlite3_exec(db, "COMMIT", 0, 0, 0);
 		if (ret==SQLITE_OK) break;
-		if (ret==SQLITE_BUSY) usleep(5000);
+//		if (ret==SQLITE_BUSY) {
+		//usleep(15000);
 		retry++;
 
 		if ( retry>maxretry ) break;
 //		sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
-
 	} while (ret != SQLITE_OK);
 
 	if (ret == SQLITE_OK) {
@@ -371,7 +371,7 @@ int sqlitecmdro(int argc, char **argv) {
 	int		ret = 0;
 	sqlite3_stmt   *stmt;
 	char		*cp;
-	int		maxretry = 20;
+	int		maxretry = 50;
 	int		retry = 0;
 
 //	const char journal_mode_sql[] = "PRAGMA journal_mode = MEMORY;";
@@ -417,6 +417,8 @@ int sqlitecmdro(int argc, char **argv) {
 	}
 	free(dbfile);
 
+	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+
 	res = 0;
 	for (i = 2; i < argc; i++) res += strlen(argv[i]) + 1;
 
@@ -437,8 +439,8 @@ int sqlitecmdro(int argc, char **argv) {
 	do {
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 		if (ret==SQLITE_OK) break;
-		if (ret==SQLITE_BUSY) usleep(5000);
-
+//		if (ret==SQLITE_BUSY) {
+		//usleep(15000);
 		retry++;
 		if ( retry>maxretry ) break;
 //		sqlite3_prepare_v2(db, journal_mode_sql, -1, &stmt, NULL);
