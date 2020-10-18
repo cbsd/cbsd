@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname cwd"
+MYOPTARG="cbsdfile jname cwd multiple"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP="cbsdfile - alternative path to CBSDfile, could be relative to the\n\
@@ -12,6 +12,9 @@ EXTHELP="wf_cbsdfile"
 . ${strings}
 cwd=
 . ${cbsdinit}
+
+# flags for multiple CBSDfile env
+[ -z "${multiple}" ] && multiple=0
 
 # init CBSDfile data
 . ${distdir}/cbsdfile.subr
@@ -32,7 +35,7 @@ bhyve_ssh_wait()
 		_attempt_max="${bhyve_ssh_wait_timeout}"
 	fi
 
-	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}...${N0_COLOR}"
+	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
 	# wait for VM boot
 	_y=2		# test for timeout exceed
 	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
@@ -114,6 +117,14 @@ run_jail()
 
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
 
+	# per-env preup func
+	if fn_exists preup_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		preup_${jname}
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+	fi
+
 	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${N1_COLOR}${JAIL_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
 	set -o errexit
 	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${JAIL_ARGS} ${CBSDFILE_ARGS}
@@ -137,6 +148,14 @@ run_jail()
 		${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 	fi
 
+	. ${jrcconf}
+	# per-env postup func
+	if fn_exists postup_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+		postup_${jname}
+		${ECHO} "${N1_COLOR}execute postup_${jname} done${N0_COLOR}"
+	fi
+
 	# restore old workdir
 	cbsd_workdir="${ocbsd_workdir}"
 }
@@ -150,7 +169,6 @@ run_bhyve()
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 
 	ojname="${jname}"
-
 	# should be in sync with bcreate script (except: jname)
 	MYOPTARG="jconf inter removejconf"
 	# allow all bhyve settings
@@ -198,6 +216,14 @@ run_bhyve()
 
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
 
+	# per-env preup func
+	if fn_exists preup_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		preup_${jname}
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+	fi
+
 	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} ${N1_COLOR}${BHYVE_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
 	set -o errexit
 	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bcreate jname=${jname} ${BHYVE_ARGS} ${CBSDFILE_ARGS}
@@ -234,6 +260,15 @@ run_bhyve()
 		else
 			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		fi
+
+		jname="${ojname}"
+		# per-env postup func
+		if fn_exists postup_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			postup_${jname}
+			jname="${ojname}"		# for corrupted/changed jname in func
+		fi
+
 	else
 		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
 	fi
@@ -245,8 +280,14 @@ export NOINTER=1
 if [ ${num_env} -eq 1 ]; then
 	st_time=$( ${DATE_CMD} +%s )
 
-	if fn_exists preup 2>/dev/null; then
-		preup
+	echo "$jname $multiple" >> /tmp/xxx.log
+
+	# protection from multiple env
+	if [ ${multiple} -eq 0 ]; then
+		# global preup
+		if fn_exists preup 2>/dev/null; then
+			preup
+		fi
 	fi
 
 	if [ ${jail_num} -eq 1 ]; then
@@ -260,8 +301,12 @@ if [ ${num_env} -eq 1 ]; then
 	diff_time=$(( end_time - st_time ))
 	diff_time=$( displaytime ${diff_time} )
 
-	if fn_exists postup 2>/dev/null; then
-		postup
+	# protection from multiple env
+	if [ ${multiple} -eq 0 ]; then
+		# global postup
+		if fn_exists postup 2>/dev/null; then
+			postup
+		fi
 	fi
 
 	${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
@@ -277,24 +322,30 @@ task_owner="up_multiple"
 task_id=
 task_id_cur=
 
+# global preup
+if fn_exists preup 2>/dev/null; then
+	${ECHO} "${N1_COLOR}execute global preup function${N0_COLOR}"
+	preup
+	${ECHO} "${N1_COLOR}execute global preup function done${N0_COLOR}"
+fi
+
 # spawn command for all jail
 for jname in ${jail_list} ${bhyve_list}; do
 	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up multiple=1 cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
 	sleep 2
 done
 
-if fn_exists preup 2>/dev/null; then
-	preup
-fi
-
 st_time=$( ${DATE_CMD} +%s )
 multiple_processing_spawn -o ${task_owner} -n "up"
 
+# global postup
 if fn_exists postup 2>/dev/null; then
+	${ECHO} "${N1_COLOR}execute global postup function${N0_COLOR}"
 	postup
+	${ECHO} "${N1_COLOR}execute global postup function done${N0_COLOR}"
 fi
 
 end_time=$( ${DATE_CMD} +%s )
