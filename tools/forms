@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v11.0.14
+#v12.1.17
 MYARG=""
 MYOPTARG="formfile bootstrap module jname updcol header inter table out index group debug_form"
 MYDESC="Ncurses-based jail image boostrap helper"
@@ -49,23 +49,26 @@ fi
 readconf helpers.conf
 . ${distdir}/imghelper.subr
 
+selected_defaultitem=
+
 dialog_menu_main()
 {
 	local _par VAL
 	local btitle="$DIALOG_BACKTITLE"
-	local prompt="Use menu for select and edit limit"
+	local prompt="use menu for select and edit items"
 	local hline=
-	local defaultitem=
 	local mytargets=
+	local defaultitem=
 
 	f_dialog_default_fetch defaultitem
 
+	[ -n "${selected_defaultitem}" ] && defaultitem="${selected_defaultitem}"
 	[ -n "${jname}" ] && mytargets="for ${jname} "
 
 	local title
 	local _mydesc
 	local menu_list=
-	local _id=0
+	local _id=0 _delimer_check
 
 	if [ -n "${forms_title}" ]; then
 		title="${forms_title}"
@@ -81,7 +84,9 @@ dialog_menu_main()
 		is_value=0
 		is_delimer=0
 
-		if [ "${_items}" = "-" ]; then
+		_delimer_check=$( substr --pos=0 --len=1 --str="${_items}" )
+
+		if [ "${_delimer_check}" = "-" ]; then
 			_type="delimer"
 		else
 			eval _type="\$${_items}_type"
@@ -98,18 +103,21 @@ dialog_menu_main()
 				_items="forms_delimer_${_id}"
 				is_delimer=1
 				;;
+			group_add)
+				VAL="+"
+				;;
 			*)
 				eval VAL=\$${_items}
 				is_value=1
 				;;
 		esac
 
-		eval _mydesc="\$${_items}_desc"
+		eval _mydesc="\|\$${_items}_desc\|"
 
 		if [ ${is_delimer} -eq 1 ]; then
-			menu_list="${menu_list} '-'	'${_mydesc}'	'Field delimer'"
+			menu_list="${menu_list} ''		'${_mydesc}'	'Field delimer'"
 		elif [ -z "${VAL}" ]; then
-			menu_list="${menu_list} '${_items}'	' '	'${_mydesc}'"
+			menu_list="${menu_list} '${_items}'	' '		'${_mydesc}'"
 		else
 			menu_list="${menu_list} '${_items}'	'${VAL}'	'${_mydesc}'"
 		fi
@@ -235,7 +243,7 @@ get_checkbox()
 #				printf "${mtag}"
 				return 0
 			;;
-			"-")
+			-)	# delimer field
 				continue
 				;;
 			*)
@@ -257,8 +265,7 @@ get_checkbox()
 
 reload_forms_full()
 {
-	sql_part="SELECT param FROM ${table} WHERE type != \"subtable\""
-	sql_part="${sql_part} ORDER BY order_id"
+	local sql_part="SELECT param FROM ${table} WHERE type != \"subtable\" ORDER BY CAST(order_id AS int)"
 	param=$( cbsdsqlro ${formfile} ${sql_part} )
 	load_forms
 	load_new
@@ -267,8 +274,20 @@ reload_forms_full()
 
 group_add()
 {
-	[ ! -x ${distmoduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${N1_COLOR}Forms not support for dynamic data, no such: ${N2_COLOR}${distmoduledir}/forms.d/${module}/custom_forms.sh${N0_COLOR}"
-	${distmoduledir}/forms.d/${module}/custom_forms.sh -a add -f ${formfile}
+	local _config _file _order_id
+
+	while getopts "c:o:" opt; do
+		case "${opt}" in
+			c) _config="${OPTARG}" ;;
+			o) _order_id="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	_file="${distmoduledir}/forms.d/${module}/custom_${_config}.sh"
+
+	[ ! -x ${_file} ] && err 1 "${N1_COLOR}forms not support for dynamic data, no such: ${N2_COLOR}${_file}${N0_COLOR}"
+	${_file} -a add -o ${_order_id} -f ${formfile}
 }
 
 # $1 - overvrite index
@@ -276,7 +295,7 @@ group_del()
 {
 	local _group_id
 
-	[ ! -x ${distmoduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${N1_COLOR}Forms not support for dynamic data, no such: ${N2_COLOR}${distmoduledir}/forms.d/${module}/custom_forms.sh${N0_COLOR}"
+	[ ! -x ${distmoduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${N1_COLOR}Forms not support for dynamic data, no such: ${N2_COLOR}${distmoduledir}/forms.d/${module}/custom_forms.sh${N0_COLOR}"f
 
 	if [ -n "${1}" ]; then
 		_group_id="${1}"
@@ -346,7 +365,7 @@ get_helper_value()
 		group_add)
 			# add button
 			# echo "${distmoduledir}/forms.d/${module}/initforms.sh"
-			group_add
+			group_add -c "${mtag}" -o "${VAL}"
 			reload_forms_full
 			;;
 		group_del)
@@ -381,13 +400,13 @@ fi
 
 # Show list modules with no arg
 if [ -z "${1}" ]; then
-	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}Current helper module: ${N2_COLOR}${helper_module}${N0_COLOR}"
+	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}current helper module: ${N2_COLOR}${helper_module}${N0_COLOR}"
 	[ ! -d ${distmoduledir}/${helper_module}.d ] && exit 0
 	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}Available modules:${N0_COLOR}"
 	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}"
 
 	# rename helper_module to forms-<helper>-name!!!
-	/usr/bin/find ${distmoduledir}/forms.d/ -type d -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | /usr/bin/sort | while read _dir; do
+	${FIND_CMD} ${distmoduledir}/forms.d/ -type d -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | while read _dir; do
 		p1=${_dir%%_*}
 		p2=${_dir##*_}
 		echo ${p2}
@@ -441,10 +460,10 @@ elif [ -n "${jname}" ]; then
 	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}Available modules for ${N2_COLOR}${jname}${N1_COLOR}:${N0_COLOR}"
 	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}"
 
-	/usr/bin/find ${jailsysdir}/${jname}/helpers/ -type f -depth 1 -maxdepth 1 -name \*.sqlite -exec /usr/bin/basename {} \; |while read _dir; do
+	${FIND_CMD} ${jailsysdir}/${jname}/helpers/ -type f -depth 1 -maxdepth 1 -name \*.sqlite -exec ${BASENAME_CMD} {} \; | while read _dir; do
 		p1=${_dir%%_*}
 		p2=${_dir##*_}
-		echo ${p2} |${SED_CMD} 's/\.sqlite//g'
+		echo ${p2} | ${SED_CMD} 's/\.sqlite//g'
 	done
 	[ ${header} -eq 1 ] && ${ECHO} "${N0_COLOR}"
 	exit 0
@@ -453,8 +472,8 @@ fi
 # update formfile
 if [ ! -d "${workdir}/formfile" ]; then
 	# perms for web user via cbsd group
-	/bin/mkdir -m 0775 ${workdir}/formfile
-	/usr/sbin/chown cbsd:cbsd ${workdir}/formfile
+	${MKDIR_CMD} -m 0775 ${workdir}/formfile
+	${CHOWN_CMD} cbsd:cbsd ${workdir}/formfile
 fi
 
 if [ -n "${module}" ]; then
@@ -467,7 +486,7 @@ fi
 [ ! -f "${formfile}" ] && err 1 "Formfile doesn't exist: ${formfile}"
 
 if [ -z "${helper_workdir}" ]; then
-	helper_workdir=$( /usr/bin/dirname ${formfile} )
+	helper_workdir=$( ${DIRNAME_CMD} ${formfile} )
 fi
 
 check_version
@@ -484,18 +503,22 @@ fi
 while [ ${x} -eq 1 ]; do
 	dialog_menu_main
 	ret=$?
-	case $ret in
+	case ${ret} in
 		${DIALOG_OK})
+			[ -z "${mtag}" ] && continue
 			case "${mtag}" in
 				-)
 					continue
 					;;
-				"COMMIT")
-					if all_filled; then
+				COMMIT)
+					tmp=$( all_filled )
+					_ret=$?
+					if [ ${_ret} -eq 0 ]; then
 						x=0
 						continue
 					else
-						f_dialog_msgbox "All field is mandatory"
+						f_dialog_msgbox "all field is mandatory: [${tmp}]"
+						selected_defaultitem="${tmp}"
 					fi
 					continue
 					;;
@@ -570,11 +593,11 @@ if [ -n "$helper_module}" ]; then
 					# Looking for helpers pre/post hooks (todo: also lookup in $moduledir)
 					if [ -d "${distmoduledir}/forms.d/${module}/jail-system-default" ]; then
 						cd ${distmoduledir}/forms.d/${module}/jail-system-default
-						for i in $( /usr/bin/find . -type f -depth 2 -maxdepth 2 ); do
+						for i in $( ${FIND_CMD} . -type f -depth 2 -maxdepth 2 ); do
 							jp=$( echo ${i} | ${SED_CMD} s:^./:${jailsysdir}/${jname}\/:g )
 							if [ ! -r ${jp} ]; then
 								${ECHO} "${N1_COLOR}Install helpers hook: ${N2_COLOR}${jp}${N0_COLOR}"
-								/bin/cp -a ${i} ${jp}
+								${CP_CMD} -a ${i} ${jp}
 							fi
 						done
 					fi

@@ -1,0 +1,142 @@
+#!/usr/local/bin/cbsd
+#v12.2.0
+MYARG="end_port start_port"
+MYOPTARG="address end_port start_port nc_timeout skip lock pass lease_time"
+MYDESC="scan port via nc to determine first available tcp port of specified IP"
+ADDHELP="\
+  address    - (optional) address to scan (e.g: -a 127.0.0.1 [ or :: for IPv6 ] which is default) \n\
+  end_port   - (mandatory) end port range (e.g: -e 6000) \n\
+  start_port - (mandatory) start port range (e.g: -s 5900) \n\
+  nc_timeout - (optional) nc(1) timeout (e.g: -w 2 which is default) \n\
+  skip       - (optional) skip for \"X B C D\" values\n\
+  lease_time - lock/lease for X seconds,default is: 30\n"
+
+. ${subr}
+lock=1
+pass=
+lease_time=30
+. ${cbsdinit}
+
+# some defaults
+[ -z "${address}" ] && address="127.0.0.1"
+[ -z "${nc_timeout}" ] && nc_timeout=2
+
+[ -z "${start_port}" -o -z "${end_port}" ] && log_err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}: empty start_port or end_port params${N0_COLOR}"
+[ ${start_port} -gt ${end_port} ] && log_err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}start_port ${start_port} greater then end_port ${end_port}${N0_COLOR}"
+
+
+LOCKFILE="${ftmpdir}/get-next-tcp-port.lock"
+LEASE_FILE="${tmpdir}/get-next-tcp-port.lease"
+# list of locked/skip ports
+LOCKFILE_SKIPLIST=
+
+# we need the atomicity of the operation to exclude
+# the simultaneous selection of the same free port
+# use file as lock and temp database in
+# <port>:<end_lease_time>
+# <port>:<end_lease_time>
+if [ -z "${pass}" ]; then
+	if [ "${lock}" = "1" ]; then
+		# rebuild arg list ( + add pass )
+		# Pass '"' as \" in cmd
+		INIT_IFS="${IFS}"
+		IFS="~"
+		cmd="$@"
+		IFS="${INIT_IFS}"
+		while [ -n "${1}" ]; do
+			IFS="~"
+			strpos --str="${1}" --search="="
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				# not params=value form
+				#printf "${1} "         # (printf handles -args (with dashes)
+				#echo -n "${1} "
+				shift
+				continue
+			fi
+			_arg_len=$( strlen ${1} )
+			_pref=$(( _arg_len - _pos ))
+			ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+			VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+			[ -z "${ARG}" -o -z "${VAL}" ] && continue
+			#printf "${ARG}='${VAL}' "
+			shift
+		done
+		exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd get-next-tcp-port ${cmd} pass=1
+		ret=$?
+		exit ${ret}
+	fi
+fi
+
+# prune/purge old records
+if [ -r ${LEASE_FILE} ]; then
+	${TRUNCATE_CMD} -s0 ${LEASE_FILE}.swap
+	cur_time=$( ${DATE_CMD} +%s )
+	eval $( ${CAT_CMD} ${LEASE_FILE} | while read items; do
+		p1=${items%%:*}
+		p2=${items##*:}
+		[ -z "${p1}" -o -z "${p2}" ] && continue
+		if [ ${p2} -gt ${cur_time} ]; then
+			# still valid
+			echo "${items}" >> ${LEASE_FILE}.swap
+			if [ -z "${LOCKFILE_SKIPLIST}" ]; then
+				LOCKFILE_SKIPLIST="${p1}"
+			else
+				LOCKFILE_SKIPLIST="${LOCKFILE_SKIPLIST} ${p1}"
+			fi
+		fi
+	echo "LOCKFILE_SKIPLIST=\"${LOCKFILE_SKIPLIST}\""
+	done )
+	${MV_CMD} ${LEASE_FILE}.swap ${LEASE_FILE}
+fi
+
+
+#### MAIN
+iptype ${address}
+_ret=$?
+case ${_ret} in
+	2)
+		ipver="-6"
+		;;
+	*)
+		ipver="-4"
+		;;
+esac
+
+if [ -n "${LOCKFILE_SKIPLIST}" ]; then
+	# append skip list
+	if [ -z "${skip}" ]; then
+		skip="${LOCKFILE_SKIPLIST}"
+	else
+		skip="${skip} ${LOCKFILE_SKIPLIST}"
+	fi
+fi
+
+for tcp_port in $( ${SEQ_CMD} ${start_port} ${end_port} ); do
+	if [ -n "${skip}" ]; then
+		skipme=0
+		for i in ${skip}; do
+			if ! is_number "${i}"; then
+				if [ ${i} -eq ${tcp_port} ]; then
+					skipme=1
+					break
+				fi
+			fi
+		done
+		[ ${skipme} -eq 1 ] && continue
+	fi
+	${NC_CMD} ${ipver} -w ${nc_timeout} -z ${address} ${tcp_port} > /dev/null 2>&1 || break
+done
+
+if [ ${tcp_port} -eq ${end_port} ]; then
+	cbsdlogger WARNING ${CBSD_APP}: no free port available from ${start_port} to ${end_port} range at ${address}
+	err 1 "0"
+fi
+
+echo ${tcp_port}
+
+cur_time=$( ${DATE_CMD} +%s )
+lease_time_end=$(( cur_time + lease_time ))
+echo "${tcp_port}:${lease_time_end}" >> ${LEASE_FILE}
+
+return 0

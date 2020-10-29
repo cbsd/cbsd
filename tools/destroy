@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname cwd"
+MYOPTARG="cbsdfile jname cwd multiple"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP=""
@@ -12,11 +12,16 @@ EXTHELP="wf_cbsdfile"
 cwd=
 . ${cbsdinit}
 
+# flags for multiple CBSDfile env
+[ -z "${multiple}" ] && multiple=0
+
 # init CBSDfile data
 . ${distdir}/cbsdfile.subr
+. ${distdir}/time.subr
 
 destroy_jail()
 {
+	local ojname="${jname}"
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
 	. ${jrcconf}
@@ -25,7 +30,22 @@ destroy_jail()
 	# push old cbsd workdir
 	ocbsd_workdir="${cbsd_workdir}"
 
+	# per-env predestroy func
+	if fn_exists predestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute predestroy_${jname}${N0_COLOR}"
+		predestroy_${jname}
+		jname="${ojname}"               # for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute predestroy_${jname} done${N0_COLOR}"
+	fi
+
 	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jremove jname=${jname} quiet="${quiet}"
+
+	# per-env postdestroy func
+	if fn_exists postdestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname}${N0_COLOR}"
+		postdestroy_${jname}
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname} done${N0_COLOR}"
+	fi
 
 	# restore old workdir
 	cbsd_workdir="${ocbsd_workdir}"
@@ -33,6 +53,7 @@ destroy_jail()
 
 destroy_bhyve()
 {
+	local ojname="${jname}"
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
 	. ${jrcconf}
@@ -41,7 +62,22 @@ destroy_bhyve()
 	# push old cbsd workdir
 	ocbsd_workdir="${cbsd_workdir}"
 
+	# per-env preup func
+	if fn_exists predestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute predestroy_${jname}${N0_COLOR}"
+		predestroy_${jname}
+		jname="${ojname}"               # for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute predestroy_${jname} done${N0_COLOR}"
+	fi
+
 	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" bremove jname=${jname} quiet="${quiet}"
+
+	# per-env postdestroy func
+	if fn_exists postdestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname}${N0_COLOR}"
+		postdestroy_${jname}
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname} done${N0_COLOR}"
+	fi
 
 	# restore old workdir
 	cbsd_workdir="${ocbsd_workdir}"
@@ -50,6 +86,16 @@ destroy_bhyve()
 
 # MAIN
 if [ ${num_env} -eq 1 ]; then
+	st_time=$( ${DATE_CMD} +%s )
+
+	# protection from multiple env
+	if [ ${multiple} -eq 0 ]; then
+		# global predestroy
+		if fn_exists predestroy 2>/dev/null; then
+			predestroy
+		fi
+	fi
+
 	if [ ${jail_num} -eq 1 ]; then
 		jname="${jail_list}"
 		destroy_jail
@@ -57,6 +103,19 @@ if [ ${num_env} -eq 1 ]; then
 		jname="${bhyve_list}"
 		destroy_bhyve
 	fi
+
+	# protection from multiple env
+	if [ ${multiple} -eq 0 ]; then
+		# global postdestroy
+		if fn_exists postdestroy 2>/dev/null; then
+			postdestroy
+		fi
+	fi
+
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 	exit 0
 fi
 
@@ -72,12 +131,26 @@ task_id_cur=
 # spawn command for all jail
 for jname in ${jail_list} ${bhyve_list}; do
 	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd destroy cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd destroy multiple=1 cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
 	sleep 2
 done
 
-multiple_processing_spawn -o ${task_owner} -n "up"
+st_time=$( ${DATE_CMD} +%s )
+
+multiple_processing_spawn -o ${task_owner} -n "destroy"
+
+# global postdestroy
+if fn_exists postdestroy 2>/dev/null; then
+	${ECHO} "${N1_COLOR}execute global postdestroy function${N0_COLOR}"
+	postdestroy
+	${ECHO} "${N1_COLOR}execute global postdestroy function done${N0_COLOR}"
+fi
+
+end_time=$( ${DATE_CMD} +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 
 exit 0

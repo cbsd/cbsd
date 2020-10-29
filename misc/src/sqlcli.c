@@ -81,7 +81,7 @@ main(int argc, char **argv)
 	char           *query;
 	char           *tmp;
 	char           *err = NULL;
-	int		maxretry = 20;
+	int		maxretry = 40;
 	int		retry = 0;
 	sqlite3_stmt   *stmt;
 	int		ret;

@@ -395,8 +395,13 @@ bhyve_zfs_install()
 		fi
 	fi
 
-	echo "zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap=\"${swapsize}\" quiet=1"
-	zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${path} mnt=${mnttmp} pool=${mypool} swap="${swapsize}" quiet=1
+	if [ ${baserw} -eq 1 ]; then
+		srcdata=${data}
+	else
+		srcdata=${path}
+	fi
+	echo "zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${srcdata} mnt=${mnttmp} pool=${mypool} swap=\"${swapsize}\" quiet=1"
+	zfsinstall devs=${unit} ver=${ver} arch=${arch} srcdata=${srcdata} mnt=${mnttmp} pool=${mypool} swap="${swapsize}" quiet=1
 	_ret=$?
 	echo "RET ${_ret}"
 	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}jail2iso: zfsinstall error${N0_COLOR}"
@@ -497,7 +502,12 @@ make_ufs()
 		cd ${TMP_DIR}/boot/kernel && ${GZIP_CMD} -9 ./kernel
 	fi
 
-	[ -f "${jailsysdir}/${jname}/loader.conf" ] && ${CP_CMD} ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
+	if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf found${N0_COLOR}"
+		${CP_CMD} ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
+	else
+		${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf absent in ${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
+	fi
 
 	if [ "${media}" != "bhyve" ]; then
 		${CAT_CMD} >> ${TMP_DIR}/boot/loader.conf << EOF
@@ -513,14 +523,10 @@ vfs.root.mountfrom="ufs:/dev/md0"
 
 net.inet.ip.fw.default_to_accept=1
 EOF
-else
+	else
 ${CAT_CMD} >> ${TMP_DIR}/boot/loader.conf <<EOF
-#hw.vga.textmode=1
+# jail2iso
 console="userboot"
-#virtio_load="YES"
-#virtio_pci_load="YES"
-#virtio_blk_load="YES"
-#if_vtnet_load="YES"
 EOF
 	fi
 
@@ -665,7 +671,14 @@ case "${media}" in
 		[ $? -ne 0 ] && err 1 "makefs failed"
 
 		if [ ${efi} -eq 1 ]; then
-			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			# efifat was deprecated in 12.2-RELEASE
+			if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
+				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			elif [ -r ${TMP_DIR}/boot/loader.efi ]; then
+				#${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efi -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			else
+				err 1 "${N1_COLOR}${CBSD_APP}: no such boot1.efi or loader.efi${N0_COLOR}"
+			fi
 		else
 			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 		fi
@@ -706,6 +719,10 @@ case "${media}" in
 				fi
 				;;
 			zfs)
+				# deprecated, rewrite:
+				create_img_for_dir ${data} ${dstdir}/${dstname}
+				unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${dstdir}/${dstname} 2>&1 )
+				[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: mdconfig ${W1_COLOR}failed${N2_COLOR} ${unit}${N0_COLOR}"
 				bhyve_zfs_install
 				;;
 		esac

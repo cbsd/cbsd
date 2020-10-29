@@ -134,6 +134,7 @@ if [ -n "${EXPOOLS}" ]; then
 		if [ "$P" = "$POOL" ]; then
 			echo Error: An exported ZFS pool \"$POOL\" already exists
 			echo Please choose another pool name or rename/destroy the exported pool.
+			echo "See /sbin/zpool import | ${GREP_CMD} pool: "
 			exit 1
 		fi
 	done
@@ -236,16 +237,29 @@ for DEV in ${DEVS}; do
 
 	/bin/sleep 1
 
-	# Make EFI
-	echo "/sbin/gpart add -t efi -s 800K ${DEV}"
-	if ! /sbin/gpart add -t efi -s 800K ${DEV} > /dev/null; then
-		echo "/sbin/gpart add -t efi -s 800K ${DEV}"
+	# Make EFI, 40M - fat32 minimal
+	echo "/sbin/gpart add -t efi -s 40M ${DEV}"
+	if ! /sbin/gpart add -t efi -s 40M ${DEV} > /dev/null; then
+		echo "/sbin/gpart add -t efi -s 40M ${DEV}"
 		echo " error"
 		exit 1
 	fi
 
-	dd if=/boot/boot1.efifat of=/dev/${DEV}p1
-
+	# efifat was deprecated in 12.2-RELEASE
+	if [ -r /boot/boot1.efifat ]; then
+		dd if=/boot/boot1.efifat of=/dev/${DEV}p1
+	elif [ -r /boot/boot1.efi ]; then
+		echo "stamp loader.efi"
+		tmp_mp=$( ${MKTEMP_CMD} -d )
+		newfs_msdos -F 32 -c 1 /dev/${DEV}p1
+		mount -t msdosfs /dev/${DEV}p1 ${tmp_mp}
+		mkdir -p ${tmp_mp}/EFI/BOOT
+		cp /boot/loader.efi ${tmp_mp}/EFI/BOOT/BOOTX64.efi
+		umount ${tmp_mp}
+		rmdir ${tmp_mp}
+	else
+		err 1 "no such boot1.efifat or loader.efi"
+	fi
 #	echo "/sbin/gpart add -t freebsd-boot -s 128 ${DEV}"
 	echo "/sbin/gpart add -t freebsd-boot -s 512K ${DEV}"
 
@@ -412,6 +426,7 @@ else
 fi
 
 echo "populate ${data} done"
+echo ">> ${MNT}"
 
 [ ! -x ${MNT}/bin/sh ] && err 1 "zfsinstall: base not populated to ${MNT}"
 
