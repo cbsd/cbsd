@@ -1,21 +1,34 @@
 #!/usr/local/bin/cbsd
-#v11.1.3
+#v12.2.1
 MYARG=""
-MYOPTARG="default_jailname"
+MYOPTARG="default_jailname skip lock pass lease_time"
 MYDESC="Suggest first free available jname"
-ADDHELP="default_jailname - prefix for name, e.g: vnet\n"
+ADDHELP="\
+  default_jailname - prefix for name, e.g: vnet\n\
+  skip       - (optional) skip for \"X B C D\" values\n\
+  lease_time - lock/lease for X seconds,default is: 30\n"
+
 CBSDMODULE="jail"
 
 . ${subr}
+lock=1
+pass=
+lease_time=30
 . ${cbsdinit}
 
 [ -z "${default_jailname}" ] && default_jailname="jail"
 
+LOCKFILE="${ftmpdir}/get-freejname.lock"
+LEASE_FILE="${tmpdir}/get-freejname.lease"
+# list of locked/skip jname
+LOCKFILE_SKIPLIST=
+
 #find for first jnameX where X is number++
 freejname()
 {
-	local _num _newjname
+	local _num _newjname _skipme
 	local _nodes _i _test _exist _unregister _j
+	local _cur_time _lease_time_end
 
 	# also find by remote nodes databases, but local is first
 	_nodes=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null )
@@ -32,9 +45,20 @@ freejname()
 		_unregister="${_unregister} ${jname}"
 	done
 
-	for _num in $( /usr/bin/jot 10000 ); do
+	for _num in $( ${JOT_CMD} 10000 ); do
 		_newjname="${default_jailname}${_num}"
 		_exist=0
+
+		# in skip list?
+		_skipme=0
+		for i in ${skip}; do
+			if [ ${i} = "${_newjname}" ]; then
+				_skipme=1
+				break
+			fi
+		done
+
+		[ ${_skipme} -eq 1 ] && continue
 
 		for _i in ${_unregister}; do
 			[ "${_newjname}" = "${_i}" ] && _exist=1 && break
@@ -58,7 +82,85 @@ freejname()
 		esac
 	done
 
+	_cur_time=$( ${DATE_CMD} +%s )
+	_lease_time_end=$(( _cur_time + lease_time ))
+	echo "${_newjname}:${_lease_time_end}" >> ${LEASE_FILE}
+
 	echo ${_newjname}
+	return 0
 }
 
+
+### MAIN
+# we need the atomicity of the operation to exclude
+# the simultaneous selection of the same free port
+# use file as lock and temp database in
+# <port>:<end_lease_time>
+# <jname>:<end_lease_time>
+if [ -z "${pass}" ]; then
+	if [ "${lock}" = "1" ]; then
+		# rebuild arg list ( + add pass )
+		# Pass '"' as \" in cmd
+		INIT_IFS="${IFS}"
+		IFS="~"
+		cmd="$@"
+		IFS="${INIT_IFS}"
+		while [ -n "${1}" ]; do
+			IFS="~"
+			strpos --str="${1}" --search="="
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				# not params=value form
+				#printf "${1} "         # (printf handles -args (with dashes)
+				#echo -n "${1} "
+				shift
+				continue
+			fi
+			_arg_len=$( strlen ${1} )
+			_pref=$(( _arg_len - _pos ))
+			ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+			VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+			[ -z "${ARG}" -o -z "${VAL}" ] && continue
+			#printf "${ARG}='${VAL}' "
+			shift
+		done
+		exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd freejname ${cmd} pass=1
+		ret=$?
+		exit ${ret}
+	fi
+fi
+
+# prune/purge old records
+if [ -r ${LEASE_FILE} ]; then
+	${TRUNCATE_CMD} -s0 ${LEASE_FILE}.swap
+	cur_time=$( ${DATE_CMD} +%s )
+	eval $( ${CAT_CMD} ${LEASE_FILE} | while read items; do
+		p1=${items%%:*}
+		p2=${items##*:}
+		[ -z "${p1}" -o -z "${p2}" ] && continue
+		if [ ${p2} -gt ${cur_time} ]; then
+			# still valid
+			echo "${items}" >> ${LEASE_FILE}.swap
+			if [ -z "${LOCKFILE_SKIPLIST}" ]; then
+				LOCKFILE_SKIPLIST="${p1}"
+			else
+				LOCKFILE_SKIPLIST="${LOCKFILE_SKIPLIST} ${p1}"
+			fi
+		fi
+		echo "LOCKFILE_SKIPLIST=\"${LOCKFILE_SKIPLIST}\""
+	done )
+	${MV_CMD} ${LEASE_FILE}.swap ${LEASE_FILE}
+fi
+
+if [ -n "${LOCKFILE_SKIPLIST}" ]; then
+	# append skip list
+	if [ -z "${skip}" ]; then
+		skip="${LOCKFILE_SKIPLIST}"
+	else
+		skip="${skip} ${LOCKFILE_SKIPLIST}"
+	fi
+fi
+
 freejname
+
+exit 0

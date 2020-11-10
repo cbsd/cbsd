@@ -25,11 +25,8 @@ EXTHELP="wf_jailscp"
 
 getjname()
 {
-	local _t
-
-	_t=$( echo ${1} | ${GREP_CMD} ":")
-
-	[ $? -ne 0 ] && return 1
+	strpos --str="${1}" --search=":"
+	[ $? -eq 0 ] && return 1
 
 	jname=${1%%:*}
 	rfile=${1##*:}
@@ -63,47 +60,42 @@ fi
 if [ "${verbose}" = "0" ]; then
 	quiet="-q"
 else
-	quiet=""
+	quiet=
 fi
 
 [ $# -ne 2 ] && err 1 "${N1_COLOR}${CBSD_APP}: $0 bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ]${N0_COLOR}"
 jname=
 rfile=
 rarg=0
+dst=
 
-if getjname $1; then
-	if getjname $2; then
+if getjname ${1}; then
+	if getjname ${2}; then
 		log_err 1 "${N1_COLOR}${CBSD_APP}: only one remote path${N0_COLOR}"
+	fi
+	if [ -n "${rfile}" ]; then
+		dst=$( ${BASENAME_CMD} ${rfile} )
+	else
+		dst=$( ${BASENAME_CMD} ${2} )
 	fi
 	rarg=1
 else
-	if getjname $2; then
+	if getjname ${2}; then
 		rarg=2
+		if [ -n "${rfile}" ]; then
+			dst=$( ${BASENAME_CMD} ${rfile} )
+		else
+			dst=$( ${BASENAME_CMD} ${1} )
+		fi
 	fi
 fi
 
-[ -z "${jname}" -o -z "${rfile}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: jail path via jail:path records not determine${N0_COLOR}"
+[ -z "${jname}" -o -z "${dst}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: jail path via jail: path records not determine${N0_COLOR}"
 
-validate_jname "${jname}" || log_err 1 "${N1_COLOR}${CBSD_ADD}: bad jname: ${jname}${N0_COLOR}"
-
-RSYNC=$( which rsync )
+validate_jname "${jname}" || log_err 1 "${N1_COLOR}${CBSD_APP}: bad jname: ${jname}${N0_COLOR}"
 
 . ${jrcconf}
-if [ $? -eq 1 ]; then
-	try_remote
-
-	if [ ${rarg} -eq 1 ]; then
-		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${2} from ${node}:${path}${rfile}
-		nodescp root=1 ${node}:${path}${rfile} ${2}
-		err=$?
-	else
-		cbsdlogger NOTICE ${CBSD_APP}: nodescp for ${1} to ${node}:${path}${rfile}
-		nodescp root=1 $1 ${node}:${path}${rfile}
-		err=$?
-	fi
-	exit ${err}
-fi
-
+[ $? -eq 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such env: ${N2_COLOR}${jname}${N0_COLOR}"
 [ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: bhyve not active: ${jname}${N0_COLOR}"
 
 if [ ${rarg} -eq 1 ]; then
@@ -113,23 +105,9 @@ if [ ${rarg} -eq 1 ]; then
 	dstfile=$( ${BASENAME_CMD} ${2} )
 	${SCP_CMD} ${bscp_args} -i ${workdir}/.ssh/id_rsa ${ci_user_add}@${ip4_addr}:${rfile} ${CBSD_PWD}/${dstfile}
 	ret=$?
-#	# from VM
-#	if [ -n "${RSYNC}" ]; then
-#		#we have rsync for that
-#		[ ${verbose} -eq 1 ] && set -o xtrace
-#		cbsdlogger NOTICE ${CBSD_APP}: rsync ${path}${rfile} ${2}
-#		${RSYNC} -azzlH ${path}${rfile} ${2}
-#		[ ${verbose} -eq 1 ] && set +o xtrace
-#	else
-#		#no rsync, just scp
-#		[ ${verbose} -eq 1 ] && set -o xtrace
-#		cbsdlogger NOTICE ${CBSD_APP}: cp for ${path}${rfile} to ${2}
-#		/bin/cp -a ${path}${rfile} ${2}
-#		[ ${verbose} -eq 1 ] && set +o xtrace
-#	fi
 else
 	# to VM
-	DIR=$( dirname ${path}${rfile} )
+	DIR=$( ${DIRNAME_CMD} ${path}${dst} )
 	readconf blogin.conf
 	readconf bscp.conf
 
@@ -144,7 +122,7 @@ else
 		ret=$?
 		[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such file: ${N2_COLOR}${CBSD_PWD}/${1}${N0_COLOR}"
 	fi
-	dst=$( ${BASENAME_CMD} ${1} )
+
 	if [ -f ${_source} ]; then
 		echo "${SCP_CMD} ${bscp_args} -i ${workdir}/.ssh/id_rsa ${_source} ${ci_user_add}@${ip4_addr}:${dst}"
 		${SCP_CMD} ${bscp_args}  -i ${workdir}/.ssh/id_rsa ${_source} ${ci_user_add}@${ip4_addr}:${dst}
