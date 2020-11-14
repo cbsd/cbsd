@@ -113,6 +113,8 @@ dialog_menu_main()
 		esac
 
 		eval _mydesc="\|\$${_items}_desc\|"
+		eval _xattr="\$${_items}_xattr"
+		[ "${_xattr}" = "dynamic" ] && _mydesc="${_mydesc} [*dynamic*, can be deleted]"
 
 		if [ ${is_delimer} -eq 1 ]; then
 			menu_list="${menu_list} ''		'${_mydesc}'	'Field delimer'"
@@ -126,7 +128,9 @@ dialog_menu_main()
 
 	menu_list="${menu_list} 'COMMIT'	'Save changes and quit'	'Save!'"
 
-	cbsd_menubox
+	#cbsd_menubox
+	extra_label="Delete"
+	cbsd_menubox_with_extra_button
 	retval=$?
 
 	f_dialog_data_sanitize menu_choice
@@ -293,28 +297,29 @@ group_add()
 # $1 - overvrite index
 group_del()
 {
-	local _group_id
+	local _config _file _order_id
 
-	[ ! -x ${distmoduledir}/forms.d/${module}/custom_forms.sh ] && err 1 "${N1_COLOR}Forms not support for dynamic data, no such: ${N2_COLOR}${distmoduledir}/forms.d/${module}/custom_forms.sh${N0_COLOR}"f
+	while getopts "c:o:" opt; do
+		case "${opt}" in
+			c) _config="${OPTARG}" ;;
+			o) _order_id="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
-	if [ -n "${1}" ]; then
-		_group_id="${1}"
-	else
-		_group_id="${index}"
-	fi
+	_file="${distmoduledir}/forms.d/${module}/custom_${_config}.sh"
 
-	if [ -n "${_group_id}" ]; then
-		${distmoduledir}/forms.d/${module}/custom_forms.sh -a delete -f ${formfile} -i ${_group_id}
-	else
-		${distmoduledir}/forms.d/${module}/custom_forms.sh -a delete -f ${formfile}
-	fi
+	[ ! -x ${_file} ] && err 1 "${N1_COLOR}forms not support for dynamic data, no such: ${N2_COLOR}${_file}${N0_COLOR}"
+	${_file} -a del -o ${_order_id} -f ${formfile}
 }
 
 
 # inputform
 get_helper_value()
 {
-	local _input _retval _type _link _mtag _group_id
+	local _input _retval _xattr _type _link _mtag _group_id _delete=0
+
+	[ "${1}" = "delete" ] && _delete=1
 
 	f_dialog_title " ${mtag} "
 
@@ -322,7 +327,24 @@ get_helper_value()
 	eval _mydesc=\$${mtag}_desc
 	eval _type=\$${mtag}_type
 	eval _link=\$${mtag}_link
+	eval _xattr=\$${mtag}_xattr
 	eval _group_id=\$${mtag}_group_id
+
+	if [ ${_delete} -eq 1 ]; then
+		if [ "${_xattr}" != "dynamic" ]; then
+			f_dialog_msgbox "not dynamic/expandable data"
+			return 0
+		fi
+		#echo "XATTR: ${_xattr} g:${_group_id} ${mtag}/${VAL}"
+		#group_add -c "${mtag}" -o "${VAL}"
+		${SQLITE3_CMD} ${formfile} <<EOF
+BEGIN TRANSACTION;
+DELETE FROM forms WHERE group_id = "${_group_id}";
+COMMIT;
+EOF
+		reload_forms_full
+		return 0
+	fi
 
 	# errcode from dialog
 	local dialog_ok=0
@@ -369,7 +391,7 @@ get_helper_value()
 			reload_forms_full
 			;;
 		group_del)
-			# add button
+			# delete button
 			# echo "${distmoduledir}/forms.d/${module}/initforms.sh"
 			group_del ${_group_id}
 			reload_forms_full
@@ -531,6 +553,10 @@ while [ ${x} -eq 1 ]; do
 					#load_new
 					;;
 			esac
+			;;
+		${DIALOG_EXTRA})
+			get_helper_value "delete"
+			continue
 			;;
 		*)
 			exit 0
