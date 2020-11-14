@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname cwd multiple"
+MYOPTARG="cbsdfile jname cwd multiple cur_env"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP="cbsdfile - alternative path to CBSDfile, could be relative to the\n\
@@ -15,6 +15,7 @@ cwd=
 
 # flags for multiple CBSDfile env
 [ -z "${multiple}" ] && multiple=0
+[ -z "${cur_env}" ] && cur_env=1
 
 # init CBSDfile data
 . ${distdir}/cbsdfile.subr
@@ -280,6 +281,16 @@ export NOINTER=1
 if [ ${num_env} -eq 1 ]; then
 	st_time=$( ${DATE_CMD} +%s )
 
+	if [ ${multiple} -qt 0 ]; then
+		# sleep/delay a random amount of time between 2 and 10
+		# to minimize the probability that a large number of machines 
+		# will simultaneously attempt to up. except first (cur_env=1) env.
+		if [ ${cur_env} -ne 1 ]; then
+			rand_delay=$( ${AWK_CMD} -v min=2 -v max=10 'BEGIN{srand(); print int(min+rand()*(max-min+1))}' )
+			sleep ${rand_delay}
+		fi
+	fi
+
 	# protection from multiple env
 	if [ ${multiple} -eq 0 ]; then
 		# global preup
@@ -328,12 +339,18 @@ if fn_exists preup 2>/dev/null; then
 fi
 
 # spawn command for all jail
+max_env=0
+for i in ${jail_list} ${bhyve_list}; do
+	max_env=$(( max_env + 1 ))
+done
+cur_env=1
 for jname in ${jail_list} ${bhyve_list}; do
 	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up multiple=1 cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up multiple=${max_env} cur_env=${cur_env} cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
-	sleep 2
+	cur_env=$(( cur_env + 1 ))
+	sleep 1
 done
 
 st_time=$( ${DATE_CMD} +%s )
