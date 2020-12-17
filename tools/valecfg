@@ -1,21 +1,18 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
-MYARG=""
-MYOPTARG="alljails shownode display node header mode jname"
+MYARG="mode"
+MYOPTARG="name"
 MYDESC="Operate with virtual VALE switch"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyvenetwork"
-ADDHELP="alljails=1 - get jaillist from remote node\n\
-shownode=1 - show nodename for jails\n\
-node= only for current node\n\
+ADDHELP="\
+mode=list,add/create,delete/destroy\n\
 header=0 don't print header\n\
-display= list by comma for column. Default: id,vhid,advskew,pass,interface,state\n\
-mode=rescan - rescan vhd and sync info in sql base\n"
+display= list by comma for column. Default: name,vm\n\
+"
 
 . ${subr}
-
 . ${cbsdinit}
-
 . ${system}
 
 [ -z "${display}" ] && display="name,vm"
@@ -25,6 +22,7 @@ mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
 
 # upper for header
 myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+[ -z "${header}" ] && header=1
 
 show_header()
 {
@@ -65,7 +63,7 @@ populate_vale_member()
 {
 	local _sql
 
-	local _list
+	local _list _idx
 	local count=0
 	local _mydb="${dbdir}/local.sqlite"
 	local _vms _vmdb _res _i
@@ -77,11 +75,20 @@ populate_vale_member()
 		_vmdb="${jailsysdir}/${_i}/local.sqlite"
 		[ ! -r "${_vmdb}" ] && continue
 
-		_sql="SELECT jname FROM bhyvenic WHERE nic_parent=\"${vale_name}\" LIMIT 1"
+		_sql="SELECT jname FROM bhyvenic WHERE nic_parent=\"${vale_name}\" OR nic_parent=\"${name}\" LIMIT 1"
 
 		_res=$( cbsdsqlro ${_vmdb} ${_sql} )
+		#echo "cbsdsqlro ${_vmdb} ${_sql}" >> /tmp/ff.txt
 		[ -z "${_res}" ] && continue
 		_vale_port_tmp=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${idx}\" AND jname=\"${_i}\"" | ${XARGS_CMD} )
+
+#		if [ -z "${_vale_port_tmp}" ]; then
+#			# check for vale${idx}
+#			_idx=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"vale${idx}\" LIMIT 1 )
+#			[ -z "${_idx}" ] && continue
+#			_vale_port_tmp=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_idx}\" AND jname=\"${_i}\"" | ${XARGS_CMD} )
+#		fi
+
 		[ -z "${_vale_port_tmp}" ] && continue
 
 		if [ -n "${_vale_port_tmp}" ]; then
@@ -111,8 +118,6 @@ show_jaildata_from_sql()
 		vale_name="cbsdvale_${name}"
 		populate_output_data
 	done
-
-	IFS=" "
 }
 
 
@@ -124,12 +129,54 @@ show_local()
 	show_jaildata_from_sql local
 }
 
-show_vhid()
+add_vale()
 {
-	show_local
+	local _idx
+
+	_idx=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${name}\" LIMIT 2 2>/dev/null )
+	[ -n "${_idx}" ] && err 1 "${N1_COLOR}${CBSD_APP}: switch already exist: ${N2_COLOR}${name}${N0_COLOR}"
+
+	cbsdsqlrw local "INSERT INTO vale ( name ) VALUES ( \"${name}\" )"
+	${ECHO} "${N1_COLOR}vale added: ${N2_COLOR}${name}${N0_COLOR}"
 }
 
+del_vale()
+{
+	local _sw _p1 _p2 _len _res
+
+	/usr/sbin/valectl | ${GREP_CMD} ^${name}: | ${AWK_CMD} '{printf $1"\n"}' | while read _sw; do
+		_p1=${_sw%%:*}
+		_p2=${_sw##*:}
+		# skip for external^
+		[ -z "${_p2}" ] && continue
+		_len=$( strlen "${_p2}" )
+		_res=$( substr --pos=${_len} --len=1 --str="${_p2}" )
+		[ "${_res}" = "^" ] && continue
+		${ECHO} "${N1_COLOR}${CBSD_APP} detach: ${N2_COLOR}${_p2}${N0_COLOR}"
+		/usr/sbin/valectl -d ${name}:${_p2}
+	done
+	cbsdsqlrw local "DELETE FROM vale WHERE name=\"${name}\""
+	${ECHO} "${N1_COLOR}vale destroyed: ${N2_COLOR}${name}${N0_COLOR}"
+}
+
+
 #### MAIN
-[ -z "${header}" ] && header=1
-sqldelimer=" "
-show_local | ${COLUMN_CMD} -t
+case "${mode}" in
+	list)
+		sqldelimer=" "
+		show_local | ${COLUMN_CMD} -t
+		;;
+	add|create)
+		[ -z "${name}" ] && err 1 "${N1_COLOR}${CBSD_APP}: switch name is mandatory, e.g: vale1: ${N2_COLOR}name=${N0_COLOR}"
+		add_vale
+		;;
+	del*|destroy)
+		[ -z "${name}" ] && err 1 "${N1_COLOR}${CBSD_APP}: switch name is mandatory, e.g: vale1: ${N2_COLOR}name=${N0_COLOR}"
+		del_vale
+		;;
+	*)
+		err 1 "${N1_COLOR}${CBSD_APP}: unknown node: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
+esac
+
+exit 0
