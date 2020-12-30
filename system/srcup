@@ -54,28 +54,37 @@ init_svn()
 
 init_git()
 {
-	SCM=""
+	SCM=
 
 	if [ -f "/usr/local/bin/git" ]; then
 		SCM="/usr/local/bin/git"
 	else
-		err 1 "${N1_COLOR}No git in the base. Please install: ${N2_COLOR}pkg install -y devel/git${N0_COLOR}"
+		err 1 "${N1_COLOR}no git in the base. please install: ${N2_COLOR}pkg install -y devel/git${N0_COLOR}"
 	fi
 
 	if [ -z "${scmbase}" ]; then
-		[ -z "${GITBASE}" ] && err 1 "${N1_COLOR}Empty GITBASE variable. Please specify GITBASE via ${N2_COLOR}srcup.conf${N0_COLOR}"
+		[ -z "${GITBASE}" ] && err 1 "${N1_COLOR}empty GITBASE variable. Please specify GITBASE via ${N2_COLOR}srcup.conf${N0_COLOR}"
 		scmbase="${GITBASE}"
 	fi
 	SCM_URL="${scmbase}"
 
 	[ -d "${dst}/.git" ] && return 0
-	set -o xtrace
 
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands via git
+	# does not conflict with the same CBSD commands
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	set -o xtrace
 	cd ${dst} && ${SCM} init
 	nice -n 19 ${IDPRIO_CMD} 29 ${SCM} remote add origin ${SCM_URL}
 	nice -n 19 ${IDPRIO_CMD} 29 ${SCM} fetch ${git_flags} origin
-
 	set +o xtrace
+
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
+
 	return 0
 }
 
@@ -101,32 +110,30 @@ svn_checkout()
 
 git_checkout()
 {
-	local _depth _branch
+	local _depth
 	local _ret=0
 
 	[ "${depth}" != "0" ] && _depth="${depth}"
 
-	[ ! -f ${sharedir}/${platform}-git_branches.conf ] && err 1 "${N1_COLOR}No ${sharedir}/${platform}-git_branches.conf for git branch map${N0_COLOR}"
-	. ${sharedir}/${platform}-git_branches.conf
+	[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}empty SCM_GIT_BRANCH${N0_COLOR}"
 
-	if [ -z "${GITBRANCH}" ]; then
-		_branch=$( init_git_branch )
-	else
-		_branch="${GITBRANCH}"
-	fi
-
-	[ -z "${_branch}" ] && err 1 "${N1_COLOR}Empty branch from init_git_branch${N0_COLOR}"
-
-	${ECHO} "${N1_COLOR}Selected branch: ${N2_COLOR}${_branch}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}selected branch: ${N2_COLOR}${SCM_GIT_BRANCH}${N0_COLOR}"
 
 	if [ -d "${dst}/.git" ]; then
-		echo "cd ${dst} && ${SCM} ${git_flags} branch ${_branch}"
-		cbsdlogger NOTICE ${CBSD_APP}: processing git checkout: ${_branch} in ${dst}
-		cd ${dst} && nice -n 19 ${IDPRIO_CMD} 29 ${SCM} checkout ${_branch}
+		echo "cd ${dst} && ${SCM} ${git_flags} branch ${SCM_GIT_BRANCH}"
+		cbsdlogger NOTICE ${CBSD_APP}: processing git checkout: ${SCM_GIT_BRANCH} in ${dst}
+		set -o xtrace
+		cd ${dst}
+		nice -n 19 ${IDPRIO_CMD} 29 ${SCM} checkout ${SCM_GIT_BRANCH}
 		nice -n 19 ${IDPRIO_CMD} 29 ${SCM} pull
+		_ret=$?
+		set +o xtrace
 	else
-		echo "Clone error: no .git"
+		${ECHO} "${N1_COLOR}${CBSD_APP}: clone error: no ${N2_COLOR}.git${N0_COLOR}"
+		_ret=1
 	fi
+
+	return ${_ret}
 }
 
 status_is_maintenance_soft()
@@ -144,40 +151,6 @@ status_is_normal()
 {
 	cbsdsqlrw local "UPDATE bsdsrc SET status='0' WHERE ver=\"${ver}\""
 }
-
-
-### MAIN ###
-# auto-detect for stable/release
-strpos --str="${ver}" --search="."
-pos=$?
-if [ ${pos} -eq 0 ]; then
-	stable=1
-	ostable=1
-else
-	stable=0
-	ostable=0
-fi
-
-. ${buildconf}
-readconf buildworld.conf
-. ${distdir}/universe.subr
-
-init_distcc
-init_notify
-init_target_arch
-init_srcdir
-init_supported_arch
-init_make_flags
-
-set +e
-. ${buildconf}
-set -e
-
-if [ -n "${dst}" ]; then
-	dst="${srcdir}/src_${ver}/src"
-else
-	dst="${SRC_DIR}"
-fi
 
 cleanup_sources()
 {
@@ -208,6 +181,37 @@ cleanup_sources()
 	# restore operability status
 	status_is_normal
 }
+
+### MAIN ###
+# auto-detect for stable/release
+strpos --str="${ver}" --search="."
+pos=$?
+if [ ${pos} -eq 0 ]; then
+	stable=1
+	ostable=1
+else
+	stable=0
+	ostable=0
+fi
+
+. ${buildconf}
+readconf buildworld.conf
+. ${distdir}/universe.subr
+
+init_distcc
+init_notify
+init_target_arch
+init_srcdir
+init_supported_arch
+init_make_flags
+
+. ${buildconf}
+
+if [ -n "${dst}" ]; then
+	dst="${srcdir}/src_${ver}/src"
+else
+	dst="${SRC_DIR}"
+fi
 
 ${ECHO} "${N1_COLOR}Platform: ${N2_COLOR}${platform}${N0_COLOR}"
 LOCKFILE=${ftmpdir}/src_$( ${MD5_CMD} -qs ${dst} ).lock
@@ -248,8 +252,12 @@ case "${checkout_method}" in
 		;;
 	git*)
 		st_time=$( ${DATE_CMD} +%s )
-		init_git
 
+		[ ! -r ${sharedir}/${platform}-git_branches.conf ] && err 1 "${N1_COLOR}No ${sharedir}/${platform}-git_branches.conf for git branch map${N0_COLOR}"
+		. ${sharedir}/${platform}-git_branches.conf
+		[ -z "${SCM_GIT_BRANCH}" ] && SCM_GIT_BRANCH=$( init_git_branch )
+		[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}no SCM_GIT_BRANCH var${N0_COLOR}"
+		init_git
 		# conditional registration:
 		init_scm_and_version
 		register_src
@@ -270,7 +278,7 @@ case "${checkout_method}" in
 		cbsdlogger NOTICE ${CBSD_APP}: svn_checkout src done in ${diff_time}. with errcode: ${_ret}
 		;;
 	*)
-		err 1 "${ECHO}Unknown checkout method. Please specify it via: ${N2_COLOR}srcup.conf${N0_COLOR}"
+		err 1 "${ECHO}unknown checkout method, please specify it via: ${N2_COLOR}srcup.conf${N0_COLOR}"
 esac
 
 # todo: apply_cbsd_patch should be x11, not sign for global patch
