@@ -1,11 +1,18 @@
 #!/usr/local/bin/cbsd
 #v12.0.5
 MYARG=""
-MYOPTARG="jname inter debug debug_engine cfg_only checkpoint lm"
+MYOPTARG="cfg_only checkpoint debug debug_engine jname lm"
 MYDESC="Start XEN domain"
-ADDHELP="  checkpoint - start from specified checkpoint name\n\
-  debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve ( mostly for inherits debug with live migration )\n\
-  cfg_only=<file_path>  when set, find/create tap/vnc and generate bhyve.conf into <file_path> but without run\n"
+ADDHELP="\
+ cfg_only=<file_path>          - when set, find/create tap/vnc and generate bhyve.conf \n\
+                                 into <file_path> but without run, e.g for debugging\n\
+ checkpoint   - start from specified checkpoint name\n\
+ debug        - more debug messages\n\
+ debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve \n\
+                ( mostly for inherits debug with live migration )\n\
+ lm - 0 or 1  - when set to 1: prepare for acceptance of this domain via live migration request\n\
+"
+
 CBSDMODULE="xen"
 EXTHELP="wf_xstop_xstart"
 
@@ -15,7 +22,6 @@ lm_dport=
 lm_rnodename=
 odebug_engine=
 
-odebug_engine=
 cfg_only=		# create a configuration and run immediately
 
 . ${subr}
@@ -33,7 +39,6 @@ debug_engine=		# reset debug_engine before init
 
 # live migration
 if [ "${lm}" = "1" ]; then
-	whoami >> /tmp/live.txt
 	exec /usr/local/sbin/xl -t migrate-receive
 	exit 0
 fi
@@ -44,7 +49,6 @@ fi
 . ${distdir}/vnet.subr 		# get_vm_uplink_interface
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No XEN domain specified${N0_COLOR}"
-
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
 . ${distdir}/fetch.subr
@@ -136,22 +140,22 @@ start_xen()
 				. ${zfstool}
 
 				if is_getzvol ${_myfile}; then
-					_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
 					_cloud_source_is_zvol=1
 					_cloud_source_zvol="${is_zvol}"
 				else
 					_cloud_source_is_zvol=0
 					_cloud_source_zvol=
-					_ebytes=$( /usr/bin/stat -f "%z" ${_myfile} 2>/dev/null )
+					_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
 				fi
 
 				# store original disk size to restore them after replace by cloud image
 				if is_getzvol ${data}/dsk1.vhd; then
-					_dsk_ebytes=$( /sbin/zfs get -Hp -o value volsize ${is_zvol} )
+					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
 					_dsk_source_zvol="${is_zvol}"
 					_cloud_truncate=0
 				else
-					_dsk_ebytes=$( /usr/bin/stat -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
 					_cloud_truncate=1
 					_dsk_source_zvol=
 				fi
@@ -165,7 +169,7 @@ start_xen()
 				if [ ${_cloud_truncate} -eq 1 ]; then
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
 					# to generic clonedata (add dd method)?
-					/usr/bin/nice -n 20 /bin/dd if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
 					echo
 					# adjust original image size
 					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
@@ -173,21 +177,21 @@ start_xen()
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
 						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
-						echo "/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name}"
-						/sbin/zfs get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
 						_ret=$?
 						if [ ${_ret} -eq 1 ]; then
 							# create cloud snapshot for $jname
-							/sbin/zfs snapshot ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} snapshot ${_cloud_source_zvol}@boot-${jname}
 							# destory original zvol disk for vm
-							/sbin/zfs destroy ${_dsk_source_zvol}
-							#/sbin/zfs clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
-							/sbin/zfs clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} destroy ${_dsk_source_zvol}
+							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
 							# restore original size
-							# /sbin/zfs set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
 							# bug here, need for atomic ops ^^ in clone action
-							/sbin/zfs set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
-							/sbin/zfs set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
 						else
 							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
 						fi
@@ -206,7 +210,7 @@ start_xen()
 		init_iso
 		if [ $? -eq 1 ]; then
 			printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
-				for i in $( /usr/bin/jot 5 ); do
+				for i in $( ${JOT_CMD} 5 ); do
 					printf "."
 					sleep 1
 				done
@@ -240,10 +244,10 @@ start_xen()
 #	fi
 
 	# init nic_args
-	#if ! compile_nic_args ; then
-	#	${ECHO} "${N1_COLOR}No such nic for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
-	#	unset nic_args
-	#fi
+	if ! compile_nic_args ; then
+		${ECHO} "${N1_COLOR}No such nic for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+		unset nic_args
+	fi
 
 	# init console_args
 	#if ! compile_console_args; then
@@ -276,13 +280,16 @@ start_xen()
 	# restore overwrite debug_engine
 	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
 
+	# todo: loop for multiple devices
+	eval mybridge="\$nic0"
+
 	${CAT_CMD} >> ${XENCFG} << EOF
 name = "${jname}"
 memory = ${xvm_ram}
 vcpus = ${vm_cpus}
 
 # Network devices
-vif = [ 'bridge=bridge0' ]
+vif = [ "bridge=${mybridge}" ]
 
 # Boot args
 ${boot_arg}
@@ -380,7 +387,7 @@ EOF
 
 	# create a configuration only
 	if [ -n "${cfg_only}" ]; then
-		/bin/mv ${XENCFG} ${cfg_only}
+		${MV_CMD} ${XENCFG} ${cfg_only}
 		err 0 "${N1_COLOR}config created: ${N2_COLOR}${cfg_only}${N0_COLOR}"
 	fi
 
@@ -389,7 +396,7 @@ EOF
 	# this section should be AFTER master_prestart
 	# cloud_init and CLOUD_FILES was initialized earlier
 	if [ ${cloud_init} -eq 1 ]; then
-			/bin/rm -f ${jailsysdir}/${jname}/seed.iso
+			${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
 			if [ "${vm_os_type}" = "windows" ]; then
 				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
 				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
@@ -445,7 +452,7 @@ EOF
 			echo "/usr/bin/lldb -- ${xl_cmd}"
 			/usr/bin/lldb -- ${xl_cmd}
 			bhyve_exit=$?
-			/bin/rm -f ${tmpdir}/cmds.$$
+			${RM_CMD} -f ${tmpdir}/cmds.$$
 			;;
 		*)
 			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
@@ -454,7 +461,7 @@ EOF
 
 	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
 	printf "${N1_COLOR}Waiting for PID"
-	for i in $( /usr/bin/seq 10 ); do
+	for i in $( ${SEQ_CMD} 10 ); do
 		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
 		if [ $? -eq 0 ]; then
 				sleep 1
@@ -511,7 +518,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
-		TRAP="${TRAP} /bin/rm -f ${ftmpdir}/xstart.${jname}.$$;"
+		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/xstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		env NOINTER=1 /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
 		#lets save .pid file
@@ -543,12 +550,12 @@ st_time=$( ${DATE_CMD} +%s )
 # we need this section (besides section cloud-init section in start_xen() to allocate pci bus id via touching seed.iso
 # since some helpers may work with runtime (e.g pcibus + cloudinit) config
 if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
-	CLOUD_FILES=$( /usr/bin/find ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
+	CLOUD_FILES=$( ${FIND_CMD} ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
 	# gen seed only if files exist
 	if [ -n "${CLOUD_FILES}" ]; then
 		cloud_init=1
 		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
-		/usr/bin/touch ${jailsysdir}/${jname}/seed.iso
+		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
 	else
 		cloud_init=0
 		unset CLOUD_FILES
@@ -597,13 +604,13 @@ else
 
 		readconf zfs.conf
 		. ${zfstool}
-		DATA=$( /sbin/zfs get -Ho value name ${jaildatadir} 2>/dev/null )
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
 		[ -z "${DATA}" ] && break
 
-		for lunname in $( /usr/bin/seq 0 10 ); do
+		for lunname in $( ${SEQ_CMD} 0 10 ); do
 			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
-				/bin/ln -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
+				${LN_CMD} -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
 				${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
 		done
