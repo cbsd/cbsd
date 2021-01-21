@@ -61,13 +61,18 @@ usage() {
 # parser/initialization for MYARG, OPTARG
 # if CBSD_INIT_SAVE2FILE variables exist, use first <arg> as filename
 # and save all settings into <arg> filename
+# todo:
+# below is a very confusing and non-obvious code caused by restrictions
+# in parsing on the shell. Someday need to do something about it
 init() {
 	local MYNUMTEST=0 _i
 	local bin_version= _pos _arg_len _pref
-	local _tofile=0
-	local IFS OIFS
-
-	[ -n "${CBSD_INIT_SAVE2FILE}" ] && _tofile=1
+	local _tofile=0 _eval=1
+	local IFS OIFS _open _cmd
+	if [ -n "${CBSD_INIT_SAVE2FILE}" ]; then
+		_tofile=1
+		${TRUNCATE_CMD} -s0 ${CBSD_INIT_SAVE2FILE}
+	fi
 
 	. ${strings}
 
@@ -86,8 +91,8 @@ init() {
 		MYNUMTEST=$(( MYNUMTEST + 1 ))
 	done
 
-	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
-	trap "/bin/rm -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
+#	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
+#	trap "${RM_CMD} -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
 
 	# disable history of execution cbsd command inside cbsd command
 	export NO_CBSD_HISTORY=yes
@@ -121,44 +126,35 @@ init() {
 	#MYARG="src mk"
 	#MYOPTARG="arch"
 
-	i=0
+	_cmd=
 
-	while [ -n "${1}" ]; do
-		IFS=
-		strpos --str="${1}" --search="="
+	for i in $*; do
+		strpos --str="${i}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
-			IFS=" "
-			shift
+			# not params=value form, pass as-is
+			if [ -n "${_cmd}" ]; then
+				_cmd="${_cmd} ${i}"
+			else
+				_cmd="${i}"
+			fi
 			continue
 		fi
-		_arg_len=$( strlen ${1} )
+
+		_arg_len=$( strlen ${i} )
 		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
-		IFS=" "
-		VAL=$( echo ${VAL} | ${TR_CMD} -d '"' )		# strip extra quotes
-		#echo "V[$VAL]"
-		# todo: rewrite to substr
-		#if [ ${double_args} -eq 0 ]; then
-		#	shift
-		#	if [ -n "${T}" ]; then
-		#		continue	# value already set, skip
-		#	else
-		#		eval T="\$$ARG"
-		#	fi
-		#fi
-		i=$(( i + 1 ))
-		eval "${ARG}='${VAL}'";
-		[ ${_tofile} -eq 1 ] && ${CAT_CMD} >> ${CBSD_INIT_SAVE2FILE} <<EOF
-${ARG}='${VAL}'
-EOF
-		shift
+		ARG=$( substr --pos=0 --len=${_pos} --str="${i}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${i}" )
+		if [ -n "${_cmd}" ]; then
+			_cmd="${_cmd} ${ARG}=\"${VAL}\""
+		else
+			_cmd="${ARG}=\"${VAL}\""
+		fi
+		[ -z "${CBSD_SUDO}" ] && eval "${ARG}=\"${VAL}\""
+		[ ${_tofile} -eq 1 ] && printf "${ARG}='${VAL}' " >> ${CBSD_INIT_SAVE2FILE}
 	done
-
 	IFS=" "
-
+	[ -n "${CBSD_SUDO}" ] && echo -n "${_cmd}"
 	for i in ${MYARG}; do
 		unset T
 		eval T="\$$i"
