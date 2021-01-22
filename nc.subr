@@ -62,8 +62,10 @@ usage() {
 # if CBSD_INIT_SAVE2FILE variables exist, use first <arg> as filename
 # and save all settings into <arg> filename
 # todo:
-# below is a very confusing and non-obvious code caused by restrictions
-# in parsing on the shell. Someday need to do something about it
+# don't try to understand the code below, need to rewrite ASAP:
+# we were hostages from "param=value" and "param=\"spaces here allowed\" and param="x \
+# y z" and sudoexec
+#  and this is the most balanced work-round of all
 init() {
 	local MYNUMTEST=0 _i
 	local bin_version= _pos _arg_len _pref
@@ -128,10 +130,19 @@ init() {
 
 	_cmd=
 
+	_quoted=0
+	_opened=0
+	_closed=0
+
+	_tmparg=
+
 	for i in $*; do
+		_eqpos=0
+
+		if [ ${_opened} -eq 0 ]; then
 		strpos --str="${i}" --search="="
-		_pos=$?
-		if [ ${_pos} -eq 0 ]; then
+		_eqpos=$?
+		if [ ${_eqpos} -eq 0 ]; then
 			# not params=value form, pass as-is
 			if [ -n "${_cmd}" ]; then
 				_cmd="${_cmd} ${i}"
@@ -140,11 +151,63 @@ init() {
 			fi
 			continue
 		fi
+		fi
 
 		_arg_len=$( strlen ${i} )
-		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${i}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${i}" )
+		_postfix=$( substr --pos=${_arg_len} --len=1 --str="${i}" )
+		strpos --str="${i}" --search="\""
+		_pos=$?
+		[ ${_pos} -ne 0 ] && _pos=$(( _pos + 1 ))
+		if [ "${_postfix}" = "\"" ]; then
+			# closed \"
+			# if first " pos matches the end of the line, 
+			# so this is the closure of a multi-line variable
+			if [ ${_pos} -eq ${_arg_len} ]; then
+				_opened=0		# закрыли
+				_closed=1
+				_quoted=0
+			else
+				# variable with "xxx" ( whole )
+				_opened=1
+				_closed=1
+				_quoted=1
+			fi
+		else
+			if [ ${_pos} -gt 0 ]; then
+				# variable opened but without ending"
+				_opened=1
+				_closed=0
+				_quoted=0
+			fi
+		fi
+
+		_pref=$(( _arg_len - _eqpos ))
+		if [ ${_eqpos} -ne 0 ]; then
+			ARG=$( substr --pos=0 --len=${_eqpos} --str="${i}" )
+			VAL=$( substr --pos=$(( ${_eqpos} + 2 )) --len=$(( ${_pref}  )) --str="${i}" )
+		else
+			VAL=$( substr --pos=$(( 0 )) --len=${_arg_len} --str="${i}" )
+		fi
+		VAL=$( echo ${VAL} | ${TR_CMD} -d '"' )		# strip extra quotes
+
+		if [ ${_opened} -eq 1 -o ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg="${_tmparg} ${VAL}"
+			else
+				_tmparg="${VAL}"
+			fi
+			VAL="${_tmparg}"
+		fi
+
+		# reset opened flag
+		if [ ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg=
+			fi
+			_opened=0
+		fi
+
+		eval "${ARG}=\"${VAL}\""
 		if [ -n "${_cmd}" ]; then
 			_cmd="${_cmd} ${ARG}=\"${VAL}\""
 		else
