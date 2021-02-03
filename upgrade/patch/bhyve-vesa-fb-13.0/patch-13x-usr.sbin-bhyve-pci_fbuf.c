@@ -1,6 +1,6 @@
---- pci_fbuf.c.orig	2019-09-14 18:28:38.419850000 +0300
-+++ pci_fbuf.c	2019-09-16 15:06:50.417954000 +0300
-@@ -366,7 +366,7 @@
+--- pci_fbuf.c.orig	2021-01-23 00:09:48.409575000 +0300
++++ pci_fbuf.c	2021-01-23 00:09:24.614356000 +0300
+@@ -368,7 +368,7 @@
  	/* initialize config space */
  	pci_set_cfgdata16(pi, PCIR_DEVICE, 0x40FB);
  	pci_set_cfgdata16(pi, PCIR_VENDOR, 0xFB5D);

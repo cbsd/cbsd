@@ -1,0 +1,237 @@
+#!/usr/local/bin/cbsd
+#v12.0.4
+MYARG=""
+MYOPTARG="jname"
+MYDESC="Destroy XEN domain"
+CBSDMODULE="xen"
+EXTHELP="wf_xremove"
+
+. ${subr}
+. ${tools}	# for select_jail_by_list
+
+if [ -z "${1}" ]; then
+	select_jail_by_list -s "List of local VMs:" -e xls -r ${sqlreplica}
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}No such domains${N0_COLOR}"
+	if getyesno "Remove VM ${jname}. Are you sure? "; then
+		echo
+	else
+		exit 0
+	fi
+fi
+
+. ${cbsdinit}
+. ${jfs}
+
+if [ -n "${jname}" ]; then
+
+	emulator="bhyve" # for jname_is_multiple
+	jname_is_multiple
+
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	else
+		JLIST=${jname}
+	fi
+else
+	JLIST=$*
+fi
+
+[ -z "${JLIST}" ] && err 1 "Give me jname"
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
+. ${distdir}/time.subr
+st_time=$( ${DATE_CMD} +%s )
+
+for jname in ${JLIST}; do
+	DST="${jaildatadir}/${jname}-${jaildatapref}"
+	JAILDIR="${jaildir}/${jname}"
+	JAILFSTAB="${jailfstabdir}/${jailfstabpref}${jname}"
+	JAILSYSRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
+	JAILRCCONF="${jailrcconfdir}/rc.conf_${jname}"
+	unregister=0
+
+	. ${jrcconf}
+	if [ $? -eq 1 ]; then
+		if [ -r "${JAILRCCONF}" -o -r "${JAILSYSRCCONF}" ]; then
+			[ -r ${JAILSYSRCCONF} ] && . ${JAILSYSRCCONF}
+			[ -r ${JAILRCCONF} ] && . ${JAILRCCONF}
+			unregister=1
+		else
+			# remote?
+			if [ ${sqlreplica} -eq 0 ]; then
+				${ECHO} "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+				continue
+			fi
+			remotenode=$( bwhereis ${jname} )
+			if [ -z "${remotenode}" ]; then
+				${ECHO} "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+				continue
+			fi
+			for i in ${remotenode}; do
+				if [ "${i}" = "${nodename}" ]; then
+					${ECHO} "${N1_COLOR}Remote xremove: found on nodename ${N2_COLOR}${nodename}${N1_COLOR}. Skipped${N0_COLOR}"
+					continue
+			fi
+			${ECHO} "${N1_COLOR}Remote xremove: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
+			rexe node=${i} cbsd xremove jname=${jname}
+			if [ $? -eq 0 ]; then
+				# updating state and put task for retrinv inventory
+				${ECHO} "${N1_COLOR}Updating inventory...${N0_COLOR}"
+				task autoflush=2 mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
+			fi
+			done
+			continue
+		fi
+	fi
+
+	if [ "${protected}" = "1" ]; then
+		${ECHO} "${N1_COLOR}Protected/locked jail. Skip for remove: ${N2_COLOR}${jname}${N0_COLOR}"
+		continue
+	fi
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xremove status=1
+	fi
+
+	. ${distdir}/jcreate.subr
+	export_bhyve_data_for_external_hook
+	external_exec_master_script "remove.d"
+
+	PARENT_SNAPSHOTS=""
+	DEPENDENT_VMS=""
+	if [ ${unregister} -eq 0 ] ; then
+		if [  ${jid} -ne 0 ]; then
+			case "${emulator}" in
+				"xen")
+					xstop jname=${jname}
+					;;
+				"virtualbox")
+					. ${distdir}/virtualbox.subr
+					vstop jname=${jname}
+					;;
+				*)
+					jstop jname=${jname}
+					;;
+			esac
+		fi
+		# auto-promote if we have children
+		if [ ${zfsfeat} -eq 1 ]; then
+			base_vm_disks=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
+			for vm_item in $( cbsdsqlro storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
+				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
+				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
+				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				if [ "${parent_snapshot}" = "-" ]; then
+					continue
+				fi
+
+				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
+				for _disk_path in ${base_vm_disks}; do
+					original_disk_path=$( /usr/bin/readlink -f ${_disk_path} )
+					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
+						DEPENDENT_VMS="${DEPENDENT_VMS}\n${vm}"
+					fi
+				done
+			done
+
+			if [ ! -z "${DEPENDENT_VMS}" ]; then
+				dep_vms=$( echo ${DEPENDENT_VMS} | /usr/bin/sort | /usr/bin/uniq )
+				err 1 "${N1_COLOR}The following machines depend on ${jname}:${N0_COLOR} ${dep_vms}" >&2
+			fi
+
+			for disk_path in ${base_vm_disks}; do
+				[ ! -r ${disk_path} ] && continue
+				disk_zvol=$( /usr/bin/readlink -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				parent_snapshot=$( /sbin/zfs get -Ho value origin ${disk_zvol} )
+				if [ "${parent_snapshot}" != "-" ]; then
+					PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${parent_snapshot}"
+				fi
+			done
+
+			path_parent=$( /sbin/zfs get -Ho value origin ${DST} )
+			if [ "${path_parent}" != "-" ]; then
+				PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${path_parent}"
+			fi
+		fi
+		jcleanup jname=${jname}
+		/sbin/umount ${path} 2>/dev/null
+	fi
+
+	[ -d "${DST}" ] && remove_data_dir ${DST}
+	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
+	[ ${unregister} -eq 0 ] && junregister jname=${jname} rcfile=${JAILRCCONF}
+	[ -f "${JAILFSTAB}" ] && /bin/rm -f ${JAILFSTAB}
+	[ -f "${JAILFSTAB}.local" ] && /bin/rm -f "${JAILFSTAB}.local"
+	[ -f "${JAILRCCONF}" ] && /bin/rm -f ${JAILRCCONF}
+	[ -f "${jailrcconfdir}/rc.conf_${jname}" ] && /bin/rm -f "${jailrcconfdir}/rc.conf_${jname}"
+	if [ -d "${jailsysdir}/${jname}" ]; then
+		/bin/rm -rf "${jailsysdir}/${jname}"
+	elif [ -h "${jailsysdir}/${jname}" ]; then
+		/bin/rm -f "${jailsysdir}/${jname}"
+	fi
+	[ -f "${logdir}/${jname}.log" ] && /bin/rm -f "${logdir}/${jname}.log"
+	[ -d "${jaildir}/${jname}" ] && /bin/rmdir "${jaildir}/${jname}"
+	for parent_snapshot in ${PARENT_SNAPSHOTS}; do
+		/sbin/zfs destroy ${parent_snapshot}
+	done
+
+	vmdir="${workdir}/vm/${jname}"
+
+	### xxx
+	if [ "${zfsfeat}" = "1" ]; then
+		readconf zfs.conf
+		. ${zfstool}
+		zfsmnt "${vmdir}"
+		_ret=$?
+		if [ ${_ret} -eq 1 -o ${_ret} -eq 2 ]; then
+			_msg=$( /sbin/zfs destroy ${ZPOOL} )
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${N1_COLOR}bremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"
+			fi
+		fi
+	fi
+
+	[ -d "${vmdir}" ] && /bin/rm -rf ${vmdir}
+
+	if [ "${emulator}" != "jail" ]; then
+		# TODO: cbsd media unregister mode=removeall jname=jname
+		cbsdsqlrw storage_media "DELETE FROM media WHERE jname=\"${jname}\" AND type = \"hdd\""
+
+		A=$( cbsdsqlro storage_media SELECT name,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" )
+		if [ -n "${A}" ]; then
+			cd_name=
+			cd_path=
+			IFS="|"
+			sqllist "${A}" cd_name cd_path
+			IFS=" "
+			media mode=unregister name="${cd_name}" path="${cd_path}" jname="${jname}" type="iso"
+		fi
+	fi
+
+	if [ "${emulator}" = "virtualbox" ]; then
+		. ${distdir}/virtualbox.subr
+		${VBOX_MGMT_CMD} unregistervm ${jname}
+		[ -d "/root/VirtualBox VMs/${jname}" ] && /bin/rm -rf "/root/VirtualBox VMs/${jname}"
+	fi
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xremove status=2
+	fi
+
+done
+
+end_time=$( ${DATE_CMD} +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+cbsdlogger NOTICE ${CBSD_APP}: xen domain ${JLIST} removed in ${diff_time}
+
+exit 0

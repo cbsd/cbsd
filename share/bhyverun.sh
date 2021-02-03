@@ -315,31 +315,50 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	case "${debug_engine}" in
 		gdb)
 			if [ -x /usr/local/bin/gdb ]; then
-				gdb_cmd="/usr/local/bin/gdb"
+				debug_bin="/usr/local/bin/gdb"
 			elif [ -x /usr/libexec/gdb ]; then
-				gdb_cmd="/usr/libexec/gdb"
+				debug_bin="/usr/libexec/gdb"
 			elif [ -x /usr/bin/gdb ]; then
-				gdb_cmd="/usr/bin/gdb"
+				debug_bin="/usr/bin/gdb"
 			fi
+
+			if [ -z "${debug_bin}" ]; then
+				echo "no such gdb here, please install it first: pkg install -y devel/gdb"
+				exit 1
+			fi
+
 			# break while loop
 			touch ${tmpdir}/bhyvestop.${jname}.lock
 			echo
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${gdb_cmd} -batch --args ${debug_bhyve_cmd_run}"
-			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${gdb_cmd} -ex run --args ${debug_bhyve_cmd_run}
+			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -batch --args ${debug_bhyve_cmd_run}"
+			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -ex run --args ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		lldb)
+			if [ -x /usr/local/bin/lldb ]; then
+				debug_bin="/usr/local/bin/lldb"
+			elif [ -x /usr/libexec/lldb ]; then
+				debug_bin="/usr/libexec/lldb"
+			elif [ -x /usr/bin/lldb ]; then
+				debug_bin="/usr/bin/lldb"
+			fi
+
+			if [ -z "${debug_bin}" ]; then
+				echo "no such lldb here, please install it first: pkg install -y devel/llvm90"
+				exit 1
+			fi
+
 			# break while loop
 			touch ${tmpdir}/bhyvestop.${jname}.lock
 			echo
 			echo "Warning"
 			echo "Run bhyve throuch LLDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd_run}"
-			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock /usr/bin/lldb -- ${debug_bhyve_cmd_run}
+			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}"
+			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		*)

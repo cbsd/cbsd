@@ -1,7 +1,13 @@
 # CBSD Project
 
-Yet one more wrapper around jail, XEN and bhyve for FreeBSD.
-For more information please visit website: https://www.bsdstore.ru
+Copyright (c) 2013-2021, The CBSD Development Team
+
+Homepage: https://bsdstore.ru
+
+## Description
+
+Yet one more wrapper around [jail](https://man.freebsd.org/jail/8), 
+[Xen](http://www.xenproject.org/) and [bhyve](https://man.freebsd.org/xen/4) for [FreeBSD](https://www.freebsd.org).
 
 ![demo](https://www.bsdstore.ru/gif/jdemo.gif)
 ![demo](https://www.bsdstore.ru/gif/bdemo.gif)
@@ -24,7 +30,7 @@ For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
 Tested with following OSes and distribution:
 
-- FreeBSD 11.0+
+- FreeBSD 12.0+
 - HardenedBSD
 
 ## Support
@@ -56,4 +62,4 @@ This project exists thanks to all the people who contribute. [See the contributo
 
 Become a financial contributor and help us sustain our community.
 
-<a href="https://www.patreon.com/clonos"><img src="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png" alt="Patreon donate button" /> </a>
+<a href="https://www.patreon.com/clonos"><img src="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png" alt="Patreon donate button" /></a>

@@ -1,0 +1,115 @@
+#!/usr/local/bin/cbsd
+#v12.2.4
+MYARG="valeid"
+MYOPTARG="skip lock pass lease_time"
+MYDESC="get next free VALE port"
+ADDHELP="\
+  valeid     - vale id, e.g.: 0\n\
+  skip       - (optional) skip for \"X B C D\" values\n\
+  lease_time - lock/lease for X seconds,default is: 30\n"
+
+. ${subr}
+lock=1
+pass=
+lease_time=30
+. ${cbsdinit}
+
+LOCKFILE="${ftmpdir}/get-next-vale-port.lock"
+LEASE_FILE="${tmpdir}/get-next-vale-port.lease"
+# list of locked/skip ports
+LOCKFILE_SKIPLIST=
+
+# we need the atomicity of the operation to exclude
+# the simultaneous selection of the same free port
+# use file as lock and temp database in
+# <port>:<end_lease_time>
+# <port>:<end_lease_time>
+if [ -z "${pass}" ]; then
+	if [ "${lock}" = "1" ]; then
+		# rebuild arg list ( + add pass )
+		# Pass '"' as \" in cmd
+		INIT_IFS="${IFS}"
+		IFS="~"
+		cmd="$@"
+		IFS="${INIT_IFS}"
+		while [ -n "${1}" ]; do
+			IFS="~"
+			strpos --str="${1}" --search="="
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				# not params=value form
+				#printf "${1} "         # (printf handles -args (with dashes)
+				#echo -n "${1} "
+				shift
+				continue
+			fi
+			_arg_len=$( strlen ${1} )
+			_pref=$(( _arg_len - _pos ))
+			ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+			VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+			if [ -z "${ARG}" -o -z "${VAL}" ]; then
+				shift
+				continue
+			fi
+			#printf "${ARG}='${VAL}' "
+			shift
+		done
+		exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd get-next-vale-port ${cmd} pass=1
+		ret=$?
+		exit ${ret}
+	fi
+fi
+
+# prune/purge old records
+# lease time format:
+# <valeid>:<port>:<time>
+if [ -r ${LEASE_FILE} ]; then
+	${TRUNCATE_CMD} -s0 ${LEASE_FILE}.swap
+	cur_time=$( ${DATE_CMD} +%s )
+	eval $( ${CAT_CMD} ${LEASE_FILE} | while read items; do
+		p1=${items%%:*}
+		[ "${p1}" != "${valeid}" ] && continue		# not my VALE ID
+		p2=${items##*:}
+		p3=$( echo ${items} | ${AWK_CMD} -F':' '{printf $2}' )
+		[ -z "${p1}" -o -z "${p2}" ] && continue
+		if [ ${p2} -gt ${cur_time} ]; then
+			# still valid
+			echo "${items}" >> ${LEASE_FILE}.swap
+			if [ -z "${LOCKFILE_SKIPLIST}" ]; then
+				LOCKFILE_SKIPLIST="${p3}"
+			else
+				LOCKFILE_SKIPLIST="${LOCKFILE_SKIPLIST} ${p3}"
+			fi
+		fi
+	echo "LOCKFILE_SKIPLIST=\"${LOCKFILE_SKIPLIST}\""
+	done )
+	${MV_CMD} ${LEASE_FILE}.swap ${LEASE_FILE}
+fi
+
+#### MAIN
+if [ -n "${LOCKFILE_SKIPLIST}" ]; then
+	# append skip list
+	if [ -z "${skip}" ]; then
+		skip="${LOCKFILE_SKIPLIST}"
+	else
+		skip="${skip} ${LOCKFILE_SKIPLIST}"
+	fi
+fi
+
+if [ -n "${skip}" ]; then
+	vale_port=$( ${miscdir}/next-vale-port -i ${valeid} -e "${skip}" 2>/dev/null )
+else
+	vale_port=$( ${miscdir}/next-vale-port -i ${valeid} 2>/dev/null )
+fi
+
+cur_time=$( ${DATE_CMD} +%s )
+lease_time_end=$(( cur_time + lease_time ))
+echo "${valeid}:${vale_port}:${lease_time_end}" >> ${LEASE_FILE}
+
+if [ -n "${vale_port}" ]; then
+	echo ${vale_port}
+	exit 0
+else
+	exit 1
+fi
+

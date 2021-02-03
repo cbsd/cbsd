@@ -61,13 +61,20 @@ usage() {
 # parser/initialization for MYARG, OPTARG
 # if CBSD_INIT_SAVE2FILE variables exist, use first <arg> as filename
 # and save all settings into <arg> filename
+# todo:
+# don't try to understand the code below, need to rewrite ASAP:
+# we were hostages from "param=value" and "param=\"spaces here allowed\" and param="x \
+# y z" and sudoexec
+#  and this is the most balanced work-round of all
 init() {
 	local MYNUMTEST=0 _i
 	local bin_version= _pos _arg_len _pref
-	local _tofile=0
-	local IFS OIFS
-
-	[ -n "${CBSD_INIT_SAVE2FILE}" ] && _tofile=1
+	local _tofile=0 _eval=1
+	local IFS OIFS _open _cmd
+	if [ -n "${CBSD_INIT_SAVE2FILE}" ]; then
+		_tofile=1
+		${TRUNCATE_CMD} -s0 ${CBSD_INIT_SAVE2FILE}
+	fi
 
 	. ${strings}
 
@@ -87,13 +94,17 @@ init() {
 	done
 
 	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
-	trap "/bin/rm -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
+	trap "${RM_CMD} -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
 
 	# disable history of execution cbsd command inside cbsd command
 	export NO_CBSD_HISTORY=yes
 
 	if [ "$1" = "--help" ]; then
 		IFS=" "
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--help"
+			exit 0
+		fi
 		[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
 		${ECHO} "[${BOLD}${CBSDMODULE}${N0_COLOR}] ${N2_COLOR}${MYDESC}${N0_COLOR}"
 		${ECHO} "${BOLD}require: ${GREENL}${MYARG}${N0_COLOR}"
@@ -107,6 +118,10 @@ init() {
 
 	if [ "$1" = "--args" ]; then
 		IFS=" "
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--args"
+			exit 0
+		fi
 		echo "${greeting} ${MYNUMTEST}"
 		for argword in ${MYARG} ${MYOPTARG}; do
 			echo "${argword}"
@@ -121,44 +136,97 @@ init() {
 	#MYARG="src mk"
 	#MYOPTARG="arch"
 
-	i=0
+	_cmd=
 
-	while [ -n "${1}" ]; do
-		IFS=
-		strpos --str="${1}" --search="="
-		_pos=$?
-		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
-			IFS=" "
-			shift
+	_quoted=0
+	_opened=0
+	_closed=0
+
+	_tmparg=
+
+	for i in $*; do
+		_eqpos=0
+
+		if [ ${_opened} -eq 0 ]; then
+		strpos --str="${i}" --search="="
+		_eqpos=$?
+		if [ ${_eqpos} -eq 0 ]; then
+			# not params=value form, pass as-is
+			if [ -n "${_cmd}" ]; then
+				_cmd="${_cmd} ${i}"
+			else
+				_cmd="${i}"
+			fi
 			continue
 		fi
-		_arg_len=$( strlen ${1} )
-		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
-		IFS=" "
+		fi
+
+		_arg_len=$( strlen ${i} )
+		_postfix=$( substr --pos=${_arg_len} --len=1 --str="${i}" )
+		strpos --str="${i}" --search="\""
+		_pos=$?
+		[ ${_pos} -ne 0 ] && _pos=$(( _pos + 1 ))
+		if [ "${_postfix}" = "\"" ]; then
+			# closed \"
+			# if first " pos matches the end of the line, 
+			# so this is the closure of a multi-line variable
+			if [ ${_pos} -eq ${_arg_len} ]; then
+				_opened=0		# закрыли
+				_closed=1
+				_quoted=0
+			else
+				# variable with "xxx" ( whole )
+				_opened=1
+				_closed=1
+				_quoted=1
+			fi
+		else
+			if [ ${_pos} -gt 0 ]; then
+				# variable opened but without ending"
+				_opened=1
+				_closed=0
+				_quoted=0
+			fi
+		fi
+
+		_pref=$(( _arg_len - _eqpos ))
+		if [ ${_eqpos} -ne 0 ]; then
+			ARG=$( substr --pos=0 --len=${_eqpos} --str="${i}" )
+			VAL=$( substr --pos=$(( ${_eqpos} + 2 )) --len=$(( ${_pref}  )) --str="${i}" )
+		else
+			VAL=$( substr --pos=$(( 0 )) --len=${_arg_len} --str="${i}" )
+		fi
 		VAL=$( echo ${VAL} | ${TR_CMD} -d '"' )		# strip extra quotes
-		#echo "V[$VAL]"
-		# todo: rewrite to substr
-		#if [ ${double_args} -eq 0 ]; then
-		#	shift
-		#	if [ -n "${T}" ]; then
-		#		continue	# value already set, skip
-		#	else
-		#		eval T="\$$ARG"
-		#	fi
-		#fi
-		i=$(( i + 1 ))
-		eval "${ARG}='${VAL}'";
-		[ ${_tofile} -eq 1 ] && ${CAT_CMD} >> ${CBSD_INIT_SAVE2FILE} <<EOF
-${ARG}='${VAL}'
-EOF
-		shift
+		VAL=$( echo ${VAL} | ${TR_CMD} -d "'" )		# strip extra quotes
+
+		if [ ${_opened} -eq 1 -o ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg="${_tmparg} ${VAL}"
+			else
+				_tmparg="${VAL}"
+			fi
+			VAL="${_tmparg}"
+		fi
+
+		# reset opened flag
+		if [ ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg=
+			fi
+			_opened=0
+		fi
+
+		eval "${ARG}=\"${VAL}\""
+		if [ -n "${_cmd}" ]; then
+			_cmd="${_cmd} ${ARG}=\"${VAL}\""
+		else
+			_cmd="${ARG}=\"${VAL}\""
+		fi
+		[ -z "${CBSD_SUDO}" ] && eval "${ARG}=\"${VAL}\""
+		[ ${_tofile} -eq 1 ] && printf "${ARG}='${VAL}' " >> ${CBSD_INIT_SAVE2FILE}
 	done
-
 	IFS=" "
-
+	[ -n "${CBSD_SUDO}" ] && echo -n "${_cmd}"
 	for i in ${MYARG}; do
 		unset T
 		eval T="\$$i"
@@ -355,7 +423,7 @@ geniplist()
 		case $? in
 			0)
 				case ${a} in
-					[Dd][Hh][Cc][Pp])
+					[Dd][Hh][Cc][Pp]|[Dd][Hh][Cc][Pp][vV]6)
 						;;
 					[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
 						;;
@@ -429,16 +497,23 @@ dot()
 # $3 - safe, for force
 makelock()
 {
-	[ -f "${LOCKFILE}" -a "${3}" = "safe" ] && /bin/rm -f ${LOCKFILE}
-	[ -f "${LOCKFILE}"  ] && err 1 "Locked: ${LOCKFILE}. Try later"
-	TRAPS="/bin/rm -f ${LOCKFILE}; exit"
+	local _pid _msg
+	[ -n "${1}" ] && LOCKFILE="${1}"
+	[ -z "${LOCKFILE}" ] && err 1 "${N1_COLOR}makelock: empty LOCKFILE vars${N0_COLOR}"
+	[ -f "${LOCKFILE}" -a "${3}" = "safe" ] && ${RM_CMD} -f ${LOCKFILE}
+	if [ -f "${LOCKFILE}"  ]; then
+		_pid=$( ${CAT_CMD} ${LOCKFILE} | ${AWK_CMD} '{printf $1}' )
+		[ -n "${_pid}" ] && _msg="by ${_pid}"
+		err 1 "locked ${_msg}: ${LOCKFILE}, try later"
+	fi
+	TRAPS="${RM_CMD} -f ${LOCKFILE};"
 
-	if [ -n "$2" ]; then
-		TRAPS="$2; ${TRAPS}"
+	if [ -n "${2}" ]; then
+		TRAPS="${2}; ${TRAPS}"
 	fi
 
 	trap "${TRAPS}" HUP KILL INT ABRT BUS TERM EXIT
-	[ "$3" = "safe" ] || /usr/bin/touch $LOCKFILE
+	[ "$3" = "safe" ] || ${TOUCH_CMD} ${LOCKFILE}
 }
 
 

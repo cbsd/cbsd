@@ -1,0 +1,176 @@
+#!/usr/local/bin/cbsd
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt=" Virtual Machine: ${jname} "
+	local menu_list="
+		'A $msg_add_new_nic'	'${msg_add_new_nic_desc}'	'Add and configure new virtual NIC'
+		'-'	'-'	''
+	" # END-QUOTE
+	local defaultitem=
+	local hline="$hline_arrows_tab_enter"
+
+	local n=1
+
+	for last_nic in $( ${SEQ_CMD} 1 16 ); do
+		unset nic_id nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address
+		eval nic_id="\$nic_id$last_nic"
+		eval nic_driver="\$nic_driver$last_nic"
+
+		[ -z "${nic_id}" -o -z "${nic_driver}" ] && break
+		eval nic_slot="\$nic_slot$last_nic"
+		eval nic_type="\$nic_type$last_nic"
+		eval nic_parent="\$nic_parent$last_nic"
+		eval nic_hwaddr="\$nic_hwaddr$last_nic"
+		eval nic_address="\$nic_address$last_nic"
+
+		nic=$( echo $nic_path | ${CUT_CMD} -d "." -f 1 )
+		menu_list="${menu_list} '${nic_id} nic${n}'	'${nic_driver}'	'$nic_slot,$nic_type,$nic_parent,$nic_hwaddr,$nic_address'"
+		n=$(( $n + 1 ))
+	done
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+find_first_free_nic_id()
+{
+	local last_nic _res
+
+	for last_nic in $( ${SEQ_CMD} 1 16 ); do
+		unset _res
+		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_path FROM xennic WHERE jname=\"${jname}\" AND nic_path=\"nic${last_nic}.vhd\" 2>&1 )
+		[ -z "${_res}" ] && echo "${last_nic}" && break
+	done
+
+	echo "${last_nic}"
+}
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname"
+MYOPTARG=""
+MYDESC="xen nic image dialog"
+CBSDMODULE="xen"
+
+globalconf="${distdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subr}
+. ${strings}
+. ${tools}
+. ${vimageconf}
+. ${cbsdinit}
+
+. ${distdir}/bsdconfig.subr
+#f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages-xennic.subr
+. $BSDCFG_LIBE/$APP_DIR/include/messages-xennic.subr
+
+. ${jrcconf}
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such VM: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "xen" ] && err 1 "${N1_COLOR}Not in xen mode${N0_COLOR}"
+
+. $BSDCFG_LIBE/$APP_DIR/include/xennic.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_configure_xennic "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	load_nic_info
+	dialog_menu_main || break
+	f_dialog_menutag_fetch mtag
+
+	[ -z "${mtag}" ] && exit $SUCCESS
+
+	command=
+
+	case "$mtag" in
+		?" $msg_exit") break ;;
+		?" $msg_add_new_nic")
+			last_nic=$( find_first_free_nic_id )
+			nic="nic${last_nic}"
+			command="xennic-newnic jname=${jname} nic=${nic}"
+			;;
+		*)
+			[ "${mtag}" = "-" ] && continue
+			index=${mtag%% *}
+			nic=${mtag##* }
+			command="xennic-cfgnic jname=${jname} nic=${index}"
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

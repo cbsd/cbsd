@@ -3,19 +3,27 @@
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="mode quiet arch target_arch ver sources name basename stable inter newjname usehelpers useconfig fromfile url register_basename"
+MYOPTARG="arch basename fromfile inter mode name newjname quiet register_basename sources stable target_arch url useconfig usehelpers ver"
 MYDESC="Working with CBSD Repository"
-ADDHELP="action can be: list, get, put
-sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n
-mode can be: check, upgrade\n\
-stable=1 for RELENG_X\n\
-ver=any for mode=list for show all version (no for cur. version only\n\
-arch=any for mode=list for show all arch (no for cur. arch only\n\
-inter=0 to prevent any questions and to accept answers by default\n\
-newjname= for sources=img. Alternative jname for save\n\
-fromfile= load arguments from ascii file\n\
-url= specify URL sources, separated by comma for multiple values\n\
-register_basename= register with alternative/custom basename\n"
+ADDHELP="\
+ action can be: list, get, put\n\
+ arch=any for mode=list for show all arch (no for cur. arch only\n\
+ fromfile= load arguments from ascii file\n\
+ inter=0 to prevent any questions and to accept answers by default\n\
+ mode can be: check, upgrade\n\
+ name= specify name of resource (e.g. for sources=img)\n\
+ newjname= for sources=img, for alternative jname\n\
+ register_basename= register with alternative/custom basename\n\
+ sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n\
+ url= specify URL sources, separated by comma for multiple values\n\
+ usehelpers= (default: 0 ) when 1, execute img helper when exist (boostrap.sh file)\n\
+ ver=any for mode=list for show all version (no for cur. version only\n\
+
+ Example:
+   cbsd repo action=list sources=img [ver=any]
+   cbsd repo action=get sources=img name=pgadmin4 usehelpers=1
+
+"
 
 . ${subr}
 
@@ -159,11 +167,11 @@ getbase()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					13*)
+					14*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/13.0"
+						URL_HIER="${arch}/${target_arch}/14.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/base.txz"
@@ -500,11 +508,11 @@ getsrc()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					13*)
+					14*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/13.0"
+						URL_HIER="${arch}/${target_arch}/14.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/src.txz"
@@ -723,11 +731,11 @@ getkernel()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					13*)
+					14*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/13.0"
+						URL_HIER="${arch}/${target_arch}/14.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/kernel.txz"
@@ -763,7 +771,6 @@ getkernel()
 	fi
 
 	init_target_arch
-
 	trap "cleanup_kernels" HUP INT ABRT BUS TERM EXIT
 	register_kernel arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
 
@@ -772,7 +779,7 @@ getkernel()
 		[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo elf="-" id=kernel${ver}-${arch}-${stable} platform=${platform} arch=${arch} targetarch=${targetarch} ver=${ver} stable="${stable}" date="-" status=1
 	fi
 
-	if [ -x "${KERNEL_DIR}/bin/sh" ]; then
+	if [ -x "${KERNEL_DIR}/boot/kernel/kernel" ]; then
 		kernel_status_is_maintenance_soft
 	else
 		kernel_status_is_maintenance_hard
@@ -843,8 +850,7 @@ getkernel()
 			${TAR_CMD} xfz ${ARCHIVE}
 			set +e
 			${RM_CMD} -f ${ARCHIVE}
-			preparekernel dst=${KERNEL_DIR}
-			register_fetched_kernel ${MIRROR}
+			register_kernel ver=${ver} platform="${platform}" source="${MIRROR}"
 			# CBSD QUEUE
 			if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 				baseelf=
@@ -904,7 +910,7 @@ getkernel()
 
 	[ ${_src_found} -ne 1 ] && err 1 "${N1_COLOR}Not found data${N0_COLOR}"
 
-	${ECHO} "${N1_COLOR}Extracting...${N0_COLOR}"
+	${ECHO} "${N1_COLOR}extracting...${N0_COLOR}"
 	[ ! -d "${KERNEL_DIR}" ] && ${MKDIR_CMD} -p ${KERNEL_DIR}
 	cd ${KERNEL_DIR}
 
@@ -918,7 +924,7 @@ getkernel()
 		set +e
 	fi
 
-	register_fetched_kernel ${MIRROR}
+	register_kernel arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
 	cleanup_kernels
 
 	# CBSD QUEUE
@@ -930,7 +936,7 @@ getkernel()
 		[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=kernel${ver}-${arch}-${stable} status=2
 	fi
 
-	${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+	${ECHO} "${N1_COLOR}done...${N0_COLOR}"
 
 	return 0
 }
@@ -1152,7 +1158,7 @@ case "${action}" in
 					else
 						[ -z "${arch}" ] && arch=$( ${SYSCTL_CMD} -n hw.machine_arch )
 					fi
-					${GREP_CMD} -E ${arch}_${ver} ${TF} | ${CUT_CMD} -d "|" -f2-5
+					${GREP_CMD} -E ${arch}_${ver} ${TF} | ${CUT_CMD} -d "|" -f2-8
 					;;
 				esac
 				${RM_CMD} -f ${TF}
@@ -1283,3 +1289,5 @@ case "${action}" in
 		esac ## END of source case
 		;;
 esac ## END of action case
+
+exit 0

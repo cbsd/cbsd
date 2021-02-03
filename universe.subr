@@ -75,8 +75,8 @@ init_basedir()
 		esac
 		shift $(($OPTIND - 1))
 	done
-
-	[ -z "${target_arch}" ] && target_arch="${arch}"
+	
+	[ -z "${target_arch}" ] && target_arch=$( ${UNAME_CMD} -p )
 
 	if [ -n "${basename}" -a -z "${_basename}" ]; then
 		[ "${basename}" != "0" ] && _basename="${basename}"
@@ -217,11 +217,15 @@ init_scm_and_version()
 		svn*)
 			init_svn_version
 		;;
-	git*)
+		git*)
+			[ ! -r ${sharedir}/${platform}-git_branches.conf ] && err 1 "${N1_COLOR}No ${sharedir}/${platform}-git_branches.conf for git branch map${N0_COLOR}"
+			. ${sharedir}/${platform}-git_branches.conf
+			[ -z "${SCM_GIT_BRANCH}" ] && SCM_GIT_BRANCH=$( init_git_branch )
+			[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}no SCM_GIT_BRANCH var${N0_COLOR}"
 			init_git_version
 		;;
 	*)
-		err 1 "${ECHO}Unknown checkout method. Please specify it via: ${N2_COLOR}srcup.conf${N0_COLOR}"
+		err 1 "${ECHO}unknown checkout method. please specify it via: ${N2_COLOR}srcup.conf${N0_COLOR}"
 	esac
 
 	[ -z "${SCM_REV}" ] && SCM_REV=$( ${DATE_CMD} "+%Y-%m-%d-%H:%M:%S" )
@@ -251,15 +255,28 @@ init_svn_version()
 # require: $SRC_DIR
 init_git_version()
 {
-	local SCM=""
+	local SCM=
 
 	if [ -f "/usr/local/bin/git" ]; then
 		SCM="/usr/local/bin/git"
 	else
-		err 1 "${N1_COLOR}No git in the base. Please install devel/git${N0_COLOR}"
+		err 1 "${N1_COLOR}No git in the base. Please install ${N2_COLOR}devel/git${N0_COLOR}"
 	fi
 
-	SCM_REV=$( cd ${SRC_DIR} && ${SCM} rev-parse --short HEAD )
+	[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}no SCM_GIT_BRANCH var${N0_COLOR}"
+
+	echo "cd ${SRC_DIR} && ${SCM} rev-parse --short ${SCM_GIT_BRANCH}"
+
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands via git
+	# does not conflict with the same CBSD commands
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	#SCM_REV=$( cd ${SRC_DIR} && ${SCM} rev-parse --short ${SCM_GIT_BRANCH} )
+	SCM_REV=$( cd ${SRC_DIR} && ${SCM} log --pretty=format:'%h' -n 1 )
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
 	return 0
 }
 
@@ -395,12 +412,30 @@ base_status_is_maintenance_hard()
 	cbsdsqlrw local "UPDATE bsdbase SET status='2' WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
 }
 
-
 base_status_is_normal()
 {
 	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
 	cbsdsqlrw local "UPDATE bsdbase SET status='0' WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
 }
+
+kernel_status_is_maintenance_soft()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='1' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+kernel_status_is_maintenance_hard()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='2' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+kernel_status_is_normal()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='0' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
 
 base_status()
 {
@@ -415,10 +450,24 @@ base_status()
 
 cleanup_bases()
 {
+	set +o errexit		# restore default behaviour
+
 	if [ -x "${BASE_DIR}/bin/sh" ]; then
 		base_status_is_normal
 	else
 		unregister_base
+	fi
+	[ -r "${BASE_DIR_LOCKFILE}" ] && ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
+}
+
+cleanup_kernels()
+{
+	set +o errexit		# restore default behaviour
+
+	if [ -r "${KERNEL_DIR}/boot/kernel/kernel" ]; then
+		kernel_status_is_normal
+	else
+		unregister_kernel
 	fi
 
 	[ -r "${BASE_DIR_LOCKFILE}" ] && ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
@@ -426,6 +475,8 @@ cleanup_bases()
 
 cleanup_srcs()
 {
+	set +o errexit		# restore default behaviour
+
 	if [ -r "${srcdir}/src_${ver}" ]; then
 		source_status_is_normal
 	else

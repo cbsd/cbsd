@@ -2,20 +2,24 @@
 #v11.1.12
 CBSDMODULE="xen"
 MYARG=""
-MYOPTARG="alljails shownode display node header order"
+MYOPTARG="alljails display header hidden node order shownode"
 MYDESC="List XEN domain and status"
-ADDHELP="alljails=1 - (0 or 1): force to display foreign/remote resources\n\
+ADDHELP="\
+ alljails=1 - (0 or 1): force to display foreign/remote resources\n\
   when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
-shownode=1 - show nodename for domains\n\
-node= only for current node\n\
-header=0 don't print header\n\
-display= list by comma for column. Default: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
-     If ZFS features on: vm_zfs_guid\n\
-     If RCTL unavailable: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc
-     If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
-         additional field: path\n\
-     Notes: vnc data is meta info from: xen_vnc_tcp_bind:vnc_port\n\
-order= asc (default) or desc\n"
+ display= list by comma for column.\n\
+  Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc\n\
+  If ZFS features on: vm_zfs_guid\n\
+  If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+  If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+   additional field: path\n\
+  Notes: vnc data is meta info from: xen_vnc_tcp_bind:vnc_port\n\
+ header=0 don't print header\n\
+ hidden= show hidden env as well? 1 (default) - show, 0 - skipp\n\
+ node= only for current node\n\
+ order= asc (default) or desc\n\
+ shownode=1 - show nodename for domains\n\
+"
 EXTHELP="wf_xls"
 
 . ${subr}
@@ -26,26 +30,35 @@ EXTHELP="wf_xls"
 readconf xls.conf
 . ${cbsdinit}
 
-[ ! -d "${workdir}" ] && err 1 "${N1_COLOR}jls: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
+[ ! -d "${workdir}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
 
 [ -n "${display}" ] && odisplay="${display}"	# store original display settings
 oalljails="${alljails}"				# store original settings, they have more weight vs auto
 oshownode="${shownode}"				# store original settings, they have more weight vs auto
+ohidden="${hidden}"				# show hidden env?
 
 # autosettings for alljails and shownode
 is_cluster_mode
 cluster_mode=$?         # cluster_mode=0 when we have any node
 
 if [ ${cluster_mode} -eq 0 ]; then
+
 	if [ "${oshownode}" != "0" ]; then
 		alljails=1
 		shownode=1
 	fi
+
 fi
 
 # restore manual settings
 [ -n "${oalljails}" ] && alljails="${oalljails}"
 [ -n "${oshownode}" ] && alljails="${oshownode}"
+[ -n "${ohidden}" ] && hidden="${ohidden}"
+
+# defaults
+[ -z "${hidden}" ] && hidden=1
+show_hidden="${hidden}"
+unset hidden
 
 if [ -z "${display}" -a -z "${odisplay}" ]; then
 	case "${racct}" in
@@ -142,6 +155,7 @@ populate_output_data()
 		if [ $? -eq 0 ]; then
 			# xen is active
 			printf "${N2_COLOR}"
+
 			if [ "${racct}" = "1" ]; then
 				memoryuse=0
 				pcpu=0
@@ -173,7 +187,7 @@ populate_output_data()
 					;;
 			esac
 		else
-			printf "${DGRAY}"
+			printf "${N4_COLOR}"
 		fi
 	fi
 
@@ -313,6 +327,9 @@ show_jaildata_from_sql()
 			RHST="${sqlfile}"
 			. ${rjrcconf}
 		fi
+
+		# skip hidden env when show_hidden=0
+		[ ${hidden} -eq 1 -a ${show_hidden} -eq 0 ] && continue
 
 		if [ ! -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
 			# skip invalid vms

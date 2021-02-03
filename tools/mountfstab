@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.0.4
+#v13.0.0
 MYARG="jroot fstab"
 MYOPTARG="jname"
 MYDESC="Mount jail by fstab file"
@@ -46,21 +46,30 @@ init_localmpt_fstab()
 
 		case ":${_device}" in
 			:#* | :)
-			continue
+				continue
 			;;
 			*)
-				if [ "${_fs}" = "zfs" ]; then
-					if [ ${allow_zfs} -ne 1 ]; then
-						# allow_zfs not enabled, skipp
+				case "${_fs}" in
+					external)
+						if [ -x "${_device}" ]; then
+							echo "local_mpt${i}=\"${_mountpt}\""
+							i=$(( i + 1 ))
+						fi
+						;;
+					zfs)
+						if [ ${allow_zfs} -ne 1 ]; then
+							# allow_zfs not enabled, skipp
+							continue
+						fi
+						# we need special route for jails with zfs attach, make sign for jstart script
+						${TOUCH_CMD} ${with_zfs_attach}
 						continue
-					fi
-					# we need special route for jails with zfs attach, make sign for jstart script
-					${TOUCH_CMD} ${with_zfs_attach}
-					continue
-				else
-					echo "local_mpt${i}=\"${_mountpt}\""
-					i=$(( i + 1 ))
-				fi
+						;;
+					*)
+						echo "local_mpt${i}=\"${_mountpt}\""
+						i=$(( i + 1 ))
+						;;
+				esac
 			;;
 		esac
 	done )
@@ -110,25 +119,34 @@ ${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
 			continue
 			;;
 		*)
-			if [ "${_fs}" = "zfs" ]; then
-				if [ ${allow_zfs} -ne 1 ]; then
-					${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: jail has a zfs dataset:: ${N2_COLOR}${_device}${N0_COLOR}"
-					${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: but allow_zfs options is not enabled. please use: ${N2_COLOR}cbsd jset jname=${jname} allow_zfs=1${N0_COLOR}"
+			case "${_fs}" in
+				external)
+					if [ ! -x "${_device}" ]; then
+						err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}external script not found or not executable, check fstabs: ${N2_COLOR}${_device}${N0_COLOR}"
+						continue
+					fi
+					;;
+				geli)
+					is_mounted ${gelidir} && continue
+					err 1 "Error: ${gelidir} is not initializated. Please use: 'cbsd geli mode=initmaster' first"
+					;;
+				zfs)
+					if [ ${allow_zfs} -ne 1 ]; then
+						${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: jail has a zfs dataset:: ${N2_COLOR}${_device}${N0_COLOR}"
+						${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: but allow_zfs options is not enabled. please use: ${N2_COLOR}cbsd jset jname=${jname} allow_zfs=1${N0_COLOR}"
+						continue
+					fi
+					# we need special route for jails with zfs attach, make sign for jstart script
+					${TOUCH_CMD} ${with_zfs_attach}
 					continue
-				fi
-				# we need special route for jails with zfs attach, make sign for jstart script
-				${TOUCH_CMD} ${with_zfs_attach}
-				continue
-			fi
-
-			if [ "${_fs}" = "geli" ]; then
-				is_mounted ${gelidir} && continue
-				err 1 "Error: ${gelidir} is not initializated. Please use: 'cbsd geli mode=initmaster' first"
-			fi
-			[ -z "${_device}" ] && continue
-			# append workdir if it not full path
-			prefix=$( substr --pos=0 --len=1 --str=${_device} )
-			[ "${prefix}" != "/" ] && _device="${workdir}/${_device}"
+					;;
+				*)
+					[ -z "${_device}" ] && continue
+					# append workdir if it not full path
+					prefix=$( substr --pos=0 --len=1 --str=${_device} )
+					[ "${prefix}" != "/" ] && _device="${workdir}/${_device}"
+					;;
+			esac
 			;;
 	esac
 done
@@ -161,6 +179,13 @@ ${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
 			fi
 		fi
 		attachgeli file="${_device}" dst="${jroot}${_mountpt}" mode="${_mode}"
+		continue
+	fi
+
+	if [ "${_fs}" = "external" ]; then
+		${_device} -p ${jroot}${_mountpt} -o ${_mode} ${jname}
+		ret=$?
+		[ ${ret} -ne 0 ] && ${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}unable to create mountpoint via external ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
 		continue
 	fi
 

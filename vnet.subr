@@ -342,18 +342,20 @@ ip2mac() {
 # return $interface as parent interface and $mytap for vale
 # $nic_parent or -p <parent> must be set
 # -u (update VALE ports table), for vale only
+# -r 1 - read only: don't update/search_for_next port: return available data only
 get_vm_uplink_interface()
 {
-	local tmp_nic_parent _jname _update=0
+	local tmp_nic_parent _jname _update=0 _readonly=0
 	local _get_by_route=0	# get upink by IPv4 route ?
 	local _sw _pos _arg_len _pref _vale_arg _vale_id _vale_port
-	local _vale_port_exclude
+	local _vale_port_exclude _vale_id_tmp _res
 
 	tmp_nic_parent="${nic_parent}"
 
-	while getopts "p:u" opt; do
+	while getopts "p:r:u" opt; do
 		case "${opt}" in
 			p) tmp_nic_parent="${OPTARG}" ;;
+			r) _readonly="${OPTARG}" ;;
 			u) _update=1 ;;
 		esac
 		shift $(($OPTIND - 1))
@@ -373,15 +375,21 @@ get_vm_uplink_interface()
 			fi
 			_vale_id=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"  )
 			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${nic_parent}, please run: cbsd valecfg\""
+			if [ ${_readonly} -eq 1 ]; then
+				_vale_port=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1" )
+				[ -z "${_vale_port}" ] && _vale_port="0"
+				mytap="vale${_vale_id}:${_vale_port}"
+				return 0
+			fi
 			# VALE has limits on the length of the port name.
 			# Also, we should avoid ID/GID conflicts with multiple working directories.
 			# Determine next free VALE port, without any reference to id or name.
-			cbsdlogger NOTICE "${CBSD_APP}: looking for next free vale port: ${miscdir}/next-vale-port -i ${_vale_id}"
+			cbsdlogger NOTICE "${CBSD_APP}: looking for next free vale port: get-next-vale-port valeid=${_vale_id}"
 
 			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
-			_vale_port=$( ${miscdir}/next-vale-port -i ${_vale_id} -e "${_vale_port_exclude}" 2>/dev/null )
+			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
-				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: ${miscdir}/next-vale-port -i ${_vale_id}\""
+				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: get-next-vale-port valeid=${_vale_id}\""
 			fi
 			if [ ${_update} -eq 1 ]; then
 				cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: update/reservation next-vale-port for ${jname}, valeid: ${_vale_id}: port: ${_vale_port}"
@@ -390,6 +398,7 @@ get_vm_uplink_interface()
 			mytap="vale${_vale_id}:${_vale_port}"
 			net_emul="virtio-net"
 			cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: vale id: ${_vale_id} -> ${mytap}"
+			return 0
 			;;
 		vale*)
 			# pass vale as-is
@@ -398,9 +407,26 @@ get_vm_uplink_interface()
 			# Determine next free VALE port, without any reference to id or name.
 			_vale_id=$( echo ${tmp_nic_parent} | ${TR_CMD} -d [:alpha:] )		# remove alpha, get ID only
 			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${tmp_nic_parent}, please run: cbsd valecfg\""
-			_vale_port=$( ${miscdir}/next-vale-port -i ${_vale_id} 2>/dev/null )
+			if [ ${_readonly} -eq 1 ]; then
+				_vale_port=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1" )
+				[ -z "${_vale_port}" ] && _vale_port="0"
+				mytap="vale${_vale_id}:${_vale_port}"
+				return 0
+			fi
+			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
+
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
-				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: ${miscdir}/next-vale-port -i ${_vale_id}\""
+				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: get-next-vale-port valeid=${_vale_id}\""
+			fi
+
+			# check for vale name existance to avoid ID collision
+			_vale_id_tmp=$( cbsdsqlro local "SELECT idx FROM vale WHERE name=\"vale${_vale_id}\" LIMIT 1" 2>/dev/null )
+			[ -n "${_vale_id_tmp}" ] && _vale_id="${_vale_id_tmp}"
+			# avoid dup
+			_res=$( cbsdsqlro local "SELECT idx FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" AND port_id=\"${_vale_port}\" LIMIT 1" 2>/dev/null )
+			if [ -z "${_res}" ]; then
+				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
 			fi
 			mytap="${tmp_nic_parent}:${_vale_port}"
 			net_emul="virtio-net"
