@@ -1,19 +1,24 @@
 #!/usr/local/bin/cbsd
 #v11.1.19
 MYARG=""
-MYOPTARG="jname mode proto in out inaddr outaddr"
+MYOPTARG="in inaddr jname mode out outaddr proto"
 MYDESC="Exposing a port to jail from master host"
-ADDHELP="mode - add,delete,apply,clear,flush,list\n\
-  - add : add and apply one rule, e.g: in=222 out=22 proto=tcp\n\
+ADDHELP="\
+ in     - master port for incoming connection\n\
+ inaddr - use IP as nodeip (for incoming connection). Default is $nodeip\n\
+ jname  - environment name\n\
+ mode   - add,delete,apply,clear,flush,list\n\
+  - add    : add and apply one rule, e.g: in=222 out=22 proto=tcp\n\
   - delete : delete and clear one rule, e.g: in=222 out=22\n\
-  - apply : apply all rules from database\n\
-  - clear : clear all rules from database\n\
-  - flush : clear and remove all rules\n\
-proto = udp, tcp. default: tcp\n\
-in - master port for incoming connection\n\
-out - \(optional\) destination port inside jail\n\
-inaddr - use IP as nodeip (for incoming connection). Default is $nodeip\n\
-outaddr - use IP as destination address, do not use jail IPs\n"
+  - apply  : apply all rules from database\n\
+  - clear  : clear all rules from database\n\
+  - flush  : clear and remove all rules\n\
+ out - \(optional\) destination port inside jail\n\
+ outaddr - use IP as destination address, do not use jail IPs\n\
+ proto = udp, tcp. default: tcp\n\
+Examples:\n\
+ cbsd expose mode=add in=2233 out=22\n\
+"
 CBSDMODULE="jail"
 
 . ${subr}
@@ -22,7 +27,7 @@ CBSDMODULE="jail"
 
 show_all_expose()
 {
-	/usr/bin/find ${jailsysdir}/*/  -type f -depth 1 -maxdepth 1 -name expose.sqlite -exec ${REALPATH_CMD} {} \; | while read _file; do
+	${FIND_CMD} ${jailsysdir}/*/  -type f -depth 1 -maxdepth 1 -name expose.sqlite -exec ${REALPATH_CMD} {} \; | while read _file; do
 		myjail=$( echo ${_file} | ${SED_CMD} -Ees:${jailsysdir}/::g -es:/expose.sqlite::g )
 		jstatus jname=${myjail} > /dev/null 2>&1
 		[ $? -eq 0 ] && continue
@@ -50,8 +55,8 @@ get_first_fwnum()
 	local tmp
 	unset fwnum
 
-	tmp=$( for i in $( /usr/bin/seq ${fwexpose_st} ${fwexpose_end} ); do
-		/sbin/ipfw list ${i} > /dev/null 2>&1
+	tmp=$( for i in $( ${SEQ_CMD} ${fwexpose_st} ${fwexpose_end} ); do
+		${IPFW_CMD} list ${i} > /dev/null 2>&1
 		[ $? -eq 0 ] && continue
 		echo ${i}
 		break
@@ -69,9 +74,9 @@ pf_del()
 
 	if [ -f "${etcdir}/pfnat.conf" ]; then
 		if ${GREP_CMD} "${COMMENT}" ${etcdir}/pfnat.conf >/dev/null 2>&1; then
-			/bin/cp -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
+			${CP_CMD} -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
 			${GREP_CMD} -v "${COMMENT}" ${tmpdir}/pfnat.conf | ${GREP_CMD} "." > ${etcdir}/pfnat.conf
-			/bin/rm -f ${tmpdir}/pfnat.conf
+			${RM_CMD} -f ${tmpdir}/pfnat.conf
 		fi
 	fi
 }
@@ -102,9 +107,9 @@ EOF
 			;;
 		*)
 			if [ ${freebsdhostversion} -gt 1100120 ]; then
-				/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
+				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
 			else
-				/sbin/ipfw add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
+				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
 			fi
 			echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
 			;;
@@ -135,7 +140,7 @@ fw_expose_clear()
 		pf)
 			[ ! -f ${etcdir}/pfnat.conf ] && return 0
 			if ${GREP_CMD} -E "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${etcdir}/pfnat.conf 2>&1; then
-				/bin/cp -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
+				${CP_CMD} -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
 				${GREP_CMD} -E -v "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${tmpdir}/pfnat.conf | ${GREP_CMD} "." > ${etcdir}/pfnat.conf
 				naton
 			fi
@@ -146,7 +151,7 @@ fw_expose_clear()
 			else
 				fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 			fi
-			/sbin/ipfw delete ${fwnum}
+			${IPFW_CMD} delete ${fwnum}
 			;;
 	esac
 }
@@ -170,7 +175,7 @@ fw_expose_delete()
 			else
 				fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 			fi
-			/sbin/ipfw delete ${fwnum}
+			${IPFW_CMD} delete ${fwnum}
 			;;
 	esac
 }
@@ -185,7 +190,7 @@ fi
 [ -z "${jname}" ] && err 1 "Give me jname"
 
 . ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 [ -z "${proto}" ] && proto="tcp"
 [ -z "${inaddr}" ] && inaddr="nodeip"  # "nodeip"  - reserverd word for $nodeip variable
@@ -222,13 +227,13 @@ case "${mode}" in
 		;;
 	clear)
 		fw_expose_clear
-		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && /bin/rm -f ${ftmpdir}/${jname}-expose_fwnum
+		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && ${RM_CMD} -f ${ftmpdir}/${jname}-expose_fwnum
 		exit 0
 		;;
 	flush)
 		fw_expose_clear
-		/bin/rm -f ${exposefile}
-		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && /bin/rm -f ${ftmpdir}/${jname}-expose_fwnum
+		${RM_CMD} -f ${exposefile}
+		[ -f ${ftmpdir}/${jname}-expose_fwnum ] && ${RM_CMD} -f ${ftmpdir}/${jname}-expose_fwnum
 		exit 0
 		;;
 esac
@@ -251,3 +256,5 @@ case "${mode}" in
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 		;;
 esac
+
+exit 0
