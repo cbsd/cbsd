@@ -1,24 +1,27 @@
 #!/usr/local/bin/cbsd
-#v11.1.2
+#v13.0.1
 MYARG=""
-MYOPTARG="jname remote inter src_session user"
+MYOPTARG="inter jname remote src_session user"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
-ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
-user= login from the specified user. Default is: root\n"
+ADDHELP="\
+  If you are in the CBSDfile directory, these environments will always have priority\n\
+  remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
+  user= login from the specified user. Default is: root\n\
+"
 EXTHELP="wf_jlogin"
 
 # Login by jid not supported yet
 
 . ${subr}
-
+cloud_api=0
 . ${cbsdinit}
 readconf jlogin.conf
 
 try_remote()
 {
 	[ "${remote}" = "1" ] && err 1 "${N1_COLOR}No such jail${N0_COLOR}"
-	RHST=$( jwhereis ${jname}| /usr/bin/head -n1 )
+	RHST=$( jwhereis ${jname} | ${HEAD_CMD} -n1 )
 	[ -z "${RHST}" ] && err 1 "No such jail for login"
 
 	# we don't need for interactive when come with remote=2 from select_jail_by_list
@@ -40,7 +43,7 @@ init_tmux()
 
 	tmuxcmd=$( which tmux 2>/dev/null )
 
-	src_session="$( /usr/bin/whoami )-nodename"
+	src_session="$( ${WHOAMI_CMD} )-nodename"
 	session_name="${src_session}-${jname}"
 
 	if [ -n "${tmuxcmd}" ]; then
@@ -69,13 +72,13 @@ login_internal()
 	if [ ${exec_fib} -eq 0 ]; then
 		SETFIB=""
 	else
-		SETFIB="/usr/sbin/setfib ${exec_fib}"
+		SETFIB="${SETFIB_CMD}  ${exec_fib}"
 	fi
 
 	if [ "${cpuset}" = "0" ]; then
 		CPUSET=""
 	else
-		CPUSET="/usr/bin/cpuset -c -l ${cpuset}"
+		CPUSET="${CPUSET_CMD}  -c -l ${cpuset}"
 	fi
 
 	case "${ver}" in
@@ -100,14 +103,14 @@ login_internal()
 				. ${distdir}/emulator.subr
 				init_usermode_emul
 				# inherit emulator_flags
-				LOGIN_STR="/bin/${emulator} /usr/bin/login -f ${user}"
+				LOGIN_STR="/bin/${emulator} ${LOGIN_CMD} -f ${user}"
 			else
-				LOGIN_STR="/usr/bin/login -f ${user}"
+				LOGIN_STR="${LOGIN_CMD} -f ${user}"
 			fi
 			;;
 	esac
 
-	jexec="/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} /usr/sbin/jexec ${jid} ${LOGIN_STR}"
+	jexec="/usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}"
 
 	init_tmux
 
@@ -140,6 +143,65 @@ login_custom()
 	export PATH="${CBSDPATH}"
 }
 
+# check for cloud function when CBSDfile exist
+if [ -z "${jname}" ]; then
+	Makefile="${CBSD_PWD}/CBSDfile"
+	if [ -r ${Makefile} ]; then
+		. ${Makefile}
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+			cbsd_api=1
+		else
+			cbsd_api=0
+			all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+			jname="${all_jail_list}"
+		fi
+	fi
+else
+	cbsd_api=0
+fi
+
+if [ ${cbsd_api} -eq 1 ]; then
+	CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+	for jname in ${all_jail_list}; do
+		[ -z "${jname}" ] && return 1
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_len=$( strlen "${_ssh}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
+		fi
+		jexec_cmd="${SSH_CMD} -tt -oStrictHostKeyChecking=no -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+		echo "[debug] exec: $jexec_cmd"
+		${jexec_cmd}
+	done
+	exit 0
+fi
+
 if [ -z "${user}" ]; then
 	user="root"
 else
@@ -158,7 +220,6 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 
-
 [ -z "${jname}" ] && jname=$1
 [ -z "${jname}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify jname as argument${N0_COLOR}"
@@ -168,9 +229,9 @@ validate_jname "${jname}" || err 1 "${N1_COLOR}Bad jname${N0_COLOR}"
 
 . ${jrcconf}
 [ $? -eq 1 ] && try_remote
-[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}For bhyve jail use: ${N2_COLOR}cbsd blogin=${jname} ${N1_COLOR}instead${N0_COLOR}"
+[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}for bhyve please use: ${N2_COLOR}cbsd blogin=${jname} ${N1_COLOR}instead${N0_COLOR}"
 [ "${baserw}" = "1" ] && path=${data}
-[ ${jid} -eq 0 ] && err 1 "Not running"
+[ ${jid} -eq 0 ] && err 1 "not running"
 
 readconf jlogin.conf
 

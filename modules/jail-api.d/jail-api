@@ -1,0 +1,155 @@
+#!/usr/local/bin/cbsd
+#v12.2.2
+DIST_MODULE_PATH="${distmoduledir}/bhyve.d"
+. ${DIST_MODULE_PATH}/share/bhyve.conf
+
+#OPTARGS="${MYCOL} init_masters init_workers"
+MYOPTARG="imgsize jname img ram cpus pubkey host_hostname"
+MYARG="mode"
+#MYOPTARG="display header active human bhyve_name dryrun checkip develop runasap header gold"
+MYDESC="Operate with K8S cluster"
+CBSDMODULE="sys"
+# imgsize=10g mode=init jname=test img=ubuntu ram=1g cpus=2
+ADDHELP="\
+"
+EXTHELP="wf_bhyve"
+
+MODULE_PATH="${dbdir}/bhyve"
+
+. ${subr}
+dryrun=0
+checkip=1
+gold=0
+develop=0
+runasap=0
+init_masters=
+init_workers=
+ip4_gw=
+readconf bhyve-default-default.conf
+readconf bhyve.conf
+
+ip4_addr=
+vm_os_type=
+vm_os_profile=
+ip4_addr=
+ip4_gw=
+
+. ${cbsdinit}
+. ${system}
+. ${strings}
+. ${distdir}/jcreate.subr	# for external_exec_master_script
+
+# ram=1g cpus=2 imgsize=10g pubkey=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILdzM3pm65J28zNt/YcRWSw4NXa8PKU8MhrbA/CShuEm olevole@jhoster1.olevole.ru host_hostname=jail mode=init jname=3 img=ubuntu
+echo "$*" >> /tmp/jail.log
+
+if [ "${mode}" = "destroy" ]; then
+	${FIND_CMD} /usr/local/cloud/ -type d -name vms | while read _dir; do
+		echo "found dir: ${_dir}/${jname}" >> /tmp/a
+		if [ -r ${_dir}/${jname} ]; then
+			cid=$( realpath ${_dir}/${jname} | ${CUT_CMD} -d / -f 5 )
+			${RM_CMD} -f ${_dir}/${jname} /usr/local/cloud/${cid}/${jname}-bhyve.ssh /usr/local/cloud/${cid}/${jname}.node
+		fi
+	done
+	jdestroy jname=${jname}
+
+	exit 0
+fi
+
+## CREATE
+ssh_user=
+ssh_port=
+ssh_host=
+
+readconf bhyve-api.conf
+
+eval vm_os_type="\$${img}_vm_os_type"
+eval vm_os_profile="\$${img}_vm_os_profile"
+eval ssh_user="\$${img}_ssh_user"
+
+
+[ -z "${ssh_host}" ] && "ssh_host empty? check bhyve-api.conf"
+[ -z "${vm_os_type}" ] && "vm_os_type empty? check img/mapping in bhyve-api.conf for: ${img}"
+[ -z "${vm_os_profile}" ] && "vm_os_profile empty? check img/mapping in bhyve-api.conf for: ${img}"
+[ -z "${ssh_user}" ] && "ssh_user empty? check img/mapping in bhyve-api.conf for: ${img}"
+
+ip4_addr=$( dhcpd )
+#ip4_gw="10.0.0.1"
+#ci_jname="${jname}"
+host_hostname="${jname}.my.domain"
+#ci_fqdn="${jname}.my.domain"
+#ci_ip4_addr="${ip4_addr}"
+#ci_gw4="${ip4_gw}"
+ver=12.2
+
+#[ -z "${vm_os_type}" ] && err 1 "no vm_os_type"
+#[ -z "${vm_os_profile}" ] && err 1 "no vm_os_profile"
+
+# additional check for profile/type?
+
+cid=$( ${MD5_CMD} -qs "${pubkey}" )
+[ ! -d /usr/local/cloud/${cid} ] && ${MKDIR_CMD} -p /usr/local/cloud/${cid}
+[ ! -d /usr/local/cloud/${cid}/.ssh ] && ${MKDIR_CMD} -p /usr/local/cloud/${cid}/.ssh
+if [ ! -r /usr/local/cloud/${cid}/.ssh/authorized_keys ]; then
+	echo "${pubkey}" > /usr/local/cloud/${cid}/.ssh/authorized_keys
+	sync
+	#fflush?
+	sleep 1
+fi
+[ ! -d /usr/local/cloud/${cid}/vms ] && ${MKDIR_CMD} -p /usr/local/cloud/${cid}/vms
+
+#vm_cpus=${cpus} \
+#vm_ram=${ram} \
+#imgsize=${imgsize} \
+#vm_os_type=\"${vm_os_type}\" \
+#vm_os_profile=\"${vm_os_profile}\" \
+#ci_jname=\"${jname}\" \
+#ci_fqdn=\"${jname}.my.domain\" \
+#ci_ip4_addr=\"${ip4_addr}\" \
+#ci_gw4=\"${ip4_gw}\" \
+#ci_user_pubkey=\"/usr/local/cloud/${cid}/.ssh/authorized_keys\" \
+#ci_jname="${host_hostname}" \
+#ci_fqdn="${host_hostname}.my.domain" \
+
+
+
+str="cbsd jcreate \
+jname=${jname} \
+runasap=1 \
+ip4_addr=\"${ip4_addr}\" \
+ver=\"${ver}\" \
+fsquota=\"${imgsize}\" \
+ci_user_pubkey=\"/usr/local/cloud/${cid}/.ssh/authorized_keys\" \
+"
+
+echo "${str}" >> /tmp/jail.log
+${str}
+
+#max_retry=20
+#retry=0
+
+#while [ ${retry} -lt ${max_retry} ]; do
+#	if [ -r /usr/jails/vm/${jname}/vnc_port ]; then
+#		vnc_file_stat=$( ${STAT_CMD} -f "%z" /usr/jails/vm/${jname}/vnc_port 2>/dev/null )
+#		[ ${vnc_file_stat} -gt 0 ] && break
+#	fi
+#	sleep 1
+#	retry=$(( retry + 1 ))
+#done
+
+#if [ ${retry} -gt ${max_retry} ]; then
+#	err 1 "unable to read vnc port file: /usr/jails/vm/${jname}/vnc_port"
+#fi
+
+sleep 1
+
+#vnc_port=$( ${HEAD_CMD} -n1 /usr/jails/vm/${jname}/vnc_port | ${AWK_CMD} '{printf $1}' )
+#port=$(( vnc_port + 2000 ))
+#echo "${host_hostname} (${vm_os_type}:${vm_os_profile}) ${cpus}/${ram}/${imgsize} ssh ${ssh_user}@${ssh_host} -p${port}" > /usr/local/cloud/${cid}/vms/${jname}
+#echo $( hostname ) > /usr/local/cloud/${cid}/${jname}.node
+#
+#echo -n "ssh ${ssh_user}@${ssh_host} -p${port}" > /usr/local/cloud/${cid}/${jname}-bhyve.ssh
+#
+#echo "expose mode=add jname=${jname} in=${port} out=22" >> /tmp/jail.log
+#expose mode=add jname=${jname} in=${port} out=22 >> /tmp/jail.log
+
+exit 0

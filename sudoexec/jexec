@@ -1,19 +1,47 @@
 #!/usr/local/bin/cbsd
 #v12.1.7
-MYARG="jname"
-MYOPTARG="cmd user"
+MYARG=""
+MYOPTARG="jname cmd user"
 MYDESC="Execution for command inside jail"
-ADDHELP="if jname='*' then execute command on all jails\n"
+ADDHELP="\
+ If you are in the CBSDfile directory, these environments will always have priority\n\
+ if jname='*' then execute command on all jails\n\
+"
 CBSDMODULE="jail"
 EXTHELP="wf_jexec"
 
 . ${subr}
-
+cloud_api=0
 . ${cbsdinit}
 
-[ -z "${jname}" ] && err 1 "Give me jname"
+if [ -z "${jname}" -a -n "${ojname}" ]; then
+	# inherit jname env
+	jname="${ojname}"
+fi
 
-shift  # todo: jname and cmd may have reverse order
+# check for cloud function when CBSDfile exist
+if [ -z "${jname}" ]; then
+	Makefile="${CBSD_PWD}/CBSDfile"
+	if [ -r ${Makefile} ]; then
+		. ${Makefile}
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+			cbsd_api=1
+		else
+			cbsd_api=0
+			all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+			jname="${all_jail_list}"
+		fi
+	fi
+else
+	cbsd_api=0
+fi
+
+if [ ${cbsd_api} -eq 0 ]; then
+	# todo: multiple bexec via all_bhyve_list?
+	[ -z "${jname}" ] && err 1 "Give me jname"
+	shift  # todo: jname and cmd may have reverse order
+fi
 
 if [ -n "${user}" ]; then
 	shift
@@ -44,7 +72,7 @@ if [ -n "${jail_list}" ]; then
 #		echo "C:[${cmd}]"
 #		continue
 
-		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd jexec jname=${jname} "${cmd}" 2>/dev/null )
+		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec jname=${jname} "${cmd}" 2>/dev/null )
 		task_id="${task_id} ${task_id_cur}"
 	done
 
@@ -55,58 +83,103 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
+if [ ${cbsd_api} -eq 1 ]; then
+	CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
 
-[ ${jid} -ne 0 ] || err 1 "Not running"
-
-#rctl/limits area
-. ${distdir}/rctl.subr
-[ -z "${nice}" ] && nice="0"
-
- _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
-[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
-[ -z "${nice}" ] && nice="0"
-
-if [ ${exec_fib} -eq 0 ]; then
-	SETFIB=""
-else
-	SETFIB="setfib ${exec_fib}"
-fi
-
-if [ "${cpuset}" = "0" ]; then
-	CPUSET=""
-else
-	CPUSET="cpuset -c -l ${cpuset}"
-fi
-
-case "${ver}" in
-	"empty")
-		# is linux?
-		if [ -f "${data}/bin/bash" ]; then
-			LOGIN_STR="/bin/bash"
-		elif [ -f "${data}/bin/sh" ]; then
-			LOGIN_STR="/bin/sh" ];
-		else
-			err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
+	for jname in ${all_jail_list}; do
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
 		fi
-		;;
-	*)
-		if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
-			. ${distdir}/emulator.subr
-			init_usermode_emul
-			LOGIN_STR="/bin/${emulator} /bin/sh"
-		else
-			LOGIN_STR=
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
 		fi
-		;;
-esac
+		_ssh_len=$( strlen "${_ssh}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
+		fi
+		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-if [ -z "${LOGIN_STR}" ]; then
-	exec /usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} /bin/sh -c "${cmd}"
-else
-	exec /usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} ${LOGIN_STR} <<CBSD_EOF
+		echo "[debug]: $j{exec_cmd}"
+		${jexec_cmd} <<CBSD_EOF
 ${cmd}
 CBSD_EOF
+	done
+	exit 0
+else
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
+
+	[ ${jid} -ne 0 ] || err 1 "Not running"
+
+	#rctl/limits area
+	. ${distdir}/rctl.subr
+	[ -z "${nice}" ] && nice="0"
+
+	 _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+	[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
+	[ -z "${nice}" ] && nice="0"
+
+	if [ ${exec_fib} -eq 0 ]; then
+		SETFIB=""
+	else
+		SETFIB="setfib ${exec_fib}"
+	fi
+
+	if [ "${cpuset}" = "0" ]; then
+		CPUSET=""
+	else
+		CPUSET="cpuset -c -l ${cpuset}"
+	fi
+
+	case "${ver}" in
+		"empty")
+			# is linux?
+			if [ -f "${data}/bin/bash" ]; then
+				LOGIN_STR="/bin/bash"
+			elif [ -f "${data}/bin/sh" ]; then
+				LOGIN_STR="/bin/sh" ];
+			else
+				err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
+			fi
+			;;
+		*)
+			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
+				. ${distdir}/emulator.subr
+				init_usermode_emul
+				LOGIN_STR="/bin/${emulator} /bin/sh"
+			else
+				LOGIN_STR=
+			fi
+			;;
+	esac
+
+	if [ -z "${LOGIN_STR}" ]; then
+		exec /usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} /bin/sh -c "${cmd}"
+	else
+		exec /usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} ${LOGIN_STR} <<CBSD_EOF
+${cmd}
+CBSD_EOF
+	fi
 fi
+
+exit 0

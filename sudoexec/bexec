@@ -1,19 +1,51 @@
 #!/usr/local/bin/cbsd
 #v12.1.2
-MYARG="jname"
-MYOPTARG="cmd user script"
+MYARG=""
+MYOPTARG="jname cmd user script"
 MYDESC="Execution for command inside cloud-based vm"
-ADDHELP="if jname='*' then execute command on all vms\n\
-  cmd - command to execute inside VM, e.g\n\
-    bexec jname=centos1 sudo yum update -y\n\n\
-  script - path to script instead of command\n"
+ADDHELP="\
+ If you are in the CBSDfile directory, these environments will always have priority\n\
+ if jname='*' then execute command on all vms\n\
+ cmd - command to execute inside VM, e.g\n\
+  bexec jname=centos1 sudo yum update -y\n\
+ script - path to script instead of command\n\
+"
 CBSDMODULE="bhyve"
 
 . ${subr}
 script=
+ojname="${jname}"
+cbsd_api=0
 . ${cbsdinit}
 
-[ -z "${jname}" ] && err 1 "Give me jname"
+if [ -z "${jname}" -a -n "${ojname}" ]; then
+	# inherit jname env
+	jname="${ojname}"
+fi
+
+# check for cloud function when CBSDfile exist
+if [ -z "${jname}" ]; then
+	Makefile="${CBSD_PWD}/CBSDfile"
+	if [ -r ${Makefile} ]; then
+		. ${Makefile}
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+			cbsd_api=1
+		else
+			cbsd_api=0
+			all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+			jname="${all_bhyve_list}"
+		fi
+	fi
+else
+	cbsd_api=0
+fi
+
+if [ ${cbsd_api} -eq 0 ]; then
+	# todo: multiple bexec via all_bhyve_list?
+	[ -z "${jname}" ] && err 1 "Give me jname"
+fi
+
 
 if [ -z "${script}" ]; then
 	# Pass '"' as ' in cmd
@@ -51,9 +83,6 @@ else
 	unset cmd
 fi
 
-#echo "OK: ${cmd}"
-#exit 0
-
 emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple	# import jail_list if jname is mask
 
@@ -71,9 +100,9 @@ if [ -n "${jail_list}" ]; then
 		. ${jrcconf}
 		[ ${myjid} -eq 0 ] && continue
 		if [ -n "${script}" ]; then
-			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
 		else
-			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
 		fi
 		task_id="${task_id} ${task_id_cur}"
 	done
@@ -85,13 +114,56 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 
-. ${jrcconf}
-[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
 
-[ ${jid} -ne 0 ] || err 1 "Not running"
+if [ ${cbsd_api} -eq 0 ]; then
+	. ${jrcconf}
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+	[ ${jid} -ne 0 ] || err 1 "Not running"
 
-readconf bexec.conf
+	readconf bexec.conf
+else
+	CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+
+	for jname in ${all_bhyve_list}; do
+		_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+		fi
+		_ssh_len=$( strlen "${_ssh}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+		elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+			_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+		else
+			date
+		fi
+	fi
+	bexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+
+	echo "[debug]: ${bexec_cmd}"
+	${bexec_cmd} <<CBSD_EOF
+${cmd}
+CBSD_EOF
+
+	done
+	exit 0
+fi
 
 if [ -n "${cmd}" ]; then
 	exec ${bexec_cmd} <<CBSD_EOF

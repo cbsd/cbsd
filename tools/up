@@ -1,18 +1,25 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname cwd multiple cur_env quiet"
+MYOPTARG="cbsdfile cur_env cwd jname multiple quiet"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP="\
  cbsdfile - alternative path to CBSDfile, could be relative to the\n\
- working directory like: tmp/CBSDfile\n
+   working directory like: tmp/CBSDfile\n\
+Some parameters can be reassigned on the command line, e,g. one CBSDfile\n\
+to build an image of several versions:\n\
+ cbsd up ver=13.0\n\
+ cbsd up ver=12.2\n\
 "
 EXTHELP="wf_cbsdfile"
 
 . ${subr}
 . ${strings}
 cwd=
+jname=
+CLOUD_URL=
+CLOUD_KEY=
 . ${cbsdinit}
 
 # flags for multiple CBSDfile env
@@ -67,21 +74,66 @@ bhyve_ssh_wait()
 	return 0
 }
 
+# testing/wip
+run_jail_cloud()
+{
+	local CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+
+	${CAT_CMD} > up-${jname}.json <<EOF
+{
+  "type": "jail",
+  "imgsize": "${imgsize}",
+  "ram": "${vm_ram}",
+  "cpus": "${vm_cpus}",
+  "img": "${img}",
+  "pubkey": "${CLOUD_KEY}"
+}
+EOF
+
+	${CAT_CMD} > deploy-${jname}.sh <<EOF
+${CURL_CMD} -X POST -H "Content-Type: application/json" -d @up-${jname}.json ${CLOUD_URL}/api/v1/create/${jname}
+EOF
+	${CHMOD_CMD} +x deploy-${jname}.sh
+	./deploy-${jname}.sh
+	# without debug
+	${RM_CMD} -f ./deploy-${jname}.sh ./up-${jname}.json
+	return 0
+}
+
+
 run_jail()
 {
 	local _val _ret MYOPTARG JAIL_ARGS i ojname
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
-
-	. ${jrcconf}
-	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
-
-	ojname="${jname}"
 
 	# should be in sync with jcreate script
 	MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet"
 	. ${distsharedir}/jail-arg
 	JAIL_ARGS="${JARG}"
 	MYOPTARG="${MYOPTARG} ${JAIL_ARGS}"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		# unset all
+		ojname="${jname}"
+
+		for i in ${JAIL_ARGS}; do
+			unset ${i}
+		done
+
+		jname="${ojname}"
+		jail_${jname}
+
+		run_jail_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	ojname="${jname}"
 
 	# push old cbsd workdir
 	ocbsd_workdir="${workdir}"
@@ -172,17 +224,40 @@ run_jail()
 	cbsd_workdir="${ocbsd_workdir}"
 }
 
+# testing/wip
+run_bhyve_cloud()
+{
+	local CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+
+	${CAT_CMD} > up-${jname}.json <<EOF
+{
+  "type": "bhyve",
+  "imgsize": "${imgsize}",
+  "ram": "${vm_ram}",
+  "cpus": "${vm_cpus}",
+  "img": "${img}",
+  "pubkey": "${CLOUD_KEY}"
+}
+EOF
+
+	${CAT_CMD} > deploy-${jname}.sh <<EOF
+${CURL_CMD} -X POST -H "Content-Type: application/json" -d @up-${jname}.json ${CLOUD_URL}/api/v1/create/${jname}
+EOF
+	${CHMOD_CMD} +x deploy-${jname}.sh
+	./deploy-${jname}.sh
+	# without debug
+	${RM_CMD} -f ./deploy-${jname}.sh ./up-${jname}.json
+	return 0
+}
+
 run_bhyve()
 {
 	local MYOPTARG BHYVE_ARGS ojname _ret
+
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
-	. ${jrcconf}
-	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
-
-	ojname="${jname}"
-	# should be in sync with bcreate script (except: jname)
-	MYOPTARG="jconf inter removejconf"
 	# allow all bhyve settings
 	BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator \
 	imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile \
@@ -191,6 +266,29 @@ run_bhyve()
 	vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface \
 	ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid \
 	ci_interface_mtu"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		# unset all
+		ojname="${jname}"
+
+		for i in ${BHYVE_ARGS}; do
+			unset ${i}
+		done
+
+		jname="${ojname}"
+		bhyve_${jname}
+
+		run_bhyve_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	ojname="${jname}"
+	# should be in sync with bcreate script (except: jname)
+	MYOPTARG="jconf inter removejconf"
 	MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 
 	# push old cbsd workdir
