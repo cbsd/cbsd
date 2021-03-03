@@ -87,13 +87,14 @@ fw_expose_add()
 	res=$( ${NC_CMD} -w1 -z ${inaddr} ${in} 2>/dev/null )
 
 	if [ $? -eq 0 ]; then
-		${ECHO} "${N1_COLOR}Port already in use on ${inaddr}: ${N2_COLOR}${in}${N0_COLOR}"
-		return 0
+		${ECHO} "${N1_COLOR}port already in use on ${inaddr}: ${N2_COLOR}${in}${N0_COLOR}"
+		return 1
 	fi
 
 	[ -f ${ftmpdir}/${jname}-expose_fwnum ] && fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 
 	${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR}"
+	cbsdlogger NOTICE ${CBSD_APP}: ${jname}: proto: ${proto}: ${in}:${out}
 
 	case "${nat_enable}" in
 		pf)
@@ -113,6 +114,8 @@ EOF
 			echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
 			;;
 	esac
+
+	return 0
 }
 
 fw_expose_apply()
@@ -140,6 +143,7 @@ fw_expose_clear()
 			[ ! -f ${etcdir}/pfnat.conf ] && return 0
 			if ${GREP_CMD} -E "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${etcdir}/pfnat.conf 2>&1; then
 				${CP_CMD} -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
+				cbsdlogger NOTICE ${CBSD_APP}: fw_expose_clear for ${jname}: via pfnat
 				${GREP_CMD} -E -v "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${tmpdir}/pfnat.conf | ${GREP_CMD} "." > ${etcdir}/pfnat.conf
 				naton
 			fi
@@ -150,6 +154,7 @@ fw_expose_clear()
 			else
 				fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 			fi
+			cbsdlogger NOTICE ${CBSD_APP}: fw_expose_clear for ${jname}: delete ipfw rule ${fwnum}
 			${IPFW_CMD} delete ${fwnum}
 			;;
 	esac
@@ -160,6 +165,7 @@ fw_expose_delete()
 	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
 
 	cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
+	cbsdlogger NOTICE ${CBSD_APP}: fw_expose_delete: delete config for: ${jname}
 
 	case "${nat_enable}" in
 		pf)
@@ -245,7 +251,15 @@ COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
 case "${mode}" in
 	add)
 		fw_expose_add
-		cbsdsqlrw ${exposefile} "INSERT INTO expose ( pin, pout, proto, inaddr, outaddr ) VALUES ( ${in}, ${out}, \"${proto}\", \"${inaddr}\", \"${outaddr}\" )"
+		ret=$?
+		if [ ${ret} -eq 0 ]; then
+			# check for dup
+			_res=$( cbsdsqlro ${exposefile} "SELECT pin FROM expose WHERE pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\"" | ${HEAD_CMD} -n 1 )
+			[ -n "${_res}" ] && err 1 "${N1_COLOR}${CBSD_APP}: already exist in DB: pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
+			cbsdsqlrw ${exposefile} "INSERT INTO expose ( pin, pout, proto, inaddr, outaddr ) VALUES ( ${in}, ${out}, \"${proto}\", \"${inaddr}\", \"${outaddr}\" )"
+		else
+			err 1 "${N1_COLOR}${CBSD_APP}: fw_expose_add error: ${ret}${N0_COLOR}"
+		fi
 		;;
 	delete)
 		fw_expose_delete
