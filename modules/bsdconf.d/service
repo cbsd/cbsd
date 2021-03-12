@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 CBSDMODULE="bsdconf"
-MYARG="jname mode"
-MYOPTARG="baseonly ver arch service"
+MYARG="mode"
+MYOPTARG="jname baseonly ver arch service"
 MYDESC="cbsd service wrapper"
 ADDHELP="jname= work in with jail. Also can be path to basejail\n\
 mode= work mode, list or action\n\
@@ -16,9 +16,8 @@ example:\n\
 EXTHELP="modules/bsdconf.d"
 
 . ${subr}
-
 unset jname baseonly arch ver service
-
+cbsd_api=0
 . ${cbsdinit}
 . ${system}
 
@@ -85,8 +84,59 @@ SERVICE="service"
 # MAIN
 origjname=
 emulator="jail" # for jname_is_multiple
-jail_list=
-jname_is_multiple
+
+if [ -z "${jname}" -a -n "${ojname}" ]; then
+	# inherit jname env
+	jname="${ojname}"
+fi
+
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ -r ${Makefile} ]; then
+	${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+	. ${Makefile}
+
+	all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+	[ -z "${all_jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no jail found${N0_COLOR}"
+
+	if [ -n "${jname}" ]; then
+		found=0
+		for i in ${all_jail_list}; do
+			if [ "${i}" = "${jname}" ]; then
+				found=1
+				break
+			fi
+		done
+		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+		all_jail_list="${jname}"
+	fi
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+fi
+
+if [ -n "${all_jail_list}" ]; then
+	jail_list="${all_jail_list}"
+else
+	jail_list=
+	jname_is_multiple
+fi
+
+if [ -n "${jail_list}" ]; then
+	num_jails=0
+	for i in ${jail_list}; do
+		num_jails=$(( num_jails + 1 ))
+	done
+	if [ ${num_jails} -eq 1 ]; then
+		jname="${jail_list}"
+		unset jail_list
+	fi
+fi
 
 # MAIN for multiple jails
 if [ -n "${jail_list}" ]; then
@@ -152,6 +202,50 @@ done
 
 # test jname as path ?
 prefix=$( substr --pos=0 --len=1 --str="${jname}" )
+
+if [ ${cbsd_api} -eq 1 ]; then
+	CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+	for jname in ${all_jail_list}; do
+		[ -z "${jname}" ] && return 1
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_len=$( strlen "${_ssh}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
+		fi
+		jexec_cmd="${SSH_CMD} -tt -oStrictHostKeyChecking=no -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+		exec_cmd="${SERVICE_CMD} ${cmd}"
+		echo "[debug] exec $jname: $jexec_cmd ${exec_cmd}"
+		${jexec_cmd} ${exec_cmd}
+	done
+	exit 0
+fi
+
+[ -z "${jname}" ] && err 1 "${N1_COLOR}please set: ${N2_COLOR}${jname}${N0_COLOR}"
 
 ## MAIN ##
 if [ "${prefix}" = "/" ]; then

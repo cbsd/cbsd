@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v12.1.12
+#v13.0.2
 CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="verbose"
@@ -19,7 +19,7 @@ EXTHELP="wf_jscp"
 . ${strings}
 
 verbose=0
-
+cloud_api=0
 . ${cbsdinit}
 
 
@@ -73,8 +73,80 @@ scp()
 	fi
 
 	[ -z "${jname}" -o -z "${rfile}" ] && log_err 1 "${N1_COLOR}jail path via jail:path records not determine${N0_COLOR}"
-
 	validate_jname "${jname}" || log_err 1 "${N1_COLOR}bad jname: ${jname}${N0_COLOR}"
+
+	Makefile="${CBSD_PWD}/CBSDfile"
+	if [ -r ${Makefile} ]; then
+		${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+		. ${Makefile}
+		all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			cbsd_api=1
+		else
+			cbsd_api=0
+		fi
+	else
+		cbsd_api=0
+	fi
+
+	if [ ${cbsd_api} -eq 1 ]; then
+		CURL_CMD=$( which curl )
+		[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+		${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+		_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+		found=0
+		for i in ${all_jail_list}; do
+			if [ "${i}" = "${jname}" ]; then
+				found=1
+				break
+			fi
+		done
+		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+		for _jname in ${all_jail_list}; do
+			_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1 )
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+			fi
+			_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+			if [ "${_ssh_pref}" != "ssh" ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+			fi
+			_ssh_len=$( strlen "${_ssh}" )
+			_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+			#echo "${SSH_CMD} ${_ssh_post}"
+			_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
+			_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+			# rewrite
+			if [ -n "${SUDO_USER}" ]; then
+				if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+					_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+				elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+					_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+				else
+					date
+				fi
+			fi
+
+			if [ ${rarg} -eq 1 ]; then
+				DIR=$( ${DIRNAME_CMD} ${2} )
+				[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
+				scp_exec="${SCP_CMD} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_ip}:${rfile} ${2}"
+				echo "[debug] ${scp_exec}"
+			else
+				scp_exec="${SCP_CMD} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${1} ${_ssh_ip}:${rfile}"
+				echo "[debug] ${scp_exec}"
+			fi
+		done
+		exit 0
+	fi
 
 	. ${jrcconf}
 	if [ $? -eq 1 ]; then
