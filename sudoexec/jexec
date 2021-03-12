@@ -21,7 +21,7 @@ fi
 
 Makefile="${CBSD_PWD}/CBSDfile"
 if [ -r ${Makefile} ]; then
-	${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 	. ${Makefile}
 	all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
 	jname="${all_jail_list}"
@@ -50,7 +50,17 @@ else
 fi
 
 [ -z "${cmd}" ] && cmd="${@}"
-[ -z "${cmd}" ] && err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
+if [ -z "${cmd}" ]; then
+	batchfile=$( ${MKTEMP_CMD} )
+	while read _line; do
+		echo "${_line}" >> ${batchfile}
+	done
+	jscp ${batchfile} ${jname}:${batchfile}
+	jexec /bin/sh ${batchfile}
+	${RM_CMD} -f ${batchfile}
+	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
+	exit 0
+fi
 
 emulator="jail"		# for jname_is_multiple
 jname_is_multiple	# import jail_list if jname is mask
@@ -86,8 +96,10 @@ fi
 if [ ${cbsd_api} -eq 1 ]; then
 	CURL_CMD=$( which curl )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
 	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+	_global_ret=0
 
 	for jname in ${all_jail_list}; do
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
@@ -95,12 +107,14 @@ if [ ${cbsd_api} -eq 1 ]; then
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
 		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
 		if [ "${_ssh_pref}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
 		_ssh_len=$( strlen "${_ssh}" )
@@ -118,12 +132,12 @@ if [ ${cbsd_api} -eq 1 ]; then
 		fi
 		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-		echo "[debug]: $j{exec_cmd}"
+		echo "[jexec debug]: ${exec_cmd}"
 		${jexec_cmd} <<CBSD_EOF
 ${cmd}
 CBSD_EOF
 	done
-	exit 0
+	exit ${_global_ret}
 else
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
