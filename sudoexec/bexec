@@ -24,28 +24,29 @@ if [ -z "${jname}" -a -n "${ojname}" ]; then
 fi
 
 # check for cloud function when CBSDfile exist
-if [ -z "${jname}" ]; then
-	Makefile="${CBSD_PWD}/CBSDfile"
-	if [ -r ${Makefile} ]; then
-		. ${Makefile}
-		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-			all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
-			cbsd_api=1
-		else
-			cbsd_api=0
-			all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
-			jname="${all_bhyve_list}"
-		fi
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. ${Makefile}
+	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+	jname="${all_bhyve_list}"
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
 	fi
 else
 	cbsd_api=0
 fi
 
-if [ ${cbsd_api} -eq 0 ]; then
-	# todo: multiple bexec via all_bhyve_list?
-	[ -z "${jname}" ] && err 1 "Give me jname"
+if [ -z "${all_jail_list}" ]; then
+	if [ ${cbsd_api} -eq 0 ]; then
+		# todo: multiple bexec via all_bhyve_list?
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+		shift  # todo: jname and cmd may have reverse order
+	fi
 fi
-
 
 if [ -z "${script}" ]; then
 	# Pass '"' as ' in cmd
@@ -81,6 +82,19 @@ if [ -z "${script}" ]; then
 	done )
 else
 	unset cmd
+fi
+
+if [ -z "${cmd}" ]; then
+	batchfile=$( ${MKTEMP_CMD} )
+	# todo: test/chec for stdin/blocked
+	while read _line; do
+		echo "${_line}" >> ${batchfile}
+	done
+	bscp ${batchfile} ${jname}:${batchfile}
+	bexec /bin/sh ${batchfile}
+	${RM_CMD} -f ${batchfile}
+	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
+	exit 0
 fi
 
 emulator="bhyve"	# for jname_is_multiple
@@ -126,20 +140,25 @@ else
 	CURL_CMD=$( which curl )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+	_global_ret=0
 
 	for jname in ${all_bhyve_list}; do
-		_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
 		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
 		if [ "${_ssh_pref}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
+			continue
 		fi
 		_ssh_len=$( strlen "${_ssh}" )
 		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
@@ -148,13 +167,13 @@ else
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
-		elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
-			_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
-		else
-			date
+			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
 		fi
-	fi
-	bexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+		bexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
 	echo "[debug]: ${bexec_cmd}"
 	${bexec_cmd} <<CBSD_EOF
@@ -162,7 +181,7 @@ ${cmd}
 CBSD_EOF
 
 	done
-	exit 0
+	exit ${_global_ret}
 fi
 
 if [ -n "${cmd}" ]; then
