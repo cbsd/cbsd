@@ -17,7 +17,9 @@
 
 #include "elf_tables.h"
 
+#if !defined(roundup2)
 #define roundup2(x, y)	(((x)+((y)-1))&(~((y)-1)))	/* if y is powers of two */
+#endif
 
 static void
 usage(void)

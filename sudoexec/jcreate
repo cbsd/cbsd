@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
-#v12.1.9
+#v13.0.1
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
-MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet"
+MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey"
 # allow all jail settings
 . ${distsharedir}/jail-arg
 JAIL_ARGS="${JARG}"
@@ -17,6 +17,9 @@ ADDHELP="\
  pkg_bootstrap = 0,1; overwrite pkg_bootstrap from conf file.\n\
  removejconf   = 0,1: remove jconf after jcreate? 0 - don't remove\n\
  quiet         = 0,1: be quiet, dont output verbose message\n\
+Examples:\n\
+ cbsd jcreate jname=test runasap=1\n\
+ cbsd jcreate jname=test2 astart=0 pkglist=\"misc/mc net/fping\" ip4_addr=DHCP,DHCPv6 allow_sysvipc=1 allow_raw_sockets=1\n\
 "
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate"
@@ -27,6 +30,7 @@ EXTHELP="wf_jcreate"
 . ${mdtools}
 . ${jfs}
 
+ci_user_pubkey=
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -197,6 +201,9 @@ if [ -n "${tpl_pkglist}" ]; then
 	pkglist="${tpl_pkglist}"
 fi
 
+#re-init rctl_ vars
+[ -n "${fsquota}" ] && rctl_fsquota="${fsquota}"
+
 . ${buildconf}
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}No such jname variable${N0_COLOR}"
@@ -284,7 +291,7 @@ fi
 if [ -d "${jailsysskeldir}" ]; then
 	# we have custom skeldir. copy
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Applying custom skel system dir template from: ${N2_COLOR}${jailsysskeldir}${N1_COLOR}"
-	${RSYNC_CMD} -a ${jailsysskeldir} ${jailsysdir}/${jname}/
+	${RSYNC_CMD} -a ${jailsysskeldir}/ ${jailsysdir}/${jname}/
 	# local fstab ?
 	[ -f "${jailsysskeldir}/fstab.local" ] && fstablocal="${jailsysskeldir}/fstab.local"
 fi
@@ -470,14 +477,48 @@ fi
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
 	eval _val="\$rctl_${i}"
-	if [ -n "${_val}" ]; then
-		#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
-		jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
-	fi
+	[ -z "{_val}" ] && continue
+	#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
+	jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
 done
 
 if [ -n "${nic_hwaddr}" ]; then
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr=\"${nic_hwaddr}\""
+fi
+
+# pubkey ?
+if [ -n "${ci_user_pubkey}" ]; then
+	# empty/linux jail test?
+	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, enable service: ${N2_COLOR}sshd${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, adjust via jail rc.conf: ${N2_COLOR}PermitRootLogin=without-password${N0_COLOR}"
+	${SYSRC_CMD} -qf ${data}/etc/rc.conf sshd_flags+=" -oPermitRootLogin=without-password" sshd_enable=YES > /dev/null 2>&1
+	. ${distdir}/settings-tui-virtual.subr  # for is_valid_ssh_key
+	# check for injection/strip..
+	if [ -r "${workdir}/${ci_user_pubkey}" ]; then
+		_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+#		echo "C ${_keytest}"
+		if ! is_valid_ssh_key "${_keytest}"; then
+				echo "cloudinit: invalid ssh key from ${workdir}/${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+				echo "found: [${_keytest}]"
+				return 1
+		fi
+	elif [ -r "${ci_user_pubkey}" ]; then
+		_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+		if ! is_valid_ssh_key "${_keytest}"; then
+			echo "cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+			echo "found: [${_keytest}]"
+			return 1
+		fi
+	else
+		if ! is_valid_ssh_key "${ci_user_pubkey}"; then
+			echo "cloudinit: invalid ssh key: [${ci_user_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+			return 1
+		fi
+		_keytest="${ci_user_pubkey}"
+	fi
+	[ ! -d ${data}/root/.ssh ] && ${MKDIR_CMD} -m 0700 ${data}/root/.ssh
+	echo "${_keytest}" >> ${data}/root/.ssh/authorized_keys
+	${CHMOD_CMD} 0644 ${data}/root/.ssh/authorized_keys
 fi
 
 jswmode jname=${jname} mode=master comment='0'
@@ -511,7 +552,7 @@ if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; t
 fi
 diff_time=$( displaytime ${diff_time} )
 [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
-cbsdlogger NOTICE ${CBSD_APP}: vm ${jname} has been created in ${diff_time}
+cbsdlogger NOTICE ${CBSD_APP}: jail ${jname} has been created in ${diff_time}
 
 # create.d hook
 geniplist	${ip4_addr}			# for ipvX_first_public-like vars

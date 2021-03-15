@@ -1,23 +1,33 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
 MYARG=""
-MYOPTARG="cbsdfile jname cwd multiple cur_env quiet"
+MYOPTARG="cbsdfile cur_env cwd jname multiple quiet"
 MYDESC="work with CBSDfile, vagrant-like behavior"
 CBSDMODULE="sys"
 ADDHELP="\
  cbsdfile - alternative path to CBSDfile, could be relative to the\n\
- working directory like: tmp/CBSDfile\n
+   working directory like: tmp/CBSDfile\n\
+Some parameters can be reassigned on the command line, e,g. one CBSDfile\n\
+to build an image of several versions:\n\
+ cbsd up ver=13.0\n\
+ cbsd up ver=12.2\n\
 "
 EXTHELP="wf_cbsdfile"
 
 . ${subr}
 . ${strings}
 cwd=
+jname=
+CLOUD_URL=
+CLOUD_KEY=
 . ${cbsdinit}
 
 # flags for multiple CBSDfile env
 [ -z "${multiple}" ] && multiple=0
 [ -z "${cur_env}" ] && cur_env=1
+
+# skip notice for subcommand with CBSDfile/API
+export CBSDFILE_RECURSIVE=1
 
 # init CBSDfile data
 if [ -n "${cwd}" ]; then
@@ -43,16 +53,79 @@ bhyve_ssh_wait()
 		_attempt_max="${bhyve_ssh_wait_timeout}"
 	fi
 
-	${ECHO} "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
+	printf "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
 	# wait for VM boot
+	# Some OSes are unstable after the first connection, we will check three times for stability
+	pass=0
 	_y=2		# test for timeout exceed
+	printf "${N1_COLOR}[" 1>&1
 	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		#_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
 		_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
-		[ $? -eq 0 ] && break
+		if [ $? -eq 0 ]; then
+			pass=$(( pass + 1 ))
+		else
+			pass=0
+		fi
+		case ${pass} in
+			0)
+				printf "." 1>&2
+				;;
+			1)
+				printf "o" 1>&2
+				;;
+			3)
+				printf "O" 1>&2
+				;;
+		esac
+		# when three times pass, we believe that the system is stable
+		[ ${pass} -eq 3 ] && break
 		_y=$(( _y + 1 ))
 		sleep 1
 		# todo: delete only ip
-		${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
+		[ -z "${CLOUD_URL}" ] && ${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
+		if [ ${_y} -eq ${_attempt_max} ]; then
+			# restore old settings
+			set ${_orig_options}
+			return 1
+		fi
+	done
+	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
+
+	${ECHO} "${N1_COLOR}bhyve ssh available${N0_COLOR}"
+	# restore old settings
+	set ${_orig_options}
+
+	return 0
+}
+
+jail_ssh_wait()
+{
+	local _orig_options _ret
+	_orig_options=$( set +o )
+
+	# disable errexit/xtrace settings for a while..
+	set +o xtrace
+	set +o errexit
+
+	local _attempt_max=60 _i _x _y
+	readconf cbsdfile.conf
+	if [ -n "${jail_ssh_wait_timeout}" ]; then
+		_attempt_max="${jail_ssh_wait_timeout}"
+	fi
+
+	${ECHO} "${N1_COLOR}waiting jail ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
+	# wait for VM boot
+	_y=2		# test for timeout exceed
+	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		_x=$( timeout 10 cbsd jexec jname=${jname} date > /dev/null 2>&1 )
+		_ret=$?
+		[ ${_ret} -eq 0 ] && break
+		_y=$(( _y + 1 ))
+		sleep 1
+		[ -z "${CBSDFILE_RECURSIVE}" ] && printf "." 1>&2
+		# todo: delete only ip
+		[ -z "${CLOUD_URL}" ] && ${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
 		if [ ${_y} -eq ${_attempt_max} ]; then
 			# restore old settings
 			set ${_orig_options}
@@ -60,28 +133,125 @@ bhyve_ssh_wait()
 		fi
 	done
 
-	${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
+	${ECHO} "${N1_COLOR}jail ssh available${N0_COLOR}"
 	# restore old settings
 	set ${_orig_options}
 
 	return 0
 }
 
+
+# testing/wip
+run_jail_cloud()
+{
+	local CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	[ -z "${ssh_wait}" ] && ssh_wait=0
+
+	${CAT_CMD} > up-${jname}.json <<EOF
+{
+  "type": "jail",
+  "imgsize": "${imgsize}",
+  "ram": "${vm_ram}",
+  "cpus": "${vm_cpus}",
+  "img": "${img}",
+  "pkglist": "${pkglist}",
+  "tags": "${tags}",
+  "pubkey": "${CLOUD_KEY}"
+}
+EOF
+
+	${CAT_CMD} > deploy-${jname}.sh <<EOF
+${CURL_CMD} -X POST -H "Content-Type: application/json" -d @up-${jname}.json ${CLOUD_URL}/api/v1/create/${jname}
+EOF
+	${CHMOD_CMD} +x deploy-${jname}.sh
+	./deploy-${jname}.sh
+	# without debug
+	${RM_CMD} -f ./deploy-${jname}.sh ./up-${jname}.json
+
+	#if fn_exists postcreate_${jname} 2>/dev/null; then
+		# we cannot execute the postcreate function
+		# if we do not wait for ssh, force ssh_wait?
+		#jail_ssh_wait=1
+	#fi
+
+	if [ ${ssh_wait} -eq 1 ]; then
+		jail_ssh_wait
+		ret=$?
+	else
+		ret=0
+	fi
+	if [ ${ret} -eq 0 ]; then
+		#jail_${jname}		# re-read variables
+
+		if fn_exists postcreate_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+
+			postcreate_${jname}
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		# per-env postup func
+		if fn_exists postup_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			postup_${jname}
+			jname="${ojname}"		# for corrupted/changed jname in func
+		fi
+	else
+		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+	return 0
+}
+
+
 run_jail()
 {
 	local _val _ret MYOPTARG JAIL_ARGS i ojname
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
-
-	. ${jrcconf}
-	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
-
-	ojname="${jname}"
 
 	# should be in sync with jcreate script
 	MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet"
 	. ${distsharedir}/jail-arg
 	JAIL_ARGS="${JARG}"
 	MYOPTARG="${MYOPTARG} ${JAIL_ARGS}"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		# unset all
+		ojname="${jname}"
+
+		for i in ${JAIL_ARGS}; do
+			unset ${i}
+		done
+
+		jname="${ojname}"
+		jail_${jname}
+
+		run_jail_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	ojname="${jname}"
 
 	# push old cbsd workdir
 	ocbsd_workdir="${workdir}"
@@ -137,6 +307,10 @@ run_jail()
 		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
 	fi
 
+	if [ -d ${myworkdir}/skel ]; then
+		JAIL_ARGS="${JAIL_ARGS} customskel=${myworkdir}/skel"
+	fi
+
 	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${N1_COLOR}${JAIL_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
 	set -o errexit
 	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${JAIL_ARGS} ${CBSDFILE_ARGS}
@@ -149,12 +323,22 @@ run_jail()
 		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		# cleanup jail when postcreate action failed
 		trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
+
+		# export some variables via H_CBSD_ (for scp,expose, and so on...)
+		export H_CBSD_jname="${jname}"
+
 		set -o errexit
 		set -o xtrace
+
 		postcreate_${jname}
+
 		set +o xtrace
 		set +o errexit
 		trap "" HUP INT ABRT BUS TERM EXIT
+
+		# export some variables via H_CBSD_
+		unset H_CBSD_jname
+
 		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
 	else
 		${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
@@ -172,17 +356,84 @@ run_jail()
 	cbsd_workdir="${ocbsd_workdir}"
 }
 
+# testing/wip
+run_bhyve_cloud()
+{
+	local CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	[ -z "${ssh_wait}" ] && ssh_wait=0
+
+	${CAT_CMD} > up-${jname}.json <<EOF
+{
+  "type": "bhyve",
+  "imgsize": "${imgsize}",
+  "ram": "${vm_ram}",
+  "cpus": "${vm_cpus}",
+  "img": "${img}",
+  "tags": "${tags}",
+  "pubkey": "${CLOUD_KEY}"
+}
+EOF
+
+	${CAT_CMD} > deploy-${jname}.sh <<EOF
+${CURL_CMD} -X POST -H "Content-Type: application/json" -d @up-${jname}.json ${CLOUD_URL}/api/v1/create/${jname}
+EOF
+	${CHMOD_CMD} +x deploy-${jname}.sh
+	./deploy-${jname}.sh
+	# without debug
+	${RM_CMD} -f ./deploy-${jname}.sh ./up-${jname}.json
+
+	if [ ${ssh_wait} -eq 1 ]; then
+		bhyve_ssh_wait
+		ret=$?
+	else
+		ret=0
+	fi
+	if [ ${ret} -eq 0 ]; then
+		#bhyve_${jname}		# re-read variables
+
+		if fn_exists postcreate_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+
+			postcreate_${jname}
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		# per-env postup func
+		if fn_exists postup_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			postup_${jname}
+			jname="${ojname}"		# for corrupted/changed jname in func
+		fi
+	else
+		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+	return 0
+}
+
 run_bhyve()
 {
 	local MYOPTARG BHYVE_ARGS ojname _ret
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
-	. ${jrcconf}
-	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_bhyve: empty jname${N0_COLOR}"
 
-	ojname="${jname}"
-	# should be in sync with bcreate script (except: jname)
-	MYOPTARG="jconf inter removejconf"
 	# allow all bhyve settings
 	BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator \
 	imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile \
@@ -191,6 +442,29 @@ run_bhyve()
 	vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface \
 	ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid \
 	ci_interface_mtu"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		# unset all
+		ojname="${jname}"
+
+		for i in ${BHYVE_ARGS}; do
+			unset ${i}
+		done
+
+		jname="${ojname}"
+		bhyve_${jname}
+
+		run_bhyve_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${jrcconf}
+	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	ojname="${jname}"
+	# should be in sync with bcreate script (except: jname)
+	MYOPTARG="jconf inter removejconf"
 	MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 
 	# push old cbsd workdir
@@ -254,20 +528,25 @@ run_bhyve()
 		ret=0
 	fi
 	if [ ${ret} -eq 0 ]; then
-		${ECHO} "${N1_COLOR}ssh available${N0_COLOR}"
-
 		#bhyve_${jname}		# re-read variables
 
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
 			# cleanup bhyve when postcreate action failed
 			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
 			set -o errexit
 			set -o xtrace
+
 			postcreate_${jname}
+
 			set +o xtrace
 			set +o errexit
 			trap "" HUP INT ABRT BUS TERM EXIT
+			unset H_CBSD_jname
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
 		else
 			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
@@ -360,7 +639,7 @@ done
 cur_env=1
 for jname in ${jail_list} ${bhyve_list}; do
 	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up multiple=${max_env} cur_env=${cur_env} cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd up multiple=${max_env} cur_env=${cur_env} cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
 	task_id="${task_id} ${task_id_cur}"
 	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
 	cur_env=$(( cur_env + 1 ))

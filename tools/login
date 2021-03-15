@@ -1,0 +1,94 @@
+#!/usr/local/bin/cbsd
+#v12.1.11
+MYARG=""
+MYOPTARG="cbsdfile cur_env cwd jname"
+MYDESC="SSH into a running CBSDfile machine and give you access to a shell"
+CBSDMODULE="sys"
+ADDHELP="\
+ (experimental)\n\
+ cbsdfile - alternative path to CBSDfile, could be relative to the\n\
+   working directory like: tmp/CBSDfile\n\
+"
+EXTHELP="wf_cbsdfile"
+
+. ${subr}
+. ${strings}
+cwd=
+jname=
+CLOUD_URL=
+CLOUD_KEY=
+. ${cbsdinit}
+
+[ -z "${cur_env}" ] && cur_env=1
+
+# init CBSDfile data
+if [ -n "${cwd}" ]; then
+	[ ! -r ${cwd}/CBSDfile ] && err 1 "${N1_COLOR}${CBSD_APP}: no such CBSDfile: ${N2_COLOR}${cwd}/CBSDfile${N0_COLOR}"
+	cbsdfile="${cwd}/CBSDfile"
+	cd ${cwd}
+fi
+. ${distdir}/cbsdfile.subr
+. ${distdir}/time.subr
+
+cluster_login()
+{
+	local CURL_CMD=$( which curl )
+	local _cid _ssh _ssh_pref _ssh_post _ssh_len _ssh_sudo_args
+	[ -z "${jname}" ] && return 1
+
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+	# drop privileges to nobody
+	_ssh=$( ${SU_CMD} -m nobody -c "${CURL_CMD} --no-progress-meter -H \"cid:${_cid}\" ${CLOUD_URL}/api/v1/status/${jname}" 2>&1 )
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+		${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+		return 1
+	fi
+	_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+	if [ "${_ssh_pref}" != "ssh" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+		${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+		exit 1
+	fi
+	_ssh_len=$( strlen "${_ssh}" )
+	_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+	echo "${SSH_CMD} ${_ssh_post}"
+
+	# rewrite
+	if [ -n "${SUDO_USER}" ]; then
+		file -s /home/${SUDO_USER}/.ssh/id_ed25519
+		if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+			_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+		elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+			_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+		else
+			date
+		fi
+	fi
+
+	${SSH_CMD} ${_ssh_sudo_arg} ${_ssh_post}
+	_ret=$?
+	return ${_ret}
+}
+
+[ -z "${CLOUD_URL}" ] && err 1 "${N1_COLOR}${CBSD_APP}: empty CLOUD_URL${N0_COLOR}"
+[ -z "${CLOUD_KEY}" ] && err 1 "${N1_COLOR}${CBSD_APP}: empty CLOUD_KEY${N0_COLOR}"
+
+# todo: select/multipe when env>1
+if [ ${bhyve_num} -eq 0 ]; then
+	err 1 "${N1_COLOR}${CBSD_APP}: no such bhyve env${N0_COLOR}"
+fi
+
+if [ ${bhyve_num} -eq 1 ]; then
+	jname="${bhyve_list}"
+else
+	err 1 "${N1_COLOR}${CBSD_APP}: multiple host not supported yedt${N0_COLOR}"
+fi
+
+cluster_login ${jname}
+ret=$?
+
+exit ${ret}
