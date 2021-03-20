@@ -137,6 +137,7 @@ done
 
 [ -z "${debug_engine}" ] && debug_engine="none"
 [ -z "${xhci}" ] && xhci=0
+[ -z "${tablet}" ] && tablet=0
 [ -z "${hda}" ] && hda="none"
 [ -z "${exit_action}" ] && exit_action=0	# use on_poweroff/on_reboot/on_crash settings: disabled by default
 [ ! -f "${conf}" ] && exit 0
@@ -242,7 +243,11 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
 			if [ ${xhci} -eq 1 ]; then
-				xhci_args="-s 30,xhci,tablet"
+				if [ ${tablet} -eq 1 ]; then
+					xhci_args="-s 30,xhci,tablet"
+				else
+					xhci_args="-s 30,xhci,"		# , is mandatory
+				fi
 			else
 				xhci_args=
 			fi
@@ -254,7 +259,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			fi
 
 		else
-			xhci_args=""
+			xhci_args=
 		fi
 	fi
 
