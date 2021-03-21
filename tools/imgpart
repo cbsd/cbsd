@@ -1,24 +1,26 @@
 #!/usr/local/bin/cbsd
 #v12.1.5
-MYARG="jname part mode"
-MYOPTARG="out hdrver compress emulator filestats ebytes header_extra"
+MYARG="jname mode part"
+MYOPTARG="compress ebytes emulator filestats hdrver header_extra jexport_exclude out"
 MYDESC="Pack or extract chunk from from image"
 ADDHELP="\
-  out=path_to_file for ascii-part or directory to extract for binary\n\
-  or for binary image from pack mode\n\
-  part variants: header,rcconf,fstab,pkginfo,descr,info,sysdata,data\n\
-  mode=pack,extract\n\
   compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
-  filestats - save bytes stats for part=data into file in pack mode\n\
   ebytes - expected bytes (for pass into cbsdtee) in extract mode\n\
-  header_extra - can be as header_extra=\"test4=4,param=val\" or path to file. extra header data\n"
+  filestats - save bytes stats for part=data into file in pack mode\n\
+  header_extra - can be as header_extra=\"test4=4,param=val\" or path to file. extra header data\n\
+  jexport_exclude - skip/exclude path in jail to export\n\
+  mode=pack,extract\n\
+  part variants: header,rcconf,fstab,pkginfo,descr,info,sysdata,data\n\
+  out=path_to_file for ascii-part or directory to extract for binary\n\
+    or for binary image from pack mode\n\
+"
 
 . ${subr}
 
 filestats=
 ebytes=
 header_extra=
-
+jexport_exclude=
 . ${cbsdinit}
 
 extractchunk()
@@ -142,7 +144,7 @@ packme()
 			if [ -r ~cbsd/nodename ]; then
 				_my_nodename=$( ${CAT_CMD} ~cbsd/nodename | ${AWK_CMD} '{printf $1}' )
 			else
-				_my_nodename=$( /bin/hostname )
+				_my_nodename=$( ${HOSTNAME_CMD} )
 			fi
 
 			${CAT_CMD} > ${out} <<EOF
@@ -329,11 +331,18 @@ EOF
 				_res1=$( ${REALPATH_CMD} ${jailsysdir}/${jname} )
 				_res2=$( ${REALPATH_CMD} ${jaildatadir}/${jname}-${jaildatapref} )
 				if [ "${_res1}" = "${_res2}" ]; then
-					${FIND_CMD} ${_res1}/ -depth 1 -maxdepth 1 \( -type l -or -type f -or -type d \) -and -not -regex "${_res1}/dsk[0-9]*\.vhd" -exec ${BASENAME_CMD} {} \; > ${tmpdir}/exclude.txt
-					_sys_exclude="-X ${tmpdir}/exclude.txt"
+					${FIND_CMD} ${_res1}/ -depth 1 -maxdepth 1 \( -type l -or -type f -or -type d \) -and -not -regex "${_res1}/dsk[0-9]*\.vhd" -exec ${BASENAME_CMD} {} \; > ${tmpdir}/exclude.txt.$$
+					_sys_exclude="-X ${tmpdir}/exclude.txt.$$"
 				else
 					_sys_exclude=
 				fi
+			fi
+
+			if [ -n "${jexport_exclude}" ]; then
+				for i in ${jexport_exclude}; do
+					echo "${real_dir}${i}" >> ${tmpdir}/exclude.txt.$$
+				done
+				_sys_exclude="-X ${tmpdir}/exclude.txt.$$"
 			fi
 
 			case "${compress}" in
@@ -355,6 +364,8 @@ EOF
 					fi
 					;;
 			esac
+
+			[ -r ${tmpdir}/exclude.txt.$$ ] && ${RM_CMD} -f ${tmpdir}/exclude.txt.$$
 
 			echo >> ${out}
 			echo "___NCSTOP_DATA=1" >> ${out}

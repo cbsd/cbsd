@@ -2,17 +2,26 @@
 #v11.1.17
 globalconf="${distdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="compress dstdir genmd5 gensize ls imgname jname header_extra"
+MYOPTARG="compress dstdir genmd5 gensize header_extra imgname jexport_exclude jname ls"
 MYDESC="Export jail into image"
 CBSDMODULE="jail"
 ADDHELP="\
-  compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
-  dstdir - alternative export dir ( by default - $workdir/exports )\n\
-  genmd5 - generate $imgname.md5 file with md5sum of image\n\
-  gensize - generate $imgname.size file with size of image in bytes\n\
-  ls - filter for list: bls or jls\n\
-  imgname - alternative image dir ( by default - $jname.img\n\
-  header_extra - can be as header_extra=\"test1=4,param=val\" or path to file. set extra/custom header data\n"
+ compress - XZ compress level ( 0 - 9 ). Default is: 6. 0 mean is compression disabled\n\
+ dstdir - alternative export dir ( by default - $workdir/exports )\n\
+ genmd5 - generate $imgname.md5 file with md5sum of image\n\
+ gensize - generate $imgname.size file with size of image in bytes\n\
+ header_extra - can be as header_extra=\"test1=4,param=val\" or path to file. set extra/custom header data\n\
+ imgname - alternative image dir ( by default - $jname.img\n\
+ jexport_exclude - skip/exclude path in jail when export\n\
+ jname - environment name\n\
+ ls - filter for list: bls or jls\n\
+ \n\
+ Examples:\n\
+  cbsd jexport jname=test jexport_exclude=\"/tmp/* /usr/ports /var/run/*\"      (exclude /tmp and /usr/ports in image)\n\
+  cbsd jexport jname=test jexport_exclude=\"/\"                                 (export settings only, without data!)\n\
+  cbsd jexport jname=test compress=0                                          (tar only, without compression)\n\
+"
+EXTHELP="wf_jexport"
 
 . ${subr}
 . ${strings}
@@ -24,7 +33,10 @@ genmd5=0
 gensize=0
 
 header_extra=
+jexport_exclude=
+ojexport_exclude=
 . ${cbsdinit}
+[ -n "${jexport_exclude}" ] && ojexport_exclude="${jexport_exclude}"
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
@@ -35,6 +47,7 @@ jexport_me()
 {
 	local _ret
 	local _filestats _header_extra_opt
+	local _sys_exclude _jexport_exclude_args
 
 	${ECHO} "${N1_COLOR}Exporting (with compress level:${N2_COLOR}${compress}${N1_COLOR}), please stand by: ${N2_COLOR}${jname}${N0_COLOR}"
 	local DEST="${dstdir}/${imgname}"
@@ -126,6 +139,27 @@ ___NCSTART_DATA=1 \
 			___NCSTART_DATA*)
 				#test for zfs mounted & mount if not
 				_ebytes=0
+
+				case "${emulator}" in
+					jail)
+						readconf jexport.conf
+						_sys_exclude=
+						[ -n "${ojexport_exclude}" ] && jexport_exclude="${ojexport_exclude}"
+						if [ -n "${jexport_exclude}" ]; then
+							${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}will be excluded by the jexport_exclude settings: ${N1_COLOR}"
+							for i in ${jexport_exclude}; do
+								${ECHO} "  ${N2_COLOR}* ${i}${N0_COLOR}"
+								if [ -n "${_sys_exclude}" ]; then
+									_sys_exclude="${_sys_exclude} ${i}"
+								else
+									_sys_exclude="${i}"
+								fi
+							done
+							_jexport_exclude_args="jexport_exclude=\"${_sys_exclude}\""
+						fi
+						;;
+				esac
+
 				case ${zfsfeat} in
 					1)
 						. ${zfstool}
@@ -154,7 +188,7 @@ ___NCSTART_DATA=1 \
 						;;
 				esac
 				jmkrcconf jname=${jname} > ${JAILRCCONF}
-				res=$( imgpart mode=pack jname=${jname} compress=${compress} part=data out=${DEST} filestats=${_filestats} ebytes=${_ebytes} )
+				res=$( imgpart mode=pack jname=${jname} compress=${compress} part=data out=${DEST} filestats=${_filestats} ebytes=${_ebytes} ${_jexport_exclude_args} )
 				[ $? -ne 0 ] && err 1 "${N1_COLOR}Error in ${_part}: ${res}${N0_COLOR}"
 				${RM_CMD} -f ${JAILRCCONF}
 				[ "${WASNOMOUNT}" = "1" ] && ${ZFS_CMD} unmount "${ZPOOL}"
