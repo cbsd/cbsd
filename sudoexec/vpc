@@ -1,28 +1,48 @@
 #!/usr/local/bin/cbsd
 #v12.1.10
 MYARG="mode"
-MYOPTARG="display header active human vpc_name dryrun"
+MYOPTARG="bridge_ips display dryrun force header vpc_name peer_network node_member"
 MYDESC="Operate with CBSD VPC"
 CBSDMODULE="sys"
-ADDHELP="mode=init,remove,list,init_peers,init_vxlan,destroy_vxlan,sync\n\
+ADDHELP="\
+  bridge_ips            - (for mode=init_bridge) add ips address (comma separated) to vpc bridge\n\
+  display=<item1,item2> - list by comma for column. Default: name,pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk\n\
+  dryrun=1              - print command only, dont apply\n\
+  force=1               - Form of action locally, even remote node is not available\n\
+  header=0              - don't print header\n\
+  mode=init,remove,list,init_peers,init_vxlan,destroy_vxlan,sync\n\
   init_bridge,destroy_bridge,deploy,destroy,status\n\
-  mode=init - init/create VPC (locally),\n\
-  mode=init_peers - generate peer map (locally),\n\
-  mode=init_vxlan - apply peer map, create vxlan cfg (locally),\n\
-  mode=destroy_vxlan - destroy peer map, remove vxlan cfg (locally),\n\
-  mode=init_bridge - apply VPC bridge, create bridge cfg (locally),\n\
-  mode=destroy_bridge - destroy VPC map, remove bridge cfg (locally),\n\
-  mode=deploy - mass initialization on all nodes (init_peers + init_vxlan + init_bridge)\n\
-  mode=collapse - mass de-initialization on all nodes (destroy_vxlan + destroy_bridge)\n\
-  mode=status - get VPC state\n\
-node_member in mode=create can be 'all'\n\
-header=0 don't print header\n\
-display= list by comma for column. Default: name,pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk\n\
-dryrun=1 - print command only, dont apply\n"
+    mode=init           - init/create VPC (locally),\n\
+    mode=init_peers     - generate peer map (locally),\n\
+    mode=init_vxlan     - apply peer map, create vxlan cfg (locally),\n\
+    mode=destroy_vxlan  - destroy peer map, remove vxlan cfg (locally),\n\
+    mode=init_bridge    - apply VPC bridge, create bridge cfg (locally),\n\
+    mode=destroy_bridge - destroy VPC map, remove bridge cfg (locally),\n\
+    mode=deploy         - mass initialization on all nodes (init_peers + init_vxlan + init_bridge)\n\
+    mode=collapse       - mass de-initialization on all nodes (destroy_vxlan + destroy_bridge)\n\
+    mode=status         - get VPC state\n\
+    mode=init_rc        - create FreeBSD rc.d startup script for init VPC upon host boot\n\
+  node_member           - (for mode=create) can be 'all'\n\
+  peer_networkember     - system/endpoint network for full-mesh point-to-point\n\
+
+ Examples (when node member added via 'cbsd node mode=add'):
+   host1:
+     a) cbsd vpc mode=init node_member=all peer_network=10.100.0.0/24 vpc_name=vpc1
+   host2:
+     a) cbsd vpc mode=init node_member=all peer_network=10.100.0.0/24 vpc_name=vpc1
+   host1:
+     b) cbsd vpc vpc_name=vpc1 mode=init_peers
+     c) cbsd vpc vpc_name=vpc1 mode=sync
+   all host:
+     d) cbsd vpc mode=list
+     e) cbsd vpc vpc_name=vpc1 mode=init_vxlan
+     f) cbsd vpc vpc_name=vpc1 mode=init_bridge [bridge_ips=]
+"
 EXTHELP="wf_vpc"
 
 . ${subr}
 dryrun=0
+force=0
 . ${cbsdinit}
 . ${system}
 . ${strings}
@@ -312,10 +332,13 @@ init_bridge()
 		esac
 		${IFCONFIG_CMD} vxlan${vxlan_id} > /dev/null 2>&1
 		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}interface not exist: ${N2_COLOR}vxlan${vxlan_id}${N1_COLOR}. please init first: ${N1_COLOR}cbsd mode=init_vxlan vpc_name=${vpc_name}${N0_COLOR}"
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}interface not exist: ${N2_COLOR}vxlan${vxlan_id}${N1_COLOR}. please init first: ${N1_COLOR}cbsd vpc mode=init_vxlan vpc_name=${vpc_name}${N0_COLOR}"
 	done
 
 #	_bridge_id=$( cbsdsqlro ${_dbpath} "SELECT dst_node FROM vpc_peers LIMIT 1" )
+	if [ -z "${bridge_ips}" -o "${bridge_ips}" = "0" ]; then
+		bridge_ips=$( cbsdsqlro ${_dbpath} "SELECT bridge_ips FROM vpc" | ${AWK_CMD} '{printf $1}' )
+	fi
 
 	. ${distdir}/vnet.subr
 
@@ -325,7 +348,45 @@ init_bridge()
 		return 1
 	fi
 
-	${ECHO} "${N1_COLOR}created: ${N2_COLOR}${mybridge}${N0_COLOR}"
+	if [ -n "${bridge_ips}" -a "${bridge_ips}" != "0" ]; then
+		# todo: comma + iptype
+		${ECHO} "${N1_COLOR}add ips for vpc bridge: ${N2_COLOR}${IFCONFIG_CMD} ${mybridge} inet ${bridge_ips} up${N0_COLOR}"
+		${IFCONFIG_CMD} ${mybridge} inet ${bridge_ips} up
+		cbsdsqlrw ${_dbpath} "UPDATE vpc SET bridge_ips=\"${bridge_ips}\""
+	fi
+
+	${ECHO} "${N1_COLOR}vpc bridge created: ${N2_COLOR}${mybridge}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}you may want to create startup script via: ${N2_COLOR}cbsd vpc vpc_name=${vpc_name} mode=init_rc${N0_COLOR}"
+}
+
+init_rc()
+{
+	local _node_list _peer_network _myip= _dbpath _res _ret _bridge_id
+
+	_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+	[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+
+	[ ! -r ${distsharedir}/vpc-rc.tpl ] && err 1 "${N1_COLOR}${CBSD_APP}: no such ${distsharedir}/vpc-rc.tpl template${N0_COLOR}"
+
+	if [ -z "${bridge_ips}" -o "${bridge_ips}" = "0" ]; then
+		bridge_ips=$( cbsdsqlro ${_dbpath} "SELECT bridge_ips FROM vpc" | ${AWK_CMD} '{printf $1}' )
+	fi
+
+	. ${distdir}/vnet.subr
+
+	mybridge=
+	if ! mybridge=$( get_my_device vpc vpc-${vpc_name} ); then
+		${ECHO} "${N1_COLOR}${CBSD_APP} failed to get bridge: ${mybridge}${N0_COLOR}"
+		return 1
+	fi
+
+	${SED_CMD} -e "s:%%VPC_NAME%%:${vpc_name}:g" \
+		-e "s:%%BRIDGE_IPS%%:${bridge_ips}:g" \
+		-e "s:%%MYBRIDGE%%:${mybridge}:g" \
+		${distsharedir}/vpc-rc.tpl > /usr/local/etc/rc.d/cbsd-vpc-${vpc_name}
+	${CHMOD_CMD} +x /usr/local/etc/rc.d/cbsd-vpc-${vpc_name}
+	/usr/sbin/service cbsd-vpc-${vpc_name} enable
+	return 0
 }
 
 destroy_bridge()
@@ -479,7 +540,9 @@ destroy()
 		${ECHO} "${N1_COLOR}    node: ${N2_COLOR}${i}${N0_COLOR}"
 		rexe node=${i} /usr/local/bin/cbsd vpc mode=destroy_bridge vpc_name=${vpc_name} 2>/dev/null
 		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}destroy failed${N0_COLOR}"
+		if [ ${force} -ne 1 ]; then
+			[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}remote destroy bridge failed. Add ${N2_COLOR}force=1${N1_COLOR} to destroy locally${N0_COLOR}"
+		fi
 	done
 
 	${ECHO} "${N1_COLOR}  deploy: ${N2_COLOR}destroy_vxlan${N0_COLOR}"
@@ -487,7 +550,9 @@ destroy()
 		${ECHO} "${N1_COLOR}    node: ${N2_COLOR}${i}${N0_COLOR}"
 		rexe node=${i} /usr/local/bin/cbsd vpc mode=destroy_vxlan vpc_name=${vpc_name} 2>/dev/null
 		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}destroy failed${N0_COLOR}"
+		if [ ${force} -ne 1 ]; then
+			[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}remote destroy vxlan failed. Add ${N2_COLOR}force=1${N1_COLOR} to destroy locally${N0_COLOR}"
+		fi
 	done
 
 	return 0
@@ -524,6 +589,10 @@ case "${mode}" in
 		[ -z "${vpc_name}" ] && err 1 "${N1_COLOR}${CBSD_APP} ${N2_COLOR}vpc_name= ${N1_COLOR}is mandatory${N0_COLOR}"
 		init_bridge
 		;;
+	init_rc)
+		[ -z "${vpc_name}" ] && err 1 "${N1_COLOR}${CBSD_APP} ${N2_COLOR}vpc_name= ${N1_COLOR}is mandatory${N0_COLOR}"
+		init_rc
+		;;
 	destroy_bridge)
 		[ -z "${vpc_name}" ] && err 1 "${N1_COLOR}${CBSD_APP} ${N2_COLOR}vpc_name= ${N1_COLOR}is mandatory${N0_COLOR}"
 		destroy_bridge
@@ -546,6 +615,8 @@ case "${mode}" in
 	destroy)
 		[ -z "${vpc_name}" ] && err 1 "${N1_COLOR}${CBSD_APP} ${N2_COLOR}vpc_name= ${N1_COLOR}is mandatory${N0_COLOR}"
 		destroy
+		_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+		${RM_CMD} ${_dbpath}
 		;;
 	*)
 		err 1 "${N1_COLOR}unknown mode: ${N2_COLOR}${mode}${N1_COLOR}, available: ${N2_COLOR}init,destroy,list,init_peers,init_vxlan,destroy_vxlan,sync,init_bridge,destroy_bridge${N0_COLOR}"
