@@ -1,17 +1,31 @@
 #!/usr/local/bin/cbsd
 #v12.1.7
 MYARG=""
-MYOPTARG="jname cmd user"
+MYOPTARG="jname cmd user dir"
 MYDESC="Execution for command inside jail"
 ADDHELP="\
+ dir= change current directory\n\
  If you are in the CBSDfile directory, these environments will always have priority\n\
  if jname='*' then execute command on all jails\n\
+Examples: \
+
+ cbsd jexec jname=test dir=/tmp pwd
+
+ cbsd jexec jname=test <<EOF
+pwd
+hostname
+ls -la
+EOF
+
+  cbsd jexec jname='*' \"hostname; ls -la \"
+
 "
 CBSDMODULE="jail"
 EXTHELP="wf_jexec"
 
 . ${subr}
 cloud_api=0
+dir=
 . ${cbsdinit}
 
 if [ -z "${jname}" -a -n "${ojname}" ]; then
@@ -49,22 +63,71 @@ else
 	user="root"
 fi
 
-[ -z "${cmd}" ] && cmd="${@}"
+if [ -z "${cmd}" ]; then
+	if [ -n "${dir}" ]; then
+		cmd0="cd ${dir}"
+	fi
+
+	OIFS="${IFS}"
+	IFS="~"
+	cmd=$( while [ -n "${1}" ]; do
+		IFS="~"
+		strpos --str="${1}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			# not params=value form
+			echo -n "${1} "
+			shift
+			continue
+		fi
+
+		_arg_len=$( strlen ${1} )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		case "${ARG}" in
+			dir|jname)
+				shift
+				continue
+				;;
+		esac
+		printf "${ARG}='${VAL}' "
+		shift
+	done )
+
+	# strip extra space 
+	cmd=$( echo ${cmd} | ${SED_CMD} 's/.$//' )
+	IFS="${OIFS}"
+fi
+
+emulator="jail"		# for jname_is_multiple
+jname_is_multiple	# import jail_list if jname is mask
+
 if [ -z "${cmd}" ]; then
 	batchfile=$( ${MKTEMP_CMD} )
 	# todo: test/chec for stdin/blocked
 	while read _line; do
+		[ -n "${dir}" ] && echo "cd ${dir}" >> ${batchfile}
 		echo "${_line}" >> ${batchfile}
 	done
-	jscp ${batchfile} ${jname}:${batchfile}
-	jexec /bin/sh ${batchfile}
+
+	if [ -n "${jail_list}" ]; then
+		for jname in ${jail_list}; do
+			jscp ${batchfile} ${jname}:${batchfile}
+			jexec jname=${jname} /bin/sh ${batchfile}
+		done
+	else
+		jscp ${batchfile} ${jname}:${batchfile}
+		jexec jname=${jname} /bin/sh ${batchfile}
+	fi
 	${RM_CMD} -f ${batchfile}
 	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
 	exit 0
 fi
 
-emulator="jail"		# for jname_is_multiple
-jname_is_multiple	# import jail_list if jname is mask
+if [ -n "${dir}" ]; then
+	cmd="cd ${dir}; ${cmd}"
+fi
 
 if [ -n "${jail_list}" ]; then
 	. ${distdir}/multiple.subr
@@ -83,7 +146,7 @@ if [ -n "${jail_list}" ]; then
 #		echo "C:[${cmd}]"
 #		continue
 
-		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec jname=${jname} "${cmd}" 2>/dev/null )
+		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec dir="${dir}" jname=${jname} cmd="${cmd}" 2>/dev/null )
 		task_id="${task_id} ${task_id_cur}"
 	done
 
@@ -157,13 +220,13 @@ else
 	if [ ${exec_fib} -eq 0 ]; then
 		SETFIB=""
 	else
-		SETFIB="setfib ${exec_fib}"
+		SETFIB="${SETFIB_CMD} ${exec_fib}"
 	fi
 
 	if [ "${cpuset}" = "0" ]; then
 		CPUSET=""
 	else
-		CPUSET="cpuset -c -l ${cpuset}"
+		CPUSET="${CPUSET_CMD} -c -l ${cpuset}"
 	fi
 
 	case "${ver}" in
