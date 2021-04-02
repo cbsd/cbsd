@@ -243,9 +243,15 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 	}
 	data = elf_getdata(scn, NULL);
 	src = data->d_buf;
+
 	for (;;) {
 		memcpy(&note, src, sizeof(Elf_Note));
 		src += sizeof(Elf_Note);
+		if (strlen(src)==0) {
+			src+=9;
+			strcpy(src,"unknown");
+			break;		// empty or no elf?
+		}
 		if (note.n_type == NT_VERSION)
 			break;
 		src += note.n_namesz + note.n_descsz;
