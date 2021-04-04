@@ -129,17 +129,23 @@ validate_ipaddr()
 }
 
 
-# jid, interface, ip4_addr and jname must be set
+# jid and jname must be set
 modify_ipaddr()
 {
 	local _A _ip4_addr_old _pureip _inet _face _interface _IP4 _IP6 _MODIF _nIPs IFS _dhcp
 
-	_A=$( cbsdsqlro local SELECT interface,ip4_addr,applytpl FROM jails WHERE jname=\"${jname}\" )
-	sqllist "${_A}" _interface _ip4_addr_old applytpl
+	_A=$( cbsdsqlro local SELECT interface,ip4_addr,applytpl,vnet,empty FROM jails WHERE jname=\"${jname}\" )
+	sqllist "${_A}" _interface _ip4_addr_old applytpl vnet empty
 
 	if [ "${_interface}" = "0" ]; then
 		${ECHO} "${argpart}: ${N1_COLOR}on-the-fly currently disabled because option interface is "0"${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: on-the-fly currently disabled because option interface is 0
+		return 0
+	fi
+
+	if [ "${empty}" = "1" ]; then
+		${ECHO} "${argpart}: ${N1_COLOR}on-the-fly disabled because jail option empty is "1"${N0_COLOR}"
+		cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: on-the-fly disabled because jail option empty is 1
 		return 0
 	fi
 
@@ -151,9 +157,13 @@ modify_ipaddr()
 	for _pureip in ${_ip4_addr_old}; do
 		iptype ${_pureip}
 		_inet=$?
-		_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+		if [ ${vnet} -eq 1 ]; then
+			_iface="eth0"
+		else
+			_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+		fi
 		ipwmask ${_pureip}
-		if [ -n "$IWM" ]; then
+		if [ -n "${IWM}" ]; then
 			case ${_inet} in
 				1)
 					_MODIF="inet"
@@ -165,7 +175,11 @@ modify_ipaddr()
 			IFS=" "
 			${ECHO} "${N1_COLOR}Remove old IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias${N0_COLOR}"
 			cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: remove old IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias
-			${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias >/dev/null 2>/dev/null
+			if [ ${vnet} -eq 1 ]; then
+				jexec jname=${jname} ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias >/dev/null 2>/dev/null
+			else
+				${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias >/dev/null 2>/dev/null
+			fi
 			IFS=","
 		fi
 	done
@@ -197,7 +211,11 @@ modify_ipaddr()
 		esac
 		iptype ${_pureip}
 		_inet=$?
-		_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+		if [ ${vnet} -eq 1 ]; then
+			_iface="eth0"
+		else
+			_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+		fi
 		ipwmask ${_pureip}
 		if [ -n "${IWM}" ]; then
 			case ${_inet} in
@@ -222,7 +240,11 @@ modify_ipaddr()
 			IFS=" "
 			${ECHO} "${N1_COLOR}Setup new IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias${N0_COLOR}"
 			cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: setup new IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
-			${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+			if [ ${vnet} -eq 1 ]; then
+				jexec jname=${jname} ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+			else
+				${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+			fi
 			IFS=","
 		fi
 	done
@@ -238,7 +260,14 @@ modify_ipaddr()
 	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
 
 	cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: ${JAIL_CMD} -m ${_nIPs} jid=${jid}
-	${JAIL_CMD} -m ${_nIPs} jid=${jid}
+	if [ ${vnet} -eq 1 ]; then
+		# alias for multiple? IPv6 ? restart routing ? [auto] restart services ?
+		data="${jaildatadir}/${jname}-${jaildatapref}"
+		${SYSRC_CMD} -qf ${data}/etc/rc.conf ifconfig_eth0="inet ${ip4_addr} up" > /dev/null 2>&1
+		jexec jname=${jname} /etc/rc.d/routing restart
+	else
+		${JAIL_CMD} -m ${_nIPs} jid=${jid}
+	fi
 
 	cbsdsqlrw local UPDATE jails SET ${i}=\"${ip4_addr}\" WHERE jname=\"${jname}\"
 	${ECHO} "${argpart}: ${N1_COLOR}${ip4_addr}${N0_COLOR}"
