@@ -121,7 +121,7 @@ fetch_files(char *urls, char *fout)
 		total_bytes += ustat.size;
 
 	if (speedtest==1)
-		fetchTimeout = 3;
+		fetchTimeout = 5;
 	else
 		fetchTimeout = 20;
 
