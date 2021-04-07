@@ -34,19 +34,36 @@ init_svn()
 
 init_git()
 {
-	SCM=""
+	SCM=
 
 	if [ -f "/usr/local/bin/git" ]; then
 		SCM="/usr/local/bin/git"
 	else
-		err 1 "${N1_COLOR}No git in the base. Please install devel/git${N0_COLOR}"
+		err 1 "${N1_COLOR}no git in the base. please install: ${N2_COLOR}pkg install -y devel/git${N0_COLOR}"
 	fi
 
 	if [ -z "${scmbase}" ]; then
-		SCM_URL="${GITBASE}"
-	else
-		SCM_URL="${scmbase}"
+		[ -z "${GITBASE}" ] && err 1 "${N1_COLOR}empty GITBASE variable. Please specify GITBASE via ${N2_COLOR}srcup.conf${N0_COLOR}"
+		scmbase="${GITBASE}"
 	fi
+	SCM_URL="${scmbase}"
+
+	[ -d "${dst}/.git" ] && return 0
+
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands via git
+	# does not conflict with the same CBSD commands
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	set -o xtrace
+	cd ${dst} && ${SCM} init
+	nice -n 19 ${IDPRIO_CMD} 29 ${SCM} remote add origin ${SCM_URL}
+	nice -n 19 ${IDPRIO_CMD} 29 ${SCM} fetch ${git_flags} origin
+	set +o xtrace
+
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
 
 	return 0
 }
@@ -70,18 +87,58 @@ svn_checkout()
 
 git_checkout()
 {
-	local _depth _srcdir
-	_srcdir=$( ${REALPATH_CMD} ${dst} )
+	local _depth _remotes _origin
+	local _ret=0 _p2 _branch
 
 	[ "${depth}" != "0" ] && _depth="${depth}"
 
-	if [ -d "${_srcdir}/.git" ]; then
-		cd ${_srcdir} && nice -n 19 ${IDPRIO_CMD} 29 ${SCM} checkout DragonFly_RELEASE_3_8
-		cd ${_srcdir} && nice -n 19 ${IDPRIO_CMD} 29 ${SCM} pull ${_depth}
+	[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}empty SCM_GIT_BRANCH${N0_COLOR}"
+
+	${ECHO} "${N1_COLOR}selected branch: ${N2_COLOR}${SCM_GIT_BRANCH}${N0_COLOR}"
+
+	if [ -d "${dst}/.git" ]; then
+		echo "cd ${dst} && ${SCM} ${git_flags} branch ${SCM_GIT_BRANCH}"
+		cbsdlogger NOTICE ${CBSD_APP}: processing git checkout: ${SCM_GIT_BRANCH} in ${dst}
+
+		local CBSDPATH="${PATH}"
+		# reset CBSD PATH
+		# it is necessary that the calling of any commands via git
+		# does not conflict with the same CBSD commands
+		export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+		set -o xtrace
+		cd ${dst}
+		nice -n 19 ${IDPRIO_CMD} 29 ${SCM} reset --hard                         # reset to source default
+
+		_remotes="remotes/"
+		_origin="origin/"
+
+		# remove 'remotes/' + 'origin/'
+		_p2=${SCM_GIT_BRANCH##*${_remotes}}
+		_branch=${_p2##*${_origin}}
+
+		[ -z "${_branch}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: empty branch var SCM_GIT_BRANCH${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP} swith to branch: ${N2_COLOR}${_branch}${N0_COLOR}"
+
+		nice -n 19 ${IDPRIO_CMD} 29 ${SCM} pull ${git_pull_flags}
+		_ret=$?
+
+		if [ -n "${rev}" ]; then
+			nice -n 19 ${IDPRIO_CMD} 29 ${SCM} checkout ${rev}
+			_ret=$?
+		else
+			nice -n 19 ${IDPRIO_CMD} 29 ${SCM} checkout ${_branch}
+			_ret=$?
+		fi
+		set +o xtrace
+		# restore CBSD PATH
+		export PATH="${CBSDPATH}"
 	else
-		[ -z "${rev}" ] && rev="origin/main"
-		nice -n 19 ${IDPRIO_CMD} 29 ${SCM} clone -b ${rev} ${git_flags} ${SCM_URL} ${_srcdir}
+		${ECHO} "${N1_COLOR}${CBSD_APP}: clone error: no ${N2_COLOR}.git${N0_COLOR}"
+		_ret=1
 	fi
+
+	return ${_ret}
 }
 
 
