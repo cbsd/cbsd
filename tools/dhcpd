@@ -26,6 +26,9 @@ lease_time=30
 cleanup=
 . ${cbsdinit}
 
+# dhcpd_helper?
+readconf dhcpd.conf
+
 #
 # ipv4_to_ip10 ipv4 ip10
 #	Function converts IPv4 address to decimal address. $1 must be IPv4
@@ -475,6 +478,42 @@ LEASE_FILE="${tmpdir}/dhcpd.lease"
 # list of locked/skip IPS
 LOCKFILE_SKIPLIST=
 
+if [ "${dhcpd_helper}" != "internal" ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: use external dhcpd_helper: ${dhcpd_helper}
+	[ ! -x "${dhcpd_helper}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: external helper not executable: ${N2_COLOR}${dhcpd_helper}${N0_COLOR}"
+
+	# rebuild arg list ( + add pass )
+	# Pass '"' as \" in cmd
+	INIT_IFS="${IFS}"
+	IFS="~"
+	cmd="$@"
+	IFS="${INIT_IFS}"
+	cmd=$( while [ -n "${1}" ]; do
+		IFS="~"
+		strpos --str="${1}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			# not params=value form
+			#printf "${1} "         # (printf handles -args (with dashes)
+			#echo -n "${1} "
+			shift
+			continue
+		fi
+		_arg_len=$( strlen ${1} )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		if [ -z "${ARG}" -o -z "${VAL}" ]; then
+			shift
+			continue
+		fi
+		printf "${ARG}='${VAL}' "
+		shift
+	done )
+
+	exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} ${dhcpd_helper} ${cmd}
+fi
+
 if [ -n "${cleanup}" ]; then
 	[ ! -r ${LEASE_FILE} ] && exit 0
 	for i in ${cleanup}; do
@@ -483,7 +522,6 @@ if [ -n "${cleanup}" ]; then
 	done
 	exit 0
 fi
-
 
 # use args network instead of global CBSD settings/variable
 if [ -n "${ip4pool}" ]; then
@@ -522,9 +560,8 @@ if [ -n "${ip4pool}" ]; then
 				#printf "${ARG}='${VAL}' "
 				shift
 			done
+
 			exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd dhcpd ${cmd} pass=1
-			ret=$?
-			exit ${ret}
 		fi
 	fi
 	nodeippool=$( echo ${ip4pool} | ${TR_CMD} "," " " )
@@ -562,7 +599,6 @@ pow8=$((1 << 8))
 #if [ -n "${ip4pool}" ]; then
 #	nodeippool=$( echo ${ip4pool} | ${TR_CMD} "," " " )
 #fi
-
 
 # Multiple network loop
 for tmpnet in ${nodeippool}; do
@@ -602,11 +638,16 @@ for tmpnet in ${nodeippool}; do
 
 	found=0
 
+	[ -z "${s1}" -o -z "${e2}" ] && break
+
 	# assign wanted octet by starting octet
 	for w1 in $( ${SEQ_CMD} ${s1} ${e1} ); do
+		[ -z "${s2}" -o -z "${e2}" ] && break
 		for w2 in $( ${SEQ_CMD} ${s2} ${e2} ); do
+			[ -z "${s3}" -o -z "${e3}" ] && break
 			for w3 in $( ${SEQ_CMD} ${s3} ${e3} ); do
 				# last wanted octet loop
+				[ -z "${s4}" -o -z "${e4}" ] && break
 				for w4 in $( ${SEQ_CMD} ${s4} ${e4} ); do
 					skip=0
 					tmpip="${w1}.${w2}.${w3}.${w4}"
