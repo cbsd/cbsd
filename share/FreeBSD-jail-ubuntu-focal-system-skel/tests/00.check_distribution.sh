@@ -68,7 +68,7 @@ customskel
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
 
-printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00aptitude
+printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
 cat > ${customskel}/etc/apt/sources.list <<EOF
 deb http://archive.ubuntu.com/ubuntu focal main restricted
 deb http://archive.ubuntu.com/ubuntu focal multiverse
