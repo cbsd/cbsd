@@ -1,4 +1,4 @@
-# $FreeBSD: head/etc/root/dot.cshrc 243893 2012-12-05 13:56:39Z eadler $
+# $FreeBSD$
 #
 # .cshrc - csh resource script, read at beginning of execution by each shell
 #
@@ -12,18 +12,20 @@ alias la	ls -aF
 alias lf	ls -FA
 alias ll	ls -lAF
 
+# read(2) of directories may not be desirable by default, as this will provoke
+# EISDIR errors from each directory encountered.
+# alias grep	grep -d skip
+
 # A righteous umask
 umask 22
 
-set path = (/sbin /bin /usr/sbin /usr/bin /usr/games /usr/local/sbin /usr/local/bin $HOME/bin)
+set path = (/sbin /bin /usr/sbin /usr/bin /usr/local/sbin /usr/local/bin $HOME/bin)
 
 setenv	EDITOR	vi
-setenv	PAGER	more
-setenv	BLOCKSIZE	K
+setenv	PAGER	less
 
 if ($?prompt) then
 	# An interactive shell -- set some stuff up
-	# set prompt = "%N@%m:%~ %# "
 	set prompt = "%{^[[40;35;1m%}`/bin/hostname -s`:%{^[[40;31;1m%}%/@%{^[[40;33;1m%}%B[%T]%b # "
 	set promptchars = "%#"
 

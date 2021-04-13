@@ -14,14 +14,10 @@ CBSDMODULE="bhyve"
 
 . ${subr}
 script=
-ojname="${jname}"
 cbsd_api=0
+jname=
 . ${cbsdinit}
-
-if [ -z "${jname}" -a -n "${ojname}" ]; then
-	# inherit jname env
-	jname="${ojname}"
-fi
+ojname="${jname}"
 
 # check for cloud function when CBSDfile exist
 Makefile="${CBSD_PWD}/CBSDfile"
@@ -31,6 +27,12 @@ if [ -r ${Makefile} ]; then
 	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 	jname="${all_bhyve_list}"
 
+	if [ -n "${ojname}" ]; then
+		jname="${ojname}"
+	fi
+
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
 	else
@@ -38,13 +40,17 @@ if [ -r ${Makefile} ]; then
 	fi
 else
 	cbsd_api=0
-fi
 
-if [ -z "${all_jail_list}" ]; then
-	if [ ${cbsd_api} -eq 0 ]; then
-		# todo: multiple bexec via all_bhyve_list?
-		[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
-		shift  # todo: jname and cmd may have reverse order
+	if [ -n "${ojname}" ]; then
+		jname="${ojname}"
+	fi
+
+	if [ -z "${all_jail_list}" ]; then
+		if [ ${cbsd_api} -eq 0 ]; then
+			# todo: multiple bexec via all_bhyve_list?
+			[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+			shift  # todo: jname and cmd may have reverse order
+		fi
 	fi
 fi
 
@@ -86,15 +92,17 @@ fi
 
 if [ -z "${cmd}" ]; then
 	batchfile=$( ${MKTEMP_CMD} )
+	script_name=$( ${BASENAME_CMD} ${batchfile} )
 	# todo: test/chec for stdin/blocked
 	while read _line; do
 		echo "${_line}" >> ${batchfile}
 	done
-	bscp ${batchfile} ${jname}:${batchfile}
-	bexec /bin/sh ${batchfile}
+	bscp ${batchfile} ${jname}:${script_name}
+	bexec /bin/sh ./${script_name}
+	ret=$?
 	${RM_CMD} -f ${batchfile}
 	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
-	exit 0
+	exit ${ret}
 fi
 
 emulator="bhyve"	# for jname_is_multiple
@@ -128,13 +136,11 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 
-
 if [ ${cbsd_api} -eq 0 ]; then
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
 	[ ${jid} -ne 0 ] || err 1 "Not running"
-
 	readconf bexec.conf
 else
 	CURL_CMD=$( which curl )

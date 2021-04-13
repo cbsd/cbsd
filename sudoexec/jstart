@@ -14,6 +14,14 @@ EXTHELP="wf_jstop_jstart"
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
+if [ -n "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
+	oci_gw4="${ci_gw4}"
+else
+	if [ -n "${default_ci_gw4}" -a "${default_ci_gw4}" != "0" ]; then
+		oci_gw4="${default_ci_gw4}"
+	fi
+fi
+
 [ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
 
 . ${cbsdinit}
@@ -94,6 +102,7 @@ emulator_exec_check()
 etcupdate_check()
 {
 	[ "${etcupdate_init}" != "1" ] && return 0
+	[ "${empty}" = "1" ] && return 0
 
 	local _etcupdate_jail_root
 
@@ -337,7 +346,6 @@ if [ -n "${mdsize}" -a "${mdsize}" != "0" ]; then
 	fi
 fi
 
-
 # Update Redis
 if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
 	cbsdredis hset "jail:${jname}" node "${nodename}" status 1 || echo "WARNING: failed to update Redis!"
@@ -473,8 +481,11 @@ if [ "${vnet}" = "1" ]; then
 
 		nic_hwaddr=
 		nic_parent=
-
-		nic_parent=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_parent FROM jailnic WHERE name=\"${i}\" )
+		nic_address=
+		_A=
+		_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_parent,nic_address,nic_hwaddr FROM jailnic WHERE name=\"${i}\" )
+		sqllist "${_A}" nic_parent nic_address nic_hwaddr
+		#nic_parent=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_parent FROM jailnic WHERE name=\"${i}\" )
 
 		# when ip=0 and interface=auto we must use default interface for upstream
 		[ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ] && nic_parent=$( getnics-by-ip ip=0.0.0.0 skip=bridge )
@@ -545,7 +556,7 @@ if [ "${vnet}" = "1" ]; then
 		TRAP="${TRAP} ${IFCONFIG_CMD} ${myepair}a destroy;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
-		nic_hwaddr=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic WHERE name=\"${i}\" )
+		#nic_hwaddr=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic WHERE name=\"${i}\" )
 
 		# MAC MGMT
 		if [ "${nic_hwaddr}" = "0" ]; then
@@ -555,6 +566,9 @@ if [ "${vnet}" = "1" ]; then
 
 		cbsdlogger NOTICE ${CBSD_APP}: jail ${jname}: set hwaddr for vnet interface ${myepair}b: ${nic_hwaddr}
 		${IFCONFIG_CMD} ${myepair}b ether ${nic_hwaddr}
+		if [ "${nic_address}" != "0" ]; then
+			${IFCONFIG_CMD} ${myepair}a inet ${nic_address} up
+		fi
 	done
 
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N0_COLOR}"
@@ -748,21 +762,57 @@ if [ ${vnet} -eq 1 ]; then
 		# make lock
 		echo "${jname}" > ${tmpdir}/eth${eth_seq}.locked
 		${IFCONFIG_CMD} ${i} name eth${eth_seq} && ${IFCONFIG_CMD} eth${eth_seq} vnet ${jname}
-		if [ "${ip4_addr}" = "REALDHCP" ]; then
-			# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
-			[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
-			if [ -z "${dhclient_program}" ]; then
-				DHCLIENT_PROGRAM=`${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
-			else
-				DHCLIENT_PROGRAM=${dhclient_program}
-			fi
-			${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
-		fi
+		case "${ip4_addr}" in
+			[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
+				# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
+				[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
+				if [ -z "${dhclient_program}" ]; then
+					DHCLIENT_PROGRAM=`${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
+				else
+					DHCLIENT_PROGRAM=${dhclient_program}
+				fi
+				${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
+				;;
+			0|[Dd][Hh][Cc][Pp])
+				# just skip
+				;;
+			*)
+				# alias ? IPv6 ? mtu ?
+				${SYSRC_CMD} -qf ${data}/etc/rc.conf ifconfig_eth0="${ip4_addr} up" > /dev/null 2>&1
+		esac
+
 		# release lock
 		${RM_CMD} -f ${tmpdir}/eth${eth_seq}.locked
 		eth_seq=$(( eth_seq + 1 ))
 		IFS=","
 	done
+
+	if [ -n "${ci_gw4}" ]; then
+		case ${ci_gw4} in
+			0)
+				# do nothing
+				;;
+			auto)
+				# always first?
+				nic_address=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_address FROM jailnic LIMIT 1 )
+				# is ip?
+				if [ -n "${nic_address}" -a "${nic_address}" != "0" ]; then
+					echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to nic_address: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+					${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+				elif [ -n "${oci_gw4}" ];then
+					nic_address="${oci_gw4}"
+					echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to by config file: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+					${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+				else
+					echo "${N1_COLOR}${CBSD_APP}: ci_gw4 sets to auto bit ic_address is empty${N0_COLOR}"
+				fi
+				;;
+			*)
+				${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
+				;;
+		esac
+	fi
+
 	IFS="${OIFS}"
 	late_start="${exec_start}"
 fi
@@ -805,7 +855,7 @@ else
 	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
 		cbasredis hset "jail:${jname}" status -1 || echo "WARNING: Failed to update Redis"
 		cbasredis hdel "jail:${jname}" jid || echo "WARNING: Failed to update Redis"
-        	cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":-1}'
+		cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":-1}'
 	fi
 fi
 
@@ -820,7 +870,6 @@ if [ -x "${distmoduledir}/vncterm.d/cbsdvnc" ]; then
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}vncterm is installed, launch vncterm session...${N0_COLOR}"
 	${DAEMON_CMD} -f /usr/local/bin/cbsd vncterm jname=${jname} mode=run addr=127.0.0.1 >/dev/null 2>&1
 fi
-
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then

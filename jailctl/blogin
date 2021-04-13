@@ -16,6 +16,7 @@ CBSDMODULE="bhyve"
 cbsd_api=0
 . ${cbsdinit}
 
+
 try_remote()
 {
 	local RHST
@@ -80,7 +81,6 @@ login_internal()
 	${TMUX_CMD} -Lcbsd-"${jname}" attach-session
 }
 
-
 login_custom()
 {
 	local CBSDPATH="${PATH}"
@@ -97,6 +97,42 @@ login_custom()
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
 }
+
+# jname must be set
+jname_blogin()
+{
+	. ${jrcconf}
+	[ $? -eq 1 ] && try_remote
+
+	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Not in bhyve mode${N0_COLOR}"
+	[ "${baserw}" = "1" ] && path=${data}
+	[ ${jid} -eq 0 ] && err 1 "Not running"
+
+	readconf blogin.conf
+
+	vm_efi=$( cbsdsqlro local "SELECT vm_efi FROM bhyve WHERE jname=\"${jname}\"" )
+	vnc_bind=$( cbsdsqlro local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname=\"${jname}\"" )
+
+	if [ "${vm_efi}" != "none" ]; then
+		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
+			vm_port=$( ${CAT_CMD} ${jailsysdir}/${jname}/vnc_port )
+		else
+			vm_port="0"
+		fi
+	fi
+
+	cbsdlogger NOTICE ${CBSD_APP}: login into ${jname} via ${login_cmd} method
+
+	case "${login_cmd}" in
+		internal)
+			login_internal
+			;;
+		*)
+			login_custom
+			;;
+	esac
+}
+
 
 # check for cloud function when CBSDfile exist
 Makefile="${CBSD_PWD}/CBSDfile"
@@ -123,7 +159,12 @@ if [ -r ${Makefile} ]; then
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
 	else
-		cbsd_api=0
+		# CBSDfile without API
+		for jname in ${all_bhyve_list}; do
+			${ECHO} "${N1_COLOR}exec blogin to: ${N2_COLOR}${jname}${N0_COLOR}"
+			jname_blogin
+		done
+		exit 0
 	fi
 else
 	cbsd_api=0
@@ -187,35 +228,6 @@ fi
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify jname as argument${N0_COLOR}"
 [ -z "${remote}" ] && remote=0
 
-. ${jrcconf}
-[ $? -eq 1 ] && try_remote
-
-[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Not in bhyve mode${N0_COLOR}"
-[ "${baserw}" = "1" ] && path=${data}
-[ ${jid} -eq 0 ] && err 1 "Not running"
-
-readconf blogin.conf
-
-vm_efi=$( cbsdsqlro local "SELECT vm_efi FROM bhyve WHERE jname=\"${jname}\"" )
-vnc_bind=$( cbsdsqlro local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname=\"${jname}\"" )
-
-if [ "${vm_efi}" != "none" ]; then
-	if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
-		vm_port=$( ${CAT_CMD} ${jailsysdir}/${jname}/vnc_port )
-	else
-		vm_port="0"
-	fi
-fi
-
-cbsdlogger NOTICE ${CBSD_APP}: login into ${jname} via ${login_cmd} method
-
-case "${login_cmd}" in
-	internal)
-		login_internal
-		;;
-	*)
-		login_custom
-		;;
-esac
+jname_blogin
 
 exit 0
