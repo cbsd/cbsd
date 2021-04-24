@@ -390,7 +390,7 @@ create_fs()
 # -z zfs_snapsrc
 create_zfs_fs()
 {
-	local _data _mount_point _name _promote _zfs_snapsrc
+	local _data _mount_point _name _promote _zfs_snapsrc _ret
 
 	while getopts "d:m:n:p:z:" opt; do
 		case "${opt}" in
@@ -418,9 +418,36 @@ create_zfs_fs()
 		log_err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
 	fi
 
+	# encrypt
+	#_keyformat=
+	if [ "${zfs_encryption}" = "1" ]; then
+		if [ -n "${NOINTER}" -o "${inter}" = "1" ]; then
+			err 1 "${N1_COLOR}${CBSD_APP} keyformat is passphrase, skipp for non-interactive mode${N0_COLOR}"
+		else
+			# at the moment only keyphrase method supported
+			_keyformat="passphrase"
+		fi
+	fi
+
+	if [ "${_keyformat}" = "passphrase" ]; then
+		if [ -n "${NOINTER}" -o "${inter}" = "1" ]; then
+			err 1 "${N1_COLOR}${CBSD_APP} keyformat is passphrase, skipp for non-interactive mode${N0_COLOR}"
+		else
+			_encrypt_args="-o encryption=on -o keyformat=passphrase"
+		fi
+	else
+		_encrypt_args=
+	fi
+
 	if [ -z "${_zfs_snapsrc}" ]; then
-		res=$( ${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
-		[ $? -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${N0_COLOR}"
+		if [ -z "${_encrypt_args}" ]; then
+			res=$( ${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
+			_ret=$?
+		else
+			${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${_encrypt_args} ${ZPOOL}/${_name}
+			_ret=$?
+		fi
+		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs: ZFS ${ZPOOL}/${_name} has been created with mountpoint: ${_data}, opt: ${zfs_create_flags}
 	else
 		${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}

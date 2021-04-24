@@ -433,7 +433,7 @@ done
 IFS="${OIFS}"
 
 if [ ${_mod} -eq 1 ]; then
-	jset jname=${jname} ip4_addr="${_tmp_ip4_addr}"
+	jset ip4_addr="${_tmp_ip4_addr}"
 	ip4_addr="${_tmp_ip4_addr}"
 fi
 
@@ -579,7 +579,25 @@ case ${zfsfeat} in
 	1)
 		. ${zfstool}
 		zfsmnt ${data}
-		[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
+		if [ $? -eq 2 ]; then
+			# ZFS encryption?
+			zfs_encryption_val=$( ${ZFS_CMD} get -Ho value encryption ${ZPOOL} 2>/dev/null )
+			if [ -n "${zfs_encryption_val}" -a "${zfs_encryption_val}" != "off" ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: encrypted dataset: ${N2_COLOR}${zfs_encryption_val}${N0_COLOR}"
+				zfs_encryption_keyformat=$( ${ZFS_CMD} get -Ho value keyformat ${ZPOOL} 2>/dev/null )
+				${ECHO} "${N1_COLOR}${CBSD_APP}: encryption keyformat: ${N2_COLOR}${zfs_encryption_keyformat}${N0_COLOR}"
+				if [ "${zfs_encryption_keyformat}" = "passphrase" ]; then
+					if [ -n "${NOINTER}" -o "${inter}" = "1" ]; then
+						err 0 "${N1_COLOR}${CBSD_APP} keyformat is passphrase, skipp for non-interactive mode${N0_COLOR}"
+					else
+						${ZFS_CMD} load-key ${ZPOOL}
+						# 255 code valid here, already loaded
+					fi
+				fi
+			fi
+			${ZFS_CMD} mount "${ZPOOL}"
+			is_mounted ${data} || err 1 "${N1_COLOR}${CBSD_APP}: unable to mount zfs pool: ${N2_COLOR}${ZPOOL} -> ${data}${N0_COLOR}"
+		fi
 	;;
 esac
 
@@ -862,7 +880,7 @@ fi
 cbsdsqlrw local UPDATE jails SET jid=${myjid},status=${status} where jname=\"${jname}\"
 ${RM_CMD} -f ${ftmpdir}/${jname}.conf
 fwcounter
-expose jname=${jname} mode=apply
+expose mode=apply
 [ ${myjid} -gt 0 -a ${cpuset} != "0" ] && ${CPUSET_CMD} -c -l ${cpuset} -j ${myjid}
 
 # VNC auto start
