@@ -91,9 +91,10 @@ fi
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -r ${data}/bin/bash ]; then
+	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
 	# populate jails data from rootfs?
 	. ${distdir}/freebsd_world.subr
-	customskel
+	customskel -s ${rootfs_dir}
 fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
