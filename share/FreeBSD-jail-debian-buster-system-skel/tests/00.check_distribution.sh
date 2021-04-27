@@ -5,29 +5,41 @@
 
 . ${subr}
 . ${cbsdinit}
+: ${distdir="/usr/local/cbsd"}
+unset workdir
 
-. /etc/rc.conf
-
+# MAIN
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 if [ -z "${cbsd_workdir}" ]; then
 	echo "No workdir"
 	exit 1
+else
+	workdir="${cbsd_workdir}"
 fi
+[ ! -r "${distdir}/cbsd.conf" ] && exit 1
 
-workdir="${cbsd_workdir}"
-
-[ ! -f "${distdir}/cbsd.conf" ] && exit 1
 . ${distdir}/cbsd.conf
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
+. ${distdir}/fetch.subr
 
-SRC_MIRROR="http://deb.debian.org/debian/"
-customskel="${sharedir}/FreeBSD-jail-debian-buster-system-skel"
 
-[ -z "${jname}" ] && err 1 "${N1_COLOR}Empty jname${N0_COLOR}"
+SRC_MIRROR="\
+http://deb.debian.org/debian/ \
+ftp2.cn.debian.org/debian/ \
+http://ftp.de.debian.org/debian/ \
+http://ftp.uk.debian.org/debian/ \
+http://ftp.us.debian.org/debian/ \
+http://ftp.fi.debian.org/debian/ \
+http://ftp.hk.debian.org/debian/ \
+"
 
-[ ! -d ${customskel} ] && ${MKDIR_CMD} -p ${customskel}
+rootfs_dir="${sharedir}/jail-debian-buster-rootfs"
+
+[ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
+[ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
 
 if [ ! -x /usr/local/sbin/debootstrap ]; then
 	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
@@ -40,17 +52,23 @@ done
 ${KLDSTAT_CMD} -m linuxelf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux
 ${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
 
-if [ ! -f ${customskel}/bin/bash ]; then
+if [ ! -f ${rootfs_dir}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
-		${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}buster ${N1_COLOR}${customskel} ${SRC_MIRROR}${N0_COLOR}"
-		/bin/sh <<EOF
-/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg buster ${customskel} ${SRC_MIRROR}
-EOF
 
-		printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
-		${CAT_CMD} > ${customskel}/etc/apt/sources.list <<EOF
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
+		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/buster/main/Contents-amd64.gz"
+		for i in ${FASTEST_SRC_MIRROR}; do
+			${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}buster ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			/bin/sh <<EOF
+/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg buster ${rootfs_dir} ${i}
+EOF
+			ret=$?
+			[ ${ret} -eq 0 ] && break
+		done
+		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
 deb http://deb.debian.org/debian buster main
 deb-src http://deb.debian.org/debian buster main
 deb http://security.debian.org/ buster/updates main
@@ -62,17 +80,18 @@ deb-src http://deb.debian.org/debian buster-backports main
 EOF
 
 	else
-		echo "No such distribution"
+		echo "canceled"
 		exit 1
 	fi
 fi
 
-[ ! -f ${customskel}/bin/bash ] && err 1 "${N1_COLOR}No such distribution on ${N2_COLOR}${customskel}${N0_COLOR}"
+[ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
 
 . ${jrcconf}
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -r ${data}/bin/bash ]; then
+	# populate jails data from rootfs?
 	. ${distdir}/freebsd_world.subr
 	customskel
 fi
