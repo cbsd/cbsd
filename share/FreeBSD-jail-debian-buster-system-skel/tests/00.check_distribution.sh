@@ -59,7 +59,7 @@ fi
 . ${jrcconf}
 [ "${baserw}" = "1" ] && path=${data}
 
-if [ ! -d ${data}/bin/bash ]; then
+if [ ! -r ${data}/bin/bash ]; then
 	. ${distdir}/freebsd_world.subr
 	customskel
 fi

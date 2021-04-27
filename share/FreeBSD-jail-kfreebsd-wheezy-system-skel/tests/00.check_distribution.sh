@@ -38,7 +38,7 @@ for module in linprocfs fdescfs tmpfs linsysfs; do
 	${KLDSTAT_CMD} -m "${module}" > /dev/null 2>&1 || ${KLDLOAD_CMD} ${module}
 done
 
-if [ ! -f ${customskel}/bin/bash ]; then
+if [ ! -r ${customskel}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
