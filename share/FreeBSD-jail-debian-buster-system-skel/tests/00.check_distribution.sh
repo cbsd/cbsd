@@ -48,6 +48,19 @@ if [ ! -f ${customskel}/bin/bash ]; then
 		/bin/sh <<EOF
 /usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg buster ${customskel} ${SRC_MIRROR}
 EOF
+
+		printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > ${customskel}/etc/apt/sources.list <<EOF
+deb http://deb.debian.org/debian buster main
+deb-src http://deb.debian.org/debian buster main
+deb http://security.debian.org/ buster/updates main
+deb-src http://security.debian.org/ buster/updates main
+deb http://deb.debian.org/debian buster-updates main
+deb-src http://deb.debian.org/debian buster-updates main
+deb http://deb.debian.org/debian buster-backports main
+deb-src http://deb.debian.org/debian buster-backports main
+EOF
+
 	else
 		echo "No such distribution"
 		exit 1
@@ -65,18 +78,5 @@ if [ ! -r ${data}/bin/bash ]; then
 fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
-
-printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
-cat > ${customskel}/etc/apt/sources.list <<EOF
-deb http://deb.debian.org/debian buster main
-deb-src http://deb.debian.org/debian buster main
-deb http://security.debian.org/ buster/updates main
-deb-src http://security.debian.org/ buster/updates main
-deb http://deb.debian.org/debian buster-updates main
-deb-src http://deb.debian.org/debian buster-updates main
-deb http://deb.debian.org/debian buster-backports main
-deb-src http://deb.debian.org/debian buster-backports main
-EOF
-
 
 exit 0

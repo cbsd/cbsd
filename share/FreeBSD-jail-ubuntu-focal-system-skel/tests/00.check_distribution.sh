@@ -52,6 +52,21 @@ if [ ! -f ${customskel}/bin/bash ]; then
 EOF
 		#debootstrap --include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib wheezy ${customskel} ${SRC_MIRROR}
 		#${CHROOT_CMD} ${customskel} dpkg -i /var/cache/apt/archives/*.deb
+
+		printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > ${customskel}/etc/apt/sources.list <<EOF
+deb http://archive.ubuntu.com/ubuntu focal main restricted
+deb http://archive.ubuntu.com/ubuntu focal multiverse
+deb http://archive.ubuntu.com/ubuntu focal universe
+deb http://archive.ubuntu.com/ubuntu focal-backports main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu focal-updates main restricted
+deb http://archive.ubuntu.com/ubuntu focal-updates multiverse
+deb http://archive.ubuntu.com/ubuntu focal-updates universe
+deb http://security.ubuntu.com/ubuntu focal-security main restricted
+deb http://security.ubuntu.com/ubuntu focal-security multiverse
+deb http://security.ubuntu.com/ubuntu focal-security universe
+EOF
+
 	else
 		echo "No such distribution"
 		exit 1
@@ -69,20 +84,5 @@ if [ ! -r ${data}/bin/bash ]; then
 fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
-
-printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
-cat > ${customskel}/etc/apt/sources.list <<EOF
-deb http://archive.ubuntu.com/ubuntu focal main restricted
-deb http://archive.ubuntu.com/ubuntu focal multiverse
-deb http://archive.ubuntu.com/ubuntu focal universe
-deb http://archive.ubuntu.com/ubuntu focal-backports main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu focal-updates main restricted
-deb http://archive.ubuntu.com/ubuntu focal-updates multiverse
-deb http://archive.ubuntu.com/ubuntu focal-updates universe
-deb http://security.ubuntu.com/ubuntu focal-security main restricted
-deb http://security.ubuntu.com/ubuntu focal-security multiverse
-deb http://security.ubuntu.com/ubuntu focal-security universe
-EOF
-
 
 exit 0

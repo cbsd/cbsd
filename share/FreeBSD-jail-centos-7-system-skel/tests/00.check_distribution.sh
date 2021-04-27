@@ -230,6 +230,23 @@ if [ ! -f ${customskel}/bin/bash ]; then
 			/usr/local/bin/rpm2cpio pkgtmp/${i} | cpio -idmv 2>/dev/null
 			rm -f pkgtmp/${i}
 		done
+
+		[ -d ${customskel}/etc/yum.repos.d ] && ${MV_CMD} ${customskel}/etc/yum.repos.d/ ${customskel}/etc/yum.repos.d-o
+		${MKDIR_CMD} -p ${customskel}/etc/yum.repos.d
+		${CAT_CMD} > ${customskel}/etc/yum.repos.d/CentOS-Base.repo <<EOF
+[base]
+name=CentOS-$releasever - Base
+mirrorlist=http://mirrorlist.centos.org/?release=7&arch=x86_64&repo=os&infra=$infra
+#baseurl=http://mirror.centos.org/centos/$releasever/os/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+EOF
+
+		${CAT_CMD} > ${customskel}/etc/resolv.conf <<EOF
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+EOF
+
 	else
 		echo "No such distribution"
 		exit 1
@@ -247,21 +264,5 @@ if [ ! -r ${data}/bin/bash ]; then
 fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
-
-mv ${data}/etc/yum.repos.d/ ${data}/etc/yum.repos.d-o
-mkdir -p ${data}/etc/yum.repos.d
-cat > ${data}/etc/yum.repos.d/CentOS-Base.repo <<EOF
-[base]
-name=CentOS-$releasever - Base
-mirrorlist=http://mirrorlist.centos.org/?release=7&arch=x86_64&repo=os&infra=$infra
-#baseurl=http://mirror.centos.org/centos/$releasever/os/$basearch/
-gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
-EOF
-
-cat > ${data}/etc/resolv.conf <<EOF
-nameserver 8.8.8.8
-nameserver 8.8.4.4
-EOF
 
 exit 0
