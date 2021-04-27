@@ -17,6 +17,7 @@
 #include <fetch.h>
 #include <signal.h> // sigaction(), sigsuspend(), sig*()
 #include <unistd.h>
+#include <sys/time.h>
 
 static int	fetch_files(char *, char *);
 void		handle_signal(int);
@@ -24,6 +25,9 @@ void		handle_sigalrm(int);
 
 off_t		current_bytes=0;
 int		speedtest=0;
+
+int		start_time=0;
+int		end_time=0;
 
 int usage()
 {
@@ -99,6 +103,9 @@ fetch_files(char *urls, char *fout)
 	int		lprg = 0;
 	struct sigaction sa;
 	sigset_t mask;
+	struct timeval now_time;
+	int cur_time=0;
+	int diff_time=0;
 
 	sa.sa_handler = &handle_sigalrm; // Intercept and ignore SIGALRM
 	sa.sa_flags = SA_RESETHAND; // Remove the handler after first signal
@@ -117,6 +124,10 @@ fetch_files(char *urls, char *fout)
 
 	progress = 0;
 	total_bytes = 0;
+
+	gettimeofday(&now_time, NULL);
+	start_time = (time_t) now_time.tv_sec;
+
 	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0)
 		total_bytes += ustat.size;
 
@@ -165,6 +176,20 @@ fetch_files(char *urls, char *fout)
 
 	fclose(fetch_out);
 	fclose(file_out);
+
+	gettimeofday(&now_time, NULL);
+	end_time = (time_t) now_time.tv_sec;
+	diff_time=end_time-start_time;
+	if (diff_time==0)
+		diff_time=1;
+
+	/*
+	 * Please note that printf et al. are NOT safe to use in signal handlers.
+	 * Look for async safe functions.
+	 */
+	if (speedtest==1)
+		printf("%ld\n", current_bytes / diff_time );
+
 	return (0);
 }
 
@@ -172,6 +197,8 @@ fetch_files(char *urls, char *fout)
 void handle_signal(int signal) {
 	const char *signal_name;
 	sigset_t pending;
+	struct timeval now_time;
+	int diff_time=0;
 
 	// Find out which signal we're handling
 	switch (signal) {
@@ -189,11 +216,18 @@ void handle_signal(int signal) {
 			return;
 	}
 
+	gettimeofday(&now_time, NULL);
+	end_time = (time_t) now_time.tv_sec;
+	diff_time=end_time-start_time;
+	if (diff_time==0)
+		diff_time=1;
+
 	/*
 	 * Please note that printf et al. are NOT safe to use in signal handlers.
 	 * Look for async safe functions.
 	 */
-	printf("%ld\n",current_bytes);
+	if (speedtest==1)
+		printf("%ld\n", current_bytes / diff_time );
 
 	exit(0);
 }
