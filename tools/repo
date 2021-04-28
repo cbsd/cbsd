@@ -174,20 +174,20 @@ getbase()
 						URL_HIER="${arch}/${target_arch}/14.0"
 						;;
 					*)
-						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/"
+						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/base.txz"
 						_release="releases"
 						_rel_postfix="RELEASE"
 						URL_HIER="${arch}/${target_arch}/${ver}"
 						;;
 				esac
-				BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/ http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/ https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/"
+				BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/base.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/base.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/base.txz"
 				;;
 			HardenedBSD)
 				# Assume HBSD always in stable=1: at the moment (2018-01-17) doesn't have
 				# /hardenedbsd-X.Y- url. So, adduct ver version to major version for repo hier
 				_majorver=${ver%%.*}
 				URL_HIER="${arch}/${target_arch}/hardenedbsd-${_majorver}-stable-LAST"
-				BSDBASE_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${URL_HIER}/ https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${URL_HIER}/ http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/"
+				BSDBASE_DISTSITE="https://pub.allbsd.org/pub/HardenedBSD/releases/${URL_HIER}/base.txz https://installer.hardenedbsd.org/pub/HardenedBSD/releases/${URL_HIER}/base.txz http://jenkins.hardenedbsd.org/builds/HardenedBSD-${_majorver}-STABLE-${target_arch}-LATEST/base.txz"
 				;;
 		esac
 	fi
@@ -228,8 +228,43 @@ getbase()
 
 	if [ "${fbsdrepo}" = "1" ]; then
 		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
-		scan_fastest_mirror -s "${BSDBASE_DISTSITE}" -t 3 -u "base.txz"
-		iso_site="${FASTEST_SRC_MIRROR}"
+
+		_mirror_num=$( echo "${BSDBASE_DISTSITE}" | ${WC_CMD} -w | ${AWK_CMD} {'printf $1'} )
+
+		local max_url_len=0
+		local cur_url_len=0
+		local free_len=0
+
+		# determine longest url
+		for i in ${BSDBASE_DISTSITE}; do
+			cur_url_len=$( strlen ${i} )
+			[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
+		done
+
+		max_url_len=$(( max_url_len + 1 ))
+
+		for i in ${BSDBASE_DISTSITE}; do
+			_mirror_cur=$(( _mirror_cur + 1 ))
+			cur_url_len=$( strlen ${i} )
+			free_len=$(( max_url_len - cur_url_len ))
+			printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
+			t_size=$( ${TIMEOUT_CMD} -s KILL 5 ${TIMEOUT_CMD} -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${i} 2>/dev/null )
+			if [ -z "${t_size}" ]; then
+				${ECHO} "${W1_COLOR}failed${N0_COLOR}"
+			else
+				${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
+				if ! is_number ${t_size}; then
+					if [ ${t_size} -gt ${win_rate} ]; then
+						win_rate=${t_size}
+						win_mirror="${i}"
+					fi
+				else
+					${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
+				fi
+			fi
+		done
+		[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
+		iso_site="${win_mirror} ${BSDBASE_DISTSITE}"
 	fi
 
 	if [ "${fbsdrepo}" = "1" -a -z "${basename}" ]; then
@@ -237,7 +272,7 @@ getbase()
 		${ECHO} "${N1_COLOR}Looking for official ${platform} mirror:${N0_COLOR}"
 		ARCHIVE="${MYDIR}/base.txz"
 		for MIRROR in ${iso_site}; do
-			fetchme -u ${MIRROR}/base.txz -o ${ARCHIVE}
+			fetchme -u ${MIRROR} -o ${ARCHIVE}
 			if [ $? -eq 0 ]; then
 				break
 			else
