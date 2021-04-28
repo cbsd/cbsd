@@ -5,30 +5,42 @@
 
 . ${subr}
 . ${cbsdinit}
+: ${distdir="/usr/local/cbsd"}
+unset workdir
 
-. /etc/rc.conf
-
+# MAIN
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 if [ -z "${cbsd_workdir}" ]; then
 	echo "No workdir"
 	exit 1
+else
+	workdir="${cbsd_workdir}"
 fi
+[ ! -r "${distdir}/cbsd.conf" ] && exit 1
 
-workdir="${cbsd_workdir}"
-
-[ ! -f "${distdir}/cbsd.conf" ] && exit 1
 . ${distdir}/cbsd.conf
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
+. ${distdir}/fetch.subr
 
-SRC_MIRROR="http://archive.ubuntu.com/ubuntu/"
-# + http://deb.debian.org/debian/
-customskel="${sharedir}/FreeBSD-jail-ubuntu-focal-system-skel"
 
-[ -z "${jname}" ] && err 1 "${N1_COLOR}Empty jname${N0_COLOR}"
+SRC_MIRROR="\
+http://archive.ubuntu.com/ubuntu/
+https://mirror.internet.asn.au/pub/ubuntu/archive/ \
+http://mirror.easyname.at/ubuntu-archive/ \
+https://mirrors.edge.kernel.org/ubuntu/ \
+http://ftp.halifax.rwth-aachen.de/ubuntu/ \
+https://mirror.xtom.com.hk/ubuntu/ \
+http://mirror.nl.datapacket.com/ubuntu/ \
+http://mirror.enzu.com/ubuntu/ \
+"
 
-[ ! -d ${customskel} ] && ${MKDIR_CMD} -p ${customskel}
+rootfs_dir="${sharedir}/jail-ubuntu-focal-rootfs"
+
+[ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
+[ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
 
 if [ ! -x /usr/local/sbin/debootstrap ]; then
 	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
@@ -41,35 +53,23 @@ done
 ${KLDSTAT_CMD} -m linuxelf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux
 ${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
 
-if [ ! -f ${customskel}/bin/bash ]; then
+if [ ! -f ${rootfs_dir}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
-		${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}focal ${N1_COLOR}${customskel} ${SRC_MIRROR}${N0_COLOR}"
-		#debootstrap --arch=amd64 --no-check-gpg focal ${customskel} ${SRC_MIRROR}
-		/bin/sh <<EOF
-/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg focal ${customskel} ${SRC_MIRROR}
+
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
+		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/focal/Contents-amd64.gz"
+		for i in ${FASTEST_SRC_MIRROR}; do
+			${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}focal ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			/bin/sh <<EOF
+/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg focal ${rootfs_dir} ${i}
 EOF
-		#debootstrap --include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib wheezy ${customskel} ${SRC_MIRROR}
-		#${CHROOT_CMD} ${customskel} dpkg -i /var/cache/apt/archives/*.deb
-	else
-		echo "No such distribution"
-		exit 1
-	fi
-fi
-
-[ ! -f ${customskel}/bin/bash ] && err 1 "${N1_COLOR}No such distribution on ${N2_COLOR}${customskel}${N0_COLOR}"
-
-. ${jrcconf}
-[ "$baserw" = "1" ] && path=${data}
-
-. ${distdir}/freebsd_world.subr
-customskel
-
-[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
-
-printf "APT::Cache-Start 251658240;" > ${customskel}/etc/apt/apt.conf.d/00freebsd
-cat > ${customskel}/etc/apt/sources.list <<EOF
+			ret=$?
+			[ ${ret} -eq 0 ] && break
+		done
+		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
 deb http://archive.ubuntu.com/ubuntu focal main restricted
 deb http://archive.ubuntu.com/ubuntu focal multiverse
 deb http://archive.ubuntu.com/ubuntu focal universe
@@ -82,5 +82,24 @@ deb http://security.ubuntu.com/ubuntu focal-security multiverse
 deb http://security.ubuntu.com/ubuntu focal-security universe
 EOF
 
+	else
+		echo "canceled"
+		exit 1
+	fi
+fi
+
+[ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
+
+. ${jrcconf}
+[ "${baserw}" = "1" ] && path=${data}
+
+if [ ! -r ${data}/bin/bash ]; then
+	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
+	# populate jails data from rootfs?
+	. ${distdir}/freebsd_world.subr
+	customskel -s ${rootfs_dir}
+fi
+
+[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
 
 exit 0

@@ -117,5 +117,73 @@ fetchme()
 	return ${_res}
 }
 
+# -s sources
+# -t timeout
+# -u test_url/file
+# scan_fastest_mirror -s "mirror1 mirror2" -t 3 -u "/base.txz"
+
+scan_fastest_mirror()
+{
+	local _src_mirror
+	local _test_file="${2}"
+	local _timeout=3
+	local _mirror_num
+	local max_url_len=0
+	local cur_url_len=0
+	local free_len=0
+	local win_rate=0
+	local _stimeout _htimeout
+
+	while getopts "s:u:t:" opt; do
+		case "${opt}" in
+			s) _src_mirror="${OPTARG}" ;;
+			t) _timeout="${OPTARG}" ;;
+			u) _test_file="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_src_mirror}" ] && err 1 "scan_fastest_mirror: empty src_mirror"
+	_mirror_num=$( echo "${_src_mirror}" | ${WC_CMD} -w | ${AWK_CMD} {'printf $1'} )
+
+	[ -z "${_test_file}" ] && err 1 "scan_fastest_mirror: empty test_file"
+
+	# soft timeout
+	_stimeout="${_timeout}"
+
+	# hard timeout
+	_htimeout=$(( _stimeout + 1 ))
+
+	# determine longest url
+	for i in ${_src_mirror}; do
+		cur_url_len=$( strlen ${i} )
+		[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
+	done
+
+	max_url_len=$(( max_url_len + 1 ))
+	for i in ${_src_mirror}; do
+		_mirror_cur=$(( _mirror_cur + 1 ))
+		cur_url_len=$( strlen ${i} )
+		free_len=$(( max_url_len - cur_url_len ))
+		printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
+		t_size=$( ${TIMEOUT_CMD} -s KILL ${_htimeout} ${TIMEOUT_CMD} -s HUP ${_stimeout} ${bindir}/cfetch -s 1 -o /dev/null -u ${i}${_test_file} 2>/dev/null )
+		if [ -z "${t_size}" ]; then
+			${ECHO} "${W1_COLOR}failed${N0_COLOR}"
+		else
+			${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
+			if ! is_number ${t_size}; then
+				if [ ${t_size} -gt ${win_rate} ]; then
+					win_rate=${t_size}
+					win_mirror="${i}"
+				fi
+			else
+				${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
+			fi
+		fi
+	done
+	[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
+	FASTEST_SRC_MIRROR="${win_mirror} ${_src_mirror}"
+}
+
 ###
 fi

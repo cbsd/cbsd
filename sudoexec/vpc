@@ -36,7 +36,8 @@ ADDHELP="\
    all host:
      d) cbsd vpc mode=list
      e) cbsd vpc vpc_name=vpc1 mode=init_vxlan
-     f) cbsd vpc vpc_name=vpc1 mode=init_bridge [bridge_ips=]
+     f) cbsd vpc vpc_name=vpc1 mode=init_bridge [bridge_ips=X.X.X.X/24]
+     g) cbsd vpc vpc_name=vpc1 mode=init_rc
 "
 EXTHELP="wf_vpc"
 
@@ -237,7 +238,7 @@ init_vxlan()
 				_myip="${nodeip6}"
 				;;
 		esac
-		${IFCONFIG_CMD} vxlan${vxlan_id} > /dev/null 2>&1
+		${IFCONFIG_CMD} vxlan${vxlan_id} up > /dev/null 2>&1
 		_ret=$?
 		if [ ${_ret} -eq 0 ]; then
 			${ECHO} "${N1_COLOR}interface already exist: ${N2_COLOR}vxlan${vxlan_id}. ${N1_COLOR}Use for destroy: ${N2_COLOR}cbsd vpc mode=destroy_vxlan vpc_name=${vpc_name}${N0_COLOR}"
@@ -257,6 +258,8 @@ init_vxlan()
 			err 0 "${N1_COLOR}vxlan init failed: ${N2_COLOR}${_res}${N0_COLOR}"
 		fi
 		${IFCONFIG_CMD} vxlan${vxlan_id} description tunnel-to-${dst_node} > /dev/null 2>&1
+		${IFCONFIG_CMD} vxlan${vxlan_id} down
+		${IFCONFIG_CMD} vxlan${vxlan_id} up
 	done
 }
 
@@ -350,7 +353,7 @@ init_bridge()
 				_myip="${nodeip6}"
 				;;
 		esac
-		${IFCONFIG_CMD} vxlan${vxlan_id} > /dev/null 2>&1
+		${IFCONFIG_CMD} vxlan${vxlan_id} up > /dev/null 2>&1
 		_ret=$?
 		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}interface not exist: ${N2_COLOR}vxlan${vxlan_id}${N1_COLOR}. please init first: ${N1_COLOR}cbsd vpc mode=init_vxlan vpc_name=${vpc_name}${N0_COLOR}"
 	done
@@ -371,9 +374,18 @@ init_bridge()
 	if [ -n "${bridge_ips}" -a "${bridge_ips}" != "0" ]; then
 		# todo: comma + iptype
 		${ECHO} "${N1_COLOR}add ips for vpc bridge: ${N2_COLOR}${IFCONFIG_CMD} ${mybridge} inet ${bridge_ips} up${N0_COLOR}"
-		${IFCONFIG_CMD} ${mybridge} inet ${bridge_ips} up
+		${IFCONFIG_CMD} ${mybridge} inet ${bridge_ips}
+		${IFCONFIG_CMD} ${mybridge} down
+		${IFCONFIG_CMD} ${mybridge} up
 		cbsdsqlrw ${_dbpath} "UPDATE vpc SET bridge_ips=\"${bridge_ips}\""
 	fi
+
+	# refresh vxlan iface again (bug upon start?)
+	cbsdsqlro ${_dbpath} "SELECT vxlan_id FROM vpc_peers WHERE src_node=\"${nodename}\"" | while read _line; do
+		sqllist "${_line}" vxlan_id
+		${IFCONFIG_CMD} vxlan${vxlan_id} down
+		${IFCONFIG_CMD} vxlan${vxlan_id} up
+	done
 
 	${ECHO} "${N1_COLOR}vpc bridge created: ${N2_COLOR}${mybridge}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}you may want to create startup script via: ${N2_COLOR}cbsd vpc vpc_name=${vpc_name} mode=init_rc${N0_COLOR}"

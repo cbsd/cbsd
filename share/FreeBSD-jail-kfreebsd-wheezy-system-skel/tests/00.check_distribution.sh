@@ -38,7 +38,7 @@ for module in linprocfs fdescfs tmpfs linsysfs; do
 	${KLDSTAT_CMD} -m "${module}" > /dev/null 2>&1 || ${KLDLOAD_CMD} ${module}
 done
 
-if [ ! -f ${customskel}/bin/bash ]; then
+if [ ! -r ${customskel}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
@@ -54,10 +54,12 @@ fi
 [ ! -f ${customskel}/bin/bash ] && err 1 "${N1_COLOR}No such distribution on ${N2_COLOR}${customskel}${N0_COLOR}"
 
 . ${jrcconf}
-[ "$baserw" = "1" ] && path=${data}
+[ "${baserw}" = "1" ] && path=${data}
 
-. ${distdir}/freebsd_world.subr
-customskel
+if [ ! -d ${data}/bin/bash ]; then
+	. ${distdir}/freebsd_world.subr
+	customskel
+fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
 exit 0

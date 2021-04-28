@@ -5,25 +5,29 @@
 
 . ${subr}
 . ${cbsdinit}
+: ${distdir="/usr/local/cbsd"}
+unset workdir
 
-. /etc/rc.conf
-
+# MAIN
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 if [ -z "${cbsd_workdir}" ]; then
 	echo "No workdir"
 	exit 1
+else
+	workdir="${cbsd_workdir}"
 fi
+[ ! -r "${distdir}/cbsd.conf" ] && exit 1
 
-workdir="${cbsd_workdir}"
-
-[ ! -f "${distdir}/cbsd.conf" ] && exit 1
 . ${distdir}/cbsd.conf
 . ${subr}
 . ${system}
 . ${strings}
 . ${tools}
+. ${distdir}/fetch.subr
 
 SRC_MIRROR="http://mirror.centos.org/centos/7.9.2009/os/x86_64/Packages"
-customskel="${sharedir}/FreeBSD-jail-centos-7-system-skel"
+
+rootfs_dir="${sharedir}/jail-centos-7-rootfs"
 
 # based on chrooted list + glibc:
 #mkdir -p /var/tmp/chroot/var/lib/rpm
@@ -203,8 +207,7 @@ glib2-2.56.1-7.el7.x86_64.rpm
 "
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Empty jname${N0_COLOR}"
-
-[ ! -d ${customskel} ] && ${MKDIR_CMD} -p ${customskel}
+[ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
 
 if [ ! -x /usr/local/bin/rpm2cpio ]; then
 	err 1 "${N1_COLOR}No such rpm2cpio. Please ${N2_COLOR}pkg install rpm2cpio${N1_COLOR} it.${N0_COLOR}"
@@ -217,38 +220,23 @@ done
 ${KLDSTAT_CMD} -m linuxelf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux
 ${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
 
-if [ ! -f ${customskel}/bin/bash ]; then
+if [ ! -f ${rootfs_dir}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
-		#${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}buster ${N1_COLOR}${customskel} ${SRC_MIRROR}${N0_COLOR}"
-		cd ${customskel} || exit 1
-		mkdir pkgtmp
+		#${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}buster ${N1_COLOR}${rootfs_dir} ${SRC_MIRROR}${N0_COLOR}"
+		cd ${rootfs_dir} || exit 1
+		${MKDIR_CMD} pkgtmp
 		for i in ${LIST}; do
-			cd ${customskel}
+			cd ${rootfs_dir}
 			fetch -o pkgtmp/ ${SRC_MIRROR}/${i}
-			/usr/local/bin/rpm2cpio pkgtmp/${i} | cpio -idmv 2>/dev/null
-			rm -f pkgtmp/${i}
+			/usr/local/bin/rpm2cpio pkgtmp/${i} | ${CPIO_CMD} -idmv 2>/dev/null
+			${RM_CMD} -f pkgtmp/${i}
 		done
-	else
-		echo "No such distribution"
-		exit 1
-	fi
-fi
 
-[ ! -f ${customskel}/bin/bash ] && err 1 "${N1_COLOR}no such distribution on ${N2_COLOR}${customskel}${N0_COLOR}"
-
-. ${jrcconf}
-[ "$baserw" = "1" ] && path=${data}
-
-. ${distdir}/freebsd_world.subr
-customskel
-
-[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
-
-mv ${data}/etc/yum.repos.d/ ${data}/etc/yum.repos.d-o
-mkdir -p ${data}/etc/yum.repos.d
-cat > ${data}/etc/yum.repos.d/CentOS-Base.repo <<EOF
+		[ -d ${rootfs_dir}/etc/yum.repos.d ] && ${MV_CMD} ${rootfs_dir}/etc/yum.repos.d/ ${rootfs_dir}/etc/yum.repos.d-o
+		${MKDIR_CMD} -p ${rootfs_dir}/etc/yum.repos.d
+		${CAT_CMD} > ${rootfs_dir}/etc/yum.repos.d/CentOS-Base.repo <<EOF
 [base]
 name=CentOS-$releasever - Base
 mirrorlist=http://mirrorlist.centos.org/?release=7&arch=x86_64&repo=os&infra=$infra
@@ -257,9 +245,28 @@ gpgcheck=1
 gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
 EOF
 
-cat > ${data}/etc/resolv.conf <<EOF
+		${CAT_CMD} > ${rootfs_dir}/etc/resolv.conf <<EOF
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
+	else
+		echo "canceled"
+		exit 1
+	fi
+fi
+
+[ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}no such distribution on ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
+
+. ${jrcconf}
+[ "${baserw}" = "1" ] && path=${data}
+
+if [ ! -r ${data}/bin/bash ]; then
+	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
+	# populate jails data from rootfs?
+	. ${distdir}/freebsd_world.subr
+	customskel -s ${rootfs_dir}
+fi
+
+[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
 
 exit 0
