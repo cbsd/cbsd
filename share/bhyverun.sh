@@ -212,12 +212,12 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 					#orig_vnc_args="${vnc_args}"
 					# bhyve_vnc_vgaconf before wait
 					if [ "${bhyve_vnc_vgaconf}" != "io" ]; then
-						[ -n "${bhyve_vnc_vgaconf}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
+						[ -n "${bhyve_vnc_vgaconf}" -a -n "${vnc_args}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
 					fi
 					#orig_vnc_args="${vnc_args}"
 					if [ "${cd_vnc_wait}" = "1" ]; then
 						echo "Waiting for first connection via VNC to starting VMs..."
-						vnc_args="${vnc_args},wait"
+						[ -n "${vnc_args}" ] && vnc_args="${vnc_args},wait"
 					fi
 				fi
 			fi
@@ -225,7 +225,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		*)
 			# bhyve_vnc_vgaconf before wait
 			if [ "${bhyve_vnc_vgaconf}" != "io" ]; then
-				[ -n "${bhyve_vnc_vgaconf}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
+				[ -n "${bhyve_vnc_vgaconf}" -a -n "${vnc_args}" ] && vnc_args="${vnc_args},vga=${bhyve_vnc_vgaconf}"
 			fi
 	esac
 
