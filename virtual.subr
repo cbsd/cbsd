@@ -45,7 +45,6 @@ init_iso()
 	local _sorted_mirror_list _sorted_mirror_list2
 	local _sorted_mirror_list_rate
 	local _fetch_attempt=0
-	local _mirror_num=0 _mirror_cur=0
 	local _iso_img_type=
 	local _ret _is_link
 
@@ -136,8 +135,6 @@ init_iso()
 		fi
 	fi
 
-	_mirror_num=$( echo "${iso_site} ${cbsd_iso_mirrors}" | ${WC_CMD} -w | ${AWK_CMD} {'printf $1'} )
-
 	# check for broken link
 	if [ -h "${_myfile}" ]; then
 		_ret=$( ${READLINK_CMD} ${_myfile} 2>&1 )
@@ -175,68 +172,9 @@ init_iso()
 			local cur_url_len=0
 			local free_len=0
 
-			if [ ${_mirror_num} -gt 1 ]; then
-				${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
-				_sorted_mirror_list=$( for i in ${iso_site} ${cbsd_iso_mirrors}; do echo ${i}; done | ${SORT_CMD} -u )
+			scan_fastest_mirror -s "${iso_site} ${cbsd_iso_mirrors}" -t 3 -u "${iso_img_dist}"
+			iso_site="${FASTEST_SRC_MIRROR}"
 
-				# determine longest url
-				for i in ${iso_site} ${cbsd_iso_mirrors}; do
-					cur_url_len=$( strlen ${i} )
-					[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
-				done
-
-				max_url_len=$(( max_url_len + 1 ))
-				max_url_len_header=$(( max_url_len - 15 ))
-
-				printf "%-12s ${UNDERLINE}${H1_COLOR}Mirror source:${N0_COLOR} %-${max_url_len_header}s ${UNDERLINE}${H1_COLOR}Bytes per 3sec:${N0_COLOR}\n"
-
-				_sorted_mirror_list_rate=
-				# for broken_crc_fetch_order="cbsd_mirror"
-				_sorted_mirror_list2=$( for i in ${cbsd_iso_mirrors} ${iso_site}; do echo ${i}; done | ${SORT_CMD} -u )
-
-				for i in ${_sorted_mirror_list}; do
-					_mirror_cur=$(( _mirror_cur + 1 ))
-					url="${i}${iso_img_dist}"
-
-					cur_url_len=$( strlen ${i} )
-					free_len=$(( max_url_len - cur_url_len ))
-
-					printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
-					t_size=$( ${TIMEOUT_CMD} -s KILL 5 ${TIMEOUT_CMD} -s HUP 3 ${bindir}/cfetch -s 1 -o /dev/null -u ${url} 2>/dev/null )
-					if [ -z "${t_size}" ]; then
-						${ECHO} "${W1_COLOR}failed ${N2_COLOR}(${url})${N0_COLOR}"
-						t_size=0
-					else
-						if [ "${t_size}" = "0" ]; then
-							${ECHO} "${N4_COLOR}${t_size}${N0_COLOR}"
-						else
-							${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
-						
-						fi
-						if ! is_number ${t_size}; then
-							if [ ${t_size} -gt ${win_rate} ]; then
-								win_rate=${t_size}
-								win_mirror="${i}"
-							fi
-						else
-							t_size=0
-							${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
-						fi
-					fi
-					_sorted_mirror_list_rate="${_sorted_mirror_list_rate}${t_size} ${i}\n"
-				done
-
-				_sorted_mirror_list_rate=$( printf "${_sorted_mirror_list_rate}" | ${SORT_CMD} -k1 -n -r )
-				_sorted_mirror_list=$( printf "${_sorted_mirror_list_rate}" | ${AWK_CMD} {'printf $2" "'} )
-				# sorted list "<rate> <mirror>":
-				#echo "${_sorted_mirror_list_rate}"
-
-				[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
-				iso_site="${_sorted_mirror_list}"
-			else
-				# single site without mirrors
-				_sorted_mirror_list2=
-			fi
 			for i in ${iso_site}; do
 				sha256sum_passed=0
 				${ECHO} "${N1_COLOR}Processing: ${N2_COLOR}${i}${H2_COLOR}${iso_img_dist}${N0_COLOR}"
@@ -249,25 +187,25 @@ init_iso()
 				[ -r ${outfile} -a ${sha256sum_passed} -eq 1 ] && break
 				[ -r ${outfile} ] && ${RM_CMD} -f ${outfile}
 				_fetch_attempt=$(( _fetch_attempt + 1 ))
-				if [ "${broken_crc_fetch_order}" = "cbsd_mirror" -a ${_fetch_attempt} -eq 1 ]; then
-					# reset mirror list
-					for x in ${_sorted_mirror_list2}; do
-						${ECHO} "${N1_COLOR}Processing from CBSD Mirrors: ${N2_COLOR}${x}${N0_COLOR}"
-						fetchme -o ${outfile} -u ${x}${iso_img_dist}
-						check_iso_sha256sum -f ${outfile} -m ${sha256sum}
-						sha256sum_passed=$?
-						[ -r ${outfile} -a ${sha256sum_passed} -eq 1 ] && break
-					done
-					break
-				fi
+#				if [ "${broken_crc_fetch_order}" = "cbsd_mirror" -a ${_fetch_attempt} -eq 1 ]; then
+#					# reset mirror list
+#					for x in ${_sorted_mirror_list2}; do
+#						${ECHO} "${N1_COLOR}Processing from CBSD Mirrors: ${N2_COLOR}${x}${N0_COLOR}"
+#						fetchme -o ${outfile} -u ${x}${iso_img_dist}
+#						check_iso_sha256sum -f ${outfile} -m ${sha256sum}
+#						sha256sum_passed=$?
+#						[ -r ${outfile} -a ${sha256sum_passed} -eq 1 ] && break
+#					done
+#					break
+#				fi
 			done
 
 			if [ ${sha256sum_passed} -ne 1 ]; then
 				${ECHO} "${N1_COLOR}SHA256 sum wrong. Please update profiles or use ${N2_COLOR}CBSD_ISO_SKIP_CHECKSUM=yes${N1_COLOR} variable"
 				${ECHO} "via env(1) or ${emulator}-default-default.conf config file to disable sha256sum validating${N0_COLOR}"
-			
 			fi
 		fi
+
 		ALWAYS_YES=0
 
 		# restore inter value
