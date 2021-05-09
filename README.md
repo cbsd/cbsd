@@ -36,7 +36,7 @@ Tested with following OSes and distribution:
 ## Support
 
 * For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
-* Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
+* Web link: https://t.me/cbsdofficial
 * Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
 * Other contact: https://www.bsdstore.ru/en/feedback.html
 
