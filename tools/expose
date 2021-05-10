@@ -2,24 +2,55 @@
 #v11.1.19
 MYARG=""
 MYOPTARG="in inaddr jname mode out outaddr proto"
-MYDESC="Exposing a port to jail from master host"
+MYDESC="Exposing a port (port forwarding) to env via IPFW or PF"
 ADDHELP="\
- in     - master port for incoming connection\n\
- inaddr - use IP as nodeip (for incoming connection). Default is $nodeip\n\
- jname  - environment name\n\
- mode   - add,delete,apply,clear,flush,list\n\
-  - add    : add and apply one rule, e.g: in=222 out=22 proto=tcp\n\
-  - delete : delete and clear one rule, e.g: in=222 out=22\n\
-  - apply  : apply all rules from database\n\
-  - clear  : clear all rules from database\n\
-  - flush  : clear and remove all rules\n\
- out - \(optional\) destination port inside jail\n\
- outaddr - use IP as destination address, do not use jail IPs\n\
- proto = udp, tcp. default: tcp\n\
-Examples:\n\
- cbsd expose mode=add in=2233 out=22\n\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ By command 'cbsd expose' you can create forward rule for tcp/udp
+ port from external IP (default with 'nodeip' from 'cbsd initenv-tui'
+ to bhyve or jail.
+ The RDR/FWD rules are generated for NAT framework, 
+ which you chose through 'cbsd natcfg'. For 'pf', nat rules file
+ located in ~cbsd/etc/pf.conf. For 'ipfw' rules applied in runtime
+ and have a comment 'Setup by CBSD expose.'. Each '[jb]stop' or '[jb]start'
+ sequence trigger 'expose' script every time (when the environment has rules).
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}in${N0_COLOR}      - master port for incoming connection.
+ ${N2_COLOR}inaddr${N0_COLOR}  - use IP as nodeip (for incoming connection),
+           default is \${nodeip} ( 'cbsd initenv-tui' to change ).
+ ${N2_COLOR}jname${N0_COLOR}   - environment name.
+ ${N2_COLOR}mode${N0_COLOR}    - add,delete,apply,clear,flush,list:
+  - add    : add and apply one rule, e.g: in=222 out=22 proto=tcp;
+  - delete : delete and clear one rule, e.g: in=222 out=22;
+  - apply  : apply all rules from database;
+  - clear  : clear all rules from datatase;
+  - flush  : clear and remove all rules;
+ ${N2_COLOR}out${N0_COLOR}     - \(optional\) destination port inside jail.
+ ${N2_COLOR}outaddr${N0_COLOR} - use IP as destination address, do not
+           use jail/bhyve IPs.
+ ${N2_COLOR}proto${N0_COLOR}   - udp, tcp. default: tcp.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ cbsd expose mode=add in=2233 out=22 jname=myjail
+
+Or with CBSDfile (the 'jname=' args can be ommited):
+--
+jail_foo()
+{
+}
+
+postcreate_foo()
+{
+    expose mode=add in=3000 out=3000
+}
+--
+
 "
-CBSDMODULE="jail"
+CBSDMODULE="bhyve,jail"
 
 . ${subr}
 cloud_api=0
@@ -31,7 +62,7 @@ if [ -z "${jname}" -a -n "${ojname}" ]; then
 fi
 
 # check for cloud function when CBSDfile exist
-Makefile="${CBSD_PWD}/CBSDfile" 
+Makefile="${CBSD_PWD}/CBSDfile"
 if [ -r ${Makefile} ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
 	. ${Makefile}
@@ -121,7 +152,36 @@ pf_del()
 
 fw_expose_add()
 {
+	local _ret
 	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
+
+	if [ -z "${inaddr}" -o "${inaddr}" = "0" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${inaddr}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	ipwmask ${inaddr}
+	iptype ${IWM}
+	_ret=$?
+
+	if [ ${_ret} -ne 1 ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${inaddr}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	if [ -z "${jip}" -o "${jip}" = "0" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: outaddr not IPv4 address, skip: ${N2_COLOR}${jip}${N0_COLOR}" 1>&2
+		return 1
+	fi
+
+	ipwmask ${jip}
+	iptype ${IWM}
+	_ret=$?
+
+	if [ ${_ret} -ne 1 ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: outaddr not IPv4 address, skip: ${N2_COLOR}${jip}${N0_COLOR}" 1>&2
+		return 1
+	fi
 
 	res=$( ${NC_CMD} -w1 -z ${inaddr} ${in} 2>/dev/null )
 
