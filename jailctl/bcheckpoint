@@ -1,19 +1,78 @@
 #!/usr/local/bin/cbsd
 #v11.2.0
 MYARG="jname mode"
-MYOPTARG="name poweroff"
+MYOPTARG="name suspend"
 MYDESC="bhyve checkpoint"
 CBSDMODULE="bhyve"
-ADDHELP="mode=create,list,destroyall\n\
-  create   - create new checkpoint\n\
-  list     - show available checkpoint for current domain\n\
-  destroyall - destroy all checkpoints for current domain\n\
-name= name of checkpoint. by default: checkpoint\n\n\
-poweroff=  - 1 - turn off the domain immediately after checkpoint, by default - 0\n"
+ADDHELP="\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+The functionality of checkpoints and suspend of a virtual machine is the
+freezing of the virtual environment, saving the entire state to disk,
+from which you can return the system to its previous state without
+having to reboot the environment. CBSD bcheckpoint script helps you 
+to manage and organize checkints.
+
+Do not confuse this feature with disk snapshots (cbsd bsnapshot),
+although a combination of 'cbsd checkpoint suspend=1' + 'cbsd bsnapshot'
+can be used together. Make sure that the checkpoint is always consistent 
+with the state of the disk at the time of the checkpoint.
+
+To run VM from a checkpoint, use 'cbsd bstart' with the 'checkpoint' argument.
+
+${W1_COLOR}Warning! ${N0_COLOR}To use this feature, vmm/ and bhyve utilities
+must be compiled with the BHYVE_SNAPSHOT support:
+
+  1) rebuild kernel/vmm modules with /etc/src.conf:
+  WITH_BHYVE_SNAPSHOT=yes
+
+  and kernel config options:
+
+  options         BHYVE_SNAPSHOT
+
+  2) rebuild userland tools:
+
+  cd /usr/src/usr.sbin/bhyve
+  make clean
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes install
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes clean
+
+  cd /usr/src/usr.sbin/bhyvectl
+  make clean
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes install
+  env MK_BHYVE_SNAPSHOT=yes make -DBHYVE_SNAPSHOT=yes clean
+
+${H3_COLOR}Options${N0_COLOR}:
+
+${N2_COLOR}jname=${N0_COLOR}    - target envinvironment.
+${N2_COLOR}mode=${N0_COLOR}     - action: create,list,destroyall:
+  create     - create new checkpoint;
+  list       - show available checkpoint for current domain;
+  destroyall - destroy all checkpoints for current domain;
+${N2_COLOR}name=${N0_COLOR}     - name of checkpoint. by default: 'checkpoint'.
+${N2_COLOR}suspend=${N0_COLOR}  - when set to 1 then turn off the domain immediately after checkpoint,
+            for disk consistency. By default - 0, create checkpoint only.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bcheckpoint mode=create suspend=1 jname=myvm
+ # cbsd bcheckpoint mode=list jname=myvm
+ # cbsd bstart checkpoint=checkpoint jname=myvm
+
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bsnapshot --help
+  cbsd bstart --help
+
+"
 
 . ${subr}
 
-poweroff=0
+suspend=0
 name="checkpoint"
 
 . ${cbsdinit}
@@ -46,35 +105,34 @@ checkpoint_create()
 		${RM_CMD} -f ${CHECKPOINT} ${CHECKPOINT}.kern ${CHECKPOINT}.meta
 	fi
 
-	if [ ${poweroff} -eq 1 ]; then
+	if [ ${suspend} -eq 1 ]; then
 		# we must shutdown VM after the checkpoint is created.
 		# We guarantee that it will not work any more, freezing its condition before snapshot.
 		# In this life, VM will never wake up and we can kill VM hard
-		#bpause jname=${jname} mode=on
-		/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
-		sync
-		cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
-		# todo: rewrite to file modification test
+		${BHYVECTL_CMD} --suspend=${CHECKPOINT} --vm=${jname}
+
+		# if we kill or pause VM too early, the <chk>.kern file will not be generated
+		# (why does control come back before the end, bhyve bug?)
+		#bpause mode=on jname=${jname} || true
+		# switch to RO?
 		for i in $( ${SEQ_CMD} 1 5 ); do
 			${ECHO} "${N1_COLOR}Waiting and sure that the info is written on the disk: ${N2_COLOR}${i}/5${N0_COLOR}"
 			sleep 1
 		done
 		# kill the virtual machine immediately
-		bstop jname=${jname} noacpi=1
-		cbsdlogger NOTICE ${CBSD_APP}: stop ${jname} due to checkpoint poweroff=1: ${CHECKPOINT}
+		bstop jname=${jname} noacpi=1 || true
+		cbsdlogger NOTICE ${CBSD_APP}: stop ${jname} due to checkpoint suspend=1: ${CHECKPOINT}
 	else
-		/usr/sbin/bhyvectl --checkpoint ${CHECKPOINT} --vm=${jname}
-		sync
-		cbsdlogger NOTICE ${CBSD_APP}: checkpoint created: ${CHECKPOINT}
-		# todo: rewrite to file modification test
-		for i in $( ${SEQ_CMD} 1 5 ); do
-			${ECHO} "${N1_COLOR}Waiting and sure that the info is written on the disk: ${N2_COLOR}${i}/5${N0_COLOR}"
-			sleep 1
-		done
+		# switch to dsk RO ?
+		${BHYVECTL_CMD} --checkpoint ${CHECKPOINT} --vm=${jname}
 	fi
 
+	# todo:
+	# check for <chk>{.kern,meta} size > 0
+	# check for valid meta json
+
 	sync
-	${ECHO} "${N1_COLOR}Checkpoint was created!: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}checkpoint was created: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
 	return 0
 }
 
@@ -101,3 +159,5 @@ case "${mode}" in
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 esac
+
+exit 0
