@@ -7,7 +7,7 @@ Homepage: https://bsdstore.ru
 ## Description
 
 Yet one more wrapper around [jail](https://man.freebsd.org/jail/8), 
-[Xen](http://www.xenproject.org/) and [bhyve](https://man.freebsd.org/xen/4) for [FreeBSD](https://www.freebsd.org).
+[Xen](http://www.xenproject.org/) and [bhyve](https://man.freebsd.org/bhyve/4) for [FreeBSD](https://www.freebsd.org).
 
 ![demo](https://www.bsdstore.ru/gif/jdemo.gif)
 ![demo](https://www.bsdstore.ru/gif/bdemo.gif)
