@@ -1,24 +1,51 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
-CBSDMODULE="bsdconf"
+CBSDMODULE="jail,sys"
 MYARG="mode"
-MYOPTARG="jname baseonly ver arch service"
-MYDESC="cbsd service wrapper"
-ADDHELP="jname= work in with jail. Also can be path to basejail\n\
-mode= work mode, list or action\n\
-  list   - show service list but apply IGNORE_SERVICES list from srvbrowser.conf\n\
-  action - passthru command to service, e.g: stop, start, onestop, onestart, status, enable, disable\n\
-baseonly=1 - show services only from FreeBSD distribition (use basejail dir)\n\
-service = specify service name for mode=action\n\
-example:\n\
-  cbsd service jname=jail1 mode=action sshd enable\n\
-  cbsd service jname=jail1 mode=action sshd start\n"
+MYOPTARG="arch baseonly jname service ver"
+MYDESC="CBSD service wrapper"
+ADDHELP="\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ service(8) wrapper for CBSD. Control (start/stop/etc.) or list system services.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}     - work in with jail. Also can be path to basejail.
+ ${N2_COLOR}mode=${N0_COLOR}      - work mode, "list" or "action":
+              - list   - to show service list but apply IGNORE_SERVICES list
+                         from srvbrowser.conf file;
+              - action - passthru command to service, e.g:
+                'stop', 'start', 'onestop', 'onestart', 'status', 'enable', 'disable';
+ ${N2_COLOR}baseonly=${N0_COLOR}  - when 1, show services only from FreeBSD 
+                    distribition (use basejail dir).
+ ${N2_COLOR}service=${N0_COLOR}   - specify service name for mode=action.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd service jname=jail1 mode=action sshd enable
+ # cbsd service jname=jail1 mode=action sshd start
+ # cbsd service jname=jail1 mode=list
+ # cbsd service mode=list baseonly=1 jname=/usr/jails/basejail/base_amd64_amd64_13.0
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd sysrc --help
+
+"
+
 EXTHELP="modules/bsdconf.d"
 
 . ${subr}
 unset jname baseonly arch ver service
 cbsd_api=0
+jname=
+ojname=
 . ${cbsdinit}
+
+[ -n "${jname}" ] && ojname="${jname}"
+
 . ${system}
 
 srv_list()
@@ -82,17 +109,25 @@ _MYDIR=$( ${DIRNAME_CMD} `${REALPATH_CMD} $0` )
 SERVICE="service"
 
 # MAIN
-origjname=
 emulator="jail" # for jname_is_multiple
 
-if [ -z "${jname}" -a -n "${ojname}" ]; then
+if [ -n "${ojname}" ]; then
 	# inherit jname env
 	jname="${ojname}"
 fi
 
+# jname can be as path, detect it:
+prefix=$( substr --pos=0 --len=1 --str=${jname} )
+if [ "${prefix}" = "/" ]; then
+	[ ! -r ${jname}/bin/sh ] && err 1 "${N1_COLOR}${CBSD_APP}: file hier not found: ${N2_COLOR}${jname}${N0_COLOR}"
+	jname_as_path=1
+else
+	jname_as_path=0
+fi
+
 # check for cloud function when CBSDfile exist
 Makefile="${CBSD_PWD}/CBSDfile"
-if [ -r ${Makefile} ]; then
+if [ ${jname_as_path} -eq 0 -a -r ${Makefile} ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 	. ${Makefile}
 
@@ -178,30 +213,29 @@ cmd=
 
 # trim for jname=, service=, mode= and action= in "$*"
 for i in $*; do
-	prefix6=
-	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
-	[ "${prefix6}" = "jname=" ] && continue
-
 	prefix5=
+	prefix6=
+	prefix8=
+	prefix9=
+
 	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
 	[ "${prefix5}" = "mode=" ] && continue
 
-	prefix9=
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+	[ "${prefix6}" = "jname=" ] && continue
+
+	prefix8=$( substr --pos=0 --len=8 --str="${i}" )
+	[ "${prefix8}" = "service=" ] && continue
+
 	prefix9=$( substr --pos=0 --len=9 --str="${i}" )
 	[ "${prefix9}" = "baseonly=" ] && continue
 
-	prefix8=
-	prefix8=$( substr --pos=0 --len=8 --str="${i}" )
-	[ "${prefix8}" = "service=" ] && continue
 	if [ -n "${cmd}" ]; then
 		cmd="${cmd} ${i}"
 	else
 		cmd="${service} ${i}"
 	fi
 done
-
-# test jname as path ?
-prefix=$( substr --pos=0 --len=1 --str="${jname}" )
 
 if [ ${cbsd_api} -eq 1 ]; then
 	CURL_CMD=$( which curl )
@@ -248,18 +282,10 @@ fi
 [ -z "${jname}" ] && err 1 "${N1_COLOR}please set: ${N2_COLOR}${jname}${N0_COLOR}"
 
 ## MAIN ##
-if [ "${prefix}" = "/" ]; then
-	# this is path
-	data=""
+if [ ${jname_as_path} -eq 1 ]; then
 	if [ "${baseonly}" = "1" ]; then
-		. ${distdir}/universe.subr
-		readconf buildworld.conf
-		. ${buildconf}
-		init_target_arch
-		init_srcdir
-		init_basedir
-		[ ! -d "${BASE_DIR}/dev" ] && err 1 "${N1_COLOR}No such base: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
-		exec_cmd="${CHROOT_CMD} ${BASE_DIR} ${SERVICE_CMD}"
+		[ ! -d "${jname}/dev" ] && err 1 "${N1_COLOR}no such /dev: ${N2_COLOR}${jname}${N0_COLOR}"
+		exec_cmd="${CHROOT_CMD} ${jname} ${SERVICE_CMD}"
 		${MOUNT_CMD} -t devfs devfs ${BASE_DIR}/dev
 		TRAP="${TRAP} ${UMOUNT_CMD} ${BASE_DIR}/dev;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
@@ -267,15 +293,15 @@ if [ "${prefix}" = "/" ]; then
 		exec_cmd="${SERVICE_CMD}"
 	fi
 else
+	data=
 	. ${jrcconf}
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && err 1 "Jail is offline"
+	[ ! -d "${data}/etc" ] && err 1 "${N1_COLOR}No such etc dir: ${N2_COLOR}${data}/etc${N0_COLOR}"
 #	permit any action, e.g: configtest ?
-	[ $baserw -eq 1 ] && path=$data
+	[ ${baserw} -eq 1 ] && path=${data}
 	exec_cmd="jexec jname=${jname} ${SERVICE_CMD}"
 fi
-
-[ ! -d "${data}/etc" ] && err 1 "${N1_COLOR}No such etc dir: ${N2_COLOR}${data}/etc${N0_COLOR}"
 
 case "${mode}" in
 	list)

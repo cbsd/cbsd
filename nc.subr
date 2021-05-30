@@ -76,38 +76,35 @@ usage() {
 # y z" and sudoexec
 #  and this is the most balanced work-round of all
 init() {
-	local MYNUMTEST=0 _i
+	local MYNUMTEST=0 _i _known_arg=0
 	local bin_version= _pos _arg_len _pref
-	local _tofile=0 _eval=1
-	local IFS OIFS VAL _open _cmd
-	if [ -n "${CBSD_INIT_SAVE2FILE}" ]; then
-		_tofile=1
-		${TRUNCATE_CMD} -s0 ${CBSD_INIT_SAVE2FILE}
-	fi
+	local _tofile=0 _eval=1 _validmod
+	local IFS OIFS VAL _open _cmd _workdir_ver
 
-	. ${strings}
-
-	[ -z "${double_args}" ] && double_args=1
-
-	bin_version=$( /usr/local/bin/cbsd -c version 2>/dev/null )
-
-	if [ "${bin_version}" != "${myversion}" ]; then
-		OIFS="${IFS}"
+	if [ "$1" = "--desc" ]; then
 		IFS=" "
-		${ECHO} "${W1_COLOR}Warning${N1_COLOR}: CBSD is ${bin_version} while workdir initializated for ${myversion}. Please re-run: ${N2_COLOR}cbsd initenv${N0_COLOR}" 1>&2
-		IFS="${OIFS}"
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--desc"
+			exit 0
+		fi
+		if [ -n "${CBSDMODULEONLY}" ]; then
+			_XOIFS="${IFS}"
+			_validmod=0
+			IFS=","
+			# CBSDMODULE can be multiple value separated by ','
+			for i in ${CBSDMODULE}; do
+				if [ "${CBSDMODULEONLY}" = "${i}" ]; then
+					_validmod=1
+					break
+				fi
+			done
+			IFS="${_XOIFS}"
+			[ ${_validmod} -ne 1 ] && exit 0
+		fi
+		#[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
+		${ECHO} "[${BOLD}${CBSDMODULE}${N0_COLOR}] ${N2_COLOR}${MYDESC}${N0_COLOR}"
+		exit 0
 	fi
-
-	for _i in ${MYARG} ${MYOPTARG}; do
-		MYNUMTEST=$(( MYNUMTEST + 1 ))
-	done
-
-	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
-	trap "${RM_CMD} -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
-
-	# disable history of execution cbsd command inside cbsd command
-	export NO_CBSD_HISTORY=yes
-
 	if [ "$1" = "--help" ]; then
 		IFS=" "
 		if [ -n "${CBSD_SUDO}" ]; then
@@ -125,6 +122,41 @@ init() {
 		exit 0
 	fi
 
+	if [ -n "${CBSD_INIT_SAVE2FILE}" ]; then
+		_tofile=1
+		${TRUNCATE_CMD} -s0 ${CBSD_INIT_SAVE2FILE}
+	fi
+
+	. ${strings}
+
+	[ -z "${double_args}" ] && double_args=1
+
+	bin_version=$( /usr/local/bin/cbsd -c version 2>/dev/null )
+	if [ -r ${workdir}/ver ]; then
+		_workdir_ver=$( ${CAT_CMD} ${workdir}/ver )
+	else
+		_workdir_ver="${bin_version}"
+		printf "${bin_version}" > ${workdir}/ver
+	fi
+	if [ "${bin_version}" != "${myversion}" ]; then
+		OIFS="${IFS}"
+		IFS=" "
+		${ECHO} "${W1_COLOR}Warning${N1_COLOR}: CBSD is ${bin_version} while distfiles initializated for ${myversion}. Please re-run: ${N2_COLOR}cbsd initenv${N0_COLOR}" 1>&2
+		IFS="${OIFS}"
+	fi
+	if [ "${_workdir_ver}" != "${myversion}" ]; then
+		OIFS="${IFS}"
+		IFS=" "
+		${ECHO} "${W1_COLOR}Warning${N1_COLOR}: CBSD is ${bin_version} while workdir initializated for ${_workdir_ver}. Please re-run: ${N2_COLOR}env workdir=${workdir} cbsd initenv${N0_COLOR}" 1>&2
+		IFS="${OIFS}"
+	fi
+
+	OIFS="${IFS}"
+	IFS="${INIT_IFS}"
+	for _i in ${MYARG} ${MYOPTARG}; do
+		MYNUMTEST=$(( MYNUMTEST + 1 ))
+	done
+
 	if [ "$1" = "--args" ]; then
 		IFS=" "
 		if [ -n "${CBSD_SUDO}" ]; then
@@ -137,6 +169,13 @@ init() {
 		done
 		err 0 ""
 	fi
+	IFS="${OIFS}"
+
+	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
+	trap "${RM_CMD} -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
+
+	# disable history of execution cbsd command inside cbsd command
+	export NO_CBSD_HISTORY=yes
 
 	[ ! -r "${localcbsdconf}" ] && err 1 "no such local conf file: ${localcbsdconf}"
 	. ${localcbsdconf}
@@ -172,17 +211,17 @@ init() {
 		_eqpos=0
 
 		if [ ${_opened} -eq 0 ]; then
-		strpos --str="${i}" --search="="
-		_eqpos=$?
-		if [ ${_eqpos} -eq 0 ]; then
-			# not params=value form, pass as-is
-			if [ -n "${_cmd}" ]; then
-				_cmd="${_cmd} ${i}"
-			else
-				_cmd="${i}"
+			strpos --str="${i}" --search="="
+			_eqpos=$?
+			if [ ${_eqpos} -eq 0 ]; then
+				# not params=value form, pass as-is
+				if [ -n "${_cmd}" ]; then
+					_cmd="${_cmd} ${i}"
+				else
+					_cmd="${i}"
+				fi
+				continue
 			fi
-			continue
-		fi
 		fi
 
 		_arg_len=$( strlen ${i} )
@@ -195,7 +234,7 @@ init() {
 			# if first " pos matches the end of the line, 
 			# so this is the closure of a multi-line variable
 			if [ ${_pos} -eq ${_arg_len} ]; then
-				_opened=0		# закрыли
+				_opened=0		# close
 				_closed=1
 				_quoted=0
 			else
@@ -221,7 +260,7 @@ init() {
 			VAL=$( substr --pos=$(( 0 )) --len=${_arg_len} --str="${i}" )
 		fi
 		VAL=$( echo ${VAL} | ${TR_CMD} -d '"' )		# strip extra quotes
-		VAL=$( echo ${VAL} | ${TR_CMD} -d "'" )		# strip extra quotes
+#		VAL=$( echo ${VAL} | ${TR_CMD} -d "'" )		# strip extra quotes
 
 		if [ ${_opened} -eq 1 -o ${_closed} -eq 1 ]; then
 			if [ -n "${_tmparg}" ]; then
@@ -240,16 +279,29 @@ init() {
 			_opened=0
 		fi
 
-		eval "${ARG}=\"${VAL}\""
+		# do eval for known args only
+		_known_arg=0
+		OIFS="${IFS}"
+		IFS="${INIT_IFS}"
+		for j in ${MYARG} ${MYOPTARG}; do
+			if [ "${ARG}" = "${j}" ]; then
+				_known_arg=1
+				break
+			fi
+		done
+		IFS="${OIFS}"
+		[ ${_known_arg} -eq 1 ] && eval "${ARG}=\"${VAL}\""
+
 		if [ -n "${_cmd}" ]; then
 			_cmd="${_cmd} ${ARG}=\"${VAL}\""
 		else
 			_cmd="${ARG}=\"${VAL}\""
 		fi
-		[ -z "${CBSD_SUDO}" ] && eval "${ARG}=\"${VAL}\""
-		[ ${_tofile} -eq 1 ] && printf "${ARG}='${VAL}' " >> ${CBSD_INIT_SAVE2FILE}
+		[ -z "${CBSD_SUDO}" -a ${_known_arg} -eq 1 ] && eval "${ARG}=\"${VAL}\""
+		[ ${_tofile} -eq 1 ] && printf "${ARG}=\"${VAL}\" " >> ${CBSD_INIT_SAVE2FILE}
 	done
 	IFS=" "
+
 	[ -n "${CBSD_SUDO}" ] && echo -n "${_cmd}"
 	for i in ${MYARG}; do
 		unset T

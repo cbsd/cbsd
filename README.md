@@ -7,7 +7,7 @@ Homepage: https://bsdstore.ru
 ## Description
 
 Yet one more wrapper around [jail](https://man.freebsd.org/jail/8), 
-[Xen](http://www.xenproject.org/) and [bhyve](https://man.freebsd.org/xen/4) for [FreeBSD](https://www.freebsd.org).
+[Xen](http://www.xenproject.org/) and [bhyve](https://man.freebsd.org/bhyve/4) for [FreeBSD](https://www.freebsd.org).
 
 ![demo](https://www.bsdstore.ru/gif/jdemo.gif)
 ![demo](https://www.bsdstore.ru/gif/bdemo.gif)
@@ -36,7 +36,7 @@ Tested with following OSes and distribution:
 ## Support
 
 * For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
-* Web link: https://web.telegram.org/#/im?p=%40cbsdofficial
+* Web link: https://t.me/cbsdofficial
 * Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
 * Other contact: https://www.bsdstore.ru/en/feedback.html
 

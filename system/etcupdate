@@ -5,15 +5,64 @@ MYOPTARG="arch default_obtain_etcupdate_method etcupdate_create_backup force fro
 MYDESC="etcupdate helper, manage updates to system files not updated by installworld"
 CBSDMODULE="jail"
 ADDHELP="\
-  default_obtain_etcupdate_method= overwrite obtain method, valid: build,index\n\
-  etcupdate_create_backup= (integer) when positive - number of etcupdate backup files, 0 - disable\n\
-  force=1 - force to extract/build even if resource already exist\n\
-  from= from X.Y version\n\
-  jname= jail name\n\
-  mode - can be: extract,build,update,purge,resolve\n\
-   - mode=extract and jname is set, extract etc files for specified jail\n\
-   - mode=diff - execute etcupdate diff between version\n\
-  to= to X.Y version\n\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+  To solve the distribution file synchronization problem (this is basically the
+  contents of the /etc directory) when changing versions of the base system, 
+  FreeBSD offers two utilities: mergemaster(8) and etcupdate(8). CBSD has a 
+  script for working with etcupdate under the same name. By default CBSD 
+  creates a directory hierarchy for working etcupdate in the system directory 
+  of the database and each jail. You can turn this off by overriding the 
+  'etcupdate_init' parameter value to '0' (disabled) in the profile of your 
+  container or globally via 'jail-freebsd-default.conf' the configuration 
+  file in the '~cbsd/etc/' directory.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}default_obtain_etcupdate_method=${N0_COLOR} - overwrite obtain 
+   method, valid values: 'build','index'.
+ ${N2_COLOR}etcupdate_create_backup=${N0_COLOR}         - (integer) when
+   positive: number of etcupdate backup files, 0 - disable.
+ ${N2_COLOR}force=1${N0_COLOR}                          - force to 
+   extract/build even if resource already exist.
+ ${N2_COLOR}from=${N0_COLOR}                            - from X.Y version.
+ ${N2_COLOR}jname=${N0_COLOR}                           - target jail name.
+ ${N2_COLOR}mode=${N0_COLOR}                             - can be:
+   build extract purge resolve update:
+   - mode=build   - (re)build index file for basejail.
+   - mode=diff    - execute etcupdate diff between version.
+   - mode=extract - when  jname is set, extract etc files for specified jail
+ ${N2_COLOR}to=${N0_COLOR}                              - to X.Y version
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  Full update cycle between 12.2 and 13.0 version:
+
+  1) create test jail on 12.2 version
+
+    # cbsd jcreate jname=test ver=12.2
+
+  2) create/build index files for 12.2 base if necessary ( only once for each base )
+
+    # cbsd etcupdate mode=extract default_obtain_etcupdate_method=index ver=12.2
+    # cbsd etcupdate mode=build default_obtain_etcupdate_method=index ver=12.2
+
+  3) fetch and create/build (if necessary) new base version: 13.0
+
+    # cbsd repo action=get sources=base ver=13.0
+    # cbsd etcupdate mode=extract default_obtain_etcupdate_method=index ver=13.0
+    # cbsd etcupdate mode=build default_obtain_etcupdate_method=index ver=13.0
+
+  4) change jail version to new, 13.0:
+
+    # cbsd jset jname=test ver=13.0
+    # cbsd jstart test
+
+  5) Merge/sync/update config files:
+
+    # cbsd etcupdate jname=test mode=update from=12.2 to=13.0
+
 "
 arch=
 target_arch=
@@ -227,7 +276,11 @@ etcupdate_update()
 	[ ! -d ${etcupdate_jail_root}/current ] && ${CP_CMD} -a ${_etcupdate_from_dir}/current ${etcupdate_jail_root}
 
 	for i in ${etcupdate_exclude_path}; do
-		_exclude_args="${_exclude_args} -I ${i}"
+		if [ -z "${_exclude_args}" ]; then
+			_exclude_args="-I ${i}"
+		else
+			_exclude_args="${_exclude_args} -I ${i}"
+		fi
 	done
 
 	# backup and rotate area
@@ -268,8 +321,10 @@ etcupdate_update()
 
 	[ ${baserw} -eq 1 ] && path="${data}"		# baserw has a different root
 
-	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
-	#echo "${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}"
+	echo "[debug]: ${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}" 1>&2
+	/bin/sh <<EOF
+${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
+EOF
 	_ret=$?
 
 	if [ ${_ret} -ne 0 ]; then

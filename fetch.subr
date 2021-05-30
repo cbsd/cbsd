@@ -119,20 +119,23 @@ fetchme()
 
 # -s sources
 # -t timeout
-# -u test_url/file
+# -u (opt) test_url/file
 # scan_fastest_mirror -s "mirror1 mirror2" -t 3 -u "/base.txz"
-
 scan_fastest_mirror()
 {
 	local _src_mirror
-	local _test_file="${2}"
+	local _test_file
 	local _timeout=3
-	local _mirror_num
+	local _mirror_num=0
 	local max_url_len=0
 	local cur_url_len=0
 	local free_len=0
 	local win_rate=0
 	local _stimeout _htimeout
+	local _sorted_mirror_list
+	local _test_file_cast=0
+	local _surl
+	local _testurl
 
 	while getopts "s:u:t:" opt; do
 		case "${opt}" in
@@ -144,45 +147,91 @@ scan_fastest_mirror()
 	done
 
 	[ -z "${_src_mirror}" ] && err 1 "scan_fastest_mirror: empty src_mirror"
-	_mirror_num=$( echo "${_src_mirror}" | ${WC_CMD} -w | ${AWK_CMD} {'printf $1'} )
+	_sorted_mirror_list=$( for i in ${_src_mirror}; do echo ${i}; done | ${SORT_CMD} -u )
+
+	for i in ${_sorted_mirror_list}; do
+
+		# short url len
+		_surl=$( echo ${i} | ${CUT_CMD} -d '/' -f 1-3 )
+		cur_url_len=$( strlen ${_surl} )
+		[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
+
+		_mirror_num=$(( _mirror_num + 1 ))
+		if [ ${_mirror_num} -eq 1 -a -z "${_test_file}" ]; then
+			# if _test_file empty then try to extract from url
+			_test_file=$( ${BASENAME_CMD} ${i} )
+			_test_file_cast=1
+		fi
+	done
 
 	[ -z "${_test_file}" ] && err 1 "scan_fastest_mirror: empty test_file"
 
-	# soft timeout
-	_stimeout="${_timeout}"
-
-	# hard timeout
-	_htimeout=$(( _stimeout + 1 ))
-
-	# determine longest url
-	for i in ${_src_mirror}; do
-		cur_url_len=$( strlen ${i} )
-		[ ${cur_url_len} -gt ${max_url_len} ] && max_url_len=${cur_url_len}
-	done
-
 	max_url_len=$(( max_url_len + 1 ))
-	for i in ${_src_mirror}; do
-		_mirror_cur=$(( _mirror_cur + 1 ))
-		cur_url_len=$( strlen ${i} )
-		free_len=$(( max_url_len - cur_url_len ))
-		printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${i}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num}
-		t_size=$( ${TIMEOUT_CMD} -s KILL ${_htimeout} ${TIMEOUT_CMD} -s HUP ${_stimeout} ${bindir}/cfetch -s 1 -o /dev/null -u ${i}${_test_file} 2>/dev/null )
-		if [ -z "${t_size}" ]; then
-			${ECHO} "${W1_COLOR}failed${N0_COLOR}"
-		else
-			${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}"
-			if ! is_number ${t_size}; then
-				if [ ${t_size} -gt ${win_rate} ]; then
-					win_rate=${t_size}
-					win_mirror="${i}"
-				fi
+	max_url_len_header=$(( max_url_len - 15 ))
+
+	if [ ${_mirror_num} -gt 1 ]; then
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}" 1>&2
+		# adjust soft timeout
+		_stimeout="${_timeout}"
+
+		# adjust hard timeout
+		_htimeout=$(( _stimeout + 1 ))
+
+		printf "%-12s ${UNDERLINE}${H1_COLOR}Mirror source:${N0_COLOR} %-${max_url_len_header}s ${UNDERLINE}${H1_COLOR}bytes/sec:${N0_COLOR}\n" 1>&2
+		_sorted_mirror_list_rate=
+
+		for i in ${_sorted_mirror_list}; do
+			_surl=$( echo ${i} | ${CUT_CMD} -d '/' -f 1-3 )
+			_mirror_cur=$(( _mirror_cur + 1 ))
+
+			cur_url_len=$( strlen ${_surl} )
+			free_len=$(( max_url_len - cur_url_len ))
+
+			_testurl=
+
+			if [ ${_test_file_cast} -eq 0 ]; then
+				_testurl="${i}${_test_file}"
 			else
-				${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}"
+				_testurl="${i}"
 			fi
-		fi
-	done
-	[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}"
-	FASTEST_SRC_MIRROR="${win_mirror} ${_src_mirror}"
+
+			printf " ${H1_COLOR}* ${H2_COLOR}[ %-5s ] ${N2_COLOR}${_surl}${N0_COLOR}:%-${free_len}s" ${_mirror_cur}/${_mirror_num} 1>&2
+			t_size=$( ${TIMEOUT_CMD} -s KILL ${_htimeout} ${TIMEOUT_CMD} -s HUP ${_stimeout} ${bindir}/cfetch -s 1 -o /dev/null -u ${_testurl} 2>/dev/null )
+			if [ -z "${t_size}" ]; then
+				${ECHO} "${W1_COLOR}failed ${N2_COLOR}(${_testurl})${N0_COLOR}" 1>&2
+				t_size=0
+			else
+				if [ "${t_size}" = "0" ]; then
+					${ECHO} "${N4_COLOR}${t_size}${N0_COLOR}" 1>&2
+				else
+					${ECHO} "${H5_COLOR}${t_size}${N0_COLOR}" 1>&2
+				fi
+
+				if ! is_number ${t_size}; then
+					if [ ${t_size} -gt ${win_rate} ]; then
+						win_rate=${t_size}
+						win_mirror="${i}"
+					fi
+				else
+					t_size=0
+					${ECHO} "${W1_COLOR}failed, no size${N0_COLOR}" 1>&2
+				fi
+			fi
+			_sorted_mirror_list_rate="${_sorted_mirror_list_rate}${t_size} ${i}\n"
+		done
+
+		_sorted_mirror_list_rate=$( printf "${_sorted_mirror_list_rate}" | ${SORT_CMD} -k1 -n -r )
+		_sorted_mirror_list=$( printf "${_sorted_mirror_list_rate}" | ${AWK_CMD} {'printf $2" "'} )
+		# sorted list "<rate> <mirror>":
+		#echo "${_sorted_mirror_list_rate}"
+
+		[ -n "${win_mirror}" ] && ${ECHO} "${H3_COLOR} Winner: ${N2_COLOR}${win_mirror}${N0_COLOR}" 1>&2
+		FASTEST_SRC_MIRROR="${_sorted_mirror_list}"
+	else
+		FASTEST_SRC_MIRROR="${_sorted_mirror_list}"
+	fi
+
+	return 0
 }
 
 ###

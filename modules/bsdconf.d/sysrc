@@ -1,11 +1,38 @@
 #!/usr/local/bin/cbsd
-#v12.0.4
-CBSDMODULE="bsdconf"
+#v13.0.8
+CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="jname fromfile"
-MYDESC="cbsd sysrc wrapper"
-ADDHELP="jname= work in with jail\n\
-fromfile - include file for read sysrc_enable, sysrc_disable list\n"
+MYDESC="CBSD sysrc wrapper"
+ADDHELP="\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+sysrc(8) wrapper for CBSD. Safely edit system rc files in jail.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}   - work in with jail, can be mask.
+ ${N2_COLOR}fromfile${N0_COLOR} - include file for read sysrc_enable, sysrc_disable list
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd sysrc jname=test ifconfig_eth0_ipv6+=\"inet6 accept_rtadv\"
+
+ # cbsd sysrc jname='*' sshd_flags=\"-oUseDNS=no\"
+
+ # cat > /tmp/myrc.txt <<EOF
+sysrc_disable=\"syslogd cron\"
+sysrc_enable=\"sshd inetd\"
+EOF
+ # cbsd sysrc jname=test fromfile=/tmp/myrc.txt
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd service --help
+
+"
+
 EXTHELP="modules/bsdconf.d"
 
 . ${subr}
@@ -120,11 +147,10 @@ fi
 
 ARGS=
 
-# exclude jname= and mode= params from args str
-INIT_IFS="${IFS}"
+# exclude jname= and fromfile= params from args str, re-add quotes
+OIFS="${IFS}"
 IFS="~"
-cmd="$@"
-IFS="${INIT_IFS}"
+
 ARGS=$( while [ -n "${1}" ]; do
 	IFS="~"
 	strpos --str="${1}" --search="="
@@ -142,16 +168,20 @@ ARGS=$( while [ -n "${1}" ]; do
 	ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
 	VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
 
-	case ${ARG} in
+	case "${ARG}" in
 		fromfile|jname)
 			shift
 			continue
 			;;
 	esac
 
-	printf "${ARG}=${VAL} "
+	printf "${ARG}=\"${VAL}\" "
 	shift
 done )
+
+# strip extra space
+ARGS=$( echo ${ARGS} | ${SED_CMD} 's/.$//' )
+IFS="${OIFS}"
 
 if [ ${cbsd_api} -eq 1 ]; then
 	CURL_CMD=$( which curl )
@@ -208,37 +238,31 @@ fi
 ## MAIN ##
 if [ -n "${jname}" ]; then
 	. ${jrcconf}
-	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
-	[ ${baserw} -eq 1 ] && path=${data}
-
-	if [ ${jid} -eq 0 ]; then
-		set -e
-			. ${_MYDIR}/bsdconf.subr
-		set +e
-		. ${distdir}/universe.subr
-		readconf buildworld.conf
-		init_target_arch
-		init_srcdir
-		init_basedir
-		init_kerneldir
-		prepare_jail
-	fi
-	exec_cmd="${CHROOT_CMD} ${path} ${SYSRC_CMD} -f /etc/rc.conf"
+	[ ! -d ${data}/etc ] && err 1 "${N1_COLOR}${CBSD_APP}: no such /etc directory in jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	exec_cmd="${SYSRC_CMD} -qf ${data}/etc/rc.conf"
 else
 	data=
 	exec_cmd="${SYSRC_CMD}"
 fi
 
 [ ! -f "${data}/etc/rc.conf" ] && ${TOUCH_CMD} ${data}/etc/rc.conf
+
 if [ -z "${fromfile}" ];then
-	${exec_cmd} ${ARGS}
+	echo "${exec_cmd} ${ARGS}"
+	/bin/sh <<EOF
+${exec_cmd} ${ARGS}
+EOF
+	ret=$?
+else
+	for i in ${sysrc_enable}; do
+		${exec_cmd} ${i}_enable="YES"
+	done
+
+	for i in ${sysrc_disable}; do
+		${exec_cmd} ${i}_enable="NO"
+	done
 fi
 
-for i in ${sysrc_enable}; do
-	${exec_cmd} ${i}_enable="YES"
-done
-
-for i in ${sysrc_disable}; do
-	${exec_cmd} ${i}_enable="NO"
-done
+exit ${ret}
