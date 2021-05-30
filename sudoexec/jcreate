@@ -1,9 +1,9 @@
 #!/usr/local/bin/cbsd
-#v13.0.1
+#v13.0.8
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey \
-ci_ip4_addr ci_gw4"
+ci_ip4_addr ci_gw4 sysrc"
 # allow all jail settings
 . ${distsharedir}/jail-arg
 JAIL_ARGS="${JARG}"
@@ -31,6 +31,9 @@ Alternative methods of creating jail:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
+ ${N2_COLOR}ci_user_pubkey${N0_COLOR}  - full/relative path to authorized_keys or may contain pubkey 
+                   string itself, e.g: ci_user_pubkey=\"ssh-ed25519 XXXXX root@my.domain\".
+                   This options will customize /root/.ssh/authorized_keys in jail.
  ${N2_COLOR}ci_gw4=${N0_COLOR}         - 0,IP to disable: manage/set defaultrouter= settings in jail rc.conf (for vnet).
  ${N2_COLOR}inter=${N0_COLOR}          - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}customskel=${N0_COLOR}     - <path>: additional skel directory applyed above jail structrure.
@@ -39,6 +42,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}zfs_snapsrc=${N0_COLOR}    - <name>: use ZFS snapshot as data source.
  ${N2_COLOR}pkg_bootstrap=${N0_COLOR}  - 0,1: overwrite pkg_bootstrap from conf file.
  ${N2_COLOR}removejconf=${N0_COLOR}    - 0,1: remove jconf after jcreate? 0 - don't remove.
+ ${N2_COLOR}runasap=${N0_COLOR}        - 0,1: when 1 - run a jail immediately (atomic jcreate+jstart).
  ${N2_COLOR}quiet=${N0_COLOR}          - 0,1: be quiet, dont output verbose message.
  ${N2_COLOR}zfs_encryption=${N0_COLOR} - 0,1: enable native ZFS encryption.
 
@@ -51,6 +55,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jcreate jname=ubu jprofile=ubuntu_focal allow_raw_sockets=1
  # cbsd jcreate jname=cent jprofile=centos_7 allow_raw_sockets=1
  # cbsd jcreate jname=riscv pkg_bootstrap=0 arch=riscv emulator=\"qemu-riscv64-static\" exec_start=\"/bin/qemu-riscv64-static /bin/sh /etc/rc\" exec_stop=\"/bin/qemu-riscv64-static /bin/sh /etc/rc.shutdown\"
+ # cbsd jcreate jname=xx ver=13.0 vnet=1 sysrc=\"ifconfig_eth0+='mtu 1450' inetd_enable=YES\"
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -69,6 +74,7 @@ EXTHELP="wf_jcreate"
 . ${jfs}
 
 ci_user_pubkey=
+sysrc=
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -527,33 +533,49 @@ fi
 # pubkey ?
 if [ -n "${ci_user_pubkey}" ]; then
 	# empty/linux jail test?
-	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, enable service: ${N2_COLOR}sshd${N0_COLOR}"
-	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, adjust via jail rc.conf: ${N2_COLOR}PermitRootLogin=without-password${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, enable service: ${N2_COLOR}sshd${N0_COLOR}" 2>&1
+	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, adjust via jail rc.conf: ${N2_COLOR}PermitRootLogin=without-password${N0_COLOR}" 2>&1
 	${SYSRC_CMD} -qf ${data}/etc/rc.conf sshd_flags+=" -oPermitRootLogin=without-password" sshd_enable=YES > /dev/null 2>&1
 	. ${distdir}/settings-tui-virtual.subr  # for is_valid_ssh_key
 	# check for injection/strip..
-	if [ -r "${workdir}/${ci_user_pubkey}" ]; then
-		_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
-#		echo "C ${_keytest}"
-		if ! is_valid_ssh_key "${_keytest}"; then
-				echo "cloudinit: invalid ssh key from ${workdir}/${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-				echo "found: [${_keytest}]"
-				return 1
-		fi
-	elif [ -r "${ci_user_pubkey}" ]; then
-		_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
-		if ! is_valid_ssh_key "${_keytest}"; then
-			echo "cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-			echo "found: [${_keytest}]"
-			return 1
+	prefix=$( substr --pos=0 --len=1 --str="${ci_user_pubkey}" )
+        if [ "${prefix}" = "/" ]; then
+    		# its full/realpath to file
+		if [ -r "${ci_user_pubkey}" ]; then
+			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+			if ! is_valid_ssh_key "${_keytest}"; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
+				err 1 "${N1_COLOR}found: [${N2_COLOR}${_keytest}${N1_COLOR}]${N0_COLOR}"
+			fi
+		else
+			err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: keyfile not found: ${N2_COLOR}${ci_user_pubkey}${N0_COLOR}"
 		fi
 	else
-		if ! is_valid_ssh_key "${ci_user_pubkey}"; then
-			echo "cloudinit: invalid ssh key: [${ci_user_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-			return 1
-		fi
-		_keytest="${ci_user_pubkey}"
-	fi
+		# its relative path or pubkey string itself.
+		strpos --str="${ci_user_pubkey}" --search=" "
+		if [ $? -ne 0 ]; then
+			# not path, check syntax
+			if ! is_valid_ssh_key "${ci_user_pubkey}"; then
+				err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key: [${ci_user_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
+			else
+				_keytest="${ci_user_pubkey}"
+			fi
+		else
+	    		# get realpath: lookup current dir and $workdir
+    			if [ -r "${CBSD_PWD}/${ci_user_pubkey}" ]; then
+    				ci_user_pubkey=$( ${REALPATH_CMD} ${CBSD_PWD}/${ci_user_pubkey} )
+	    		elif [ -r "${workdir}/${ci_user_pubkey}" ]; then
+    				ci_user_pubkey=$( ${REALPATH_CMD} ${workdir}/${ci_user_pubkey} )
+    			else
+				err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: relative keyfile not found: ${N2_COLOR}${ci_user_pubkey} (in $CBSD_PWD or $workdir)"
+    			fi
+			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+			if ! is_valid_ssh_key "${_keytest}"; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
+				err 1 "${N1_COLOR}found: [${N2_COLOR}${_keytest}${N1_COLOR}]${N0_COLOR}"
+			fi
+    		fi
+    	fi
 	[ ! -d ${data}/root/.ssh ] && ${MKDIR_CMD} -m 0700 ${data}/root/.ssh
 	echo "${_keytest}" >> ${data}/root/.ssh/authorized_keys
 	${CHMOD_CMD} 0644 ${data}/root/.ssh/authorized_keys
@@ -571,6 +593,15 @@ fi
 jswmode jname=${jname} mode=master comment='0'
 myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 [ -z "${myjid}" ] && myjid=0
+
+# sysrc: post-create sysrc(8) for any jail rc.conf customization
+[ -n "${osysrc}" ] && sysrc="${osysrc}"
+if [ -n "${sysrc}" ]; then
+	/bin/sh <<EOF
+	${SYSRC_CMD} -qf ${data}/etc/rc.conf ${sysrc} > /dev/null 2>&1
+EOF
+fi
+
 # autostart asap upon jail created
 [ "${runasap}" = "1" -a ${myjid} -eq 0 ] && jstart jname=${jname} quiet=${quiet}
 
