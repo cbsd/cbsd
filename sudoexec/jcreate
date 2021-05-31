@@ -3,7 +3,7 @@
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey \
-ci_ip4_addr ci_gw4 sysrc"
+ci_ip4_addr ci_gw4 sysrc from"
 # allow all jail settings
 . ${distsharedir}/jail-arg
 JAIL_ARGS="${JARG}"
@@ -56,6 +56,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jcreate jname=cent jprofile=centos_7 allow_raw_sockets=1
  # cbsd jcreate jname=riscv pkg_bootstrap=0 arch=riscv emulator=\"qemu-riscv64-static\" exec_start=\"/bin/qemu-riscv64-static /bin/sh /etc/rc\" exec_stop=\"/bin/qemu-riscv64-static /bin/sh /etc/rc.shutdown\"
  # cbsd jcreate jname=xx ver=13.0 vnet=1 sysrc=\"ifconfig_eth0+='mtu 1450' inetd_enable=YES\"
+ # cbsd jcreate jname=vmagent from=https://dl.bsdstore.ru/img/amd64/amd64/13.0/vmagent/vmagent.img
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -75,6 +76,7 @@ EXTHELP="wf_jcreate"
 
 ci_user_pubkey=
 sysrc=
+from=
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -196,6 +198,50 @@ if [ ${removejconf} = "1" ]; then
 	trap "${RM_CMD} -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM EXIT
 else
 	trap "${RM_CMD} -f ${temprcconf}" HUP INT ABRT BUS TERM EXIT
+fi
+
+# todo: when 'from' exist: use temprcconf settings to jset fromfile to re-configure default image options
+[ -n "${ofrom}" ] && from="${ofrom}"
+if [ -n "${from}" ]; then
+	from_md5=$( ${MD5_CMD} -qs "${from}" )
+	echo "check importdir for: ${from_md5}.img"
+	if [ -r "${importdir}/${from_md5}.img" ]; then
+		echo "Cache img exist"
+	else
+		echo "${FETCH_CMD} -o \"${importdir}/${from_md5}.img\" \"${from}\""
+		${FETCH_CMD} -o "${importdir}/${from_md5}.img" "${from}"
+		echo "REMOTE: ${from}"
+	fi
+
+	. ${temprcconf}
+
+	# COPY on write + GOLD?
+	if [ -r "${importdir}/${from_md5}.img" ]; then
+		cbsd jimport jname=${importdir}/${from_md5}.img new_jname=${jname} host_hostname=${jname}.my.domain
+	else
+		err 1 "${N1_COLOR}${CBSD_APP} error: no such ${importdir}/${from_md5}.img"
+	fi
+
+	for i in ${MYOPTARG}; do
+
+		case "${i}" in
+			jname|from|removejconf)
+				continue
+				;;
+		esac
+
+		eval T="\$o${i}"
+
+		if [ -n "${T}" ]; then
+#			echo "jset jname=${jname} ${i}=\"${T}\""
+			jset jname=${jname} ${i}="${T}"
+		fi
+	done
+
+	# autostart asap upon jail created
+	[ "${runasap}" = "1" ] && jstart jname=${jname} quiet=${quiet}
+
+	exit 0
 fi
 
 . ${temprcconf}
@@ -539,8 +585,8 @@ if [ -n "${ci_user_pubkey}" ]; then
 	. ${distdir}/settings-tui-virtual.subr  # for is_valid_ssh_key
 	# check for injection/strip..
 	prefix=$( substr --pos=0 --len=1 --str="${ci_user_pubkey}" )
-        if [ "${prefix}" = "/" ]; then
-    		# its full/realpath to file
+	if [ "${prefix}" = "/" ]; then
+		# its full/realpath to file
 		if [ -r "${ci_user_pubkey}" ]; then
 			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
 			if ! is_valid_ssh_key "${_keytest}"; then
@@ -561,21 +607,21 @@ if [ -n "${ci_user_pubkey}" ]; then
 				_keytest="${ci_user_pubkey}"
 			fi
 		else
-	    		# get realpath: lookup current dir and $workdir
-    			if [ -r "${CBSD_PWD}/${ci_user_pubkey}" ]; then
-    				ci_user_pubkey=$( ${REALPATH_CMD} ${CBSD_PWD}/${ci_user_pubkey} )
-	    		elif [ -r "${workdir}/${ci_user_pubkey}" ]; then
-    				ci_user_pubkey=$( ${REALPATH_CMD} ${workdir}/${ci_user_pubkey} )
-    			else
+			# get realpath: lookup current dir and $workdir
+			if [ -r "${CBSD_PWD}/${ci_user_pubkey}" ]; then
+				ci_user_pubkey=$( ${REALPATH_CMD} ${CBSD_PWD}/${ci_user_pubkey} )
+			elif [ -r "${workdir}/${ci_user_pubkey}" ]; then
+				ci_user_pubkey=$( ${REALPATH_CMD} ${workdir}/${ci_user_pubkey} )
+			else
 				err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: relative keyfile not found: ${N2_COLOR}${ci_user_pubkey} (in $CBSD_PWD or $workdir)"
-    			fi
+			fi
 			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
 			if ! is_valid_ssh_key "${_keytest}"; then
 				${ECHO} "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
 				err 1 "${N1_COLOR}found: [${N2_COLOR}${_keytest}${N1_COLOR}]${N0_COLOR}"
 			fi
-    		fi
-    	fi
+		fi
+	fi
 	[ ! -d ${data}/root/.ssh ] && ${MKDIR_CMD} -m 0700 ${data}/root/.ssh
 	echo "${_keytest}" >> ${data}/root/.ssh/authorized_keys
 	${CHMOD_CMD} 0644 ${data}/root/.ssh/authorized_keys
