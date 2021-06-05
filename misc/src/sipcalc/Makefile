@@ -6,12 +6,8 @@ MAN=
 
 clean:
 	rm -f .depend* sipcalc sipcalc.debug sipcalc.full *.o
-#install:
-#    install -o ${BINOWN} -g ${BINGRP} -m ${BINMODE} fscd /usr/sbin/
-
-
 install:
-	date
+	install -s -o root -g wheel -m 0555 sipcalc /usr/local/cbsd/misc/sipcalc
 
 .include <bsd.prog.mk>
 
