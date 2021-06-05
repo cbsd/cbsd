@@ -18,33 +18,6 @@ init_vnet()
 }
 
 # $1 - nicname (eg: bridge)
-# if nicname=epair we search as epairXa
-# show first available nic by type
-# example:
-#  ttt=$( find_first_freenic bridge )
-# return 1 when error
-find_first_freenic()
-{
-	local _i _epair _A
-	local _num=1 # begin from 1, due to 0 often used for system usage ( e.g: virbr0 on Xen )
-
-	[ -z $1 ] && return 1
-	[ "$1" = "epair" ] && _epair="a"
-
-	for _i in $( ${IFCONFIG_CMD} -l ); do
-		case "${_i}" in
-			${1}*${_epair})
-				${IFCONFIG_CMD} ${1}${_num}${_epair} >/dev/null 2>&1
-				[ $? -eq 1 ] && echo "${1}${_num}" && return 0
-				_num=$(( _num + 1 ))
-				[ ${_num} -gt 1000 ] && return 1
-			;;
-		esac
-	done
-	echo "${1}${_num}"
-}
-
-# $1 - nicname (eg: bridge)
 # show nicX if exist
 # example:
 #   for i in $( show_all_nic_by_name bridge ); do
@@ -140,16 +113,21 @@ get_my_device()
 {
 	local _i _uplink _firstfree _ret _test _dev _desc
 	local _vpc=0 _dbpath
+	local _is_vtnet=0 _prefix5	# (see #254343 work-around)
 
 	[ -z "${1}" ] && echo "set device" && return 1
 	[ -z "${2}" ] && echo "No uplink" && return 1
-	_dev=$1
-	_desc=$2
+	_dev="$1"
+	_desc="$2"
 
 	if [ "${_dev}" = "vpc" ]; then
 		_vpc=1
 		_dev="bridge"
 	fi
+
+	# workaround #254343
+	_prefix5=$( substr --pos=0 --len=5 --str="${_desc}" )
+	[ "${_prefix5}" = "vtnet" ] && _is_vtnet=1
 
 	for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
 		_uplink=$( get_device_uplink ${_i} ${_desc} )
@@ -157,10 +135,26 @@ get_my_device()
 	done
 
 	# we need for new bridge with ${_dev} uplink
-	_firstfree=$( find_first_freenic ${_dev} )
+	_firstfree=$( get-next-nic name=${_dev} )
 	[ -z "${_firstfree}" ] && echo "Cant find first available ${_dev}" && return 1
 
 	if [ "${_dev}" = "bridge" ]; then
+
+		cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: [$_is_vtnet] VTNET
+
+		if [ ${_is_vtnet} -eq 1 ]; then
+			# workaround for #254343: force to vtnet promisc!
+			# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=254343
+			# Starting from FreeBSD 13.0 if_vtnet was upgraded to 1.0/1.1 spec
+			# If the hypervisor supports VTNET_FLAG_CTRL_RX, then send query to hypervisor - pass all traffic.
+			# bhyve doesnt support for VTNET_FLAG_CTRL_RX so query rejected ( Nevertheless, bhyve ALWAYS works
+			# in a PROMISC mode and does not know how to filter MAC/HWADDR ).
+			# this is workaround for bhyve hypervisor + FreeBSD 13.0 to add 'vtnet' into 'bridge'
+			if [ ${freebsdhostversion} -gt 1300000 ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: apply #254343 workaround: force to set PPROMISC for ${_desc}
+				${IFCONFIG_CMD} ${_desc} promisc
+			fi
+		fi
 
 		# my parent already bridge?
 		if [ ${_vpc} -ne 1 ]; then
@@ -172,7 +166,7 @@ get_my_device()
 		_test=$( ${IFCONFIG_CMD} ${_firstfree} create description ${_desc} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			cbsdlogger NOTICE ${CBSD_APP}: get_my_device: error, unable to create: ${_ret}: ${_test}
+			cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, unable to create: ${_ret}: ${_test}
 			echo "${_test}"
 			return 1
 		fi
@@ -180,11 +174,11 @@ get_my_device()
 
 		case "${_vpc}" in
 			0)
-				cbsdlogger NOTICE ${CBSD_APP}: get_my_device: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
+				cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
 				_test=$( ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up 2>&1 )
 				_ret=$?
 				if [ ${_ret} -ne 0 ]; then
-					cbsdlogger NOTICE ${CBSD_APP}: get_my_device: error, ret: ${_ret}: ${_test}
+					cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, ret: ${_ret}: ${_test}
 					echo "${_test}"
 					return 1
 				fi
@@ -227,7 +221,7 @@ get_my_epair()
 
 	[ -z "${1}" ] && echo "No bridge" && return 1
 
-	_firstfree=$( find_first_freenic epair )
+	_firstfree=$( get-next-nic name=epair )
 
 	[ $? -eq 1 ] && echo "No free available epair" && return 1
 
@@ -269,7 +263,7 @@ get_my_tap()
 
 	[ -z "${1}" ] && echo "No bridge" && return 1
 
-	_firstfree=$( find_first_freenic tap )
+	_firstfree=$( get-next-nic name=tap )
 
 	if [ $? -eq 1 ]; then
 		cbsdlogger WARNING ${CBSD_APP}: get_my_tap: no free available tap
