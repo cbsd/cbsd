@@ -18,7 +18,7 @@ ARCH!=  uname -p
 
 .SILENT:
 
-all:	cbsd dump_cpu_topology dump_iscsi_discovery
+all:	cbsd dump_cpu_topology dump_iscsi_discovery clean
 
 clean:
 	${MAKE} -C bin/cbsdsh clean
