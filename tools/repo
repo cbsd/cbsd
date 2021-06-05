@@ -3,23 +3,26 @@
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="arch basename fromfile inter mode name newjname quiet register_basename sources stable target_arch url useconfig usehelpers ver"
+MYOPTARG="arch basename fetchonly fromfile inter mode name newjname quiet register_basename sources stable target_arch url useconfig usehelpers ver"
 MYDESC="Working with CBSD Repository"
-ADDHELP="\
- action can be: list, get, put\n\
- arch=any for mode=list for show all arch (no for cur. arch only\n\
- fromfile= load arguments from ascii file\n\
- inter=0 to prevent any questions and to accept answers by default\n\
- mode can be: check, upgrade\n\
- name= specify name of resource (e.g. for sources=img)\n\
- newjname= for sources=img, for alternative jname\n\
- register_basename= register with alternative/custom basename\n\
- sources can be: src, obj, base, bhyve, kernel, img, helpers, modules\n\
- url= specify URL sources, separated by comma for multiple values\n\
- usehelpers= (default: 0 ) when 1, execute img helper when exist (boostrap.sh file)\n\
- ver=any for mode=list for show all version (no for cur. version only\n\
+ADDHELP="
+
+ action can be: list, get, put
+ arch=any for mode=list for show all arch (no for cur. arch only
+ fetchonly= download only, do not process
+ fromfile= load arguments from ascii file
+ inter=0 to prevent any questions and to accept answers by default
+ mode can be: check, upgrade
+ name= specify name of resource (e.g. for sources=img)
+ newjname= for sources=img, for alternative jname
+ register_basename= register with alternative/custom basename
+ sources can be: src, obj, base, bhyve, kernel, img, helpers, modules
+ url= specify URL sources, separated by comma for multiple values
+ usehelpers= (default: 0 ) when 1, execute img helper when exist (boostrap.sh file)
+ ver=any for mode=list for show all version (no for cur. version only
 
  Example:
+
    cbsd repo action=list sources=img [ver=any]
    cbsd repo action=get sources=img name=pgadmin4 usehelpers=1
 
@@ -29,8 +32,10 @@ ADDHELP="\
 
 url=
 register_basename=
+fetchonly=
 . ${cbsdinit}
-
+[ -n "${fetchonly}" ] && ofetchonly="${fetchonly}"
+[ -z "${fetchonly}" ] && fetchonly=0
 . ${system}
 
 # MAIN
@@ -833,9 +838,13 @@ getkernel()
 	return 0
 }
 
+# todo: determine for schema/prefix to support full url, e.g:
+# cbsd repo .. name=vmagent     = $REPO/vmagent
+#  or
+# cbsd repo .. name=http[s]://a.b.c/xxx.img = http[s]://a.b.c/xxx.img
 getimg()
 {
-	local URL_HIER DST
+	local URL_HIER DST _ret _size
 
 	[ -z "${newjname}" ] && newjname="${name}"
 
@@ -855,22 +864,30 @@ getimg()
 	[ $? -ne 0 ] && err 1 "${N1_COLOR}You already have ${N2_COLOR}${newjname}${N1_COLOR} jail. Remove it or use ${N2_COLOR}newjname=${N0_COLOR}"
 
 	for MYREPO in ${repo}; do
-		${ECHO} "${N1_COLOR}REPO:${N2_COLOR} ${MYREPO}"
+		${ECHO} "${N1_COLOR}REPO:${N2_COLOR} ${MYREPO}" 1>&2
 		MIRROR="${MYREPO}/img/${URL_HIER}/mirror.html"
 		fetchme -q1 -u ${MIRROR} -o ${TF}
 
 		if [ $? -eq 0 ]; then
 			MYREPO=$( ${CAT_CMD} ${TF} )
-			${ECHO} "${N1_COLOR}Found new mirror for ${name} ${N0_COLOR}: ${MYREPO}"
+			${ECHO} "${N1_COLOR}Found new mirror for ${name} ${N0_COLOR}: ${MYREPO}" 1>&2
 		fi
 
-		${ECHO} "${N1_COLOR}Fetching ${name} jail: ${N2_COLOR}${MYREPO}/${DIR}${N1_COLOR}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Fetching ${name} jail: ${N2_COLOR}${MYREPO}/${DIR}${N1_COLOR}${N0_COLOR}" 1>&2
 		fetchme -o ${DST} -u ${MYREPO}/img/${URL_HIER}/${name}.img
-
-		[ $? -eq 0 ] || continue
+		_ret=$?
+		[ ${_ret} -eq 0 -a -s ${MYREPO}/img/${URL_HIER}/${name}.img ] && break
 	done
 
-	[ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
+	if [ -s ${DST} ]; then
+		_size=$( ${STAT_CMD} -f %z ${DST} 2>/dev/null )
+		_err=$( cbsdsqlrw images "INSERT INTO images ( name,path,source,created,emulator,size ) VALUES ( \"${name}\", \"${DST}\", \"${MYREPO}/img/${URL_HIER}/${name}.img\", \"now\", \"jail\", \"${_size}\" )" )
+		echo $?
+		echo "pull ok: ${_err}"
+	else
+		[ ! -f "${DST}" ] && err 1 "No such remote file or network problem"
+	fi
+	return ${_ret}
 }
 
 getbhyve()
@@ -1109,12 +1126,14 @@ case "${action}" in
 				${MKDIR_CMD} -p ${MYDIR}
 				getkernel
 				;;
-			"img")
+			img)
 				[ -z "${name}" ] && err 1 "Give me name"
 				LOCKFILE="${jaildir}/${name}.lock"
 				makelock ${LOCKFILE} "${RM_CMD} -f ${TF}; ${RM_CMD} -rf ${MYDIR}"
 				${MKDIR_CMD} -p ${MYDIR}
 				getimg
+				ret=$?
+				[ ${fetchonly} -eq 1 ] && exit ${ret}
 				if [ "${usehelpers}" = "1" ]; then
 					${ECHO} "${N1_COLOR}Use img helpers: ${N2_COLOR}yes${N0_COLOR}"
 					# && gethelpers ${name} ${name}
