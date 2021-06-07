@@ -57,7 +57,7 @@ fi
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -d ${data}/bin/bash ]; then
-	. ${distdir}/freebsd_world.subr
+	. ${subrdir}/freebsd_world.subr
 	customskel
 fi
 

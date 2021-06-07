@@ -13,7 +13,7 @@ fi
 
 set -e
 . ${distdir}/cbsd.conf
-. ${distdir}/tools.subr
+. ${subrdir}/tools.subr
 . ${subr}
 set +e
 
