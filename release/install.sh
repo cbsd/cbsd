@@ -1,8 +1,8 @@
 #!/bin/sh
 MINIMALSIZEGB=3
 
-. /usr/local/cbsd/nc.subr
-. /usr/local/cbsd/tools.subr
+. /usr/local/cbsd/subr/nc.subr
+. /usr/local/cbsd/subr/tools.subr
 
 # fatal error. Print message end quit with exitval
 err()
