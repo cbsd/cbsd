@@ -23,7 +23,7 @@ fi
 . ${system}
 . ${strings}
 . ${tools}
-. ${distdir}/fetch.subr
+. ${subrdir}/fetch.subr
 
 SRC_MIRROR="http://mirror.centos.org/centos/7.9.2009/os/x86_64/Packages"
 
@@ -263,7 +263,7 @@ fi
 if [ ! -r ${data}/bin/bash ]; then
 	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
 	# populate jails data from rootfs?
-	. ${distdir}/freebsd_world.subr
+	. ${subrdir}/freebsd_world.subr
 	customskel -s ${rootfs_dir}
 fi
 
