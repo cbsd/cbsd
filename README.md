@@ -57,29 +57,29 @@ Tested with following OSes and distribution:
 a) First install the required dependencies: **libssh2, sudo, rsync, sqlite3**
 
 ```
-% pkg install sudo libssh2 rsync sqlite3 git
+pkg install sudo libssh2 rsync sqlite3 git
 ```
 
 b) get the latest version of **CBSD**:
 
 ```
-% git clone https://github.com/cbsd/cbsd.git /usr/local/cbsd
+git clone https://github.com/cbsd/cbsd.git /usr/local/cbsd
 ```
 
 c) create a **CBSD** user:
 
 ```
-%  pw useradd cbsd -s /bin/sh -d /nonexistent -c "cbsd user"
+pw useradd cbsd -s /bin/sh -d /nonexistent -c "cbsd user"
 ```
 
 d) create links of the rc.d scripts to start **CBSD** at system startup and create link to bsdconfig module (when installing from ports and pkg's it is unnecessary):
 
 ```
-% cd /usr/local/etc/rc.d
-% ln -s /usr/local/cbsd/rc.d/cbsdd
-% ln -s /usr/local/cbsd/rc.d/cbsdrsyncd
-% mkdir -p /usr/local/libexec/bsdconfig
-% ln -s /usr/local/cbsd/share/bsdconfig/cbsd /usr/local/libexec/bsdconfig/cbsd
+cd /usr/local/etc/rc.d
+ln -s /usr/local/cbsd/rc.d/cbsdd
+ln -s /usr/local/cbsd/rc.d/cbsdrsyncd
+mkdir -p /usr/local/libexec/bsdconfig
+ln -s /usr/local/cbsd/share/bsdconfig/cbsd /usr/local/libexec/bsdconfig/cbsd
 ```
 
 ## Contributors
