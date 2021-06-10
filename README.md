@@ -57,7 +57,7 @@ Tested with following OSes and distribution:
 a) First install the required dependencies:
 
 ```
-pkg install sudo libssh2 rsync sqlite3 git
+pkg install sudo libssh2 rsync sqlite3 git pkgconf
 ```
 
 b) get the latest version of **CBSD**:
