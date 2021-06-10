@@ -72,7 +72,7 @@ c) create a **CBSD** user:
 pw useradd cbsd -s /bin/sh -d /nonexistent -c "cbsd user"
 ```
 
-d) create links of the rc.d scripts to start **CBSD** at system startup and create link to bsdconfig module (when installing from ports and pkg's it is unnecessary):
+d) create links of the rc.d scripts to start **CBSD** at system startup and create link to bsdconfig module:
 
 ```
 cd /usr/local/etc/rc.d
