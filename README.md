@@ -54,7 +54,7 @@ Tested with following OSes and distribution:
 
 ### Installing development version
 
-a) First install the required dependencies: **libssh2, sudo, rsync, sqlite3**
+a) First install the required dependencies:
 
 ```
 pkg install sudo libssh2 rsync sqlite3 git
