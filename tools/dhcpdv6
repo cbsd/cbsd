@@ -2,23 +2,168 @@
 #v12.1.6
 # Detect first available IPv6 from ippool's
 MYARG=""
-MYOPTARG="ip6pool"
+MYOPTARG="cleanup dhcpd_helper ip6pool lease_time lock pass"
 MYDESC="Detect first available IPv6 from pools"
-ADDHELP="ip6pool = alternative pool, comma-separated if multiple\n\
- errcode:\n\
-   0 - IP found\n\
-   1 - Unknown error\n\
-   3 - All pools are exhausted\n"
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+This script consistently suggests free IP addresses if the user does not specify
+a static address. Can pass a request for any external script (see dhcpdv6.conf config).
+Works with 'nodeip6pool' variable ranges by default (see 'cbsd initenv-tui').
+
+ ${UNDERLINE}Return codes${N0_COLOR}:
+
+   0 - IP found
+   1 - Unknown error
+   2 - All pools are exhausted
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}cleanup=${N0_COLOR}      - flush leasetime for cleanup= list, e.g:
+                 cleanup=\"fe80::222:56ff:febb:4a7f fe80::333:22ff:beff:1b4a\";
+ ${N2_COLOR}dhcpd_helper=${N0_COLOR} - <path_to_executable> overwrite dhcpd_helper settings
+                 from dhcpdv6.conf;
+ ${N2_COLOR}ip6pool=${N0_COLOR}      - use alternative pool, comma-separated if multiple
+                 valid value sample:
+                   ip4pool=\"2a01:4f8:140:918b::/64\";
+ ${N2_COLOR}lease_time=${N0_COLOR}   - lock/lease for X seconds to avoid race/collisions
+                 on concurrent request, default is: 30;
+ ${N2_COLOR}lock=${N0_COLOR}         - set to '0' to prevent recursive/lock
+                 (race/collisions protection);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd dhcpd
+ # cbsd dhcpd ip4pool=\"2a01:4f8:140:918b::/64\"
+ # cbsd dhcpd dhcpd_helper=\"/root/bin/myhelper6\"
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ # cbsd initenv-tui --help
+ # cat ~cbsd/etc/defaults/dhcpdv6.conf
+ External helper sample: https://www.bsdstore.ru/en/13.0.x/wf_ipam_ssi.html
+
+"
 
 . ${subr}
-
+lock=1
+pass=
+lease_time=30
+cleanup=
+dhcpd_helper=
 . ${cbsdinit}
 
-[ -z "${nodeip6pool}" ] && err 1 "${N1_COLOR}no nodeip6pool${N0_COLOR}"
+[ -n "${dhcpd_helper}" ] && odhcpd_helper="${dhcpd_helper}"
+
+# dhcpd_helper?
+readconf dhcpd.conf
+
+LOCKFILE="${ftmpdir}/dhcpdv6.lock"
+LEASE_FILE="${tmpdir}/dhcpdv6.lease"
+# list of locked/skip IPS
+LOCKFILE_SKIPLIST=
+
+[ -n "${odhcpd_helper}" ] && dhcpd_helper="${odhcpd_helper}"
+
+if [ "${dhcpd_helper}" != "internal" ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: use external dhcpd_helper: ${dhcpd_helper}
+	[ ! -x "${dhcpd_helper}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: external helper not executable: ${N2_COLOR}${dhcpd_helper}${N0_COLOR}"
+
+	# rebuild arg list ( + add pass )
+	# Pass '"' as \" in cmd
+	INIT_IFS="${IFS}"
+	IFS="~"
+	cmd="$@"
+	IFS="${INIT_IFS}"
+	cmd=$( while [ -n "${1}" ]; do
+		IFS="~"
+		strpos --str="${1}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			# not params=value form
+			#printf "${1} "         # (printf handles -args (with dashes)
+			#echo -n "${1} "
+			shift
+			continue
+		fi
+		_arg_len=$( strlen ${1} )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		if [ -z "${ARG}" -o -z "${VAL}" ]; then
+			shift
+			continue
+		fi
+		printf "${ARG}='${VAL}' "
+		shift
+	done )
+
+	exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} ${dhcpd_helper} ${cmd}
+fi
+
+if [ -n "${cleanup}" ]; then
+	[ ! -r ${LEASE_FILE} ] && exit 0
+	for i in ${cleanup}; do
+		# ndp
+		#${ARP_CMD} -nd ${i} > /dev/null 2>&1
+		${SED_CMD} -i '' "/${i}:/d" ${LEASE_FILE}
+	done
+	exit 0
+fi
+
 [ "${nodeip6pool}" = "0" -o "${nodeip6pool}" = "(null)" ] && err 1 "${N1_COLOR}no nodeip6pool${N0_COLOR}"
 
-iptype ${nodeip6pool} in
-case $? in
+# use args network instead of global CBSD settings/variable
+if [ -n "${ip6pool}" ]; then
+	# we need the atomicity of the operation to exclude
+	# the simultaneous selection of the same free IP
+	# use file as lock and temp database in
+	# <ip>:<end_lease_time>
+	# <ip>:<end_lease_time>
+	if [ -z "${pass}" ]; then
+		if [ "${lock}" = "1" ]; then
+			# rebuild arg list ( + add pass )
+			# Pass '"' as \" in cmd
+			INIT_IFS="${IFS}"
+			IFS="~"
+			cmd="$@"
+			IFS="${INIT_IFS}"
+			while [ -n "${1}" ]; do
+				IFS="~"
+				strpos --str="${1}" --search="="
+				_pos=$?
+				if [ ${_pos} -eq 0 ]; then
+					# not params=value form
+					#printf "${1} "         # (printf handles -args (with dashes)
+					#echo -n "${1} "
+					shift
+					continue
+				fi
+				_arg_len=$( strlen ${1} )
+				_pref=$(( _arg_len - _pos ))
+				ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+				VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+				if [ -z "${ARG}" -o -z "${VAL}" ]; then
+					shift
+					continue
+				fi
+				#printf "${ARG}='${VAL}' "
+				shift
+			done
+
+			exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd dhcpdv6 ${cmd} pass=1
+	fi
+fi
+	nodeip6pool=$( echo ${ip6pool} | ${TR_CMD} "," " " )
+fi
+
+[ -z "${nodeip6pool}" ] && err 1 "${N1_COLOR}no nodeip6pool${N0_COLOR}"
+
+iptype ${nodeip6pool}
+ret=$?
+
+case ${ret} in
 	2)
 		;;
 	*)
@@ -26,11 +171,35 @@ case $? in
 		;;
 esac
 
+# prune/purge old records
+if [ -r ${LEASE_FILE} ]; then
+	${TRUNCATE_CMD} -s0 ${LEASE_FILE}.swap
+	cur_time=$( ${DATE_CMD} +%s )
+	eval $( ${CAT_CMD} ${LEASE_FILE} | while read items; do
+		p1=${items%%|*}
+		p2=${items##*|}
+		[ -z "${p1}" -o -z "${p2}" ] && continue
+		if is_number "${p2}"; then
+			continue
+		fi
+		if [ ${p2} -gt ${cur_time} ]; then
+			# still valid
+			echo "${items}" >> ${LEASE_FILE}.swap
+			if [ -z "${LOCKFILE_SKIPLIST}" ]; then
+				LOCKFILE_SKIPLIST="${p1}"
+			else
+				LOCKFILE_SKIPLIST="${LOCKFILE_SKIPLIST} ${p1}"
+			fi
+		fi
+	echo "LOCKFILE_SKIPLIST=\"${LOCKFILE_SKIPLIST}\""
+	done )
+	${MV_CMD} ${LEASE_FILE}.swap ${LEASE_FILE}
+fi
+
 eval $( ${miscdir}/sipcalc ${nodeip6pool} )
 
 [ $? -ne 0 ] && err 1 "${N1_COLOR}sipcalc: error for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
 [ -z "${_prefix_ipv6_range_start}" -o -z "${_prefix_ipv6_range_end}" ] && 1 "${N1_COLOR}sipcalc: no range for: ${N2_COLOR}${nodeip6pool}${N0_COLOR}"
-
 
 # normalize range from network/broadcast to first/latest usable IP
 # todo: implement in sipcalc!
@@ -51,7 +220,17 @@ fi
 
 # check jail&bhyve first
 
+skip_ip="${nodeip6}"
+
 ip=$( ${miscdir}/ipv6range ${_prefix_ipv6_range_start} ${_prefix_ipv6_range_end} | while read _ip; do
+
+	# todo: skip list as dhcpdv
+	# prepare skip ip list
+	skip=0
+	for n in ${skip_ip} ${LOCKFILE_SKIPLIST}; do
+		[ "${n}" = "${_ip}" ] && skip=1
+	done
+	[ ${skip} -eq 1 ] && continue
 
 	if [ ${freebsdhostversion} -gt 1300131 ]; then
 		# https://svnweb.freebsd.org/base?view=revision&revision=r368045
@@ -70,4 +249,10 @@ ip=$( ${miscdir}/ipv6range ${_prefix_ipv6_range_start} ${_prefix_ipv6_range_end}
 	printf "${_ip}" && exit 0
 done )
 
+cur_time=$( ${DATE_CMD} +%s )
+lease_time_end=$(( cur_time + lease_time ))
+echo "${ip}|${lease_time_end}" >> ${LEASE_FILE}
+
 echo "${ip}"
+
+exit 0
