@@ -136,7 +136,7 @@ bhyve_ssh_wait()
 
 jail_ssh_wait()
 {
-	local _orig_options _ret
+	local _orig_options
 	_orig_options=$( set +o )
 
 	# disable errexit/xtrace settings for a while..
@@ -149,16 +149,36 @@ jail_ssh_wait()
 		_attempt_max="${jail_ssh_wait_timeout}"
 	fi
 
-	${ECHO} "${N1_COLOR}waiting jail ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
+	printf "${N1_COLOR}waiting jail ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
 	# wait for VM boot
+	# Some OSes are unstable after the first connection, we will check three times for stability
+	pass=0
 	_y=2		# test for timeout exceed
+	printf "${N1_COLOR}[" 1>&1
 	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		#_x=$( timeout 10 cbsd jexec jname=${jname} date > /dev/null 2>&1 )
 		_x=$( timeout 10 cbsd jexec jname=${jname} date > /dev/null 2>&1 )
-		_ret=$?
-		[ ${_ret} -eq 0 ] && break
+		if [ $? -eq 0 ]; then
+			pass=$(( pass + 1 ))
+		else
+			pass=0
+		fi
+		case ${pass} in
+			0)
+				printf "." 1>&2
+				;;
+			1)
+				printf "o" 1>&2
+				;;
+			3)
+				printf "O" 1>&2
+				;;
+		esac
+		# when three times pass, we believe that the system is stable
+		[ ${pass} -eq 3 ] && break
 		_y=$(( _y + 1 ))
-		sleep 1
-		[ -z "${CBSDFILE_RECURSIVE}" ] && printf "." 1>&2
+		# some ssh flop, wait for stabilize (todo: more retry support?)
+		sleep 2
 		# todo: delete only ip
 		[ -z "${CLOUD_URL}" ] && ${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
 		if [ ${_y} -eq ${_attempt_max} ]; then
@@ -167,6 +187,7 @@ jail_ssh_wait()
 			return 1
 		fi
 	done
+	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
 
 	${ECHO} "${N1_COLOR}jail ssh available${N0_COLOR}"
 	# restore old settings
@@ -174,7 +195,6 @@ jail_ssh_wait()
 
 	return 0
 }
-
 
 # testing/wip
 run_jail_cloud()
