@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.9
 MYARG=""
-MYOPTARG="inter jname"
+MYOPTARG="fast inter jname"
 MYDESC="Stop jail"
 CBSDMODULE="jail"
 EXTHELP="wf_jstop_jstart"
@@ -13,6 +13,7 @@ ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
+ ${N2_COLOR}fast=${N0_COLOR}  - set 1 to destroy jail without config, jail -rR: no shutdown seq.
  ${N2_COLOR}inter=${N0_COLOR} - set 1 to prevent any questions and to accept answers by default.
  ${N2_COLOR}jname=${N0_COLOR} - target jail. If jail='*' or jail='pri*' then stop all jails or
           jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
@@ -32,7 +33,11 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${tools}		# for select_jail_by_list
 
 [ -z "${1}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
+fast=
 . ${cbsdinit}
+
+[ -n "${fast}" ] && ofast="${fast}"
+[ -z "${fast}" ] && fast=0
 
 . ${system}
 . ${mdtools}
@@ -254,7 +259,6 @@ exec_prestop
 #rctl area
 ${ECHO} "${N1_COLOR}Stoping jail: ${N2_COLOR}${jname}, parallel timeout=${parallel}${N0_COLOR}"
 jrctl jname=${jname} mode=unset >/dev/null 2>&1
-sleep 2
 
 external_exec_script -s stop.d
 if [ ${vnet} -eq 1 ]; then
@@ -263,7 +267,16 @@ if [ ${vnet} -eq 1 ]; then
 		jexec jname=${jname} pkill -9 dhclient dhcpcd 2>/dev/null 1>&2
 	fi
 fi
-${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -r ${jname} >/dev/null 2>&1 || true
+
+[ -n "${ofast}" ] && fast="${ofast}"
+
+if [ "${fast}" = "1" ]; then
+	JAIL_STOP_CMD="${JAIL_CMD} -rR ${jname}"
+else
+	JAIL_STOP_CMD="${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -r ${jname}"
+fi
+
+${JAIL_STOP_CMD} > /dev/null 2>&1 || true
 
 for i in $( ${PS_CMD} -J ${jid} -o pid 2>/dev/null | ${GREP_CMD} -v PID ); do
 	${KILL_CMD} -9 ${i} > /dev/null 2>&1
@@ -288,6 +301,7 @@ fi
 # waiting for fixed kqueue in upstream
 ${JAIL_CMD} -r ${ST} > /dev/null 2>&1
 ${JAIL_CMD} -r ${ST} > /dev/null 2>&1
+
 cbsdsqlrw local "UPDATE jails SET jid=0,status=0,state_time=(strftime('%s','now')) WHERE jname='${jname}'"
 
 jaillock="${jailsysdir}/${jname}/locked"
