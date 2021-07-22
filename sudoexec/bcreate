@@ -8,7 +8,7 @@ BHYVE_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart n
 iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile swapsize vm_iso_path vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory \
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver \
 vnc_password media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr \
-ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu"
+ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu ci_ip4_addr2"
 MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 MYDESC="Create bhyve VM from config file or args"
 ADDHELP="\
@@ -64,6 +64,9 @@ CBSDMODULE="bhyve"
 EXTHELP="wf_bcreate"
 
 . ${subr}
+
+# temporary hack for second nic
+interface2=
 
 readconf buildworld.conf
 readconf zfs.conf
@@ -589,6 +592,10 @@ else
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( \"${jname}\", \"${interface}\" )"
 fi
 
+if [ -n "${interface2}" ]; then
+	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( \"${jname}\", \"${interface2}\" )"
+fi
+
 [ -z "${nic_ratelimit}" ] && nic_ratelimit="0"
 
 #if [ "${bhyve_have_net_ratelimit}" = "1" ]; then
@@ -694,30 +701,69 @@ if [ ${is_cloud} -eq 1 ]; then
 		${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_gw4 not set. VM without gateway?${N0_COLOR}" 2>&1
 	fi
 
-	case "${ci_ip4_addr}" in
-		[Dd][Hh][Cc][Pp])
-			ci_ip4_addr=$( dhcpd 2>/dev/null )
-			if [ $? -eq 2 ]; then
-				cbsdlogger NOTICE ${CBSD_APP}: no free IP address for DHCP in nodeippool
-				err 1 "${N1_COLOR}${CBSD_APP}: no free IP address for DHCP in nodeippool${N0_COLOR}"
-			fi
-			ci_ip4_addr="${ci_ip4_addr}/24"		# todo: hardcoded mask
-			${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr="${ci_ip4_addr}" > /dev/null 2>&1
-			;;
-	esac
+	OIFS="${IFS}"
+	IFS=","
 
-	iptype ${ci_ip4_addr}
-	_ret=$?
+	normalize_ip4_addr=
+	normalize_ci_ip4_addr=
 
-	case ${_ret} in
-		1)
-			ip4_addr="${IWM}"
-			;;
-		*)
-			ip4_addr="${ci_ip4_addr}"
-			;;
-	esac
-	bset jname="${jname}" ip4_addr="${ip4_addr}" > /dev/null 2>&1
+	# normalize IP addresses
+	for _pureip in ${ci_ip4_addr}; do
+		IFS="${OIFS}"
+
+		case "${_pureip}" in
+			[Dd][Hh][Cc][Pp])
+				_pureip=$( dhcpd 2>/dev/null )
+				if [ $? -eq 2 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: no free IP address for DHCP in nodeippool
+					err 1 "${N1_COLOR}${CBSD_APP}: no free IP address for DHCP in nodeippool${N0_COLOR}"
+				fi
+
+				_pureip="${_pureip}/24"		# todo: hardcoded mask
+				_mod=1
+				;;
+			[Dd][Hh][Cc][Pp][vV]6)
+				_pureip=$( dhcpdv6 2>/dev/null )
+				if [ $? -eq 2 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: no free IP address for DHCPv6 in nodeip6pool
+					err 1 "${N1_COLOR}${CBSD_APP}: no free IP address for DHCPv6 in nodeip6pool${N0_COLOR}"
+				fi
+
+				_pureip="${_pureip}/64"		# todo: hardcoded mask
+				_mod=1
+				;;
+		esac
+
+		iptype ${_pureip}
+		_ret=$?
+
+		if [ -z "${normalize_ip4_addr}" ]; then
+			normalize_ip4_addr="${IWM}"
+		else
+			normalize_ip4_addr="${normalize_ip4_addr},${IWM}"
+		fi
+		if [ -z "${normalize_ci_ip4_addr}" ]; then
+			normalize_ci_ip4_addr="${IWM}/24"
+		else
+			normalize_ci_ip4_addr="${normalize_ci_ip4_addr},${IWM}/24"
+		fi
+
+		IFS=","
+	done
+
+	IFS="${OIFS}"
+
+	ci_ip4_addr="${normalize_ci_ip4_addr}"
+	[ -n "${ci_gw42}" ] && ${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_gw42="${ci_gw42}" > /dev/null 2>&1
+
+	if [ -n "${ci_ip4_addr2}" ]; then
+		#todo: normalize
+		${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr2="${ci_ip4_addr2}" > /dev/null 2>&1
+		normalize_ip4_addr="${normalize_ip4_addr},${ci_ip4_addr2}"
+	fi
+
+	${SYSRC_CMD} -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr="${normalize_ci_ip4_addr}" > /dev/null 2>&1
+	bset jname="${jname}" ip4_addr="${normalize_ip4_addr}" > /dev/null 2>&1
 
 	readconf cloud-init.conf
 
@@ -753,6 +799,7 @@ if [ ${is_cloud} -eq 1 ]; then
 	esac
 
 	cbsdlogger NOTICE ${CBSD_APP}: cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
+	echo "cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine=${cloudengine}"
 	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 

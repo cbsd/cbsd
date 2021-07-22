@@ -1,12 +1,22 @@
 #!/usr/local/bin/cbsd
-#v12.0.6
-MYARG="mode jname"
-MYOPTARG="fromfile jname cloudengine"
+#v13.0.11
+CBSDMODULE="sys"
+MYARG="jname mode"
+MYOPTARG="cloudengine fromfile"
 MYDESC="cloud-init helper t generate CI yaml"
-ADDHELP="mode can be: show, gen\n\
-pw - plain password, or\n\
-epw - encrypted password\n\
-cloudengine - 'cloud-init' (default) or 'cloudinit-base'\n"
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ Prepare cloud-init/cloudbase related manifests.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}cloudengine=${N0_COLOR} - target engine, 'cloud-init' (default) or 'cloudinit-base'
+ ${N2_COLOR}fromfile=${N0_COLOR}    - load params from file
+ ${N2_COLOR}jname=${N0_COLOR}       - target env
+ ${N2_COLOR}mode=${N0_COLOR}        - mode can be: 'show', 'gen'
+"
 
 . ${subr}
 . ${cbsdinit}
@@ -28,7 +38,7 @@ SERVICE="cloudinit"
 case "${cloudengine}" in
 	cloud-init)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
-		cloud_data_files="meta-data network-config user-data"
+		cloud_data_files="meta-data network-config user-data cbsd-network-config"
 		;;
 	cloudinit-base)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init/openstack/latest"
@@ -58,6 +68,7 @@ show()
 	local _source=
 	local _tpldir="${_MYDIR}/cloud-tpl/${ci_template}"
 	local _keytest
+	local _nomask=1
 
 	[ ! -d ${_tpldir} ] && err 1 "${N1_COLOR}cloudinit: no template dir: ${N2_COLOR}${_tpldir}${N0_COLOR}"
 
@@ -114,13 +125,129 @@ show()
 			${_tpldir}/${_source}
 			;;
 		network-config)
-			${SED_CMD} -e "s:%%ci_interface%%:${ci_interface}:g" \
-			-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
-			-e "s:%%ci_ip4_addr%%:${ci_ip4_addr}:g" \
-			-e "s:%%ci_gw4%%:${ci_gw4}:g" \
-			-e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+
+			${CAT_CMD} ${_tpldir}/10-${_source}
+
+			interface_num=1
+			gw_set=0
+
+			for interface in ${ci_interface}; do
+
+				${SED_CMD} -e "s:%%ci_interface%%:${interface}:g" \
+				-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
+				${_tpldir}/20-${_source}-interface
+
+				OIFS="${IFS}"
+				IFS=","
+
+				for _pureip in ${ip4_addr}; do
+					IFS="${OIFS}"
+
+					ipwmask ${_pureip}
+					[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+					strpos --str="${_pureip}" --search="/"
+					_nomask=$?
+
+					iptype ${IWM}
+					_inet=$?
+
+					case ${_inet} in
+						1)
+							ipv4_true="true"
+							ipv6_true="false"
+							[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+							;;
+						2)
+							ipv4_true="false"
+							ipv6_true="true"
+							[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+							;;
+						*)
+							log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+							;;
+					esac
+
+					# default router only one ( fix BSD )
+					# use oci_gw4 instead of ci_gw4 - dont prune original value
+					if [ ${interface_num} -eq 1 ]; then
+						if [ ${gw_set} -eq 0 ]; then
+							oci_gw4="${ci_gw4}"
+						else
+							oci_gw4=
+						fi
+					else
+						if [ ${gw_set} -eq 0 ]; then
+							# eval by interface_num id
+							oci_gw4="${ci_gw42}"
+						else
+							oci_gw4=
+						fi
+
+						[ -n "${ci_ip4_addr2}" ] && _pureip="${ci_ip4_addr2}"
+
+					fi
+
+					${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
+					-e "s#%%ipv6_true%%#${ipv6_true}#g" \
+					-e "s#%%ci_ip4_addr%%#${_pureip}#g" \
+					-e "s#%%ci_gw4%%#${oci_gw4}#g" \
+					${_tpldir}/30-${_source}-static
+
+					gw_set=1
+
+					IFS=","
+				done
+				IFS="${OIFS}"
+				interface_num=$(( interface_num + 1 ))
+				gw_set=0
+			done
+
+			${SED_CMD} -e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
 			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
-			${_tpldir}/${_source}
+			${_tpldir}/40-${_source}
+			;;
+		cbsd-network-config)
+
+			OIFS="${IFS}"
+			IFS=","
+
+			iface=0
+
+			for _pureip in ${ip4_addr}; do
+				IFS="${OIFS}"
+
+				ipwmask ${_pureip}
+				[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+				strpos --str="${_pureip}" --search="/"
+				_nomask=$?
+
+				iptype ${IWM}
+				_inet=$?
+
+				case ${_inet} in
+					1)
+						ipv4_true="true"
+						ipv6_true="false"
+						[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+						;;
+					2)
+						ipv4_true="false"
+						ipv6_true="true"
+						[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+						;;
+					*)
+						log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+						;;
+				esac
+
+				echo "ip${iface}=\"${_pureip}\""
+				echo "gw${iface}=\"${ci_gw42}\""
+				iface=$(( iface + 1 ))
+				IFS=","
+			done
+			IFS="${OIFS}"
 			;;
 		network_data.json)
 			${SED_CMD} -e "s:%%ci_interface%%:${ci_interface}:g" \
