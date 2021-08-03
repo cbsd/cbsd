@@ -1,21 +1,50 @@
 #!/usr/local/bin/cbsd
 #v12.0.14
 MYARG=""
-MYOPTARG="jname"
+MYOPTARG="hard_timeout jname inter noacpi"
 MYDESC="Stop XEN domain"
 CBSDMODULE="xen"
 EXTHELP="wf_jstop_jstart"
-ADDHELP="noacpi= 1 - force hard poweroff immediately or 0 - send ACPI signal first\n\
-    can be overwriten by xstop.conf\n\
-hard_timeout=N, how many seconds wait after ACPI signal before hard poweroff,\n\
-    default is: 30. Can be overwriten by xstop.conf\n"
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+Stop the XEN domain. By default, the script sends the ACPI signal (through the
+kill command) to bhyve process and expects completion during the timeout.
+If during this time the virtual machine did not respond to the signal, the script
+will terminate the bhyve process of forcibly.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}        - Target VM. If jail='*' or jail='vm*' then stop  all
+                 bhyve or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
+ ${N2_COLOR}hard_timeout=${N0_COLOR} - Wait N seconds (30 by default) before hard reset.
+                 The parameter can be overridden globally through the xstop.conf.
+ ${N2_COLOR}noacpi=${N0_COLOR}       - 0,1. Set to 1 to prevent ACPI signal sending, just kill,
+                 immediate and merciless. The parameter can be overridden globally
+                 through the xstop.conf.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd xstop
+ # cbsd xstop jname=diehard noacpi=1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd xstart --help
+
+"
 
 . ${subr}
 . ${tools}		# for select_jail_by_list
 
-. ${subrdir}/xen.subr
+jname=
 
-[ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e xls -r ${sqlreplica}
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ ! -r ${Makefile} ]; then
+	[ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e xls -r ${sqlreplica}
+fi
 
 noacpi=0		# soft shutdown by default
 hard_timeout=30		# default soft timeout: 30 seconds
@@ -23,10 +52,35 @@ hard_timeout=30		# default soft timeout: 30 seconds
 readconf xstop.conf
 
 . ${cbsdinit}
-. ${system}
-. ${mdtools}
+ojname="${jname}"
+
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. ${Makefile}
+	all_bhyve_list=$( ${EGREP_CMD} '^xen_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#xen_##g )
+	jname="${all_bhyve_list}"
+
+	if [ -n "${ojname}" ]; then
+		jname="${ojname}"
+	fi
+
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+fi
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No domain specified${N0_COLOR}"
+
+. ${system}
+. ${mdtools}
+. ${subrdir}/xen.subr
+
 . ${subrdir}/jcreate.subr	# external_exec_master_script
 
 # MAIN
@@ -63,7 +117,7 @@ st_time=$( ${DATE_CMD} +%s )
 if [ ${jail_num} -gt 1 ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple stopping: ${JLIST}
 	for jname in ${JLIST}; do
-		/usr/sbin/daemon -p ${ftmpdir}/xstop.${jname}.$$ /usr/local/bin/cbsd xstop jname=${jname} noacpi=${noacpi} hard_timeout=${hard_timeout}
+		${DAEMON_CMD} -p ${ftmpdir}/xstop.${jname}.$$ /usr/local/bin/cbsd xstop jname=${jname} noacpi=${noacpi} hard_timeout=${hard_timeout}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/xstop.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/xstop.${jname}.$$ ) --timeout=${parallel}
@@ -125,11 +179,11 @@ if [ ${noacpi} -eq 0 ]; then
 		# soft stop, send SIGTERM
 		tleft=$(( hard_timeout - 1 ))
 		${XL_CMD} shutdown ${jname} > /dev/null 2>&1
-		for i in $( /usr/bin/seq 1 ${hard_timeout} ); do
+		for i in $( ${SEQ_CMD} 1 ${hard_timeout} ); do
 			printf "${CLRLINE}"
 			printf "${CURSORRST}"
 			printf "${N1_COLOR}Send SIGTERM to ${N2_COLOR}${jname}${N1_COLOR}. Soft timeout is ${N2_COLOR}${hard_timeout}${N1_COLOR} sec. ${W1_COLOR}${tleft}${N1_COLOR} seconds left [${N0_COLOR}"
-			for x in $( /usr/bin/seq 1 ${i} ); do
+			for x in $( ${SEQ_CMD} 1 ${i} ); do
 				printf "${N1_COLOR}."
 			done
 			_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
@@ -143,7 +197,7 @@ if [ ${noacpi} -eq 0 ]; then
 		printf "]${N0_COLOR}\n"
 	fi
 else
-	${XL_CMD} destroy ${jname}
+	${XL_CMD} destroy -F ${jname}
 fi
 
 _state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
@@ -153,12 +207,14 @@ if [ $? -eq 0 ]; then
 	${XL_CMD} destroy ${jname}
 fi
 
-[ -r ${jailsysdir}/${jname}/vnc_port ] && /bin/rm -f ${jailsysdir}/${jname}/vnc_port
+[ -r ${jailsysdir}/${jname}/vnc_port ] && ${RM_CMD} -f ${jailsysdir}/${jname}/vnc_port
 
 jswmode jname=${jname} mode=master comment='0'
 
 # cleanup for ifaces
 . ${vimageconf}
+
+fwcounters jname=${jname} mode=remove
 
 # update state_time
 cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
