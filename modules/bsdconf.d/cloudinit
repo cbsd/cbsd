@@ -131,22 +131,87 @@ show()
 			interface_num=1
 			gw_set=0
 
-			for interface in ${ci_interface}; do
+			# todo: ci_interfaceX - unlim?
+			for interface in ${ci_interface} ${ci_interface2}; do
 
-				${SED_CMD} -e "s:%%ci_interface%%:${interface}:g" \
+				nic_id=$(( interface_num - 1 ))
+				interface_name="${ci_interface_name}${nic_id}"
+
+				# CLOUD HACK
+				if [ ${interface_num} -eq 1 ]; then
+					ci_interface_mtu="1450"
+				else
+					ci_interface_mtu="1500"
+				fi
+
+				${SED_CMD} -e "s:%%ci_interface_name%%:${interface_name}:g" \
 				-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
 				${_tpldir}/20-${_source}-interface
 
-				OIFS="${IFS}"
-				IFS=","
+				if [ ${interface_num} -eq 1 ]; then
 
-				for _pureip in ${ip4_addr}; do
+					OIFS="${IFS}"
+					IFS=","
+
+					for _pureip in ${ci_ip4_addr}; do
+
+						IFS="${OIFS}"
+
+						ipwmask ${_pureip}
+						[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+						strpos --str="${_pureip}" --search="/"
+						_nomask=$?
+
+						iptype ${IWM}
+						_inet=$?
+
+						case ${_inet} in
+							1)
+								ipv4_true="true"
+								ipv6_true="false"
+								[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+								;;
+							2)
+								ipv4_true="false"
+								ipv6_true="true"
+								[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+								;;
+							*)
+								log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+								;;
+						esac
+
+						# default router only one ( fix BSD )
+						# use oci_gw4 instead of ci_gw4 - dont prune original value
+						if [ ${interface_num} -eq 1 ]; then
+							if [ ${gw_set} -eq 0 ]; then
+								oci_gw4="${ci_gw4}"
+							else
+								oci_gw4=
+							fi
+						fi
+
+						${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
+						-e "s#%%ipv6_true%%#${ipv6_true}#g" \
+						-e "s#%%ci_ip4_addr%%#${_pureip}#g" \
+						-e "s#%%ci_gw4%%#${oci_gw4}#g" \
+						${_tpldir}/30-${_source}-static
+
+						gw_set=1
+
+						IFS=","
+					done
 					IFS="${OIFS}"
+				fi
 
-					ipwmask ${_pureip}
+				## 
+				if [ ${interface_num} -eq 2 -a -n "${ci_ip4_addr2}" ]; then
+
+					ipwmask ${ci_ip4_addr2}
 					[ -z "${IWM}" -o "${_i}" = "0" ] && continue
 
-					strpos --str="${_pureip}" --search="/"
+					strpos --str="${ci_ip4_addr2}" --search="/"
 					_nomask=$?
 
 					iptype ${IWM}
@@ -156,49 +221,28 @@ show()
 						1)
 							ipv4_true="true"
 							ipv6_true="false"
-							[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+							[ ${_nomask} -eq 0 ] && ci_ip4_addr2="${ci_ip4_addr2}/24"
 							;;
 						2)
 							ipv4_true="false"
 							ipv6_true="true"
-							[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+							[ ${_nomask} -eq 0 ] && ci_ip4_addr2="${ci_ip4_addr2}/64"
 							;;
 						*)
 							log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
 							;;
 					esac
 
-					# default router only one ( fix BSD )
-					# use oci_gw4 instead of ci_gw4 - dont prune original value
-					if [ ${interface_num} -eq 1 ]; then
-						if [ ${gw_set} -eq 0 ]; then
-							oci_gw4="${ci_gw4}"
-						else
-							oci_gw4=
-						fi
-					else
-						if [ ${gw_set} -eq 0 ]; then
-							# eval by interface_num id
-							oci_gw4="${ci_gw42}"
-						else
-							oci_gw4=
-						fi
-
-						[ -n "${ci_ip4_addr2}" ] && _pureip="${ci_ip4_addr2}"
-
-					fi
+					#oci_gw4="${ci_gw42}"
+					oci_gw4="${ci_gw42}%${interface_name}"
 
 					${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
 					-e "s#%%ipv6_true%%#${ipv6_true}#g" \
-					-e "s#%%ci_ip4_addr%%#${_pureip}#g" \
+					-e "s#%%ci_ip4_addr%%#${ci_ip4_addr2}#g" \
 					-e "s#%%ci_gw4%%#${oci_gw4}#g" \
 					${_tpldir}/30-${_source}-static
+				fi
 
-					gw_set=1
-
-					IFS=","
-				done
-				IFS="${OIFS}"
 				interface_num=$(( interface_num + 1 ))
 				gw_set=0
 			done
@@ -243,7 +287,8 @@ show()
 				esac
 
 				echo "ip${iface}=\"${_pureip}\""
-				echo "gw${iface}=\"${ci_gw42}\""
+#				echo "gw${iface}=\"${ci_gw42}\""
+				echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
 				iface=$(( iface + 1 ))
 				IFS=","
 			done
