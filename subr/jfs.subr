@@ -391,6 +391,7 @@ create_fs()
 create_zfs_fs()
 {
 	local _data _mount_point _name _promote _zfs_snapsrc _ret
+	local _cmd
 
 	while getopts "d:m:n:p:z:" opt; do
 		case "${opt}" in
@@ -441,27 +442,60 @@ create_zfs_fs()
 
 	if [ -z "${_zfs_snapsrc}" ]; then
 		if [ -z "${_encrypt_args}" ]; then
-			res=$( ${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name} 2>&1 )
+			_cmd="${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${ZPOOL}/${_name}"
+			res=$( ${_cmd} 2>&1 )
 			_ret=$?
+			cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}
 		else
-			${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${_encrypt_args} ${ZPOOL}/${_name}
+			_cmd=$( ${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_data} ${_encrypt_args} ${ZPOOL}/${_name} )
+			${_cmd}
 			_ret=$?
+			cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}
 		fi
 		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs: ZFS ${ZPOOL}/${_name} has been created with mountpoint: ${_data}, opt: ${zfs_create_flags}
 	else
-		${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
-		[ $? -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs clone failed: ${res}${N0_COLOR}"
+		_cmd=$( ${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name} )
+		res=$( ${_cmd} 2>&1 )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs clone failed, code: ${_ret}: ${res}${N0_COLOR}"
 		cbsdlogger NOTICE ${CBSD_APP}: ZFS cloned: ${_zfs_snapsrc} to ${ZPOOL}/${_name}
 
 		if [ "${_mount_point}" != "none" ]; then
 			if [ -n "${_mount_point}" ]; then
-				${ZFS_CMD} set mountpoint=${_mount_point} ${ZPOOL}/${_name}
+				_cmd=$( ${ZFS_CMD} set mountpoint=${_mount_point} ${ZPOOL}/${_name} )
+				${_cmd}
+				_ret=$?
+				cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}
 			else
-				${ZFS_CMD} set mountpoint=${_data} ${ZPOOL}/${_name}
+				_cmd=$( ${ZFS_CMD} set mountpoint=${_data} ${ZPOOL}/${_name} )
+				${_cmd}
+				_ret=$?
+				cbsdlogger NOTICE ${CBSD_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}
 			fi
 		fi
 	fi
+
+	# HACK
+	# In some cases (for example, when the host is heavily loaded or we are working as a XEN Dom0 , the sequence of commands of:
+	# % zfs create -o mountpoint=/usr/jails/vm/${pool} zroot/ROOT/default/${pool}
+	# % zfs create -V 10737549312 -s -o volblocksize=32K -o checksum=on -o compression=lz4 -o copies=1 -o primarycache=none -o secondarycache=none -o dedup=off -o volmode=dev -o snapshot_limit=none -o sync=disabled zroot/ROOT/default/${pool}/dsk1.vhd
+	# does not issue the 'dsk1.vhd' device in /dev/zvol/zroot/ROOT/default/centos8/
+	# but another ugly pause between these commands helps, e.g.:
+	# % zfs create -o mountpoint=/usr/jails/vm/${pool} zroot/ROOT/default/${pool}
+	# % sleep 0.1
+	# % zfs create -V 10737549312 -s -o volblocksize=32K -o checksum=on -o compression=lz4 -o copies=1 -o primarycache=none -o secondarycache=none -o dedup=off -o volmode=dev -o snapshot_limit=none -o sync=disabled zroot/ROOT/default/${pool}/dsk1.vhd
+	# let's give this pause here:
+	${SYNC_CMD} > /dev/null 2>&1 || true
+	case "${emulator}" in
+		xen)
+			# XEN need more?
+			sleep 1
+			;;
+		bhyve)
+			sleep 0.1
+			;;
+	esac
 
 	if [ ${_promote} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}ZFS promoting for: ${N2_COLOR}${ZPOOL}/${_name}${N0_COLOR}"

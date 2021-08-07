@@ -440,22 +440,63 @@ compile_vnc_args()
 
 	case "${vm_vnc_port}" in
 		0)
-			vm_port=$( get-next-tcp-port start_port=5900 end_port=6900 )
-			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range${N0_COLOR}"
+			case "${xen_vnc_tcp_bind}" in
+				0.0.0.0)
+					_vnc_bind="127.0.0.1"
+					;;
+				::|\[::\])
+					_vnc_bind="::1"
+					;;
+				*)
+					_vnc_bind="${xen_vnc_tcp_bind}"
+					;;
+			esac
+			# build skip list
+			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"xen\"" )
+			for i in ${_vms}; do
+				[ "${i}" = "${jname}" ] && continue             # its me
+				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
+				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+				if [ -n "${_tmpport}" ]; then
+					if ! is_number ${_tmpport}; then
+						[ ${_tmpport} -eq 0 ] && continue
+						if [ -z "${_skip_ports}" ]; then
+							_skip_ports="${_tmpport}"
+						else
+							_skip_ports="${_skip_ports} ${_tmpport}"
+						fi
+					else
+						continue
+					fi
+				fi
+			done
+			vm_port=$( get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\" )
+			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
+##
 			vnc_args="--vrde on --vrdeport ${vm_port}"
 			vncdisplay=$(( ${vm_port} - 5900 ))
 			${ECHO} "${N1_COLOR}VRDP is enabled. VNC port: ${N2_COLOR}${vm_port}. ${N1_COLOR}VNC pass: ${N2_COLOR}cbsd${N0_COLOR}${N0_COLOR}"
 			;;
 		1)
+			vncdisplay=0
 			vm_port=0
 			vnc_args="--vrde off"
 		;;
 	*)
 			vm_port=${vm_vnc_port}
+			if [ ${vm_port} -ge 5900 ]; then
+				vncdisplay=$(( ${vm_port} - 5900 ))
+			else
+				# unknown
+				vncdisplay=0
+			fi
 			vnc_args="--vrde on --vrdeport ${vm_port}"
 			;;
 	esac
 
+	# update vm_vnc_port in SQL and duplicate it in the ascii file
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vm_vnc_port=\"${vm_port}\""
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
 	if [ -n "${xen_vnc_tcp_bind}" ]; then
@@ -480,6 +521,28 @@ compile_vnc_args()
 		heigh="${default_vnc_height}"
 	fi
 
+	# add xen_vnc_tcp_ipconnect variables, used in
+	# vncviewer prompt and exported hooks variables
+	case "${vnc_bind}" in
+		0.0.0.0)
+			if [ -n "${nodeip}" ]; then
+				xen_vnc_tcp_ipconnect="${nodeip}"
+			else
+				${ECHO} "${W1_COLOR}Warning, nodeip variable is not set. Please use: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
+			fi
+			;;
+		::|\[::\])
+			if [ -n "${nodeip6}" ]; then
+				xen_vnc_tcp_ipconnect="${nodeip6}"
+			else
+				${ECHO} "${W1_COLOR}Warning, nodeip6 variable is not set. Please use: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
+			fi
+			;;
+		*)
+			bhyve_vnc_tcp_ipconnect="${vnc_bind}"
+			;;
+	esac
+
 	${ECHO} "${N1_COLOR}VRDP is enabled. VNC bind/port: ${N2_COLOR}${xen_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${xen_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Resolution: ${N2_COLOR}${width}x${height}.${N0_COLOR}"
@@ -487,7 +550,7 @@ compile_vnc_args()
 
 	if [ "${vnc_bind}" = "0.0.0.0" ]; then
 		echo
-		${ECHO} "${N1_COLOR}Warning!!! You are running system with open ${N2_COLOR}VNC${N1_COLOR} port to all world wich is not to safe${N1_COLOR}"
+		${ECHO} "${N1_COLOR}Warning!!! You are running a system with open ${N2_COLOR}VNC${N1_COLOR} port to the world wich is not secure${N0_COLOR}"
 		${ECHO} "${N1_COLOR}Please use IP filter or balancer with password to restrict ${N2_COLOR}VNC${N1_COLOR} port access${N0_COLOR}"
 		${ECHO} "${N1_COLOR}Or change vnc_bind params to ${N2_COLOR}127.0.0.1${N1_COLOR} and reboot VM after maintenance work${N0_COLOR}"
 		echo
