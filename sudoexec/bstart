@@ -78,9 +78,6 @@ bhyverun_wrapper=	# reset bhyverun_wrapper
 delay=0
 . ${cbsdinit}
 
-# mainly to smooth mass start in astart.
-[ ${delay} -gt 0 ] && sleep ${delay}
-
 ojname="${jname}"
 
 . ${system}
@@ -109,7 +106,24 @@ else
 	cbsd_api=0
 fi
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}no bhyve specified${N0_COLOR}"
+# trim args from "$*"
+ARGS=
+for i in $*; do
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+
+	[ "${prefix6}" = "delay=" ] && shift && continue
+	[ "${prefix6}" = "jname=" ] && shift && continue
+	[ "${prefix6}" = "quiet=" ] && shift && continue
+	[ "${prefix6}" = "inter=" ] && shift && continue
+
+	if [ -n "${ARGS}" ]; then
+		ARGS="${ARGS} ${i}"
+	else
+		ARGS="${i}"
+	fi
+done
+
+[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}no bhyve specified${N0_COLOR}"
 
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"		# store overwrite debug_engine
 [ -n "${bhyverun_wrapper}" ] && obhyverun_wrapper="${bhyverun_wrapper}"	# store overwrite bhyverun_wrapper
@@ -825,7 +839,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=2
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
@@ -843,7 +857,6 @@ fi
 # MAIN
 . ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 . ${subrdir}/time.subr
-st_time=$( ${DATE_CMD} +%s )
 [ -z "${jname}" ] && jname=${1}
 
 if [ "${lm}" = "0" ]; then
@@ -869,6 +882,16 @@ if [ "${lm}" = "0" ]; then
 		exit 0
 	fi
 
+	# mainly to smooth mass start in astart.
+	if [ ${delay} -ne 0 ]; then
+		[ -z "${boot_delay}" ] && boot_delay=1
+		cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname}: ${boot_delay} sec.
+		sleep ${boot_delay}
+	fi
+
+	# start bhyve
+	st_time=$( ${DATE_CMD} +%s )
+
 	[ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
 	[ -z "${mnt_start}" ] && mnt_start="0"
 	if [ "${mnt_start}" != "0" ]; then
@@ -892,6 +915,8 @@ else
 	${ECHO} "${N1_COLOR}Request for live migration...${N0_COLOR}"
 
 	. ${jrcconf}
+	st_time=$( ${DATE_CMD} +%s )
+
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}This is local domain! Please unregister first: ${N2_COLOR}${jname}${N0_COLOR}"
 
 	RHST=
