@@ -28,16 +28,17 @@ static int add_param(const char *name, void *value, size_t valuelen,
 		struct jailparam *source, unsigned flags);
 static int sort_param(const void *a, const void *b);
 static int print_jail(int pflags, int jflags);
+static int print_jids(int pflags, int jflags);
 
 int
 cbsdjlscmd(int argc, char **argv)
 {
 	char *ep, *jname;
-	int c, jflags, jid, lastjid, pflags;
+	int c, jflags, jid, lastjid, pflags, jid_only=0;
 
 	jname = NULL;
 	pflags = jflags = jid = 0;
-	while ((c = getopt(argc, argv, "adj:hNnqsv")) >= 0)
+	while ((c = getopt(argc, argv, "adj:hNnqsvq")) >= 0)
 		switch (c) {
 		case 'a':
 		case 'd':
@@ -69,20 +70,33 @@ cbsdjlscmd(int argc, char **argv)
 			    ~(PRINT_HEADER | PRINT_NAMEVAL | PRINT_SKIP)) |
 			    PRINT_VERBOSE;
 			break;
+		case 'q':
+			jid_only=1;
+			break;
 		default:
 			out1fmt("usage: cbsdjls [-dhNnqv] [-j jail] [param ...]");
 			return 1;
 		}
 
 	/* Add the parameters to print. */
-	add_param("jid", NULL, (size_t)0, NULL, JP_USER);
-	add_param("name", NULL, (size_t)0, NULL, JP_USER);
-	add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+	if ( jid_only == 1 ) {
+		add_param("jid", NULL, (size_t)0, NULL, JP_USER);
+		add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+		/* Fetch the jail(s) and print the parameters. */
+		for (lastjid = 0; (lastjid = print_jids(pflags, jflags)) >= 0; ) {
+		}
 
-	/* Fetch the jail(s) and print the parameters. */
-	for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
+	} else {
+		add_param("jid", NULL, (size_t)0, NULL, JP_USER);
+		add_param("name", NULL, (size_t)0, NULL, JP_USER);
+		add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+
+		/* Fetch the jail(s) and print the parameters. */
+		for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
+		}
 
 	}
+
 
 	return 0;
 
@@ -192,6 +206,15 @@ static int print_jail(int pflags, int jflags) {
 
 	if (jid < 0) return jid;
 	out1fmt("%d %s\n",*(int *)params[0].jp_value,(char *)params[1].jp_value);
+
+	return (jid);
+}
+
+static int print_jids(int pflags, int jflags) {
+	int jid = jailparam_get(params, nparams, jflags);
+
+	if (jid < 0) return jid;
+	out1fmt("%d ",*(int *)params[0].jp_value);
 
 	return (jid);
 }

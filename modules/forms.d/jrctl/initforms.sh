@@ -60,6 +60,7 @@ INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,a
 INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,200,"-","Other limits",'-','','',1, "maxlen=128", "delimer", "", "" );
 INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,201,"nice","Priority for nice: from -20 (higher pri) to 20 (lower pri); default is: 0",'0','','',1, "maxlen=60", "inputbox", "", "" );
 INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,202,"bw","Network traffic bandwitch limit; default is: 0",'0','','',1, "maxlen=60", "inputbox", "", "" );
+INSERT INTO forms ( mytable,group_id,order_id,param,desc,def,cur,new,mandatory,attr,type,link,groupname ) VALUES ( "forms", 1,203,"cpu","CPU limit, in cores; default is: 0",'0','','',1, "maxlen=60", "inputbox", "", "" );
 COMMIT;
 EOF
 

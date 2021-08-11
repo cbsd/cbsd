@@ -2,6 +2,9 @@ if [ ! "$_CBSD_JRCTL_SUBR" ]; then
 _CBSD_JRCTL_SUBR=1
 ###
 
+#### INIT JRCTL_CPUSET_CORE_X VARS: Look at the end.
+
+
 # return true if variable in RCTL_HUMANIZE list
 rctl_humanize()
 {
@@ -74,8 +77,88 @@ get_rctl_values()
 		eval _res="\$${_show}"
 		echo "${_res}"
 	fi
-
 }
+
+
+jrctl_list_cpuset()
+{
+	local _i _passenger _mask
+
+	cbsdjls | while read _jid _name; do
+		echo "JID ${_jid} ${_name}"
+		_mask=$( ${CPUSET_CMD} -g -j ${_jid} 2>/dev/null | ${GREP_CMD} "^jail ${_jid} mask:" | ${CUT_CMD} -d ':' -f 2-100 | ${TR_CMD} -d ',' )
+		[ -z "${_mask}" ] && continue
+		echo "MASK for ${_name}: ${_mask}"
+	done
+
+
+	for _i in $( ${SEQ_CMD} 0 ${JRCTL_SEQ_CPU_ID} ); do
+		eval _passenger=\$JRCTL_CPUSET_CORE_${_i}
+		echo "JRCTL_CPUSET_CORE_${_i}: ${_passenger}"
+	done
+}
+
+jrctl_get_next_cpuset()
+{
+	local _min=1024 _id=0
+	local _i
+
+	for _i in $( ${SEQ_CMD} 0 ${JRCTL_SEQ_CPU_ID} ); do
+		eval _passenger=\$JRCTL_CPUSET_CORE_${_i}
+		[ "${_passenger}" = "0" ] && _id="${_i}" && break
+
+		if [ ${_passenger} -lt ${_min} ]; then
+			#echo "new min found: id:${_i} = _passenger:${_passenger}"
+			_min="${_passenger}"
+			_id="${_i}"
+		fi
+	done
+
+	JRCTL_CPUSET_CORE="${_id}"
+}
+
+jrctl_increment_cpuset()
+{
+	local _id="${1}"
+
+	eval _passenger=\$JRCTL_CPUSET_CORE_${_id}
+	#echo "INCREMENT CORE ${_id}"
+	_passenger=$(( _passenger + 1 ))
+	eval JRCTL_CPUSET_CORE_${_id}=${_passenger}
+}
+
+jrctl_decrement_cpuset()
+{
+	local _id="${1}"
+
+	eval _passenger=\$JRCTL_CPUSET_CORE_${_id}
+	[ "${_passenger}" = "0" ] && return
+	_passenger=$(( _passenger - 1 ))
+	eval JRCTL_CPUSET_CORE_${_id}=${_passenger}
+}
+
+
+#### INIT JRCTL_CPUSET_CORE_X VARS
+[ -z "${ncpu}" ] && ncpu=$( ${SYSCTL_CMD} -qn hw.ncpu | ${AWK_CMD} '{printf $1}' )
+JRCTL_SEQ_CPU_ID=$(( ncpu - 1 ))
+
+# init JRCTL_CPUSET_CORE ( jrctl_\* func )
+for _i in $( ${SEQ_CMD} 0 ${JRCTL_SEQ_CPU_ID} ); do
+	eval JRCTL_CPUSET_CORE_${_i}="0"
+done
+
+jrctl_jid=$( cbsdjls -q | ${TR_CMD} -d \\r\\n )
+
+for i in ${jrctl_jid}; do
+	mask=$( ${CPUSET_CMD} -g -j ${i} 2>/dev/null | ${GREP_CMD} "^jail ${i} mask:" | ${CUT_CMD} -d ':' -f 2-100 | ${TR_CMD} -d ',' )
+	[ -z "${mask}" ] && continue
+	for x in ${mask}; do
+
+		#echo "jid $i: jrctl_increment_cpuset ${x}"
+		jrctl_increment_cpuset ${x}
+	done
+done
+
 
 ###
 fi
