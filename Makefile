@@ -51,10 +51,12 @@ distclean:
 	${RM} -f misc/daemon
 	${RM} -f misc/resolv
 	${RM} -f misc/ipv6range
+.if ( ${OSTYPE} != DragonFly )
 	${RM} -f misc/next-vale-port
+	${RM} -f tools/vale-ctl
+.endif
 	${RM} -f tools/imghelper
 	${RM} -f tools/xo
-	${RM} -f tools/vale-ctl
 	${RM} -f tools/nic_info
 	${RM} -f tools/bridge
 	${RM} -f tools/racct-jail-statsd
@@ -108,23 +110,27 @@ cbsd: pkg-config-check
 	${CC} misc/src/daemon.c -lutil -o misc/daemon && ${STRIP} misc/daemon
 	${CC} misc/src/resolv.c -o misc/resolv && ${STRIP} misc/resolv
 	${CC} misc/src/ipv6range.c -o misc/ipv6range && ${STRIP} misc/ipv6range
+.if ( ${OSTYPE} != DragonFly )
 	${CC} misc/src/next-vale-port.c -o misc/next-vale-port && ${STRIP} misc/next-vale-port
-	${CC} tools/src/imghelper.c -o tools/imghelper && ${STRIP} tools/imghelper
-	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
 	${CC} tools/src/vale-ctl.c -o tools/vale-ctl && ${STRIP} tools/vale-ctl
+	${CC} tools/src/bridge.c -o tools/bridge && ${STRIP} tools/bridge
+.endif
+	${CC} tools/src/imghelper.c -o tools/imghelper && ${STRIP} tools/imghelper
 	${CC} tools/src/nic_info.c -o tools/nic_info && ${STRIP} tools/nic_info
 
 .if defined(WITH_INFLUX)
 	EXTRAC=" ../../bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX"
 .endif
 
+.if ( ${OSTYPE} != DragonFly )
 	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
 	${CC} tools/src/racct-bhyve-statsd.c lib/beanstalk-client/beanstalk.c  ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-bhyve-statsd && ${STRIP} tools/racct-bhyve-statsd
+	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
+.endif
 
 .if defined(WITH_REDIS)
 	EXTRAC+=" ../../bin/cbsdsh/cbsdredis.c ../../bin/cbsdsh/contrib/credis.c -DWITH_REDIS"
 .endif
-	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C misc/src/sipcalc && ${STRIP} misc/src/sipcalc/sipcalc
