@@ -1,5 +1,6 @@
 PREFIX?=/usr/local
 CC?=/usr/bin/cc
+OSTYPE?= uname -s
 CBSD_HOME=${PREFIX}/cbsd
 STRIP="/usr/bin/strip"
 RM="/bin/rm"
