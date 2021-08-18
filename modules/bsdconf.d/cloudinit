@@ -32,13 +32,17 @@ esac
 
 [ -z "${cloudengine}" ] && cloudengine="cloud-init"
 
+cbsd_cloud_init=0
+readconf cloud-init-extras.conf
+
 _MYDIR="${distdir}/modules/bsdconf.d"
 SERVICE="cloudinit"
 
 case "${cloudengine}" in
 	cloud-init)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
-		cloud_data_files="meta-data network-config user-data cbsd-network-config"
+		cloud_data_files="meta-data network-config user-data"
+		[ ${cbsd_cloud_init} -eq 1 ] && cloud_data_files="${cloud_data_files} cbsd-network-config"
 		;;
 	cloudinit-base)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init/openstack/latest"
@@ -109,7 +113,13 @@ show()
 	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user='*'
 	ci_user_pw_root_lock="false"
 	[ -z "${ci_user_pw_root}" ] && ci_user_pw_root='*'
-	[ -z "${ci_interface_mtu}" ] && ci_interface_mtu="1500"
+
+	if [ -z "${default_ci_interface_mtu}" ]; then
+		ci_interface_mtu="1500"
+		oci_interface_mtu="1500"
+	else
+		oci_interface_mtu="${default_ci_interface_mtu}"
+	fi
 
 	# todo: test for empty values
 	case "${_source}" in
@@ -137,11 +147,11 @@ show()
 				nic_id=$(( interface_num - 1 ))
 				interface_name="${ci_interface_name}${nic_id}"
 
-				# CLOUD HACK
-				if [ ${interface_num} -eq 1 ]; then
-					ci_interface_mtu="1450"
-				else
+				# CLOUD HACK: only first nic used global ci_interface_mtu
+				if [ ${interface_num} -ne 1 ]; then
 					ci_interface_mtu="1500"
+				else
+					ci_interface_mtu="${oci_interface_mtu}"
 				fi
 
 				${SED_CMD} -e "s:%%ci_interface_name%%:${interface_name}:g" \
@@ -233,8 +243,8 @@ show()
 							;;
 					esac
 
-					#oci_gw4="${ci_gw42}"
-					oci_gw4="${ci_gw42}%${interface_name}"
+					oci_gw4="${ci_gw42}"
+					#oci_gw4="${ci_gw42}%${interface_name}"
 
 					${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
 					-e "s#%%ipv6_true%%#${ipv6_true}#g" \
@@ -286,13 +296,25 @@ show()
 						;;
 				esac
 
+				if [ ${iface} -eq 1 ]; then
+					if [ ${gw_set} -eq 0 ]; then
+						oci_gw4="${ci_gw4}"
+					else
+						oci_gw4="${ci_gw42}"
+					fi
+				fi
+
 				echo "ip${iface}=\"${_pureip}\""
-#				echo "gw${iface}=\"${ci_gw42}\""
-				echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
+				echo "gw${iface}=\"${oci_gw4}\""
+				#echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
 				iface=$(( iface + 1 ))
 				IFS=","
+
 			done
 			IFS="${OIFS}"
+
+			# CLOUD HACK: only first nic used global ci_interface_mtu
+			echo "mtu=\"${oci_interface_mtu}\""
 			;;
 		network_data.json)
 			${SED_CMD} -e "s:%%ci_interface%%:${ci_interface}:g" \
@@ -378,7 +400,7 @@ if [ -n "${fromfile}" ]; then
 
 	unset ci_template ci_user_pw_root ci_user_add ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_search
 	unset ci_jname ci_fqdn ci_interface ci_ip4_addr ci_gw4 ci_nameserver_address ci_user_pw_user ci_user_pw_root
-	unset ci_nic_hwaddr0 ci_user_pubkey ci_interface_mtu
+	unset ci_nic_hwaddr0 ci_user_pubkey ci_interface_mtu default_ci_interface_mtu
 
 	. ${fromfile}
 
