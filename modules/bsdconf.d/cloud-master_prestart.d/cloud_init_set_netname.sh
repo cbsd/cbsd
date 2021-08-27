@@ -6,7 +6,7 @@
 
 set -e
 . ${distdir}/cbsd.conf
-. ${subr}
+. ${subrdir}/nc.subr
 . ${cbsdinit}
 set +e
 
