@@ -53,7 +53,7 @@ fi
 
 [ ! -f ${customskel}/bin/bash ] && err 1 "${N1_COLOR}No such distribution on ${N2_COLOR}${customskel}${N0_COLOR}"
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -d ${data}/bin/bash ]; then

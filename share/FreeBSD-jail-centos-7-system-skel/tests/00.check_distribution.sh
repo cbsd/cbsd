@@ -257,7 +257,7 @@ fi
 
 [ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}no such distribution on ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -r ${data}/bin/bash ]; then
