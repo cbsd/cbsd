@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 	struct timespec tv;
 	char *watchfile = NULL;
 	int timeout = 10;
-	char cmd[10];
+	char cmd[20];
 
 	struct option   long_options[] = {
 		{ "file", required_argument, 0, C_FILE },
