@@ -3,7 +3,7 @@
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${cbsdinit}
 : ${distdir="/usr/local/cbsd"}
 unset workdir
@@ -19,7 +19,7 @@ fi
 [ ! -r "${distdir}/cbsd.conf" ] && exit 1
 
 . ${distdir}/cbsd.conf
-. ${subr}
+. ${subrdir}/nc.subr
 . ${system}
 . ${strings}
 . ${tools}
@@ -87,7 +87,7 @@ fi
 
 [ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 [ "${baserw}" = "1" ] && path=${data}
 
 if [ ! -r ${data}/bin/bash ]; then

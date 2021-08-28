@@ -174,7 +174,7 @@ fi
 orig_vnc_args="${vnc_args}"
 
 . /usr/local/cbsd/cbsd.conf
-. ${subr}		# readconf
+. ${subrdir}/nc.subr		# readconf
 # mod_cbsd_queue_enabled?
 . ${inventory}
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
