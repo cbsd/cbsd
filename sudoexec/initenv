@@ -214,7 +214,6 @@ phase0()
 
 	# touch must be in paths until phase1 generates <cmd>_CMD macros
 	[ ! -f /etc/rc.conf ] && touch /etc/rc.conf
-
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && return 0
 	[ ! -x ${miscdir}/sqlcli ] && return 0	# no build/first run?
@@ -266,17 +265,24 @@ phase1()
 		exit 1
 	fi
 
-	if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
-		# check for correct homedir
-		if [ ! -r /etc/master.passwd ]; then
-			echo "no such /etc/master.passwd file"
-			exit 1
-		fi
-		cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
-		[ "${cbsd_home}" != "${workdir}" ] && pw usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
-	else
-		initenv_modify_cbsd_homedir=0
-	fi
+	case "${platform}" in
+		Linux)
+			cbsd_home=$( echo ~${cbsd} > /dev/null 2>&1 )
+			[ "${cbsd_home}" != "${workdir}" ] && usermod -d ${workdir} cbsd
+			;;
+		*)
+			if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
+				# check for correct homedir
+				if [ ! -r /etc/master.passwd ]; then
+					echo "no such /etc/master.passwd file"
+					exit 1
+				fi
+				cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
+				[ "${cbsd_home}" != "${workdir}" ] && pw usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
+			else
+				initenv_modify_cbsd_homedir=0
+			fi
+	esac
 
 	if [ ! -d "${workdir}" ]; then
 		/bin/mkdir -m 755 ${workdir}
@@ -288,12 +294,9 @@ phase1()
 	printf "${myversion}" > ${workdir}/ver
 
 	$ECHO "${N1_COLOR} * Check hier and permission..."
-	MTREE_CMD=$( which mtree 2>/dev/null )
-	if [ ! -x "${MTREE_CMD}" ]; then
-		echo "initenv error: no such command: mtree"
-		exit 1
-	fi
-	${MTREE_CMD} -deU -f ${distdir}/etc/cbsd.mtree -p ${workdir}
+
+	${miscdir}/mtree ${workdir}
+
 	env workdir=${workdir} ${distdir}/misc/cmdboot
 	_ret=$?
 	if [ ${_ret} -ne 0 ]; then
@@ -339,7 +342,7 @@ phase2()
 	[ ! -f "${distdir}/sbin/netmask" ] && ${CC_CMD} ${distdir}/sbin/src/netmask.c -o ${distdir}/sbin/netmask
 
 	if [ ! -f "${distdir}/misc/sqlcli" ]; then
-		/usr/bin/which -s pkg-config
+		/usr/bin/which pkg-config
 		if [ $? -ne 0 ]; then
 			echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf";
 			exit 1
@@ -363,17 +366,23 @@ phase2()
 	[ ! -f "${distdir}/misc/daemon" ] && ${CC_CMD} ${distdir}/misc/src/daemon.c -lutil -o ${distdir}/misc/daemon
 	[ ! -f "${distdir}/misc/resolv" ] && ${CC_CMD} ${distdir}/misc/src/resolv.c -o ${distdir}/misc/resolv
 	[ ! -f "${distdir}/tools/imghelper" ] && ${CC_CMD} ${distdir}/tools/src/imghelper.c -o ${distdir}/tools/imghelper
-	if [ "${platform}" != "DragonFly" ]; then
-		if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
-			[ ! -f ${distdir}/tools/racct-jail-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
-			[ ! -f ${distdir}/tools/racct-bhyve-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
-			[ ! -f ${distdir}/tools/racct-hoster-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c ${distdir}/bin/cbsdsh/cbsdredis.c ${distdir}/bin/cbsdsh/contrib/credis.c -DWITH_REDIS -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
-		else
-			[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
-			[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
-			[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
-		fi
-	fi
+
+	case "${platform}" in
+		DragonFly|Linux)
+			;;
+			# not supported yet
+		*)
+			if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
+				[ ! -f ${distdir}/tools/racct-jail-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+				[ ! -f ${distdir}/tools/racct-bhyve-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+				[ ! -f ${distdir}/tools/racct-hoster-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c ${distdir}/bin/cbsdsh/cbsdredis.c ${distdir}/bin/cbsdsh/contrib/credis.c -DWITH_REDIS -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+			else
+				[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+				[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+				[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+			fi
+	esac
+
 	[ ! -f "${distdir}/tools/select_jail" ] && ${CC_CMD} ${distdir}/tools/src/select_jail.c -o ${distdir}/tools/select_jail
 
 	if [ ! -f ${distdir}/misc/dump_cpu_topology ]; then
@@ -1160,10 +1169,18 @@ EOF
 # export LOCK_CMD
 init_lock()
 {
-	if [ -x /usr/bin/lockf ]; then
-		LOCK_CMD="/usr/bin/lockf -t0 -s "
-	elif [ -x /usr/bin/flock ]; then
-		LOCK_CMD="/usr/bin/flock -w0 -x "
+	local _lock_cmd
+	LOCK_CMD=
+
+	_lock_cmd=$( which lockf 2>/dev/null )
+
+	if [ -n "${_lock_cmd}" -a -x "${_lock_cmd}" ]; then
+		LOCK_CMD="${_lock_cmd} -t0 -s "
+	else
+		_lock_cmd=$( which flock 2>/dev/null )
+		if [ -n "${_lock_cmd}" -a -x ${_lock_cmd} ]; then
+			LOCK_CMD="${_lock_cmd} -w0 -x "
+		fi
 	fi
 
 	if [ -z "${LOCK_CMD}" ]; then
