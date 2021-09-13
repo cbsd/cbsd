@@ -1,15 +1,65 @@
 #!/usr/local/bin/cbsd
 #v12.1.17
 MYARG=""
-MYOPTARG="formfile bootstrap module jname updcol header inter table out index group debug_form"
-MYDESC="Ncurses-based jail image boostrap helper"
-ADDHELP="updcol = new (default) update new column, cur - update cur column\n\
-table - initial table, default is forms\n\
-if jname name is cbsdpuppet1 then just generate manifest or hiera\n\
-if jname name is CBSDSYS then configure current system\n\
-out - out manifest content to file, when jname=cbsdpuppet1\n\
-index - index id for group_add and group_del operation\n\
-group - group=add or group=del to add/del custom params group, in dynamical forms\n"
+MYOPTARG="bootstrap config debug_form export formfile group header index inter jname module out table updcol"
+MYDESC="Assistant for configuring containers/services, TUI/CLI"
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ CBSD forms represents a bridge between user parameters and helper for the jail environment.
+ Unlike templates that usually contain static packages/config files, you can use the full power 
+ of dynamic configurations (Puppet,Ansible,SaltStack,Chef) using the community force.
+ This allows you to configure the setting not only at the initial start, but also accompany and 
+ reconfigure the service at any time.
+
+ By running 'cbsd forms jname=XXXX module=NNN', you will dynamically built forms in TUI and can
+ view/modify and apply settings. If you prefer non-interactive configuration and/or want to overwrite
+ settins, you can use:
+
+   - external helper (e.g. with consul/zookeeper/... integration);
+   - config file with (~cbsd/etc/forms_env.conf by default) with ( H_<param>=\"<value>\" settings );
+   - global variable via H_<param>=\"<value>\" env;
+
+After forms apply, you can export current helper settings via external helper (e.g. with 
+consul/zookeeper/... integration) or to local file with default variable form:
+
+<jname>_<module>_PARAM="values"
+
+This form can be mapped/overwrited at your discretion via global forms_export_vars.conf or
+per-jail in ~cbsd/jails-system/jail/etc/forms_export_vars.conf.
+
+When 'cbsd forms' executed with 'vars' args: show VARIABLE names per module.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}config=${N0_COLOR} - read H_<params> values from this file,
+           default values: ~cbsd/etc/forms_env.conf
+ ${N2_COLOR}export=${N0_COLOR} - export variables;
+ ${N2_COLOR}jname=${N0_COLOR}  - jail name to configure, with reserved name:
+           if jname name is 'cbsdpuppet1' then just generate manifest or hiera.
+           if jname name is CBSDSYS then configure current system.
+ ${N2_COLOR}index=${N0_COLOR}  - index id for group_add and group_del operation;
+ ${N2_COLOR}group=${N0_COLOR}  - group=add or group=del to add/del custom params group, 
+             in dynamical forms;
+ ${N2_COLOR}out=${N0_COLOR}    - out manifest content to file, when jname=cbsdpuppet1;
+ ${N2_COLOR}table=${N0_COLOR}  - initial table, default is forms;
+ ${N2_COLOR}updcol=${N0_COLOR} - 'new' (default) update 'new' value, 'cur' - update 'cur' value;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jcreate jname=redis runasap=1
+ # cbsd module mode=install forms-redis
+ # cbsd forms module=redis jname=redis
+ # env H_port=1234 H_maxmemory=8g cbsd forms module=redis jname=redis inter=0
+ # cbsd forms module=redis vars
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd repo --help
+
+"
+CBSDMODULE="jail"
 EXTHELP="wf_forms"
 
 . ${subrdir}/nc.subr
@@ -32,8 +82,21 @@ if [ "${1}" != "--help" -a "${1}" != "--args" ]; then
 fi
 
 debug_form=0
+config="forms_env.conf"
+oupdcol=
+updcol=
+export=
+oexport=
+show_vars_only=0
+for i in $*; do
+	[ "${i}" = "vars" ] && show_vars_only=1
+done
 
 . ${cbsdinit}
+[ -n "${updcol}" ] && oupdcol="${updcol}"
+[ -z "${updcol}" ] && updcol="new"
+[ -n "${export}" ] && oexport="${export}"
+[ -z "${export}" ] && export="stdout"
 
 . ${subrdir}/settings-tui.subr
 . ${dialog}
@@ -404,6 +467,86 @@ EOF
 }
 
 
+export_vars()
+{
+	local param _id type idx
+	local _tmp _res param
+
+	[ ! -f ${formfile} ] && err 1 "${N1_COLOR}formfile not found: ${N2_COLOR}${formfile}${N0_COLOR}"
+	[ -z "${table}" ] && table="forms"
+
+	idx=0
+
+	_param="$( cbsdsqlro ${formfile} "SELECT param FROM ${table}" ORDER BY CAST\(order_id AS int\) | ${XARGS_CMD} )"
+
+	helpername=$( cbsdsqlro ${formfile} "SELECT helpername FROM system" )
+	# First SQL sequence is 1
+	_id=0
+	_seq_ind=0
+	# H_<env> prefered, we need to pop/push it before/after config env file
+
+
+	for param in ${_param}; do
+		_seq_ind=$(( _seq_ind + 1 ))
+		_id="$( cbsdsqlro ${formfile} "SELECT idx FROM ${table} WHERE param=\"${param}\" LIMIT 1" )"
+		type="$( cbsdsqlro ${formfile} "SELECT type FROM ${table} WHERE idx=\"${_id}\"" )"
+		case "${type}" in
+			hiddendelim|subtable|delimer)
+				continue
+				;;
+		esac
+
+		_res="$( cbsdsqlro ${formfile} "SELECT cur FROM ${table} WHERE idx=\"${_id}\"" )"
+		[ -z "${_res}" ] && continue
+
+		readconf forms_export_vars.conf
+		[ -z "${FORMS_EXPORT_VARS_TPL}" ] && FORMS_EXPORT_VARS_TPL="${jname}_${module}_${param}"
+
+		_tmp=$( echo "${FORMS_EXPORT_VARS_TPL}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
+		unset FORMS_EXPORT_VARS_TPL
+		echo "${_tmp}=\"${_res}\""
+	done
+}
+
+show_vars()
+{
+	local param _id type idx
+	local _tmp _res param _all_vars
+
+	[ -z "${formfile}" -o ! -f ${formfile} ] && err 1 "${N1_COLOR}formfile not found: ${N2_COLOR}${formfile}${N0_COLOR}"
+	[ -z "${table}" ] && table="forms"
+
+	idx=0
+	_param="$( cbsdsqlro ${formfile} "SELECT param FROM ${table}" ORDER BY CAST\(order_id AS int\) | ${XARGS_CMD} )"
+
+	helpername=$( cbsdsqlro ${formfile} "SELECT helpername FROM system" )
+	# First SQL sequence is 1
+	_id=0
+	_seq_ind=0
+	# H_<env> prefered, we need to pop/push it before/after config env file
+
+
+	for param in ${_param}; do
+		_seq_ind=$(( _seq_ind + 1 ))
+		_id="$( cbsdsqlro ${formfile} "SELECT idx FROM ${table} WHERE param=\"${param}\" LIMIT 1" )"
+		type="$( cbsdsqlro ${formfile} "SELECT type FROM ${table} WHERE idx=\"${_id}\"" )"
+		case "${type}" in
+			hiddendelim|subtable|delimer)
+				continue
+				;;
+		esac
+
+		_tmp=$( echo "${param}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
+		if [ -n "${_all_vars}" ]; then
+			_all_vars="${_all_vars} H_${_tmp}"
+		else
+			_all_vars="H_${_tmp}"
+		fi
+	done
+
+	echo "${_all_vars}"
+}
+
 #### [ MAIN AREA ] ####
 # we work in two modes:
 # when we got bootstrap file ( which shall contain install_img )
@@ -420,12 +563,15 @@ else
 	with_bootstrap=1
 fi
 
+
+
 # Show list modules with no arg
 if [ -z "${1}" ]; then
-	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}current helper module: ${N2_COLOR}${helper_module}${N0_COLOR}"
+	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}current helper module: ${N2_COLOR}${helper_module}${N0_COLOR}" 1>&2
 	[ ! -d ${distmoduledir}/${helper_module}.d ] && exit 0
-	[ ${header} -eq 1 ] && ${ECHO} "${N1_COLOR}Available modules:${N0_COLOR}"
-	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}"
+
+	[ ${header} -eq 1 ] && ${ECHO} "${BOLD}${UNDERLINE}Available modules:${N0_COLOR}" 1>&2
+	[ ${header} -eq 1 ] && echo 1>&2
 
 	# rename helper_module to forms-<helper>-name!!!
 	${FIND_CMD} ${distmoduledir}/forms.d/ -type d -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | while read _dir; do
@@ -461,11 +607,6 @@ fi
 imghelper_version="201607"
 cfg_existing=0
 
-[ -z "${updcol}" ] && updcol="new"
-
-# read global H_ environment from file
-readconf forms_env.conf
-
 if [ -n "${jname}" -a -n "${module}" ]; then
 	formfile="${jailsysdir}/${jname}/helpers/${module}.sqlite"
 	if [ ! -r ${formfile} ]; then
@@ -473,7 +614,7 @@ if [ -n "${jname}" -a -n "${module}" ]; then
 		cfg_existing=0
 	else
 		cfg_existing=1
-		updcol="cur"
+		#updcol="cur"
 	fi
 elif [ -n "${module}" ]; then
 	: ${formfile="${workdir}/formfile/${module}.sqlite"}
@@ -488,6 +629,11 @@ elif [ -n "${jname}" ]; then
 		echo ${p2} | ${SED_CMD} 's/\.sqlite//g'
 	done
 	[ ${header} -eq 1 ] && ${ECHO} "${N0_COLOR}"
+	exit 0
+fi
+
+if [ ${show_vars_only} -eq 1 ]; then
+	show_vars
 	exit 0
 fi
 
@@ -578,13 +724,15 @@ case "${group}" in
 esac
 
 # export global variable to new module (when init)
-if [ -r "${distmoduledir}/puppet.d/sync_env2form" ]; then
-	sync_env2form
-fi
+#if [ -r "${distmoduledir}/puppet.d/sync_env2form" ]; then
+#	sync_env2form
+#fi
 
 # no bootrstap? this is the end my beautiful friend
 [ ${with_bootstrap} -eq 0 ] && exit 0
 
+[ -n "${oupdcol}" ] && updcol="${oupdcol}"
+echo "update_params ${updcol}"
 update_params ${updcol}
 
 # commit when works with module
@@ -608,13 +756,15 @@ if [ -n "$helper_module}" ]; then
 					${distmoduledir}/forms.d/${module}/cbsdsys ${formfile} ${jname}
 					;;
 				*)
-					echo "${helper_module} jname=${jname} module=${module} mode=apply"
-					#exit 
+					echo "${helper_module} jname=${jname} module=${module} mode=apply debug_form=${debug_form}"
 					${helper_module} jname=${jname} module=${module} mode=apply debug_form=${debug_form}
 					# re-export global variable
-					if [ -r "${distmoduledir}/puppet.d/sync_env2form" ]; then
-						sync_env2form
-					fi
+#					if [ -r "${distmoduledir}/puppet.d/sync_env2form" ]; then
+#						sync_env2form
+#					fi
+
+					[ -n "${oexport}" ] && export="${oexport}"
+					[ -n "${export}" ] && export_vars
 
 					# Looking for helpers pre/post hooks (todo: also lookup in $moduledir)
 					if [ -d "${distmoduledir}/forms.d/${module}/jail-system-default" ]; then

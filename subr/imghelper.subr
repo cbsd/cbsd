@@ -103,7 +103,11 @@ update_params()
 			# [ -n "${id}" ] && _T="${id}"
 		fi
 
+#		echo "${_imgformfile} DDD SET ${_target}=\"${_T}\" where param=\"${i}\""
+
+#		echo "${miscdir}/sqlcli ${_imgformfile} UPDATE forms SET ${_target}=\"${_T}\" WHERE param=\"${i}\""
 		${miscdir}/sqlcli ${_imgformfile} UPDATE forms SET ${_target}=\"${_T}\" WHERE param=\"${i}\"
+
 
 		# cleanup new
 		[ "${_target}" != "new" ] && ${miscdir}/sqlcli ${_imgformfile} UPDATE forms SET new=\"\" WHERE param=\"${i}\"
@@ -119,7 +123,7 @@ update_params()
 load_forms()
 {
 	local param _id def def2 link type _env idx lnk _vars
-	local _tmpfile
+	local _tmpfile _tmp _res _env_vars
 
 	[ ! -f ${formfile} ] && err 1 "${N1_COLOR}formfile not found: ${N2_COLOR}${formfile}${N0_COLOR}"
 	[ -z "${table}" ] && table="forms"
@@ -136,12 +140,48 @@ load_forms()
 
 	[ "${packages}" = "0" ] && packages=
 
+	_tmpfile="/dev/stdout"			# default
+	_tmpfile=$( ${MKTEMP_CMD} )		# for debug
+
 	# First SQL sequence is 1
 	_id=0
 	_seq_ind=0
+	# H_<env> prefered, we need to pop/push it before/after config env file
+	for i in ${param}; do
+		_seq_ind=$(( _seq_ind + 1 ))
+		_id="$( cbsdsqlro ${formfile} "SELECT idx FROM ${table} WHERE param=\"${i}\" LIMIT 1" )"
+		type="$( cbsdsqlro ${formfile} "SELECT type FROM ${table} WHERE idx=\"${_id}\"" )"
+		case "${type}" in
+			hiddendelim|subtable|delimer)
+				continue
+				;;
+			*)
+				# is_value=1
+				;;
+		esac
 
-	_tmpfile="/dev/stdout"			# default
-	_tmpfile=$( ${MKTEMP_CMD} )		# for debuf
+		_env_vars=$( echo ${i} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+		_tmp=
+		eval _tmp="\$H_${_env_vars}"
+		if [ -n "${_tmp}" ]; then
+			# env exist
+			export H_XXX_${_env_vars}="${_tmp}"
+		fi
+	done
+
+	if [ -n "${config}" ]; then
+		_tmp=$( substr --pos=0 --len=1 --str=${config} )
+		if [ "${_tmp}" = "/" ]; then
+			# realpath
+			. ${config}
+		else
+			readconf ${config}
+		fi
+	fi
+
+	# First SQL sequence is 1
+	_id=0
+	_seq_ind=0
 
 	# export params_<ind> variables by sequence, not SQL index
 	for i in ${param}; do
@@ -189,15 +229,27 @@ load_forms()
 
 		# check for H_environment
 		if [ ${is_value} -eq 1 ]; then
-			eval _res="\$H_${_vars}"
+			_env_vars=$( echo ${i} | ${TR_CMD} '[:lower:]' '[:upper:]' )
 			_vars="${i}"
-		else
-			#
+			_tmp=
+			eval _tmp="\$H_${_env_vars}"
+			if [ -n "${_tmp}" ]; then
+				# env exist
+				_res="${_tmp}"
+			fi
+
+			# pop env ?
+			_tmp=
+			eval _tmp="\$H_XXX_${_env_vars}"
+			if [ -n "${_tmp}" ]; then
+				# env exist
+				_res="${_tmp}"
+			fi
 		fi
 
-		[ -z "${_vars}" ] && continue
+		#echo " >>> ${_vars} is value: ${is_value}, IDX = ${_id}, TYPE: ${type}, DESC: [${desc}], RES: ${_res}" >> /tmp/forms.txt
 
-#		echo " >>> ${_vars} is value: ${is_value}, IDX = ${_id}, TYPE: ${type}, DESC: [${desc}], RES: ${_res}" >> /tmp/forms.txt
+		[ -z "${_vars}" ] && continue
 
 		if [ -n "${_res}" ]; then
 			# environment is preferred
@@ -285,6 +337,35 @@ load_new()
 		unset _env new
 		new="$( cbsdsqlro ${formfile} SELECT new FROM ${table} WHERE param=\"${i}\" )"
 		[ -z "${new}" ] && continue
+		echo "${i}=\"${new}\""
+	done )
+}
+
+# merge new value to cur and flush new
+# $formfile and $table must be present
+merge_new()
+{
+	[ ! -f ${formfile} ] && err 1 "${N1_COLOR}formfile not found: ${N2_COLOR}${formfile}${N0_COLOR}"
+	[ -z "${table}" ] && table="forms"
+
+	local param
+	param=$( cbsdsqlro ${formfile} "SELECT param FROM ${table} ORDER BY CAST(order_id AS int)" | ${XARGS_CMD} )
+	local _env
+
+	eval $( for i in ${param}; do
+		case "${i}" in
+			-*)
+				continue
+				;;
+#			Expand)
+#				continue
+#				;;
+		esac
+		unset _env new
+		new="$( cbsdsqlro ${formfile} SELECT new FROM ${table} WHERE param=\"${i}\" )"
+		[ -z "${new}" ] && continue
+		cbsdsqlrw ${formfile} "UPDATE ${table} SET cur=\"${new}\" WHERE param=\"${i}\""
+		cbsdsqlrw ${formfile} "UPDATE ${table} SET new=\"\" WHERE param=\"${i}\""
 		echo "${i}=\"${new}\""
 	done )
 }
