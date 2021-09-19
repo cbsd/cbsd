@@ -37,7 +37,7 @@ ${H3_COLOR}Options${N0_COLOR}:
                    This options will customize /root/.ssh/authorized_keys in jail.
  ${N2_COLOR}ci_gw4=${N0_COLOR}         - 0,IP to disable: manage/set defaultrouter= settings in jail rc.conf (for vnet).
  ${N2_COLOR}etcupdate_init=${N0_COLOR} - 1(enable),0(disable) for etcupdate init (overwrite config values).
- ${N2_COLOR}from=${N0_COLOR}           - <url>, create jail from CBSD image via remote URL.
+ ${N2_COLOR}from=${N0_COLOR}           - <url> or MD5 of image to create jail from CBSD image.
  ${N2_COLOR}inter=${N0_COLOR}          - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}customskel=${N0_COLOR}     - <path>: additional skel directory applyed above jail structrure.
  ${N2_COLOR}fstablocal=${N0_COLOR}     - <path>: additional fstab file stored as fstab.local.
@@ -66,6 +66,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jcreate jname=riscv pkg_bootstrap=0 arch=riscv emulator=\"qemu-riscv64-static\" exec_start=\"/bin/qemu-riscv64-static /bin/sh /etc/rc\" exec_stop=\"/bin/qemu-riscv64-static /bin/sh /etc/rc.shutdown\"
  # cbsd jcreate jname=xx ver=13.0 vnet=1 sysrc=\"ifconfig_eth0+='mtu 1450' inetd_enable=YES\"
  # cbsd jcreate jname=vmagent from=https://dl.bsdstore.ru/img/amd64/amd64/13.0/vmagent/vmagent.img pkg_bootstrap=0 runasap=1
+ # cbsd jcreate jname=myapp from=fbbb4e8707f6794008cc6e8ed0d86082 runasap=1
  # cbsd jcreate jname=small cpu=1 fsquota=10g vmemoryuse=512m runasap=1
 
 ${H3_COLOR}See also${N0_COLOR}:
@@ -73,6 +74,7 @@ ${H3_COLOR}See also${N0_COLOR}:
  cbsd jconstruct --help
  cbsd jconstruct-tui --help
  cbsd up --help
+ cbsd images --help
 
 "
 CBSDMODULE="jail"
@@ -162,42 +164,6 @@ install_and_apply_helpers()
 	forms module=${module} mode=apply jname=${jname} inter=0
 }
 
-# jaildatadir must be set
-get_zfs_image_snap()
-{
-	local _zfssrc _zfssrc_snap
-
-	[ -z "${1}" ] && return 1
-
-	_zfssrc="${1}"
-
-	. ${subrdir}/zfs.subr
-	${ZFS_CMD} list ${_zfssrc} > /dev/null 2>&1
-	_ret=$?
-	if [ ${_ret} -eq 0 ]; then
-		# ZFS FS exist, check for snap
-		${ZFS_CMD} list -t snapshot ${_zfssrc}@start > /dev/null 2>&1
-		_ret=$?
-		if [ ${_ret} -ne 0 ]; then
-			#echo "Create snapshot..."
-			${ZFS_CMD} snapshot ${_zfssrc}@start
-		fi
-		${ZFS_CMD} list -t snapshot ${_zfssrc}@start > /dev/null 2>&1
-		_ret=$?
-		if [ ${_ret} -ne 0 ]; then
-			err 1 "${CBSD_APP}: no such snapshot ${_zfssrc}@start"
-		else
-			_zfssrc_snap="${_zfssrc}@start"
-		fi
-	else
-		return 1
-	fi
-
-	printf "${_zfssrc_snap}"
-
-	return 0
-}
-
 ### MAIN
 . ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
@@ -253,63 +219,62 @@ fi
 if [ -n "${from}" ]; then
 	. ${temprcconf}
 	jstatus jname=${jname} > /dev/null 2>&1
-	[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ $? -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 
-	from_md5=$( ${MD5_CMD} -qs "${from}" )
-	_myfile="${importdir}/${from_md5}.img"
+	[ ! -r ${dbdir}/images.sqlite ] && ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
+
+	from_md5=
+
+	# is from=MD5?
+	_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${from}\"" 2>/dev/null )
+	if [ -n "${_res}" ]; then
+		from_md5="${from}"
+	else
+		# second chance - is md5(from) exist?
+		if [ -z "${_res}" ]; then
+			tmpfrom=$( ${MD5_CMD} -qs "${from}" )
+			_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${tmpfrom}\"" 2>/dev/null )
+			[ -n "${_res}" ] && from_md5="${tmpfrom}"
+			unset tmpfrom
+		fi
+	fi
 
 	jail_created=0
+
+	if [ -z "${from_md5}" ]; then
+		# cbsd image register ...
+		images mode=register path="${from}"
+		ret=$?
+		if [ ${ret} -ne 0 ]; then
+			stderr 1 "${N1_COLOR}${CBSD_APP}: images failed: cbsd images mode=register from=\"${N2_COLOR}\${from}${N1_COLOR}\"${N0_COLOR}"
+		fi
+		tmpfrom=$( ${MD5_CMD} -qs "${from}" )
+		_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${tmpfrom}\"" 2>/dev/null )
+		[ -z "${_res}" ] && stderr 1 "${N1_COLOR}${CBSD_APP}: images failed: cbsd images mode=register from=\"${N2_COLOR}\${from}${N1_COLOR}\"${N0_COLOR}"
+		from_md5="${tmpfrom}"
+		unset tmpfrom
+	fi
 
 	# first of all: check zfs dataset existance for image
 	if [ ${zfsfeat} -eq 1 ]; then
 		. ${subrdir}/zfs.subr
 		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 		_zfssrc="${DATA}/${from_md5}"
-		_zfssrc_snap=$( get_zfs_image_snap ${_zfssrc} )
-	fi
+		_zfssrc_snap="${DATA}/${from_md5}@start"
 
-	if [ -n "${_zfssrc_snap}" ]; then
+		${ZFS_CMD} list -t snapshot ${_zfsssrc_snap} > /dev/null 2>&1
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			#echo "Create snapshot..."
+			${ZFS_CMD} snapshot ${_zfssrc}@start
+			${ZFS_CMD} list -t snapshot ${_zfssrc_snap} > /dev/null 2>&1
+			_ret=$?
+			[ ${_ret} -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP}: unable to create snapshot: ${N2_COLOR}${ZFS_CMD} list -t snapshot ${_zfssrc_snap}${N0_COLOR}"
+		fi
+
 		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}create jail from image snapshot: ${N2_COLOR}${_zfssrc_snap}${N0_COLOR}" 1>&2
 		jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}"
 		jail_created=1
-	fi
-
-	if [ ${jail_created} -eq 0 ]; then
-		echo "check importdir for: ${from_md5}.img"
-		if [ -r "${_myfile}" ]; then
-			echo "Cache img exist"
-		else
-			echo "REMOTE: ${from}"
-			echo "${FETCH_CMD} -o \"${importdir}/${from_md5}.img\" \"${from}\""
-			${FETCH_CMD} -o "${importdir}/${from_md5}.img" "${from}"
-		fi
-
-		[ ! -r ${_myfile} ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such ${importdir}/${from_md5}.img"
-
-		if [ ${zfsfeat} -eq 1 ]; then
-			cbsd jimport jname=${importdir}/${from_md5}.img new_jname=${from_md5} host_hostname=${jname}.my.domain
-			cbsd junregister jname=${from_md5}
-			${RM_CMD} -f ${jailrcconfdir}/rc.conf_${from_md5}
-			# whats about systemdir stuff?
-			${RM_CMD} -rf ${jailsysdir}/${from_md5}
-
-			# create_from_srcsnap loop
-			. ${subrdir}/zfs.subr
-			DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
-			_zfssrc="${DATA}/${from_md5}"
-			_zfssrc_snap=$( get_zfs_image_snap ${_zfssrc} )
-
-			if [ -n "${_zfssrc_snap}" ]; then
-				. ${temprcconf}
-				echo "Create from snapshot..."
-				jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}"
-				jail_created=1
-			fi
-			# with ZFS we dont need image file anymore
-			${RM_CMD} -f ${_myfile}
-		else
-			cbsd jimport jname=${importdir}/${from_md5}.img new_jname=${jname} host_hostname=${jname}.my.domain
-		fi
 	fi
 
 	#check for jail exist

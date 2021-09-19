@@ -1,18 +1,29 @@
 #!/usr/local/bin/cbsd
 #v13.0.8
-MYARG=""
-MYOPTARG="ver"
-MYDESC="Pull CBSD images from registry"
+MYARG="mode"
+MYOPTARG="md5 name path source"
+MYDESC="Manage environment images"
 CBSDMODULE="sys"
-ADDHELP="\
+ADDHELP="
 
 ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
+mode=register,list
+  - register - create and attach new disk
+  - delete|remove - detach and remove disk
+ mode=list properties:
+  header=0 don't print header
+  display= list by comma for column. Default: 
+    md5,name,path,source,emulator,size,created
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
+ # cbsd images mode=register name=golds
+ # cbsd images mode=register path=/usr/jails/export/golds.img
+ # cbsd images mode=register path=\"https://dl.bsdstore.ru/img/amd64/amd64/14.0/redis/redis.img\"
+ # cbsd images mode=list
 
 "
 
@@ -21,9 +32,210 @@ ${H3_COLOR}Examples${N0_COLOR}:
 . ${strings}
 . ${tools}
 
+md5=
+name=
+path=
+source=
 . ${cbsdinit}
 
-cbsdsqlrw images "SELECT name,path,source,created,emulator,size FROM images"
+# jaildatadir must be set
+get_zfs_image_snap()
+{
+	local _zfssrc _zfssrc_snap
+
+	[ -z "${1}" ] && return 1
+
+	_zfssrc="${1}"
+
+	. ${subrdir}/zfs.subr
+	${ZFS_CMD} list ${_zfssrc} > /dev/null 2>&1
+	_ret=$?
+	if [ ${_ret} -eq 0 ]; then
+		# ZFS FS exist, check for snap
+		${ZFS_CMD} list -t snapshot ${_zfssrc}@start > /dev/null 2>&1
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			#echo "Create snapshot..."
+			${ZFS_CMD} snapshot ${_zfssrc}@start
+		fi
+		${ZFS_CMD} list -t snapshot ${_zfssrc}@start > /dev/null 2>&1
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			err 1 "${CBSD_APP}: no such snapshot ${_zfssrc}@start"
+		else
+			_zfssrc_snap="${_zfssrc}@start"
+		fi
+	else
+		return 1
+	fi
+
+	printf "${_zfssrc_snap}"
+
+	return 0
+}
+
+images_register()
+{
+	local _md5 _size _ret _res _tmpfile _remove_source=0
+
+	[ ! -r ${dbdir}/images.sqlite ] && ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
+
+
+
+	# can process multiple several cases:
+	# a) name ( lookup in ~cbsd/import/<name>.img
+	# b) path=realpath to image
+	# c) path=<remote url>
+
+	if [ -n "${name}" -a -z "${path}" ]; then
+		path="${importdir}/${name}.img"
+		[ ! -r ${path} ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: file not found ${N2_COLOR}${path}${N0_COLOR}"
+	else
+		[ -z "${path}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}path= or name=${N1_COLOR} is mandatory${N0_COLOR}"
+		prefix4=$( substr --pos=0 --len=4 --str="${path}" )
+		# fetch from remote
+		if [ "${prefix4}" = "http" ]; then
+			_md5=$( ${MD5_CMD} -qs "${path}" )
+
+			_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${_md5}\"" 2>/dev/null )
+			[ -n "${_res}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}${_md5}${N1_COLOR} already exist: source: ${N2_COLOR}${source}${N0_COLOR}"
+
+			${ECHO} "${N1_COLOR}${CBSD_APP}: remote resource: ${N2_COLOR}${path}${N0_COLOR}" 1>&2
+			_tmpfile="${importdir}/${_md5}.img"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: ${FETCH_CMD} -o \"${_tmpfile}\" \"${path}\"${N0_COLOR}" 1>&2
+			${FETCH_CMD} -o "${_tmpfile}" "${path}"
+			[ ! -r ${_tmpfile} ] && err 1 "${N1_COLOR}${CBSD_APP} error: unable to fetch: ${N2_COLOR}${path} -> ${_tmpfile}${N0_COLOR}"
+			opath="${path}"
+			_file=$( ${BASENAME_CMD} ${path} )
+			name=$( echo ${_file} | ${SED_CMD} 's:\.img::g' )
+			source="${path}"
+			_omd5="${md5}"
+			path="${_tmpfile}"
+			_remove_source=1
+		fi
+		[ ! -r "${path}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: file not found ${N2_COLOR}${path}${N0_COLOR}"
+		path=$( ${REALPATH_CMD} ${path} )
+
+		if [ -z "${name}" ]; then
+			_file=$( ${BASENAME_CMD} ${path} )
+			name=$( echo ${_file} | ${SED_CMD} 's:\.img::g' )
+		fi
+	fi
+
+	[ -z "${source}" ] && source="${path}"
+	_md5=$( ${MD5_CMD} -qs "${source}" )
+
+	_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${_md5}\"" 2>/dev/null )
+	[ -n "${_res}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}${_md5}${N1_COLOR} already exist: source: ${N2_COLOR}${source}${N0_COLOR}"
+
+	# detect image emulator
+	imgpart out=${tmpdir}/hdr.$$ jname=${path} part=header mode=extract
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		[ -r ${tmpdir}/hdr.$$ ] && ${RM_CMD} -f ${tmpdir}/hdr.$$
+		stderr 1 "${N1_COLOR}${CBSD_APP} error: imgpart failed, not CBSD image?: ${N2_COLOR}imgpart out=${tmpdir}/hdr.$$ jname=${imgpath} part=header mode=extract${N0_COLOR}"
+	fi
+	. ${tmpdir}/hdr.$$
+	${RM_CMD} ${tmpdir}/hdr.$$
+	[ -z "${emulator}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: unable to determine emulator for: ${N2_COLOR}${path}${N0_COLOR}"
+
+	# import jail
+	if [ ${zfsfeat} -eq 1 ]; then
+		jimport jname=${path} new_jname=${_md5} host_hostname=${_md5}.my.domain
+		junregister jname=${_md5}
+		${RM_CMD} -f ${jailrcconfdir}/rc.conf_${_md5}
+		# whats about systemdir stuff?
+		${RM_CMD} -rf ${jailsysdir}/${_md5}
+
+		# create_from_srcsnap loop
+		. ${subrdir}/zfs.subr
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+		_zfssrc="${DATA}/${_md5}"
+		_zfssrc_snap=$( get_zfs_image_snap ${_zfssrc} )
+
+#		if [ -n "${_zfssrc_snap}" ]; then
+#			. ${temprcconf}
+#			echo "Create from snapshot..."
+#			jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}"
+#			jail_created=1
+#		fi
+		# with ZFS we dont need image file anymore
+		[ ${_remove_source} -eq 1 ] && ${RM_CMD} -f ${path}
+	else
+		err 1 "${CBSD_APP} for ZFS only"
+	fi
+
+	#_size=$( ${STAT_CMD} -f %z ${path} 2>/dev/null )
+	_size=$( ${ZFS_CMD} get -Hp -o value used ${_zfssrc} 2>/dev/null )
+
+	[ -n "${opath}" ] && path="${opath}"
+	cbsdsqlrw images "INSERT INTO images ( md5,name,path,source,emulator,size ) VALUES ( \"${_md5}\", \"${name}\", \"${path}\", \"${source}\", \"${emulator}\", \"${_size}\" )"
+	stderr 0 "${N1_COLOR}registered: ${N2_COLOR}${_md5}${N0_COLOR}"
+}
+
+images_delete()
+{
+	local _res _jaildatadir _data _zfssrc _zfssrc_snap _ret
+
+	_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${md5}\"" 2>/dev/null )
+	[ -z "${_res}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: not exist in DB: ${N2_COLOR}${md5}${N0_COLOR}"
+
+	# try to remove ZFS first
+	###
+	if [ ${zfsfeat} -eq 1 ]; then
+		. ${subrdir}/zfs.subr
+
+		_jaildatadir="${jaildatadir}/${md5}-${jaildatapref}"
+		_data=$( ${ZFS_CMD} get -Ho value name ${_jaildatadir} 2>/dev/null )
+		if [ -n "${_data}" ]; then
+			_zfssrc="${_data}/${md5}"
+			_zfssrc_snap="${_data}@start"
+			${ZFS_CMD} list -t snapshot ${_zfssrc_snap} > /dev/null 2>&1
+			_ret=$?
+			if [ ${_ret} -eq 0 ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: snap exist, destroy: ${N2_COLOR}${_zfssrc_snap}${N0_COLOR}" 1>&2
+				${ZFS_CMD} destroy ${_zfssrc_snap}
+				_ret=$?
+				[ ${_ret} -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: unable to destroy snapshot: ${N2_COLOR}${ZFS_CMD} destroy ${_zfssrc_snap}${N0_COLOR}"
+			fi
+
+			${ECHO} "${N1_COLOR}${CBSD_APP}: destroy image dataset: ${N2_COLOR}${_data}${N0_COLOR}" 1>&2
+			${ZFS_CMD} destroy ${_data}
+			_ret=$?
+			[ ${_ret} -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: unable to destroy image dataset: ${N2_COLOR}${ZFS_CMD} destroy ${_data}${N0_COLOR}"
+		else
+			${ECHO} "${N1_COLOR}${CBSD_APP}: dataset not exist: ${N2_COLOR}${ZFS_CMD} get -Ho value name ${_jaildatadir}${N0_COLOR}" 1>&2
+		fi
+	fi
+
+	[ -d "${_jaildatadir}" ] && ${RMDIR_CMD} ${_jaildatadir}
+
+	cbsdsqlrw images "DELETE FROM images WHERE md5=\"${md5}\""
+	stderr 0 "${N1_COLOR}removed: ${N2_COLOR}${md5}${N0_COLOR}"
+}
+
+# MAIN
+case "${mode}" in
+	register)
+		images_register
+		exit $?
+		;;
+	delete|remove|destroy)
+		[ -z "${md5}" ] && stderr 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}md5= ${N1_COLOR}is mandatory${N0_COLOR}"
+		images_delete
+		;;
+	list)
+		[ -z "${display}" ] && display="md5,name,path,source,emulator,size,created"
+		[ -z "${header}" ] && header="1"
+		if [ -n "${jname}" ]; then
+			images-list header="${header}" display="${display}" jname="${jname}"
+		else
+			images-list header="${header}" display="${display}"
+		fi
+		;;
+	*)
+		stderr 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
+esac
 
 exit 0
-
