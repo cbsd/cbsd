@@ -1,17 +1,42 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG=""
-MYOPTARG="alljails shownode display node header mode jname"
-MYDESC="Show disk images from database"
+MYOPTARG="alljails display header jname mode node shownode"
+MYDESC="Show bhyve disks"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
-ADDHELP="alljails=1 - get jaillist from remote node\n\
-shownode=1 - show nodename for jails\n\
-node= only for current node\n\
-header=0 don't print header\n\
-display= list by comma for column. Default: jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable\n\
-    also available: dsk_zfs_guid\n\
-mode=rescan - rescan vhd and sync info in sql base\n"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+This command will show a list of virtual disks for bhyve VMs.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR}  - (0 or 1): force to display foreign/remote resources;
+ ${N2_COLOR}display=${N0_COLOR}   - comma separated list of columns to display,
+              default value:
+                jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable
+              when sqlrepica and node available:
+                nodename,jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable
+              also available: 'dsk_zfs_guid'
+ ${N2_COLOR}header=${N0_COLOR}    - don't print header info;
+ ${N2_COLOR}jname=${N0_COLOR}     - for XXX bhyve only;
+ ${N2_COLOR}mode=${N0_COLOR}      - 'rescan' to rescan vhd and sync info in sql base;
+ ${N2_COLOR}node=${N0_COLOR}      - for XXX node only;
+ ${N2_COLOR}shownode=${N0_COLOR}  - when '1' - show node name(s) for listed VMs;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-dsk-list
+ # cbsd bhyve-dsk-list header=0 display=dsk_size,jname
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bconfig --help
+ cbsd bhyve-nic-list --help
+ cbsd bpcibus --help
+
+"
 
 . ${subrdir}/nc.subr
 . ${system}
@@ -19,7 +44,30 @@ mode=rescan - rescan vhd and sync info in sql base\n"
 . ${cbsdinit}
 . ${subrdir}/bhyve.subr
 . ${subrdir}/virtual.subr
-[ -z "${display}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable"
+. ${nodes}
+
+[ -n "${display}" ] && odisplay="${display}"	# store original display settings
+oalljails="${alljails}"				# store original settings, they have more weight vs auto
+oshownode="${shownode}"				# store original settings, they have more weight vs auto
+ojname="${jname}"				# store original jname setting
+
+is_cluster_mode
+cluster_mode=$?		# cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+	if [ "${oshownode}" != "0" ]; then
+		alljails=1
+		shownode=1
+	fi
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
+
+# defaults
+[ -z "${display}" -a -z "${odisplay}" ] && display="jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable"
+[ "${shownode}" = "1" -a -z "${odisplay}" ] && display="nodename,${display}"
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
@@ -33,8 +81,10 @@ show_header()
 	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
 }
 
-# if $1 = "Unregister" then overwrite status to "Unregister"
-populate_output_data()
+# -j $jname
+# -s alternative SQL file
+# -u 1 - always show status as "Unregister"
+opopulate_output_data()
 {
 	local _i _val dsk_size
 
@@ -72,6 +122,91 @@ populate_output_data()
 	done
 }
 
+# -j $jname
+# -s alternative SQL file
+# -u 1 - always show status as "Unregister"
+populate_output_data()
+{
+	local _i _val
+	local unregister="0" _md5_node_name
+
+	while getopts "j:s:u:" opt; do
+		case "${opt}" in
+			j) jname="${OPTARG}" ;;
+			s) sqlfile="${OPTARG}" ;;
+			u) unregister="1" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${sqlfile}" ] && sqlfile="local"
+
+	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid,dsk_iops_limit,dsk_mbps_limit FROM bhyvedsk WHERE jname=\"${jname}\""
+	cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite ${_sql} | while read jname dsk_controller dsk_path dsk_slot dsk_size dsk_sectorsize bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit; do
+
+		if [ -n "${ojname}" ]; then
+			[ "${ojname}" != "${jname}" ] && continue
+		fi
+
+		printf "${N0_COLOR}" # for column sort
+
+		if [ "${sqlfile}" = "local" ]; then
+			if [ -e "/dev/vmm/${jname}" ]; then
+				# bhyve is active
+				printf "${N2_COLOR}"
+			else
+				printf "${N4_COLOR}"
+			fi
+		else
+			# pop status variable from node_is_online()
+			_md5_node_name=$( ${MD5_CMD} -q -s ${sqlfile} )
+			eval _node_is_online=\$node_${_md5_node_name}_online
+			if [ "${_node_is_online}" = "1" ]; then
+				# retr from sql
+				jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+				case ${jid} in
+					0)
+						printf "${N4_COLOR}"
+						;;
+					*)
+						printf "${N2_COLOR}"
+						;;
+				esac
+			else
+				printf "${N4_COLOR}"
+			fi
+		fi
+
+		#populate values for in output string
+		for _i in ${mydisplay}; do
+			_val=
+			eval _val=\$$_i
+			[ -z "${_val}" ] && _val="\-"
+
+			if [ "${_i}" = "dsk_size" ]; then
+				if [ "${_val}" = "0" ]; then
+					# no size in table? retrieve and update it
+					populate_dsk_size
+					_val="${dsk_size}"			# already in human
+					# update values in table
+					cbsdsqlrw ${sqlfile_sysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+				else
+					# convert ${dsk_bsize} for human
+					if conv2human "${dsk_bsize}"; then
+						_val=${convval}
+					else
+						populate_dsk_size
+						_val="${dsk_size}"
+					fi
+				fi
+			fi
+
+
+			printf "${_val} "
+		done
+		printf "${N0_COLOR}\n"
+	done
+}
 
 # $1 - which file from. Eg: local
 show_jaildata_from_sql()
@@ -85,15 +220,32 @@ show_jaildata_from_sql()
 		sqlfile="local"
 	fi
 
-	[ -n "${2}" ] && local jname="${2}"
+	if [ "${sqlfile}" = "local" ]; then
+		sqlfile_sysdir="${jailsysdir}"
+	else
+		sqlfile_sysdir="${tmpdir}/${1}"
+	fi
 
-	_status=
-	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid,dsk_iops_limit,dsk_mbps_limit FROM bhyvedsk WHERE jname=\"${jname}\""
-	cbsdsqlro ${sqlfile} ${_sql}| while read jname dsk_controller dsk_path dsk_slot dsk_size dsk_sectorsize bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit; do
-		populate_output_data
-		printf "${N2_COLOR}"
-		printf "${_status}"
-		printf "${N0_COLOR}\n"
+#	[ -n "${2}" ] && local jname="${2}"
+
+	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname; do
+		_status=
+
+		if [ "${sqlfile}" = "local" ]; then
+			. ${subrdir}/rcconf.subr
+		else
+			RHST="${sqlfile}"
+			. ${subrdir}/rrcconf.subr
+		fi
+
+		if [ ! -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+			# skip invalid vms
+			${ECHO} "${N1_COLOR}${jname}: can't open database file for ${jname}: ${N2_COLOR}${sqlfile_sysdir}/${jname}/local.sqlite${N0_COLOR}"  >> ${my_err_file}
+			continue
+		fi
+
+		conv_status
+		populate_output_data -j ${jname} -s ${sqlfile}
 	done
 }
 
@@ -101,35 +253,30 @@ show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$(cbsd node mode=list header=0 allinfo=0)
+	[ -z "${node}" ] && node=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null | ${XARGS_CMD} )
 
-	for _n in $node; do
+	for _n in ${node}; do
 		nodename="${_n}"
-		show_jaildata_from_sql "inv.${_n}"
+		# init and export into $node_${md5_node_name}_online node status
+		node_is_online -n ${nodename} -e 1
+		show_jaildata_from_sql ${_n}
 	done
 }
 
 show_local()
 {
-	local _errcode _status _vm _lvm
-
 	show_header
-
-	for _vm in ${vms}; do
-		_lvm="${jailsysdir}/${_vm}/local.sqlite"
-#		echo ${_lvm}
-		[ -r "${_lvm}" ] && show_jaildata_from_sql ${_lvm} ${_vm}
-	done
+	show_jaildata_from_sql local
 }
 
 show_dsk()
 {
 	if [ -n "${node}" ]; then
 		show_remote
-		exit
+		exit 0
 	fi
 
-	if [ -n "${alljails}" ]; then
+	if [ "${alljails}" = "1" ]; then
 		show_local
 		header=0
 		show_remote
@@ -174,4 +321,13 @@ fi
 
 [ -z "${header}" ] && header=1
 sqldelimer=" "
-show_dsk | /usr/bin/column -t
+my_err_file="${ftmpdir}/bhyve-nic-list.$$"
+show_dsk | ${COLUMN_CMD} -t
+
+if [ -r ${my_err_file} ]; then
+	${ECHO} "${N1_COLOR}Error:${N0_COLOR}" 1>&2
+	${CAT_CMD} ${my_err_file} 1>&2
+	${RM_CMD} -f ${my_err_file}
+fi
+
+exit 0
