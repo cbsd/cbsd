@@ -1,0 +1,588 @@
+if [ ! "$_CBSD_VNET_SUBR" ]; then
+_CBSD_VNET_SUBR=1
+###
+
+# Network interface=related funcion, for vnet feature
+#
+# default MAC_PREFIX
+MAC_PREFIX="02:00:c0"
+
+init_vnet()
+{
+	if ! ${KLDSTAT_CMD} -qm if_bridge; then
+		${ECHO} "${N1_COLOR}Loading if_bridge.ko...${N0_COLOR}"
+		${KLDLOAD_CMD} if_bridge
+	fi
+
+	gw_enable
+}
+
+# $1 - nicname (eg: bridge)
+# show nicX if exist
+# example:
+#   for i in $( show_all_nic_by_name bridge ); do
+#      echo ${i}
+#   done
+show_all_nic_by_name()
+{
+	local _i _mynic _A _epair
+	local _niclist
+
+	[ -z $1 ] && return 1
+	[ "${1}" = "epair" ] && _epair="a" # we check only one of pair
+
+	for _i in $( ${IFCONFIG_CMD} -l ); do
+		case "${_i}" in
+			${1}*${_epair})
+				_niclist="${_niclist} ${_i}"
+			;;
+		esac
+	done
+
+	[ -n "${_niclist}" ] && echo "${_niclist}"
+	return 0
+}
+
+gw_enable()
+{
+	${SYSCTL_CMD} -n net.inet.ip.forwarding=1 > /dev/null 2>&1
+	${SYSCTL_CMD} -n net.inet6.ip6.forwarding=1 > /dev/null 2>&1
+}
+
+# cbsd store uplink interface in description area ;)
+# this func extract and show this
+# $1 - iface (eg: bridge0)
+# $2 - (optional) for bridge: try to search not only by desc - search for $2 as addm member
+# example:
+#    ttt=$( get_device_uplink bridge0 )
+# example2:
+#    ttt=$( get_device_uplink bridge0 em0 )
+get_device_uplink()
+{
+	local _desc1 _desc2
+	local _is_bridge
+	local _addm
+	local _addm_list
+	local _i
+
+	[ -z "${1}" ] && return 1
+	[ -n "${2}" ] && _addm="${2}"
+
+	_desc1=$( ${IFCONFIG_CMD} ${1} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+
+	# extra check for bridge for cases where bridge created not by CBSD but member of
+	# right uplink
+	# required $2 for member
+	# Also, inforamtion from bridge addm pasring preferred to desc
+	if [ -z "${_addm}" ]; then
+		[ -n "${_desc1}" ] && printf "${_desc1}"
+		return 0
+	fi
+
+	_is_bridge=$( substr --pos=0 --len=6 --str=${1} )
+
+	if [ "${_is_bridge}" != "bridge" ]; then
+		[ -n "${_desc1}" ] && printf "${_desc1}"
+		return 0
+	fi
+
+	_addm_list=$( ${IFCONFIG_CMD} ${1} 2>/dev/null | ${AWK_CMD} '/member: /{printf $2" "}' )
+
+	for _i in ${_addm_list}; do
+		if [ "${_addm}" = "${_i}" ]; then
+			printf "${_addm}"
+			return 0
+		fi
+	done
+
+	[ -n "${_desc1}" ] && printf "${_desc1}"
+
+	return 0
+}
+
+# function search for available bridges in system who have uplink to ${interface}
+# when not - create one
+# out bridge name when it exist
+# $1 - type (bridge, epair or vpc) , $2 - uplink interface
+# return 1 when error
+#   example:
+#    if !  ttt=$( get_my_device bridge nfe0 ); then
+#	echo "Error: $ttt"
+#    fi
+get_my_device()
+{
+	local _i _uplink _firstfree _ret _test _dev _desc
+	local _vpc=0 _dbpath
+	local _is_vtnet=0 _prefix5	# (see #254343 work-around)
+
+	[ -z "${1}" ] && echo "set device" && return 1
+	[ -z "${2}" ] && echo "No uplink" && return 1
+	_dev="$1"
+	_desc="$2"
+
+	if [ "${_dev}" = "vpc" ]; then
+		_vpc=1
+		_dev="bridge"
+	fi
+
+	# workaround #254343
+	_prefix5=$( substr --pos=0 --len=5 --str="${_desc}" )
+	[ "${_prefix5}" = "vtnet" ] && _is_vtnet=1
+
+	for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
+		_uplink=$( get_device_uplink ${_i} ${_desc} )
+		[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
+	done
+
+	# we need for new bridge with ${_dev} uplink
+	_firstfree=$( get-next-nic name=${_dev} )
+	[ -z "${_firstfree}" ] && echo "Cant find first available ${_dev}" && return 1
+
+	if [ "${_dev}" = "bridge" ]; then
+
+		cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: [$_is_vtnet] VTNET
+
+		if [ ${_is_vtnet} -eq 1 ]; then
+			# workaround for #254343: force to vtnet promisc!
+			# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=254343
+			# Starting from FreeBSD 13.0 if_vtnet was upgraded to 1.0/1.1 spec
+			# If the hypervisor supports VTNET_FLAG_CTRL_RX, then send query to hypervisor - pass all traffic.
+			# bhyve doesnt support for VTNET_FLAG_CTRL_RX so query rejected ( Nevertheless, bhyve ALWAYS works
+			# in a PROMISC mode and does not know how to filter MAC/HWADDR ).
+			# this is workaround for bhyve hypervisor + FreeBSD 13.0 to add 'vtnet' into 'bridge'
+			if [ ${freebsdhostversion} -gt 1300000 ]; then
+				cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: apply #254343 workaround: force to set PPROMISC for ${_desc}
+				${IFCONFIG_CMD} ${_desc} promisc
+			fi
+		fi
+
+		# my parent already bridge?
+		if [ ${_vpc} -ne 1 ]; then
+			_is_bridge=$( ${IFCONFIG_CMD} ${_desc} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+			[ "${_is_bridge}" = "bridge" ] && echo "${_desc}" && return 0
+		fi
+
+		# set desciption first
+		_test=$( ${IFCONFIG_CMD} ${_firstfree} create description ${_desc} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, unable to create: ${_ret}: ${_test}
+			echo "${_test}"
+			return 1
+		fi
+
+
+		case "${_vpc}" in
+			0)
+				cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
+				_test=$( ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up 2>&1 )
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, ret: ${_ret}: ${_test}
+					echo "${_test}"
+					return 1
+				fi
+				;;
+			1)
+				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+				[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+				_vxlan_list=$( cbsdsqlro ${_dbpath} "SELECT vxlan_id FROM vpc_peers WHERE src_node=\"${nodename}\"" | ${XARGS_CMD} )
+				if [ -z "${_vxlan_list}" ]; then
+					echo "no vxlan_id in VPC database"
+					return 1
+				fi
+				for i in ${_vxlan_list}; do
+					${IFCONFIG_CMD} vxlan${i} > /dev/null 2>&1
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						echo "vxlan interface not initialized: vxlan${i}"
+						return 1
+					fi
+
+					_test=$( ${IFCONFIG_CMD} ${_firstfree} addm vxlan${i} private vxlan${i} up 2>&1 )
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						echo "ifconfig addm error: ${IFCONFIG_CMD} ${_firstfree} addm vxlan${i}"
+						return 1
+					fi
+				done
+				;;
+		esac
+	fi
+	echo "${_firstfree}"
+}
+
+# create epair and switch epairXa to bridge $1
+# out of created epair
+get_my_epair()
+{
+	local _firstfree
+	local _parent_mtu
+
+	[ -z "${1}" ] && echo "No bridge" && return 1
+
+	_firstfree=$( get-next-nic name=epair )
+
+	[ $? -eq 1 ] && echo "No free available epair" && return 1
+
+	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
+	_parent_mtu=$( ${toolsdir}/nic_info --nic=${1} --mtu --quiet 2>/dev/null )
+
+	${IFCONFIG_CMD} ${_firstfree}a mtu ${_parent_mtu}
+	${IFCONFIG_CMD} ${_firstfree}b mtu ${_parent_mtu}
+
+	${IFCONFIG_CMD} ${1} addm ${_firstfree}a >/dev/null 2>/dev/null
+
+	# MAC MGMT
+	local maca=
+	local macb=
+
+	if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
+		macb=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic )
+	else
+		/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${distdir}/share/local-jailnic.schema jailnic
+	fi
+
+	if [ -z "${macb}" -o "${macb}" = "0" ]; then
+		macb=$( mac_gen 02:ff:f0 )
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${macb}\" )"
+	fi
+
+	# flush stdout
+	${IFCONFIG_CMD} ${_firstfree}a up > /dev/null 2>&1
+	${IFCONFIG_CMD} ${_firstfree}b ether ${macb} up > /dev/null 2>&1
+
+	echo ${_firstfree}
+}
+
+# create tap and attach to bridge $1 if $1 is not "disable"
+get_my_tap()
+{
+	local _firstfree _parent_mtu=0 _ret
+	local _create=1
+
+	[ -z "${1}" ] && echo "No bridge" && return 1
+
+	_firstfree=$( get-next-nic name=tap )
+
+	if [ $? -eq 1 ]; then
+		cbsdlogger WARNING ${CBSD_APP}: get_my_tap: no free available tap
+		echo "No free available tap"
+		return 1
+	fi
+
+	cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: found new free device: ${_firstfree}. Will be created
+	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
+
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: ${IFCONFIG_CMD} ${_firstfree} create: failed
+	fi
+
+	# Inherits parent MTU to stop "ifconfig: BRDGADD XXX: Invalid argument" when
+	# parent MTU less then tap
+	_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+	_ret=$?
+
+	if [ ${_ret} -eq 0 -a -n "${_parent_mtu}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: adjust parent_mtu for ${_firstfree}: ${_parent_mtu}
+		${IFCONFIG_CMD} ${_firstfree} mtu ${_parent_mtu}
+	fi
+
+	if [ "${1}" != "disable" ]; then
+		${IFCONFIG_CMD} ${1} addm ${_firstfree}
+		${IFCONFIG_CMD} ${_firstfree} up
+	fi
+
+	echo ${_firstfree}
+	return 0
+}
+
+# convert mac to ip
+# mac2ip 5c:f9:dd:76:d5:c4
+mac2ip() {
+	local mac=$1
+
+	[ -z "${mac}" ] && return 0
+
+	ip_a=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 3` )
+	ip_b=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 4` )
+	ip_c=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 5` )
+	ip_d=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 6` )
+	echo "$ip_a.$ip_b.$ip_c.$ip_d"
+}
+
+# convert ip to mac
+# ip2mac 221.118.213.196
+ip2mac() {
+	local ip=$1
+
+	[ -z "${ip}" ] && return 0
+
+	local IFS="."
+	local macpart=4
+
+	eval $( for i in ${ip}; do
+		unset macval
+		unset len
+		macval=$( printf "%x" ${i} )
+		# append zero if len=1
+		len=$( strlen ${macval} )
+		[ "${len}" = "1" ] && macval="0${macval}"
+		echo "export mac_${macpart}=\"${macval}\""
+		macpart=$(( macpart + 1 ))
+	done )
+
+	echo "${MAC_PREFIX}:${mac_5}:${mac_6}:${mac_7}"
+}
+
+# return $interface as parent interface and $mytap for vale
+# $nic_parent or -p <parent> must be set
+# -u (update VALE ports table), for vale only
+# -r 1 - read only: don't update/search_for_next port: return available data only
+get_vm_uplink_interface()
+{
+	local tmp_nic_parent _jname _update=0 _readonly=0
+	local _get_by_route=0	# get upink by IPv4 route ?
+	local _sw _pos _arg_len _pref _vale_arg _vale_id _vale_port
+	local _vale_port_exclude _vale_id_tmp _res _tmp_ip4_addr
+
+	tmp_nic_parent="${nic_parent}"
+
+	while getopts "p:r:u" opt; do
+		case "${opt}" in
+			p) tmp_nic_parent="${OPTARG}" ;;
+			r) _readonly="${OPTARG}" ;;
+			u) _update=1 ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	case "${tmp_nic_parent}" in
+		cbsdvale*)
+			strpos --str="${tmp_nic_parent}" --search="_"
+			_pos=$?
+			if [ ${_pos} -eq 0 ]; then
+				# not vale_XXX form
+			else
+				_arg_len=$( strlen ${tmp_nic_parent} )
+				_pref=$(( _arg_len - _pos ))
+				_vale_arg=$( substr --pos=0 --len=${_pos} --str="${tmp_nic_parent}" )
+				_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${tmp_nic_parent}" )
+			fi
+			_vale_id=$( cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"  )
+			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${nic_parent}, please run: cbsd valecfg\""
+			if [ ${_readonly} -eq 1 ]; then
+				_vale_port=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1" )
+				[ -z "${_vale_port}" ] && _vale_port="0"
+				mytap="vale${_vale_id}:${_vale_port}"
+				return 0
+			fi
+			# VALE has limits on the length of the port name.
+			# Also, we should avoid ID/GID conflicts with multiple working directories.
+			# Determine next free VALE port, without any reference to id or name.
+			cbsdlogger NOTICE "${CBSD_APP}: looking for next free vale port: get-next-vale-port valeid=${_vale_id}"
+
+			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
+			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
+				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: get-next-vale-port valeid=${_vale_id}\""
+			fi
+			if [ ${_update} -eq 1 ]; then
+				cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: update/reservation next-vale-port for ${jname}, valeid: ${_vale_id}: port: ${_vale_port}"
+				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
+			fi
+			mytap="vale${_vale_id}:${_vale_port}"
+			net_emul="virtio-net"
+			cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: vale id: ${_vale_id} -> ${mytap}"
+			return 0
+			;;
+		vale*)
+			# pass vale as-is
+			# VALE has limits on the length of the port name.
+			# Also, we should avoid ID/GID conflicts with multiple working directories.
+			# Determine next free VALE port, without any reference to id or name.
+			_vale_id=$( echo ${tmp_nic_parent} | ${TR_CMD} -d [:alpha:] )		# remove alpha, get ID only
+			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${tmp_nic_parent}, please run: cbsd valecfg\""
+			if [ ${_readonly} -eq 1 ]; then
+				_vale_port=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1" )
+				[ -z "${_vale_port}" ] && _vale_port="0"
+				mytap="vale${_vale_id}:${_vale_port}"
+				return 0
+			fi
+			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
+
+			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
+				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: get-next-vale-port valeid=${_vale_id}\""
+			fi
+
+			# check for vale name existance to avoid ID collision
+			_vale_id_tmp=$( cbsdsqlro local "SELECT idx FROM vale WHERE name=\"vale${_vale_id}\" LIMIT 1" 2>/dev/null )
+			[ -n "${_vale_id_tmp}" ] && _vale_id="${_vale_id_tmp}"
+			# avoid dup
+			_res=$( cbsdsqlro local "SELECT idx FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" AND port_id=\"${_vale_port}\" LIMIT 1" 2>/dev/null )
+			if [ -z "${_res}" ]; then
+				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
+			fi
+			mytap="${tmp_nic_parent}:${_vale_port}"
+			net_emul="virtio-net"
+			cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: pass vale interface as-is -> ${mytap}"
+			return 0
+			;;
+		*)
+			if [ "${tmp_nic_parent}" = "0" -o "${tmp_nic_parent}" = "auto" ]; then
+				# use first iface only!
+				OIFS="${IFS}"
+				IFS=","
+				for i in ${ip4_addr}; do
+					_tmp_ip4_addr="${i}"
+					break
+				done
+
+				IFS="${OIFS}"
+
+				case ${_tmp_ip4_addr} in
+					[Dd][Hh][Cc][Pp])
+						_get_by_route=0
+						;;
+					*)
+						iptype ${_tmp_ip4_addr}
+						case $? in
+							1)
+								cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: has valid IP address: ${_tmp_ip4_addr}, parent auto: get_by_route=1
+								_get_by_route=1
+								;;
+							2)
+								# IPv6 here: WIP
+								_get_by_route=0
+								;;
+							*)
+								_get_by_route=0
+								;;
+						esac
+						;;
+				esac
+			else
+				# no auto
+				_get_by_route=0
+			fi
+			case ${_get_by_route} in
+				0)
+					# when ip=0 and interface=auto we must use default interface for upstream
+					if [ "${tmp_nic_parent}" = "0" -o "${tmp_nic_parent}" = "auto" ]; then
+						cbsdlogger NOTICE "${CBSD_APP}: get_vm_uplink_interface: get_by_route: ${_get_by_route}, tmp_nic_parent: ${tmp_nic_parent}, use default iface"
+						. ${subrdir}/initenv.subr
+						update_netinfo
+							if [ "${node_ip6_active}" = "1" ]; then
+							interface="${CBSD_UPLINK_IFACE6}"
+						else
+							interface="${CBSD_UPLINK_IFACE4}"
+						fi
+					else
+						interface="${tmp_nic_parent}"
+					fi
+					cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${_tmp_ip4_addr}, determine uplink method: by uplink, interface: ${interface}
+					;;
+				1)
+					interface=$( ${ROUTE_CMD} -n -4 get ${IWM} 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+					cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${IWM}, determine uplink method: by route, interface: ${interface}
+					case "${interface}" in
+						lo*)
+							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: ${IWM}, iface: ${interface} is loopback. force to 0.0.0.0 route
+							interface=$( ${ROUTE_CMD} -n -4 get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: ip4_addr: 0.0.0.0, determine uplink method: by route, interface: ${interface}
+							;;
+						*)
+							cbsdlogger NOTICE ${CBSD_APP}: get_vm_uplink_interface for ${jname}: interface by route detected: ${interface}
+							;;
+					esac
+					;;
+			esac
+			;;
+	esac
+
+	[ -z "${interface}" ] && return 1
+
+	return 0
+}
+
+# detach and remove NIC from vnet-based jail
+# jname must be set
+# $1 is id of nic in SQL table
+# require: /usr/local/bin/cbsd as shell
+jail_remove_nic()
+{
+	local id="${1}"; shift
+	[ -z "${jname}" -o -z "${id}" ] && return 0
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM jailnic WHERE id=\"${id}\"
+
+	return 0
+}
+
+# return 0 if -n $nic exist on the host
+# e.g:
+# if is_nic_exist -n lo0; then
+#	echo "EXIST"
+#fi
+is_nic_exist()
+{
+	local _nic _nic_list _i
+
+	while getopts "n:" opt; do
+		case "${opt}" in
+			n) _nic="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_nic}" ] && return 1
+
+	_nic_list=$( ${miscdir}/nics-list | ${XARGS_CMD} )
+
+	local IFS=" "
+
+	for _i in ${_nic_list}; do
+		[ "${_nic}" = "${_i}" ] && return 0
+	done
+
+	return 1
+}
+
+# function search for nic in system by iface description
+# return 0 and print to stdout nic if found
+# return 1 when not
+#   example:
+#    if ttt=$( get_nic_by_descr freebsd1-nic0 ); then
+#	echo "Found: $ttt"
+#    fi
+get_nic_by_descr()
+{
+	local _iface _mytap _i _list=
+
+	_iface=$( ${IFCONFIG_CMD} -l )
+	_mytap=
+
+	for _i in ${_iface}; do
+		_desc=$( ${IFCONFIG_CMD} ${_i} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+		[ -z "${_desc}" ] && continue
+		if [ "${_desc}" = "${1}" ]; then
+			if [ -n "${_list}" ]; then
+				_list="${_list} ${_i}"
+			else
+				_list="${_i}"
+			fi
+		fi
+	done
+
+	if [ -n "${_list}" ]; then
+		printf "${_list}"
+		return 0
+	else
+		return 1
+	fi
+}
+
+###
+fi

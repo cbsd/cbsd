@@ -1,0 +1,1138 @@
+if [ ! "$_CBSD_INITENV_SUBR" ]; then
+_CBSD_INITENV_SUBR=1
+###
+
+init_items_desc()
+{
+	nodename_desc="CBSD Nodename for this host e.g. the hostname. Warning: this operation will recreate the ssh keys in $workdir/.ssh dir"
+	hostname_desc="Fully qualified domain name (FQDN) of the host"
+	nodeip_desc="Node management IPv4 address"
+	nodeip6_desc="Node management IPv6 address"
+	nodedescr_desc="Node info/description"
+	jnameserver_desc="environment default DNS name-server"
+	jnameserver_desc_full="environment default DNS name-server\ncomma separated when multiple servers, e.g:\n8.8.8.8,4.4.4.4,2001:4860:4860::8888,2001:4860:4860::8844"
+	nodeip4pool_desc="Environment pool IPv4 address range\ncomma separated when mulitple networks\nyou can use range in the last octet. e.g:\n10.0.0.0/24,192.168.0.0/24 or 172.16.0.30-40"
+	nodeip6pool_desc="Environment pool IPv6 address range\ncomma separated when mulitple networks"
+	nat_enable_desc="Enable NAT for RFC1918 networks"
+	natip_desc="NAT IPv4 or NIC"
+	fbsdrepo_desc="Use official FreeBSD repository? When no (0) the repository of CBSD is preferred (useful for stable=1)"
+	mdtmp_desc="Configure memory disk"
+	repo_desc="Use repository for images and template?"
+	workdir_desc="Work directory"
+	ipfw_enable_desc="Enable IPFW?"
+	zfsfeat_desc="Enable ZFS feature?"
+	hammerfeat_desc="Enable HAMMERFS feature?"
+	jail_interface_desc="Jails NIC"
+	parallel_desc="Parallel mode stop/start"
+	stable_desc="Use STABLE branch instead of RELEASE by default? Attention: only the CBSD repository has a binary base for STABLE branch"
+	sqlreplica_desc="Enable sqlite3 replication to remote nodes"
+	statsd_bhyve_enable_desc="Configure CBSD statsd services for collect RACCT bhyve statistics?"
+	statsd_jail_enable_desc="Configure CBSD statsd services for collect RACCT jail statistics?"
+	statsd_hoster_enable_desc="Configure CBSD statsd services for collect RACCT hoster statistics?"
+}
+
+init_items_default()
+{
+	collect_netinfo
+
+	##default area
+	nodename_default=$( ${HOSTNAME_CMD} )
+
+	case "${node_ip6_active}" in
+		1)
+			nodeip_default="${CBSD_IP6}"
+			nodeip6_default="${CBSD_IP6}"
+			jnameserver_default="9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9"
+			# todo: ipv6 calc/net
+			nodeippool_default="10.0.0.0/16"
+			nodeip6pool_default="fde4:8dba:82e1::/64"
+			natip_default="${CBSD_IP6}"
+			;;
+		*)
+			nodeip_default="${CBSD_IP4}"
+			nodeip6_default=
+			#jnameserver_default="9.9.9.9,149.112.112.112"
+			jnameserver_default="9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9"
+			nodeippool_default="10.0.0.0/16"
+			natip_default="${CBSD_IP4}"
+			;;
+		*)
+	esac
+
+	nodedescr_default="Datacenter #5, Middle of Nowhere"
+	jnameserver_default="${jnameserver_default}"
+
+	nat_enable_default="Enable NAT"
+	fbsdrepo_default="1"
+	mdtmp_default="8"
+	repo_default="https://bsdstore.ru"
+	workdir_default="/usr/jails"
+	ipfw_enable_default="1"
+	zfsfeat_default="1"
+	hammerfeat_default="1"
+	jail_interface_default="auto"
+	parallel_default="5"
+	stable_default="0"
+	sqlreplica_default="1"
+	statsd_jail_enable_default="0"
+	statsd_bhyve_enable_default="0"
+	statsd_hoster_enable_default="0"
+}
+
+# install file from $2 to $3 if not equal
+# $1 addit.  arg for install
+installne()
+{
+	[ ! -f "${2}" ] && err 1 "${N1_COLOR}installne: no such source: ${N2_COLOR}${2}${N0_COLOR}"
+
+	if ! cmp -s $2 $3; then
+		${INSTALL_CMD} $1 $2 $3
+		return 1
+	fi
+
+	return 0
+}
+
+# sync with natcfg form if forms exist
+# for back-compatible with old settings in global/local.sqlite
+# $answ variable must be set
+sync_nat_with_forms()
+{
+	local _answ
+
+	[ ! -r "${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite" ] && return 0
+	[ -z "${answ}" ] && return 0
+
+	case "${answ}" in
+		0)
+			_answ="disable"
+			;;
+		*)
+			_answ="${answ}"
+			;;
+	esac
+
+	if [ -r "${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite" ]; then
+		framework_id=$( cbsdsqlro ${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite "SELECT id FROM nat_enable_select WHERE text=\"${_answ}\"" )
+		${miscdir}/sqlcli ${jailsysdir}/CBSDSYS/helpers/natcfg.sqlite "UPDATE forms SET cur=\"${framework_id}\" WHERE param='nat_enable'"
+	fi
+}
+
+make_nat()
+{
+	local rfc1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+	local _extiface
+	local _ret
+
+	update_netinfo
+
+	iptype ${natip} >/dev/null 2>&1
+	_ret=$?
+
+	# if natip is not valid IPv4, assume it is NIC variable.
+	# so try to find out first IPv4 for aliasing
+	case ${_ret} in
+		1)
+			# natip is valid IPv4
+			_extiface="${CBSD_UPLINK_IFACE4}"
+			;;
+		2)
+			# natip is valid IPv6
+			_extiface="${CBSD_UPLINK_IFACE6}"
+			;;
+		*)
+			#${ECHO} "${N1_COLOR}make_nat: iptype unknown for ${natip}, trying to obtain info via getip-by-nics..${N0_COLOR}"
+			_extiface="${natip}"
+			natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+			if [ $? -ne 0 ]; then
+				${ECHO} "${N1_COLOR}Unable to determine first IP for nic: ${N2_COLOR}${_extiface}${N0_COLOR}"
+				return 2
+			fi
+			${ECHO} "${N1_COLOR}make_nat: ${natip} IP selected via: ${N2_COLOR}${_extiface}${N0_COLOR}"
+	esac
+
+	${IFCONFIG_CMD} ${_extiface} >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		${ECHO} "Unable to determine default interface"
+		return 1
+	fi
+
+	case "${ok}" in
+		"exit")
+			return 0
+			;;
+		"pf")
+			if [ $( ${GREP_CMD} ^pf_load= /boot/loader.conf /boot/loader.conf.local 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
+				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && ${SYSRC_CMD} -vf /boot/loader.conf pf_load=YES
+				${SYSRC_CMD} -qf ${workdir}/rc.conf pf_load="1" > /dev/null 2>&1
+			fi
+
+			#save other rule, except nat
+			if [ -r "${etcdir}/pfnat.conf" ]; then
+				${GREP_CMD} -E -v "(^nat)|(Setup by CBSD NAT)" ${etcdir}/pfnat.conf | ${SORT_CMD} -u > ${tmpdir}/pfnat.conf.bak
+			fi
+			${TRUNCATE_CMD} -s0 ${etcdir}/pfnat.conf
+
+			for _net in ${rfc1918}; do
+				_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
+				${distdir}/sbin/netmask ${_nm} ${natip}
+				if [ $? -ne 1 ]; then
+					${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
+nat on ${_extiface} from ${_net} to ! ${_net} -> ${natip} # // Setup by CBSD NAT
+EOF
+				fi
+			done
+
+			#restore other rule
+			if [ -r ${tmpdir}/pfnat.conf.bak ]; then
+				${CAT_CMD} ${tmpdir}/pfnat.conf.bak >> ${etcdir}/pfnat.conf
+				${RM_CMD} -f ${tmpdir}/pfnat.conf.bak
+			fi
+
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+		;;
+		"ipfilter")
+			${TRUNCATE_CMD} -s0 ${etcdir}/ipfilter.conf
+
+			for _net in ${rfc1918}; do
+				_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
+				${distdir}/sbin/netmask ${_nm} ${natip}
+				if [ $? -ne 1 ]; then
+					${CAT_CMD} >> ${etcdir}/ipfilter.conf <<EOF
+map ${_extiface} ${_net} -> ${natip}/32 proxy port ftp ftp/tcp
+map ${_extiface} ${_net} -> ${natip}/32 portmap tcp/udp 10000:20000
+map ${_extiface} ${_net} -> ${natip}/32
+EOF
+				fi
+			done
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+			;;
+		"ipfw")
+			local check_mod="net.inet.ip.fw.default_to_accept ipfw_nat_load libalias_load"
+			local fix_mod=0
+			for i in ${check_mod}; do
+				${GREP_CMD} -q ^${i} /boot/loader.conf /boot/loader.conf.local 2>/dev/null || fix_mod=$(( fix_mod + 1 ))
+			done
+
+			if [ ${fix_mod} -ne 0 ]; then
+				# we need pass inter=0 here for initenv-tui: need for allow accept when we first init ipfw from initenv-tui
+				if [ $( ${GREP_CMD} ^ipfw_configured= ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
+					if getyesno "Do you want to modify /boot/loader.conf to set ipfw_load=YES, ipfw_nat_load=YES, libalias_load=YES and net.inet.ip.fw.default_to_accept=1 ?" || [ "${inter}" = "0" ]; then
+						# sysrc: net.inet.ip.fw.default_to_accept: name contains characters not allowed in shell
+						echo "net.inet.ip.fw.default_to_accept=1" >> /boot/loader.conf
+						${SYSRC_CMD} -vf /boot/loader.conf ipfw_nat_load=YES
+						${SYSRC_CMD} -vf /boot/loader.conf libalias_load=YES
+					else
+						${ECHO} "${W1_COLOR}!warning!${N1_COLOR} without ${N2_COLOR}net.inet.ip.fw.default_to_accept=1${N1_COLOR} in /boot/loader.conf and/or custom ipfw rules your host will become unavailable via network on restart${N0_COLOR}"
+						${ECHO} "${W1_COLOR}!warning!${N1_COLOR} hope you know what you are doing${N0_COLOR}"
+					fi
+					${SYSRC_CMD} -qf ${workdir}/rc.conf ipfw_configured="1" > /dev/null 2>&1
+				fi
+			fi
+			${TRUNCATE_CMD} -s0 ${etcdir}/ipfw.conf
+			_nm=$( echo ${rfc1918} | ${TR_CMD} " " "," )
+			${CAT_CMD} >> ${etcdir}/ipfw.conf << EOF
+/sbin/ipfw -q add ${fwcount_end} nat 123 all from ${_nm} to not ${_nm} any via ${_extiface}
+/sbin/ipfw -q nat 123 config ip ${natip}
+/sbin/ipfw -q add ${fwcount_end} nat 123 ip from any to ${natip} via ${_extiface}
+EOF
+
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+			;;
+		0|disable)
+			# Just disable NAT
+			natoff
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"0\"
+			sync_nat_with_forms
+			return 0
+			;;
+	esac
+	return 1
+}
+
+
+# if arg then force configure
+configure_nat()
+{
+	update_netinfo
+
+	if [ -n "${nat_enable}" ]; then
+		_default="${nat_enable}"
+	else
+		_default="pf"
+	fi
+
+	answ=0
+	ok=
+
+	local nat_selected=0
+
+	while [ "${nat_selected}" != "1" ]; do
+		${ECHO} "${BOLD}Which NAT framework do you want to use: [${N2_COLOR}${_default}${N0_COLOR}${BOLD}]${N0_COLOR}"
+		${ECHO} "${N1_COLOR}(type FW name, eg pf,ipfw,ipfilter, 'disable' or '0' to CBSD NAT, \"exit\" for break)${N0_COLOR}"
+
+		# skip reading answer when inter=0
+		if [ "${inter}" != "0" ]; then
+			read ok leftover
+		fi
+
+		[ -z "${ok}" ] && ok="${_default}"
+
+		case "${ok}" in
+			exit)
+				return 0
+				;;
+			0|disable)
+				make_nat
+				return 0
+				;;
+			pf|ipfw|ipfilter)
+				nat_selected="1"
+				;;
+			*)
+				${ECHO} "${N1_COLOR}wrong input: ${N1_COLOR}${ok}${N0_COLOR}"
+				;;
+		esac
+	done
+
+	if [ "${CBSD_NODE_IP6_ACTIVE}" = "1" ]; then
+		ext_iface="${CBSD_UPLINK_IFACE6}"
+	else
+		ext_iface="${CBSD_UPLINK_IFACE4}"
+	fi
+
+	local _default _tmpdef
+	local _net _nm
+
+	. ${tools}
+
+	# Todo: IPv6
+	[ "${natip}" = "auto" ] && natip="${CBSD_IP4}"
+	[ "${natip6}" = "auto" ] && natip6="${CBSD_IP6}"
+
+	if [ "${inter}" = "0" ]; then
+		[ -z "${natip}" ] && natip=$( cbsd -c "cbsdsqlrw local UPDATE local SET natip=\"${natip}\"" 2>/dev/null )
+		ok="${nat_enable}"
+		make_nat
+		return 0
+	fi
+
+	_default=$( cbsd -c "cbsdsqlro local SELECT natip FROM local" 2>/dev/null )
+
+	iptype ${_default} >/dev/null 2>&1
+	_ret=$?
+
+	# if natip is not valid IPv4, assume it is NIC variable.
+	# so try to find out first IPv4 for aliasing
+	case ${_ret} in
+		1|2)
+			;;
+		*)
+			_extiface="${_default}"
+			_tmpdef=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+			[ -z "${_tmpdef}" ] && _default=$( cbsd -c "cbsdsqlro local SELECT nodeip FROM local" )
+			;;
+	esac
+
+	${ECHO} "${BOLD}Set IP address or NIC as the aliasing NAT address or interface, e.g: ${N2_COLOR}${_default}${N0_COLOR}"
+	read natip
+	[ -z "${natip}" ] && natip="${_default}"
+
+	if [ -z "${natip}" ]; then
+		$ECHO "${N1_COLOR}Error: empty natip value${N0_COLOR}"
+		return 1
+	fi
+
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET natip=\"${natip}\"
+
+	make_nat
+	_err=$?
+
+	case ${_err} in
+		0)
+			return 0
+			;;
+		1)
+			;;
+		2) # Unable to determine first IP for NIC
+			return 2
+			;;
+	esac
+}
+
+rsyncd_enable()
+{
+	[ ! -f "${inventory}" ] || . ${inventory}
+	if [ $( ${GREP_CMD} ^cbsdrsyncd_enable="YES" /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Shall I modify /etc/rc.conf to set cbsdrsyncd_enable=\"YES\"" ${initenv_modify_rcconf_cbsdrsyncd_enable}; then
+			initenv_modify_rcconf_cbsdrsyncd_enable=1
+			${SYSRC_CMD} -vf /etc/rc.conf cbsdrsyncd_enable="YES"
+		else
+			initenv_modify_rcconf_cbsdrsyncd_enable=0
+			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdrsyncd_enable="YES"
+		fi
+	fi
+
+	if [ -n "${nodeip}" ]; then
+		if [ $( ${GREP_CMD} ^cbsdrsyncd_flags= /etc/rc.conf ${workdir}/rc.conf| /usr/bin/wc -l ) = 0 ]; then
+			if getyesno "Do you want to modify /etc/rc.conf to set the cbsdrsyncd_flags=\"--config=${etcdir}/rsyncd.conf\" ?" ${initenv_modify_rcconf_cbsdrsyncd_flags}; then
+				initenv_modify_rcconf_cbsdrsyncd_flags=1
+				${SYSRC_CMD} -vf /etc/rc.conf cbsdrsyncd_flags="--config=${etcdir}/rsyncd.conf"
+			else
+				initenv_modify_rcconf_cbsdrsyncd_flags=0
+				${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdrsyncd_flags="--config=${etcdir}/rsyncd.conf"
+			fi
+		fi
+	fi
+
+	[ -f "/usr/local/etc/rc.d/cbsdrsyncd" ] && ${SYSRC_CMD} -vf /usr/local/etc/rc.d/cbsdrsyncd required_files="${etcdir}/rsyncd.conf"
+	/usr/sbin/service cbsdrsyncd onestart
+}
+
+rsyncd_disable()
+{
+	/usr/sbin/service cbsdrsyncd stop > /dev/null 2>&1
+	${SYSRC_CMD} -vf /etc/rc.conf cbsdrsyncd_enable="NO"
+}
+
+configure_rsync()
+{
+	[ ! -f "${etcdir}/rsyncd.conf" ] && installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/etc/defaults/rsyncd.conf ${etcdir}/rsyncd.conf
+
+	if [ $( ${GREP_CMD} ^cbsdrsyncd_enable= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Configure RSYNC services for jail migration?"; then
+			rsyncd_enable
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdrsyncd_enable="YES"
+		fi
+	fi
+}
+
+# $1 engine: jail, bhyve, hoster
+cbsd_statsd_enable()
+{
+	local _engine
+
+	[ -z "${1}" ] && return 1
+
+	_engine="${1}"
+
+	[ ! -f "${inventory}" ] || . ${inventory}
+
+	if [ $( ${GREP_CMD} ^cbsd_statsd_${_engine}_enable="YES" /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Shall I modify /etc/rc.conf to set cbsd_statsd_${_engine}_enable=YES"; then
+			${SYSRC_CMD} -vf /etc/rc.conf cbsd_statsd_${_engine}_enable=YES
+		else
+			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_statsd_${_engine}_enable=YES
+		fi
+	fi
+
+	${rcddir}/cbsd-statsd-${_engine} onestart
+}
+
+configure_racct()
+{
+	local racct_enabled
+
+	racct_enabled=$( ${SYSCTL_CMD} -qn kern.racct.enable )
+
+	[ $? -ne 0 ] && return 0
+
+	if [ "${racct_enabled}" = "1" ]; then
+		return 0
+	fi
+
+	if [ $( ${GREP_CMD} ^kern.racct.enable /boot/loader.conf /boot/loader.conf.local ${workdir}/rc.conf 2>/dev/null | /usr/bin/wc -l ) = 0 ]; then
+		if getyesno "Do you want to enable RACCT feature for resource accounting?"; then
+			printf "\nkern.racct.enable=1\n" >> /boot/loader.conf
+		else
+			printf "\nkern.racct.enable=1\n" >> ${workdir}/rc.conf
+		fi
+	fi
+}
+
+
+update_hwinfo()
+{
+	for _uninit in ${HWINI}; do
+		eval answ="\$${_uninit}"
+		if [ -n "${answ}" ]; then
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET ${_uninit}=\"${answ}\"
+		fi
+	done
+}
+
+# form for $hostname
+get_initenv_hostname()
+{
+	f_dialog_title " hostname "
+	f_dialog_msgbox "Already set: ${hostname}"
+}
+
+# execute external natcfg-tui script
+get_initenv_natcfg()
+{
+	#natcfg-tui
+	# << swith to form, wip
+	natcfg
+}
+
+
+# trigger for cbsdd_enable
+get_initenv_rcconf()
+{
+	case "$( ${SYSRC_CMD} -n cbsdd_enable )" in
+		[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1)
+			${SYSRC_CMD} -q cbsdd_enable=NO > /dev/null 2>&1
+			;;
+		*)
+			${SYSRC_CMD} -q cbsdd_enable=YES > /dev/null 2>&1
+	esac
+}
+
+# form for $nodename
+get_initenv_nodename()
+{
+	local _input _retval
+
+	f_dialog_title " nodename "
+
+	f_dialog_input _input "${host_hostname_msg}" "${nodename}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nodename="${_input}"
+}
+
+# form for $nodeip
+get_initenv_nodeip()
+{
+	local _input _retval _ok=0 _nodeip
+
+	title=" nodeip "
+	prompt="${nodeip_desc}"
+	defaultitem="${nodeip}"
+	extra_label="Auto"
+
+	while [ ${_ok} -ne 1 ]; do
+
+		cbsd_inputbox_with_extra_button
+		retval=$?
+
+		case ${retval} in
+			${DIALOG_OK})
+				nodeip="${mtag}"
+				_ok=1
+				;;
+			${DIALOG_EXTRA})
+				update_netinfo
+				case "${node_ip4_active}" in
+				1)
+					if [ "${CBSD_IP4}" = "127.0.0.1" ]; then
+						_nodeip="0"      # disabled
+					else
+						_nodeip="${CBSD_IP4}"
+					fi
+					;;
+				*)
+					_nodeip="0"              # disabled
+					;;
+				esac
+				defaultitem="${_nodeip}"
+				;;
+			*)
+				_ok=1
+				;;
+		esac
+	done
+	return ${_retval}
+}
+
+# form for $nodeip6
+get_initenv_nodeip6()
+{
+	local _input _retval _ok=0 _nodeip6
+
+	title=" nodeip6 "
+	prompt="${nodeip6_desc}"
+	defaultitem="${nodeip6}"
+	extra_label="Auto"
+
+	while [ ${_ok} -ne 1 ]; do
+
+		cbsd_inputbox_with_extra_button
+		retval=$?
+
+		case ${retval} in
+			${DIALOG_OK})
+				nodeip6="${mtag}"
+				_ok=1
+				;;
+			${DIALOG_EXTRA})
+				update_netinfo
+				case "${node_ip6_active}" in
+				1)
+					if [ "${CBSD_IP6}" = "::1" ]; then
+						_nodeip6="0"      # disabled
+					else
+						_nodeip6="${CBSD_IP6}"
+					fi
+					;;		*)
+					_nodeip6="0"              # disabled
+					;;
+				esac
+				defaultitem="${_nodeip6}"
+				;;
+			*)
+				_ok=1
+				;;
+		esac
+	done
+	return ${_retval}
+}
+
+
+
+# form for $nodeip
+get_initenv_nodedescr()
+{
+	echo
+}
+
+
+# form for $jnameserver
+get_initenv_jnameserver()
+{
+	local _input _retval _ok=0 _ret
+
+	f_dialog_title " jnameserver "
+
+	while [ ${_ok} -ne 1 ]; do
+
+		f_dialog_input _input "${jnameserver_desc_full}" "${jnameserver}" \
+			"${_message}" || return $?
+
+		_ret=$?
+
+		strpos --str="${_input}" --search=" "
+		[ $? -ne 0 ] && _message="use commas when multiple, not spaces" && continue
+
+		# validate_jnameserver_function_here "${_input}"
+		# _ret=$?
+		case ${_ret} in
+			0)
+				_ok=1
+				;;
+			*)
+				_message="ERROR: bad values. choose other one"
+				;;
+		esac
+
+	done
+
+	[ -n "${_input}" ] && jnameserver="${_input}"
+}
+
+# form for $nodeippool
+get_initenv_nodeippool()
+{
+	local _input _retval
+
+	f_dialog_title " nodeippool "
+	f_dialog_input _input "${nodeip4pool_desc}" "${nodeippool}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nodeippool="${_input}"
+}
+
+# form for $nodeip6pool
+get_initenv_nodeip6pool()
+{
+	local _input _retval
+
+	f_dialog_title " nodeip6pool "
+	f_dialog_input _input "${nodeip6pool_desc}" "${nodeip6pool}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nodeip6pool="${_input}"
+}
+
+# form for $nat_enable
+get_initenv_nat_enable()
+{
+	local _input _retval
+
+	local title=" NAT framework "
+	local prompt="${nat_enable_desc}"
+	hline=
+
+	[ "${nat_enable}" = "0" ] && nat_enable="disable"
+
+	local menu_list="${menu_list} 'pf'		'pf'	'Use PF-based NAT'"
+
+	menu_list="${menu_list} 'ipfw'		'ipfw'	'Use IPFW-based NAT'"
+	menu_list="${menu_list} 'ipfilter'	'ipfilter'	'Use ipnat from IPFilter'"
+	menu_list="${menu_list} 'disable'	'Disable NAT'	'Disable NAT'"
+
+	local defaultitem="${nat_enable}"
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		0)
+			nat_enable="${mtag}"
+			[ "${nat_enable}" = "disable" ] && nat_enable="0"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for $natip
+get_initenv_natip()
+{
+	local _input _retval
+
+	local ipv4_list=
+	local nic_list=
+
+	local title=" NAT framework "
+	local prompt="${nat_enable_desc}"
+	hline=
+
+	ipv4_list=$( ${IFCONFIG_CMD} | ${AWK_CMD} '/inet [0-9]+/{print $2}' | ${XARGS_CMD} )
+	nic_list=$( nics-list phyonly=1 | ${XARGS_CMD} )
+
+	local menu_list=
+
+	for i in ${nic_list}; do
+		menu_list="${menu_list} '${i}'		'${i}'	'NAT on NIC'"
+	done
+
+	menu_list="${menu_list} '-'		'-'	''"
+
+	for i in ${ipv4_list}; do
+		case "${i}" in
+			127.*)
+				continue
+				;;
+			*)
+				menu_list="${menu_list} '${i}'		'${i}'	'NAT on IPv4'"
+				;;
+		esac
+	done
+
+	local defaultitem="${natip}"
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		0)
+			natip="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for $statsd_jail_enable
+get_initenv_statsd_jail_enable()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+
+	f_dialog_noyes "${statsd_jail_enable_desc}"
+	_retval=$?
+
+	case ${_retval} in
+	0|1)
+		statsd_jail_enable=${_retval}
+		;;
+	esac
+}
+
+# form for $statsd_bhyve_enable
+get_initenv_statsd_bhyve_enable()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+
+	f_dialog_noyes "${statsd_bhyve_enable_desc}"
+	_retval=$?
+
+	case ${_retval} in
+	0|1)
+		statsd_bhyve_enable=${_retval}
+		;;
+	esac
+}
+
+# form for $statsd_hoster_enable
+get_initenv_statsd_hoster_enable()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+
+	f_dialog_noyes "${statsd_hoster_enable_desc}"
+	_retval=$?
+
+	case ${_retval} in
+	0|1)
+		statsd_hoster_enable=${_retval}
+		;;
+	esac
+}
+
+# form for $fbsdrepo
+get_initenv_fbsdrepo()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+	 f_dialog_noyes "${fbsdrepo_desc}"
+	_retval=$?
+
+	case ${_retval} in
+	0|1)
+		fbsdrepo=${_retval}
+		;;
+	esac
+}
+
+# form for $repo
+get_initenv_repo()
+{
+	local _input _retval
+
+	f_dialog_title " repo "
+
+	f_dialog_input _input "${repo_desc}" "${repo}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && repo="${_input}"
+}
+
+# form for $ipfw_enable
+get_initenv_ipfw_enable()
+{
+	local _retval
+
+	msg_yes="no"
+	msg_no="yes"
+	f_dialog_noyes "${ipfw_enable_desc}"
+	_retval=$?
+
+	case ${_retval} in
+	0|1)
+		ipfw_enable=${_retval}
+		;;
+	esac
+}
+
+# form for $zfsfeat
+get_initenv_zfsfeat()
+{
+	local _retval
+
+	msg_yes="no"
+	msg_no="yes"
+	f_dialog_noyes "${zfsfeat_desc}"
+	_retval=$?
+
+	case ${_retval} in
+		0|1)
+			zfsfeat=${_retval}
+			;;
+	esac
+}
+
+
+# form for $hammerfeat
+get_initenv_hammerfeat()
+{
+	local _retval
+
+	msg_yes="no"
+	msg_no="yes"
+	f_dialog_noyes "${hammerfeat_desc}"
+	_retval=$?
+
+	case ${_retval} in
+		0|1)
+			hammerfeat=${_retval}
+			;;
+	esac
+}
+
+
+# form for $jail_interface
+get_initenv_jail_interface()
+{
+	local _input _retval
+
+	f_dialog_title " jail_interface "
+
+	f_dialog_input _input "${jail_interface_desc}" "${jail_interface}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && jail_interface="${_input}"
+}
+
+# form for $parallel
+get_initenv_parallel()
+{
+	local _input _retval
+
+	f_dialog_title " parallel "
+	f_dialog_input _input "${parallel_desc}" "${parallel}" \
+		"${_message}" || return $?
+	[ -n "${_input}" ] && parallel="${_input}"
+}
+
+
+# form for $stable
+get_initenv_stable()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+	 f_dialog_yesno "${stable_desc}"
+	_retval=$?
+
+	case ${_retval} in
+		0|1)
+			stable=${_retval}
+		;;
+	esac
+}
+
+# form for $sqlreplica
+get_initenv_sqlreplica()
+{
+	local _retval
+
+	 msg_yes="no"
+	 msg_no="yes"
+	 f_dialog_yesno "${sqlreplica_desc}"
+	_retval=$?
+
+	case ${_retval} in
+		0|1)
+			sqlreplica=${_retval}
+		;;
+	esac
+}
+
+# nodename must be set
+# -a <path> - path to new public authorized_keys
+# -p <path> - path to new private id_rsa file
+# -r - renew pair by new
+install_sshkey()
+{
+	local _md5name _keyfile _pubfile _prune_keyfile _renew=0
+	local _install_key
+	local _install_pub
+	local _update=0
+	local _renew=0
+
+	while getopts "a:p:r" opt; do
+		case "$opt" in
+			a)
+				_install_pub="${OPTARG}"
+				[ ! -r "${_install_pub}" ] && err 1 "${N1_COLOR}No read access for: ${N2_COLOR}${_install_pub}${N0_COLOR}"
+				;;
+			p)
+				_install_key="${OPTARG}"
+				[ ! -r "${_install_key}" ] && err 1 "${N1_COLOR}No read access for: ${N2_COLOR}${_install_key}${N0_COLOR}"
+				;;
+			r)
+				_renew=1
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${nodename}" ] && err 1 "${N1_COLOR}Install sshkey: empty nodename${N0_COLOR}"
+
+	_md5name=$( ${MD5_CMD} -qs ${nodename} )
+	_keyfile="${sshdir}/${_md5name}.id_rsa"
+	_pubfile="${sshdir}/authorized_keys"
+
+	# store old key for remove
+	if [ -h ${sshdir}/id_rsa -a ${_renew} -eq 1 ]; then
+		_prune_keyfile=$( ${READLINK_CMD} ${sshdir}/id_rsa )
+		[ ! -r ${_prune_keyfile} ] && unset _prune_keyfile
+	fi
+
+	if [ ${_renew} -eq 1 ]; then
+		# first remove old keys
+		if [ -n "${_prune_keyfile}" ]; then
+			${RM_CMD} -f ${_prune_keyfile}
+			unset _prune_keyfile
+		fi
+		[ -f "${_pubkey}" ] && ${RM_CMD} -f ${_pubkey}
+	fi
+
+	if [ -z "${_install_key}" -a -z "${_install_pub}" -o ${_renew} -eq 1 ]; then
+		if [ ! -f ${_keyfile} ]; then
+			${SSH_KEYGEN_CMD} -t ed25519 -f ${_keyfile} -N ''
+			${MV_CMD} ${_keyfile}.pub ${_pubfile}
+		fi
+	else
+		[ -n "${_install_key}" ] && ${CP_CMD} -a ${_install_key} ${_keyfile} && ${ECHO} "${N1_COLOR}Private key updated${N0_COLOR}"
+		[ -n "${_install_pub}" ] && ${CP_CMD} -a ${_install_pub} ${_pubfile} && ${ECHO} "${N1_COLOR}Public key updated${N0_COLOR}"
+	fi
+
+	${CHMOD_CMD} 0444 ${_pubfile}
+	${CHMOD_CMD} 0400 ${_keyfile}
+	${CHOWN_CMD} ${cbsduser}:${cbsduser} ${_keyfile} ${_pubfile}
+	${LN_CMD} -sf ${_keyfile} ${sshdir}/id_rsa
+}
+
+# run install_sshkey for change ssh key
+# update nodename in respective places
+# $nodename and $old_nodename must be filled
+change_nodename()
+{
+	[ -z "${nodename}" -o -z "${old_nodename}" ] && return 0
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nodename=\"${nodename}\"
+	# lets save old nodename db as backup
+	if [ -f "${dbdir}/inv.${old_nodename}.sqlite" ]; then
+		${CP_CMD} ${dbdir}/inv.${old_nodename}.sqlite ${dbdir}/inv.${nodename}.sqlite
+	fi
+	install_sshkey -r
+	echo "${nodename}" > "${nodenamefile}"
+	env sqlcolnames="1" ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT * FROM local" > ${inventory}
+}
+
+# export CBSD_UPLINK_IFACE[4|6] variable
+# export CBSD_IP[4|6] variable
+# export node_ip[4|6]_active=
+collect_netinfo()
+{
+	local CBSD_NODE_IP4_ACTIVE=0
+	local CBSD_NODE_IP6_ACTIVE=0
+	local _uplink_iface4=
+	local _uplink_iface6=
+
+	case "${platform}" in
+		DragonFly)
+			# Dfly not support -4/-6 args
+			_uplink_iface4=$( ${ROUTE_CMD} -n get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+			#_uplink_iface6=$( ${ROUTE_CMD} -n -6 get ::0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' ) -- ??
+			;;
+		*)
+			_uplink_iface4=$( ${ROUTE_CMD} -n -4 get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+			_uplink_iface6=$( ${ROUTE_CMD} -n -6 get ::0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+			;;
+	esac
+
+	if [ -n "${_uplink_iface4}" ]; then
+		CBSD_UPLINK_IFACE4="${_uplink_iface4}"
+		local INITIP4=$( ${IFCONFIG_CMD} ${_uplink_iface4} | ${AWK_CMD} '/inet [0-9]+/{print $2}'| ${HEAD_CMD} -n1 )
+	else
+		CBSD_UPLINK_IFACE4="lo0"
+		local INITIP4="127.0.0.1"
+	fi
+
+	if [ -n "${_uplink_iface6}" ]; then
+		CBSD_UPLINK_IFACE6="${_uplink_iface6}"
+		local INITIP6=$( ${IFCONFIG_CMD} ${_uplink_iface6} | ${AWK_CMD} '/inet6 *:*+/{print $2}'| ${GREP_CMD} -v %${_uplink_iface6}$ | ${HEAD_CMD} -n1 )
+	else
+		CBSD_UPLINK_IFACE6="lo0"
+		local INITIP6="::1"
+	fi
+
+	[ -z "${INITIP4}" ] && INITIP4="127.0.0.1"
+	[ -z "${INITIP6}" ] && INITIP6="::1"
+
+	CBSD_IP4="${INITIP4}"
+	CBSD_IP6="${INITIP6}"
+
+	if [ "${CBSD_IP6}" = "::1" ]; then
+		CBSD_NODE_IP6_ACTIVE=0
+	else
+		CBSD_NODE_IP6_ACTIVE=1
+	fi
+
+	if [ "${CBSD_IP4}" = "127.0.0.1" ]; then
+		CBSD_NODE_IP4_ACTIVE=0
+	else
+		CBSD_NODE_IP4_ACTIVE=1
+	fi
+
+	node_ip4_active=${CBSD_NODE_IP4_ACTIVE}
+	node_ip6_active=${CBSD_NODE_IP6_ACTIVE}
+}
+
+# export CBSD_UPLINK_IFACE[4|6] variable
+# export CBSD_IP[4|6] variable
+# export and store (in inventory) node_ip[4|6] variable
+update_netinfo()
+{
+	collect_netinfo
+
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip4_active=\"${node_ip4_active}\"
+	${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip6_active=\"${node_ip6_active}\"
+}
+
+
+## MAIN
+#user settings
+USERINI="\
+nodename \
+hostname \
+nodeip \
+nodeip6 \
+nodedescr \
+jnameserver \
+nodeippool \
+nodeip6pool \
+nat_enable \
+natip \
+fbsdrepo \
+mdtmp \
+repo \
+workdir \
+ipfw_enable \
+zfsfeat \
+hammerfeat \
+jail_interface \
+parallel \
+stable \
+sqlreplica \
+statsd_bhyve_enable \
+statsd_jail_enable \
+statsd_hoster_enable \
+"
+
+#system settings
+HWINI="fs ncpu physmem freemem memtype disks cpumodel cpufreq kernhz sched eventtimer nics osrelease hostarch vimage_feature racct platform node_ip4_active node_ip6_active la is_virtual cbsdver"
+
+###
+fi

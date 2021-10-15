@@ -1,0 +1,1385 @@
+# GENERIC VIRTUAL-related TUI function ( vbox, xen, bhyve )
+if [ ! "$_CBSD_SETTINGS_TUI_VIRTUAL_SUBR" ]; then
+_CBSD_SETTINGS_TUI_VIRTUAL_SUBR=1
+###
+
+ip4_addr_msg="VM IPv4 and/or IPv6 address"
+ip4_addr_desc="Current CBSD IPv4 pool: ${nodeippool}\n\
+ Useful with cloud-init and/or hook script\n\
+ 'DHCP' for determine free IPv4 automatically\n"
+
+GET_CD_BOOT_FIRMWARE_MSG="Choose CD boot firmware"
+GET_HDD_BOOT_FIRMWARE_MSG="Choose HDD boot firmware"
+GET_CONSOLE_MSG="Choose default console"
+GET_CPUS_MSG="Number of CPUs: 1, max: ${vm_cpus_max}"
+GET_EFI_MSG="Choose UEFI firmware"
+GET_GUESTFS_MSG="Choose FS for boot image"
+GET_GW4_MSG="Enter default gateway inside VMs or jail"
+GET_CI_GW4_MSG="Enter default gateway inside VMs or jail"
+GET_HOSTBRIDGE_MSG="Hostbridge for VMs, eg: hostbridge or amd_hostbridge"
+GET_IMGSIZE_MSG="Allocate X size of image free space, e.g.: 100m, 1g, 2.5g"
+GET_IMGTYPE_MSG="Choose disk image type"
+GET_ISOPATH_MSG="Path to ISO image in srcdir/iso, eg: release.iso. 0 - for default img_iso"
+GET_RAM_MSG="RAM in MB, eg: 512, 1024M, 2g"
+GET_SWAPSIZE_MSG="Configure swap partitional in X size (usual RAMx2), 0 - for disable, e.g: 4g"
+GET_VM_CPU_TOPOLOGY_MSG="Select CPU topology profile name"
+GET_VM_ISOPATH_MSG="Select available/registered ISO"
+GET_VM_PACKAGE_MSG="Choose package name"
+GET_VM_VNC_PORT_MSG="VNC port. 0 - for auto, 1 - disable"
+GET_VMPROFILE_MSG="- Use 'Update/GIT' button to keep profiles up to date via official\n  CBSD public repo: https://github.com/cbsd/cbsd-vmprofiles"
+GET_VMPROFILE_MSG_GIT="${GET_VMPROFILE_MSG}\n- Use 'Clean/GIT' button to revert GIT updates and reset to contrib settings"
+GET_SOUNDHW_MSG="Choose sound harware"
+
+# virtual form for $vnc_password
+get_construct_vnc_password()
+{
+	if get_password can_empty; then
+		vnc_password="${mtag}"
+	fi
+	[ -z "${vnc_password}" ] && vnc_password="0"
+	return 0
+}
+
+
+# virtual form for $spice_password
+get_construct_spice_password()
+{
+	if get_password can_empty; then
+		spice_password="${mtag}"
+	else
+		unset spice_password
+	fi
+
+	[ -z "${spice_password}" ] && spice_password="0"
+}
+
+# virtual forms for $imgsize
+get_construct_imgsize()
+{
+	local _input
+	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human= _minbytes_human_mb
+	local _ret=1 _ret2=
+	local _add_help_msg= _input_bytes=
+	local _message
+
+	# determine min/max threshold for input validation
+	if [ -n "${imgsize_min}" ]; then
+		_minbytes=$( get_bytes ${imgsize_min} )
+		_minbytes=$(( _minbytes + 536870912 ))		# + 512 MB for stock
+		if conv2human "${_minbytes}"; then
+			_minbytes_human="${convval}"
+		else
+			_minbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="min:${_minbytes_human}"
+	fi
+	if [ -n "${imgsize_max}" ]; then
+		_maxbytes=$( get_bytes ${imgsize_max} )
+		if conv2human "${_maxbytes}"; then
+			_maxbytes_human="${convval}"
+		else
+			_maxbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="${_add_help_msg} max:${_maxbytes_human}"
+	fi
+
+	f_dialog_title " imgsize "
+
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_IMGSIZE_MSG}\n${_add_help_msg}" "${imgsize}" \
+			"${_message}" || return $?
+
+		if ! is_number "${_input}"; then
+			# is number. assume user's input value in MB, so convert to bytes
+			_input="${_input}m"
+		fi
+
+		if conv2human "${_input}"; then
+			_input_bytes="${convval}"
+		else
+			_input_bytes="${_minbytes}"
+		fi
+
+		if [ -n "${_minbytes}" ]; then
+			if [ ${_input_bytes} -lt ${_minbytes} ]; then
+				_minbytes_human_mb=$(( _minbytes / 1024 / 1024 ))
+				#f_show_msg "Values ${_tmp} too small, minimal > ${_minbytes_human_mb}m+"
+				omsg_help="${msg_help}"
+				msg_help="Ignore"
+				cbsd_msgbox_with_extra_button "Values ${_tmp} too small, minimal > ${_minbytes_human_mb}m+"
+				_ret2=$?
+				msg_help="${omsg_help}"
+				if [ ${_ret2} -eq 2 ]; then
+					# ignore
+				else
+					imgsize="${_minbytes_human_mb}m"
+					continue
+				fi
+			fi
+		fi
+
+		if [ -n "${_maxbytes}" ]; then
+			if [ ${_input_bytes} -gt ${_maxbytes} ]; then
+				if ! getyesno "Warning! Values too high: ${_maxbytes_human}. Overcommitting size anyway?"; then
+					continue
+				fi
+			fi
+		fi
+
+		_ret=0
+	done
+
+	imgsize="${_input}"
+}
+
+# virtual forms for swapsize
+get_construct_swapsize()
+{
+	local _input
+
+	f_dialog_title " swapsize "
+
+	f_dialog_input _input "${GET_SWAPSIZE_MSG}:" "${swapsize}" \
+			"${_message}" || return $?
+
+	swapsize="${_input}"
+}
+
+
+# virtual form for $cpus
+get_construct_vm_cpus()
+{
+	local _input _message=" current hoster logical CPUs: ${ncpu} "
+	local _ret=1
+
+	f_dialog_title " vCpus "
+
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_CPUS_MSG}" "${vm_cpus}" \
+			"${_message}" || return $?
+
+		if is_number ${_input}; then
+			f_show_msg "Only number is valid input for cpu"
+			continue
+		fi
+
+		if [ ${_input} -gt ${ncpu} -a ${_input} -lt ${vm_cpus_max} ]; then
+			if ! getyesno "Warning! Current node cpu: ${ncpu}. Overcommitting vCPUs can hurt perfomance.\nContinue anyway?"; then
+				continue
+			fi
+		elif [ ${_input} -lt 1 -o ${_input} -gt ${vm_cpus_max} ]; then
+			f_show_msg "Valid number of guest CPUs within 1 - ${vm_cpus_max} range"
+			continue
+		fi
+		_ret=0
+	done
+	vm_cpus="${_input}"
+}
+
+
+# virtual form for $vm_vnc_port
+get_construct_vm_vnc_port()
+{
+	local _input
+
+	f_dialog_title " vnc port "
+
+	f_dialog_input _input "${GET_VM_VNC_PORT_MSG}" "${vm_vnc_port}" \
+			"${_message}" || return $?
+
+	vm_vnc_port="${_input}"
+}
+
+# virtual form for $ram
+get_construct_vm_ram()
+{
+	local _input _tmp
+	local _minbytes= _maxbytes= _minbytes_human= _maxbytes_human= _minbytes_human_mb=
+	local _ret=1
+	local _add_help_msg= _input_bytes=
+	local _message
+	local _local_physmem_bytes=
+	local _local_physmem_human=
+
+	_local_physmem_bytes="${physmem}"
+	if conv2human "${_local_physmem_bytes}"; then
+			_local_physmem_human="${convval}"
+	else
+		_local_physmem_human="${_local_physmem_bytes}"
+	fi
+
+	_message=" current hoster physmem: ${_local_physmem_human} "
+
+	# determine min/max threshold for input validation
+	if [ -n "${vm_ram_min}" ]; then
+		_minbytes=$( get_bytes ${vm_ram_min} )
+		if conv2human "${_minbytes}"; then
+			_minbytes_human="${convval}"
+		else
+			_minbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="min:${_minbytes_human}"
+	fi
+	if [ -n "${vm_ram_max}" ]; then
+		[ "${vm_ram_max}" = "native" ] && vm_ram_max="${physmem}"
+		_maxbytes=$( get_bytes ${vm_ram_max} )
+		if conv2human "${_maxbytes}"; then
+			_maxbytes_human="${convval}"
+		else
+			_maxbytes_human="${_minbytes}"
+		fi
+		_add_help_msg="${_add_help_msg} max:${_maxbytes_human}"
+	fi
+
+	f_dialog_title " RAM amount "
+
+	while [ ${_ret} -ne 0 ]; do
+
+		f_dialog_input _input "${GET_RAM_MSG}\n${_add_help_msg}" "${vm_ram}" \
+				"${_message}" || return $?
+
+		# test for human
+		if ! is_number "${_input}"; then
+			# is number. assume user's input value in MB, so convert to bytes
+			_input="${_input}m"
+		fi
+
+		_tmp="${_input}"
+
+		if conv2human "${_input}"; then
+			_input_bytes="${convval}"
+		else
+			_input_bytes="${_minbytes}"
+		fi
+
+		if [ -n "${_minbytes}" ]; then
+			if [ ${_input_bytes} -lt ${_minbytes} ]; then
+				_minbytes_human_mb=$(( _minbytes / 1024 / 1024 ))
+				f_show_msg "Values ${_tmp} too small, minimal > ${_minbytes_human_mb}m+"
+				vm_ram="${_minbytes_human_mb}m"
+				continue
+			fi
+		fi
+
+		if [ -n "${_maxbytes}" ]; then
+			if [ ${_input_bytes} -gt ${_maxbytes} ]; then
+				if ! getyesno "Warning! Values too high: ${_maxbytes_human}. Overcommitting RAM anyway?"; then
+					continue
+				fi
+			fi
+		fi
+
+		_ret=0
+	done
+
+	vm_ram="${_tmp}"
+}
+
+# virtual form for $vm_iso_path
+get_construct_isopath()
+{
+	local _input
+
+	f_dialog_title " isopath "
+
+	f_dialog_input _input "${GET_ISOPATH_MSG}" "${vm_iso_path}" \
+			"${_message}" || return $?
+
+	vm_iso_path="${_input}"
+}
+
+
+# virtual form for cloud init helper
+get_construct_cloud_init_menu()
+{
+	local _input _res item_let=A _ret
+	local _pubkey_len _ip1 _ip2 _ip3 _ip4
+
+	local prompt="choose cloud-init settings to modify"
+	local title="Cloud-init helper options"
+	local defaultitem=
+	local menu_choice=
+	local _checkbox="ci_user_pw_root_lock ci_user_pw_user_lock"
+
+	f_dialog_default_fetch defaultitem
+
+	# read global default vars
+	readconf cloud-init.conf
+
+	[ -z "${ci_password_salt}" ] && ci_password_salt="${default_ci_password_salt}"
+	[ -z "${ci_user_pw_root_lock}" ] && ci_user_pw_root_lock="${default_ci_user_pw_root_lock}"
+	[ -z "${ci_user_pw_user_lock}" ] && ci_user_pw_user_lock="${default_ci_user_pw_user_lock}"
+	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user="${default_ci_user_pw_user}"
+	[ -z "${ci_user_pw_root}" ] && ci_user_pw_root="${default_ci_user_pw_root}"
+
+	[ -z "${ci_user_add}" ] && ci_user_add="${default_ci_user_add}"
+
+	[ -z "${ci_interface}" ] && ci_interface="${default_ci_interface}"
+	[ -z "${ci_interface_name}" ] && ci_interface_name="${default_ci_interface_name}"
+	[ -z "${ci_interface_mtu}" ] && ci_interface_mtu="${default_ci_interface_mtu}"
+	[ -z "${ci_ip4_addr}" ] && ci_ip4_addr="${default_ci_ip4_addr}"
+	[ -z "${ci_gw4}" ] && ci_gw4="${default_ci_gw4}"
+	[ -z "${ci_nameserver_address}" ] && ci_nameserver_address="${default_ci_nameserver_address}"
+	[ -z "${ci_nameserver_search}" ] && ci_nameserver_search="${default_ci_nameserver_search}"
+	[ -z "${ci_adjust_inteface_helper}" ] && ci_adjust_inteface_helper="${default_ci_adjust_inteface_helper}"
+	[ -z "${ci_jname}" ] && ci_jname="${jname}"
+	[ -z "${ci_fqdn}" ] && ci_fqdn="${host_hostname}"
+
+	case "${ci_ip4_addr}" in
+		[Dd][Hh][Cc][Pp])
+			ci_ip4_addr=$( dhcpd )
+			;;
+	esac
+
+	case "${ci_gw4}" in
+		[Aa][Uu][Tt][Oo])
+			iptype ${ci_ip4_addr}
+			case $? in
+				1)
+					_ip1=${IWM%.*.*.*}
+					_ip2=${IWM%.*.*}; _ip2=${_ip2#*.}
+					_ip3=${IWM#*.*.}; _ip3=${_ip3%.*}
+					_ip4=${IWM#*.*.*.}
+					ci_gw4="${_ip1}.${_ip2}.${_ip3}.1"
+					;;
+				*)
+					;;
+			esac
+			;;
+		*)
+			;;
+	esac
+
+	local menu_list=""
+
+	if [ -z "${ci_user_pw_user}" -o "${ci_user_pw_user}" = '*' ]; then
+		ci_user_pw_user_mark='*locked*'
+	else
+		ci_user_pw_user_mark='*specified*'
+	fi
+	if [ -z "${ci_user_pw_root}" -o "${ci_user_pw_root}" = '*' ]; then
+		ci_user_pw_root_mark='*locked*'
+	else
+		ci_user_pw_root_mark='*specified*'
+	fi
+
+	menu_list="${menu_list} '${item_let} ci_jname'			'[${ci_jname}]'				'Default: ${jname}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_fqdn'			'[${ci_fqdn}]'				'Default: ${host_hostname}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_user_add'		'[${ci_user_add}]'			'Default: ${default_ci_user_add}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_ip4_addr'		'[${ci_ip4_addr}]'			'Default: ${default_ci_ip4_addr}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_gw4'			'[${ci_gw4}]'				'Default: ${default_ci_gw4}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_nameserver_address'	'[${ci_nameserver_address}]'		'Default: ${default_ci_nameserver_address}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_nameserver_search'	'[${ci_nameserver_search}]'		'Default: ${default_ci_nameserver_search}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_user_pw_user'		'[${ci_user_pw_user_mark}]'		'Default: ${default_ci_user_pw_user}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_user_pw_root'		'[${ci_user_pw_root_mark}]'		'Default: ${default_ci_user_pw_root}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} ci_interface_mtu'		'[${ci_interface_mtu}]'			'Default: ${default_ci_interface_mtu}'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '-'	'-'	''"
+
+	for i in ${ci_user_add}; do
+			inc_menu_index item_let
+			eval _home="\$ci_user_home_${i}"
+			menu_list="${menu_list} '${item_let} ci_user_home_${i}'	'[${_home}]'	'user home'"
+			inc_menu_index item_let
+			eval _pubkey="\$ci_user_pubkey_${i}"
+			_pubkey_len=$( strlen "${_pubkey}" )
+			if [ ${_pubkey_len} -gt 30 ]; then
+				_pubkey=$( substr --pos=0 --len=30 --str="${_pubkey}" )
+				_pubkey="${_pubkey} ..."
+			fi
+			menu_list="${menu_list} '${item_let} ci_user_pubkey_${i}'	'[${_pubkey}]'	'user pubkey'"
+			inc_menu_index item_let
+	done
+
+	menu_list="${menu_list} 'Save'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "${menu_choice}"
+	f_dialog_default_store "${menu_choice}"
+
+	iptype ${ci_ip4_addr}
+	_ret=$?
+	case ${_ret} in
+		1)
+			ip4_addr="${IWM}"
+			;;
+		*)
+			ip4_addr="${ci_ip4_addr}"
+			;;
+	esac
+
+	return ${retval}
+}
+
+# check $1 as valid ssh pubkey
+# return 0 if valid
+# return 1 when invald
+# if ! is_valid_ssh_key "TEST"; then
+#   echo "bad key"
+# fi
+is_valid_ssh_key()
+{
+	local _pos _keystart
+	strpos --str="${1}" --search=" "
+	_pos=$?
+	[ ${_pos} -eq 0 ] && return 1
+
+	_keystart=$( substr --pos=0 --len=${_pos} --str="${1}" )
+	case "${_keystart}" in
+		ssh-rsa*|ssh-ed25519*|ecdsa*|ssh-dsa*)
+			;;
+		*)
+			return 1
+			;;
+	esac
+
+	return 0
+}
+
+# Submenu for get_construct_cloud_init
+get_construct_cloud_init_options()
+{
+	local mychoice index
+	local old_defaultitem="${mtag}"
+	local _defaults _pos _keystart= _keytest
+	local _ci_gw4_mod=0 _ci_ip4_addr_mod=0
+	local _i1 _i2 _i3 _i4 _g1 _g2 _g3 _g4 _ip4_addr_with_mask
+
+	while [ 1 ]; do
+		get_construct_cloud_init_menu || break
+
+		index=${mtag%% *}
+		mychoice=${mtag##* }
+
+		case "${mychoice}" in
+			-)
+				continue
+				;;
+			Save)
+				break
+				;;
+			ci_jname)
+				title=" ci_jname "
+				prompt=" adjust short host name "
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && ci_jname="${mtag}"
+				;;
+			ci_fqdn)
+				title=" ci_fqdn "
+				prompt=" adjust host FQDN "
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && ci_fqdn="${mtag}"
+				;;
+			ci_gw4)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
+				_ci_gw4_mod=1			# trigger to re-check IP
+				;;
+			ci_user_add|ci_nameserver_address|ci_nameserver_search|ci_interface_mtu)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="${mtag}"
+				;;
+			ci_ip4_addr)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} "
+				eval defaultitem="\$${mychoice}"
+				ip4_addr="${defaultitem}"
+				get_construct_ip4_addr && eval ${mychoice}="${ip4_addr}"
+				_ci_ip4_addr_mod=1		# trigger to re-check GW
+
+
+				# assume new GW4 when ci_gw4 not in ci_ip4_addr network (todo: mask/prefix)
+				if [ ${_ci_gw4_mod} -eq 0 ]; then
+
+					OIFS="${IFS}"
+					IFS=","
+					gw_set=0
+
+					for _pureip in ${ip4_addr}; do
+						IFS="${OIFS}"
+
+						[ ${gw_set} -eq 1 ] && break
+						ipwmask ${_pureip}
+						if [ -n "${IWM}" -a "${IWM}" != "0" ]; then
+							iptype ${IWM}
+							_inet=$?
+							case ${_inet} in
+								1)
+									_MODIF="inet"
+									;;
+								2)
+									_MODIF="inet6"
+									;;
+							esac
+						fi
+
+
+						# GW in network?
+						strpos --str="${_pureip}" --search="/"
+						ret=$?
+
+						if [ "${_MODIF}" = "inet" ]; then
+							if [ ${ret} -ne 0 ]; then
+								_ip4_addr_with_mask="${_pureip}"
+							else
+								_ip4_addr_with_mask="${_pureip}/24"		# /24 prefix by default
+							fi
+
+							eval $( ${miscdir}/sipcalc ${_ip4_addr_with_mask} )
+							[ -z "${_usable_range_start}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to determine usable range start: ${_ip4_addr_with_mask}${N0_COLOR}"
+							sqllistdelimer="."
+							sqllist "${_usable_range_start}" _i1 _i2 _i3 _i4
+							sqllist "${ci_gw4}" _g1 _g2 _g3 _g4
+							if [ "${_i}.${_i2}.${_i3}" != "${_g}.${_g2}.${_g3}" ]; then
+								# assume new GW4
+								ci_gw4="${_i1}.${_i2}.${_i3}.${_i4}"
+								gw_set=1
+							fi
+						fi
+
+						IFS=","
+					done
+
+					IFS="${OIFS}"
+				fi
+				;;
+			ci_user_pubkey_*)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} (ctrl+u to erase)\n enter ssh key or path to authorized_keys\n use .ssh/authorized_keys for default node key"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple
+				if [ $? -eq 0 ]; then
+					if [ -r "${workdir}/${mtag}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${mtag} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
+						fi
+						eval ${mychoice}="\"${mtag}\""
+					elif [ -r "${mtag}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${mtag} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
+						fi
+						eval ${mychoice}="\"${mtag}\""
+					else
+						if ! is_valid_ssh_key "${mtag}"; then
+							f_dialog_msgbox "invalid key. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							continue
+						fi
+						eval ${mychoice}="\"${mtag}\""
+					fi
+				fi
+				;;
+			ci_user_home_*|ci_user_gecos_*|ci_user_pubkey_*)
+				title=" ${mychoice} "
+				prompt=" adjust ${mychoice} (ctrl+u to erase) "
+				#eval _defaults="\$default_${mychoice}"
+				eval defaultitem="\$${mychoice}"
+				cbsd_inputbox_simple && eval ${mychoice}="\"${mtag}\""
+				;;
+			ci_user_pw_user)
+				if get_password; then
+					# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
+					case "${vm_os_type}" in
+						freebsd)
+							ci_user_pw_user=$( ${miscdir}/pwcrypt "${mtag}" )
+							if [ $? -ne 0 ]; then
+								unset ci_user_pw_user
+							fi
+						;;
+						*)
+							ci_user_pw_user="${mtag}"
+							;;
+					esac
+				fi
+				;;
+			ci_user_pw_root)
+				if get_password; then
+					# crypt password problem in some cases: need for r&d https://cloudinit.readthedocs.io/en/latest/topics/modules.html#set-passwords
+					case "${vm_os_type}" in
+						freebsd)
+							ci_user_pw_root=$( ${miscdir}/pwcrypt "${mtag}" )
+							if [ $? -ne 0 ]; then
+								unset ci_user_pw_root
+							fi
+							;;
+						*)
+							ci_user_pw_root="${mtag}"
+							;;
+					esac
+				fi
+				;;
+			*)
+				invert_checkbox ${mychoice}
+				continue
+				;;
+			esac
+	done
+
+	[ -n "${ci_jname}" ] && cloud_init_options="[configured]"
+
+	f_dialog_default_store "${old_defaultitem}"
+}
+
+# virtual form for exit behavior
+get_construct_exit_behavior_menu()
+{
+	local _input _res item_let=A
+
+	local title="Exit behavior"
+	local defaultitem=
+	local menu_choice=
+
+	f_dialog_default_fetch defaultitem
+
+	[ -z "${on_poweroff}" ] && on_poweroff="destroy"
+	[ -z "${on_reboot}" ] && on_reboot="restart"
+	[ -z "${on_crash}" ] && on_crash="destroy"
+
+	local menu_list=""
+
+	menu_list="${menu_list} '${item_let} on_poweroff'	'[${on_poweroff}]'	'Action to take when the guest requests a poweroff'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} on_reboot'		'[${on_reboot}]'	'Action to take when the guest requests a reboot'"
+	inc_menu_index item_let
+	menu_list="${menu_list} '${item_let} on_crash'		'[${on_crash}]'		'Action to take when the guest crashes'"
+
+	menu_list="${menu_list} 'Save'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return ${retval}
+}
+
+# virtual form for exit behavior
+# $1 - variable to set, e.g: on_poweroff, on_reboot, on_crash
+get_exit_behavior()
+{
+	local _input _res
+	local _action="${1}"
+
+	[ -z "${_action}" ] && return 1
+
+	local title="Exit behaviour for ${_action}"
+
+	local defaultitem=
+
+	eval defaultitem="\$${_action}"
+
+	[ -z "${defaultitem}" ] && defaultitem="destroy"
+
+	local menu_list="
+		'destroy'	'destroy'	'The domain will be terminated completely and all resources released'
+		'restart'	'restart'	'The domain will be terminated and then restarted with the same configuration'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && export ${_action}="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# virtual form for exit behavior
+get_construct_exit_behavior()
+{
+	local mychoice index
+	local old_defaultitem="${mtag}"
+
+	while [ 1 ]; do
+		get_construct_exit_behavior_menu || break
+
+		index=${mtag%% *}
+		mychoice=${mtag##* }
+
+		case "${mychoice}" in
+		"-")
+			continue
+			;;
+		"Save")
+			break
+			;;
+		on_poweroff|on_reboot|on_crash)
+			get_exit_behavior ${mychoice}
+			;;
+		esac
+	done
+
+	f_dialog_default_store "${old_defaultitem}"
+}
+
+
+# virtual form for $vm_guestfs
+get_construct_vm_guestfs()
+{
+	local _input _res
+
+	local title="${GET_GUESTFS_MSG}"
+	local defaultitem="${vm_guestfs}"
+
+	local menu_list="
+		'zfs'	'zfs'	'ZFS filesystem'
+		'ufs'	'ufs'	'UFS filesystem'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_guestfs="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+# virtual form for $vm_boot
+get_construct_vm_boot()
+{
+	local _res
+
+	local vm_boot_data="${ftmpdir}/vm_boot.$$"
+
+	bootmgmt selected=${vm_boot} controlmaster=${vm_boot_data}
+
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			. ${vm_boot_data}
+			;;
+		*)
+			;;
+	esac
+
+	${RM_CMD} -f ${vm_boot_data}
+
+	return ${retval}
+}
+
+# virtual form for vm_package
+# update vm_\* values according to $vm_package data
+# if $1 - "force", all variables will be overwrited
+#  otherwise, assign variables only vm_\* is empty
+# $vm_package variables must be set
+apply_vm_package()
+{
+	[ -z "${vm_package}" ] && return 0
+	[ "${1}" = "force" ] && unset vm_cpus vm_ram imgsize
+
+	[ -z "${vm_cpus}" ] && vm_cpus=$( cbsdsqlro local SELECT pkg_vm_cpus FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
+	[ -z "${vm_ram}" ] && vm_ram=$( cbsdsqlro local SELECT pkg_vm_ram FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
+	[ -z "${imgsize}" ] && imgsize=$( cbsdsqlro local SELECT pkg_vm_disk FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
+	return 0
+}
+
+# virtual form for vm_package
+get_construct_vm_package()
+{
+	local _input _res
+
+	local title="${GET_VM_PACKAGE_MSG}"
+	local defaultitem="${vm_package}"
+
+	local sqldelimer=" "
+
+	local menu_list=$( cbsdsqlro local SELECT name,pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages | while read name pkg_vm_cpus pkg_vm_ram pkg_vm_disk; do
+		echo "'${name}' '[${mark}] name=${name} CPU=${pkg_vm_cpus} RAM=${pkg_vm_ram} DISK=${pkg_vm_disk}'  'description'"
+	done ) || err 1 "${N1_COLOR}Error while create packages map${N0_COLOR}"
+
+	cbsd_menubox
+	retval=$?
+
+	case $retval in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && vm_package="${mtag}"
+			apply_vm_package force
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+# virtual form for $imgtype
+get_construct_imgtype()
+{
+	local _input _res
+
+	local title="${GET_IMGTYPE_MSG}"
+	local defaultitem="${imgtype}"
+
+	local menu_list="
+		'zvol'		'ZFS volume'			'Use ZVOL. This is a faster bakend than md'
+		'md'		'use mdconfig(8) as backend'	'Use MD if your want to have guest FS-in-file on the hoster FS'
+		'raw'		'RAW disk, /dev/XXX'		'RAW/Direct attached disk /dev/devices'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && imgtype="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+# virtual form for $vm_os_type
+# if $1 = "value" apply value without dialog
+get_construct_vm_os_type()
+{
+	local _input
+	local defaultitem="${vm_os_type}"
+	local _vm_os_type_old="${vm_os_type}"
+
+	if [ -n "${1}" ]; then
+		vm_os_type="${1}"
+		retval=${DIALOG_OK}
+	else
+		unset menu_list
+
+		# load menu_list from external source by emulator opportunity
+		if [ -f "${sharedir}/emulators/ostype_${emulator}.subr" ]; then
+			. ${sharedir}/emulators/ostype_${emulator}.subr
+		else
+			f_dialog_msgbox "No such menu_list for emulator ${emulator}:\n${sharedir}/emulators/ostype_${emulator}.subr"
+			return 0
+		fi
+
+		cbsd_menubox
+		retval=$?
+	fi
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ "${_vm_os_type_old}" = "${mtag}" ] && return 0		# not changed
+			${RM_CMD} -f ${tmpdir}/get_construct_vm_os_profile.menu
+			[ -n "${mtag}" ] && vm_os_type="${mtag}"
+			unset vm_os_profile jname imgsize vm_ram vm_cpus cd_boot_firmware hdd_boot_firmware ci_interface
+			unset ci_interface_mtu
+			apply_vm_package
+			# set default
+			[ -z "${cd_boot_firmware}" ] && cd_boot_firmware="bhyve"
+			[ -z "${hdd_boot_firmware}" ] && hdd_boot_firmware="${cd_boot_firmware}"
+			[ -z "${ci_interface_mtu}" ] && ci_interface_mtu="${default_ci_interface_mtu}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# virtual form for vm_iso_path
+get_construct_vm_iso_path()
+{
+	local menu_list=
+	local vm_res
+	local i
+
+	local title=" Select ISO "
+	local prompt="${GET_VM_ISOPATH_MSG}"
+	local iso_path
+
+	vm_res=$( cbsdsqlro storage_media SELECT name FROM media WHERE type=\"iso\" )
+
+	[ -z "${vm_res}" ] && return 0
+
+	for i in ${vm_res}; do
+		menu_list="${menu_list} '${i}' '${i}' '${i}'"
+	done
+
+	menu_list="${menu_list} 'Detach' 'Detach' 'Detach any CD ISO'"
+
+	defaultitem="${vm_iso_path}"
+
+	mtag=
+	cbsd_menubox
+
+	case $retval in
+		${DIALOG_OK})
+			if [ -n "${mtag}" ]; then
+				case "${mtag}" in
+					Detach)
+						cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
+						register_iso_as=
+						vm_iso_path=
+						alt_iso=
+						;;
+					*)
+						register_iso_as="${mtag}"
+						vm_iso_path="${mtag}"
+						alt_iso="${mtag}"
+						iso_path=$( cbsdsqlro storage_media SELECT path FROM media WHERE type=\"iso\" AND name=\"${mtag}\" )
+						# remove old disk if exist
+						cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
+						echo "media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}"
+						media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}
+						;;
+				esac
+			fi
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# virtual form for cpu topology
+get_construct_vm_cpu_topology()
+{
+	local menu_list=
+	local vm_res
+	local i
+	local _query _sockets _cores _threads _vm_cores
+
+	local title=" Select CPU topology "
+	local prompt="${GET_VM_CPU_TOPOLOGY_MSG}"
+	local iso_path
+
+	vm_res=$( cbsdsqlro local SELECT name FROM vm_cpu_topology | ${XARGS_CMD} )
+
+	[ -z "${vm_res}" ] && return 0
+	. ${strings}
+	. ${subrdir}/virtual.subr
+
+	for i in ${vm_res}; do
+		_query=$( cbsdsqlro local SELECT sockets,cores,threads FROM vm_cpu_topology WHERE name=\"${i}\" )
+		[ -z "${_query}" ] && return 0
+		OIFS="${IFS}"
+		IFS="|"
+		sqllist "${_query}" _sockets _cores _threads
+		IFS="${OIFS}"
+		_vm_cores=$( get_vm_cores_by_topology ${_sockets} ${_cores} ${_threads} )
+		local topology_${i}_cpus="${_vm_cores}"
+		menu_list="${menu_list} '${i}' 'sockets=${_sockets},cores=${_cores},threads=${_threads}' 'sockets=${_sockets},cores=${_cores},threads=${_threads}, Core: ${_vm_cores}'"
+	done
+
+	menu_list="${menu_list}"
+	defaultitem="${vm_cpu_topology}"
+
+	mtag=
+	cbsd_menubox
+
+	case ${retval} in
+		${DIALOG_OK})
+			if [ -n "${mtag}" ]; then
+				vm_cpu_topology="${mtag}"
+				eval vm_cpus="\$topology_${mtag}_cpus"
+			fi
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# virtual form for profiles update
+# try to update profiles from GitHub via Internet
+get_profiles_update()
+{
+	local _git
+	local _logfile
+
+	_git=$( which git )
+
+	if [ -z "${_git}" ]; then
+		local msg_ok="It's a pity"
+		f_dialog_msgbox "No git in system. Please install git first: pkg install -y devel/git"
+		return 0
+	fi
+
+	_logfile=$( ${MKTEMP_CMD} )
+
+	trap "${RM_CMD} -f ${_logfile}" HUP INT ABRT BUS TERM EXIT
+
+	f_dialog_info "Updating from GitHub repository. Please wait..."
+	f_dialog_title " Log messages "
+	echo >> ${_logfile}
+	${MAKE_CMD} -C ~cbsd/etc profiles-upgrade >> ${_logfile} 2>&1
+	f_show_help "${_logfile}"
+	${RM_CMD} -f ${_logfile}
+	trap "" HUP INT ABRT BUS TERM EXIT
+}
+
+# virtual form for $vm_os_profile
+# if $1 not empty just load profile without dialogizing
+get_construct_vm_os_profile()
+{
+	local _input _search_profile="vm-${vm_os_type}" _search_cloud_profile="vm-${vm_os_type}-cloud" _res vm_profile _myprofiles="" _myfile _all _num _myfile
+	local menu_list cloud_menu_list _menu_list_cache
+	local _cnt=0
+	local _menu_list_cache=
+
+	local title=" profile "
+	local git_init=0
+	local prompt
+
+	# use menu item cache
+	if [ -r ${tmpdir}/get_construct_vm_os_profile.menu ]; then
+		#_menu_list_cache=$( ${CAT_CMD} ${tmpdir}/get_construct_vm_os_profile.menu )
+		. ${tmpdir}/get_construct_vm_os_profile.menu
+	else
+		f_dialog_info "scan and build menu entry..."
+		_menu_list_cache=
+	fi
+
+	while [ ${_cnt} -ne 1 ]; do
+
+		if [ -d ${etcdir}/.git ]; then
+			git_init=1
+			prompt="${GET_VMPROFILE_MSG_GIT}"
+		else
+			prompt="${GET_VMPROFILE_MSG}"
+		fi
+
+		menu_list=
+		cloud_menu_list=
+		_all=0
+
+		if [ -z "${_menu_list_cache}" ]; then
+			eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_profile} show_cloud=0 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
+				unset long_description iso_img_dist_size
+				eval $( ${GREP_CMD} ^long_description= ${path} )
+				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				[ -z "${long_description}" ] && long_description="${vm_profile}"
+				if [ -z "${iso_img_dist_size}" ]; then
+					iso_img_dist_size="Unknown"
+				else
+					if conv2human "${iso_img_dist_size}"; then
+						iso_img_dist_size=${convval}
+					fi
+				fi
+				[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
+				_mypath=$( echo ${path} | ${SED_CMD} s:^${workdir}/::g )
+				menu_list="${menu_list} '${vm_profile}' '${_mypath}' '${long_description}, size: ${iso_img_dist_size}'"
+				echo "menu_list=\"${menu_list}\""
+				# store filename
+				echo "profile${_all}=\"${vm_profile}\""
+				echo "file${_all}=\"${path}\""
+				_all=$(( _all + 1 ))
+				echo "_all=${_all}"
+			done )
+
+			eval $( env NOCOLOR=1 show_profile_list search_profile=${_search_cloud_profile} show_cloud=1 show_${emulator}=1 uniq=1 display=path,name,contrib header=0 | while read path vm_profile contrib; do
+				unset long_description iso_img_dist_size
+				# when -n $1 we apply profile, so skip unnecessary vars
+				eval $( ${GREP_CMD} ^long_description= ${path} )
+				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				[ -z "${long_description}" ] && long_description="${vm_profile}"
+				if [ -z "${iso_img_dist_size}" ]; then
+					iso_img_dist_size="Unknown"
+				else
+					if conv2human "${iso_img_dist_size}"; then
+						iso_img_dist_size=${convval}
+					fi
+				fi
+				[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
+				_mypath=$( echo ${path} | ${SED_CMD} s:^${workdir}/::g )
+				cloud_menu_list="${cloud_menu_list} '${vm_profile}' '${_mypath}' '${long_description}, size: ${iso_img_dist_size}'"
+				echo "cloud_menu_list=\"${cloud_menu_list}\""
+				# store filename
+				echo "profile${_all}=\"${vm_profile}\""
+				echo "file${_all}=\"${path}\""
+				_all=$(( _all + 1 ))
+				echo "_all=${_all}"
+			done )
+
+			if [ -n "${cloud_menu_list}" ]; then
+				menu_list="${menu_list} '>' ' Cloud images ' ''"
+				menu_list="${menu_list} ${cloud_menu_list}"
+			fi
+		else
+			menu_list="${_menu_list_cache}"
+			_all="${_all_cache}"
+		fi
+
+		[ -z "${menu_list}" ] && unset vm_os_profile && return 0
+
+		# store menu item cache
+		${SYSRC_CMD} -qf ${tmpdir}/get_construct_vm_os_profile.menu _menu_list_cache="${menu_list}" > /dev/null 2>&1
+		${SYSRC_CMD} -qf ${tmpdir}/get_construct_vm_os_profile.menu _all_cache="${_all}" > /dev/null 2>&1
+
+		if [ -n "${1}" ]; then
+			mtag="${1}"
+			retval=${DIALOG_OK}
+		else
+			defaultitem="${vm_os_profile}"
+			extra_label="Update/GIT"
+			help_label="Clean/GIT"
+			if [ ${git_init} -eq 1 ]; then
+				cbsd_menubox_with_extra_button_with_help
+			else
+				cbsd_menubox_with_extra_button
+			fi
+			retval=$?
+		fi
+
+		case ${retval} in
+			${DIALOG_OK})
+				[ "${mtag}" = ">" ] && continue
+				_cnt=1
+				pkgnum=0
+				unset pkglist tpl_pkglist from_jail vm_profile profile ci_interface
+				unset ci_interface_mtu
+				is_cloud=0
+				alt_iso=
+				vm_os_profile="${mtag}"
+				_num=0
+				_myfile=$( while [ ${_num} -ne ${_all} ]; do
+					eval _myfile="\$file${_num}"
+					eval _prof="\$profile${_num}"
+					[ "${vm_os_profile}" = "${_prof}" ] && echo "${_myfile}" && exit
+					_num=$(( _num + 1 ))
+				done )
+
+				[ -z "${_myfile}" ] && return 0
+
+				if [ -f "${_myfile}" ]; then
+					unset imgsize vm_ram vm_cpus cd_boot_firmware hdd_boot_firmware imgsize_min
+					. ${_myfile}
+					global_profile_file="${_myfile}"
+					apply_vm_package
+					# defaults
+					[ -z "${cd_boot_firmware}" ] && cd_boot_firmware="bhyve"
+					[ -z "${hdd_boot_firmware}" ] && hdd_boot_firmware="${cd_boot_firmware}"
+					[ -z "${ci_interface_mtu}" ] && ci_interface_mtu="${default_ci_interface_mtu}"
+				fi
+				;;
+			${DIALOG_EXTRA})
+				get_profiles_update
+				${RM_CMD} -f ${tmpdir}/get_construct_vm_os_profile.menu
+				_menu_list_cache=
+				continue
+				;;
+			${DIALOG_HELP})
+				${MAKE_CMD} -C ${etcdir} git-clean
+				git_init=0
+				_menu_list_cache=
+				continue
+				;;
+			*)
+				_cnt=1
+				return 1
+				;;
+		esac
+	done
+
+	vm_iso_path="${register_iso_as}"
+	return ${retval}
+}
+
+# form select for soundhw
+# XEN options: /usr/local/lib/xen/bin/qemu-system-i386 -soundhw help
+# Bhyve: hda only
+#  -c "sb16 es1370 ac97 adlib gus cs4231a hda pcspk"   ( specify select choice )
+get_construct_soundhw()
+{
+	local _input _res
+	local _choose= i
+
+	local title="${GET_SOUNDHW_MSG}"
+	local defaultitem="${soundhw}"
+
+	while getopts "c:" opt; do
+		case "${opt}" in
+			c) _choose="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	local menu_list="
+		'none'		'No sound'			'Disable sound'
+	" # END-QUOTE
+
+	for i in ${_choose}; do
+		case "${i}" in
+			sb16)
+				menu_list="${menu_list}	'sb16'		'Creative Sound Blaster 16'	'Creative Sound Blaster 16'"
+				;;
+			es1370)
+				menu_list="${menu_list}	'es1370'	'ENSONIQ AudioPCI ES1370'	'ENSONIQ AudioPCI ES1370'"
+				;;
+			ac97)
+				menu_list="${menu_list}	'ac97'		'Intel 82801AA AC97 Audio'	'Intel 82801AA AC97 Audio'"
+				;;
+			adlib)
+				menu_list="${menu_list}	'adlib'		'Yamaha YM3812 (OPL2)'		'Yamaha YM3812 (OPL2)'"
+				;;
+			gus)
+				menu_list="${menu_list}	'gus'		'Gravis Ultrasound GF1'		'Gravis Ultrasound GF1'"
+				;;
+			cs4231a)
+				menu_list="${menu_list}	'cs4231a'	'CS4231A'			'CS4231A'"
+				;;
+			hda)
+				menu_list="${menu_list}	'hda'		'Intel HD Audio'		'Intel HD Audio'"
+				;;
+			pcspk)
+				menu_list="${menu_list}	'pcspk'		'PC speaker'			'PC speaker'"
+				;;
+		esac
+	done
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && soundhw="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# virtual form for $debug_engine
+get_construct_debug_engine()
+{
+	local _input _res
+
+	local title="Debug engine"
+	local defaultitem="${debug_engine}"
+
+	local menu_list="
+		'gdb'	'gdb'	'GNU debugger'
+		'lldb'	'lldb'	'LLVM debuger'
+		'none'	'none'	'No debuger'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && debug_engine="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# form for submenu for audio options
+get_construct_audio_options_menu()
+{
+	local _input _res item_let=A
+
+	local title="Audio Options"
+	local defaultitem=
+	local menu_choice=
+
+	f_dialog_default_fetch defaultitem
+
+	local menu_list=""
+
+	[ -z "${soundhw}" ] && soundhw="${default_soundhw}"
+	[ -z "${soundhw}" ] && soundhw="none"
+
+	menu_list="${menu_list}	'${item_let} soundhw'	'[${soundhw}]'	'Default: ${default_soundhw}'"
+
+	if [ "${soundhw}" = "hda" ]; then
+		[ -z "${soundhw_play}" ] && soundhw_play="${default_soundhw_play}"
+		[ -z "${soundhw_rec}" ] && soundhw_rec="${default_soundhw_rec}"
+		menu_list="${menu_list}	'${item_let} soundhw_play'	'[${soundhw_play}]'	'Default play device: ${default_soundhw_play}'"
+		menu_list="${menu_list}	'${item_let} soundhw_rec'	'[${soundhw_rec}]'	'Default rec device: ${default_soundhw_rec}'"
+	fi
+
+	menu_list="${menu_list}	'Save'				'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "${menu_choice}"
+	f_dialog_default_store "${menu_choice}"
+
+	return ${retval}
+}
+
+
+# virtual part for virtualbox jconf
+make_virtualbox_part()
+{
+${CAT_CMD} >> ${TMPFILE} << EOF
+exec_start="${exec_start}"
+exec_stop="${exec_stop}"
+emulator="${emulator}";
+imgsize="${imgsize}";
+vm_cpus="${vm_cpus}";
+vm_ram="${vm_ram}";
+vm_os_type="${vm_os_type}";
+vm_efi="${vm_efi}";
+
+iso_site="${iso_site}";
+iso_img="${iso_img}";
+register_iso_name="${register_iso_name}"
+register_iso_as="${register_iso_as}"
+
+vm_hostbridge="${vm_hostbridge}";
+bhyve_flags="${bhyve_flags}";
+virtio_type="${virtio_type}";
+gw4="${gw4}";
+vm_os_profile="${vm_os_profile}";
+jprofile="${jprofile}";
+swapsize="${swapsize}";
+vm_guestfs="${vm_guestfs}";
+vm_vnc_port="${vm_vnc_port}";
+with_img_helpers="";
+runasap="${runasap}";
+EOF
+}
+
+###
+fi

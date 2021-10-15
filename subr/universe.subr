@@ -1,0 +1,504 @@
+if [ ! "$_CBSD_UNIVERSE_SUBR" ]; then
+_CBSD_UNIVERSE_SUBR=1
+###
+
+init_distcc()
+{
+	if [ "${distcc}" = "1"  ]; then
+		readconf distcc.conf
+		if ! distcc_check; then
+			distcc=0
+		fi
+	else
+		distcc=0
+	fi
+}
+
+init_notify()
+{
+	if [ "${notify}" = "1"  ]; then
+		notify=1
+	else
+		notify=0
+	fi
+}
+
+# init SRC_DIR, origmakeconf, MAKEOBJDIRPREFIX, SRCCONF. After init_target_arch only
+# require: $ver, $arch, $target_arch.
+# optional: $basename
+init_srcdir()
+{
+	local _confname
+	SRC_DIR="${srcdir}/src_${ver}/src"
+
+	if [ -z "${basename}" ]; then
+		origmakeconf="${etcdir}/src-make-${platform}.conf"
+	else
+		[ -f "${etcdir}/make-${basename}.conf" ] && origmakeconf="${etcdir}/make-${basename}.conf"
+	fi
+
+	[ ! -r "${origmakeconf}" ] && origmakeconf="${etcdir}/defaults/src-make-${platform}.conf"
+	[ ! -r "${origmakeconf}" ] && ${ECHO} "${N1_COLOR}make.conf not found: ${N2_COLOR}${origmakeconf}${N0_COLOR}"
+
+	if [ -z "${basename}" ]; then
+		export MAKEOBJDIRPREFIX=${srcdir}/obj_${arch}_${target_arch}_${ver}
+	else
+		export MAKEOBJDIRPREFIX=${srcdir}/obj_${basename}_${arch}_${target_arch}_${ver}
+	fi
+
+	if [ -z "${basename}" ]; then
+		_confname="src.conf"
+	else
+		_confname="src-${basename}.conf"
+	fi
+
+	if [ -f "${etcdir}/${_confname}" ]; then
+		SRCCONF="${etcdir}/${_confname}"
+	else
+		SRCCONF="${etcdir}/defaults/${_confname}"
+	fi
+}
+
+# init BASE_DIR and BASE_DIR_LOCKFILE. After init_target_arch only
+# require: $arch, $target_arch, $ver
+# optional: $basename, $destdir
+# SKIP_CHECK_DIR=1 - do not exit if dir not exist, just init path variable
+# -a: set alternative arch ( same is $arch variable )
+# -b: set alternative basename ( same is $basename variable )
+# -v: set alternative ver ( same is $ver variable )
+init_basedir()
+{
+	local _basename
+	local _arch _ver _sver _idx _oarch _over
+
+	while getopts "a:b:v:" opt; do
+		case "${opt}" in
+			a) _oarch="${OPTARG}" ;;
+			b) _basename="${OPTARG}" ;;
+			v) _over="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${target_arch}" ] && target_arch=$( ${UNAME_CMD} -p )
+
+	if [ -n "${basename}" -a -z "${_basename}" ]; then
+		[ "${basename}" != "0" ] && _basename="${basename}"
+	fi
+
+	if [ -n "${destdir}" ]; then
+		BASE_DIR="${destdir}"
+		BASE_DIR_LOCKFILE="${BASE_DIR}.lock"
+		return 0
+	fi
+
+	[ -z "${_over}" ] && _over="${ver}"
+	[ -z "${_oarch}" ] && _oarch="${arch}"
+
+	if [ -z "${_basename}" ]; then
+		BASE_DIR="${basejaildir}/${basejailpref}_${_oarch}_${target_arch}_${_over}"
+	else
+		_sver=${_over%%.*}
+		_idx=$( cbsdsqlro ${dbdir}/local.sqlite SELECT idx FROM bsdbase WHERE basename=\"${_basename}\" AND \( ver=\"${_over}\" OR ver=\"${_sver}\" \) AND arch=\"${_oarch}\" 2>/dev/null )
+		# base with custom basename may registered with stable/unstable $ver - get this version to determine correct base path
+		if [ -n "${_idx}" ]; then
+			_ver=$( cbsdsqlro ${dbdir}/local.sqlite SELECT ver FROM bsdbase WHERE idx="${_idx}" 2>/dev/null )
+			BASE_DIR="${basejaildir}/${basejailpref}_${_basename}_${_oarch}_${target_arch}_${_ver}"
+		else
+			BASE_DIR="${basejaildir}/${basejailpref}_${_basename}_${_oarch}_${target_arch}_${_over}"
+		fi
+	fi
+
+	BASE_DIR_LOCKFILE="${BASE_DIR}.lock"
+	return 0
+}
+
+
+# init KERNEL_DIR
+# require: $arch, $ver
+# optional: $destdir, $name
+init_kerneldir()
+{
+
+	if [ -n "${destdir}" ]; then
+		KERNEL_DIR="${destdir}"
+		return 0
+	fi
+
+	[ -z "${name}" ] && name="GENERIC"
+
+	if [ -z "${basename}" ]; then
+		KERNEL_DIR="${basejaildir}/${platform}-kernel_${name}_${arch}_${ver}"
+	else
+		KERNEL_DIR="${basejaildir}/${platform}-kernel_${basename}_${name}_${arch}_${ver}"
+	fi
+}
+
+
+init_supported_arch()
+{
+	support_arch=0
+
+	# reserved word 'any' for repo
+	[ "${arch}" = "any" ] && return 0
+
+	for i in $SUPPORTED_ARCH; do
+		[ "${arch}" = "${i}" ] && support_arch=1 && return 0
+	done
+
+	[ ${support_arch} -eq 0 ] && err 1 "${N1_COLOR}Your arch: ${N2_COLOR}${arch}${N1_COLOR} while supported architecture only: ${N2_COLOR}${SUPPORTED_ARCH}${N0_COLOR}"
+}
+
+# init emulator, TARGET and TARGET_ARCH variable
+# require: $arch, $target_arch
+init_target_arch()
+{
+	local _my_arch=$( ${UNAME_CMD} -m )
+	local _my_target_arch=$( ${UNAME_CMD} -p )
+
+	if [ -n "${target_cputype}" ]; then
+		TARGET_CPUTYPE="${target_cputype}"
+	fi
+
+	if [ "${_my_arch}" != "${arch}" ]; then
+		case "${arch}" in
+			"i386")
+				TARGET="i386"
+				TARGET_ARCH="i386"
+			;;
+			"amd64")
+				TARGET="amd64"
+				TARGET_ARCH="amd64"
+			;;
+			"arm")
+				TARGET="arm"
+				TARGET_ARCH="armv6"
+				BUILDPATH="arm-bsd-user"
+				emulator="qemu-arm-static"
+			;;
+			"aarch64")
+				TARGET="arm64"
+				TARGET_ARCH="aarch64"
+				BUILDPATH="aarch64-bsd-user"
+				emulator="qemu-aarch64-static"
+			;;
+			"mips")
+				TARGET="mips"
+				TARGET_ARCH="mips64"
+				BUILDPATH="mips64-bsd-user"
+				emulator="qemu-mips64-static"
+			;;
+			powerpc)
+				TARGET="powerpc64"
+				TARGET_ARCH="powerpc64"
+				BUILDPATH="powerpc64-bsd-user"
+				emulator="qemu-ppc64-static"
+			;;
+			"riscv")
+				TARGET="riscv"
+				TARGET_ARCH="riscv64"
+				BUILDPATH="riscv64-bsd-user"
+				emulator="qemu-riscv64-static"
+			;;
+		esac
+	fi
+
+	#overwrite target_arch if specify
+	if [ -n "${target_arch}" ]; then
+		TARGET_ARCH="${target_arch}"
+	else
+		if [ -n "${TARGET_ARCH}" ]; then
+			target_arch="${TARGET_ARCH}"
+		else
+			target_arch="${arch}" # default
+		fi
+	fi
+}
+
+# init SCM_REV
+# require: $SRC_DIR
+init_scm_and_version()
+{
+	case "${checkout_method}" in
+		svn*)
+			init_svn_version
+			;;
+		git*)
+			[ ! -r ${sharedir}/${platform}-git_branches.conf ] && err 1 "${N1_COLOR}No ${sharedir}/${platform}-git_branches.conf for git branch map${N0_COLOR}"
+			. ${sharedir}/${platform}-git_branches.conf
+			[ -z "${SCM_GIT_BRANCH}" ] && SCM_GIT_BRANCH=$( init_git_branch )
+			[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}no SCM_GIT_BRANCH var${N0_COLOR}"
+			init_git_version
+			;;
+		*)
+			err 1 "${ECHO}unknown checkout method. please specify it via: ${N2_COLOR}srcup.conf${N0_COLOR}"
+			;;
+	esac
+
+	[ -z "${SCM_REV}" ] && SCM_REV=$( ${DATE_CMD} "+%Y-%m-%d-%H:%M:%S" )
+	return 0
+}
+
+# init SCM_REV
+# require: $SRC_DIR
+init_svn_version()
+{
+	local SCM=""
+
+	if [ -f "/usr/bin/svnlite" ]; then
+		SCM="/usr/bin/svnlite"
+	elif [ -f "/usr/local/bin/svn" ]; then
+		SCM="/usr/local/bin/svn"
+	else
+		err 1 "${N1_COLOR}No svn in the base. Please install devel/subversion${N0_COLOR}"
+	fi
+
+	SCM_REV=$( cd ${SRC_DIR} && ${SCM} info 2>/dev/null | ${AWK_CMD} '/^Last Changed Rev: /{printf $4}' )
+
+	return 0
+}
+
+# init SCM_REV
+# require: $SRC_DIR
+init_git_version()
+{
+	local SCM=
+
+	if [ -f "/usr/local/bin/git" ]; then
+		SCM="/usr/local/bin/git"
+	else
+		err 1 "${N1_COLOR}No git in the base. Please install ${N2_COLOR}devel/git${N0_COLOR}"
+	fi
+
+	[ -z "${SCM_GIT_BRANCH}" ] && err 1 "${N1_COLOR}no SCM_GIT_BRANCH var${N0_COLOR}"
+
+	echo "cd ${SRC_DIR} && ${SCM} rev-parse --short ${SCM_GIT_BRANCH}"
+
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands via git
+	# does not conflict with the same CBSD commands
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	#SCM_REV=$( cd ${SRC_DIR} && ${SCM} rev-parse --short ${SCM_GIT_BRANCH} )
+	SCM_REV=$( cd ${SRC_DIR} && ${SCM} log --pretty=format:'%h' -n 1 )
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
+	return 0
+}
+
+
+# init NUMJOBS, NOCLEANUP
+# require: $maxjobs, $clean
+init_make_flags()
+{
+	NUMJOBS=
+	[ ${maxjobs} -ne 0 ] && NUMJOBS="-j${maxjobs}"
+
+	NOCLEANUP=
+	if [ ${clean} -ne 1 ]; then
+		if [ ${freebsdhostversion} -lt 1400000 ]; then
+			NOCLEANUP="-DNO_CLEAN"
+		else
+			NOCLEANUP="-DWITHOUT_CLEAN"
+		fi
+	else
+		NOCLEANUP=
+	fi
+	return 0
+}
+
+
+# return idx from sql for base
+# args, e.g: -a amd64 -p FreeBSD -s 0 -t amd64 -v 12 [-b basename]
+get_baseidx()
+{
+	local arch platform stable target_arch ver idx basename
+
+	while getopts "a:b:p:s:t:v:" opt; do
+		case "${opt}" in
+			a) arch="${OPTARG}" ;;
+			a) basename="${OPTARG}" ;;
+			p) platform="${OPTARG}" ;;
+			s) stable="${OPTARG}" ;;
+			t) target_arch="${OPTARG}" ;;
+			v) ver="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${basename}" ] && basename="0"
+
+	idx=$( cbsdsqlro local SELECT idx FROM bsdbase WHERE platform=\"${platform}\" AND arch=\"${arch}\" AND targetarch=\"${target_arch}\" AND ver=\"${ver}\" AND stable=\"${stable}\" AND basename=\"${basename}\" 2>/dev/null )
+	echo "${idx}"
+}
+
+# return idx from sql for kernel
+# args, e.g: -a amd64 -p FreeBSD -s 0 -t amd64 -v 12
+get_kernelidx()
+{
+	local arch platform stable target_arch ver idx
+
+	while getopts "a:p:s:t:v:" opt; do
+		case "${opt}" in
+			a) arch="${OPTARG}" ;;
+			p) platform="${OPTARG}" ;;
+			s) stable="${OPTARG}" ;;
+			t) target_arch="${OPTARG}" ;;
+			v) ver="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	idx=$( cbsdsqlro local SELECT idx FROM bsdkernel WHERE platform=\"${platform}\" AND arch=\"${arch}\" AND targetarch=\"${target_arch}\" AND ver=\"${ver}\" AND stable=\"${stable}\" 2>/dev/null )
+	echo "${idx}"
+}
+
+
+
+# return idx from sql for src
+get_srcidx()
+{
+	cbsdsqlro local SELECT idx FROM bsdsrc WHERE platform=\"${platform}\" AND ver=\"${ver}\" 2>/dev/null
+}
+
+
+# update sql for src
+# Require: $platform, $ver, ( $SCM_REV - opt )
+register_src()
+{
+	[ -z "${platform}" ] && echo "register_src: empty platform" && return 0
+	[ -z "${ver}" ] && echo "register_src: empty ver" && return 0
+	[ -z "${SCM_REV}" ] && SCM_REV="unknown"
+	[ -z "${SCM_URL}" ] && SCM_URL="unknown"
+
+	local idx=$( get_srcidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsqlrw local "UPDATE bsdsrc SET rev=\"${SCM_REV}\",date=datetime('now','localtime'),source=\"${SCM_URL}\" WHERE idx=\"${idx}\""
+		local dt="$( cbsdsqlro local SELECT date FROM bsdsrc WHERE rev=\"${SCM_REV}\" AND idx=\"${idx}\" )"
+		date=$( ${DATE_CMD} -j -f "%Y-%m-%d %H:%M:%S" "${dt}" "+%s" )
+	else
+		cbsdsqlrw local "INSERT INTO bsdsrc ( platform,name,ver,rev,source ) VALUES ( \"${platform}\", \"src\", \"${ver}\", \"${SCM_REV}\", \"${SCM_URL}\" )"
+	fi
+
+}
+
+# remove sql records for src
+# Require: $platform, $ver, $SCM_REV
+unregister_src()
+{
+	[ -z "${platform}" ] && echo "unregister_src: empty platform" && return 0
+	[ -z "${ver}" ] && echo "unregister_src: empty ver" && return 0
+	[ -z "${SCM_REV}" ] && echo "unregister_src: empty SCM_REV" && return 0
+
+	local idx=$( get_srcidx )
+
+	if [ -n "${idx}" ]; then
+		cbsdsqlrw local "DELETE FROM bsdsrc WHERE idx=\"${idx}\""
+	fi
+}
+
+source_status_is_maintenance_soft()
+{
+	cbsdsqlrw local "UPDATE bsdsrc SET status='1' WHERE name=\"src\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+source_status_is_maintenance_hard()
+{
+	cbsdsqlrw local "UPDATE bsdsrc SET status='2' WHERE name=\"base\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+source_status_is_normal()
+{
+	cbsdsqlrw local "UPDATE bsdsrc SET status='0' WHERE platform=\"${platform}\" AND name=\"src\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+base_status_is_maintenance_soft()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdbase SET status='1' WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+base_status_is_maintenance_hard()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdbase SET status='2' WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+base_status_is_normal()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdbase SET status='0' WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+kernel_status_is_maintenance_soft()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='1' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+kernel_status_is_maintenance_hard()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='2' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+kernel_status_is_normal()
+{
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+	cbsdsqlrw local "UPDATE bsdkernel SET status='0' WHERE platform=\"${platform}\" AND name=\"kernel\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\""
+}
+
+
+base_status()
+{
+	local _ret
+
+	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
+
+	_ret=$( cbsdsqlro local "SELECT status FROM bsdbase WHERE platform=\"${platform}\" AND name=\"base\" AND arch=\"${arch}\" AND targetarch=\"${TARGET_ARCH}\" AND ver=\"${ver}\" AND stable=\"${stable}\"" )
+	[ -z "${_ret}" ] && _ret=0
+	return ${_ret}
+}
+
+cleanup_bases()
+{
+	set +o errexit		# restore default behaviour
+
+	if [ -x "${BASE_DIR}/bin/sh" ]; then
+		base_status_is_normal
+	else
+		unregister_base
+	fi
+	[ -r "${BASE_DIR_LOCKFILE}" ] && ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
+}
+
+cleanup_kernels()
+{
+	set +o errexit		# restore default behaviour
+
+	if [ -r "${KERNEL_DIR}/boot/kernel/kernel" ]; then
+		kernel_status_is_normal
+	else
+		unregister_kernel
+	fi
+
+	[ -r "${BASE_DIR_LOCKFILE}" ] && ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
+}
+
+cleanup_srcs()
+{
+	set +o errexit		# restore default behaviour
+
+	if [ -r "${srcdir}/src_${ver}" ]; then
+		source_status_is_normal
+	else
+		unregister_source
+	fi
+
+	#[ -r "${BASE_DIR_LOCKFILE}" ] && ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
+}
+
+###
+fi

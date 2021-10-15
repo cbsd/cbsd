@@ -3,13 +3,14 @@
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey \
-ci_ip4_addr ci_gw4 sysrc"
+ci_ip4_addr ci_gw4 sysrc from"
 # allow all jail settings
 . ${distsharedir}/jail-arg
+[ "${racct}" = "1" ] && . ${distsharedir}/rctl.conf
 JAIL_ARGS="${JARG}"
 MYOPTARG="${MYOPTARG} ${JAIL_ARGS}"
 MYDESC="Create jail from config file or args"
-ADDHELP="\
+ADDHELP="
 
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -25,6 +26,8 @@ e.g: ~cbsd/etc/defaults/jail-freebsd-default.conf which can be overwrited via
 You can create your own profile and specify it when creating the container.
 
 If jail exist and autorestart=1 - jset will be used to update params.
+ If the container is running and any parameter has been changed, the container will be restarted.
+ Mostly useful for management system (Ansible/Puppet/Salt) which generate the container template.
 
 Alternative methods of creating jail:
   CBSDfile, 'cbsd jconstruct', 'cbsd jconstruct-tui'.
@@ -35,6 +38,8 @@ ${H3_COLOR}Options${N0_COLOR}:
                    string itself, e.g: ci_user_pubkey=\"ssh-ed25519 XXXXX root@my.domain\".
                    This options will customize /root/.ssh/authorized_keys in jail.
  ${N2_COLOR}ci_gw4=${N0_COLOR}         - 0,IP to disable: manage/set defaultrouter= settings in jail rc.conf (for vnet).
+ ${N2_COLOR}etcupdate_init=${N0_COLOR} - 1(enable),0(disable) for etcupdate init (overwrite config values).
+ ${N2_COLOR}from=${N0_COLOR}           - <url> or MD5 of image to create jail from CBSD image.
  ${N2_COLOR}inter=${N0_COLOR}          - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}customskel=${N0_COLOR}     - <path>: additional skel directory applyed above jail structrure.
  ${N2_COLOR}fstablocal=${N0_COLOR}     - <path>: additional fstab file stored as fstab.local.
@@ -46,6 +51,12 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}quiet=${N0_COLOR}          - 0,1: be quiet, dont output verbose message.
  ${N2_COLOR}zfs_encryption=${N0_COLOR} - 0,1: enable native ZFS encryption.
 
+Additional args when RACCT enabled: ${RCTL} ${RCTL_EXTRA}
+
+ ${N2_COLOR}cpu=${N0_COLOR}            - limit number of CPU cores, e.g: 1
+ ${N2_COLOR}fsquota=${N0_COLOR}        - set ZFS quota, e.g: 10g
+ ${N2_COLOR}vmemoryuse=${N0_COLOR}     - limit memory use, e.g: 512m
+
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd jcreate jname=test runasap=1 zfs_encryption=1
@@ -56,18 +67,22 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jcreate jname=cent jprofile=centos_7 allow_raw_sockets=1
  # cbsd jcreate jname=riscv pkg_bootstrap=0 arch=riscv emulator=\"qemu-riscv64-static\" exec_start=\"/bin/qemu-riscv64-static /bin/sh /etc/rc\" exec_stop=\"/bin/qemu-riscv64-static /bin/sh /etc/rc.shutdown\"
  # cbsd jcreate jname=xx ver=13.0 vnet=1 sysrc=\"ifconfig_eth0+='mtu 1450' inetd_enable=YES\"
+ # cbsd jcreate jname=vmagent from=https://dl.bsdstore.ru/img/amd64/amd64/13.0/vmagent/vmagent.img pkg_bootstrap=0 runasap=1
+ # cbsd jcreate jname=myapp from=fbbb4e8707f6794008cc6e8ed0d86082 runasap=1
+ # cbsd jcreate jname=small cpu=1 fsquota=10g vmemoryuse=512m runasap=1
 
 ${H3_COLOR}See also${N0_COLOR}:
 
  cbsd jconstruct --help
  cbsd jconstruct-tui --help
  cbsd up --help
+ cbsd images --help
 
 "
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate"
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${system}
 . ${tools}
 . ${mdtools}
@@ -75,6 +90,7 @@ EXTHELP="wf_jcreate"
 
 ci_user_pubkey=
 sysrc=
+from=
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -91,6 +107,7 @@ readconf jcreate.conf
 if [ -z "${jconf}" ]; then
 	jconf=$( ${MKTEMP_CMD} )
 	export CBSD_INIT_SAVE2FILE=${jconf}			# save args and generate jconf
+	[ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 	[ -z "${removejconf}" ] && removejconf=1
 	${SYSRC_CMD} -qf ${jconf} removejconf="${removejconf}" > /dev/null 2>&1
 	. ${cbsdinit}
@@ -100,8 +117,8 @@ fi
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}please set for jcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -z "${autorestart}" ] && autorestart=0
 [ -z "${quiet}" ] && quiet=0
-[ -n "${etcupdate_init}" ] && oetcupdate_init="${etcupdate_init}"
-[ -n "${removejconf}" ] && oremovejconf="${removejconf}"
+#[ -n "${etcupdate_init}" ] && oetcupdate_init="${etcupdate_init}"
+#[ -n "${removejconf}" ] && oremovejconf="${removejconf}"
 
 mkfstab()
 {
@@ -151,7 +168,7 @@ install_and_apply_helpers()
 }
 
 ### MAIN
-. ${distdir}/time.subr
+. ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
 
 [ -n "${delpkglist}" ] && odelpkglist="${delpkglist}"
@@ -175,8 +192,8 @@ readconf jail-freebsd-default.conf
 # set default nice from rctl_nice
 [ -n "${rctl_nice}" ] && nice="${rctl_nice}"
 
-. ${distdir}/universe.subr
-. ${distdir}/freebsd_world.subr
+. ${subrdir}/universe.subr
+. ${subrdir}/freebsd_world.subr
 
 [ ! -f "${jconf}" ] && err 1 "${N1_COLOR}no such jconf file${N0_COLOR}"
 
@@ -196,6 +213,99 @@ if [ ${removejconf} = "1" ]; then
 	trap "${RM_CMD} -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM EXIT
 else
 	trap "${RM_CMD} -f ${temprcconf}" HUP INT ABRT BUS TERM EXIT
+fi
+
+# todo: when 'from' exist: use temprcconf settings to jset fromfile to re-configure default image options
+[ -n "${ofrom}" ] && from="${ofrom}"
+
+# todo: there is a lot of duplicate code (for example, create_fs/from_zfssnap): cleaning required.
+if [ -n "${from}" ]; then
+	. ${temprcconf}
+	jstatus jname=${jname} > /dev/null 2>&1
+	[ $? -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	[ ! -r ${dbdir}/images.sqlite ] && ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
+
+	from_md5=
+
+	# is from=MD5?
+	_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${from}\"" 2>/dev/null )
+	if [ -n "${_res}" ]; then
+		from_md5="${from}"
+	else
+		# second chance - is md5(from) exist?
+		if [ -z "${_res}" ]; then
+			tmpfrom=$( ${MD5_CMD} -qs "${from}" )
+			_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${tmpfrom}\"" 2>/dev/null )
+			[ -n "${_res}" ] && from_md5="${tmpfrom}"
+			unset tmpfrom
+		fi
+	fi
+
+	jail_created=0
+
+	if [ -z "${from_md5}" ]; then
+		# cbsd image register ...
+		images mode=register path="${from}"
+		ret=$?
+		if [ ${ret} -ne 0 ]; then
+			stderr 1 "${N1_COLOR}${CBSD_APP}: images failed: cbsd images mode=register from=\"${N2_COLOR}\${from}${N1_COLOR}\"${N0_COLOR}"
+		fi
+		tmpfrom=$( ${MD5_CMD} -qs "${from}" )
+		_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5=\"${tmpfrom}\"" 2>/dev/null )
+		[ -z "${_res}" ] && stderr 1 "${N1_COLOR}${CBSD_APP}: images failed: cbsd images mode=register from=\"${N2_COLOR}\${from}${N1_COLOR}\"${N0_COLOR}"
+		from_md5="${tmpfrom}"
+		unset tmpfrom
+	fi
+
+	# first of all: check zfs dataset existance for image
+	if [ ${zfsfeat} -eq 1 ]; then
+		. ${subrdir}/zfs.subr
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+		_zfssrc="${DATA}/${from_md5}"
+		_zfssrc_snap="${DATA}/${from_md5}@start"
+
+		${ZFS_CMD} list -t snapshot ${_zfsssrc_snap} > /dev/null 2>&1
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			#echo "Create snapshot..."
+			${ZFS_CMD} snapshot ${_zfssrc}@start
+			${ZFS_CMD} list -t snapshot ${_zfssrc_snap} > /dev/null 2>&1
+			_ret=$?
+			[ ${_ret} -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP}: unable to create snapshot: ${N2_COLOR}${ZFS_CMD} list -t snapshot ${_zfssrc_snap}${N0_COLOR}"
+		fi
+
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}create jail from image snapshot: ${N2_COLOR}${_zfssrc_snap}${N0_COLOR}" 1>&2
+		jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}"
+		jail_created=1
+	fi
+
+	#check for jail exist
+	jstatus jname=${jname} > /dev/null 2>&1
+	[ $? -ne 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to create jail ${jname} from: ${N2_COLOR}${from}${N0_COLOR}"
+
+	. ${temprcconf}
+
+	for i in ${MYOPTARG}; do
+
+		case "${i}" in
+			jname|from|removejconf)
+				continue
+				;;
+		esac
+
+		eval T="\$o${i}"
+
+		if [ -n "${T}" ]; then
+#			echo "jset jname=${jname} ${i}=\"${T}\""
+			jset jname=${jname} ${i}="${T}"
+		fi
+	done
+
+	# autostart asap upon jail created
+	[ "${runasap}" = "1" ] && jstart jname=${jname} quiet=${quiet}
+
+	exit 0
 fi
 
 . ${temprcconf}
@@ -246,9 +356,9 @@ if [ -n "${tpl_pkglist}" ]; then
 fi
 
 #re-init rctl_ vars
-[ -n "${fsquota}" ] && rctl_fsquota="${fsquota}"
+#[ -n "${fsquota}" ] && rctl_fsquota="${fsquota}"
 
-. ${buildconf}
+. ${subrdir}/build.subr
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}No such jname variable${N0_COLOR}"
 
@@ -395,7 +505,7 @@ mkfstab
 case "${ip4_addr}" in
 	[Dd][Hh][Cc][Pp])
 		ip4_addr=$( dhcpd )
-		[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
+		[ $? -eq 2 ] && log_err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}${jname}: no free IP address for DHCP in 'nodeippool', please check: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
 		${SYSRC_CMD} -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
 		# CBSD QUEUE
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -404,7 +514,7 @@ case "${ip4_addr}" in
 		;;
 	[Dd][Hh][Cc][Pp][vV]6)
 		ip4_addr=$( dhcpdv6 )
-		[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCPv6 in nodeippool${N0_COLOR}"
+		[ $? -eq 2 ] && log_err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}${jname}: no free IP address for DHCPv6 in 'nodeip6pool', please check: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
 		${SYSRC_CMD} -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
 		# CBSD QUEUE
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -435,7 +545,7 @@ jregister jname=${jname} mode=new progress=3
 res=$?
 
 if [ ${res} -eq 0 ]; then
-	. ${distdir}/jcreate.subr
+	. ${subrdir}/jcreate.subr
 
 	jswmode jname=${jname} mode=maintenance comment='Jail Initialization...'
 
@@ -520,9 +630,9 @@ fi
 
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
-	eval _val="\$rctl_${i}"
+	eval _val="\$${i}"
 	[ -z "{_val}" ] && continue
-	#echo "NICE : $i : jrctl jname=${jname} mode=set ${i}=${_val}"
+	#echo "INIT RCTL: jrctl jname=${jname} mode=set ${i}=${_val}"
 	jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
 done
 
@@ -536,18 +646,21 @@ if [ -n "${ci_user_pubkey}" ]; then
 	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, enable service: ${N2_COLOR}sshd${N0_COLOR}" 2>&1
 	${ECHO} "${N1_COLOR}${CBSD_APP}pubkey exist, adjust via jail rc.conf: ${N2_COLOR}PermitRootLogin=without-password${N0_COLOR}" 2>&1
 	${SYSRC_CMD} -qf ${data}/etc/rc.conf sshd_flags+=" -oPermitRootLogin=without-password" sshd_enable=YES > /dev/null 2>&1
-	. ${distdir}/settings-tui-virtual.subr  # for is_valid_ssh_key
+	. ${subrdir}/settings-tui-virtual.subr  # for is_valid_ssh_key
 	# check for injection/strip..
 	prefix=$( substr --pos=0 --len=1 --str="${ci_user_pubkey}" )
-        if [ "${prefix}" = "/" ]; then
-    		# its full/realpath to file
+	# todo: check on ealry stage?
+	if [ "${prefix}" = "/" ]; then
+		# its full/realpath to file
 		if [ -r "${ci_user_pubkey}" ]; then
 			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
 			if ! is_valid_ssh_key "${_keytest}"; then
+				jdestroy jname=${jname} || true
 				${ECHO} "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
 				err 1 "${N1_COLOR}found: [${N2_COLOR}${_keytest}${N1_COLOR}]${N0_COLOR}"
 			fi
 		else
+			jdestroy jname=${jname} || true
 			err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: keyfile not found: ${N2_COLOR}${ci_user_pubkey}${N0_COLOR}"
 		fi
 	else
@@ -556,26 +669,29 @@ if [ -n "${ci_user_pubkey}" ]; then
 		if [ $? -ne 0 ]; then
 			# not path, check syntax
 			if ! is_valid_ssh_key "${ci_user_pubkey}"; then
+				jdestroy jname=${jname} || true
 				err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key: [${ci_user_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
 			else
 				_keytest="${ci_user_pubkey}"
 			fi
 		else
-	    		# get realpath: lookup current dir and $workdir
-    			if [ -r "${CBSD_PWD}/${ci_user_pubkey}" ]; then
-    				ci_user_pubkey=$( ${REALPATH_CMD} ${CBSD_PWD}/${ci_user_pubkey} )
-	    		elif [ -r "${workdir}/${ci_user_pubkey}" ]; then
-    				ci_user_pubkey=$( ${REALPATH_CMD} ${workdir}/${ci_user_pubkey} )
-    			else
+			# get realpath: lookup current dir and $workdir
+			if [ -r "${CBSD_PWD}/${ci_user_pubkey}" ]; then
+				ci_user_pubkey=$( ${REALPATH_CMD} ${CBSD_PWD}/${ci_user_pubkey} )
+			elif [ -r "${workdir}/${ci_user_pubkey}" ]; then
+				ci_user_pubkey=$( ${REALPATH_CMD} ${workdir}/${ci_user_pubkey} )
+			else
+				jdestroy jname=${jname} || true
 				err 1 "${N1_COLOR}${CBSD_APP}: cloudinit: relative keyfile not found: ${N2_COLOR}${ci_user_pubkey} (in $CBSD_PWD or $workdir)"
-    			fi
+			fi
 			_keytest=$( ${GREP_CMD} -v '#' ${ci_user_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
 			if ! is_valid_ssh_key "${_keytest}"; then
+				jdestroy jname=${jname} || true
 				${ECHO} "${N1_COLOR}${CBSD_APP}: cloudinit: invalid ssh key from ${ci_user_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa${N0_COLOR}"
 				err 1 "${N1_COLOR}found: [${N2_COLOR}${_keytest}${N1_COLOR}]${N0_COLOR}"
 			fi
-    		fi
-    	fi
+		fi
+	fi
 	[ ! -d ${data}/root/.ssh ] && ${MKDIR_CMD} -m 0700 ${data}/root/.ssh
 	echo "${_keytest}" >> ${data}/root/.ssh/authorized_keys
 	${CHMOD_CMD} 0644 ${data}/root/.ssh/authorized_keys
@@ -638,6 +754,7 @@ export_jail_data_for_external_hook
 external_exec_master_script "master_create.d"
 external_exec_script -s create.d -a
 
+[ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 if [ ${removejconf} = "1" ]; then
 	${RM_CMD} -f ${temprcconf} ${jconf} > /dev/null 2>&1
 fi

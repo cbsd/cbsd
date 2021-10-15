@@ -1,0 +1,115 @@
+#!/usr/local/bin/cbsd
+#v12.0.4
+MYARG=""
+MYOPTARG="alljails shownode display node header mode jname"
+MYDESC="Show disk images from database"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="
+header=0 don't print header
+display= list by comma for column. Default: display=md5,name,path,source,emulator,size,created"
+
+. ${subrdir}/nc.subr
+. ${system}
+
+. ${cbsdinit}
+. ${subrdir}/bhyve.subr
+. ${subrdir}/virtual.subr
+[ -z "${display}" ] && display="md5,name,path,source,emulator,size,created"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i _val dsk_size
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=""
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ "${_i}" = "dsk_size" ]; then
+			if [ "${_val}" = "0" ]; then
+				# no size in table? retrieve and update it
+				populate_dsk_size
+				_val="${dsk_size}"			# already in human
+				# update values in table
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+			else
+				# convert ${dsk_bsize} for human
+				if conv2human "${dsk_bsize}"; then
+					_val=${convval}
+				else
+					populate_dsk_size
+					_val="${dsk_size}"
+				fi
+			fi
+		fi
+
+		if [ -z "${_status}" ]; then
+			_status="${N0_COLOR}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+		[ ! -r ${sqlfile}.sqlite ] && exit 1
+
+	else
+		sqlfile="images"
+	fi
+
+	_status=
+	_sql="SELECT md5,name,path,source,emulator,size,created FROM images"
+
+	cbsdsqlro ${sqlfile} ${_sql} | while read md5 name path source emulator size created; do
+		created=$( echo ${created} | ${TR_CMD} " " "_" )
+
+		if ! is_number ${size}; then
+			if conv2human "${size}"; then
+				size=${convval}
+			fi
+		fi
+
+		populate_output_data
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
+	done
+}
+
+show_images()
+{
+	show_header
+	show_jaildata_from_sql
+}
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_images | ${COLUMN_CMD} -t
+exit 0

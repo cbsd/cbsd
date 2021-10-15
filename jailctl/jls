@@ -4,22 +4,50 @@ CBSDMODULE="jail"
 MYARG=""
 MYOPTARG="alljails display header hidden node order shownode"
 MYDESC="List and show status of jails"
-ADDHELP="\
- alljails=1 - (0 or 1): force to display foreign/remote resources\n\
-  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
- display= Comma separated list of columns to display. Default: jid,jname,ip4_addr,host_hostname,path,status\n\
-  If sqlrepica and node available: nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port\n\
-  Additional: real_ip4,etcver\n\
- header=0 Don't print header information.\n\
- hidden= show hidden env as well? 1 (default) - show, 0 - skipp\n\
- node= List only jails of the specified node.\n\
- order= asc (default) or desc\n\
- shownode=1 - Show node name(s) for listed jails.\n\
+[ "${racct}" = "1" ] && . ${distsharedir}/rctl.conf
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+Yhe script shows the table of environments. You can adjust the content of the column 
+through the display= parameter. 
+In addition, you can add your own parameters for the output and external sources 
+for this data.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR}  - (0 or 1): force to display foreign/remote resources. When 
+              sqlreplica=1 and node available, alljails sets to 1 automatically;
+ ${N2_COLOR}display=${N0_COLOR}   - comma separated list of columns to display.
+              Default value: jid,jname,ip4_addr,host_hostname,path,status
+              When sqlrepica and node available:
+                nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc_port
+              Additional field: real_ip4,etcver
+              Default display= setting can be reassigned globally via ~cbsd/jls.conf;
+ ${N2_COLOR}header=${N0_COLOR}    - don't print header info;
+ ${N2_COLOR}hidden=${N0_COLOR}    - show hidden env as well? 1 (default) - show, 0 - skip;
+ ${N2_COLOR}node=${N0_COLOR}      - list only jails of the specified node;
+ ${N2_COLOR}order=${N0_COLOR}     - sort older, 'asc' (default) or 'desc';
+ ${N2_COLOR}shownode=1${N0_COLOR} - show node name(s) for listed jails;
+
+When RCTL enabled, additional field available: ${RCTL} ${RCTL_EXTRA}
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jls
+ # cbsd jls header=0 display=jname,status,ip4_addr,astart
+ # cbsd jls display=jname,cpu,vmemoryuse,fsquota
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jget --help
+ cat ~cbsd/etc/defaults/jls.conf
+
 "
 EXTHELP="wf_jls"
 MANPAGE="man cbsd-jls"
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
 . ${nodes}
@@ -115,6 +143,10 @@ populate_output_data()
 		fi
 	fi
 
+	# strip extra spaces + translate to "param1|param2|param3"
+	#_rctl_params=$( echo "${RCTL} ${RCTL_EXTRA} " | ${SED_CMD} 's/.$//' | ${TR_CMD} " " "|" )
+	#echo "PARA[${_rctl_params}]" >> /tmp/ap
+
 	#populate values for in output string
 	for _i in ${mydisplay}; do
 
@@ -123,7 +155,7 @@ populate_output_data()
 
 		# search for custom column output helper first
 		if [ -x "${jailsysdir}/${jname}/facts.d/${_i}" ]; then
-			. ${distdir}/jcreate.subr		# for export_jail_data_for_external_hook
+			. ${subrdir}/jcreate.subr		# for export_jail_data_for_external_hook
 			geniplist ${ip4_addr}			# for ipvX_first_public-like vars
 			export_jail_data_for_external_hook
 			_val=$( ${jailsysdir}/${jname}/facts.d/${_i} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
@@ -134,7 +166,11 @@ populate_output_data()
 
 			case ${_i} in
 				ip4_addr)
-					_val=$( is_special_ip ${_val} )
+					if [ "${_val}" = "\-" ]; then
+						_val="0"
+					else
+						_val=$( is_special_ip ${_val} )
+					fi
 					;;
 				real_ip4)
 					# real_ip is dynamic/pseudo field,
@@ -171,6 +207,13 @@ populate_output_data()
 						[ -n "${etcupdate_current_ver}" ] && _val=${etcupdate_current_ver}
 					fi
 					;;
+				datasize|stacksize|coredumpsize|memoryuse|memorylocked|maxproc|openfiles|vmemoryuse|pseudoterminals|swapuse|nthr|msgqqueued|msgqsize|nmsgq|nsem|nsemop|nshm|shmsize|wallclock|pcpu|readbps|writebps|readiops|writeiops|cpu|fsquota|nice|bw)
+					# RACCT
+					if [ -r ${jailsysdir}/${jname}/helpers/jrctl.sqlite ]; then
+						#_tmp=${_i##*rctl_}
+						_val=$( cbsdsqlro ${jailsysdir}/${jname}/helpers/jrctl.sqlite "SELECT cur FROM forms WHERE param=\"${_i}\" LIMIT 1"; )
+						[ -z "${_val}" ] && _val="\-"
+					fi
 			esac
 		fi
 		[ -z "${_val}" ] && _val="\-"
@@ -194,7 +237,7 @@ show_jaildata_from_sql()
 
 	cbsdsqlro ${sqlfile} SELECT jname,hidden FROM jails WHERE emulator=\"jail\" OR emulator=\"qemu-arm-static\" OR emulator=\"qemu-mips64-static\" OR emulator=\"qemu-aarch64-static\" OR emulator=\"qemu-ppc64-static\" OR emulator=\"qemu-riscv64-static\" ORDER BY jname ${order} | while read jname hidden; do
 		_status=""
-		. ${jrcconf}
+		. ${subrdir}/rcconf.subr
 
 		# skip hidden env when show_hidden=0
 		[ ${hidden} -eq 1 -a ${show_hidden} -eq 0 ] && continue

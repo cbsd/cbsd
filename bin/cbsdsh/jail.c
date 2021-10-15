@@ -1,7 +1,79 @@
 #include <sys/param.h>
 #include <sys/jail.h>
 
+#ifdef __DragonFly__
+
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <err.h>
+
+#include "output.h"
+
+int
+cbsdjlscmd(int argc, char **argv)
+{
+        size_t len;
+        char *jls; /* Jail list */
+        char *curpos;
+        char *nextpos;
+
+        if (sysctlbyname("jail.list", NULL, &len, NULL, 0) == -1)
+                err(1, "sysctlbyname(): jail.list");
+retry:
+        if (len == 0)
+                return(0);
+
+        jls = malloc(len);
+        if (jls == NULL)
+                err(1, "malloc failed");
+
+        if (sysctlbyname("jail.list", jls, &len, NULL, 0) == -1) {
+                if (errno == ENOMEM) {
+                        free(jls);
+                        goto retry;
+                }
+                err(1, "sysctlbyname(): jail.list");
+        }
+//      printf("JID\tHostname\tPath\t\tIPs\n");
+        curpos = jls;
+        while (curpos) {
+                char *str_jid;
+                char *str_host;
+                char *str_path;
+                char *str_ips;
+                char *jname;
+                nextpos = strchr(curpos, '\n');
+                if (nextpos)
+                        *nextpos++ = 0;
+                str_jid = strtok(curpos, " ");
+                str_host = strtok(NULL, " ");
+                str_path = strtok(NULL, " ");
+                str_ips = strtok(NULL, "\n");
+
+                jname = strrchr(str_path, '/') + 1;
+
+		//use vars to elimiate clang/gcc warning (-Wunused-but-set-variable)
+		free(str_host);
+		free(str_ips);
+
+		out1fmt("%s %s\n",str_jid, jname);
+
+//                printf("%s %s\n",
+//                        str_jid,
+//                        jname );
+                curpos = nextpos;
+        }
+        free(jls);
+	return 0;
+}
+// no jail.h
+#else
 #include <jail.h>
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,16 +100,17 @@ static int add_param(const char *name, void *value, size_t valuelen,
 		struct jailparam *source, unsigned flags);
 static int sort_param(const void *a, const void *b);
 static int print_jail(int pflags, int jflags);
+static int print_jids(int pflags, int jflags);
 
 int
 cbsdjlscmd(int argc, char **argv)
 {
 	char *ep, *jname;
-	int c, jflags, jid, lastjid, pflags;
+	int c, jflags, jid, lastjid, pflags, jid_only=0;
 
 	jname = NULL;
 	pflags = jflags = jid = 0;
-	while ((c = getopt(argc, argv, "adj:hNnqsv")) >= 0)
+	while ((c = getopt(argc, argv, "adj:hNnqsvq")) >= 0)
 		switch (c) {
 		case 'a':
 		case 'd':
@@ -69,20 +142,33 @@ cbsdjlscmd(int argc, char **argv)
 			    ~(PRINT_HEADER | PRINT_NAMEVAL | PRINT_SKIP)) |
 			    PRINT_VERBOSE;
 			break;
+		case 'q':
+			jid_only=1;
+			break;
 		default:
 			out1fmt("usage: cbsdjls [-dhNnqv] [-j jail] [param ...]");
 			return 1;
 		}
 
 	/* Add the parameters to print. */
-	add_param("jid", NULL, (size_t)0, NULL, JP_USER);
-	add_param("name", NULL, (size_t)0, NULL, JP_USER);
-	add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+	if ( jid_only == 1 ) {
+		add_param("jid", NULL, (size_t)0, NULL, JP_USER);
+		add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+		/* Fetch the jail(s) and print the parameters. */
+		for (lastjid = 0; (lastjid = print_jids(pflags, jflags)) >= 0; ) {
+		}
 
-	/* Fetch the jail(s) and print the parameters. */
-	for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
+	} else {
+		add_param("jid", NULL, (size_t)0, NULL, JP_USER);
+		add_param("name", NULL, (size_t)0, NULL, JP_USER);
+		add_param("lastjid", &lastjid, sizeof(lastjid), NULL, 0);
+
+		/* Fetch the jail(s) and print the parameters. */
+		for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
+		}
 
 	}
+
 
 	return 0;
 
@@ -195,3 +281,15 @@ static int print_jail(int pflags, int jflags) {
 
 	return (jid);
 }
+
+static int print_jids(int pflags, int jflags) {
+	int jid = jailparam_get(params, nparams, jflags);
+
+	if (jid < 0) return jid;
+	out1fmt("%d ",*(int *)params[0].jp_value);
+
+	return (jid);
+}
+
+#endif
+// DFLY

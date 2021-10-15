@@ -18,7 +18,7 @@ DHCPD_CONF="/root/etc/dhcpd.conf"
 
 set -e
 . ${distdir}/cbsd.conf
-. ${subr}
+. ${subrdir}/nc.subr
 . ${cbsdinit}
 set +e
 

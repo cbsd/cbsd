@@ -1,0 +1,241 @@
+#!/usr/local/bin/cbsd
+#v13.0.1
+globalconf="${distdir}/cbsd.conf";
+MYARG=""
+MYOPTARG="jname remote inter"
+MYDESC="Exec login into jail"
+ADDHELP="\
+  If you are in the CBSDfile directory, these environments will always have priority\n\
+"
+EXTHELP="wf_xlogin"
+CBSDMODULE="xen"
+
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+cbsd_api=0
+. ${cbsdinit}
+
+
+try_remote()
+{
+	local RHST
+
+	. ${subrdir}/rrcconf.subr
+	. ${subrdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	export_bhyve_data_for_external_hook
+
+	[ "${remote}" = "1" ] && err 1 "${N1_COLOR}No such domain${N0_COLOR}"
+	RHST=$( xwhereis ${jname} | ${HEAD_CMD} -n1 )
+	[ -z "${RHST}" ] && err 1 "No such domain for login"
+
+	# we don't need for interactive when come with remote=2 from select_jail_by_list
+	if [ "${remote}" != "2" -a "${always_rlogin}" = "0" ]; then
+		getyesno "Found domain on remote node: ${RHST}. Try to login?"
+		[ $? -eq 1 -o $? -eq 3 ] && err 1 "No such domains for login"
+	fi
+
+	case "${login_cmd}" in
+		internal)
+			${ECHO} "${N1_COLOR}Exec xlogin internal on remote node: ${N2_COLOR}${RHST}${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: executing internal xlogin: rexe node=${RHST} /usr/local/bin/cbsd xlogin src_session=${nodename} jname=${jname} remote=1
+			rexe node=${RHST} /usr/local/bin/cbsd xlogin src_session=${nodename} jname=${jname} remote=1
+			;;
+		*)
+			# re-read custom
+			readconf xlogin.conf > /dev/null 2>&1
+			cbsdlogger NOTICE ${CBSD_APP}: executing custom xlogin: ${login_cmd}
+			login_custom
+			;;
+	esac
+	err 0 ""
+}
+
+login_internal()
+{
+	local CBSDPATH="${PATH}"
+
+	# reset CBSD PATH
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+	local TMUX_CMD=$( which tmux )
+
+	[ -z "${TMUX_CMD}" ] && err 1 "${N1_COLOR}no such tmux${N0_COLOR}"
+
+	if [ "${vm_efi}" != "none" ]; then
+		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
+			echo " *** VM booted in VNC mode. ***"
+			${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${xen_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
+			if ! getyesno "Do you want to attach into UEFI console anyway?"; then
+				exit 0
+			fi
+		else
+			echo " *** VM booted in VNC mode. ***"
+			echo "But no ${jailsysdir}/${jname}/vnc_port file"
+			if ! getyesno "Do you want to attach into UEFI console anyway?"; then
+				exit 0
+			fi
+		fi
+	fi
+
+	export TERM=xterm
+	${TMUX_CMD} -Lcbsd-"${jname}" attach-session
+}
+
+login_custom()
+{
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+	. ${subrdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	export_bhyve_data_for_external_hook
+
+	# re-read custom
+	readconf xlogin.conf > /dev/null 2>&1
+
+	${ECHO} "${N1_COLOR}Custom login command: ${N2_COLOR}${login_cmd}${N0_COLOR}"
+	exec /bin/sh -c "${login_cmd}"
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
+}
+
+# jname must be set
+jname_xlogin()
+{
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && try_remote
+
+	[ "${emulator}" != "xen" ] && err 1 "${N1_COLOR}Not in xen mode${N0_COLOR}"
+	[ "${baserw}" = "1" ] && path=${data}
+	[ ${jid} -eq 0 ] && err 1 "Not running"
+
+	readconf xlogin.conf
+
+	vm_efi=$( cbsdsqlro local "SELECT vm_efi FROM xen WHERE jname=\"${jname}\"" )
+	vnc_bind=$( cbsdsqlro local "SELECT xen_vnc_tcp_bind FROM xen WHERE jname=\"${jname}\"" )
+
+	if [ "${vm_efi}" != "none" ]; then
+		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
+			vm_port=$( ${CAT_CMD} ${jailsysdir}/${jname}/vnc_port )
+		else
+			vm_port="0"
+		fi
+	fi
+
+	cbsdlogger NOTICE ${CBSD_APP}: login into ${jname} via ${login_cmd} method
+
+	case "${login_cmd}" in
+		internal)
+			login_internal
+			;;
+		*)
+			login_custom
+			;;
+	esac
+}
+
+
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+	. ${Makefile}
+
+	all_xen_list=$( ${EGREP_CMD} '^xen_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#xen_##g )
+	[ -z "${all_xen_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no xen found${N0_COLOR}"
+	[ -z "${jname}" ] && jname=$1
+
+	if [ -n "${jname}" ]; then
+		found=0
+		for i in ${all_xen_list}; do
+			if [ "${i}" = "${jname}" ]; then
+				found=1
+				break
+			fi
+		done
+		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: no such xen: ${N2_COLOR}${jname}${N0_COLOR}"
+		all_xen_list="${jname}"
+	fi
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		# CBSDfile without API
+		for jname in ${all_xen_list}; do
+			${ECHO} "${N1_COLOR}exec xlogin to: ${N2_COLOR}${jname}${N0_COLOR}"
+			jname_xlogin
+		done
+		exit 0
+	fi
+else
+	cbsd_api=0
+fi
+
+if [ ${cbsd_api} -eq 1 ]; then
+	CURL_CMD=$( which curl )
+	JQ_CMD=$( which jq )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
+
+	for jname in ${all_xen_list}; do
+		[ -z "${jname}" ] && return 1
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error2: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			continue
+		fi
+
+		_ssh_len=$( strlen "${_ssh_string}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
+		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
+		fi
+		jexec_cmd="${SSH_CMD} -tt -oStrictHostKeyChecking=no -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+		echo "[debug] exec: $jexec_cmd"
+		${jexec_cmd}
+	done
+	exit 0
+fi
+
+emulator="xen"	# for jname_is_multiple
+jname_is_multiple	# import jail_list if jname is mask
+
+if [ -n "${jail_list}" ]; then
+	${ECHO} "${N1_COLOR}Found domains by mask: ${N2_COLOR}${jail_list}${N0_COLOR}"
+	for jname in ${jail_list}; do
+		${ECHO} "${N1_COLOR}exec xlogin to: ${N2_COLOR}${jname}${N0_COLOR}"
+		xlogin jname=${jname}
+	done
+	exit 0
+fi
+
+[ -z "${jname}" ] && jname=$1
+[ -z "${jname}" ] && select_jail_by_list -s "List of online domains" -a "On" -e xls -r ${sqlreplica}
+[ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify jname as argument${N0_COLOR}"
+[ -z "${remote}" ] && remote=0
+
+jname_xlogin
+
+exit 0

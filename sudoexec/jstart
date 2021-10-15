@@ -1,14 +1,38 @@
 #!/usr/local/bin/cbsd
 #v12.1.8
 MYARG=""
-MYOPTARG="jname inter quiet"
+MYOPTARG="delay jname inter quiet"
 MYDESC="Start jail"
-ADDHELP="inter=0 to prevent any questions and to accept answers by default\n\
-quiet= 0,1: be quiet, dont output verbose message\n"
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ Start the container.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}delay=${N0_COLOR} - <sec>, delay N secbefore start, mainly to smooth the astart,
+          default is: '0', no delay.
+ ${N2_COLOR}inter=${N0_COLOR} - set 1 to prevent any questions and to accept answers by default.
+ ${N2_COLOR}jname=${N0_COLOR} - target jail. If jail='*' or jail='pri*' then start all jails or
+          jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
+ ${N2_COLOR}quiet=${N0_COLOR} - 0,1: be quiet, dont output verbose message.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jstart
+ # cbsd jstart jname='memcach*'
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jstop --help
+
+"
+
 CBSDMODULE="jail"
 EXTHELP="wf_jstop_jstart"
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${tools}		# for select_jail_by_list
 
 readconf buildworld.conf
@@ -24,16 +48,36 @@ fi
 
 [ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
 
+delay=0
 . ${cbsdinit}
+
 . ${system}
-. ${distdir}/universe.subr
-. ${distdir}/ipfw.subr	# fwcounter
+. ${subrdir}/universe.subr
+. ${subrdir}/ipfw.subr	# fwcounter
 
 [ -z "${quiet}" ] && quiet=0
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
+
+# trim args from "$*"
+ARGS=
+for i in $*; do
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+
+	[ "${prefix6}" = "delay=" ] && shift && continue
+	[ "${prefix6}" = "jname=" ] && shift && continue
+	[ "${prefix6}" = "quiet=" ] && shift && continue
+	[ "${prefix6}" = "inter=" ] && shift && continue
+
+	if [ -n "${ARGS}" ]; then
+		ARGS="${ARGS} ${i}"
+	else
+		ARGS="${i}"
+	fi
+done
+
+[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
 
 # for external_exec-related command
-. ${distdir}/jcreate.subr
+. ${subrdir}/jcreate.subr
 
 my_name="jstart"
 
@@ -208,12 +252,12 @@ unset_changes_20140930()
 	fi
 }
 
-
 emulator="jail"	# for jname_is_multiple
 jname_is_multiple
 
 # MAIN for multiple jails
 if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+
 	# multiple astart always non interactive
 	export inter=0
 	# recursive
@@ -225,7 +269,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	for jname in ${JLIST}; do
 		[ "${jname}" = "inter=0" ] && continue
-		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname}
+		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
@@ -236,12 +280,10 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	err 0 "${N1_COLOR}Multiple jstart: ${N2_COLOR}done${N0_COLOR}"
 fi
 
-
 # MAIN
-. ${distdir}/time.subr
-st_time=$( ${DATE_CMD} +%s )
+. ${subrdir}/time.subr
 [ -z "${jname}" ] && jname=${1}
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 
 if [ $? -eq 1 ]; then
 	# remote start
@@ -263,6 +305,16 @@ if [ $? -eq 1 ]; then
 	done
 	exit 0
 fi
+
+# mainly to smooth mass start in astart.
+if [ ${delay} -ne 0 ]; then
+	[ -z "${boot_delay}" ] && boot_delay=1
+	cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname}: ${boot_delay} sec.
+	sleep ${boot_delay}
+fi
+
+# start jail
+st_time=$( ${DATE_CMD} +%s )
 
 if [  "${ver}" = "native" ]; then
 	tmpver=$( ${UNAME_CMD} -r )
@@ -383,6 +435,9 @@ jcleanup jname=${jname}
 [ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
 [ -z "${mnt_start}" ] && mnt_start="0"
 
+[ -n "${ointer}" ] && inter="${ointer}"
+[ "${inter}" = "0" ] && export NOINTER=1
+
 if [ "${mnt_start}" != "0" ]; then
 	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
 		err 1 "mnt_start script not exist or not executable: ${mnt_start}"
@@ -475,7 +530,7 @@ epaira_list=
 # extract and export/rewrite interface variable from jailnic for vnet-based jails
 if [ "${vnet}" = "1" ]; then
 	# for vnet we can make another action
-	. ${vimageconf}
+	. ${subrdir}/vnet.subr
 
 	interfaces=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM jailnic | while read _int; do
 		printf "${_int} "
@@ -586,7 +641,7 @@ fi	# vnet -eq 1
 #test for zfs mounted & mount if not
 case ${zfsfeat} in
 	1)
-		. ${zfstool}
+		. ${subrdir}/zfs.subr
 		zfsmnt ${data}
 		if [ $? -eq 2 ]; then
 			# ZFS encryption?
@@ -660,7 +715,14 @@ if [ "${mount_kernel}" = "1" ]; then
 fi
 
 if [ "${mount_ports}" = "1" ]; then
-	MOUNTOPT="${MOUNTOPT} -p /usr/ports -d ${data}/var/cache/distfiles"
+	case "${platform}" in
+		DragonFly)
+			MOUNTOPT="${MOUNTOPT} -p /usr/dports"
+			;;
+		*)
+			MOUNTOPT="${MOUNTOPT} -p /usr/ports -d ${data}/var/cache/distfiles"
+			;;
+	esac
 fi
 
 [ "${ver}" != "empty" ] && mountbase -v ${ver} -a ${arch} ${MOUNTOPT}
@@ -711,7 +773,6 @@ set +e
 
 #rctl/limits area
 jrctl jname=${jname} mode=set quiet=${quiet}
-#. ${distdir}/rctl.subr
 [ -r "${jailsysdir}/${jname}/helpers/jrctl.sqlite" ] && nice=$( cbsdsqlro ${jailsysdir}/${jname}/helpers/jrctl.sqlite "SELECT cur FROM forms WHERE param=\"nice\"" )
 [ -z "${nice}" ] && nice="0"
 [ "${nice}" != "0" ] && [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}jail renice: ${N2_COLOR}${nice}${N0_COLOR}"
@@ -742,13 +803,35 @@ fi
 # tmpfs on /usr/jails/jails/jail2/var (tmpfs, local)
 # tmpfs on /usr/jails/jails/jail2/tmp (tmpfs, local)
 
-case "${quiet}" in
-	0)
-		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
+CPUSET=
+if [ -r "${jailsysdir}/${jname}/cpu" ]; then
+	. ${jailsysdir}/${jname}/cpu
+		CPUSET="${CPUSET_CMD} ${cpuset}"
+	else
+		if [ "${cpuset}" != "0" ]; then
+			CPUSET="${CPUSET_CMD} ${cpuset}"
+		fi
+	fi
+
+case "${platform}" in
+	DragonFly)
+		# legacy jail tools only
+		#cat ${ftmpdir}/${jname}.conf
+		${MOUNT_CMD} -t devfs devfs ${path}/dev
+		echo "[debug] ${JAIL_CMD} ${path} ${host_hostname} ${ip4_addr} ${exec_start}"
+		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} ${path} ${host_hostname} ${ip4_addr} ${exec_start}
+		echo "[debug]: ${ftmpdir}/jstart.${jname}.$$"
 		;;
-	1)
-		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname} > /dev/null
-		;;
+	*)
+		cbsdlogger NOTICE ${CBSD_APP}: ${CPUSET} ${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
+		case "${quiet}" in
+			0)
+				${CPUSET} ${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
+				;;
+			1)
+				${CPUSET} ${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/bin/nice -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname} > /dev/null
+				;;
+		esac
 esac
 
 trap "" HUP INT ABRT BUS TERM EXIT
@@ -767,7 +850,8 @@ if [ -r ${with_zfs_attach} -a ${is_freebsd} -eq 1 ]; then
 	[ -r ${mount_fstab} ] && attachzfs fstab=${mount_fstab} jname=${jname}
 	[ -r ${mount_fstab}.local ] && attachzfs fstab=${mount_fstab}.local jname=${jname}
 	# real exec_start for zfs attached jail
-	${JEXEC_CMD} ${jname} ${ZFS_CMD} mount -a
+	# todo: FIB? NICE?
+	${CPUSET} ${JEXEC_CMD} ${jname} ${ZFS_CMD} mount -a
 	late_start="${exec_start}"
 fi
 
@@ -794,11 +878,13 @@ if [ ${vnet} -eq 1 ]; then
 				# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
 				[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
 				if [ -z "${dhclient_program}" ]; then
-					DHCLIENT_PROGRAM=`${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
+					# todo: FIB? NICE?
+					DHCLIENT_PROGRAM=`${CPUSET} ${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
 				else
 					DHCLIENT_PROGRAM=${dhclient_program}
 				fi
-				${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
+				# todo: FIB? NICE?
+				${CPUSET} ${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
 				;;
 			0|[Dd][Hh][Cc][Pp])
 				# just skip
@@ -874,7 +960,8 @@ fi
 
 if [ -n "${late_start}" ]; then
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}late_start in progress...${N2_COLOR}"
-	${JEXEC_CMD} ${jname} ${late_start}
+	# todo: FIB? NICE?
+	${CPUSET} ${JEXEC_CMD} ${jname} ${late_start}
 fi
 ### /late start ###
 
@@ -885,12 +972,17 @@ cbsdsqlrw local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname
 UNDHOSTNAME=$( echo ${hostname} | ${TR_CMD}  "." "_" )
 FID="/var/run/jail_${UNDHOSTNAME}.id"
 echo ${ST} > ${FID}
-exec_cbsdjail_first_boot
 
+# todo: CPUSET, NICE, FIB?
+exec_cbsdjail_first_boot
 external_exec_script -s start.d
 
 get_jid
 jid=${myjid}
+
+if [ "${platform}" = "DragonFly" ]; then
+	[ ${allow_raw_sockets} -eq 1 ] && ${SYSCTL_CMD} -w jail.${jid}.net_raw_sockets=1
+fi
 
 external_exec_master_script "master_poststart.d"
 
@@ -919,7 +1011,19 @@ cbsdsqlrw local "UPDATE jails SET jid=${myjid},status=${status} where jname='${j
 ${RM_CMD} -f ${ftmpdir}/${jname}.conf
 fwcounter
 expose mode=apply
-[ ${myjid} -gt 0 -a ${cpuset} != "0" ] && ${CPUSET_CMD} -c -l ${cpuset} -j ${myjid}
+
+if [ ${myjid} -gt 0 ]; then
+	if [ -r "${jailsysdir}/${jname}/cpu" ]; then
+		. ${jailsysdir}/${jname}/cpu
+		echo "${CPUSET_CMD} ${cpuset} -j ${myjid}" 1>&2
+		${CPUSET_CMD} ${cpuset} -j ${myjid}
+	else
+		if [ "${cpuset}" != "0" ]; then
+			echo "${CPUSET_CMD} ${cpuset} -j ${myjid}" 1>&2
+			${CPUSET_CMD} ${cpuset} -j ${myjid}
+		fi
+	fi
+fi
 
 # VNC auto start
 if [ -x "${distmoduledir}/vncterm.d/cbsdvnc" ]; then

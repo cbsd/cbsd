@@ -1,0 +1,772 @@
+if [ ! "$_CBSD_NC_SUBR" ]; then
+_CBSD_NC_SUBR=1
+###
+
+# transparent remote command routing
+if [ -n "${CBSD_RNODE}" ]; then
+	rnode="${CBSD_RNODE}"
+	unset CBSD_RNODE
+	cmd=$( /usr/bin/basename $0 )
+	exec /usr/local/bin/cbsd rexe node=${rnode} /usr/local/bin/cbsd ${cmd} $@
+fi
+
+# common functions used by various rc scripts
+# jname must be set
+# export myjid as JID
+# return 0 if jail not exist
+# return 1 if jail exist
+get_jid() {
+	local _res
+	myjid="0"
+
+	[ -z "$jname" -a -z "${path}" ] && return 0
+
+	_res=$( cbsdjls | while read _jid _name; do
+		[ "${_name}" = "${jname}" ] && echo ${_jid}
+	done)
+
+	[ -z "${_res}" ] && return 0
+
+	myjid=${_res}
+	return 1
+}
+
+# fatal error. Print message to stdout then quit with exitval
+err() {
+	exitval=$1
+	shift
+	${ECHO} "$*"
+	# 1>&2
+	[ "${pause_after_err}" = "1" ] && echo "Press any key" && read p
+	exit ${exitval}
+}
+
+# fatal error. Print message to stderr then quit with exitval
+stderr() {
+	exitval=$1
+	shift
+	${ECHO} "$*" 1>&2
+	[ "${pause_after_err}" = "1" ] && echo "Press any key" && read p
+	exit ${exitval}
+}
+
+# Same as err but also dup message to syslog with WARNING verbosity level
+log_err() {
+	local _msg
+	exitval=$1
+	shift
+	${ECHO} "$*"
+	# remove ANSII
+	_msg=$( ${ECHO} "$*" | ${SED_CMD} "s,$(printf '\033')\\[[0-9;]*[a-zA-Z],,g" )
+	cbsdlogger WARNING ${CBSD_APP}: ${_msg}
+	exit ${exitval}
+}
+
+# print $MYARG and exit
+usage() {
+	err 1 "usage: $0 ${MYARG}"
+}
+
+# parser/initialization for MYARG, OPTARG
+# if CBSD_INIT_SAVE2FILE variables exist, use first <arg> as filename
+# and save all settings into <arg> filename
+# todo:
+# don't try to understand the code below, need to rewrite ASAP:
+# we were hostages from "param=value" and "param=\"spaces here allowed\" and param="x \
+# y z" and sudoexec
+#  and this is the most balanced work-round of all
+init() {
+	local MYNUMTEST=0 _i _known_arg=0
+	local bin_version= _pos _arg_len _pref
+	local _tofile=0 _eval=1 _validmod
+	local IFS OIFS VAL _open _cmd _workdir_ver
+
+	if [ "$1" = "--desc" ]; then
+		IFS=" "
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--desc"
+			exit 0
+		fi
+		if [ -n "${CBSDMODULEONLY}" ]; then
+			_XOIFS="${IFS}"
+			_validmod=0
+			IFS=","
+			# CBSDMODULE can be multiple value separated by ','
+			for i in ${CBSDMODULE}; do
+				if [ "${CBSDMODULEONLY}" = "${i}" ]; then
+					_validmod=1
+					break
+				fi
+			done
+			IFS="${_XOIFS}"
+			[ ${_validmod} -ne 1 ] && exit 0
+		fi
+		#[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
+		${ECHO} "[${BOLD}${CBSDMODULE}${N0_COLOR}] ${N2_COLOR}${MYDESC}${N0_COLOR}"
+		exit 0
+	fi
+	if [ "$1" = "--help" ]; then
+		IFS=" "
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--help"
+			exit 0
+		fi
+		[ -z "${CBSDMODULE}" ] && CBSDMODULE="sys"
+		${ECHO} "[${BOLD}${CBSDMODULE}${N0_COLOR}] ${N2_COLOR}${MYDESC}${N0_COLOR}"
+		${ECHO} "${BOLD}require: ${GREENL}${MYARG}${N0_COLOR}"
+		${ECHO} "${BOLD}opt: ${N2_COLOR}${MYOPTARG}${N0_COLOR}"
+		[ -n "${ADDHELP}" ] && printf "${N2_COLOR}${ADDHELP}${N0_COLOR}"
+		[ -f "/usr/local/share/doc/cbsd/currentver.html" ] && cbsddocsrc="/usr/local/share/doc/cbsd"
+		[ -n "${MANPAGE}" ] && printf "${BOLD}Check out manual page: ${N2_COLOR}${MANPAGE}${N0_COLOR}\n"
+		[ -n "${EXTHELP}" -a -n "${cbsddocsrc}" ] && printf "${BOLD}External help: ${N2_COLOR}${cbsddocsrc}/${EXTHELP}_ssi.html${N0_COLOR}\n"
+		exit 0
+	fi
+
+	if [ -n "${CBSD_INIT_SAVE2FILE}" ]; then
+		_tofile=1
+		${TRUNCATE_CMD} -s0 ${CBSD_INIT_SAVE2FILE}
+	fi
+
+	. ${subrdir}/strings.subr
+
+	[ -z "${double_args}" ] && double_args=1
+
+	bin_version=$( /usr/local/bin/cbsd -c version 2>/dev/null )
+	if [ -r ${workdir}/ver ]; then
+		_workdir_ver=$( ${CAT_CMD} ${workdir}/ver )
+	else
+		_workdir_ver="${bin_version}"
+		printf "${bin_version}" > ${workdir}/ver
+	fi
+	if [ "${bin_version}" != "${myversion}" ]; then
+		OIFS="${IFS}"
+		IFS=" "
+		${ECHO} "${W1_COLOR}Warning${N1_COLOR}: CBSD is ${bin_version} while distfiles initializated for ${myversion}. Please re-run: ${N2_COLOR}cbsd initenv${N0_COLOR}" 1>&2
+		IFS="${OIFS}"
+	fi
+	if [ "${_workdir_ver}" != "${myversion}" ]; then
+		OIFS="${IFS}"
+		IFS=" "
+		${ECHO} "${W1_COLOR}Warning${N1_COLOR}: CBSD is ${bin_version} while workdir initializated for ${_workdir_ver}. Please re-run: ${N2_COLOR}env workdir=${workdir} cbsd initenv${N0_COLOR}" 1>&2
+		IFS="${OIFS}"
+	fi
+
+	OIFS="${IFS}"
+	IFS="${INIT_IFS}"
+	for _i in ${MYARG} ${MYOPTARG}; do
+		MYNUMTEST=$(( MYNUMTEST + 1 ))
+	done
+
+	if [ "$1" = "--args" ]; then
+		IFS=" "
+		if [ -n "${CBSD_SUDO}" ]; then
+			echo -n "--args"
+			exit 0
+		fi
+		echo "${greeting} ${MYNUMTEST}"
+		for argword in ${MYARG} ${MYOPTARG}; do
+			echo "${argword}"
+		done
+		err 0 ""
+	fi
+	IFS="${OIFS}"
+
+	DEBLOG="${tmpdir}/`/usr/bin/basename $0`-log.$$"
+	trap "${RM_CMD} -f ${DEBLOG}" HUP INT ABRT BUS TERM EXIT
+
+	# disable history of execution cbsd command inside cbsd command
+	export NO_CBSD_HISTORY=yes
+
+	[ ! -r "${distdir}/cbsd.conf" ] && err 1 "no such local conf file: ${distdir}/cbsd.conf"
+	. ${distdir}/cbsd.conf
+
+	# example
+	#MYARG="src mk"
+	#MYOPTARG="arch"
+
+	# special route for H_CBSD_<ARGS> environment variables
+	# mainly used to pass parameters from/via up/destroy command
+	# (values via args is preferable)
+	OIFS="${IFS}"
+	IFS="${INIT_IFS}"
+	for _i in ${MYARG} ${MYOPTARG}; do
+		_tmp_env="H_CBSD_${_i}"
+		eval VAL="\${${_tmp_env}}"
+		if [ -n "${VAL}" ]; then
+			eval ${_i}="\$${_tmp_env}"
+			cbsdlogger NOTICE ${CBSD_APP}: loader ${_i} variable from H_CBSD_${_i} env: ${VAL}
+		fi
+	done
+	IFS="${OIFS}"
+
+	_cmd=
+
+	_quoted=0
+	_opened=0
+	_closed=0
+
+	_tmparg=
+
+	for i in $*; do
+		_eqpos=0
+
+		if [ ${_opened} -eq 0 ]; then
+			strpos --str="${i}" --search="="
+			_eqpos=$?
+			if [ ${_eqpos} -eq 0 ]; then
+				# not params=value form, pass as-is
+				if [ -n "${_cmd}" ]; then
+					_cmd="${_cmd} ${i}"
+				else
+					_cmd="${i}"
+				fi
+				continue
+			fi
+		fi
+
+		_arg_len=$( strlen ${i} )
+		_postfix=$( substr --pos=${_arg_len} --len=1 --str="${i}" )
+		strpos --str="${i}" --search="\""
+		_pos=$?
+		[ ${_pos} -ne 0 ] && _pos=$(( _pos + 1 ))
+		if [ "${_postfix}" = "\"" ]; then
+			# closed \"
+			# if first " pos matches the end of the line, 
+			# so this is the closure of a multi-line variable
+			if [ ${_pos} -eq ${_arg_len} ]; then
+				_opened=0		# close
+				_closed=1
+				_quoted=0
+			else
+				# variable with "xxx" ( whole )
+				_opened=1
+				_closed=1
+				_quoted=1
+			fi
+		else
+			if [ ${_pos} -gt 0 ]; then
+				# variable opened but without ending"
+				_opened=1
+				_closed=0
+				_quoted=0
+			fi
+		fi
+
+		_pref=$(( _arg_len - _eqpos ))
+		if [ ${_eqpos} -ne 0 ]; then
+			ARG=$( substr --pos=0 --len=${_eqpos} --str="${i}" )
+			VAL=$( substr --pos=$(( ${_eqpos} + 2 )) --len=$(( ${_pref}  )) --str="${i}" )
+		else
+			VAL=$( substr --pos=$(( 0 )) --len=${_arg_len} --str="${i}" )
+		fi
+		VAL=$( echo ${VAL} | ${TR_CMD} -d '"' )		# strip extra quotes
+#		VAL=$( echo ${VAL} | ${TR_CMD} -d "'" )		# strip extra quotes
+
+		if [ ${_opened} -eq 1 -o ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg="${_tmparg} ${VAL}"
+			else
+				_tmparg="${VAL}"
+			fi
+			VAL="${_tmparg}"
+		fi
+
+		# reset opened flag
+		if [ ${_closed} -eq 1 ]; then
+			if [ -n "${_tmparg}" ]; then
+				_tmparg=
+			fi
+			_opened=0
+		fi
+
+		# do eval for known args only
+		_known_arg=0
+		OIFS="${IFS}"
+		IFS="${INIT_IFS}"
+		for j in ${MYARG} ${MYOPTARG}; do
+			if [ "${ARG}" = "${j}" ]; then
+				_known_arg=1
+				break
+			fi
+		done
+		IFS="${OIFS}"
+		[ ${_known_arg} -eq 1 ] && eval "${ARG}=\"${VAL}\""
+
+		if [ -n "${_cmd}" ]; then
+			_cmd="${_cmd} ${ARG}=\"${VAL}\""
+		else
+			_cmd="${ARG}=\"${VAL}\""
+		fi
+		[ -z "${CBSD_SUDO}" -a ${_known_arg} -eq 1 ] && eval "${ARG}=\"${VAL}\""
+		#[ ${_tofile} -eq 1 ] && printf "${ARG}=\"${VAL}\" " >> ${CBSD_INIT_SAVE2FILE}
+		# needed for newline to merge config operation, e.g. bcreate+jconf+CBSD_INIT_SAVE2FILE
+		[ ${_tofile} -eq 1 ] && ${SYSRC_CMD} -qf ${CBSD_INIT_SAVE2FILE} ${ARG}="${VAL}" > /dev/null 2>&1
+	done
+	IFS=" "
+
+	[ -n "${CBSD_SUDO}" ] && echo -n "${_cmd}"
+	for i in ${MYARG}; do
+		unset T
+		eval T="\$$i"
+		[ -z "${T}" ] && err 1 "${N1_COLOR}Please set ${CBSD_APP}: ${N2_COLOR}${i}${N0_COLOR}"
+	done
+
+	return 0
+}
+
+# getyesno var
+# Show $1 strings and get answer in infinity loop
+# return 0 when YES/1 and 1 when not
+# return 3 if not interactive ($inter=0) (or INTER=0 env exist)
+# if ALWAYS_YES=1 and inter=0, always return 0
+# if ALWAYS_NO=1 and inter=0, always return 1
+# $1 - pre-defined return: 1 - yes, 0 - no
+getyesno()
+{
+	if [ -n "${2}" ]; then
+		case "${2}" in
+			1)
+				return 0
+				;;
+			0)
+				return 1
+				;;
+		esac
+	fi
+
+	if [ "${inter}" = "0" -o -n "${NOINTER}" ]; then
+		[ "${ALWAYS_YES}" = "1" ] && return 0
+		[ "${ALWAYS_NO}" = "1" ] && return 1
+		return 3
+	fi
+
+	if [ -z "${DIALOG}" ]; then
+		${ECHO} "${BOLD}${1}${N0_COLOR}"
+		answ=
+		while [ x$answ = x ]; do
+			${ECHO} "[${N2_COLOR}yes(1) or no(0)${N0_COLOR}]"
+			read reply leftover
+			case $reply in
+				# "yes", "true", "on", or "1"
+				Y*|y*|1)
+					return 0
+				;;
+				# "no", "false", "off", or "0"
+				N*|n*|0)
+					return 1
+				;;
+			esac
+		done
+	else
+		. ${dialog}
+		local msg_yes="yes"
+		local msg_no="no"
+		f_dialog_title " Yes and No "
+		f_dialog_yesno "${1}" "${hline}"
+		if [ $? -eq 0 ]; then
+			return 0
+		else
+			return 1
+		fi
+	fi
+}
+
+# getyesnocancel var
+# Show $1 strings and get answer (or cancel) in infinity loop
+# return 0 when YES/1 and 1 when not
+# return 2 when cancel
+# return 3 if not interactive ($inter=0) (or INTER=0 env exist)
+# if ALWAYS_YES=1 and inter=0, always return 0
+# if ALWAYS_NO=1 and inter=0, always return 1
+# $1 - pre-defined return: 1 - yes, 0 - no
+getyesnocancel()
+{
+	if [ -n "${2}" ]; then
+		case "${2}" in
+			1)
+				return 0
+				;;
+			0)
+				return 1
+				;;
+		esac
+	fi
+
+	if [ "${inter}" = "0" -o -n "${NOINTER}" ]; then
+		[ "${ALWAYS_YES}" = "1" ] && return 0
+		[ "${ALWAYS_NO}" = "1" ] && return 1
+		return 3
+	fi
+
+	if [ -z "${DIALOG}" ]; then
+		${ECHO} "${BOLD}${1}${N0_COLOR}"
+		answ=
+		while [ x$answ = x ]; do
+			${ECHO} "[${N2_COLOR}yes(1) or no(0) or cancel(2)${N0_COLOR}]"
+			read reply leftover
+			case ${reply} in
+				# "yes", "true", "on", or "1"
+				Y*|y*|1)
+					return 0
+				;;
+				# "no", "false", "off", or "0"
+				N*|n*|0)
+					return 1
+				;;
+				C*|c*|2)
+					return 2
+				;;
+			esac
+		done
+	else
+		. ${dialog}
+		local msg_yes="yes"
+		local msg_no="no"
+		f_dialog_title " Yes and No "
+		f_dialog_yesno "${1}" "${hline}"
+		if [ $? -eq 0 ]; then
+			return 0
+		else
+			return 1
+		fi
+	fi
+}
+
+# value="YES" or "NO"
+checkyesno()
+{
+	eval _value=\$${1}
+
+	case $_value in
+		# "yes", "true", "on", or "1"
+		[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Oo][Nn]|1)
+			return 0
+			;;
+		# "no", "false", "off", or "0"
+		[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee]|[Oo][Ff][Ff]|0)
+			return 1
+			;;
+		*)
+		# echo "\$${1} is not set properly - see ${rcvar_manpage}."
+			return 1
+			;;
+	esac
+}
+
+# cut prefix from x.x.x.x/pref into IWM variable
+ipwmask()
+{
+	unset IWM
+	IWM=${1%%/*}
+}
+
+# parse ip4_addr, check ip, remove commas
+# detect when IP6 in list and set flags for sleep
+# export variables:
+#   ipv4_first_public
+#   ipv4_first_private
+#   ipv4_first
+#   ipv6_first_public
+#   ipv6_first_private
+#   ipv6_first
+geniplist()
+{
+	local I ST a
+	[ -z "${1}" ] && return 0
+	[ ! -f "${subrdir}/tools.subr" ] && err 1 "No such tools.subr"
+	. ${subrdir}/tools.subr
+
+	local private_net="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+	local pnet NC_RANGE INNET res
+
+	# init global exported variables
+	ipv4_first_public=
+	ipv4_first_private=
+	ipv4_first=
+	ipv6_first_public=
+	ipv6_first_private=
+	ipv6_first=
+
+	HAVE_IPV6=0
+	multiips=$@
+
+	I=$( echo ${multiips} | ${TR_CMD} "," " " )
+	IPS=""
+	ST=0
+
+	for a in ${I}; do
+		a=$( is_special_ip ${a} )
+		# Identify type {inet,inet6}.
+		iptype ${a}
+		case $? in
+			0)
+				case ${a} in
+					[Dd][Hh][Cc][Pp]|[Dd][Hh][Cc][Pp][vV]6)
+						;;
+					[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
+						;;
+					*)
+						${ECHO} "${N1_COLOR}ip not identified: ${N2_COLOR}${a}${N0_COLOR}"
+						;;
+				esac
+				continue
+			;;
+			1)
+				[ -z "${ipv4_first}" ] && ipv4_first="${IWM}"	# IWM from iptype
+				INNET=0	# count of coincidence in private network
+				if [ -z "${ipv4_first_private}" -o -z "${ip4_first_public}" ]; then
+					for pnet in ${private_net}; do
+						NC_RANGE=$( /bin/echo ${pnet} | ${TR_CMD} "/" " " )
+						netmask ${NC_RANGE} ${IWM} > /dev/null 2>&1
+						res=$?
+						if [ ${res} -eq 1 ]; then
+							INNET=$(( INNET + 1 ))
+						fi
+					done
+				fi
+
+				[ -z "${ipv4_first_private}" -a ${INNET} -ne 0 ] && ipv4_first_private="${IWM}"
+				[ -z "${ipv4_first_public}" -a ${INNET} -eq 0 ] && ipv4_first_public="${IWM}"
+
+				;;
+			2)
+				[ -z "${ipv6_first}" ] && ipv6_first="${IWM}"	# IWM from iptype
+				HAVE_IPV6=1
+			;;
+		esac
+		# this is ip
+		ST=$((ST + 1))
+		if [ ${ST} -eq 1 ]; then
+			IPS="${a}"
+		else
+			IPS="${IPS} ${a}"
+		fi
+	done
+}
+
+# print "." for progress activity
+dot()
+{
+	if [ $? -ne 0 ]; then
+		# Update Redis
+		if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" -a -n "${CBSD_APP}" ]; then
+			end_time=$( ${DATE_CMD} +%s )
+			diff_time=$(( end_time - st_time ))
+		        cbsdredis publish cbsd_events '{"cmd":"'${CBSD_APP}'", "node":"'${nodename}'", "dest":"'${node}'", "jail":"'${jname}'", "status":2, "msg":"'$1'", "duration":'${diff_time}',"code":'$?'}'
+		fi  
+
+		${ECHO} "${N1_COLOR}Error in $1${N0_COLOR}"
+		if [ -f ${DEBLOG} ]; then
+			${ECHO} "${N1_COLOR}Guru meditaion: ${N0_COLOR}"
+			cat ${DEBLOG}
+		fi
+
+		exit 1
+	fi
+
+	[ "$1" = "0" ] && return 0
+
+	printf "${N1_COLOR}.${N0_COLOR}"
+}
+
+
+# check&make lockfile $1
+# $2 - additional action for trap
+# $3 - safe, for force
+makelock()
+{
+	local _pid _msg
+	[ -n "${1}" ] && LOCKFILE="${1}"
+	[ -z "${LOCKFILE}" ] && err 1 "${N1_COLOR}makelock: empty LOCKFILE vars${N0_COLOR}"
+	[ -f "${LOCKFILE}" -a "${3}" = "safe" ] && ${RM_CMD} -f ${LOCKFILE}
+	if [ -f "${LOCKFILE}"  ]; then
+		_pid=$( ${CAT_CMD} ${LOCKFILE} | ${AWK_CMD} '{printf $1}' )
+		[ -n "${_pid}" ] && _msg="by ${_pid}"
+		err 1 "locked ${_msg}: ${LOCKFILE}, try later"
+	fi
+	TRAPS="${RM_CMD} -f ${LOCKFILE};"
+
+	if [ -n "${2}" ]; then
+		TRAPS="${2}; ${TRAPS}"
+	fi
+
+	trap "${TRAPS}" HUP KILL INT ABRT BUS TERM EXIT
+	[ "$3" = "safe" ] || ${TOUCH_CMD} ${LOCKFILE}
+}
+
+
+# search for slow jails and wait him before exit
+# -a - what action to observe: 'stop' or 'start'
+# -i - timeout interval for cbsd_pwait (default: 1)
+# -t - global loop timeout (default: 90)
+wait_for_fpid()
+{
+	local ECHO="echo -e"
+	local A PID
+	local interval=1
+	local myaction=
+	local timeout=90
+	local ltimeout=0
+
+	while getopts "a:i:t:" opt; do
+		case "${opt}" in
+			a) myaction="${OPTARG}" ;;
+			i) interval="${OPTARG}" ;;
+			t) timeout="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${myaction}" ] && return 0
+	local myfile="j${myaction}" # jstop and jstart file
+
+	while [ 1 ]; do
+		A=$( /usr/bin/find ${ftmpdir} -type f -depth 1 -maxdepth 1 -name ${myfile}\.\*\.\* | /usr/bin/head -n1 )
+		[ -z "${A}" ] && break
+		PID=$( ${CAT_CMD} ${A} )
+		[ -z "${PID}" ] && break
+		/bin/ps -p ${PID} > /dev/null 2>&1
+		[ $? -ne 0 ] && break # No such pid here
+		${ECHO} "${N1_COLOR}Waiting for ${myaction}ing jail who have pid: ${N2_COLOR}${PID}${N0_COLOR}"
+		cbsd_pwait --pid=${PID} --timeout=${interval}
+		ltimeout=$(( ltimeout + interval ))
+		[ ${ltimeout} -gt ${timeout} ] && break
+	done
+}
+
+# wrapper for including config in $etcdir. $1 is name of the file
+# At the first we try to include $etcdir/defaults/$1, in second: $etcdir/$1
+# third: ${moduledir}/etc/$1
+# finaly: in jailsysdir/jname/etc/
+readconf()
+{
+	[ -z "${1}" ] && return 1
+
+	[ -r "${etcdir}/defaults/$1" ] && . ${etcdir}/defaults/$1
+	[ -r "${etcdir}/$1" ] && . ${etcdir}/$1
+
+	if [ -n "${CBSDMODULE}" ]; then
+		[ -r "${moduledir}/${CBSDMODULE}.d/etc/$1" ] && . ${moduledir}/${CBSDMODULE}.d/etc/$1
+	fi
+
+	#finnaly, search conf in jails-system/$jname/etc
+	if [ -n "${jname}" ]; then
+		[ -r "${jailsysdir}/${jname}/etc/${1}" ] && . ${jailsysdir}/${jname}/etc/${1}
+	fi
+
+	return 0
+}
+
+# wrapper for copy config from $etcdir to $2 location
+# local copy of config win, $etcdir/defaults - is last (reverse order to readconf)
+storeconf()
+{
+	[ -z "${1}" -o -z "${2}" ] && return 1
+
+	# per-jail etc dir - first and high priority finnaly
+	if [ -n "${jname}" ]; then
+		[ -r "${jailsysdir}/${jname}/etc/${1}" ] && /bin/cp ${jailsysdir}/${jname}/etc/${1} ${2} && return 0
+	fi
+
+	[ -r "${etcdir}/$1" ] && /bin/cp ${etcdir}/$1 ${2} && return 0
+	[ -r "${etcdir}/defaults/$1" ] && /bin/cp ${etcdir}/defaults/$1 ${2} && return 0
+
+	# no conf here
+	return 1
+}
+
+validate_jname()
+{
+	[ -z "$1" ] && return 0 # empty name is valid
+	echo -n "$1" | ${AWK_CMD} '!/^[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*$/{exit 1}' RS='^$'
+}
+
+# echo ${_device} |grep -sq ^/
+# concat for workdir when $1 not beginning with /
+# data=$( normalize_path ${data} )
+normalize_path()
+{
+	local _res prefix
+
+	prefix=$( substr --pos=0 --len=1 --str="${1}" )
+	if [ "${prefix}" != "/" ]; then
+		_res="${workdir}/${1}"
+	else
+		_res="${1}"
+	fi
+	echo "${_res}"
+}
+
+# we need support for relative paths (when $relative_path not set to 0)
+# init path from jconf or rcconf
+init_jail_path()
+{
+	[ "${relative_path}" = "0" ] && return 0
+	path=$( normalize_path ${path} )
+	mount_fstab=$( normalize_path ${mount_fstab} )
+	data=$( normalize_path ${data} )
+	rcconf=$( normalize_path ${rcconf} )
+	jailskeldir=$( normalize_path ${jailskeldir} )
+}
+
+get_help()
+{
+	local _fetch=0
+	local _myhtml=
+	local _myhelp=
+	local TRAP=""
+	local _res
+
+	[ -z "${EXTHELP}" ] && return 0
+
+	# verification that we have a local copy documentation.
+	# - if not, try to use the online documentation.
+	_myhtml="/usr/local/share/doc/cbsd/${EXTHELP}"
+	if [ ! -f "${_myhtml}" ]; then
+		_myhtml="${tmpdir}/myhtml.$$"
+		_fetch=1
+	else
+		_fetch=0
+	fi
+
+	_myhelp="${tmpdir}/myhelp.$$"
+
+	if [ ${_fetch} -eq 1 ]; then
+		f_dialog_info "You have no local documentation. Try to obtain docs from: ${cbsddocsrc}. Please wait..."
+		_res=$( /usr/bin/su -m nobody -c "/usr/bin/fetch -q -o ${_myhtml} ${cbsddocsrc}/${EXTHELP}.html" 2>&1 )
+		if [ $? -ne 0 -o ! -f "${_myhtml}" ]; then
+			local msg_ok="It's a pity"
+			f_dialog_msgbox "${_res}"
+			return 0
+		fi
+		TRAP="${TRAP} /bin/rm -f ${_myhtml};"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	fi
+
+	# need for help in translate quality
+	${CAT_CMD} > ${_myhelp} << EOF
+   Attention! This is automatic translation of this text.
+You can improve the quality and help CBSD by sending a more correct version
+of the text or fix html pages via GITHUB repository: https://github.com/olevole/cbsd-wwwdoc
+
+EOF
+
+	${SED_CMD} -e 's/<[^>]*>//g' ${_myhtml} | ${TR_CMD} -s "[:space:]"| /usr/bin/fold -s -w 100 >> ${_myhelp}
+
+	if [ ${_fetch} -eq 1 ]; then
+		trap "" HUP INT ABRT BUS TERM EXIT
+		/bin/rm -f "${_myhtml}"
+	fi
+
+	[ ! -f "${_myhelp}" ] && return 0
+	trap "/bin/rm -f ${_myhelp}" HUP INT ABRT BUS TERM EXIT
+	f_show_help "${_myhelp}"
+	/bin/rm -f ${_myhelp}
+	trap "" HUP INT ABRT BUS TERM EXIT
+}
+
+# global config here:
+readconf logger.conf
+
+###
+fi

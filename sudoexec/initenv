@@ -214,7 +214,6 @@ phase0()
 
 	# touch must be in paths until phase1 generates <cmd>_CMD macros
 	[ ! -f /etc/rc.conf ] && touch /etc/rc.conf
-
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && return 0
 	[ ! -x ${miscdir}/sqlcli ] && return 0	# no build/first run?
@@ -266,19 +265,38 @@ phase1()
 		exit 1
 	fi
 
-	if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
-		# check for correct homedir
-		cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
-		[ "${cbsd_home}" != "${workdir}" ] && pw usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
-	else
-		initenv_modify_cbsd_homedir=0
-	fi
+	case "${platform}" in
+		Linux)
+			cbsd_home=$( echo ~${cbsd} > /dev/null 2>&1 )
+			[ "${cbsd_home}" != "${workdir}" ] && usermod -d ${workdir} cbsd
+			;;
+		*)
+			if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
+				# check for correct homedir
+				if [ ! -r /etc/master.passwd ]; then
+					echo "no such /etc/master.passwd file"
+					exit 1
+				fi
+				cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
+				[ "${cbsd_home}" != "${workdir}" ] && pw usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
+			else
+				initenv_modify_cbsd_homedir=0
+			fi
+	esac
 
-	[ ! -d "${workdir}" ] && /bin/mkdir -m 755 ${workdir}
+	if [ ! -d "${workdir}" ]; then
+		/bin/mkdir -m 755 ${workdir}
+		if [ $? -ne 0 ]; then
+			echo "mkdir error: ${workdir}"
+			exit 1
+		fi
+	fi
 	printf "${myversion}" > ${workdir}/ver
 
 	$ECHO "${N1_COLOR} * Check hier and permission..."
-	mtree -deU -f ${distdir}/etc/cbsd.mtree -p ${workdir}
+
+	${miscdir}/mtree ${workdir}
+
 	env workdir=${workdir} ${distdir}/misc/cmdboot
 	_ret=$?
 	if [ ${_ret} -ne 0 ]; then
@@ -303,7 +321,7 @@ phase1()
 
 phase2()
 {
-	local _dir _ldir _rdir _file _dirhier _d platform 
+	local _dir _ldir _rdir _file _dirhier _d platform
 
 	${ECHO} "${N1_COLOR}[Stage 2: ${N2_COLOR}build tools${N1_COLOR}]${N0_COLOR}"
 
@@ -316,15 +334,15 @@ phase2()
 		mod_cbsd_dbi_enabled=YES
 	fi
 
-	[ ! -f "${distdir}/bin/cbsdsftp" ] && ${CC_CMD} ${distdir}/bin/cbsdsftp.c -o ${distdir}/bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distdir}/bin/cbsdsftp6" ] && ${CC_CMD} ${distdir}/bin/cbsdsftp6.c -o ${distdir}/bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distfir}/bin/cbsdssh" ] && ${CC_CMD} ${distdir}/bin/cbsdssh.c -o ${distdir}/bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distfir}/bin/cbsdssh6" ] && ${CC_CMD} ${distdir}/bin/cbsdssh6.c -o ${distdir}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distfir}/bin/cfetch" ] && ${CC_CMD} ${distdir}/bin/cfetch.c -o ${distdir}/bin/cfetch -lfetch
-	[ ! -f "${distdir}/sbin/netmask" ] && ${CC_CMD} ${distdir}/sbin/netmask.c -o ${distdir}/sbin/netmask
+	[ ! -f "${distdir}/bin/cbsdsftp" ] && ${CC_CMD} ${distdir}/bin/src/cbsdsftp.c -o ${distdir}/bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${distdir}/bin/cbsdsftp6" ] && ${CC_CMD} ${distdir}/bin/src/cbsdsftp6.c -o ${distdir}/bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${distdir}/bin/cbsdssh" ] && ${CC_CMD} ${distdir}/bin/src/cbsdssh.c -o ${distdir}/bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${distdir}/bin/cbsdssh6" ] && ${CC_CMD} ${distdir}/bin/src/cbsdssh6.c -o ${distdir}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${distdir}/bin/cfetch" ] && ${CC_CMD} ${distdir}/bin/src/cfetch.c -o ${distdir}/bin/cfetch -lfetch
+	[ ! -f "${distdir}/sbin/netmask" ] && ${CC_CMD} ${distdir}/sbin/src/netmask.c -o ${distdir}/sbin/netmask
 
 	if [ ! -f "${distdir}/misc/sqlcli" ]; then
-		/usr/bin/which -s pkg-config
+		/usr/bin/which pkg-config
 		if [ $? -ne 0 ]; then
 			echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf";
 			exit 1
@@ -348,27 +366,33 @@ phase2()
 	[ ! -f "${distdir}/misc/daemon" ] && ${CC_CMD} ${distdir}/misc/src/daemon.c -lutil -o ${distdir}/misc/daemon
 	[ ! -f "${distdir}/misc/resolv" ] && ${CC_CMD} ${distdir}/misc/src/resolv.c -o ${distdir}/misc/resolv
 	[ ! -f "${distdir}/tools/imghelper" ] && ${CC_CMD} ${distdir}/tools/src/imghelper.c -o ${distdir}/tools/imghelper
-	if [ "${platform}" != "DragonFly" ]; then
-		if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
-			${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
-			${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
-			${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c ${distdir}/bin/cbsdsh/cbsdredis.c ${distdir}/bin/cbsdsh/contrib/credis.c -DWITH_REDIS -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
-		else
-			[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
-			[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
-			[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
-		fi
-	fi
-	[ ! -f "${distdir}/tools/select_jail.c" ] && ${CC_CMD} ${distdir}/tools/src/select_jail.c -o ${distdir}/tools/select_jail
 
-	if [ -f ${distdir}/misc/src/dump_cpu_topology.c ]; then
+	case "${platform}" in
+		DragonFly|Linux)
+			;;
+			# not supported yet
+		*)
+			if [ "${cbsd_initenv_clustering_enabled}" = "1" ]; then
+				[ ! -f ${distdir}/tools/racct-jail-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+				[ ! -f ${distdir}/tools/racct-bhyve-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+				[ ! -f ${distdir}/tools/racct-hoster-statsd ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/bin/cbsdsh/contrib/ini.c ${distdir}/bin/cbsdsh/cbsdredis.c ${distdir}/bin/cbsdsh/contrib/credis.c -DWITH_REDIS -lcurl -DWITH_INFLUX ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+			else
+				[ ! -f "${distdir}/tools/racct-jail-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-jail-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-jail-statsd
+				[ ! -f "${distdir}/tools/racct-bhyve-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-bhyve-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-bhyve-statsd
+				[ ! -f "${distdir}/tools/racct-hoster-statsd" ] && ${CC_CMD} ${distdir}/tools/src/racct-hoster-statsd.c ${distdir}/lib/beanstalk-client/beanstalk.c -g -O0 -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -I${distdir}/lib/beanstalk-client -L/usr/local/lib -o ${distdir}/tools/racct-hoster-statsd
+			fi
+	esac
+
+	[ ! -f "${distdir}/tools/select_jail" ] && ${CC_CMD} ${distdir}/tools/src/select_jail.c -o ${distdir}/tools/select_jail
+
+	if [ ! -f ${distdir}/misc/dump_cpu_topology ]; then
 		${CC_CMD} -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/misc/src/dump_cpu_topology.c -o ${distdir}/misc/src/dump_cpu_topology.o
 		${CC_CMD} -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/lib/simplexml/simplexml.c -o ${distdir}/lib/simplexml/simplexml.o
 		${CC_CMD} -g -o ${distdir}/misc/dump_cpu_topology ${distdir}/misc/src/dump_cpu_topology.o ${distdir}/lib/simplexml/simplexml.o
 		/bin/rm -f ${distdir}/misc/src/dump_cpu_topology.o ${distdir}/lib/simplexml/simplexml.o
 	fi
 
-	if [ -f ${distdir}/misc/src/dump_iscsi_discovery.c ]; then
+	if [ ! -f ${distdir}/misc/dump_iscsi_discovery ]; then
 		${CC_CMD} -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/misc/src/dump_iscsi_discovery.c -o ${distdir}/misc/src/dump_iscsi_discovery.o
 		${CC_CMD} -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/lib/simplexml/simplexml.c -o ${distdir}/lib/simplexml/simplexml.o
 		${CC_CMD} -g -o ${distdir}/misc/dump_iscsi_discovery ${distdir}/misc/src/dump_iscsi_discovery.o ${distdir}/lib/simplexml/simplexml.o
@@ -383,30 +407,17 @@ phase2()
 		fi
 	fi
 
-	if [ -f ${distdir}/misc/src/ipv6range.c ]; then
+	if [ ! -f ${distdir}/misc/ipv6range ]; then
 		${CC_CMD} -o ${distdir}/misc/ipv6range ${distdir}/misc/src/ipv6range.c
 	fi
-
 	if [ "${platform}" != "DragonFly" ]; then
-		if [ -f ${distdir}/misc/src/next-vale-port.c ]; then
-			${CC_CMD} -o ${distdir}/misc/next-vale-port ${distdir}/misc/src/next-vale-port.c
-		fi
+		[ ! -f "${distdir}/misc/next-vale-port" ] && ${CC_CMD} -o ${distdir}/misc/next-vale-port ${distdir}/misc/src/next-vale-port.c
 		[ ! -f "${distdir}/tools/vale-ctl" ] && ${CC_CMD} ${distdir}/tools/src/vale-ctl.c -o ${distdir}/tools/vale-ctl
 		[ ! -f "${distdir}/tools/nic_info" ] && ${CC_CMD} ${distdir}/tools/src/nic_info.c -o ${distdir}/tools/nic_info
 		[ ! -f "${distdir}/tools/bridge" ] && ${CC_CMD} ${distdir}/tools/src/bridge.c -o ${distdir}/tools/bridge
 	fi
-
-#	if [ -f "/usr/local/bin/cbsd" ]; then
-#
-# SR: Always rebuild, options may have changed
-#
-#		CURVERSION=$( env workdir=${workdir} /usr/local/bin/cbsd -c version )
-#		if [ "${CURVERSION}" != "${myversion}" ]; then
-#			make -C ${distdir}/bin/cbsdsh clean && make -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
-#		fi
-#	else
+	if [ ! -x "/usr/local/bin/cbsd" ]; then
 		_build_options=""
-
 		[ "${mod_cbsd_redis_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_REDIS"
 		[ "${mod_cbsd_influx_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_INFLUX"
 		[ "${mod_cbsd_dbi_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_DBI"
@@ -414,13 +425,9 @@ phase2()
 		make -C ${distdir}/bin/cbsdsh clean && make ${_build_options} -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
 		# force rebuild sqlscli too to avoid possible SQLite3 link error
 		${CC_CMD} ${distdir}/misc/src/sqlcli.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${distdir}/misc/sqlcli
-
-#	fi
-
-	[ -d "${distdir}/bin/cbsd" ] && /bin/rm -rf "${distfir}/bin/cbsd"
-	[ -f "${distdir}/bin/cbsdsh/cbsd" ] && /usr/bin/install -s -o ${cbsduser} -g ${cbsduser} -m 500 ${distdir}/bin/cbsdsh/cbsd /usr/local/bin/cbsd
-
-	[ -f "/usr/local/bin/cbsd" ] && /bin/chmod 0500 /usr/local/bin/cbsd && /usr/sbin/chown ${cbsduser}:${cbsduser} /usr/local/bin/cbsd
+		[ -f "${distdir}/bin/cbsdsh/cbsd" ] && /usr/bin/install -m 0500 -s -o ${cbsduser} -g ${cbsduser} -m 500 ${distdir}/bin/cbsdsh/cbsd /usr/local/bin/cbsd
+		/usr/sbin/chown ${cbsduser}:${cbsduser} /usr/local/bin/cbsd
+	fi
 
 	#### /bin/cp SCRIPTS with override and readonly
 	_dirhier="etc/defaults"
@@ -461,8 +468,8 @@ EOF
 	#here is file with overwriting
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/DragonFly-git_branches.conf ${sharedir}/DragonFly-git_branches.conf
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/FreeBSD-git_branches.conf ${sharedir}/FreeBSD-git_branches.conf
+	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/HardenedBSD-git_branches.conf ${sharedir}/HardenedBSD-git_branches.conf
 	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/etc/Makefile ${etcdir}/Makefile
-	installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/share/FreeBSD-git_branches.conf ${sharedir}/FreeBSD-git_branches.conf
 
 	# 10_cbsd_sudoers for compatible with puppet sudo module
 	if [ ! -f "/usr/local/etc/sudoers.d/cbsd_sudoers" -a ! -f "/usr/local/etc/sudoers.d/10_cbsd_sudoers" ]; then
@@ -676,11 +683,16 @@ phase5()
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-xen.schema xen
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vnetnic.schema vnetnic
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vmpackages.schema vmpackages
+	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT name FROM vmpackages WHERE name=\"small1\" LIMIT 1" )
+	if [ -z "${_tmpval}" ]; then
+		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'small1', '1', '1g', '10g', 'admin' )"
+	fi
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vm_cpu_topology.schema vm_cpu_topology
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/cbsdtaskd.sqlite ${distdir}/share/cbsdtaskd-taskd.schema taskd
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/vpnet.sqlite ${distdir}/share/vpnet-vpnet.schema vpnet
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/authkey.sqlite ${distdir}/share/local-authkey.schema authkey
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/storage_media.sqlite ${distdir}/share/local-storage_media_map.schema media
+	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-storage_pools.schema storage_pools
 	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite SELECT id FROM storage_pools LIMIT 1 )
 	if [ -z "${_tmpval}" ]; then
@@ -706,8 +718,8 @@ phase5()
 		fi
 	fi
 
-	if [ -x /sbin/hammer ]; then
-		/sbin/hammer info ${workdir} > /dev/null 2>&1
+	if [ -x /sbin/hammer2 ]; then
+		/sbin/hammer2 info ${workdir} > /dev/null 2>&1
 		[ $? -eq 0 ] && _myfs="hammer"
 	fi
 
@@ -916,18 +928,38 @@ phase9()
 post_message()
 {
 	[ ${first_init} -eq 0 ] && return 0
-	${ECHO} "  ${N2_COLOR}First CBSD initialization complete."
+	unset NOCOLOR
+	. ${subrdir}/ansiicolor.subr
+	ECHO="echo -e"
+	${ECHO} "  ${N2_COLOR}${UNDERLINE}Congratulations! First CBSD initialization complete!${N0_COLOR}"
 	${ECHO}
-	${ECHO} "  Now your can run:"
+	${ECHO} "  ${N2_COLOR}Now your can run:${N0_COLOR}"
 	${ECHO} "  ${N0_COLOR}${BOLD}service cbsdd start${N0_COLOR}${N2_COLOR}"
-	${ECHO} "  to run CBSD services."
+	${ECHO} "  ${N2_COLOR}to run CBSD services.${N0_COLOR}"
 	${ECHO}
-	${ECHO} "  For change initenv settings in next time, use:"
+	${ECHO} "  ${N2_COLOR}For change initenv settings in next time, use:${N0_COLOR}"
 	${ECHO} "  ${N0_COLOR}${BOLD}cbsd initenv-tui${N0_COLOR}${N2_COLOR}"
 	${ECHO}
-	${ECHO} "  Also don't forget to execute:"
+	${ECHO} "  ${N2_COLOR}Also don't forget to execute:${N0_COLOR}"
 	${ECHO} "  ${N0_COLOR}${BOLD}cbsd initenv${N0_COLOR}${N2_COLOR}"
-	${ECHO} "  every time when you upgrade CBSD version.${N0_COLOR}"
+	${ECHO} "  ${N2_COLOR}every time when you upgrade CBSD version.${N0_COLOR}"
+	${ECHO}
+	${ECHO} "  ${N2_COLOR}For an easy start:${N0_COLOR}"
+	${ECHO} "  ${N0_COLOR}${BOLD}cbsd help"
+	${ECHO}
+	${ECHO} "  ${N2_COLOR}To start with jail:${N0_COLOR}"
+	${ECHO} "  ${N0_COLOR}${BOLD}cbsd jcreate --help${N0_COLOR}"
+	${ECHO} "  ${N2_COLOR}or: ${N0_COLOR}${BOLD}cbsd jconstruct-tui${N0_COLOR}"
+	${ECHO}
+	${ECHO} "  ${N2_COLOR}To start with bhyve:${N0_COLOR}"
+	${ECHO} "  ${N0_COLOR}${BOLD}cbsd bcreate --help${N0_COLOR}"
+	${ECHO} "  ${N2_COLOR}or: ${N0_COLOR}${BOLD}cbsd bconstruct-tui${N0_COLOR}"
+	${ECHO}
+	${ECHO} "  ${N2_COLOR}To start with XEN:${N0_COLOR}"
+	${ECHO} "  ${N0_COLOR}${BOLD}cbsd xcreate --help${N0_COLOR}"
+	${ECHO} "  ${N2_COLOR}or: ${N0_COLOR}${BOLD}cbsd xconstruct-tui${N0_COLOR}"
+	${ECHO}
+	${ECHO} "  ${H3_COLOR}Enjoy CBSD!${N0_COLOR}"
 	${ECHO}
 }
 
@@ -956,10 +988,10 @@ start()
 	fi
 
 	. ${globalconf}
-	. ${distdir}/nc.subr
-	. ${distdir}/tools.subr
-	. ${distdir}/initenv.subr
-	. ${distdir}/ansiicolor.subr
+	. ${subrdir}/nc.subr
+	. ${subrdir}/tools.subr
+	. ${subrdir}/initenv.subr
+	. ${subrdir}/ansiicolor.subr
 
 	if [ "${workdir}" = "${distdir}" ]; then
 		${ECHO} "${N1_COLOR}Please use difference path for workdir. Not ${N2_COLOR}${distdir}${N0_COLOR}"
@@ -1135,18 +1167,24 @@ EOF
 		${SYSRC_CMD} -qf ${workdir}/rc.conf preseedinit="${answ}" > /dev/null 2>&1
 	fi
 
-	make -C ${distdir} clean
-
 	exit 0
 }
 
 # export LOCK_CMD
 init_lock()
 {
-	if [ -x /usr/bin/lockf ]; then
-		LOCK_CMD="/usr/bin/lockf -t0 -s "
-	elif [ -x /usr/bin/flock ]; then
-		LOCK_CMD="/usr/bin/flock -w0 -x "
+	local _lock_cmd
+	LOCK_CMD=
+
+	_lock_cmd=$( which lockf 2>/dev/null )
+
+	if [ -n "${_lock_cmd}" -a -x "${_lock_cmd}" ]; then
+		LOCK_CMD="${_lock_cmd} -t0 -s "
+	else
+		_lock_cmd=$( which flock 2>/dev/null )
+		if [ -n "${_lock_cmd}" -a -x ${_lock_cmd} ]; then
+			LOCK_CMD="${_lock_cmd} -w0 -x "
+		fi
 	fi
 
 	if [ -z "${LOCK_CMD}" ]; then
@@ -1189,8 +1227,8 @@ arch=$( uname -p )
 # Overwrite $platform to TrueOS if we have TrueOS-specific dirs
 [ -d "/usr/local/etc/trueos" -a -d "/usr/local/share/trueos" ] && platform="TrueOS"
 
-[ -f "${distdir}/cmd.subr" ] && . ${distdir}/cmd.subr
-[ -f "${distdir}/${platform}.subr" ] && . ${distdir}/${platform}.subr
+[ -f "${subrdir}/cmd.subr" ] && . ${subrdir}/cmd.subr
+[ -f "${subrdir}/${platform}.subr" ] && . ${subrdir}/${platform}.subr
 
 case "$1" in
 	start)

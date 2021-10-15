@@ -1,26 +1,39 @@
 #!/usr/local/bin/cbsd
-#v12.0.6
-MYARG="mode jname"
-MYOPTARG="fromfile jname cloudengine"
+#v13.0.11
+CBSDMODULE="sys"
+MYARG="jname mode"
+MYOPTARG="cloudengine fromfile"
 MYDESC="cloud-init helper t generate CI yaml"
-ADDHELP="mode can be: show, gen\n\
-pw - plain password, or\n\
-epw - encrypted password\n\
-cloudengine - 'cloud-init' (default) or 'cloudinit-base'\n"
+ADDHELP="
 
-. ${subr}
+${H3_COLOR}Description${N0_COLOR}:
+
+ Prepare cloud-init/cloudbase related manifests.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}cloudengine=${N0_COLOR} - target engine, 'cloud-init' (default) or 'cloudinit-base'
+ ${N2_COLOR}fromfile=${N0_COLOR}    - load params from file
+ ${N2_COLOR}jname=${N0_COLOR}       - target env
+ ${N2_COLOR}mode=${N0_COLOR}        - mode can be: 'show', 'gen'
+"
+
+. ${subrdir}/nc.subr
 . ${cbsdinit}
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 
 case "${emulator}" in
 	bhyve|xen)
 		;;
 	*)
-		log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+		log_err 1 "${N1_COLOR}${CBSD_APP} error: unsupported emulator for ${jname}: ${N2_COLOR}${emulator}${N0_COLOR}"
 		;;
 esac
 
 [ -z "${cloudengine}" ] && cloudengine="cloud-init"
+
+cbsd_cloud_init=0
+readconf cloud-init-extras.conf
 
 _MYDIR="${distdir}/modules/bsdconf.d"
 SERVICE="cloudinit"
@@ -29,6 +42,7 @@ case "${cloudengine}" in
 	cloud-init)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
 		cloud_data_files="meta-data network-config user-data"
+		[ ${cbsd_cloud_init} -eq 1 ] && cloud_data_files="${cloud_data_files} cbsd-network-config"
 		;;
 	cloudinit-base)
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init/openstack/latest"
@@ -58,6 +72,7 @@ show()
 	local _source=
 	local _tpldir="${_MYDIR}/cloud-tpl/${ci_template}"
 	local _keytest
+	local _nomask=1
 
 	[ ! -d ${_tpldir} ] && err 1 "${N1_COLOR}cloudinit: no template dir: ${N2_COLOR}${_tpldir}${N0_COLOR}"
 
@@ -70,7 +85,7 @@ show()
 
 	if [ -n "${ci_pubkey}" ]; then
 		# ci_pubkey test
-		. ${distdir}/settings-tui-virtual.subr	# for is_valid_ssh_key
+		. ${subrdir}/settings-tui-virtual.subr	# for is_valid_ssh_key
 		if [ -r "${workdir}/${ci_pubkey}" ]; then
 			_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${ci_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
 			if ! is_valid_ssh_key "${_keytest}"; then
@@ -98,7 +113,13 @@ show()
 	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user='*'
 	ci_user_pw_root_lock="false"
 	[ -z "${ci_user_pw_root}" ] && ci_user_pw_root='*'
-	[ -z "${ci_interface_mtu}" ] && ci_interface_mtu="1500"
+
+	if [ -z "${default_ci_interface_mtu}" ]; then
+		ci_interface_mtu="1500"
+		oci_interface_mtu="1500"
+	else
+		oci_interface_mtu="${default_ci_interface_mtu}"
+	fi
 
 	# todo: test for empty values
 	case "${_source}" in
@@ -114,15 +135,195 @@ show()
 			${_tpldir}/${_source}
 			;;
 		network-config)
-			${SED_CMD} -e "s:%%ci_interface%%:${ci_interface}:g" \
-			-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
-			-e "s:%%ci_ip4_addr%%:${ci_ip4_addr}:g" \
-			-e "s:%%ci_gw4%%:${ci_gw4}:g" \
-			-e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+
+			${CAT_CMD} ${_tpldir}/10-${_source}
+
+			interface_num=1
+			gw_set=0
+
+			# todo: ci_interfaceX - unlim?
+			for interface in ${ci_interface} ${ci_interface2}; do
+
+				nic_id=$(( interface_num - 1 ))
+				interface_name="${ci_interface_name}${nic_id}"
+
+				# CLOUD HACK: only first nic used global ci_interface_mtu
+				if [ ${interface_num} -ne 1 ]; then
+					ci_interface_mtu="1500"
+				else
+					ci_interface_mtu="${oci_interface_mtu}"
+				fi
+
+				${SED_CMD} -e "s:%%ci_interface_name%%:${interface_name}:g" \
+				-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
+				${_tpldir}/20-${_source}-interface
+
+				if [ ${interface_num} -eq 1 ]; then
+
+					OIFS="${IFS}"
+					IFS=","
+
+					for _pureip in ${ci_ip4_addr}; do
+
+						IFS="${OIFS}"
+
+						ipwmask ${_pureip}
+						[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+						strpos --str="${_pureip}" --search="/"
+						_nomask=$?
+
+						iptype ${IWM}
+						_inet=$?
+
+						#cloudinit-base not support /prefix as ci_ip4_addr
+						if [ "${cloudengine}" != "cloudinit-base" ]; then
+							case ${_inet} in
+								1)
+									ipv4_true="true"
+									ipv6_true="false"
+									[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+									;;
+								2)
+									ipv4_true="false"
+									ipv6_true="true"
+									[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+									;;
+								*)
+									log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+									;;
+							esac
+						fi
+
+						# default router only one ( fix BSD )
+						# use oci_gw4 instead of ci_gw4 - dont prune original value
+						if [ ${interface_num} -eq 1 ]; then
+							if [ ${gw_set} -eq 0 ]; then
+								oci_gw4="${ci_gw4}"
+							else
+								oci_gw4=
+							fi
+						fi
+
+						${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
+						-e "s#%%ipv6_true%%#${ipv6_true}#g" \
+						-e "s#%%ci_ip4_addr%%#${_pureip}#g" \
+						-e "s#%%ci_gw4%%#${oci_gw4}#g" \
+						${_tpldir}/30-${_source}-static
+
+						gw_set=1
+
+						IFS=","
+					done
+					IFS="${OIFS}"
+				fi
+
+				## 
+				if [ ${interface_num} -eq 2 -a -n "${ci_ip4_addr2}" ]; then
+
+					ipwmask ${ci_ip4_addr2}
+					[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+					strpos --str="${ci_ip4_addr2}" --search="/"
+					_nomask=$?
+
+					iptype ${IWM}
+					_inet=$?
+
+					case ${_inet} in
+						1)
+							ipv4_true="true"
+							ipv6_true="false"
+							[ ${_nomask} -eq 0 ] && ci_ip4_addr2="${ci_ip4_addr2}/24"
+							;;
+						2)
+							ipv4_true="false"
+							ipv6_true="true"
+							[ ${_nomask} -eq 0 ] && ci_ip4_addr2="${ci_ip4_addr2}/64"
+							;;
+						*)
+							log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+							;;
+					esac
+
+					oci_gw4="${ci_gw42}"
+					#oci_gw4="${ci_gw42}%${interface_name}"
+
+					${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
+					-e "s#%%ipv6_true%%#${ipv6_true}#g" \
+					-e "s#%%ci_ip4_addr%%#${ci_ip4_addr2}#g" \
+					-e "s#%%ci_gw4%%#${oci_gw4}#g" \
+					${_tpldir}/30-${_source}-static
+				fi
+
+				interface_num=$(( interface_num + 1 ))
+				gw_set=0
+			done
+
+			${SED_CMD} -e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
 			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
-			${_tpldir}/${_source}
+			${_tpldir}/40-${_source}
+			;;
+		cbsd-network-config)
+
+			OIFS="${IFS}"
+			IFS=","
+
+			iface=0
+
+			for _pureip in ${ip4_addr}; do
+				IFS="${OIFS}"
+
+				ipwmask ${_pureip}
+				[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+
+				strpos --str="${_pureip}" --search="/"
+				_nomask=$?
+
+				iptype ${IWM}
+				_inet=$?
+
+				case ${_inet} in
+					1)
+						ipv4_true="true"
+						ipv6_true="false"
+						[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/24"
+						;;
+					2)
+						ipv4_true="false"
+						ipv6_true="true"
+						[ ${_nomask} -eq 0 ] && _pureip="${_pureip}/64"
+						;;
+					*)
+						log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+						;;
+				esac
+
+				if [ ${iface} -eq 1 ]; then
+					oci_gw4="${ci_gw42}"
+				fi
+
+				echo "ip${iface}=\"${_pureip}\""
+				echo "gw${iface}=\"${oci_gw4}\""
+				#echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
+				iface=$(( iface + 1 ))
+				IFS=","
+
+			done
+			IFS="${OIFS}"
+
+			# CLOUD HACK: only first nic used global ci_interface_mtu
+			echo "mtu=\"${oci_interface_mtu}\""
 			;;
 		network_data.json)
+
+			# cloudbase-init doesnt support /prefix in ci_ip4_addr
+			if [ "${cloudengine}" = "cloudinit-base" ]; then
+				ipwmask ${ci_ip4_addr}
+				[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+				ci_ip4_addr="${IWM}"
+			fi
+
 			${SED_CMD} -e "s:%%ci_interface%%:${ci_interface}:g" \
 			-e "s:%%ci_ip4_addr%%:${ci_ip4_addr}:g" \
 			-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
@@ -206,11 +407,17 @@ if [ -n "${fromfile}" ]; then
 
 	unset ci_template ci_user_pw_root ci_user_add ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_search
 	unset ci_jname ci_fqdn ci_interface ci_ip4_addr ci_gw4 ci_nameserver_address ci_user_pw_user ci_user_pw_root
-	unset ci_nic_hwaddr0 ci_user_pubkey ci_interface_mtu
+	unset ci_nic_hwaddr0 ci_user_pubkey ci_interface_mtu default_ci_interface_mtu
 
 	. ${fromfile}
 
 	[ -z "${ci_template}" ] && err 1 "${N1_COLOR}No ci_template${N0_COLOR}"
+
+	case "${vm_os_type}" in
+		windows)
+			[ -z "${ci_user_add}" ] && ci_user_add="windows"
+			;;
+	esac
 
 	for i in ${ci_user_add}; do
 		unset login epw ci_pw ci_fullname ci_secgroup ci_group ci_shell res err
@@ -237,6 +444,7 @@ if [ -n "${fromfile}" ]; then
 
 		case "${mode}" in
 			show)
+				echo $cloud_data_files
 				for i in ${cloud_data_files}; do
 					show -s ${i}
 					ret=$?

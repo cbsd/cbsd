@@ -1,0 +1,1007 @@
+# JAIL-related TUI function
+
+if [ ! "$_CBSD_SETTINGS_TUI_JAIL_SUBR" ]; then
+_CBSD_SETTINGS_TUI_JAIL_SUBR=1
+. ${dialog}
+###
+
+allow_devfs_msg="Allow privileged users inside the jail mount and unmount DEVFS file system"
+allow_dying_msg="Allow making changes to a dying Jail"
+allow_fdescfs_msg="Jail may mount the fdescfs file system"
+allow_fusefs_msg="Allow privileged users inside the jail mount and unmount fuse-based file systems."
+allow_linprocfs_msg="Allow privileged users inside the jail mount and unmount linprocfs."
+allow_linsysfs_msg="Allow privileged users inside the jail mount and unmount linsysfs."
+allow_kmem_msg="Allow kmem and /dev/io devices for jail. Warning: this is insecure options. Use it only for private purposes/X-jails"
+allow_mount_msg="Allow privileged users inside the jail mount and unmount file system"
+allow_nullfs_msg="Allow privileged users inside the jail mount and unmount NULLFS file system"
+allow_procfs_msg="Allow privileged users inside the jail mount and unmount PROCFS file system"
+allow_raw_sockets_msg="The jail root is allowed to create raw sockets"
+allow_read_msgbuf_msg="Allow an unprivileged user to read the kernel message buffer"
+allow_reserved_ports_msg="Allow the jail root may bind to ports lower than 1024. For FreeBSD 11.1+"
+sysvsem_msg="Controls access to SYSV semaphores"
+sysvshm_msg="Controls access to shared memory"
+sysvmsg_msg="Controls access to SYSV message queues"
+allow_tmpfs_msg="Allow privileged users inside the jail mount and unmount TMPFS file system"
+allow_mlock_msg="Allow mlock(2) or munlock(2) within jail"
+allow_unprivileged_proc_debug_msg="Unprivileged processes in the jail may use debugging facilities"
+allow_vmm_msg="The jail may access vmm(4). Useful for jailed bhyve"
+allow_zfs_msg="Privileged users inside the jail will be able to mount and unmount the ZFS file system"
+applytpl_msg="1,yes - Apply CBSD templates for Jail environment"
+arch_msg="Target architecture, i386/amd64 or qemu-users arch"
+basename_msg="Alternative jailbase name"
+baserw_msg="1,yes - Jail have personal copy of base system with write access, no NULLFS mount. 0,no - read-only and NULLFS"
+b_order_msg="Set integer for boot order."
+childrenmax_msg="Enable hierarchical jails and set limit max children"
+data_msg="Data directory for Jail"
+depend_msg="Specify a Jail or jails that this jail depends on"
+devfs_ruleset_msg="DEVFS ruleset number for Jail devfs"
+enforce_statfs_msg="This determines what information processes in a jail are able to get about mount points"
+exec_consolelog_msg="Jail consolelog file for stdout/stderr output. Possible values: path_to_file, 0 - for disable log to file, 1 - for automatic $logdir/jname.log"
+exec_fib_msg="The FIB routing table to set when running commands inside the prison"
+exec_timeout_msg="The maximum amount of time to wait for a command to complete"
+floatresolv_msg="1,yes - Floating /etc/resolv.conf content"
+jdomain_msg="Specify CBSD node group name for jail"
+kernelmount_msg="1,yes - Jail have mounted /boot/kernel tree in read-only. Useful for DTRACE stuff in Jail"
+mdsize_msg="Enter size for the images"
+mkhostsfile_msg="Automatically set IP/NAME in /etc/hosts when jail started"
+mount_devfs_msg="Mount DEVFS filesystem in the jail"
+mount_fdescfs_msg="Mount a FDESCFS filesystem on the chrooted /dev/fd directory"
+mount_kernel_msg="1,yes - Jail have mounted /boot/kernel tree in read-only. Useful for DTRACE stuff in Jail"
+mount_obj_msg="1,yes - Jail have mounted /usr/obj tree in read-only"
+mount_ports_msg="1,yes - Jail have /usr/ports /usr/ports tree in read-only"
+mount_src_msg="1,yes - Jail have shared /usr/src tree in read-only"
+path_msg="Mount point for Jail"
+persist_msg="Allows a jail to exist without any processes."
+stop_timeout_msg="The maximum amount of time to wait for a jailed processes to exit after sending them a SIGTERM signal"
+ver_msg="Jail base source version"
+vnet_msg="1.yes - Enable VIMAGE/VNet feature"
+ip4_addr_msg="Jail IPv4 and/or IPv6 address"
+ip4_addr_desc="Current CBSD IPv4 pool: ${nodeippool}\n\
+ Use IP/PREFIX form, comma-separated for aliases.\n\
+ '0' to disable IP creating by CBSD\n\
+ 'DHCP' for determine free IPv4 automatically\n\
+ 'DHCPv6' for determine free IPv6 automatically\n\
+ 'REALDHCP' when DHCP server is used (uses dhclient - useful for vnet jails)\n\
+ 'nic1#ip_addr,nic2#ip_addr' for multiple NIC form\n"
+
+GET_JAILPROFILE_MSG="Profile for jcreate"
+
+# jail form for $pkglist
+get_construct_pkglist()
+{
+	local _i
+
+	[ -z "${pkglist}" -o "${pkglist}" = "NO" ] && pkglist="${ftmpdir}/tui.$$"
+
+	# load pkg list from profile
+	if [ -n "${tpl_pkglist}" ]; then
+		if [ -r "${tpl_pkglist}" ]; then
+			${CAT_CMD} ${tpl_pkglist} >> ${pkglist}
+		else
+			for _i in ${tpl_pkglist}; do
+				echo ${_i} >> ${pkglist}
+			done
+		fi
+	fi
+
+	pkgbrowser controlmaster="${pkglist}"
+	[ ! -s "${pkglist}" ] && pkglist="NO"
+}
+
+# jail form for $srvlist
+get_construct_services()
+{
+	local _arch _ver
+	local msg_ok="Got it"
+
+	if [ -z "${ver}" ]; then
+		f_dialog_msgbox "Please select ver for jail version first"
+		return 0
+	fi
+
+	if [ -z "${arch}" ]; then
+		f_dialog_msgbox "Please select arch for jail architecture first"
+		return 0
+	fi
+
+	if [ "${arch}" = "native" ]; then
+		_arch=$( ${UNAME_CMD}  -m )
+	else
+		_arch="${arch}"
+	fi
+
+	if [ "${ver}" = "native" ]; then
+		_tmpver=$( ${UNAME_CMD}  -r )
+		_ver=${_tmpver%%-*}
+		unset _tmpver
+	else
+		_ver="${ver}"
+	fi
+
+	init_basedir -a ${_arch} -v ${_ver}
+
+	if [ -z "${BASE_DIR}" ]; then
+		f_dialog_msgbox "BASE_DIR empty"
+		return 0
+	fi
+
+	if [ ! -x ${BASE_DIR}/bin/sh ]; then
+		f_dialog_msgbox "No such basejail: ${BASE_DIR}\n Please fetch this first"
+		return 0
+	fi
+
+	srvlist="${ftmpdir}/srv.$$"
+	srvbrowser-tui controlmaster="${srvlist}" baseonly=1 path=${BASE_DIR}
+
+	[ ! -s "${srvlist}" ] && srvlist="NO"
+}
+
+
+# jail form for $ver
+get_construct_ver()
+{
+	title=" ver "
+	prompt="${ver_msg}"
+	defaultitem="${ver}"
+
+	cbsd_inputbox_simple && ver="${mtag}"
+}
+
+# print available/registered jail bases for $ver/$arch
+# -v $ver
+# -a $arch
+# return 0 when exist
+# return 1 when not
+# list=$( get_basebame_list [-v $ver -a $arch] )
+# [ $? -eq 0 ] && echo "base list: ${list}"
+get_basename_list()
+{
+	local _arch _ver _sver _basename_list
+
+	while getopts "a:v:" opt; do
+		case "${opt}" in
+			a) _arch="${OPTARG}" ;;
+			v) _ver="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_arch}" ] && _arch="${arch}"
+	[ -z "${_ver}" ] && _ver="${ver}"
+	_sver=${_ver%%.*}
+
+	_basename_list=$( cbsdsqlro ${dbdir}/local.sqlite SELECT basename FROM bsdbase WHERE basename != '0' AND \( ver=\"${_ver}\" OR ver=\"${_sver}\" \) AND arch=\"${_arch}\"	 2>/dev/null | ${XARGS_CMD} )
+
+	if [ -z "${_basename_list}" ]; then
+		return 1
+	else
+		printf "${_basename_list}"
+		return 0
+	fi
+
+}
+
+# jail form for $basename
+# -m 1  - add "manual" choice
+# -v $ver
+# -a $arch
+get_construct_basename()
+{
+	local menu_list _arch _manual _ver _sver _basename_list
+	local i
+
+	local title=" basename "
+	local prompt="${basename_msg}"
+	hline=
+
+	_basename_list=$( get_basename_list )
+
+	local menu_list="
+		'EXIT'	'EXIT'	'Exit'
+	" # END-QUOTE
+
+	defaultitem="${basename}"
+
+	while getopts "a:m:v:" opt; do
+		case "${opt}" in
+			a) _arch="${OPTARG}" ;;
+			m) _manual="${OPTARG}" ;;
+			v) _ver="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	_basename_list=$( get_basename_list )
+
+	[ -z "${_arch}" ] && _arch="${arch}"
+	[ -z "${_ver}" ] && _ver="${ver}"
+
+	menu_list=
+	if [ "${_manual}" = "1" ]; then
+		menu_list="${menu_list} 'manual'	'manual'	'Enter basename by hand.'"
+	fi
+
+	_basename_list=$( get_basename_list -a ${_arch} -v ${_ver} )
+
+	menu_list="${menu_list} '-'	'-'	''"
+
+	for i in ${_basename_list}; do
+			menu_list="${menu_list} '${i}'	'${i}'	'Description: ${i}'"
+	done
+	cbsd_menubox
+	_retval=$?
+
+	case ${_retval} in
+		${DIALOG_OK})
+			case "${mtag}" in
+				"-")
+					continue
+					;;
+				EXIT)
+					return 1
+					;;
+				manual)
+					cbsd_inputbox_simple && basename="${mtag}"
+					;;
+				*)
+					[ -n "${mtag}" ] && basename="${mtag}"
+					;;
+			esac
+			;;
+		*)
+			;;
+	esac
+
+	return ${_retval}
+}
+
+# jail form for $exec_stop
+get_construct_exec_stop()
+{
+	title=" exec_stop "
+	prompt=" Redefine for exec_stop "
+	defaultitem="${exec_stop}"
+
+	cbsd_inputbox_simple && exec_stop="${mtag}"
+}
+
+# jail form for $exec_start
+get_construct_exec_start()
+{
+	title=" exec_start "
+	prompt=" Redefine for exec_start "
+	defaultitem="${exec_start}"
+
+	cbsd_inputbox_simple && exec_start="${mtag}"
+}
+
+# jail form for $childrenmax
+get_construct_childrenmax()
+{
+	title=" childrenmax "
+	prompt="${childrenmax_msg}"
+	defaultitem="${childrenmax}"
+
+	cbsd_inputbox_simple && childrenmax="${mtag}"
+}
+
+# jail form for $enforce_statfs
+get_construct_enforce_statfs()
+{
+	title=" enforce_statfs "
+	prompt="${enforce_statfs_msg}"
+	defaultitem="${enforce_statfs}"
+
+	cbsd_inputbox_simple && enforce_statfs="${mtag}"
+}
+
+
+# jail form for $user_pw_root
+get_construct_user_pw_root()
+{
+	if get_password; then
+		user_pw_root_crypt=$( ${miscdir}/pwcrypt ${mtag} )
+		if [ $? -eq 0 ]; then
+			unset user_pw_root
+		else
+			user_pw_root="${mtag}"
+			unset user_pw_root_crypt
+		fi
+	fi
+}
+
+
+# jail form for $path
+get_construct_path()
+{
+	title=" path "
+	prompt="${path_msg}"
+	defaultitem="${path}"
+
+	cbsd_inputbox_simple && path="${mtag}"
+}
+
+# jail form for $data
+get_construct_data()
+{
+	title=" data "
+	prompt="${data_msg}"
+	defaultitem="${data}"
+
+	cbsd_inputbox_simple && data="${mtag}"
+}
+
+
+# jail form for $devfs_ruleset
+get_construct_devfs_ruleset()
+{
+	title=" devfs_ruleset "
+	prompt="${devfs_ruleset_msg}"
+	defaultitem="${devfs_ruleset}"
+
+	cbsd_inputbox_simple && devfs_ruleset="${mtag}"
+}
+
+# jail form for $mdsize
+get_construct_mdsize()
+{
+	title=" mdsize "
+	prompt="${mdsize_msg}"
+	defaultitem="${mdsize}"
+
+	cbsd_inputbox_simple && mdsize="${mtag}"
+}
+
+# jail form for $exec_timeout
+get_construct_exec_timeout()
+{
+	local _input
+
+	f_dialog_title " exec_timeout "
+
+	f_dialog_input _input "${exec_timeout_msg}" "${exec_timeout}" \
+			"${_message}" || return $?
+
+	exec_timeout="${_input}"
+}
+
+# jail form for $exec_fib
+get_construct_exec_fib()
+{
+	local _input
+
+	f_dialog_title " exec_fib "
+
+	f_dialog_input _input "${exec_fib_msg}" "${exec_fib}" \
+			"${_message}" || return $?
+
+	exec_fib="${_input}"
+}
+
+# jail form for $exec_consolelog
+get_construct_exec_consolelog()
+{
+	local _input
+
+	f_dialog_title " exec_consolelog "
+
+	f_dialog_input _input "${exec_consolelog_msg}" "${exec_consolelog}" \
+		"${_message}" || return $?
+
+	exec_consolelog="${_input}"
+}
+
+# jail form for $stop_timeout
+get_construct_stop_timeout()
+{
+	local _input
+
+	f_dialog_title " stop_timeout "
+
+	f_dialog_input _input "${stop_timeout_msg}" "${stop_timeout}" \
+		"${_message}" || return $?
+
+	stop_timeout="${_input}"
+}
+
+# jail form for $depend
+get_jail_depend()
+{
+	local _input
+
+	f_dialog_title " depend "
+
+	f_dialog_input _input "${depend_msg}" \
+		"${_message}" || return $?
+
+	depend="${_input}"
+}
+
+# jail form for $arch
+get_construct_arch()
+{
+	local _input _res
+
+	local title="${arch_msg}"
+	local defaultitem="${arch}"
+
+	local qemu_mips64=$( which qemu-mips64-static 2>/dev/null )
+	local qemu_arm=$( which qemu-arm-static 2>/dev/null )
+	local qemu_aarch64=$( which qemu-aarch64-static 2>/dev/null )
+	local qemu_ppc64=$( which qemu-ppc64-static 2>/dev/null )
+	local qemu_riscv64=$( which qemu-riscv64-static 2>/dev/null )
+
+	local amd64_menu=
+	local i386_menu=
+	local amd64_desc=
+	local i386_desc=
+
+	local arm_menu=
+	local mips_menu=
+	local riscv_menu=
+
+	local arm_desc=
+	local mips_desc=
+	local riscv_desc=
+
+	local qemu_mips64_desc=
+	local qemu_arm_desc=
+	local qemu_aarch64_desc=
+	local qemu_riscv64_desc=
+
+	local qemu_mips64_enable=
+	local qemu_arm_enable=
+	local qemu_aarch64_enable=
+	local qemu_riscv64_enable=
+
+	local qemu_mips64_menu="MIPS64"
+	local qemu_arm_menu="ARMv6"
+	local qemu_aarch64_menu="ARMv8"
+	local qemu_riscv64_menu="RISCV64"
+
+	local qemu_powerpc64_enable=
+	local qemu_powerpc64_menu="powerpc64"
+
+	# test for qemu_mips64
+	if [ -n "${qemu_mips64}" ]; then
+		_res=$( 2>&1 ${LDD_CMD} ${qemu_mips64} | ${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_mips64_enable=1
+			qemu_mips64_desc="MIPS64 via ${qemu_mips64}"
+		else
+			qemu_mips64_enable=0
+			qemu_mips64_desc="${qemu_mips64} is not static. Please rebuild with STATIC ( emulators/qemu-user-static , emulators/qemuXX )"
+		fi
+	else
+		qemu_mips64_enable=0
+		qemu_mips64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static , emulators/qemuXX )"
+	fi
+
+	# test for qemu_arm
+	if [ -n "${qemu_arm}" ]; then
+		_res=$( 2>&1 ${LDD_CMD} ${qemu_arm} | ${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_arm_enable=1
+			qemu_arm_desc="ARM via ${qemu_arm}"
+		else
+			qemu_arm_enable=0
+			qemu_arm_desc="${qemu_arm} is not static. Please rebuild with STATIC ( emulators/qemu-user-static , emulators/qemuXX )"
+		fi
+	else
+		qemu_arm_enable=0
+		qemu_arm_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static , emulators/qemuXX )"
+	fi
+
+	# test for qemu_aarch64
+	if [ -n "${qemu_aarch64}" ]; then
+		_res=$( 2>&1 ${LDD_CMD} ${qemu_aarch64} | ${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_aarch64_enable=1
+			qemu_aarch64_desc="aarch64 aka ARMv8 and arm-64 via ${qemu_aarch64}"
+		else
+			qemu_aarch64_enable=0
+			qemu_aarch64_desc="${qemu_aarch64} is not static. Please rebuild with STATIC ( emulators/qemu-user-static , emulators/qemuXX )"
+		fi
+	else
+		qemu_aarch64_enable=0
+		qemu_aarch64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static , emulators/qemuXX )"
+	fi
+
+	# test for qemu_ppc64
+	if [ -n "${qemu_ppc64}" ]; then
+		_res=$( 2>&1 ${LDD_CMD} ${qemu_ppc64} | ${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_powerpc64_enable=1
+			qemu_powerpc64_desc="POWERC64 via ${qemu_ppc64}"
+		else
+			qemu_powerpc64_enable=0
+			qemu_powerpc64_desc="${qemu_ppc64} is not static. Please rebuild with STATIC ( emulators/qemu-user-static , emulators/qemuXX )"
+		fi
+	else
+		qemu_powerpc64_enable=0
+		qemu_powerpc64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static , emulators/qemuXX )"
+	fi
+
+	# test for qemu_riscv64
+	if [ -n "${qemu_riscv64}" ]; then
+		_res=$( 2>&1 ${LDD_CMD} ${qemu_riscv64} | ${GREP_CMD} -q "not a dynamic ELF executable" )
+		if [ $? -eq 0 ]; then
+			qemu_riscv64_enable=1
+			qemu_riscv64_desc="RISCV64 via ${qemu_riscv64}"
+		else
+			qemu_riscv64_enable=0
+			qemu_riscv64_desc="${qemu_RISCV64} is not static. Please rebuild with STATIC ( emulators/qemu-user-static , emulators/qemuXX )"
+		fi
+	else
+		qemu_riscv64_enable=0
+		qemu_riscv64_desc="You have no qemu-user: please install qemu-devel with BSD_USER and STATIC ops ( emulators/qemu-user-static , emulators/qemuXX )"
+	fi
+
+	case "${hostarch}" in
+		"amd64")
+			amd64_menu="*"
+			amd64_desc="This is native architecture for this node"
+			;;
+		"i386")
+			i386_menu="*"
+			i386_desc="This is native architecture for this node"
+			;;
+		"arm")
+			arm_menu="*"
+			arm_desc="This is native architecture for this node"
+			;;
+		"aarch64")
+			aarch64_menu="*"
+			aarch64_desc="This is native architecture for this node"
+			;;
+		"mips")
+			mips_menu="*"
+			mips_desc="This is native architecture for this node"
+			;;
+		"ppc64")
+			ppc64_menu="*"
+			ppc64_desc="This is native architecture for this node"
+			;;
+		"riscv")
+			riscv_menu="*"
+			riscv_desc="This is native architecture for this node"
+			;;
+	esac
+
+	case "${arch}" in
+		amd64)
+			local menu_list="
+			'amd64'	'x86-64 ${amd64_menu}'		'64 bit architecture. ${amd64_desc}'
+			'i386'	'x86 ${i386_menu}'		'32 bit architecture. ${i386_desc}'
+			" # END-QUOTE
+			;;
+		i386)
+			local menu_list="
+			'i386'	'x86 ${i386_menu}'		'32 bit architecture. ${i386_desc}'
+			" # END-QUOTE
+			;;
+		arm)
+			local menu_list="
+			'arm'	'arm ${arm_menu}'		'ARM architecture. ${arm_desc}'
+			" # END-QUOTE
+			;;
+		aarch64)
+			local menu_list="
+			'arm'	'aarch64 ${aarch64_menu}'	'ARM architecture. ${aarch64_desc}'
+			" # END-QUOTE
+			;;
+		mips)
+			local menu_list="
+			'mips'	'mips ${mips_menu}'		'MIPS architecture. ${mips_desc}'
+			" # END-QUOTE
+			;;
+		ppc64)
+			local menu_list="
+			'powerpc'	'ppc64 ${ppc64_menu}'	'POWERPC64 architecture. ${ppc64_desc}'
+			" # END-QUOTE
+			;;
+		riscv64)
+			local menu_list="
+			'riscv'	'riscv ${riscv_menu}'		'RISCV architecture. ${riscv_desc}'
+			" # END-QUOTE
+			;;
+		*)
+			local menu_list="
+			'amd64'	'x86-64 ${amd64_menu}'		'64 bit architecture. ${amd64_desc}'
+			'i386'	'x86 ${i386_menu}'		'32 bit architecture. ${i386_desc}'
+			" # END-QUOTE
+			;;
+	esac
+
+	if [ ${qemu_arm_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'arm'	'${qemu_arm_menu}'	'${qemu_arm_desc}'"
+	else
+		menu_list="${menu_list} ''	'armv6 unsupported'	'${qemu_arm_desc}'"
+	fi
+
+	if [ ${qemu_aarch64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'aarch64'	'${qemu_aarch64_menu}'	'${qemu_aarch64_desc}'"
+	else
+		menu_list="${menu_list} ''		'aarch64 unsupported'	'${qemu_aarch64_desc}'"
+	fi
+
+	if [ ${qemu_mips64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'mips'	'${qemu_mips64_menu}'	'${qemu_mips64_desc}'"
+	else
+		menu_list="${menu_list} ''	'mips unsupported'	'${qemu_mips64_desc}'"
+	fi
+
+	if [ ${qemu_powerpc64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'powerpc'	'${qemu_powerpc64_menu}'	'${qemu_powerpc64_desc}'"
+	else
+		menu_list="${menu_list} ''		'ppc64 unsupported'	'${qemu_powerpc64_desc}'"
+	fi
+
+	if [ ${qemu_riscv64_enable} -eq 1 ]; then
+		menu_list="${menu_list} 'riscv'	'${qemu_riscv64_menu}'	'${qemu_riscv64_desc}'"
+	else
+		menu_list="${menu_list} ''	'riscv64 unsupported'	'${qemu_riscv64_desc}'"
+	fi
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			if [ -n "${mtag}" ]; then
+				arch="${mtag}"
+			else
+				arch="${hostarch}"
+			fi
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+
+
+# jail form for $sysvsem
+get_construct_sysvsem()
+{
+	local _input _res
+
+	local title="${sysvsem_msg}"
+	local defaultitem="${sysvsem}"
+
+	local menu_list="
+		'new'			'new'			'New sysvsem: separated isolated segments for jail'
+		'inherit'		'inherit'		'Inherit (shared) from parent environment'
+		'disable'		'disable'		'Disable sysvsem within jail'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && sysvsem="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# jail form for $sysvshm
+get_construct_sysvshm()
+{
+	local _input _res
+
+	local title="${sysvshm_msg}"
+	local defaultitem="${sysvshm}"
+
+	local menu_list="
+		'new'			'new'			'New sysvshm: separated isolated segments for jail'
+		'inherit'		'inherit'		'Inherit (shared) from parent environment'
+		'disable'		'disable'		'Disable sysvsem within jail'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && sysvshm="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# jail form for $sysvmsg
+get_construct_sysvmsg()
+{
+	local _input _res
+
+	local title="${sysvmsg_msg}"
+	local defaultitem="${sysvmsg}"
+
+	local menu_list="
+		'new'			'new'			'New sysvmsg: separated isolated segments for jail'
+		'inherit'		'inherit'		'Inherit (shared) from parent environment'
+		'disable'		'disable'		'Disable sysvmsg within jail'
+	" # END-QUOTE
+
+	cbsd_menubox
+	retval=$?
+
+	case ${retval} in
+		${DIALOG_OK})
+			[ -n "${mtag}" ] && sysvmsg="${mtag}"
+			;;
+		*)
+			;;
+	esac
+
+	return ${retval}
+}
+
+# todo: custom skip list, from jsetup-tui
+# jail form for jail options in jconstruct-tui
+# -c "alternative checkbox list" ( or global variable: ${get_construct_jail_options_menu_checkbox} )
+# -p "alternative params list" ( or global variable: ${get_construct_jail_options_menu_params} )
+get_construct_jail_options_menu()
+{
+	local _input _res item_let=A _mark _desc i VAL
+
+	local title="additional jail options"
+	local defaultitem=
+	local menu_choice=
+
+	local _checkbox
+
+	while getopts "c:p:" opt; do
+		case "${opt}" in
+			c) _checkbox="${OPTARG}" ;;
+			p) _params="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# default checkbox list
+	if [ -z "${_checkbox}" ]; then
+		# via global variable?
+		if [ -n "${get_construct_jail_options_menu_checkbox}" ]; then
+			_checkbox="${get_construct_jail_options_menu_checkbox}"
+		else
+			# default checkbox list
+			_checkbox="allow_devfs allow_dying allow_fusefs allow_linprocfs allow_linsysfs allow_kmem allow_mount \
+			allow_nullfs allow_fdescfs allow_procfs allow_raw_sockets allow_read_msgbuf allow_reserved_ports allow_sysvipc \
+			allow_tmpfs allow_unprivileged_proc_debug allow_vmm allow_zfs mount_devfs mount_fdescfs mount_procfs mount_linprocfs \
+			mount_linsysfs mount_fstab mount_kernel mount_obj mount_ports mount_src persist allow_mlock"
+		fi
+	fi
+
+	# sorted list
+	_checkbox=$( echo ${_checkbox} | ${SORT_CMD} )
+
+	# default params list
+	if [ -z "${_params}" ]; then
+		# via global variable?
+		if [ -n "${get_construct_jail_options_menu_params}" ]; then
+			_params="${get_construct_jail_options_menu_params}"
+		else
+			# default params list
+			_params="mnt_start mnt_stop boot_delay"
+		fi
+	fi
+
+	# sorted list
+	_params=$( echo ${_params} | ${SORT_CMD} )
+
+	f_dialog_default_fetch defaultitem
+
+	local menu_list=
+
+	# build main menu: params first
+	for i in ${_params}; do
+		eval VAL=\$$i
+		_mydesc=
+		eval _mydesc=\$${i}_msg
+
+		[ -z "${_mydesc}" ] && _mydesc="no description"
+
+		if [ -z "${VAL}" ]; then
+			menu_list="${menu_list} '${item_let} ${i}'	' '		'${_mydesc}'"
+		else
+			menu_list="${menu_list} '${item_let} ${i}'	'${VAL}'	'${_mydesc}'"
+		fi
+		inc_menu_index item_let
+	done
+
+	# build main menu: append checkbox list
+	for i in ${_checkbox}; do
+		eval _mytest=\$$i
+		if [ "${_mytest}" = "1" ]; then
+			export ${i}_mark="X"
+			_mark="X"
+		else
+			export ${i}_mark=" "
+			_mark=" "
+		fi
+
+		eval _desc="\${${i}_msg}"
+
+		menu_list="${menu_list} '${item_let} ${i}'		'[${_mark}]'		'${_desc}'"
+		inc_menu_index item_let
+	done
+
+	menu_list="${menu_list} 'Save'	'Save changes and quit'	'Save!'"
+
+	cbsd_menubox
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "${menu_choice}"
+	f_dialog_default_store "${menu_choice}"
+
+	return ${retval}
+}
+
+# Submenu for jail options
+get_construct_jail_options()
+{
+	local mychoice index
+	local old_defaultitem="${mtag}"
+
+	while [ 1 ]; do
+		get_construct_jail_options_menu || break
+
+		index=${mtag%% *}
+		mychoice=${mtag##* }
+
+		case "${mychoice}" in
+		"-")
+			continue
+			;;
+		mnt_start|mnt_stop|exec_start|exec_stop|boot_delay)
+			get_construct_${mychoice}
+			continue
+			;;
+		"Save")
+			break
+			;;
+		*)
+			invert_checkbox ${mychoice}
+			continue
+			;;
+		esac
+	done
+
+	f_dialog_default_store "${old_defaultitem}"
+}
+
+# jail form for $gw4
+get_construct_gw4()
+{
+	local _input
+
+	f_dialog_title " gw4 "
+
+	f_dialog_input _input "${GET_GW4_MSG}" "${gw4}" \
+			"${_message}" || return $?
+
+	gw4="${_input}"
+}
+
+# jail form for $ci_gw4
+get_construct_ci_gw4()
+{
+	local _input
+
+	f_dialog_title " ci_gw4 "
+
+	f_dialog_input _input "${GET_CI_GW4_MSG}" "${ci_gw4}" \
+			"${_message}" || return $?
+
+	ci_gw4="${_input}"
+}
+
+
+# jail form for $jdomain
+get_construct_jdomain()
+{
+	title=" jdomain "
+	prompt="${jdomain_msg}"
+	defaultitem="${jdomain}"
+
+	cbsd_inputbox_simple && jdomain="${mtag}"
+}
+
+# jail emulator part for qemu
+make_emulator_part()
+{
+	# todo
+	# we need redirect sys message from qemu, e.g:
+	# Qemu unsupported ioctl: cmd=0xc014630a dir=INOUT 'c'
+	# into log?  e.g <emulator>  -D $jailsystem-dir/../tmp/out.txt
+	# + jexec/jlogin ?
+	${SYSRC_CMD} -qf ${TMPFILE} exec_start="/bin/${emulator} ${exec_start}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="/bin/${emulator} ${exec_stop}" > /dev/null 2>&1
+}
+
+# jail emulator part for jconf
+make_jail_part()
+{
+
+	[ -n "${jailskeldir}" ] && ${SYSRC_CMD} -qf ${TMPFILE} jailskeldir="${jailskeldir}" > /dev/null 2>&1
+	[ -n "${customskel}" ] && ${SYSRC_CMD} -qf ${TMPFILE} customskel="${customskel}" > /dev/null 2>&1
+	[ -n "${jailsysskeldir}" ] && ${SYSRC_CMD} -qf ${TMPFILE} jailsysskeldir="${jailsysskeldir}" > /dev/null 2>&1
+
+	if [ -z "${profile}" ]; then
+		${SYSRC_CMD} -qf ${TMPFILE} jail_profile="default"  > /dev/null 2>&1
+	else
+		${SYSRC_CMD} -qf ${TMPFILE} jail_profile="${profile}"  > /dev/null 2>&1
+	fi
+
+${CAT_CMD} >> ${TMPFILE} << EOF
+mount_devfs="${mount_devfs}";
+allow_mount="${allow_mount}";
+allow_devfs="${allow_devfs}";
+allow_nullfs="${allow_nullfs}";
+allow_fusefs="${allow_fusefs}";
+allow_linsysfs="${allow_linsysfs}";
+allow_linprocfs="${allow_linprocfs}";
+allow_raw_sockets="${allow_raw_sockets}";
+mount_fstab="${mount_fstab}";
+mount_fstab_old="${mount_fstab_old}";
+arch="${arch}";
+mkhostsfile="${mkhostsfile}";
+devfs_ruleset="${devfs_ruleset}";
+ver="${ver}";
+basename="${basename}";
+baserw="${baserw}";
+mount_src="${mount_src}";
+mount_obj="${mount_obj}";
+mount_kernel="${mount_kernel}";
+mount_ports="${mount_ports}";
+vnet="${vnet}";
+applytpl="${applytpl}";
+mdsize="${mdsize}";
+floatresolv="${floatresolv}";
+
+exec_poststart="${exec_poststart}";
+exec_poststop="${exec_portstop}";
+exec_prestart="${exec_prestart}";
+exec_prestop="${exec_prestop}";
+
+exec_master_poststart="${exec_master_poststart}";
+exec_master_poststop="${exec_master_poststop}";
+exec_master_prestart="${exec_master_prestart}";
+exec_master_prestop="${exec_master_prestop}";
+
+pkg_bootstrap="${pkg_bootstrap}";
+with_img_helpers="";
+
+allow_reserved_ports="${allow_reserved_ports}";
+allow_unprivileged_proc_debug="${allow_unprivileged_proc_debug}";
+
+persist="${persist}";
+childrenmax="${childrenmax}";
+enforce_statfs="${enforce_statfs}";
+sysrc_enable="${sysrc_enable}";
+
+mnt_start="${mnt_start}";
+mnt_stop="${mnt_stop}";
+
+allow_mlock="${allow_mlock}";
+jailnic_temp_sql="${jailnic_temp_sql}";
+fsquota="${fsquota}";
+etcupdate_init="${etcupdate_init}";
+EOF
+	${SYSRC_CMD} -qf ${TMPFILE} exec_start="${exec_start}" > /dev/null 2>&1
+	${SYSRC_CMD} -qf ${TMPFILE} exec_stop="${exec_stop}" > /dev/null 2>&1
+}
+
+###
+fi

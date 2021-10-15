@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.9
 MYARG=""
-MYOPTARG="inter jname"
+MYOPTARG="fast inter jname"
 MYDESC="Stop jail"
 CBSDMODULE="jail"
 EXTHELP="wf_jstop_jstart"
@@ -9,25 +9,35 @@ ADDHELP="\
 
 ${H3_COLOR}Description${N0_COLOR}:
 
- Stop container.
+ Stop the container.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}jname${N0_COLOR} - target jail. If jail='*' or jail='pri*' then stop  all
-   jails or in jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
+ ${N2_COLOR}fast=${N0_COLOR}  - set 1 to destroy jail without config, jail -rR: no shutdown seq.
+ ${N2_COLOR}inter=${N0_COLOR} - set 1 to prevent any questions and to accept answers by default.
+ ${N2_COLOR}jname=${N0_COLOR} - target jail. If jail='*' or jail='pri*' then stop all jails or
+          jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd jstop
- # cbsd jstop jname=test
+ # cbsd jstop jname='memcache*'
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jstart --help
 
 "
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${tools}		# for select_jail_by_list
 
 [ -z "${1}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
+fast=
 . ${cbsdinit}
+
+[ -n "${fast}" ] && ofast="${fast}"
+[ -z "${fast}" ] && fast=0
 
 . ${system}
 . ${mdtools}
@@ -37,7 +47,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 [ -n "${inter}" ] && shift
 
 # for external_exec-related command
-. ${distdir}/jcreate.subr
+. ${subrdir}/jcreate.subr
 
 emulator="jail"		# for jname_is_multiple
 jname_is_multiple
@@ -62,7 +72,7 @@ for i in ${TMP_JLIST}; do
 	fi
 done
 
-. ${distdir}/time.subr
+. ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
 
 # this is multiple list, split it by parallel bstop execution
@@ -90,7 +100,7 @@ fi
 [ -z "${jname}" ] && jname="${1}"
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Give me jail name${N0_COLOR}"
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	remotenode=$( jwhereis ${jname} )
@@ -111,7 +121,7 @@ fi
 [ ${status} -eq 3 ] && err 1 "${N1_COLOR}Jail in maintenance mode${N0_COLOR}"
 [ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}For bhyve jail use: ${N2_COLOR}cbsd bstop ${jname} ${N1_COLOR}instead${N0_COLOR}"
 
-. ${distdir}/universe.subr
+. ${subrdir}/universe.subr
 init_basedir
 
 # Update Redis
@@ -146,7 +156,7 @@ fi
 epairb_list=
 
 if [ ${vnet} -eq 1 ]; then
-	. ${vimageconf}
+	. ${subrdir}/vnet.subr
 
 	interfaces=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM jailnic | while read _int; do
 		printf "${_int} "
@@ -249,7 +259,6 @@ exec_prestop
 #rctl area
 ${ECHO} "${N1_COLOR}Stoping jail: ${N2_COLOR}${jname}, parallel timeout=${parallel}${N0_COLOR}"
 jrctl jname=${jname} mode=unset >/dev/null 2>&1
-sleep 2
 
 external_exec_script -s stop.d
 if [ ${vnet} -eq 1 ]; then
@@ -258,7 +267,23 @@ if [ ${vnet} -eq 1 ]; then
 		jexec jname=${jname} pkill -9 dhclient dhcpcd 2>/dev/null 1>&2
 	fi
 fi
-${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -r ${jname} >/dev/null 2>&1 || true
+
+[ -n "${ofast}" ] && fast="${ofast}"
+
+case "${platform}" in
+	DragonFly)
+		JAIL_STOP_CMD="jexec jname=${jname} ${exec_stop}"
+		;;
+	*)
+		if [ "${fast}" = "1" ]; then
+			JAIL_STOP_CMD="${JAIL_CMD} -rR ${jname}"
+		else
+			JAIL_STOP_CMD="${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -r ${jname}"
+		fi
+		;;
+esac
+
+${JAIL_STOP_CMD} > /dev/null 2>&1 || true
 
 for i in $( ${PS_CMD} -J ${jid} -o pid 2>/dev/null | ${GREP_CMD} -v PID ); do
 	${KILL_CMD} -9 ${i} > /dev/null 2>&1
@@ -280,9 +305,12 @@ if [ ${vnet} -eq 1 -a -n "${myepair_list}" ]; then
 	${ECHO} "${N0_COLOR}"
 fi
 
-# waiting for fixed kqueue in upstream
-${JAIL_CMD} -r ${ST} > /dev/null 2>&1
-${JAIL_CMD} -r ${ST} > /dev/null 2>&1
+if [ "${platform}" != "DragonFly" ]; then
+	# waiting for fixed kqueue in upstream
+	${JAIL_CMD} -r ${ST} > /dev/null 2>&1
+	${JAIL_CMD} -r ${ST} > /dev/null 2>&1
+fi
+
 cbsdsqlrw local "UPDATE jails SET jid=0,status=0,state_time=(strftime('%s','now')) WHERE jname='${jname}'"
 
 jaillock="${jailsysdir}/${jname}/locked"

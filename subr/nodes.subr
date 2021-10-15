@@ -1,0 +1,317 @@
+if [ ! "$_CBSD_NODES_SUBR" ]; then
+_CBSD_NODES_SUBR=1
+###
+
+#update idle in SQLite for $1 nodename
+idle_update()
+{
+	cbsdsqlrw nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename=\"${1}\""
+}
+
+# check age of ssh mux lock. If ctime greater than 1 minutes
+# then out "Connected (uptime min)" and return 0
+# else - out "Offline" and return 1
+# required included inventory for $sqlreplica
+# sample:
+# if check_locktime /usr/jails/ftmp/shmux_199.48.133.74.lock >/dev/null 2>&1; then
+#    echo "OK"
+#  fi
+check_locktime()
+{
+	#always return online if no shmux activated
+	[ "${sqlreplica}" = "0" ] && return 0
+
+	local cur_time=$( ${DATE_CMD} +%s )
+	local difftime
+
+	[ ! -f "${1}" ] && return 1
+
+	eval $( ${STAT_CMD} -s ${1} )
+	difftime=$(( ( cur_time - st_mtime ) / 60 ))
+
+	if [ ${difftime} -lt 1 ]; then
+		return 1
+	else
+		echo "${difftime}"
+		return 0
+	fi
+}
+
+
+# idle must be set (or specified via $1 )
+# $ip (of nodes) must be set
+conv_idle()
+{
+	local _res
+
+	status="Disconnected" # default state
+
+	[ -n "${1}" ] && idle="${1}"
+
+	[ -z "${idle}" ] && return 1
+
+	if [ ${sqlreplica} -eq 1 ]; then
+		_res=$( check_locktime ${ftmpdir}/shmux_${ip}.lock )
+		[ $? -eq 0 ] && status="Connected" && idle=${_res} && return 0
+	fi
+
+	idle_time=$( ${DATE_CMD} -j -f "%Y-%m-%d %H:%M:%S" "${idle}" "+%s" )
+
+	_res=$(( ( curtime - idle_time ) / 60 ))
+	idle="${_res}"
+}
+
+# return $node as selected node by id or name from list
+# -s "is subject for list"
+# -a [0|1] show only active (status=on jail): 0, or all: 1
+select_node_by_list()
+{
+	local _res _id i=0
+	local subject="List of online nodes:"
+	local active="0" # only online
+
+	local sqldelimer=" "
+
+	while getopts "a:r:s:e:" opt; do
+		case "$opt" in
+			a) active="${OPTARG}" ;;
+			s) subject="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	eval $( cbsdsqlro nodes SELECT nodename,ip FROM nodelist | while read nodename ip status; do
+		mystatus=
+
+		if ! check_locktime ${ftmpdir}/shmux_${ip}.lock >/dev/null 2>&1; then
+			mystatus="1"   # Offline
+		else
+			mystatus="0"   # Online
+		fi
+
+		[ "${mystatus}" != "${active}" ] && continue
+
+		echo "local nodename${i}=\"${nodename}\"
+		echo "local ip${i}=\"${ip}\"
+
+		i=$(( i + 1 ))
+	done )
+
+	for i in $( ${SEQ_CMD} 0 255 ); do
+		eval _mynode="\$nodename${i}"
+		[ -z "${_mynode}" ] && break
+		[ "${_mynode}" = "${nodename}" ] && _mynode="${BOLD}local${N0_COLOR}"
+		eval _ip="\$ip${i}"
+		[ -z "${_ip}" ] && break;
+
+		[ $i -eq 0 ] && ${ECHO} "${N1_COLOR}${subject}${N0_COLOR}"
+		${ECHO} "${BOLD}${i} .. ${N2_COLOR}${_mynode} ${N0_COLOR}on ${N2_COLOR}${_ip}${N0_COLOR}"
+	done
+
+	[ $i -eq 0 ] && err 1 "${N1_COLOR}No node found${N0_COLOR}"
+	echo
+	printf "${BOLD}Enter id 0-${i} or node name:${N0_COLOR} "
+	set -e
+	read _id
+	set +e
+	if ! is_number ${_id}; then
+		eval node="\$nodename${_id}"
+	else
+		eval node="${_id}"
+	fi
+
+	remote=2 # for autoremote
+}
+
+# return 1 when there is no sqlreplica enabled and/or
+# no any nodes added
+# return 0 when sqlreplica on AND 
+# and at least one node has been added.
+# e.g:
+#   if is_cluster_mode; then
+#        echo "is cluster mode"
+#   fi
+is_cluster_mode()
+{
+	[ -z "${sqlreplica}" ] && return 1
+
+	# autosettings for alljails and shownode
+	if [ ${sqlreplica} -ne 0 ]; then
+		nodes_exist=$( cbsdsqlro nodes SELECT ip FROM nodelist LIMIT 1 )
+		[ -n "${nodes_exist}" ] && return 0
+	fi
+	return 1
+}
+
+
+# return node status by nodename
+# return 0 when node added and active/online
+# return 1 when no node or node is offline
+# -n "must be nodename"
+# -e 1 - also export status in $node_<md5sum of nodename>_online
+# e.g:
+#   if node_is_online -n ${rnodename}; then
+#      echo "Online"
+#   fi
+# or via vars:
+#   node_is_online -n ${rnodename} -e 1 ||true
+#   md5_node_name=$( /sbin/md5 -q -s ${rnodename} )
+#   eval online=\$node_${md5_node_name}_online
+#   echo ${online}
+node_is_online()
+{
+	local _res _ret _node _ip _md5_export _md5_node_name
+
+	while getopts "e:n:" opt; do
+		case "${opt}" in
+			e) _md5_export="${OPTARG}" ;;
+			n) _node="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_node}" ] && return 1
+	[ -z "${_md5_export}" ] && _md5_export=0
+
+	_ip=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${_node}\" LIMIT 1 )
+	[ -z "${_ip}" ] && return 1
+
+	_res=$( check_locktime ${ftmpdir}/shmux_${_ip}.lock )
+	_ret=$?
+	[ ${_md5_export} -eq 0 ] && return ${_ret}
+
+	_md5_node_name=$( ${MD5_CMD} -q -s ${_node} )
+
+	case ${_ret} in
+		0)
+			# is online
+			eval node_${_md5_node_name}_online=1
+			;;
+		*)
+			# is offline
+			eval node_${_md5_node_name}_online=0
+			;;
+	esac
+}
+
+# check that the directories are common
+#
+check_for_shared_dir()
+{
+	local _dir _node
+	local _local_id _remote_id
+
+	while getopts "d:n:" opt; do
+		case "${opt}" in
+			d) _dir="${OPTARG}" ;;
+			n) _node="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${_dir}" ]; then
+		${ECHO} "${N1_COLOR}check_for_shared_dir: no dir: ${N2_COLOR}${_dir}${N0_COLOR}"
+		return 1
+	fi
+	if [ -z "${_node}" ]; then
+		${ECHO} "${N1_COLOR}check_for_shared_dir: empty node${N0_COLOR}"
+		return 1
+	fi
+
+	if [ ! -r ${workdir}/${_dir}/dir.id ]; then
+		${ECHO} "${N1_COLOR}no dir.id in directory: ${N2_COLOR}${i}${N0_COLOR}"
+		return 1
+	fi
+
+	_local_id=$( ${CAT_CMD} ${workdir}/${_dir}/dir.id | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+	_remote_id=$( rexe tryoffline=1 node=${_node} ${CAT_CMD} ~cbsd/${_dir}/dir.id 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+
+	if [ -z "${_local_id}" ]; then
+		${ECHO} "${N1_COLOR}check_for_shared_dir: empty id for dir: ${N2_COLOR}${_dir}${N0_COLOR}"
+		return 1
+	fi
+	if [ -z "${_remote_id}" ]; then
+		${ECHO} "${N1_COLOR}check_for_shared_dir: empty id for dir: ${N2_COLOR}${_dir}${N0_COLOR}"
+		return 1
+	fi
+
+	if [ "${_local_id}" = "${_remote_id}" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# users custom script for executing in master host with nodes action
+# -a <action> - is source dir name ( add.d remove.d )
+# -n ${nodename}
+# -i ${ip}
+# -p ${port}
+# -k ${keyfile}
+external_exec_master_node_script()
+{
+	local _res
+	local _dir
+	local _nodename _ip _port _keyfile
+
+	while getopts "a:n:i:p:k:" opt; do
+		case "${opt}" in
+			a) _dir="${OPTARG}" ;;
+			n) _nodename="${OPTARG}" ;;
+			i) _ip="${OPTARG}" ;;
+			p) _port="${OPTARG}" ;;
+			k) _keyfile="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_dir}" ] && return 1
+
+	local _srcdir="${nodedir}/${_dir}"
+
+	[ ! -d "${_srcdir}" ] && return 0
+	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
+
+	local CBSDPATH="${PATH}"
+	# reset CBSD PATH
+	# it is necessary that the calling of any commands from external hooks
+	# does not conflict with the same CBSD commands that the user does not expect
+	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+	${FIND_CMD} "${_srcdir}" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
+		${ECHO} "${N1_COLOR}Execute master node script: ${N2_COLOR}${_file}${N0_COLOR}"
+		${ECHO} "${N1_COLOR} :: ${_srcdir}/${_file} -n ${_nodename} -i ${_ip} -p ${_port} -k ${_keyfile}${N0_COLOR}"
+		${_srcdir}/${_file} -n ${_nodename} -i ${_ip} -p ${_port} -k ${_keyfile}
+	done
+
+	# restore CBSD PATH
+	export PATH="${CBSDPATH}"
+}
+
+# return $node_list variable if node variable is mask for multiple nodes's
+node_is_multiple()
+{
+	node_list=
+
+	[ -z "${node}" ] && return 0
+	# We accept node with wildcard '*' e.g.: node*, *hoster*
+	# node as mask?
+	local is_mask=0
+
+	local _pref=$( substr --pos=0 --len=1 --str=${node} )
+
+	if [ "${_pref}" = "*" ]; then
+		is_mask=1
+	else
+		strpos --str="${node}" --search="*"
+		is_mask=$?
+	fi
+
+	if [ ${is_mask} -ne 0 ]; then
+		node_mask=$( echo ${node} | ${TR_CMD} "*" "%" )
+		node_list=$( cbsdsqlro nodes SELECT nodename FROM nodelist WHERE nodename LIKE \"${node_mask}\" | ${XARGS_CMD} )
+	fi
+}
+
+###
+fi

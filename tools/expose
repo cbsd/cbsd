@@ -1,9 +1,9 @@
 #!/usr/local/bin/cbsd
-#v11.1.19
+#v13.0.11
 MYARG=""
 MYOPTARG="in inaddr jname mode out outaddr proto"
 MYDESC="Exposing a port (port forwarding) to env via IPFW or PF"
-ADDHELP="\
+ADDHELP="
 
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -20,7 +20,9 @@ ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}in${N0_COLOR}      - master port for incoming connection.
  ${N2_COLOR}inaddr${N0_COLOR}  - use IP as nodeip (for incoming connection),
-           default is \${nodeip} ( 'cbsd initenv-tui' to change ).
+           default is '0' - inherit \${nodeip} ( 'cbsd initenv-tui' to change ).
+           This is useful when the env is migrating between different hosts 
+           (with different nodes). Or set a fixed IPv4 address.
  ${N2_COLOR}jname${N0_COLOR}   - environment name.
  ${N2_COLOR}mode${N0_COLOR}    - add,delete,apply,clear,flush,list:
   - add    : add and apply one rule, e.g: in=222 out=22 proto=tcp;
@@ -28,7 +30,7 @@ ${H3_COLOR}Options${N0_COLOR}:
   - apply  : apply all rules from database;
   - clear  : clear all rules from datatase;
   - flush  : clear and remove all rules;
- ${N2_COLOR}out${N0_COLOR}     - \(optional\) destination port inside jail.
+ ${N2_COLOR}out${N0_COLOR}     - (optional) destination port inside jail.
  ${N2_COLOR}outaddr${N0_COLOR} - use IP as destination address, do not
            use jail/bhyve IPs.
  ${N2_COLOR}proto${N0_COLOR}   - udp, tcp. default: tcp.
@@ -56,7 +58,7 @@ CBSDMODULE="bhyve,jail"
 EXTHELP="wf_expose"
 
 
-. ${subr}
+. ${subrdir}/nc.subr
 cloud_api=0
 . ${cbsdinit}
 
@@ -113,12 +115,14 @@ show_all_expose()
 get_first_ip()
 {
 	local IFS=","
-	local ip IWM
+	local ip IWM _res
 
 	for ip in ${ip4_addr}; do
 		ipwmask "${ip}"
 		if [ -n "${IWM}" ]; then
-			echo "${IWM}"
+			# cut network prefix if exist
+			_res=${IWM##*#}
+			echo "${_res}"
 			return 0
 		fi
 	done
@@ -157,20 +161,27 @@ pf_del()
 
 fw_expose_add()
 {
-	local _ret
-	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
+	local _ret _inaddr
 
-	if [ -z "${inaddr}" -o "${inaddr}" = "0" ]; then
+	[ "${inaddr}" = "nodeip" ] && inaddr="0"
+
+	if [ -z "${inaddr}" ]; then
 		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${inaddr}${N0_COLOR}" 1>&2
 		return 1
 	fi
 
-	ipwmask ${inaddr}
+	if [ "${inaddr}" = "0" ]; then
+		_inaddr="${nodeip}"
+	else
+		_inaddr="${inaddr}"
+	fi
+
+	ipwmask ${_inaddr}
 	iptype ${IWM}
 	_ret=$?
 
 	if [ ${_ret} -ne 1 ]; then
-		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${inaddr}${N0_COLOR}" 1>&2
+		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${_inaddr}${N0_COLOR}" 1>&2
 		return 1
 	fi
 
@@ -188,10 +199,10 @@ fw_expose_add()
 		return 1
 	fi
 
-	res=$( ${NC_CMD} -w1 -z ${inaddr} ${in} 2>/dev/null )
+	res=$( ${NC_CMD} -w1 -z ${_inaddr} ${in} 2>/dev/null )
 
 	if [ $? -eq 0 ]; then
-		${ECHO} "${N1_COLOR}port already in use on ${inaddr}: ${N2_COLOR}${in}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}port already in use on ${_inaddr}: ${N2_COLOR}${in}${N0_COLOR}"
 		return 1
 	fi
 
@@ -204,16 +215,16 @@ fw_expose_add()
 		pf)
 			pf_del
 			${CAT_CMD} >> ${etcdir}/pfnat.conf << EOF
-rdr pass proto ${proto} from any to ${inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
+rdr pass proto ${proto} from any to ${_inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
 EOF
 			# reload rule
 			naton
 			;;
 		*)
 			if [ ${freebsdhostversion} -gt 1100120 ]; then
-				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in ${COMMENT}
+				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${_inaddr} ${in} in ${COMMENT}
 			else
-				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${inaddr} ${in} in
+				${IPFW_CMD} add ${fwnum} fwd ${jip},${out} ${proto} from any to ${_inaddr} ${in} in
 			fi
 			echo "${fwnum}" >"${ftmpdir}/${jname}-expose_fwnum"
 			;;
@@ -298,9 +309,9 @@ if [ -z "$1" ]; then
 	exit 0
 fi
 
-[ -z "${jname}" ] && err 1 "Give me jname"
+[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 [ -z "${proto}" ] && proto="tcp"
@@ -318,7 +329,7 @@ else
 	jip="${outaddr}"
 fi
 
-[ -z "${jip}" ] && err 1 "${N1_COLOR}Unable to determine jail ip${N0_COLOR}"
+[ -z "${jip}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to determine jail ip: ${N2_COLOR}${jname}${N0_COLOR}"
 
 exposefile="${jailsysdir}/${jname}/expose.sqlite"
 
@@ -372,7 +383,7 @@ case "${mode}" in
 		fw_expose_apply
 		;;
 	*)
-		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		err 1 "${N1_COLOR}Unknown mode (valid: add,delete,apply,clear,flush,list): ${N2_COLOR}${mode}${N0_COLOR}"
 		;;
 esac
 

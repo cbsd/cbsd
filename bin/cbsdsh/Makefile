@@ -1,5 +1,6 @@
 PROG=	cbsd
 BINDIR?=	/usr/local/bin
+OSTYPE?= uname -s
 INSTALLFLAGS=	-S -m 500
 SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c cbsd_pwait.c cd.c echo.c \
 	error.c eval.c exec.c expand.c histedit.c input.c jobs.c kill.c logger.c main.c memalloc.c miscbltin.c \
@@ -8,7 +9,7 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 
 .SILENT:
 
-# HBSD/FBSD/TrueOS...
+# HBSD/FBSD/TrueOS
 SHSRCS+=	jail.c
 
 .if defined(WITH_LUA)
@@ -45,9 +46,13 @@ WITHOUT_MAN=	yes
 NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-# HBSD/FBSD/TrueOS...
+# HBSD/FBSD/TrueOS but not for DFLY
+
+.if ${OSTYPE} == DragonFly
+LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
+. else
 LDADD= -ledit -ltermcap -lm -pthread -ljail `pkg-config sqlite3 --libs` -lm
-# Dfly
+.endif
 #LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
 
 #CFLAGS+= -DSHELL -I. -I${.CURDIR} -DCBSD -I/usr/local/include -L/usr/lib -L/usr/local/lib

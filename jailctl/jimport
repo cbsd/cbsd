@@ -2,31 +2,50 @@
 #v11.2.1
 globalconf="${distdir}/cbsd.conf";
 MYARG=""
-MYOPTARG="fs_feat jname list new_host_hostname new_ip4_addr new_jname"
-#mode=ls
+MYOPTARG="fs_feat gold jname list new_host_hostname new_ip4_addr new_jname"
 MYDESC="Import jail from image"
 ADDHELP="\
-  fs_feat=0         - disable fs (zfs/hammer) features, create in normal/local dir (1 - auto by default)\n\
-  jname             - import <jname>.img ( image from ~cbsd/import/ directory\n\
-  list=1            - show content for ~cbsd/jimport/ directory for list images\n\
-  new_host_hostname - change hostname while importing. By default, domain is inherits\n\
-                      from original with change of hostname.\n\
-  new_ip4_addr      - change ip. Use 'DHCP' for detect ip automatically\n\
-  new_jname         - import image and register as newname jail\n\
-\n\
-Examples:\n\
-  cbsd jimport myjail
-  cbsd jimport jname=/usr/jails/export/oldjail.img new_jname=newjail\n\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+Import jail from CBSD image.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}fs_feat=${N0_COLOR}           - 0 to disable fs (zfs/hammer) features, create in
+                      normal/local dir (1 - auto by default).
+ ${N2_COLOR}gold=${N0_COLOR}              - set '1' to convert image file to ZFS snapshot to use it
+                      as 'gold' image, e.g. via 'cbsd jcreate from='.
+                      Image will be converted to ZFS dataset with <name>@start snapshot.
+ ${N2_COLOR}jname=${N0_COLOR}             - import <jname>.img ( image from ~cbsd/import/ directory.
+ ${N2_COLOR}list=${N0_COLOR}              - set '1' to show content for ~cbsd/jimport/ directory
+                      for list images.
+ ${N2_COLOR}new_host_hostname=${N0_COLOR} - change hostname while importing. By default,
+                      domain is inherits from original with change of hostname.
+ ${N2_COLOR}new_ip4_addr=${N0_COLOR}      - change ip. Use 'DHCP' for detect ip automatically.
+ ${N2_COLOR}new_jname=${N0_COLOR}         - import image and register as newname jail.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jimport myjail
+ # cbsd jimport jname=/usr/jails/export/oldjail.img new_jname=newjail
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jexport --help
+
 "
+
 CBSDMODULE="jail"
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${tools}
 
 fs_feat=1
-
+gold=0
 . ${cbsdinit}
 
+[ -n "${gold}" ] && ogold="${gold}"
 . ${system}
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -135,7 +154,7 @@ import_jail()
 		fi
 	fi
 
-	. ${distdir}/time.subr
+	. ${subrdir}/time.subr
 	st_time=$( ${DATE_CMD} +%s )
 
 	ebytes=$( ${STAT_CMD} -f "%z" ${SRC} 2>/dev/null )
@@ -300,7 +319,7 @@ import_jail()
 				${MKDIR_CMD} ${JAILDIR}
 				;;
 			1)
-				. ${zfstool}
+				. ${subrdir}/zfs.subr
 				ZPOOL=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 				if [ -n "${ZPOOL}" ]; then
 					if zfsroot ${jname}; then
@@ -357,7 +376,7 @@ import_jail()
 				${RMDIR_CMD} ${jaildatadir}/tmp.$$
 				;;
 			1)
-				. ${zfstool}
+				. ${subrdir}/zfs.subr
 				ZPOOL=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
 				if [ -z "${ZPOOL}" ]; then
 					${ECHO} "Can't determine ZPOOL for ${jaildatadir}. Working on non-zfs scenario"
@@ -399,7 +418,7 @@ import_jail()
 
 	# zvol area
 	if [ -n "${vm_zvol_list}" ]; then
-		. ${distdir}/bhyve.subr
+		. ${subrdir}/bhyve.subr
 		${ECHO} "${N1_COLOR}ZVOLs list: ${N2_COLOR}${vm_zvol_list}${N0_COLOR}"
 		for i in ${vm_zvol_list}; do
 			vol_size=0
@@ -470,6 +489,10 @@ import_jail()
 	${SYSRC_CMD} -qf ${JAILRCCONF} host_hostname="${new_host_hostname}" >/dev/null
 
 	jregister jname=${jname} mode=new rcfile=${JAILRCCONF}
+	[ -r ${JAILRCCONF} ] && ${RM_CMD} -f ${JAILRCCONF}
+
+	# workaround for #603: https://github.com/cbsd/cbsd/issues/603
+	[ -r ${jailsysdir}/${jname}/rc.conf_${jname}.orig ] && ${MV_CMD} ${jailsysdir}/${jname}/rc.conf_${jname}.orig ${jailsysdir}/${jname}/rc.conf_${jname}
 
 	if [ -f "${jailsysdir}/${jname}/jail-message" ]; then
 		echo "---- jail messages ----"
@@ -480,7 +503,7 @@ import_jail()
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 		# refresh jail info
-		. ${jrcconf}
+		. ${subrdir}/rcconf.subr
 
 		case "${emulator}" in
 			jail)

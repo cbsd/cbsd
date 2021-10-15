@@ -13,8 +13,8 @@ fi
 
 set -e
 . ${distdir}/cbsd.conf
-. ${distdir}/tools.subr
-. ${subr}
+. ${subrdir}/tools.subr
+. ${subrdir}/nc.subr
 set +e
 
 FORM_PATH="${workdir}/formfile"

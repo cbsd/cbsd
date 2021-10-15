@@ -33,7 +33,7 @@ EOF
 
 CBSDMODULE="bhyve"
 
-. ${subr}
+. ${subrdir}/nc.subr
 script=
 cbsd_api=0
 jname=
@@ -130,7 +130,7 @@ emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple	# import jail_list if jname is mask
 
 if [ -n "${jail_list}" ]; then
-	. ${distdir}/multiple.subr
+	. ${subrdir}/multiple.subr
 
 	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
 	task_owner="bexec_multiple"
@@ -140,7 +140,7 @@ if [ -n "${jail_list}" ]; then
 
 	# spawn command for all jail
 	for jname in ${jail_list}; do
-		. ${jrcconf}
+		. ${subrdir}/rcconf.subr
 		[ ${myjid} -eq 0 ] && continue
 		if [ -n "${script}" ]; then
 			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
@@ -158,14 +158,16 @@ if [ -n "${jail_list}" ]; then
 fi
 
 if [ ${cbsd_api} -eq 0 ]; then
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
 	[ ${jid} -ne 0 ] || err 1 "Not running"
 	readconf bexec.conf
 else
 	CURL_CMD=$( which curl )
+	JQ_CMD=$( which jq )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
 
@@ -180,16 +182,23 @@ else
 			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+
+		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+
 		if [ "${_ssh_pref}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+
+		_ssh_len=$( strlen "${_ssh_string}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
 		#echo "${SSH_CMD} ${_ssh_post}"
+		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
+		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then

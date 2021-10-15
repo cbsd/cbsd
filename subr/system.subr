@@ -1,0 +1,874 @@
+if [ ! "$_CBSD_SYSTEM_SUBR" ]; then
+_CBSD_SYSTEM_SUBR=1
+###
+
+# check for mounted resouces
+# $1 - directory or ZFS pool
+# e.g:
+# if is_mounted /tmp; then ...mounted..
+# or
+# if is_mounted zroot/ROOT; then ..mounted..
+is_mounted()
+{
+	local _tst
+
+	# test for destrination is directory ?
+	if [ -d "${1}" ]; then
+		_tst=$( ${DF_CMD} ${1} | ${TAIL_CMD} +2 | ${AWK_CMD} '{ print $6 }' )
+		[ "${_tst}" = "${1}" ] && return 0
+	else
+		# is ZFS?
+		if [ "${zfsfeat}" = "1" ]; then
+			_tst=$( ${ZFS_CMD} get -Ho value mounted ${1} 2>/dev/null )
+			[ "${_tst}" = "yes" ] && return 0
+		fi
+	fi
+
+	return 1
+}
+
+# if on_mounted /usr/src/base; then ...mounted..
+# - check if dir mounted to other place
+on_mounted()
+{
+	[ ! -d "${1}" ] && return 1
+	${MOUNT_CMD} | ${GREP_CMD} " on " | while read _device on _mountpt; do
+		[ "$_device" != "$1" ] || exit 2
+	done
+
+	[ $? -eq 2 ] && return 0
+
+	return 1
+}
+
+# check for populate base from current possibility and run copy-binlib
+# $ver variable must be filled
+get_base_from_current()
+{
+	local _elf_ver _elf_stable
+
+	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
+	#_jail_ver=${ver%%.*}
+	_jail_ver=${ver}
+
+	# get BASE_DIR
+	init_basedir
+
+	[ -z "${BASE_DIR}" ] && return 0
+
+	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
+		_elf_stable=${ver%%.*}
+		_filelist="${distdir}/share/${platform}-filebases_${_elf_stable}.txt.xz"
+		${ECHO} "${N1_COLOR}Trying to populate ${N2_COLOR}${BASE_DIR}${N1_COLOR} from current system.${N0_COLOR}"
+		${ECHO} "${N1_COLOR}IDX for:${N2_COLOR}${_elf_stable}${N1_COLOR},platform:${N2_COLOR}${platform}${N1_COLOR},index:${N2_COLOR}${_filelist}${N1_COLOR}. Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
+		if [ ! -f "${_filelist}" ]; then
+				${ECHO} "${N1_COLOR}Error: no index file: ${N2_COLOR}${_filelist}${N0_COLOR}"
+		else
+			copy-binlib filelist=${_filelist} dstdir=${BASE_DIR} basedir=/ mtree=1
+			echo
+			preparebase dst=${BASE_DIR}
+			${TRUNCATE_CMD} -s0 ${BASE_DIR}/etc/sysctl.conf ${BASE_DIR}/etc/fstab ${BASE_DIR}/etc/rc.conf ${BASE_DIR}/etc/rc.conf.local
+			# remove hoster rc.conf.d if exist
+			[ -d "${BASE_DIR}/rc.conf.d" ] && ${RM_CMD} -rf ${BASE_DIR}/etc/rc.conf.d
+		fi
+	else
+		${ECHO} "${N1_COLOR}Base version not equal (${N2_COLOR}base: ${_elf_ver}, jail: ${_jail_ver}${N1_COLOR}) with jail, populate base from current system impossible${N0_COLOR}"
+	fi
+}
+
+# check for populate kernel from current possibility and copy it
+# $ver variable must be filled
+get_kernel_from_current()
+{
+	local _elf_ver
+
+	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
+	_jail_ver=${ver%%.*}
+
+	# get KERNEL_DIR
+	init_kerneldir
+
+	[ -z "${KERNEL_DIR}" ] && return 0
+
+	[ ! -d "${KERNEL_DIR}/boot" ] && ${MKDIR_CMD} -p ${KERNEL_DIR}/boot
+
+	# kernel already exist?
+	[ -x "${KERNEL_DIR}/boot/kernel/kernel" ] && return 0
+
+	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
+		${ECHO} "${N1_COLOR}Take kernel from current system for ${N2_COLOR}${KERNEL_DIR}${N1_COLOR}. Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
+		${CP_CMD} -a /boot/kernel ${KERNEL_DIR}/boot/
+	else
+		${ECHO} "${N1_COLOR}Base version not equal (${N2_COLOR}base: ${_elf_ver}, jail: ${_jail_ver}${N1_COLOR}) with jail, populate kernel from current system impossible${N0_COLOR}"
+	fi
+}
+
+# check for base dir existance
+# if not exist - ask and try to fetch from repository
+# exit when no base and repo failure
+# $BASE_DIR - alternative (prefered) path to base dir
+# or
+# $arch and $ver (opt: $basename) must be set
+# -v X - force to use this version
+get_base()
+{
+	local _elf_ver
+	local _jail_ver
+	local _filelist
+	local _over
+
+	while getopts "b:v:" opt; do
+		case "${opt}" in
+			b)
+				basename="${OPTARG}"
+				;;
+			v)
+				over="${OPTARG}"
+				ver="${over}"
+				# auto-detect for stable/release
+				strpos --str="${ver}" --search="."
+				pos=$?
+				if [ ${pos} -eq 0 ]; then
+					stable=1
+					ostable=1
+				else
+					stable=0
+					ostable=0
+				fi
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ "${ver}" = "empty" ] && return 0
+
+	# fill ${BASE_DIR}
+	. ${subrdir}/build.subr
+
+	if [ -n "${basename}" ]; then
+		init_basedir -b ${basename}
+		_basename_args="-b ${basename}"
+	else
+		init_basedir
+		_basename_args=
+	fi
+
+	[ -x "${BASE_DIR}/bin/sh" ] && return 0
+
+	# check status
+	base_status
+
+	[ $? -eq 3 ] && err 1 "${N1_COLOR}Base is not ready, please wait: base status: ${N2_COLOR}3${N0_COLOR}"
+	${ECHO} "${N1_COLOR}no base dir in: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
+
+	select_getbase
+
+	[ ! -x "${BASE_DIR}/bin/sh" ] && err 1 "${N1_COLOR}No base data on: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
+}
+
+
+# check for kernel dir existance
+# if not exist - ask and try to fetch from repository
+# exit when no kernel and repo failure
+# $KERNEL_DIR - alternative (prefered) path to base dir
+# or
+# $arch and $ver (opt: $basename) must be set
+get_kernel()
+{
+	local _elf_ver
+	local _jail_ver
+
+	[ "${ver}" = "empty" ] && return 0
+
+	over="${ver}"
+	oarch="${arch}"
+
+	# fill $KERNEL_DIR
+	. ${subrdir}/build.subr
+	init_kerneldir
+
+	# check for $KERNEL_DIR existance
+
+	if [ ! -x "${KERNEL_DIR}/boot/kernel/kernel" ]; then
+		getyesno "No ${arch}-${target_arch}-${ver} base. Try to fetch from remote repository ?"
+		if [ $? -eq 1 ]; then
+			get_kernel_from_current
+		else
+			repo action=get sources=kernel arch=${arch} ver=${ver} target_arch=${target_arch}
+			[ ! -x "${KERNEL_DIR}/boot/kernel/kernel" ] && get_kernel_from_current
+		fi
+	fi
+
+	[ ! -x "${KERNEL_DIR}/boot/kernel/kernel" ] && err 1 "${N1_COLOR}No kernel data on: ${N2_COLOR}${KERNEL_DIR}${N0_COLOR}"
+}
+
+
+# Mount base -b or default  to destination dir $path
+# -a arch
+# -b base path
+# -c /var/db/ports dbportspath
+# -d distfiles path
+# -k kernel path
+# -n basename
+# -o obj path
+# -p ports path
+# -s source path
+# -t target (override path param)
+# -v ver
+# -x additional mount, fstab format record, eg: "linsys /compat/linux/sys linsysfs rw 0 0"
+mountbase()
+{
+	local basepath kernelpath sourcepath objpath portspath distfilespath distpackagepath dbportspath MNTCODE
+	local _base_mounted=0
+
+	# defaults
+	portspath="/usr/ports"
+	distfilespath="${tmpdir}/distfiles"
+	distpackagepath="${tmpdir}/usr/ports/packages"
+
+	xfstab="${ftmpdir}/mountbase.$$"
+	MNTCODE=0
+
+	while getopts "a:b:c:d:k:n:o:p:s:t:v:x:" opt; do
+		case "${opt}" in
+			a) arch="${OPTARG}" ;;
+			b) basepath="${OPTARG}" ;;
+			c) dbportspath="${OPTARG}" ;;
+			d) distfilespath="${OPTARG}" ;;
+			k) kernelpath="${OPTARG}" ;;
+			n) basename="${OPTARG}" ;;
+			o) objpath="${OPTARG}" ;;
+			p) portspath="${OPTARG}" ;;
+			s) sourcepath="${OPTARG}" ;;
+			t) path="${OPTARG}" ;;
+			v) ver="${OPTARG}" ;;
+			x) echo "${OPTARG}" >> "${xfstab}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	#already mounted?
+	is_mounted ${path} && _base_mounted=1
+
+	if [ ${_base_mounted} -eq 0 ]; then
+		#test for zfs mounted & mount if not
+		case ${zfsfeat} in
+			1)
+				. ${subrdir}/zfs.subr
+				[ ${baserw} -eq 1 ] && path=${data}
+				zfsmnt ${path}
+				[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
+			;;
+		esac
+
+		if [ "${baserw}" = "0" ]; then
+			get_base -v ${ver}
+		else
+			[ ! -f "${path}/bin/sh" ] && get_base -v ${ver}
+		fi
+
+		[ ! -d "${path}" ] && ${MKDIR_CMD} -p ${path}
+
+		if [ "${baserw}" = "0" ]; then
+			#check for md-based base location (postfix -md)
+			if [ -f "${BASE_DIR}-md/bin/sh" ]; then
+				echo "Mount MD-based base location as base..."
+				${MOUNT_NULL_CMD} -oro "${BASE_DIR}-md" ${path}
+				MNTCODE=$?
+			else
+				${MOUNT_NULL_CMD} -oro ${BASE_DIR} ${path}
+				MNTCODE=$?
+			fi
+		fi
+	fi # is _base_mounted=0
+
+	if [ "${mount_kernel}" != "0" ]; then
+		# Other part
+		if [ -n "${kernelpath}" -a -d "${kernelpath}" ]; then
+			[ ! -d "${path}/boot/kernel" ] && ${MKDIR_CMD} -p ${path}/boot/kernel
+			${MOUNT_NULL_CMD} -oro ${kernelpath} ${path}/boot/kernel
+		fi
+	fi
+
+	if [ "${mount_source}" != "0" ]; then
+		if [ -n "${sourcepath}" -a -d "${sourcepath}" ]; then
+			[ ! -d "${path}/usr/src" ] && ${MKDIR_CMD} -p ${path}/usr/src
+			${MOUNT_NULL_CMD} -oro ${sourcepath} ${path}/usr/src
+		fi
+	fi
+
+	if [ "${mount_obj}" != "0" ]; then
+		if [ -n "${objpath}" -a -d "${objpath}" ]; then
+			[ ! -d "${path}/usr/obj" ] && ${MKDIR_CMD} -p ${path}/usr/obj
+			${MOUNT_NULL_CMD} -orw ${objpath} ${path}/usr/obj
+		fi
+	fi
+
+	if [ "${mount_ports}" != "0" ]; then
+		if [ -n "${portspath}" ]; then
+			[ ! -d "${portspath}" ] && ${MKDIR_CMD} -p ${portspath}
+			[ ! -d "${path}/usr/ports" ] && ${MKDIR_CMD} -p ${path}/usr/ports
+			${MOUNT_NULL_CMD} -oro ${portspath} ${path}/usr/ports
+		fi
+
+		if [ -n "${distfilespath}" ]; then
+			# we need for valid mount point on /usr/ports/distifles
+
+			case "${platform}" in
+				DragonFly)
+					;;
+				*)
+					[ ! -d /usr/ports/distfiles ] && ${MKDIR_CMD} -p /usr/ports/distfiles
+					[ ! -d /usr/ports/packages ] && ${MKDIR_CMD} -p /usr/ports/packages
+
+					[ ! -d "${distfilespath}" ] && ${MKDIR_CMD} -p ${distfilespath}
+					[ ! -d "${distpackagepath}" ] && ${MKDIR_CMD} -p ${distpackagepath}
+
+					[ ! -d "${path}/usr/ports/distfiles" ] && ${MKDIR_CMD} -p ${path}/usr/ports/distfiles
+					[ ! -d "${path}/usr/ports/packages" ] && ${MKDIR_CMD} -p ${path}/usr/ports/packages
+					${MOUNT_NULL_CMD} -orw ${distfilespath} ${path}/usr/ports/distfiles
+					${MOUNT_NULL_CMD} -orw ${distpackagepath} ${path}/usr/ports/packages
+					;;
+			esac
+		fi
+	fi
+
+	if [ -f "${xfstab}" ]; then
+		mountfstab jroot="${path}" fstab="${xfstab}" jname="${jname}" 2>/dev/null
+		${RM_CMD} -f "${xfstab}"
+	fi
+
+	return ${MNTCODE}
+}
+
+
+mount_jail_fstab()
+{
+	local _res
+	local _mypath
+
+	if [ ${baserw} -eq 0 ]; then
+		_mypath=${path}
+	else
+		_mypath=${data}
+	fi
+
+	if [ -r ${mount_fstab} ]; then
+		_res=$( mountfstab jroot=${_mypath} fstab=${mount_fstab} jname="${jname}" )
+
+		if [ $? -ne 0 ]; then
+			# force unmount it better then..
+			echo "Invalid fstab file: ${_res}"
+			_res=$( jcleanup jname=${jname} )
+		fi
+	fi
+
+	if [ -r "${mount_fstab}.local" ]; then
+		mountfstab jroot=${_mypath} fstab=${mount_fstab}.local jname="${jname}"
+		# cleanup for local?
+	fi
+}
+
+unmountbase()
+{
+	[ $baserw -eq 0 ] && umount -f ${path}
+	unmountfstab jroot=${path} fstab=${mount_fstab} > /dev/null 2>&1
+	jcleanup jname=${jname} > /dev/null 2>&1
+}
+
+# Unmount all in $path or $1
+# if exist $2 - do not unmount root of $1
+umount_cdirs()
+{
+	local _unmount_root=1 _mount_list _mpath _mount_point
+	[ -n "${1}" ] && path="$1"
+	[ -n "${2}" ] && _unmount_root=0
+
+	# when error before path, we do not have any mounts by scripts
+	[ -z "${path}" ] && return 0
+
+	_mount_list=$( ${MOUNT_CMD} | ${SORT_CMD} -r | ${AWK_CMD} -F" on " '{print $2}' )
+
+	_mpath=
+	for _mount_point in ${_mount_list}; do
+		case ${_mount_point} in
+			${path}/*)
+				[ -n "${_mount_point}" ] && _mpath="${_mpath} ${path}${_mount_point#$path}"
+				;;
+		esac
+	done
+
+	[ -n "${_mpath}" ] && ${UMOUNT_CMD} -f ${_mpath}
+	#finaly unmount cdir
+	if [ ${_unmount_root} -eq 1 ]; then
+		is_mounted ${path} && ${UMOUNT_CMD} -f ${path}
+	fi
+}
+
+# populate $2 chroot dir from $1 base directory
+# when baserw set to 0, just create default hier
+populate_cdir()
+{
+	local _dir _dst _i
+
+	_dir=$( ${REALPATH_CMD} ${1} )
+	_dst=$( ${REALPATH_CMD} ${2} )
+
+	[ -d "${_dir}" -a -d "${_dst}" ] || err 1 "No such base version on ${_dir}"
+
+#JAILNODATA sample
+#[ -z "${JAILNODATA}" -a "${baserw}" = "0" ] && JAILNODATA="${_dir}/.cshrc.*|\
+#${_dir}/dev.*|\
+#${_dir}/bin.*|\
+#${_dir}/media.*|\
+#${_dir}/rescue.*|\
+#${_dir}/sys.*|\
+#${_dir}/.profile.*|\
+#${_dir}/boot.*|\
+#${_dir}/lib.*|\
+#${_dir}/mnt.*|\
+#${_dir}/COPYRIGHT.*|\
+#${_dir}/libexec.*|\
+#${_dir}/proc.*|\
+#${_dir}/sbin.*|\
+#${_dir}/usr/bin.*|\
+#${_dir}/usr/games.*|\
+#${_dir}/usr/include.*|\
+#${_dir}/usr/lib.*|\
+#${_dir}/usr/lib32.*|\
+#${_dir}/usr/libdata.*|\
+#${_dir}/usr/libexec.*|\
+#${_dir}/usr/local.*|\
+#${_dir}/usr/sbin.*|\
+#${_dir}/usr/share.*|"
+
+JAILDATA="${_dir}/compat \
+${_dir}/boot \
+${_dir}/dev \
+${_dir}/etc \
+${_dir}/home \
+${_dir}/root \
+${_dir}/tmp \
+${_dir}/usr \
+${_dir}/var \
+${_dir}/.cshrc \
+${_dir}/.profile \
+${_dir}/COPYRIGHT"
+
+	if [ "${baserw}" = "1" ]; then
+		cd ${_dir} && ${PAX_CMD} -p eme -rw . ${_dst}
+	else
+		if [ -n "${JAILNODATA}" ]; then
+			cd ${_dir} && ${FIND_CMD} -E ${_dir} \( -type f -or -type d -or -type l \) -and -not -regex \"$JAILNODATA\" -print | ${SED_CMD} s:${_dir}:./:g | ${CPIO_CMD} -pdmu ${_dst}
+		elif [ -n "${JAILDATA}" ]; then
+			for _i in ${JAILDATA}; do
+				${CP_CMD} -a ${_i} ${_dst}
+			done
+		fi
+	fi
+
+	[ "${applytpl}" = "1" ] && ${TRUNCATE_CMD} -s0 ${_dst}/etc/motd
+	return 0
+}
+
+# populate or remove system files from jail data dir
+# $1 - jail data dir
+# $2 - mode: 1 - write (populate), 2 - readonly (remove)
+switch_baserw()
+{
+	local _dst
+
+	_dst=$( ${REALPATH_CMD} ${1} )
+
+	[ ! -d "${_dst}" ] && return 0
+	get_base -v ${ver}
+
+	# populate
+	if [ "${2}" = "1" ]; then
+		JAILNODATA="${_dir}/|\
+${BASE_DIR}/dev.*|\
+${BASE_DIR}/etc.*|\
+${BASE_DIR}/sys.*|\
+${BASE_DIR}/proc.*|\
+${BASE_DIR}/root.*|"
+
+		${ECHO} "${N1_COLOR}Populate jail data from: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
+		[ ! -d "${BASE_DIR}" ] && return 0
+		cd ${BASE_DIR} && ${FIND_CMD} -E ${BASE_DIR} \( -type f -or -type d -or -type l \) -and -not -regex \"${JAILNODATA}\" -print | ${SED_CMD} s:${BASE_DIR}:./:g | ${CPIO_CMD} -pdmu ${_dst}
+
+#		todo: migrate to copy-binlib
+#		base_ver=${ver%%.*}
+#		local index_file
+#		index_file="${sharedir}/FreeBSD-filebases_${base_ver}.txt.xz"
+#		if [ ! -r "${index_file}" ]; then
+#			${ECHO} "${N1_COLOR}switch_baserw error: no such index file: ${N2_COLOR}${index_file}${N0_COLOR}"
+#			return 1
+#		fi
+#		copy-binlib filelist=${index_file} dstdir=${1} basedir=${BASE_DIR} excludedir="/dev|/etc|/sys|/proc|/root" mtree=1
+#		preparebase dst=${1}
+
+		[ ! -d "${1}/dev" ] && ${MKDIR_CMD} "${1}/dev"
+		#remove system fstab
+		[ -f "${jailfstabdir}/${jailfstabpref}${jname}" ] && ${RM_CMD} -f "${jailfstabdir}/${jailfstabpref}${jname}"
+	elif [ "$2" = "2" ]; then
+		# switch to basero
+		# create system fstab
+
+		${CAT_CMD} > ${mount_fstab} << EOF
+# Please do not edit this file for additional fstabs
+# Use ${jailfstabdir}/${jailfstabpref}local instead
+${data}/etc /etc ${NULLFS} rw 0 0
+${data}/root /root ${NULLFS} rw 0 0
+${data}/tmp /tmp ${NULLFS} rw 0 0
+${data}/usr/home /usr/home ${NULLFS} rw 0 0
+${data}/usr/local /usr/local ${NULLFS} rw 0 0
+${data}/usr/compat /usr/compat ${NULLFS} rw 0 0
+${data}/var /var ${NULLFS} rw 0 0
+#
+EOF
+
+	    #todo: remove file from data listed in base jail
+	    REMOVEDIR="bin \
+lib \
+libexec \
+rescue \
+sbin \
+usr/bin \
+usr/games \
+usr/include \
+usr/lib \
+usr/lib32 \
+usr/libdata \
+usr/libexec \
+usr/sbin \
+usr/share"
+
+		[ -z "${data}" ] && return 0
+
+		${ECHO} "${N1_COLOR}Reduce jail data by switching from baserw -> basero: ${N2_COLOR}${data}${N0_COLOR}"
+		for i in ${REMOVEDIR}; do
+			[ -d "${data}/${i}" ] && ${CHFLAGS_CMD} -R noschg ${data}/${i} && ${RM_CMD} -rf ${data}/${i}
+		done
+	fi
+	# populate
+}
+
+# return getbase_source variable
+# -s args for skip, e.g: -s "repo populate extract"
+select_getbase_source_by_list()
+{
+	local _tmpdir _tmpfile _skip=
+	local _ret _def_method=
+	local i j _get_next
+
+	while getopts "s:" opt; do
+		case "${opt}" in
+			s)
+				_skip="${OPTARG}"
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# read config
+	readconf ${platform}-bases.conf
+
+	for i in ${default_obtain_base_method}; do
+		_get_next=0
+		for j in ${_skip}; do
+			if [ "${i}" = "${j}" ]; then
+				_get_next=1
+				break
+			fi
+		done
+
+		if [ ${_get_next} -eq 0 ]; then
+			_def_method="${i}"	# get only first method from list: high priority
+			break
+		fi
+	done
+
+	if [ -z "${_def_method}" ]; then
+		getbase_source=
+		return 1
+	fi
+
+	if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
+		# set default for non interactive action
+		getbase_source="${_def_method}"
+		return 0
+	fi
+
+	local _res _id i=1
+	local _elf_ver
+
+	_elf_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
+	#_jail_ver=${ver%%.*}
+	_jail_ver=${ver}
+
+	local subject="Select base sources:"
+
+	local _method_list=
+
+	${ECHO} "${N1_COLOR}${subject}${N0_COLOR}"
+
+	_tmpdir=$( ${MKTEMP_CMD} -d )
+	_tmpfile=$( ${MKTEMP_CMD} )
+
+	for i in repo extract build; do
+		if [ "${_def_method}" = "${i}" ]; then
+			echo "1:${i}:" >> ${_tmpdir}/${i}.item
+			printf "${H5_COLOR}*[default] " > ${_tmpdir}/repo.descr
+		else
+			${TRUNCATE_CMD} -s0 ${_tmpdir}/repo.descr
+			echo "0:${i}:" >> ${_tmpdir}/${i}.item
+		fi
+	done
+
+	${ECHO} "${H3_COLOR}fetch base from repository over network${N0_COLOR}" >> ${_tmpdir}/repo.descr
+	${ECHO} "${H3_COLOR}specify path to base dir or archive${N0_COLOR}" >> ${_tmpdir}/extract.descr
+	${ECHO} "${H3_COLOR}cbsd srcup + cbsd world, long method${N0_COLOR}" >> ${_tmpdir}/build.descr
+
+	if [ "${_elf_ver}" = "${_jail_ver}" ]; then
+		local oarch=$( ${UNAME_CMD} -m )
+		if [ "${arch}" = "${oarch}" ]; then
+			if [ "${_def_method}" = "populate" ]; then
+				echo "1:populate:" >> ${_tmpdir}/populate.item
+			else
+				echo "0:populate:" >> ${_tmpdir}/populate.item
+			fi
+			${ECHO} "${H3_COLOR}create base from your host's environment${N0_COLOR}" > ${_tmpdir}/populate.descr
+		fi
+	fi
+
+	# todo: rename select_jail to something neutral, due to not only for jail selector
+	select_jail ${_tmpdir} ${_tmpfile} item ${_def_method} 2>/dev/null
+	_ret=$?
+	${RM_CMD} -rf ${_tmpdir}
+
+	getbase_source=
+
+	case "${_ret}" in
+		0)
+			getbase_source=$( ${CAT_CMD} ${_tmpfile} )
+			;;
+		1)
+			# cancel pressed
+			err 1 "${N1_COLOR}select source cancel${N0_COLOR}"
+			;;
+		2)
+			# error
+			err 1 "${N1_COLOR}select source error${N0_COLOR}"
+			;;
+	esac
+
+	${RM_CMD} -f ${_tmpfile}
+	[ -z "${getbase_source}" ] && return 1
+	return 0
+}
+
+# $1 - path to archive
+extract_base_archive()
+{
+	local _path="${1}"
+
+	[ -z "${BASE_DIR}" ] && err 1 "${N1_COLOR}extract_base_archive: INIT_DIR not initialized${N0_COLOR}"
+
+	[ -z "${_path}" ] && err 1 "${N1_COLOR}extract_base_archive: path in empty${N0_COLOR}"
+
+	if [ ! -r "${_path}" ]; then
+		${ECHO} "${N1_COLOR}extract_base_archive: not readable: ${N2_COLOR}${_path}${N0_COLOR}"
+		return 1
+	fi
+
+	[ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
+	cd ${BASE_DIR}
+	set -e
+	${TAR_CMD} vxfz ${_path}
+	set +e
+
+	preparebase dst=${BASE_DIR}
+
+	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${_path}"
+}
+
+select_getbase()
+{
+	local _repeat=1
+	local _path
+	local _url= _url_str= _skip= _cycle=0
+
+	while [ ${_repeat} -ne 0 ]; do
+
+		_cycle=$(( _cycle + 1 ))
+		if [ ${_cycle} -gt 16 ]; then
+			${ECHO} "${N1_COLOR}select_getbase: too many loop, break${N0_COLOR}"
+			_repeat=0	# loop protection
+			continue
+		fi
+
+		select_getbase_source_by_list -s "${_skip}"
+		if [ $? -ne 0 ]; then
+			${ECHO} "${N1_COLOR}select_getbase: no valid source${N0_COLOR}"
+			return 1
+		fi
+
+		if [ "${inter}" = "0" -o "${INTER}" = "0" ]; then
+			# we need special route for non-interactive and
+			# multiple source list.
+			_skip="${_skip} ${getbase_source}"
+		fi
+
+		case "${getbase_source}" in
+			repo)
+				_url_str=
+				_url=
+				if [ -n "${default_obtain_base_repo_sources}" ]; then
+					# we must pass it on with one args so that the scan can choose the best one
+					for i in ${default_obtain_base_repo_sources}; do
+						if [ -z "${_url}" ]; then
+							_url="${i}"
+							_url_str="${i}"	# human-friendly is space separated
+						else
+							_url="${_url},${i}"
+							_url_str="${_url_str} ${i}"	# human-friendly is space separated
+						fi
+					done
+					${ECHO} "${N1_COLOR}config-based sources: ${N2_COLOR}${_url_str}${N0_COLOR}"
+					repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch} url="${_url}"
+				else
+					repo action=get sources=base arch=${arch} ver=${ver} target_arch=${target_arch}
+				fi
+				;;
+			populate)
+				get_base_from_current
+				;;
+			extract)
+				${ECHO} "${N1_COLOR}Scan for config-based path to base archive: ${N2_COLOR}${default_obtain_base_extract_source}${N1_COLOR}${N0_COLOR}"
+
+				for _path in ${default_obtain_base_extract_source}; do
+					if [ ! -r "${_path}" ]; then
+						${ECHO} "${N1_COLOR}info: no such archive file: ${N2_COLOR}${_path}${N0_COLOR}"
+						continue
+					else
+						${ECHO} "${N1_COLOR}Found: ${N2_COLOR}${_path}${N0_COLOR}"
+						extract_base_archive ${_path}
+					fi
+				done
+
+				# first check
+				if [ -x ${BASE_DIR}/bin/sh ]; then
+					_repeat=0
+					break
+				fi
+
+				[ "${inter}" = "0" -o "${INTER}" = "0" ] && continue
+
+				# we can ask user for base to base.txz location
+				${ECHO} "${N1_COLOR}Please provide full path to base archive, (e.g. default: ${N2_COLOR}/usr/freebsd-dist/base.txz${N1_COLOR}):${N0_COLOR}"
+				read _path
+				if [ ! -r "${_path}" ]; then
+					${ECHO} "${N1_COLOR}info: no such archive file: ${N2_COLOR}${_path}${N0_COLOR}"
+					continue
+				else
+					${ECHO} "${N1_COLOR}Found: ${N2_COLOR}${_path}${N0_COLOR}"
+					extract_base_archive ${_path}
+				fi
+
+				# second check
+				if [ -x ${BASE_DIR}/bin/sh ]; then
+					_repeat=0
+					break
+				fi
+
+				;;
+			build)
+				local origver stable
+				origver=${ver%%.*}
+				if [ "${origver}" = "${ver}" ]; then
+					stable=1
+				else
+					stable=0
+				fi
+				srcup ver=${ver} stable=${stable} && world ver=${ver} arch=${arch} stable=${stable}
+				;;
+			*)
+				${ECHO} "${N1_COLOR} select_getbase: unknown source: ${N2_COLOR}${getbase_source}${N0_COLOR}"
+				;;
+		esac
+
+		if [ -x "${BASE_DIR}/bin/sh" ]; then
+			preparebase dst=${BASE_DIR}
+			# bootstrap etcupdate
+			etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
+			etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+			_repeat=0
+		fi
+	done
+
+	return 0
+}
+
+unset_bsdenv()
+{
+	unset OSVERSION
+	unset UNAME_s
+	unset UNAME_r
+	unset UNAME_v
+	unset release
+}
+
+# set/export OSVERSION UNAME_s UNAME_r UNAME_v RELEASE variable
+# according to version from /bin/sh in specified path
+# -p - chroot path with /bin/sh
+# -v - use version to determine -RELEASE or -STABLE (for jail) in $release
+set_bsdenv_by_path()
+{
+	unset_bsdenv
+	local path
+	local ver
+
+	while getopts "p:v:" opt; do
+		case "${opt}" in
+			p)
+				path="${OPTARG}"
+				;;
+			v)
+				ver="${OPTARG}"
+				;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ -z "${path}" ]; then
+		${ECHO} "${N1_COLOR}set_bsdenv_by_path: empty path${N0_COLOR}"
+		return 1
+	fi
+
+	if [ ! -r "${path}/bin/sh" ]; then
+		${ECHO} "${N1_COLOR}set_bsdenv_by_path: no such /bin/sh here: ${N2_COLOR}${path}${N0_COLOR}"
+		return 1
+	fi
+
+	[ -z "${ver}" ] && ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh 2>/dev/null )
+	local osversion=$( ${miscdir}/elf_tables --ver ${path}/bin/sh 2>/dev/null )
+	local release
+
+	. ${tools}
+
+	if ! is_number ${ver}; then
+		# is stable
+		export RELEASE="${ver}.0-STABLE"
+	else
+		# is release
+		export RELEASE="${ver}-RELEASE"
+	fi
+
+	export OSVERSION=${osversion}
+	export UNAME_s=FreeBSD
+	export UNAME_r=${RELEASE}
+	export UNAME_v="${UNAME_s} ${UNAME_r}"
+}
+
+###
+fi

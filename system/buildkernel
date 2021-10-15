@@ -4,22 +4,79 @@ CBSDMODULE="build"
 MYARG=""
 MYOPTARG="ver arch target_arch maxjobs clean name basename ccache notify stable emulator"
 MYDESC="Build kernel from sources"
+ADDHELP="
 
-. ${subr}
+${H3_COLOR}Description${N0_COLOR}:
+
+Build/compile kernel from source tree. To compile the kernel, you first need to get 
+'base' and source code, e.g.: 'cbsd srcup' + 'cbsd world' or via 'cbsd repo'.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}arch=${N0_COLOR}         - <name>, use non-native architectures;
+ ${N2_COLOR}basename=${N0_COLOR}     - Prefix for directory name, can be used for jail as alternative base;
+ ${N2_COLOR}destdir${N0_COLOR}       - <path> - alternative DESTDIR= path instead of ~cbsd/basejail/;
+ ${N2_COLOR}name=${N0_COLOR}         - name of the kernel, default: 'GENERIC';
+ ${N2_COLOR}nice=${N0_COLOR}         - num: overwrite default nice: '19';
+ ${N2_COLOR}target_arch=${N0_COLOR}  - <name>, build non-native target arch;
+ ${N2_COLOR}ver=${N0_COLOR}          - set version: '13.0', '13.1';
+                   when version without minor version: e.g:
+                  '13' or '12' - you will receive RELENG (stable=1), not release.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd buildkernel
+ # cbsd buildkernel destdir=/tmp/testkernel name=CBSD
+ # cbsd buildkernel ver=13.0 arch=arm64 target_arch=aarch64
+ # cbsd buildkernel ver=13.0 arch=riscv target_arch=riscv64
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd installkernel --help
+  cbsd srcup --help
+  cbsd kernels --help
+  cbsd mkdistribution --help
+
+"
+
+. ${subrdir}/nc.subr
+name=
+oname=
+over=
+oarch=
+ver=
+arch=
+nice=
+onice=
 . ${cbsdinit}
 
-over="${ver}"
-oarch="${arch}"
+[ -n "${arch}" ] && oarch="${arch}"
+[ -n "${ver}" ] && over="${ver}"
+[ -n "${name}" ] && oname="${name}"
+[ -n "${nice}" ] && onice="${nice}"
 
-[ -z "${NICE}" ] && NICE="0"
+[ -z "${nice}" ] && nice="19"
+[ -z "${name}" ] && name="GENERIC"
 
-. ${buildconf}
-. ${distccacheconf}
-. ${mailconf}
+. ${subrdir}/build.subr
+
+# auto-detect for stable/release
+strpos --str="${ver}" --search="."
+pos=$?
+if [ ${pos} -eq 0 ]; then
+	stable=1
+	ostable=1
+else
+	stable=0
+	ostable=0
+fi
+
+. ${subrdir}/distccache.subr
+. ${subrdir}/mailtools.subr
 readconf buildworld.conf
 . ${system}
-. ${distdir}/universe.subr
-. ${distdir}/emulator.subr
+. ${subrdir}/universe.subr
+. ${subrdir}/emulator.subr
 readconf srcup.conf
 
 init_distcc
@@ -29,7 +86,8 @@ init_srcdir
 init_supported_arch
 
 [ -z "${emulator}" ] && emulator="jail"
-init_usermode_emul
+
+#init_usermode_emul
 
 if [ "${ccache}" = "1"  ]; then
 	ccache_prefix="cbsd buildworld ${ver} ${arch} ${target_arch} ${basename}"
@@ -56,8 +114,6 @@ fi
 init_make_flags
 
 LOCKFILE=${ftmpdir}/$( ${MD5_CMD} -qs ${MAKEOBJDIRPREFIX} ).lock
-
-[ -z "${name}" ] && name="GENERIC"
 
 kernel_conf="${platform}-kernel-${name}-${arch}-${ver}"
 
@@ -108,17 +164,17 @@ st_time=$( ${DATE_CMD} +%s )
 # chroot not for cross-arch build
 if [ ${notify} -eq 1 ]; then
 	[ -z "$TAILSTRING" ] && TAILSTRING=50
-	script ${BLDLOG} nice -n ${NICE} ${IDPRIO_CMD} 29 ${CHROOT_CMD} ${TMPDST} ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+	script ${BLDLOG} nice -n ${nice} ${IDPRIO_CMD} 29 ${CHROOT_CMD} ${TMPDST} ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
 	res=$?
 else
-	#${CHROOT_CMD} ${TMPDST} nice -n ${NICE} ${IDPRIO_CMD} 29 ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
-	nice -n ${NICE} ${IDPRIO_CMD} 29 ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+	#${CHROOT_CMD} ${TMPDST} nice -n ${nice} ${IDPRIO_CMD} 29 ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+	nice -n ${nice} ${IDPRIO_CMD} 29 ${MAKE_CMD} ${NUMJOBS} -C ${SRC_DIR} buildkernel KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
 	res=$?
 fi
 
 end_time=$( ${DATE_CMD} +%s )
 run_time=$(( end_time - st_time ))
-. ${distdir}/time.subr
+. ${subrdir}/time.subr
 diff_time=$( displaytime ${run_time} )
 
 if [ ${notify} -eq 1 ]; then
@@ -146,3 +202,5 @@ if [ ${res} -eq 0 -a $notify -eq 1 ]; then
 	send_notification -s "[CBSD ${nodename}] buildkernel ${name} $basename $ver $arch ${target_arch} r${svnrev} complete in ${diff_time}" -f ${BLDLOG}
 	return 0
 fi
+
+exit 0

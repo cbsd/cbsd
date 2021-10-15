@@ -24,7 +24,7 @@ odebug_engine=
 
 cfg_only=		# create a configuration and run immediately
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${tools}		# for select_jail_by_list
 
 readconf buildworld.conf
@@ -44,16 +44,16 @@ if [ "${lm}" = "1" ]; then
 fi
 
 . ${system}
-. ${distdir}/universe.subr
-. ${distdir}/xen.subr
-. ${distdir}/vnet.subr 		# get_vm_uplink_interface
+. ${subrdir}/universe.subr
+. ${subrdir}/xen.subr
+. ${subrdir}/vnet.subr 		# get_vm_uplink_interface
 
 [ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No XEN domain specified${N0_COLOR}"
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
-. ${distdir}/fetch.subr
-. ${distdir}/jcreate.subr       # for external_exec_master_script
-. ${distdir}/virtual.subr		# for init_systap
+. ${subrdir}/fetch.subr
+. ${subrdir}/jcreate.subr       # for external_exec_master_script
+. ${subrdir}/virtual.subr		# for init_systap
 
 make_freebsd_part()
 {
@@ -110,7 +110,7 @@ start_xen()
 		sleep 2
 	fi
 	# re-read jail params and apply personal after profile
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -137,7 +137,7 @@ start_xen()
 				local _myfile="${iso_img}"
 				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: xstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
 
-				. ${zfstool}
+				. ${subrdir}/zfs.subr
 
 				if is_getzvol ${_myfile}; then
 					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
@@ -187,6 +187,8 @@ start_xen()
 							${ZFS_CMD} destroy ${_dsk_source_zvol}
 							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
 							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
+							${GPART_CMD} commit zvol/${_dsk_source_zvol}
 							# restore original size
 							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
 							# bug here, need for atomic ops ^^ in clone action
@@ -228,7 +230,7 @@ start_xen()
 	esac
 
 	# for vnet we can make another action
-	. ${vimageconf}
+	. ${subrdir}/vnet.subr
 
 	#unset zero-value
 	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
@@ -255,14 +257,16 @@ start_xen()
 	#	unset console_args
 	#fi
 
-	# init vnc_args
-	if ! compile_vnc_args ; then
-		unset vnc_args
-	fi
-
-	# init vnc_args
-	if ! compile_spice_args ; then
-		unset vnc_spice
+	if [ "${spice_default}" != "1" ]; then
+		# init vnc_args
+		if ! compile_vnc_args ; then
+			unset vnc_args
+		fi
+	else
+		# init vnc_args
+		if ! compile_spice_args ; then
+			unset vnc_spice
+		fi
 	fi
 
 	xvm_ram=$(( vm_ram / 1024 / 1024  ))
@@ -300,8 +304,10 @@ ${boot_arg}
 #vncdisplay="${vncdisplay}"
 
 # larger resolution
-vga="stdvga"
-videoram=16
+#vga="stdvga"
+# virtio, stdvga, qxl, cirrus
+vga = "stdvga"
+videoram=32
 
 #vm_vnc_port='${vm_vnc_port}'
 opengl=1
@@ -313,6 +319,8 @@ debug_engine='${debug_engine}'
 on_poweroff="${on_poweroff}";
 on_reboot="${on_reboot}";
 on_crash="${on_crash}";
+
+usbdevice = 'tablet'
 
 # SPICE
 #vnc=0
@@ -336,6 +344,15 @@ nestedhvm="${xen_nestedhvm}"
 # L1
 #cpuid = ['0x1:ecx=0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
 
+#nographics = 1
+#bios = "ovmf"
+#bios_override = "/usr/local/share/edk2-xen/XEN_X64_EFI.fd"
+
+apic=1
+acpi=1
+localtime=1
+usb=1
+
 EOF
 
 	case ${spice_default} in
@@ -343,6 +360,8 @@ EOF
 			${CAT_CMD} >> ${XENCFG} <<EOF
 vnc = 1
 spice = 0
+# todo: check v6:
+# XEN confuses the presence of a port if we use in6 ( [::] )
 vnclisten = "${xen_vnc_tcp_bind}"
 vncpasswd="${vnc_password}"
 vncdisplay="${vncdisplay}"
@@ -364,6 +383,30 @@ EOF
 soundhw="${soundhw}"
 EOF
 	fi
+
+#builder = "hvm"
+#name = "current0"
+#disk = [
+#'/dev/zvol/zroot/current0,raw,xvda,w'
+#]
+#boot = "c"
+#bios = "ovmf"
+#usbdevice = 'tablet'
+##nographics = 1
+#serial = [ "/dev/nmdm0A" ]
+#vnc = 1
+##vnclisten = '0.0.0.0'
+#vif = ['bridge=bridge0,mac=00:02:04:15:fd:e1','bridge=bridge1,mac=00:02:04:15:fd:e2']
+#memory=8192
+#vcpus=6
+#vga = "stdvga"
+#videoram = 16
+#;xen_platform_pci=1
+
+# UEFI
+#bios = 'ovmf'
+#nographics = 1
+#bios_override = '/usr/share/ovmf/x64/OVMF_CODE.fd'    # Added to try to be explicit, same behavior with or without
 
 	if ! compile_dsk_args ${XENCFG}; then
 		${ECHO} "${N1_COLOR}xstart: compile_dsk_args failed for vm: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -542,7 +585,7 @@ init_xen
 init_systap
 
 st_time=$( ${DATE_CMD} +%s )
-. ${distdir}/time.subr
+. ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
 [ -z "${jname}" ] && jname=${1}
 
@@ -572,7 +615,7 @@ readconf xstart.conf
 
 readconf ${default_profile}
 
-. ${jrcconf}
+. ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 [ ${status} -eq 2 ] && err 1 "${N1_COLOR}Domain in slave mode. Please ${N2_COLOR}cbsd jswmode mode=master${N1_COLOR} first${N0_COLOR}"
 
@@ -603,7 +646,7 @@ else
 		[ "${zfsfeat}" != "1" ] && break
 
 		readconf zfs.conf
-		. ${zfstool}
+		. ${subrdir}/zfs.subr
 		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
 		[ -z "${DATA}" ] && break

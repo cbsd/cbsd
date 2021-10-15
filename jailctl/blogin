@@ -10,7 +10,7 @@ ADDHELP="\
 EXTHELP="wf_blogin"
 CBSDMODULE="bhyve"
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
 cbsd_api=0
@@ -21,8 +21,8 @@ try_remote()
 {
 	local RHST
 
-	. ${rjrcconf}
-	. ${distdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	. ${subrdir}/rrcconf.subr
+	. ${subrdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
 	export_bhyve_data_for_external_hook
 
 	[ "${remote}" = "1" ] && err 1 "${N1_COLOR}No such domain${N0_COLOR}"
@@ -86,7 +86,7 @@ login_custom()
 	local CBSDPATH="${PATH}"
 	# reset CBSD PATH
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
-	. ${distdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
+	. ${subrdir}/jcreate.subr	# for export_bhyve_data_for_external_hook
 	export_bhyve_data_for_external_hook
 
 	# re-read custom
@@ -101,7 +101,7 @@ login_custom()
 # jname must be set
 jname_blogin()
 {
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && try_remote
 
 	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Not in bhyve mode${N0_COLOR}"
@@ -172,7 +172,9 @@ fi
 
 if [ ${cbsd_api} -eq 1 ]; then
 	CURL_CMD=$( which curl )
+	JQ_CMD=$( which jq )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${MD5_CMD} -qs "${CLOUD_KEY}" )
 
@@ -185,15 +187,21 @@ if [ ${cbsd_api} -eq 1 ]; then
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
+		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+
 		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error2: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+
+		_ssh_len=$( strlen "${_ssh_string}" )
+		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
 		#echo "${SSH_CMD} ${_ssh_post}"
+		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
+		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then

@@ -1,0 +1,293 @@
+#v10.0.4
+# this is a temporary wrapper for version 9.2.2 is intended to make the transition to sqlite3 version if rc.conf more painless
+# required:
+# strings.subr
+#
+
+if [ ! "$_CBSD_RCCONF_SUBR" ]; then
+_CBSD_RCCONF_SUBR=1
+###
+
+# load data from local bhyve settings
+# $1 - jname
+init_bhyve_rcconf()
+{
+	local jname="${1}"
+	[ -z "${jname}" ] && return 0
+	local sqldelimer="|"
+	local A
+	_sqlfile="${dbdir}/${_datafile}.sqlite"
+
+	A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT astart,vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vnc_port,virtio_type,bhyve_vnc_tcp_bind,bhyve_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password,vm_hostbridge,vm_iso_path,vm_console,vm_efi,bhyve_generate_acpi,bhyve_wire_memory,bhyve_rts_keeps_utc,bhyve_force_msi_irq,bhyve_x2apic_mode,bhyve_mptable_gen,bhyve_ignore_msr_acc,bhyve_vnc_vgaconf,vm_cpu_topology,debug_engine,soundhw,double_acpi,virtio_rnd,uuid,boot_delay,cpuset FROM settings ORDER BY (created) DESC LIMIT 1;" )
+
+	if [ -n "${A}" ]; then
+		OIFS="${IFS}"
+		IFS="|"
+		astart=
+		vm_cpus=
+		vm_ram=
+		vm_os_type=
+		vm_boot=
+		vm_os_profile=
+		vnc_port=
+		virtio_type=
+		bhyve_vnc_tcp_bind=
+		bhyve_vnc_resolution=
+		cd_vnc_wait=
+		protected=
+		hidden=
+		maintenance=
+		ip4_addr=
+		vnc_password=
+		vm_hostbridge=
+		vm_iso_path=
+		vm_console=
+		vm_efi=
+		bhyve_generate_acpi=
+		bhyve_wire_memory=
+		bhyve_rts_keeps_utc=
+		bhyve_force_msi_irq=
+		bhyve_x2apic_mode=
+		bhyve_mptable_gen=
+		bhyve_ignore_msr_acc=
+		bhyve_vnc_vgaconf=
+		vm_cpu_topology=
+		debug_engine=
+		soundhw=
+		double_acpi=
+		virtio_rnd=
+		uuid=
+		boot_delay=
+		cpuset=
+		sqllist "${A}" astart vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vnc_port virtio_type bhyve_vnc_tcp_bind bhyve_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr vnc_password vm_hostbridge vm_iso_path vm_console vm_efi bhyve_generate_acpi bhyve_wire_memory bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc bhyve_vnc_vgaconf vm_cpu_topology debug_engine soundhw double_acpi virtio_rnd uuid boot_delay cpuset
+		IFS="${OIFS}"
+	else
+		err 1 "${N1_COLOR}Unable to fetch vm data from: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+	fi
+
+	A=$( cbsdsqlro ${_sqlfile} "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'" )
+	if [ -n "${A}" ]; then
+		mnt_start=
+		mnt_stop=
+		sqllist "${A}" mnt_start mnt_stop
+		IFS="${OIFS}"
+	fi
+}
+
+# load data from local XEN settings
+# $jname
+init_xen_rcconf()
+{
+	local jname="${1}"
+	[ -z "${jname}" ] && return 0
+	local sqldelimer="|"
+	local A
+
+	A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vm_vnc_port,xen_vnc_tcp_bind,xen_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password,on_poweroff,on_reboot,on_crash,spice_default,xen_spice_tcp_bind,xen_spice_resolution,spice_password,soundhw,debug_engine,xen_hap,xen_nestedhvm,vm_iso_path FROM settings ORDER BY (created) DESC LIMIT 1;" )
+
+	if [ -n "${A}" ]; then
+		OIFS="${IFS}"
+		IFS="|"
+		vm_cpus=
+		vm_ram=
+		vm_os_type=
+		vm_boot=
+		vm_os_profile=
+		vm_vnc_port=
+		xen_vnc_tcp_bind=
+		xen_vnc_resolution=
+		cd_vnc_wait=
+		protected=
+		hidden=
+		maintenance=
+		ip4_addr=
+		vnc_password=
+		on_poweroff=
+		on_reboot=
+		on_crash=
+		spice_default=
+		xen_spice_tcp_bind=
+		xen_spice_resolution=
+		spice_password=
+		soundhw=
+		debug_engine=
+		xen_hap=
+		xen_nestedhvm=
+		vm_iso_path=
+		sqllist "${A}" vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vm_vnc_port xen_vnc_tcp_bind xen_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr vnc_password on_poweroff on_reboot on_crash spice_default xen_spice_tcp_bind xen_spice_resolution spice_password soundhw debug_engine xen_hap xen_nestedhvm vm_iso_path
+		IFS="${OIFS}"
+	else
+		err 1 "${N1_COLOR}Unable to fetch vm data from: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+	fi
+}
+
+# init_rcconf ( $jname must be not empty )
+# ( $sqlfile - specify sqlfile in dbdir for searching data. If empty - local file is prefered )
+init_rcconf()
+{
+	local _JCOL _BCOL _A _ALLJCOL _ALLBCOL jname _sqlfile _datafile="local" i
+
+	[ -n "${2}" ] && _datafile="${2}"
+	_sqlfile="${dbdir}/${_datafile}.sqlite"
+
+	[ ! -f "${_sqlfile}" ] && return 0
+
+	. ${distsharedir}/local-jails.schema
+	_JCOL="${MYCOL}"
+
+	#clean sqlite3 schema variables
+	for i in ${_JCOL}; do
+		unset ${i}
+	done
+
+	_ALLJCOL=$( echo ${_JCOL} | ${TR_CMD} " " "," )
+
+	local sqldelimer="|"
+	_A=$( 2>/dev/null cbsdsqlro ${_sqlfile} "SELECT ${_ALLJCOL} FROM jails WHERE jname='$1'" )
+	unset sqldelimer
+
+	[ -z "${_A}" ] && return 1
+
+	. ${strings}
+
+	sqllist "${_A}" ${_JCOL}
+
+	case "${emulator}" in
+		qemu-arm-static|qemu-mips64-static)
+			local source_emulator="${emulator}"
+			;;
+		qemu-aarch64-static)
+			local source_emulator="${emulator}"
+			arch="arm64"
+			target_arch="aarch64"
+			;;
+		qemu-ppc64-static)
+			local source_emulator="${emulator}"
+			arch="powerpc"
+			target_arch="powerpc64"
+			;;
+		qemu-riscv64-static)
+			local source_emulator="${emulator}"
+			arch="riscv"
+			target_arch="riscv64"
+			;;
+	esac
+
+	#skip for not my emulator
+	if [ -n "${source_emulator}" ]; then
+		[ "${source_emulator}" != "${emulator}" ] && continue
+	fi
+
+	. ${strings}
+	sqllist "${_A}" ${_JCOL}
+
+	case "${emulator}" in
+		bhyve|virtualbox|xen)
+			. ${distsharedir}/${emulator}.conf
+			_BCOL="${MYCOL}"
+			jid=0
+			_ALLBCOL=$( echo ${_BCOL} | ${TR_CMD} " " "," )
+			local sqldelimer="|"
+			_A=$( 2>/dev/null cbsdsqlro ${_sqlfile} "SELECT ${_ALLBCOL} FROM ${emulator} WHERE jname=\"$1\"" )
+			unset sqldelimer
+			sqllist "${_A}" ${_BCOL}
+			;;
+	esac
+
+	init_jail_path
+
+	# sanity check that jid and status are similar to the real state, for localhost  only
+	if [ "${_datafile}" = "local" ]; then
+		get_jid
+		case "${emulator}" in
+			"bhyve")
+				if [ -e "/dev/vmm/${jname}" ]; then
+					[ ${status} -ne 3 ] && status="1"	# if not in maintenance, update status to online
+					myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+
+					# temp work-around for CBSD 11.1.0 wherei PID was introduced and where old machine
+					# still run with 0 jid: change jid to non zero to proper status
+					[ -z "${myjid}" -o "${myjid}" = "0" ] && myjid=1
+
+					jid="${myjid}"
+				fi
+				;;
+			"virtualbox")
+				. ${subrdir}/virtualbox.subr
+				_state=$( ${VBOX_MGMT_CMD} showvminfo ${jname}| ${AWK_CMD} '/^State: /{print $2}' )
+				if [ "${_state}" = "running" ]; then
+					[ ${status} -ne 3 ] && status="1"	# if not in maintenance, update status to online
+					myjid="1"
+					jid="1"
+				else
+					[ ${status} -ne 3 ] && status="0"	# if not in maintenance, update status to offline
+					myjid="0"
+					jid="0"
+				fi
+				;;
+			"xen")
+				. ${subrdir}/xen.subr
+				_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+				if [ $? -eq 0 ]; then
+					check_for_xen_process -j ${jname}
+					status="1"	# if not in maintenance, update status to online
+					myjid="${vm_pid}"
+					jid="${myjid}"
+					[ -z "${myjid}" ] && myjid=0 && status=0
+					[ -z "${jid}" ] && jid=0 && status=0
+				else
+					status="0"	# if not in maintenance, update status to offline
+					myjid="0"
+					jid="0"
+				fi
+				;;
+
+		esac
+
+		# check jid when sqlite information is wrong and update it
+		[ ${myjid} -ne ${jid} ] && jid=${myjid} && cbsdsqlrw ${dbdir}/local.sqlite "UPDATE jails SET jid=\"${myjid}\" WHERE jname=\"${1}\""
+
+		# fix for status only for 0,1, not for slave or maintenace
+		if [ ${status} -eq 0 -o ${status} -eq 1 ]; then
+			if [ ${myjid} -ne 0 -a ${status} -eq 0 ]; then
+				status=1
+				cbsdsqlrw ${dbdir}/local.sqlite "UPDATE jails SET status=\"1\" WHERE jname=\"${1}\""
+			fi
+			if [ ${myjid} -eq 0 -a ${status} -ne 0 -a ${status} -ne 2 ]; then
+				status=0
+				cbsdsqlrw ${dbdir}/local.sqlite "UPDATE jails SET status=\"0\" WHERE jname=\"${1}\""
+			fi
+		fi
+	else
+		# remote resource
+		jid=$( cbsdsqlro ${_datafile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+		case ${jid} in
+			0)
+				status=0
+				;;
+			*)
+				status=1
+				;;
+		esac
+	fi
+
+	# clean some variables if equal 0
+	[ "${basename}" = "0" ] && unset basename
+	[ "${slavenode}" = "0" ] && unset slavenode
+	[ "${masterhost}" = "0" ] && unset masterhost
+	[ "${exec_stop}" = "0" ] && unset ${exec_stop}
+	[ "${exec_poststart}" = "0" ] && unset ${exec_poststart}
+	[ "${exec_poststop}" = "0" ] && unset ${exec_poststop}
+	[ "${exec_prestart}" = "0" ] && unset ${exec_prestart}
+	[ "${exec_prestop}" = "0" ] && unset ${exec_prestop}
+
+	case "${emulator}" in
+		bhyve|xen)
+			init_${emulator}_rcconf ${1}
+	esac
+}
+
+###
+fi
+
+init_rcconf ${jname} ${sqlfile}

@@ -1,0 +1,608 @@
+if [ ! "$_CBSD_TOOLS_SUBR" ]; then
+_CBSD_TOOLS_SUBR=1
+###
+
+# auto-detect if $1 has vhid or iface (for ip4_addr normalization)
+is_special_ip()
+{
+	local _pos _p1 _p2 _ip i _res=
+	_ip="${1}"
+
+	[ -z "${_ip}" ] && return 0
+
+	OIFS="${IFS}"
+	IFS=","		# multiple IP separator
+
+	for i in ${_ip}; do
+		IFS="${OIFS}"
+		strpos --str="${i}" --search="#"
+		_pos=$?
+		if [ ${_pos} -ne 0 ]; then
+			# vhid or with iface
+			_p1=${i%%#*}
+			_p2=${i##*#}
+			if [ -z "${_res}" ]; then
+				_res="${_p2}"
+			else
+				_res="${_res},${_p2}"
+			fi
+		fi
+		IFS=","		# multiple IP separator
+	done
+	IFS="${OIFS}"
+
+	[ -z "${_res}" ] && _res="${_ip}"
+
+	printf "${_res}"
+	return ${_pos}
+}
+
+
+#v11.0.12
+#return 0 errcode for undefined type
+#return 1 errcode for ipv4
+#return 2 errcode for ipv6
+# fill VHID args when CARP-specific records
+# export IWM global variables
+# fill V_INTERFACE and V_IP by iface/ip_addr when:
+#   <iface>#<ip>
+# form received.
+iptype() {
+	local prefix p1 p2 ip _special=0 _tmp
+	[ -z "${1}" ] && return 0
+	ip="${1}"
+
+	unset VHID IPWVHID V_INTERFACE V_IP
+
+	_tmp=$( is_special_ip ${ip} )
+	_special=$?
+
+	# CARP or with IFACE
+	if [ ${_special} -ne 0 ]; then
+		prefix=$( substr --pos=0 --len=4 --str=${ip} )
+		if [ "${prefix}" = "vhid" ]; then
+			p1=${ip%%#*}	# cut all after '#'
+			IPWVHID=${ip##*#}	# cut all before '#' (ip with mask)
+			ipwmask "${IPWVHID}"	# get IWM
+			VHID=${p1##*_}		# get VHID
+			. ${tools}
+			is_number ${VHID} && err 1 "${N1_COLOR}Error in iptype: vhid should be number${N0_COLOR}"
+		else
+			# cut network prefix if exist
+			V_INTERFACE=${ip%%#*}
+			V_IP=${ip##*#}
+			ipwmask "${V_IP}"
+		fi
+	else
+		ipwmask "${1}"
+	fi
+
+	[ -z "${IWM}" ] && return 0
+
+	prefix=$( substr --pos=0 --len=4 --str=${IWM} )
+
+	if [ "${prefix}" = "vhid" ]; then
+		IPWVHID=
+		p1=${IWM%%#*}
+		IPWVHID=${IWM##*#}
+		VHID=${p1##*_}
+		. ${tools}
+		is_number ${VHID} && err 1 "${N1_COLOR}Error in iptype: vhid should be number${N0_COLOR}"
+	fi
+
+	# Identify type {inet,inet6}.
+	case "${IWM}" in
+		*\.*\.*\.*)
+			echo "${IWM}" | ${EGREP_CMD} -q '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$' && return 1
+			# its not ip
+			return 0
+		;;
+		*:*)
+			return 2
+		;;
+		*)	return 0
+		;;
+	esac
+}
+
+resolvhost()
+{
+	local _host
+	local proto
+
+	if [ "${node_ip6_active}" = "1" ]; then
+		proto="6"
+	else
+		proto="4"
+	fi
+
+	_host=$( ${miscdir}/resolv ${proto} ${1} )
+
+	[ $? -eq 0 ] && echo ${_host}
+}
+
+# convert string in Xm (mbytes) or Xg (gbytes) to bytes
+# example: 
+# if conv2bytes "1g"; then
+#    echo $convval
+# fi
+# return bytes in $convval var
+# errcode 1 when error
+conv2bytes() {
+	local _testsize
+	local _value
+	local _num _postfix
+
+	[ -z "${1}" ] && return 1
+
+	if ! is_number "${1}"; then
+		convval="${1}"
+		return 0
+	fi
+
+	convval=$( ${miscdir}/conv2human ${1} )
+	[ -z "${convval}" ] && return 1
+	[ ${convval} -gt 0 ] || return 1
+}
+
+# convert bytes to human readable form
+# example:
+# if conv2human "10000"; then
+#   echo $convval
+# fi
+# errcode 1 when not number
+conv2human() {
+	[ -z "${1}" ] && return 1
+	convval=$( ${miscdir}/conv2human ${1} | ${TR_CMD} '[:upper:]' '[:lower:]' )
+	return $?
+}
+
+# $1 - $4 - ip
+# $5 - $8 - mask
+# example:
+# IFS="."
+# ip="192.168.1.55"
+# mask="255.255.255.248"
+# first_ips_w_mask 192.168.1.55 255.255.255.248
+first_ips_w_mask()
+{
+	printf "%d.%d.%d.%d\n" "$(($1 & $5))" "$(($2 & $6))" "$(($3 & $7))" "$(( ($4 & $8) + 1 ))"
+}
+
+
+# print prefix from mask
+# example: cdr=$( mask2cdr 255.255.255.248 )
+mask2cdr()
+{
+	# Assumes there's no "255." after a non-255 byte in the mask
+	local x=${1##*255.}
+	set -- 0^^^128^192^224^240^248^252^254^ $(( (${#1} - ${#x})*2 )) ${x%%.*}
+	x=${1%%$3*}
+	echo $(( $2 + (${#x}/4) ))
+}
+
+# print mask from prefix
+# example: mask=$( cdr2mask 24 )
+cdr2mask()
+{
+	# Number of args to shift, 255..255, first non-255 byte, zeroes
+	set -- $(( 5 - ($1 / 8) )) 255 255 255 255 $(( (255 << (8 - ($1 % 8))) & 255 )) 0 0 0
+	[ $1 -gt 1 ] && shift $1 || shift
+	echo ${1-0}.${2-0}.${3-0}.${4-0}
+}
+
+# for select_jail_by_list
+# return 1 when node online
+# return 0 when only_local=0 and node is offnline
+# or only_online=1 or only_local=1
+node_state()
+{
+	[ -z "${nodename}" ] && return 0 # nothing to test
+	[ ${only_local} -eq 0 ] && return 0 # local only
+	[ ${only_online_node} -eq 1 ] && return 0 # any nodes
+
+	local ip
+
+	ip=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${nodename}\" )
+	[ -z "${ip}" ] && return 0 # nothing to test
+
+	if ! check_locktime ${ftmpdir}/shmux_${ip}.lock >/dev/null 2>&1; then
+		return 1	# Offline
+	else
+		return 0	# Online
+	fi
+}
+
+# $1 in seconds
+# show human-readable converted diff time, e.g:
+# 10 min
+# 22h
+# 3 weeks
+conv_time()
+{
+	local i=0
+	local in="${1}"
+
+	[ -z "${in}" ] && return 0
+
+	for i in 1 2 3 4 5; do
+		case ${i} in
+			1)
+				# seconds -> minutes
+				if [ ${in} -lt 300 ]; then
+					printf "${in} sec."
+					return 0
+				else
+					in=$(( in / 60 ))
+					continue
+				fi
+				;;
+			2)
+				# minutes -> hours
+				if [ ${in} -lt 300 ]; then
+					printf "${in} min."
+					return 0
+				else
+					in=$(( in / 60 ))
+					continue
+				fi
+				;;
+			3)
+				# hours -> days
+				if [ ${in} -lt 73 ]; then
+					printf "${in} hours."
+					return 0
+				else
+					in=$(( in / 24 ))
+					continue
+				fi
+				;;
+			4)
+				# days -> weeks
+				if [ ${in} -lt 14 ]; then
+					printf "${in} days."
+					return 0
+				else
+					in=$(( in / 7 ))
+					continue
+				fi
+				;;
+			5)
+				printf "${in} month"
+				return 0
+				;;
+		esac
+	done
+}
+
+
+# return $jname as selected jail by id
+# -s "is subject for list"
+# -a [0|1] show only active (status=on jail): 0, or all: 1
+# -r [0|1] select jname from remote node too (1), or only local: 0
+# -e emulator ( jls for jail and bls for bhyve ): jls
+# -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
+select_jail_by_list()
+{
+	local _tmpdir _tmpfile
+	local _ret _id i=1
+	local sqldelimer=" "
+	local emulator="jls"
+	local _bhyve_local_sqlite
+
+	local only_local=0	# default - local node only
+	local subject="List of online jails:"
+
+	local searchstr
+	local active="."
+	local only_online_node=0	# only online node
+	local curr_time rtime
+
+	while getopts "a:r:s:e:o:" opt; do
+		case "${opt}" in
+			a) active="${OPTARG}" ;;
+			r) only_local="${OPTARG}" ;;
+			s) subject="${OPTARG}" ;;
+			e) emulator="${OPTARG}" ;;
+			o) only_online_node="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	. ${strings}
+
+	if [ ${only_local} -eq 0 ]; then
+		searchstr="env NOCOLOR=1 ${emulator} alljails=0"
+	else
+		searchstr="env NOCOLOR=1 ${emulator} alljails=1"
+		. ${nodes}
+	fi
+
+	case "${emulator}" in
+		j*)
+			stuff="jails"
+			;;
+		b*)
+			stuff="bhyve"
+			;;
+		x*)
+			stuff="xen"
+			;;
+	esac
+
+	${ECHO} "${N1_COLOR}${subject}${N0_COLOR}"
+
+	_tmpdir=$( ${MKTEMP_CMD} -d )
+	_tmpfile=$( ${MKTEMP_CMD} )
+
+	local my_nodename="${nodename}"
+
+	curr_time=$( ${DATE_CMD} +%s )
+
+	${searchstr} display=nodename,jname,status header=0 order=asc | ${EGREP_CMD} ${active}$ | while read nodename jname status; do
+		# continue only when any node status or when node is online (when -r 1)
+		node_state || continue
+		[ -z "${nodename}" ] && continue
+		[ "${nodename}" = "${my_nodename}" ] && nodename="local"
+		[ -z "${jname}" ] && continue
+
+		case "${status}" in
+			On)
+				active=1
+				;;
+			*)
+				active=0
+				;;
+		esac
+
+		echo "${active}:${jname}:${nodename}" >> ${_tmpdir}/${jname}.img
+		sqllistdelimer=" "
+
+		case "${emulator}" in
+			jls)
+				info=$( cbsdsqlro local SELECT ip4_addr,ver,host_hostname,state_time FROM jails WHERE jname=\"${jname}\" )
+				sqllist "${info}" ip4_addr ver host_hostname state_time
+				diff_time=$(( curr_time - state_time ))
+
+				rtime=$( conv_time ${diff_time} )
+
+				if [ ${active} -eq 1 ]; then
+					${ECHO} "${H5_COLOR}ip_addr: ${H3_COLOR}${ip4_addr}${H5_COLOR}; hostname: ${H3_COLOR}${host_hostname}${H5_COLOR}; ver: ${H3_COLOR}${ver}${H5_COLOR}; uptime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+				else
+					${ECHO} "${H5_COLOR}downtime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+				fi
+				;;
+			bls)
+				if [ "${nodename}" = "local" ]; then
+					_bhyve_local_sqlite="${jailsysdir}/${jname}/local.sqlite"
+				else
+					_bhyve_local_sqlite="${tmpdir}/${nodename}/${jname}/local.sqlite"
+				fi
+				if [ -r ${_bhyve_local_sqlite} ]; then
+					info=$( cbsdsqlro ${_bhyve_local_sqlite} SELECT ip4_addr,vm_cpus,vm_os_type,state_time FROM settings )
+					sqllist "${info}" ip4_addr vm_cpus vm_os_type state_time
+					host_hostname=$( cbsdsqlro local SELECT host_hostname FROM jails WHERE jname=\"${jname}\" )
+					diff_time=$(( curr_time - state_time ))
+					if is_number ${diff_time}; then
+						diff_time=0
+					else
+						[ ${diff_time} -lt 0 ] && diff_time=0	# protection from wrong time
+					fi
+					rtime=$( conv_time ${diff_time} )
+					if [ ${active} -eq 1 ]; then
+						${ECHO} "${H5_COLOR}ip_addr: ${H3_COLOR}${ip4_addr}${H5_COLOR}; hostname: ${H3_COLOR}${host_hostname}${H5_COLOR}; os: ${H3_COLOR}${vm_os_type}${H5_COLOR}; core's: ${H3_COLOR}${vm_cpus}${H5_COLOR}; uptime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+					else
+						${ECHO} "${H5_COLOR}ip_addr: ${H3_COLOR}${ip4_addr}${H5_COLOR}; hostname: ${H3_COLOR}${host_hostname}${H5_COLOR}; os: ${H3_COLOR}${vm_os_type}${H5_COLOR}; core's: ${H3_COLOR}${vm_cpus}${H5_COLOR}; ${H5_COLOR}downtime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+					fi
+				fi
+				;;
+			xls)
+				if [ "${nodename}" = "local" ]; then
+					_xen_local_sqlite="${jailsysdir}/${jname}/local.sqlite"
+				else
+					_xen_local_sqlite="${tmpdir}/${nodename}/${jname}/local.sqlite"
+				fi
+				if [ -r ${_xen_local_sqlite} ]; then
+					info=$( cbsdsqlro ${_xen_local_sqlite} SELECT ip4_addr,vm_cpus,vm_os_type,state_time FROM settings )
+					sqllist "${info}" ip4_addr vm_cpus vm_os_type state_time
+					diff_time=$(( curr_time - state_time ))
+					if is_number ${diff_time}; then
+						diff_time=0
+					else
+						[ ${diff_time} -lt 0 ] && diff_time=0	# protection from wrong time
+					fi
+					rtime=$( conv_time ${diff_time} )
+					if [ ${active} -eq 1 ]; then
+						${ECHO} "${H5_COLOR}os: ${H3_COLOR}${vm_os_type}${H5_COLOR}; core's: ${H3_COLOR}${vm_cpus}${H5_COLOR}; uptime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+					else
+						${ECHO} "${H5_COLOR}os: ${H3_COLOR}${vm_os_type}${H5_COLOR}; core's: ${H3_COLOR}${vm_cpus}${H5_COLOR}; ${H5_COLOR}downtime: ${H3_COLOR}${rtime}" > ${_tmpdir}/${jname}.descr
+					fi
+				fi
+				;;
+		esac
+	done
+
+	select_jail ${_tmpdir} ${_tmpfile} img CANCEL 2>/dev/null
+	_ret=$?
+	${RM_CMD} -rf ${_tmpdir}
+
+	case "${_ret}" in
+		0)
+			jname=$( ${CAT_CMD} ${_tmpfile} )
+			${RM_CMD} -f ${_tmpfile}
+			;;
+		1)
+			${RM_CMD} -f ${_tmpfile}
+			err 0 "${N1_COLOR}Cancel pressed${N0_COLOR}"
+			;;
+		2)
+			${RM_CMD} -f ${_tmpfile}
+			err 1 "${N1_COLOR}select_jail error${N0_COLOR}"
+			;;
+	esac
+
+	remote=2 # for autoremote
+
+}
+
+# libchk for testing dependency of cbsd and updatesql. Exit when stuff is broken
+test_sql_stuff()
+{
+	local _files="/usr/local/bin/cbsd ${miscdir}/updatesql"
+	local _i _res
+	# avoid chicken-egg CBSD_MACROS problem at initenv stage
+	[ -z "${GREP_CMD}" ] && GREP_CMD="grep"
+	[ -z "${LDD_CMD}" ] && LDD_CMD="ldd"
+
+	for _i in ${_files}; do
+		[ ! -f "${_i}" ] && continue
+		_res=$( ${LDD_CMD} ${_i} 2>/dev/null | ${GREP_CMD} " not found " )
+		if [ -n "${_res}" ]; then
+			echo "WARNING: ${_i} is broken:"
+			echo "${_res}"
+			echo "Please rebuild sources and try again"
+			exit 1
+		fi
+	done
+}
+
+
+# prepare jail hier for executing command inside jail 
+# when jail is not running
+# e.g for offline modification (pkg, helpers and so on... )
+# $jname, $path variable must be initialized
+prepare_offline_jail()
+{
+	mountbase -o "" -p "" -d "" -c "" -s ""
+	[ -f "${mount_fstab}" ] && /usr/local/bin/cbsd mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}"
+	[ -f "${mount_fstab}.local" ] && /usr/local/bin/cbsd mountfstab jroot=${path} fstab=${mount_fstab}.local jname="${jname}"
+	${MOUNT_CMD} -t devfs devfs ${path}/dev
+	makeresolv jname=${jname}
+	trap "${TRAP} /usr/local/bin/cbsd jcleanup jname=$jname" HUP INT ABRT BUS TERM EXIT
+}
+
+# MAC random generator
+# $1 - OUI (Organizationally Unique Identifier) or MFG (Manufacturing/vendor's code), e.g: "02:ff:f0"
+# $2 - how many mac generated, by default - 1
+# mac=$( mac_gen 02:ff:f0 2 )
+#
+# TODO
+# make possible to OUI dynamically size: 02:ff or 02:ff:f0:01 or 02:ff:f0:01:01
+#   and generate only missing parts
+mac_gen() {
+	local OUI="${1}"
+	local num
+
+	[ -z "${2}" ] && num=1
+	[ -z "${OUI}" ] && return 1
+
+	for i in $( ${SEQ_CMD} 1 ${num} ); do
+		echo -n ${OUI}; ${DD_CMD} bs=1 count=3 if=/dev/random 2>/dev/null | ${HEXDUMP_CMD} -v -e '/1 ":%02x"'
+		echo
+	done
+}
+
+# -l <length>, 30 default
+random_password_gen()
+{
+	local _length
+
+	while getopts "l:" opt; do
+		case "${opt}" in
+			l) _length="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_length}" ] && _length="30"
+
+	# todo: what the best, /dev/random or "date +%s" ?
+	${HEAD_CMD} -c ${_length} /dev/random | ${UUENCODE_CMD} -m - | ${TAIL_CMD} -n 2 | ${HEAD_CMD} -n1
+}
+
+# return $jail_list variable if jname is mask for multiple jail's
+# $emulator must be filled
+jname_is_multiple()
+{
+	jail_list=
+
+	# We accept jname with wildcard '*' e.g.: jail*, *vnet*
+	# jail as mask?
+	local is_mask=0
+
+	local jail_pref=$( substr --pos=0 --len=1 --str=${jname} )
+
+	if [ "${jail_pref}" = "*" ]; then
+		is_mask=1
+	else
+		strpos --str="${jname}" --search="*"
+		is_mask=$?
+	fi
+
+	if [ ${is_mask} -ne 0 ]; then
+		jail_mask=$( echo ${jname} | ${TR_CMD} "*" "%" )
+		jail_list=$( cbsdsqlro local SELECT jname FROM jails WHERE emulator = \"${emulator}\" AND jname LIKE \"${jail_mask}\" | ${XARGS_CMD} )
+	fi
+}
+
+# print bytes for $1 value
+get_bytes()
+{
+	local _val="0"
+
+	[ -z "${1}" ] && return 1
+
+	if is_number ${1}; then
+		conv2bytes ${1} || err 1 "${N1_COLOR}conv2bytes from get_bytes error for: ${N2_COLOR}${1}${N0_COLOR}"
+		_val="${convval}"
+	else
+		_val=${1}
+	fi
+	[ -z "${_val}" ] && return 1
+	printf "${_val}"
+	return 0
+}
+
+# rotate/prine/purge old records in
+# file-based lease records:
+# <item>:<expiretime>
+# and load/return valid
+# should work under lock due to non-atomic file operations
+rotate_lease_file()
+{
+	local _lease_file _leasefile_skiplist
+
+	while getopts "l:" opt; do
+		case "${opt}" in
+			l) _lease_file="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# prune/purge old records
+	if [ -r ${_lease_file} ]; then
+		${TRUNCATE_CMD} -s0 ${_lease_file}.swap
+		cur_time=$( ${DATE_CMD} +%s )
+		eval $( ${CAT_CMD} ${_lease_file} | while read items; do
+			p1=${items%%:*}
+			p2=${items##*:}
+			[ -z "${p1}" -o -z "${p2}" ] && continue
+			if [ ${p2} -gt ${cur_time} ]; then
+				# still valid
+				echo "${items}" >> ${_lease_file}.swap
+				if [ -z "${_leasefile_skiplist}" ]; then
+					_leasefile_skiplist="${p1}"
+				else
+					_leasefile_skiplist="${_leasefile_skiplist} ${p1}"
+				fi
+			fi
+		echo "_leasefile_skiplist=\"${_leasefile_skiplist}\""
+		done )
+		${MV_CMD} ${_lease_file}.swap ${_lease_file}
+		[ -n "${_leasefile_skiplist}" ] && printf "${_leasefile_skiplist}"
+	fi
+	return 0
+}
+
+###
+fi

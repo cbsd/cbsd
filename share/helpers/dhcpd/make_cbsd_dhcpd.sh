@@ -18,7 +18,7 @@ workdir="${cbsd_workdir}"
 
 set -e
 . ${distdir}/cbsd.conf
-. ${distdir}/nc.subr
+. ${subrdir}/nc.subr
 set +e
 
 export NOCOLOR=1

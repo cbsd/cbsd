@@ -17,9 +17,9 @@ For interactive (dialog(1)-based) edit, please use 'cbsd jconfig' instead.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}autorestart=${N0_COLOR} - auto-restart online jail after params update.
- ${N2_COLOR}mode=${N0_COLOR}         - set 'force' for modification on the running jail.
- ${N2_COLOR}jconf=${N0_COLOR}        - <path_to_file>, load and set settings from jconf.
+ ${N2_COLOR}autorestart=${N0_COLOR} - auto-restart online jail if params update (e.g. via jconf=);
+ ${N2_COLOR}mode=${N0_COLOR}        - set 'force' for modification on the running jail;
+ ${N2_COLOR}jconf=${N0_COLOR}       - <path_to_file>, load and set settings from jconf;
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -35,11 +35,10 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 EXTHELP="wf_jset"
 
-. ${subr}
+. ${subrdir}/nc.subr
 
 [ ! -f ${distsharedir}/jail-arg ] && err 1 "${N2_COLOR}no jail-arg file${N0_COLOR}";
 . ${distsharedir}/jail-arg
-
 
 MYOPTARG="autorestart jconf ${JARG} nice"
 
@@ -88,7 +87,7 @@ validate_ipaddr()
 	_pos=$?
 	 [ ${_pos} -ne 0 ] && ip4_addr=$( echo ${ip4_addr} | ${TR_CMD} '|' '#' )
 
-	. ${distdir}/vnet.subr	# for is_nic_exist
+	. ${subrdir}/vnet.subr	# for is_nic_exist
 	for _i in ${ip4_addr}; do
 		ipwmask ${_i}
 		[ -z "${IWM}" -o "${_i}" = "0" ] && continue
@@ -518,7 +517,7 @@ modify_cpuset()
 {
 	cbsdsqlrw local UPDATE jails SET ${i}=\"${cpuset}\" WHERE jname=\"${jname}\"
 	${ECHO} "${argpart}: ${N1_COLOR}${cpuset}${N0_COLOR}"
-	cpuset -c -l ${cpuset} -j ${jid}
+	${CPUSET_CMD} -c -l ${cpuset} -j ${jid}
 }
 
 # mount_src
@@ -530,7 +529,7 @@ modify_mount_src()
 	_mount_src="${mount_src}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_src="${_mount_src}"
@@ -539,7 +538,7 @@ modify_mount_src()
 	${ECHO} "${argpart}: ${N1_COLOR}${mount_src}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
-	. ${distdir}/universe.subr
+	. ${subrdir}/universe.subr
 
 	init_srcdir
 	[ ! -d "${SRC_DIR}" ] && ${ECHO} "${N1_COLOR}No such src dir: ${N2_COLOR}${SRC_DIR}${N0_COLOR}"
@@ -569,7 +568,7 @@ modify_mount_ports()
 	_mount_ports="${mount_ports}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_ports="${_mount_ports}"
@@ -606,7 +605,7 @@ modify_mount_kernel()
 	_mount_kernel="${mount_kernel}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_kernel="${_mount_kernel}"
@@ -615,7 +614,7 @@ modify_mount_kernel()
 	${ECHO} "${argpart}: ${N1_COLOR}${mount_kernel}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
-	. ${distdir}/universe.subr
+	. ${subrdir}/universe.subr
 	init_kerneldir
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -645,7 +644,7 @@ modify_mount_fdescfs()
 	_oldval="${mount_fdescfs}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_fdescfs="${_oldval}"
@@ -678,7 +677,7 @@ modify_mount_procfs()
 	_oldval="${mount_procfs}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_procfs="${_oldval}"
@@ -711,7 +710,7 @@ modify_mount_linsysfs()
 	_oldval="${mount_linsysfs}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_linsysfs="${_oldval}"
@@ -747,7 +746,7 @@ modify_mount_linprocfs()
 	_oldval="${mount_linprocfs}"
 
 	. ${system}
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 
 	#restore new variable
 	mount_linprocfs="${_oldval}"
@@ -850,10 +849,72 @@ jid=$( jstatus jname=${jname} )
 if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${N1_COLOR}No such jconf file: ${N2_COLOR}${jconf}${N0_COLOR}"
 	#jset jname=${jname} `${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} .| ${TR_CMD} -d ";"`
-	my_arg=$( ${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} . | ${TR_CMD} -d ";" | ${SED_CMD} 's/"/\\"/g' | ${XARGS_CMD} )
-	exec /bin/sh << EOF
-/usr/local/bin/cbsd jset jname=${jname} "${my_arg}" autorestart=${autorestart}
-EOF
+	jset_tmp=$( ${MKTEMP_CMD} )
+	${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} . | ${TR_CMD} -d ";" | ${SED_CMD} 's/"/\\"/g' | while read _line; do
+		strpos --str="${_line}" --search="="
+		pos=$?
+		if [ ${pos} -eq 0 ]; then
+			# not param=value?
+			continue
+		fi
+		eval "${_line}"
+		check_param=$( substr --pos=0 --len=${pos} --str="${_line}" )
+		case "${check_param}" in
+			# unchangeble
+			relative_path|jname|path|data|rcconf|jailskeldir|jail_profile|zfs_snapsrc|zfs_encryption|runasap|mount_fstab|mount_fstab_old|mdsize|with_img_helpers|persist|jailnic_temp_sql|etcupdate_init|emulator|rctl_nice)
+				continue
+				;;
+		esac
+		var_name="${check_param}"
+		eval check_value="\$$var_name"
+		[ -z "${check_value}" ] && check_value="0"
+		oldval=$( cbsdsqlro local SELECT ${check_param} FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+		[ -z "${oldval}" ] && oldval="0"
+		[ "${check_value}" = "${oldval}" ] && continue #	no change
+		# check for dynamic ( native/DHCP/..)
+		case "${check_param}" in
+			# unchangeble
+			arch)
+				[ "${oldval}" = "native" ] && continue
+				[ "${check_value}" = "native" ] && continue
+				;;
+			ver)
+				[ "${oldval}" = "native" ] && continue
+				[ "${check_value}" = "native" ] && continue
+				;;
+			ip4_addr)
+				case "${oldval}" in
+					[Dd][Hh][Cc][Pp]|[Dd][Hh][Cc][Pp][Vv]6)
+						continue
+						;;
+				esac
+				case "${check_value}" in
+					[Dd][Hh][Cc][Pp]|[Dd][Hh][Cc][Pp][Vv]6)
+						continue
+						;;
+				esac
+				;;
+		esac
+		echo "/usr/local/bin/cbsd jset jname=${jname} ${_line}" >> ${jset_tmp}
+		#echo ">> [${check_param}][${_line}][${check_value}] - [${oldval}]"
+	done
+	jset_tmp_size=$( ${STAT_CMD} -f %z ${jset_tmp} )
+	if [ "${jset_tmp_size}" = "0" ]; then
+		# no change
+	else
+		# change
+		${ECHO} "${N1_COLOR}${CBSD_APP}: change detected ( autorestart=${autorestart} ) via jconf:${N0_COLOR}" 2>&1
+		${CAT_CMD} ${jset_tmp} 2>&1
+		if [ "${autorestart}" = "1" ]; then
+			jid=$( jstatus jname=${jname} )
+			[ "${jid}" != "0" ] && jstop jname="${jname}"
+			/bin/sh ${jset_tmp}
+			[ "${jid}" != "0" ] && jstart jname="${jname}"
+		else
+			/bin/sh ${jset_tmp}
+		fi
+	fi
+	${RM_CMD} ${jset_tmp}
 	exit 0
 else
 	my_arg="$@"
@@ -946,6 +1007,10 @@ for n in ${my_arg}; do
 					allow_fdescfs)
 						cbsdlogger NOTICE ${CBSD_APP}: modify_allow_fdescfs
 						modify_allow_fdescfs
+						;;
+					boot_delay)
+						# on-the-fly
+						update_jails
 						;;
 					*)
 						if [ ${autorestart} -eq 0 ]; then

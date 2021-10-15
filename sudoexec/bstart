@@ -1,21 +1,49 @@
 #!/usr/local/bin/cbsd
 #v12.1.16
 MYARG=""
-MYOPTARG="bhyverun_wrapper cfg_only checkpoint debug debug_engine jname lm lm_dport lm_rnodename"
+MYOPTARG="bhyverun_wrapper cfg_only checkpoint debug debug_engine delay jname lm lm_dport lm_rnodename"
 MYDESC="Start bhyve domain"
 ADDHELP="\
- bhyverun_wrapper=<file_path> - alternative/custom bhyve run script\n\
- cfg_only=<file_path>          - when set, find/create tap/vnc and generate bhyve.conf \n\
-                                 into <file_path> but without run, e.g for debugging\n\
- checkpoint   - start from specified checkpoint name\n\
- debug        - more debug messages\n\
- debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve \n\
-                ( mostly for inherits debug with live migration )\n\
- lm - 0 or 1  - when set to 1: prepare for acceptance of this domain via live migration request\n\
- lm_dport     - (optional) for live migration, port for migration data exchange. Can be '0' for \n\
-                auto port, by default.\n\
- lm_rnodename - (optional) for live migration, remote/source CBSD nodename\n\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+Start the bhyve domain. You can start the offline machine, or continue the work
+of the frozen machine from the checkpoint.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}bhyverun_wrapper=${N0_COLOR} - <file_path>, alternative/custom bhyve run script.
+ ${N2_COLOR}cfg_only=${N0_COLOR}         - <file_path>: when set, find/create tap/vnc and
+                     generate bhyve.conf into <file_path> but without
+                     run, e.g for debugging.
+ ${N2_COLOR}checkpoint=${N0_COLOR}       - start from specified checkpoint name.
+ ${N2_COLOR}debug=${N0_COLOR}            - more debug messages.
+ ${N2_COLOR}debug_engine=${N0_COLOR}     - overwrite debug_engine settings: use gdb or lldb
+                     as debugger when launch bhyve ( mostly for inherits debug
+                     with live migration ).
+ ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N secbefore start, mainly to smooth 
+                     the astart, default is: '0', no delay.
+ ${N2_COLOR}jname=${N0_COLOR}            - Target VM. If jail='*' or jail='vm*' then start  all
+                     bhyve or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
+ ${N2_COLOR}lm=${N0_COLOR}               - 0,1: when set to 1: prepare for acceptance of this
+                     domain via live migration request ( used by 'bmigrate').
+ ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration.
+                     data exchange. Can be '0' for auto port, by default.
+ ${N2_COLOR}lm_rnodename=${N0_COLOR}     - (optional) for live migration, remote/source
+                     CBSD nodename.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bstart
+ # cbsd bstart jname=myvm1 checkpoint=point1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bstop --help
+ cbsd bcheckpoint --help
+
 "
+
 CBSDMODULE="bhyve"
 EXTHELP="wf_bstop_bstart"
 
@@ -27,9 +55,9 @@ odebug_engine=
 
 cfg_only=		# create a configuration and run immediately
 
-. ${subr}
+. ${subrdir}/nc.subr
 . ${tools}		# for select_jail_by_list
-. ${distdir}/ipfw.subr	# fwcounter
+. ${subrdir}/ipfw.subr	# fwcounter
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -46,14 +74,16 @@ odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 obhyverun_wrapper=	# reset bhyverun_wrapper
 bhyverun_wrapper=	# reset bhyverun_wrapper
+
+delay=0
 . ${cbsdinit}
 
 ojname="${jname}"
 
 . ${system}
-. ${distdir}/universe.subr
-. ${distdir}/bhyve.subr
-. ${distdir}/vnet.subr		# for get_vm_uplink_interface
+. ${subrdir}/universe.subr
+. ${subrdir}/bhyve.subr
+. ${subrdir}/vnet.subr		# for get_vm_uplink_interface
 
 if [ -r ${Makefile} ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
@@ -76,14 +106,31 @@ else
 	cbsd_api=0
 fi
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}no bhyve specified${N0_COLOR}"
+# trim args from "$*"
+ARGS=
+for i in $*; do
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+
+	[ "${prefix6}" = "delay=" ] && shift && continue
+	[ "${prefix6}" = "jname=" ] && shift && continue
+	[ "${prefix6}" = "quiet=" ] && shift && continue
+	[ "${prefix6}" = "inter=" ] && shift && continue
+
+	if [ -n "${ARGS}" ]; then
+		ARGS="${ARGS} ${i}"
+	else
+		ARGS="${i}"
+	fi
+done
+
+[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}no bhyve specified${N0_COLOR}"
 
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"		# store overwrite debug_engine
 [ -n "${bhyverun_wrapper}" ] && obhyverun_wrapper="${bhyverun_wrapper}"	# store overwrite bhyverun_wrapper
 
-. ${distdir}/fetch.subr
-. ${distdir}/jcreate.subr	# for external_exec_master_script
-. ${distdir}/virtual.subr	# for init_systap
+. ${subrdir}/fetch.subr
+. ${subrdir}/jcreate.subr	# for external_exec_master_script
+. ${subrdir}/virtual.subr	# for init_systap
 
 create_from_jail()
 {
@@ -124,9 +171,9 @@ start_bhyve()
 	fi
 	# re-read jail params and apply personal after profile
 	if [ "${lm}" = "0" ]; then
-		. ${jrcconf}
+		. ${subrdir}/rcconf.subr
 	else
-		. ${rjrcconf}
+		. ${subrdir}/rrcconf.subr
 	fi
 
 	# CBSD QUEUE
@@ -162,7 +209,7 @@ start_bhyve()
 				local _myfile="${iso_img}"
 				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: bstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
 
-				. ${zfstool}
+				. ${subrdir}/zfs.subr
 
 				if is_getzvol ${_myfile}; then
 					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
@@ -269,7 +316,7 @@ start_bhyve()
 
 			[ -z "${vm_profile}" ] && err 1 "${N1_COLOR}No such profile: ${N2_COLOR}vm-${vm_os_type}-${vm_os_profile}.conf${N0_COLOR}"
 			# re-read jail params and apply personal after profile 
-			[ "${lm}" = "0" ] && . ${jrcconf}
+			[ "${lm}" = "0" ] && . ${subrdir}/rcconf.subr
 			manage_boot_by_empty_hdd
 
 			if [ "${vm_boot}" = "cd" ]; then
@@ -293,9 +340,9 @@ start_bhyve()
 			# re-read jail params and apply personal after profile
 
 			if [ "${lm}" = "0" ]; then
-				. ${jrcconf}
+				. ${subrdir}/rcconf.subr
 			else
-				. ${rjrcconf}
+				. ${subrdir}/rrcconf.subr
 			fi
 
 			manage_boot_by_empty_hdd
@@ -334,7 +381,7 @@ start_bhyve()
 	esac
 
 	# for vnet we can make another action
-	. ${vimageconf}
+	. ${subrdir}/vnet.subr
 
 	#unset zero-value
 	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
@@ -766,6 +813,7 @@ EOF
 	fi
 
 	fwcounter
+	expose mode=apply
 }
 
 
@@ -792,7 +840,7 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/bstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname}
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
@@ -809,12 +857,11 @@ fi
 
 # MAIN
 . ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
-. ${distdir}/time.subr
-st_time=$( ${DATE_CMD} +%s )
+. ${subrdir}/time.subr
 [ -z "${jname}" ] && jname=${1}
 
 if [ "${lm}" = "0" ]; then
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 	if [ $? -eq 1 ]; then
 		# remote start
 		[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -835,6 +882,16 @@ if [ "${lm}" = "0" ]; then
 		done
 		exit 0
 	fi
+
+	# mainly to smooth mass start in astart.
+	if [ ${delay} -ne 0 ]; then
+		[ -z "${boot_delay}" ] && boot_delay=1
+		cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname}: ${boot_delay} sec.
+		sleep ${boot_delay}
+	fi
+
+	# start bhyve
+	st_time=$( ${DATE_CMD} +%s )
 
 	[ ! -d "${path}" ] && ${MKDIR_CMD} ${path}
 	[ -z "${mnt_start}" ] && mnt_start="0"
@@ -858,7 +915,9 @@ else
 	. ${nodes}
 	${ECHO} "${N1_COLOR}Request for live migration...${N0_COLOR}"
 
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
+	st_time=$( ${DATE_CMD} +%s )
+
 	[ $? -eq 0 ] && err 1 "${N1_COLOR}This is local domain! Please unregister first: ${N2_COLOR}${jname}${N0_COLOR}"
 
 	RHST=
@@ -889,7 +948,7 @@ else
 	done
 
 	emulator="bhyve"
-	. ${rjrcconf}
+	. ${subrdir}/rrcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}Request for live migration: no such VM in cluster: ${N2_COLOR}${jname}${N1_COLOR}. Perhaps you forget to: ${N2_COLOR}cbsd node mode=add${N1_COLOR} ?${N0_COLOR}"
 fi
 
@@ -948,16 +1007,16 @@ readconf bstart.conf
 readconf ${default_profile}
 
 if [ "${lm}" = "0" ]; then
-	. ${jrcconf}
+	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ ${jid} -ne 0 ] && err 1 "${N1_COLOR}Jail ${jname} already running, jid: ${N2_COLOR}${jid}${N0_COLOR}"
 	main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
 	[ ${status} -eq 2 ] && err 1 "${N1_COLOR}Jail in slave mode. Please ${N2_COLOR}cbsd jswmode mode=master${N1_COLOR} first${N0_COLOR}"
 	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Not bhyve mode${N0_COLOR}"
 else
-	. ${rjrcconf}
+	. ${subrdir}/rrcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
-	# change SQL local path to remote sqlite (exported by . ${rjrcconf})
+	# change SQL local path to remote sqlite (exported by . ${subrdir}/rrcconf.subr)
 	main_sqlite_local="${remote_local_sqlite}"
 fi
 
@@ -988,7 +1047,7 @@ else
 		[ "${zfsfeat}" != "1" ] && break
 
 		readconf zfs.conf
-		. ${zfstool}
+		. ${subrdir}/zfs.subr
 		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
 		[ -z "${DATA}" ] && break
