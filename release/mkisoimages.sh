@@ -26,13 +26,13 @@ fat16min=2100
 # tools/boot/install-boot.sh
 get_uefi_bootname()
 {
-	case ${TARGET:-$(uname -m)} in
+	case ${TARGET:=$(uname -m)} in
 		amd64) echo bootx64 ;;
 		arm64) echo bootaa64 ;;
 		i386) echo bootia32 ;;
 		arm) echo bootarm ;;
 		riscv) echo bootriscv64 ;;
-		*) die "machine type $(uname -m) doesn't support UEFI" ;;
+		*) die "machine type ${TARGET} doesn't support UEFI" ;;
 	esac
 }
 
