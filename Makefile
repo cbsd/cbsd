@@ -150,8 +150,8 @@ install:
 	${MAKE} -C share/bsdconfig/cbsd install
 
 bump:
-	# check if version contain "a" postfix
-	[[ ${VERSION} == *"a" ]] || exit 1
+# check if version contain "a" postfix
+.ifdef ${VERSION:M"*a"}
 	# change version in files
 	${SED} -i '' "s/myversion.*/myversion=\"${BUMPVERSION}\"/" cbsd.conf
 	${SED} -i '' "s/VERSION.*/VERSION \"${BUMPVERSION}\"/" bin/cbsdsh/about.h
@@ -162,4 +162,9 @@ bump:
 	${GIT} push --set-upstream origin ${BUMPVERSION}
 	${GIT} tag -a \"v${BUMPVERSION}\" -m \"${BUMPVERSION} release\"
 	${GIT} push origin --tags
-	echo ${BUMPVERSION}
+.endif
+.ifdef NEWVERSION
+	${SED} -i '' "s/myversion.*/myversion=\"${NEWVERSION}a\"/" cbsd.conf
+	${SED} -i '' "s/VERSION.*/VERSION \"${NEWVERSION}a\"/" bin/cbsdsh/about.h
+	${GIT} commit -am \"The Show Must Go On\"
+.endif
