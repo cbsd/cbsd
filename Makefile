@@ -150,7 +150,7 @@ install:
 	${MAKE} -C share/bsdconfig/cbsd install
 
 bump:
-# check if version contain "a" postfix
+# check if version has "a" postfix
 .ifdef ${VERSION:M"*a"}
 	# change version in files
 	${SED} -i '' "s/myversion.*/myversion=\"${BUMPVERSION}\"/" cbsd.conf
