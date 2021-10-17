@@ -20,8 +20,8 @@ VERSION != grep myversion cbsd.conf | sed s/.*=//
 BUMPVERSION = ${VERSION:S/a//}
 #GIT != which git
 #SED != which sed
-GIT = echo
-SED = echo
+GIT = echo git
+SED = echo sed
 
 .SILENT:
 
@@ -163,4 +163,3 @@ bump:
 	${GIT} tag -a "v${BUMPVERSION}" -m "${BUMPVERSION} release"
 	${GIT} push origin --tags
 	echo ${BUMPVERSION}
-	
