@@ -164,6 +164,7 @@ bump:
 	${GIT} push origin --tags
 .endif
 .ifdef NEWVERSION
+	${GIT} checkout develop
 	${SED} -i '' "s/myversion.*/myversion=\"${NEWVERSION}a\"/" cbsd.conf
 	${SED} -i '' "s/VERSION.*/VERSION \"${NEWVERSION}a\"/" bin/cbsdsh/about.h
 	${GIT} commit -am \"The Show Must Go On\"
