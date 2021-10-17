@@ -18,8 +18,10 @@ ARCH!=  uname -p
 .endif
 VERSION != grep myversion cbsd.conf | sed s/.*=//
 BUMPVERSION = ${VERSION:S/a//}
-GIT="echo"
-SED="echo"
+#GIT != which git
+#SED != which sed
+GIT = echo
+SED = echo
 
 .SILENT:
 
