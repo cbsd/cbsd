@@ -156,10 +156,10 @@ bump:
 	${SED} -i '' "s/myversion.*/myversion=\"${BUMPVERSION}\"/" cbsd.conf
 	${SED} -i '' "s/VERSION.*/VERSION \"${BUMPVERSION}\"/" bin/cbsdsh/about.h
 	${GIT} add cbsd.conf bin/cbsdsh/about.h
-	${GIT} commit -m "${BUMPVERSION}"
+	${GIT} commit -m \"${BUMPVERSION}\"
 	# stuff from https://redmine.convectix.com/projects/cloud/wiki/Cbsd_git_github
-	${GIT} checkout -b ${BUMPVERSION}
+	${GIT} checkout -b \"${BUMPVERSION}\"
 	${GIT} push --set-upstream origin ${BUMPVERSION}
-	${GIT} tag -a "v${BUMPVERSION}" -m "${BUMPVERSION} release"
+	${GIT} tag -a \"v${BUMPVERSION}\" -m \"${BUMPVERSION} release\"
 	${GIT} push origin --tags
 	echo ${BUMPVERSION}
