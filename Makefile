@@ -16,6 +16,10 @@ DUMPISCSIDISCOVERYOBJECT = misc/src/dump_iscsi_discovery.o
 .if !defined(ARCH)
 ARCH!=  uname -p
 .endif
+VERSION != grep myversion cbsd.conf | sed s/.*=//
+BUMPVERSION = ${VERSION:S/a//}
+GIT="echo"
+SED="echo"
 
 .SILENT:
 
@@ -142,3 +146,18 @@ install:
 	${INSTALL} -o cbsd -g cbsd -m 555 misc/src/sipcalc/sipcalc ${PREFIX}/cbsd/misc/sipcalc
 	${ENV} BINDIR=${PREFIX}/bin ${MAKE} -C bin/cbsdsh install
 	${MAKE} -C share/bsdconfig/cbsd install
+
+bump:
+	# check if version contain "a" postfix
+	[[ ${VERSION} == *"a" ]] || exit 1
+	# change version in files
+	${SED} -i '' "s/myversion.*/myversion=\"${BUMPVERSION}\"/" cbsd.conf
+	${SED} -i '' "s/VERSION.*/VERSION \"${BUMPVERSION}\"/" bin/cbsdsh/about.h
+	echo ${BUMPVERSION}
+	${GIT} add cbsd.conf bin/cbsdsh/about.h
+	${GIT} commit -m "${newversion}"
+	# stuff from https://redmine.convectix.com/projects/cloud/wiki/Cbsd_git_github
+	${GIT} checkout -b ${newversion}
+	${GIT} push --set-upstream origin ${newversion}
+	${GIT} tag -a "v${newversion}" -m "${newversion} release"
+	${GIT} push origin --tags
