@@ -17,9 +17,9 @@ DHCPD_CONF="/root/etc/dhcpd.conf"
 #workdir="${cbsd_workdir}"
 
 set -e
-. ${distdir}/cbsd.conf
-. ${subrdir}/nc.subr
-. ${cbsdinit}
+. "${distdir}"/cbsd.conf
+. "${subrdir}"/nc.subr
+. "${cbsdinit}"
 set +e
 
 export NOCOLOR=1
@@ -41,7 +41,7 @@ esac
 
 ipwmask "${ip4_addr}"
 [ -n "${IWM}" ] && ip="${IWM}"
-iptype ${ip}
+iptype "${ip}"
 
 ret=$?
 
@@ -57,7 +57,7 @@ case "${ret}" in
 		tmp_addr=$( dhcpd )
 		ip=${tmp_addr%%/*}
 		# check again
-		ip_type ${ip}
+		ip_type "${ip}"
 		ret=$?
 		case "${ret}" in
 			0|1)
@@ -90,7 +90,7 @@ EOF
 
 if [ -r "${EXTRA_CONF}" ]; then
 	echo "Found extra conf: ${EXTRA_CONF}"
-	/bin/cat ${EXTRA_CONF} |while read _line; do
+	/bin/cat "${EXTRA_CONF}" |while read _line; do
 		/bin/cat >> ${DHCPD_CONF} <<EOF
 	${_line}				# CBSD-AUTO-${jname}
 EOF
@@ -101,8 +101,8 @@ fi
 }				# CBSD-AUTO-${jname}
 EOF
 
-/usr/sbin/arp -d ${ip}
-/usr/sbin/arp -s ${ip} ${nic_hwaddr0} pub
+/usr/sbin/arp -d "${ip}"
+/usr/sbin/arp -s "${ip}" "${nic_hwaddr0}" pub
 
 #service isc-dhcpd restart
 /usr/sbin/service isc-dhcpd stop

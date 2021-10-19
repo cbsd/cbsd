@@ -33,7 +33,7 @@ print_info()
 	echo "[debug] cmd: ${cmd}"
 	echo "[debug] errcode: ${ret}"
 	echo "[debug] remote folder: ${remote_dir} - remote dir exist ?"
-	exit ${ret}
+	exit "${ret}"
 }
 
 
@@ -50,7 +50,7 @@ is_mounted()
 	# test for destrination is directory ?
 	if [ -d "${1}" ]; then
 		#_tst=$( df -t nfs ${1} | tail +2 | awk '{ print $6 }' )
-		_tst=$( df ${1} | tail +2 | awk '{ print $6 }' )
+		_tst=$( df "${1}" | tail +2 | awk '{ print $6 }' )
 		[ "${_tst}" = "${1}" ] && return 0
 	fi
 
@@ -89,7 +89,7 @@ echo "sysdata: ${sysdata}" 1>&2
 trap "print_info" HUP INT ABRT BUS TERM EXIT
 ret=0
 
-if is_mounted ${data}; then
+if is_mounted "${data}"; then
 	echo "[debug] ${data} already mounted!" 1>&2
 else
 	remote_dir="${NFS_SERVER_DATA_DIR}/${jname}"
@@ -100,7 +100,7 @@ fi
 
 [ ${ret} -ne 0 ] && exit ${ret}
 
-if is_mounted ${sysdata}; then
+if is_mounted "${sysdata}"; then
 	echo "[debug] ${sysdata} already mounted!" 1>&2
 else
 	remote_dir="${NFS_SERVER_SYSTEM_DIR}/${jname}"
@@ -113,7 +113,7 @@ fi
 
 # mount rcconf if necessary, see config file
 if [ ${MOUNT_RCCONF} -eq 1 ]; then
-	if is_mounted ${rcconf}; then
+	if is_mounted "${rcconf}"; then
 		echo "[debug] ${rcconf} already mounted!" 1>&2
 	else
 		remote_dir="${NFS_SERVER_RCCONF_DIR}/${jname}"
@@ -126,7 +126,7 @@ fi
 
 # mount fstab if necessary, see config file
 if [ ${MOUNT_FSTAB} -eq 1 ]; then
-	if is_mounted ${fstab}; then
+	if is_mounted "${fstab}"; then
 		echo "[debug] ${fstab} already mounted!" 1>&2
 	else
 		remote_dir="${NFS_SERVER_FSTAB_DIR}/${jname}"

@@ -3,8 +3,8 @@
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
-. ${subrdir}/nc.subr
-. ${cbsdinit}
+. "${subrdir}"/nc.subr
+. "${cbsdinit}"
 : ${distdir="/usr/local/cbsd"}
 unset workdir
 
@@ -19,11 +19,11 @@ fi
 [ ! -r "${distdir}/cbsd.conf" ] && exit 1
 
 . ${distdir}/cbsd.conf
-. ${subrdir}/nc.subr
-. ${system}
-. ${strings}
-. ${tools}
-. ${subrdir}/fetch.subr
+. "${subrdir}"/nc.subr
+. "${system}"
+. "${strings}"
+. "${tools}"
+. "${subrdir}"/fetch.subr
 
 
 SRC_MIRROR="\
@@ -40,7 +40,7 @@ http://mirror.enzu.com/ubuntu/ \
 rootfs_dir="${sharedir}/jail-ubuntu-focal-rootfs"
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
-[ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
+[ ! -d "${rootfs_dir}" ] && ${MKDIR_CMD} -p "${rootfs_dir}"
 
 if [ ! -x /usr/local/sbin/debootstrap ]; then
 	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
@@ -53,7 +53,7 @@ done
 ${KLDSTAT_CMD} -m linuxelf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux
 ${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
 
-if [ ! -f ${rootfs_dir}/bin/bash ]; then
+if [ ! -f "${rootfs_dir}"/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
@@ -68,8 +68,8 @@ EOF
 			ret=$?
 			[ ${ret} -eq 0 ] && break
 		done
-		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
-		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
+		printf "APT::Cache-Start 251658240;" > "${rootfs_dir}"/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > "${rootfs_dir}"/etc/apt/sources.list <<EOF
 deb http://archive.ubuntu.com/ubuntu focal main restricted
 deb http://archive.ubuntu.com/ubuntu focal multiverse
 deb http://archive.ubuntu.com/ubuntu focal universe
@@ -88,18 +88,18 @@ EOF
 	fi
 fi
 
-[ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
+[ ! -f "${rootfs_dir}"/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
 
-. ${subrdir}/rcconf.subr
+. "${subrdir}"/rcconf.subr
 [ "${baserw}" = "1" ] && path=${data}
 
-if [ ! -r ${data}/bin/bash ]; then
+if [ ! -r "${data}"/bin/bash ]; then
 	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
 	# populate jails data from rootfs?
-	. ${subrdir}/freebsd_world.subr
-	customskel -s ${rootfs_dir}
+	. "${subrdir}"/freebsd_world.subr
+	customskel -s "${rootfs_dir}"
 fi
 
-[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
+[ ! -f "${data}"/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
 
 exit 0

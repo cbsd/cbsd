@@ -24,5 +24,5 @@ while getopts "j:o:p:" opt; do
 	shift $(($OPTIND - 1))
 done
 
-/usr/local/bin/ntfs-3g -o ${options} /dev/da0p1 ${path}
+/usr/local/bin/ntfs-3g -o "${options}" /dev/da0p1 "${path}"
 exit $?

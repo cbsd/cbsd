@@ -15,14 +15,14 @@ while getopts "c:d:e:g:hl:r:w:" opt; do
 	shift $(($OPTIND - 1))
 done
 
-if [ ! -r ${conf} ]; then
+if [ ! -r "${conf}" ]; then
 	echo "no conf"
 	exit 1
 fi
 
 echo "-- my config--"
-grep -v '^#' ${conf} | sort
-. ${conf}
+grep -v '^#' "${conf}" | sort
+. "${conf}"
 echo "--------------"
 
 # we need to parse CBSD variables to convert into bhyve(8) key in the same way
@@ -43,15 +43,15 @@ set -o xtrace
 # boot via bhyveload
 case "${vm_boot}" in
 	cd)
-		/usr/sbin/bhyveload -c stdio -m ${vm_ram} -d ${cd_0_path} ${jname}
+		/usr/sbin/bhyveload -c stdio -m "${vm_ram}" -d "${cd_0_path}" "${jname}"
 		;;
 	hdd)
-		/usr/sbin/bhyveload -c stdio -m ${vm_ram} -d ${dsk_0_path} ${jname}
+		/usr/sbin/bhyveload -c stdio -m "${vm_ram}" -d "${dsk_0_path}" "${jname}"
 		;;
 esac
 
 # via /usr/sbin/bhyve:
-env cbsd_workdir="${workdir}" ${tmuxcmd} -2 -u new -d "${bhyve_cmd} \
+env cbsd_workdir="${workdir}" "${tmuxcmd}" -2 -u new -d "${bhyve_cmd} \
 	${add_bhyve_opts} \
 	-c ${vm_cpus} \
 	-m ${vm_ram} \

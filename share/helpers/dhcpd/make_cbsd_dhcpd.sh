@@ -17,8 +17,8 @@ DHCPD_CONF="/root/etc/dhcpd.conf"
 workdir="${cbsd_workdir}"
 
 set -e
-. ${distdir}/cbsd.conf
-. ${subrdir}/nc.subr
+. "${distdir}"/cbsd.conf
+. "${subrdir}"/nc.subr
 set +e
 
 export NOCOLOR=1
@@ -53,7 +53,7 @@ ip_type()
 
 EXTRA_CONF="${jailsysdir}/${jname}/dhcpd_extra.conf"
 
-ip_type ${ip4_addr}
+ip_type "${ip4_addr}"
 
 ret=$?
 
@@ -70,7 +70,7 @@ case "${ret}" in
 		[ $? -eq 2 ] && err 1 "No free IP address for DHCP in nodeippool"
 		ip4_addr=${tmp_addr%%/*}
 		# check again
-		ip_type ${ip4_addr}
+		ip_type "${ip4_addr}"
 		ret=$?
 		case "${ret}" in
 			0|1)
@@ -103,7 +103,7 @@ EOF
 
 if [ -r "${EXTRA_CONF}" ]; then
 	echo "Found extra conf: ${EXTRA_CONF}"
-	cat ${EXTRA_CONF} |while read _line; do
+	cat "${EXTRA_CONF}" |while read _line; do
 		cat >> ${DHCPD_CONF} <<EOF
 	${_line}				# CBSD-AUTO-${jname}
 EOF
