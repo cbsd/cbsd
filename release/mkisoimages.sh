@@ -61,7 +61,7 @@ make_esp_file()
 		-o fat_type=${fatbits} \
 		-o sectors_per_cluster=1 \
 		-o volume_label=EFISYS \
-		-s ${sizekb}k \
+		-s "${sizekb}"k \
 		"${file}" "${stagedir}"
 		rm -rf "${stagedir}"
 }
@@ -79,7 +79,7 @@ make_efi()
 	# ESP file size in KB.
 	espsize="2048"
 	echo "+"
-	make_esp_file ${espfilename} ${espsize} ${BASEBITSDIR}/boot/loader.efi
+	make_esp_file "${espfilename}" ${espsize} "${BASEBITSDIR}"/boot/loader.efi
 	echo "+"
 #	bootable="$bootable -o bootimage=i386;${espfilename} -o no-emul-boot -o platformid=efi"
 
@@ -135,22 +135,22 @@ fi
 
 #/usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME" "$@"
 echo "/usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label=${LABEL} -o publisher=\"${PUBLISHER}\" ${NAME} ${DPATH}"
-/usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label=${LABEL} -o publisher="${PUBLISHER}" ${NAME} ${DPATH}
+/usr/sbin/makefs -t cd9660 "${bootable}" -o rockridge -o label=${LABEL} -o publisher="${PUBLISHER}" "${NAME}" "${DPATH}"
 
 
 if [ ${EFI} -eq 1 ]; then
 	/bin/rm -f /tmp/efiboot.$$.img
-	/bin/rm -rf ${espfilename}
+	/bin/rm -rf "${espfilename}"
 fi
 
 # release/amd64/mkisoimages.sh
 if [ "$bootable" != "" ]; then
 	# Look for the EFI System Partition image we dropped in the ISO image.
-	for entry in `/usr/bin/etdump --format shell $NAME`; do
-		eval $entry
+	for entry in `/usr/bin/etdump --format shell "$NAME"`; do
+		eval "$entry"
 		if [ "$et_platform" = "efi" ]; then
-			espstart=`expr $et_lba \* 2048`
-			espsize=`expr $et_sectors \* 512`
+			espstart=`expr "$et_lba" \* 2048`
+			espsize=`expr "$et_sectors" \* 512`
 			espparam="-p efi::$espsize:$espstart"
 			break
 		fi
@@ -159,10 +159,10 @@ if [ "$bootable" != "" ]; then
 	# Create a GPT image containing the partitions we need for hybrid boot.
 	imgsize=`stat -f %z "$NAME"`
 	/usr/bin/mkimg -s gpt \
-		--capacity $imgsize \
+		--capacity "$imgsize" \
 		-b "${DPATH}/boot/pmbr" \
 		-p freebsd-boot:="${DPATH}/boot/isoboot" \
-		$espparam \
+		"$espparam" \
 		-o hybrid.img
 
 		# Drop the PMBR, GPT, and boot code into the System Area of the ISO.
