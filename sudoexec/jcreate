@@ -1,5 +1,8 @@
 #!/usr/local/bin/cbsd
-#v13.0.8
+# shellcheck shell=sh
+# shellcheck disable=SC2154,SC2034,SC1090,SC1091,SC3043,SC2166,SC2086
+# v13.0.8
+
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey \
@@ -150,7 +153,10 @@ install_and_apply_helpers()
 {
 	local _srcfile="${1}"
 
-	local module=$( cbsdsqlro ${_srcfile} SELECT helpername FROM system | ${AWK_CMD} '{printf $1}' )
+	local module
+	# shellcheck disable=SC2016
+	# $1 is expanded by awk
+	module=$( cbsdsqlro "${_srcfile}" SELECT helpername FROM system | ${AWK_CMD} '{printf $1}' )
 
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Install and apply helpers ${_srcfile}: ${N2_COLOR}${module}${N0_COLOR}"
 
@@ -209,9 +215,12 @@ ${CAT_CMD} ${temprcconf} >${jconf}
 
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
-if [ ${removejconf} = "1" ]; then
+if [ "${removejconf}" = "1" ]; then
+	# shellcheck disable=SC2064
+	# we need expansion right now
 	trap "${RM_CMD} -f ${temprcconf} ${jconf}" HUP INT ABRT BUS TERM EXIT
 else
+	# shellcheck disable=SC2064
 	trap "${RM_CMD} -f ${temprcconf}" HUP INT ABRT BUS TERM EXIT
 fi
 
@@ -220,9 +229,9 @@ fi
 
 # todo: there is a lot of duplicate code (for example, create_fs/from_zfssnap): cleaning required.
 if [ -n "${from}" ]; then
-	. ${temprcconf}
-	jstatus jname=${jname} > /dev/null 2>&1
-	[ $? -ne 0 ] && stderr 1 "${N1_COLOR}${CBSD_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+	. "${temprcconf}"
+	jstatus jname="${jname}" > /dev/null 2>&1 \
+	|| stderr 1 "${N1_COLOR}${CBSD_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 
 	[ ! -r ${dbdir}/images.sqlite ] && ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
 
@@ -375,9 +384,8 @@ fi
 
 init_kerneldir
 
-jstatus jname=${jname} > /dev/null 2>&1
-
-if [ $? -ne 0 ]; then
+if ! jstatus jname="${jname}" > /dev/null 2>&1;
+then
 	# Redis
 	if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
 		cbsdredis publish cbsd_events '{"cmd":"jcreate", "node":"'${nodename}'", "jail":"'${jname}'", "status":2, "ip4_addr":"'${ip4_addr}'"}'
@@ -432,11 +440,9 @@ if [ "${mnt_start}" != "0" ]; then
 	if [ ${_ret} -ne 0 ]; then
 		err 1 "${W1_COLOR}error: ${N1_COLOR}mnt_start script failed: ${N2_COLOR}${mnt_start} -d ${data} -f ${jailfstabdir} -j ${jname} -r ${jailrcconfdir} -s ${jailsysdir}/${jname}${N0_COLOR}"
 	fi
-	create_fs ${data}
-	[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+	create_fs "${data}" || err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
 else
-	create_fs ${data}
-	[ $? -ne 0 ] && err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
+	create_fs "${data}" || err 1 "${N1_COLOR}create_fs failed${N0_COLOR}"
 fi
 
 [ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
@@ -486,10 +492,10 @@ if [ "${mdsize}" != "0" ]; then
 	${TOUCH_CMD} "${mdimage}"
 	${DD_CMD} if="/dev/zero" of="${mdimage}" bs=1m count=0 seek=${blockcount} 1> /dev/null 2>&1 || err 1 "jcreate error: couldn't create the image file. ${mdimage}"
 	# Attach the .img file as a memory disk.
-	mdimagedevice=$( ${MDCONFIG_CMD} -a -t vnode -f "${mdimage}" )
-	[ $? -eq 0 ] || err 1 "Error: Failed to mdconfig on ${mdimage}"
-	${NEWFS_CMD} -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || ${MDCONFIG_CMD} -d -u ${mdimagedevice} || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
-	${MDCONFIG_CMD} -d -u ${mdimagedevice}
+	mdimagedevice=$( ${MDCONFIG_CMD} -a -t vnode -f "${mdimage}" ) \
+	|| err 1 "Error: Failed to mdconfig on ${mdimage}"
+	${NEWFS_CMD} -j -n -U "/dev/${mdimagedevice}" 1> /dev/null 2>&1 || ${MDCONFIG_CMD} -d -u "${mdimagedevice}" || err 1 "Error: Couldn't newfs the memory disk. ${mdimagedevice}"
+	${MDCONFIG_CMD} -d -u "${mdimagedevice}"
 	# mount here
 	mountmd jroot=${data} mdfile=${mdimage}
 fi
@@ -631,7 +637,7 @@ fi
 for i in ${RCTL} ${RCTL_EXTRA}; do
 	_val=
 	eval _val="\$${i}"
-	[ -z "{_val}" ] && continue
+	[ -z "${_val}" ] && continue
 	#echo "INIT RCTL: jrctl jname=${jname} mode=set ${i}=${_val}"
 	jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
 done
@@ -665,8 +671,7 @@ if [ -n "${ci_user_pubkey}" ]; then
 		fi
 	else
 		# its relative path or pubkey string itself.
-		strpos --str="${ci_user_pubkey}" --search=" "
-		if [ $? -ne 0 ]; then
+		if ! strpos --str="${ci_user_pubkey}" --search=" "; then
 			# not path, check syntax
 			if ! is_valid_ssh_key "${ci_user_pubkey}"; then
 				jdestroy jname=${jname} || true
