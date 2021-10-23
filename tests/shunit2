@@ -1,7 +1,7 @@
 #! /bin/sh
 # vim:et:ft=sh:sts=2:sw=2
 #
-# Copyright 2008-2020 Kate Ward. All Rights Reserved.
+# Copyright 2008-2021 Kate Ward. All Rights Reserved.
 # Released under the Apache 2.0 license.
 # http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -38,23 +38,16 @@ fi
 
 # Determine some reasonable command defaults.
 __SHUNIT_CMD_ECHO_ESC='echo -e'
-# shellcheck disable=SC2039
+# shellcheck disable=SC2039,SC3037
 if ${__SHUNIT_BUILTIN} [ "`echo -e test`" = '-e test' ]; then
   __SHUNIT_CMD_ECHO_ESC='echo'
 fi
 
-__SHUNIT_UNAME_S=`uname -s`
-case "${__SHUNIT_UNAME_S}" in
-  BSD) __SHUNIT_CMD_EXPR='gexpr' ;;
-  *) __SHUNIT_CMD_EXPR='expr' ;;
-esac
-__SHUNIT_CMD_TPUT='tput'
-
 # Commands a user can override if needed.
-SHUNIT_CMD_EXPR=${SHUNIT_CMD_EXPR:-${__SHUNIT_CMD_EXPR}}
+__SHUNIT_CMD_TPUT='tput'
 SHUNIT_CMD_TPUT=${SHUNIT_CMD_TPUT:-${__SHUNIT_CMD_TPUT}}
 
-# Enable color output. Options are 'never', 'always', or 'auto'.
+# Enable color output. Options are 'auto', 'always', or 'none'.
 SHUNIT_COLOR=${SHUNIT_COLOR:-auto}
 
 # Logging functions.
@@ -112,7 +105,7 @@ for __shunit_const in ${__shunit_constants}; do
       [123].*) readonly "${__shunit_const}" ;;
       *)
         # Declare readonly constants globally.
-        # shellcheck disable=SC2039
+        # shellcheck disable=SC2039,SC3045
         readonly -g "${__shunit_const}"
     esac
   fi
@@ -329,7 +322,7 @@ assertNotContains() {
 # shellcheck disable=SC2016,SC2034
 _ASSERT_NOT_CONTAINS_='eval assertNotContains --lineno "${LINENO:-}"'
 
-# Assert that a value is null (i.e. an empty string)
+# Assert that a value is null (i.e. an empty string).
 #
 # Args:
 #   message: string: failure message [optional]
@@ -339,7 +332,8 @@ _ASSERT_NOT_CONTAINS_='eval assertNotContains --lineno "${LINENO:-}"'
 assertNull() {
   # shellcheck disable=SC2090
   ${_SHUNIT_LINENO_}
-  if ${__SHUNIT_BUILTIN} [ $# -lt 1 -o $# -gt 2 ]; then
+  if ${__SHUNIT_BUILTIN} [ $# -gt 2 ]; then
+    # Allowing 0 arguments as $1 might actually be null.
     _shunit_error "assertNull() requires one or two arguments; $# given"
     _shunit_assertFail
     return ${SHUNIT_ERROR}
@@ -353,7 +347,9 @@ assertNull() {
     shunit_message_="${shunit_message_}$1"
     shift
   fi
-  assertTrue "${shunit_message_}" "[ -z '$1' ]"
+  
+  ${__SHUNIT_BUILTIN} test -z "${1:-}"
+  assertTrue "${shunit_message_}" $?
   shunit_return=$?
 
   unset shunit_message_
@@ -362,7 +358,7 @@ assertNull() {
 # shellcheck disable=SC2016,SC2034
 _ASSERT_NULL_='eval assertNull --lineno "${LINENO:-}"'
 
-# Assert that a value is not null (i.e. a non-empty string)
+# Assert that a value is not null (i.e. a non-empty string).
 #
 # Args:
 #   message: string: failure message [optional]
@@ -387,12 +383,12 @@ assertNotNull() {
     shunit_message_="${shunit_message_}$1"
     shift
   fi
-  shunit_actual_=`_shunit_escapeCharactersInString "${1:-}"`
-  test -n "${shunit_actual_}"
+
+  ${__SHUNIT_BUILTIN} test -n "${1:-}"
   assertTrue "${shunit_message_}" $?
   shunit_return=$?
 
-  unset shunit_actual_ shunit_message_
+  unset shunit_message_
   return ${shunit_return}
 }
 # shellcheck disable=SC2016,SC2034
@@ -826,8 +822,11 @@ _FAIL_NOT_SAME_='eval failNotSame --lineno "${LINENO:-}"'
 # the total of asserts and fails will not be altered.
 #
 # Args:
-#   None
-startSkipping() { __shunit_skip=${SHUNIT_TRUE}; }
+#   message: string: message to provide to user [optional]
+startSkipping() {
+  if ${__SHUNIT_BUILTIN} [ $# -gt 0 ]; then _shunit_warn "[skipping] $*"; fi
+  __shunit_skip=${SHUNIT_TRUE}
+}
 
 # Resume the normal recording behavior of assert and fail calls.
 #
@@ -947,7 +946,7 @@ _shunit_mktempDir() {
   fi
 
   # The standard `mktemp` didn't work. Use our own.
-  # shellcheck disable=SC2039
+  # shellcheck disable=SC2039,SC3028
   if ${__SHUNIT_BUILTIN} [ -r '/dev/urandom' -a -x '/usr/bin/od' ]; then
     _shunit_random_=`/usr/bin/od -vAn -N4 -tx4 </dev/urandom |command sed 's/^[^0-9a-f]*//'`
   elif ${__SHUNIT_BUILTIN} [ -n "${RANDOM:-}" ]; then
@@ -1052,6 +1051,7 @@ _shunit_configureColor() {
     *) _shunit_fatal "unrecognized color option '$1'" ;;
   esac
 
+  # shellcheck disable=SC2254
   case ${_shunit_color_} in
     ${SHUNIT_TRUE})
       __shunit_ansi_none=${__SHUNIT_ANSI_NONE}
@@ -1093,9 +1093,9 @@ _shunit_execSuite() {
     # Disable skipping.
     endSkipping
 
-    # Execute the per-test setup function.
+    # Execute the per-test setUp() function.
     if ! setUp; then
-      _shunit_fatal "setup() returned non-zero return code."
+      _shunit_fatal "setUp() returned non-zero return code."
     fi
 
     # Execute the test.
@@ -1104,10 +1104,9 @@ _shunit_execSuite() {
     if ! eval ${_shunit_test_}; then
       _shunit_error "${_shunit_test_}() returned non-zero return code."
       __shunit_testSuccess=${SHUNIT_ERROR}
-      _shunit_incFailedCount
     fi
 
-    # Execute the per-test tear-down function.
+    # Execute the per-test tearDown() function.
     if ! tearDown; then
       _shunit_fatal "tearDown() returned non-zero return code."
     fi
@@ -1177,7 +1176,7 @@ _shunit_generateReport() {
 # Returns:
 #   boolean: whether the test should be skipped (TRUE/FALSE constant)
 _shunit_shouldSkip() {
-  if test ${__shunit_skip} -eq ${SHUNIT_FALSE}; then
+  if ${__SHUNIT_BUILTIN} test ${__shunit_skip} -eq ${SHUNIT_FALSE}; then
     return ${SHUNIT_FALSE}
   fi
   _shunit_assertSkip
@@ -1251,53 +1250,6 @@ _shunit_prepForSourcing() {
   unset _shunit_script_
 }
 
-# Escape a character in a string.
-#
-# Args:
-#   c: string: unescaped character
-#   s: string: to escape character in
-# Returns:
-#   string: with escaped character(s)
-_shunit_escapeCharInStr() {
-  if ${__SHUNIT_BUILTIN} [ -z "$2" ]; then
-    return  # No point in doing work on an empty string.
-  fi
-
-  # Note: using shorter variable names to prevent conflicts with
-  # _shunit_escapeCharactersInString().
-  _shunit_c_=$1
-  _shunit_s_=$2
-
-  # Escape the character.
-  # shellcheck disable=SC1003,SC2086
-  echo ''${_shunit_s_}'' |command sed 's/'${_shunit_c_}'/\\\'${_shunit_c_}'/g'
-
-  unset _shunit_c_ _shunit_s_
-}
-
-# Escape a character in a string.
-#
-# Args:
-#   str: string: to escape characters in
-# Returns:
-#   string: with escaped character(s)
-_shunit_escapeCharactersInString() {
-  if ${__SHUNIT_BUILTIN} [ -z "$1" ]; then
-    return  # No point in doing work on an empty string.
-  fi
-
-  _shunit_str_=$1
-
-  # Note: using longer variable names to prevent conflicts with
-  # _shunit_escapeCharInStr().
-  for _shunit_char_ in '"' '$' "'" '`'; do
-    _shunit_str_=`_shunit_escapeCharInStr "${_shunit_char_}" "${_shunit_str_}"`
-  done
-
-  echo "${_shunit_str_}"
-  unset _shunit_char_ _shunit_str_
-}
-
 # Extract list of functions to run tests against.
 #
 # Args:
@@ -1344,7 +1296,7 @@ if ! command mkdir "${SHUNIT_TMPDIR}"; then
   _shunit_fatal "error creating SHUNIT_TMPDIR '${SHUNIT_TMPDIR}'"
 fi
 
-# Setup traps to clean up after ourselves.
+# Configure traps to clean up after ourselves.
 trap '_shunit_cleanup EXIT' 0
 trap '_shunit_cleanup INT' 2
 trap '_shunit_cleanup TERM' 15
