@@ -33,7 +33,7 @@ CBSDMODULE="jail"
 EXTHELP="wf_jstop_jstart"
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -49,9 +49,9 @@ fi
 [ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
 
 delay=0
-. ${cbsdinit}
 
-. ${system}
+. ${subrdir}/cbsdinit.subr
+. ${subrdir}/system.subr
 . ${subrdir}/universe.subr
 . ${subrdir}/ipfw.subr	# fwcounter
 
@@ -81,176 +81,7 @@ done
 
 my_name="jstart"
 
-# check environment scripts from tests dir
-# when error code != 0 - exit
-# $1 - is source dir name ( tests )
-check_environment_script()
-{
-	local _res
-	local _dir="${1}"
-	local _testfiles
-
-	[ -z "${_dir}" ] && return 1
-
-	local _srcdir="${jailsysdir}/${jname}/${_dir}"
-
-	[ ! -d "${_srcdir}" ] && return 0
-	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
-
-	_testfiles=$( ${FIND_CMD} "${_srcdir}" -type l -or -type f -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; )
-
-	for _file in ${_testfiles}; do
-		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Check environment script: ${N2_COLOR}${_file}${N0_COLOR}"
-		env jname=${jname} ${_srcdir}/${_file}
-		[ $? -ne 0 ] && err 1 "${N1_COLOR}Error: ${N2_COLOR}${_file}${N0_COLOR}"
-	done
-}
-
-exec_cbsdjail_first_boot()
-{
-	if [ -f ${path}/etc/rc.cbsdjail_first_boot ]; then
-		local CBSDPATH="${PATH}"
-		# reset CBSD PATH
-		export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
-		/usr/local/bin/cbsd jexec jname=${jname} /bin/sh /etc/rc.cbsdjail_first_boot
-		# restore CBSD PATH
-		export PATH="${CBSDPATH}"
-		${RM_CMD} -f ${path}/etc/rc.cbsdjail_first_boot
-	fi
-}
-
-# prepare symlink for emulator and
-# check that the emulator is able to execute commands
-emulator_exec_check()
-{
-	local _res _ret _path
-
-	[ -z "${emulator}" ] && return 0
-	[ "${emulator}" = "bhyve" ] && return 0
-	[ "${emulator}" = "jail" ] && return 0
-	[ "${emulator}" = "0" ] && return 0
-
-	if [ ${baserw} -eq 0 ]; then
-		_path="${BASE_DIR}"
-	else
-		_path="${data}"
-	fi
-
-	preparebase dst=${_path} emulator=${emulator}
-	if [ ! -r ${_path}/bin/${emulator} ]; then
-		printf "no such ${_path}/bin/${emulator}, please check: cbsd preparebase dst=${_path} emulator=${emulator}"
-		return 1
-	fi
-	_res=$( ${CHROOT_CMD} ${_path} /bin/${emulator} /bin/sh -c "echo ping" 2>&1 )
-	_ret=$?
-	[ ${_ret} -ne 0 ] && printf "${CHROOT_CMD} ${_path} /bin/${emulator} /bin/sh -c \"echo ping\": ${_res}"
-	return ${_ret}
-}
-
-etcupdate_check()
-{
-	[ "${etcupdate_init}" != "1" ] && return 0
-	[ "${empty}" = "1" ] && return 0
-
-	local _etcupdate_jail_root
-
-	_etcupdate_jail_root="${jailsysdir}/${jname}/etcupdate"
-	[ ! -d ${_etcupdate_jail_root}/current ] && return 0		# not etcupdate bootstraped jail
-	[ ! -r ${_etcupdate_jail_root}/ver ] && return 0			# no bootstrap version info
-	. ${_etcupdate_jail_root}/ver
-	[ -z "${etcupdate_current_ver}" ] && return 0			# no bootstrap version info
-
-	if [ "${etcupdate_current_ver}" != "${ver}" ]; then
-		[ ${quiet} -ne 1 ] && ${ECHO} "${W1_COLOR}Warning${N1_COLOR}: jail version (${N2_COLOR}${ver}${N1_COLOR}) and distribution (e.g: /etc dir content) (${N2_COLOR}${etcupdate_current_ver}${N1_COLOR}) is differ${N0_COLOR}"
-		[ ${quiet} -ne 1 ] && ${ECHO} "${W1_COLOR}Warning${N1_COLOR}: you can use etcupdate to sync content: ${N2_COLOR}cbsd etcupdate jname=${jname} mode=update from=${etcupdate_current_ver} to=${ver}${N0_COLOR}"
-	fi
-	return 0
-}
-
-
-start_bhyve()
-{
-	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}For bhyve mode use: ${N2_COLOR}cbsd bstart jname=${jname} ${N1_COLOR}instead.${N0_COLOR}"
-	exit 0
-}
-
-# chase 'grep -A28 ^20140930: /usr/ports/CHANGES'
-set_changes_20140930()
-{
-	local _tpl="CBSD autotpl for CHANGES 20140930"
-
-	[ ${applytpl} -eq 0 ] && return 0
-	[ "${ver}" = "empty" ] && return 0
-
-	set_bsdenv_by_path
-	unset_bsdenv
-
-	local nodever=$( ${miscdir}/elf_tables --freebsdver /bin/sh 2>/dev/null )
-	local jailver=$( ${miscdir}/elf_tables --freebsdver ${path}/bin/sh 2>/dev/null )
-
-	[ "${nodever}" = "${jailver}" ] && return 0
-
-	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Applying /usr/ports/CHANGES -A28 ^20140930 work-around${N0_COLOR}"
-	# we need put fake UNAME_r-stuff environment for correct works of port system
-
-	set_bsdenv_by_path -p ${path} -v ${ver}
-
-	# make backup and add records
-	[ -f "${data}/etc/make.conf" ] && ${CP_CMD} ${data}/etc/make.conf ${data}/etc/make.conf.bak
-
-	${CAT_CMD} >> ${data}/etc/make.conf <<EOF
-
-OSVERSION+= ${OSVERSION}			# ${_tpl}
-UNAME_ENV+= OSVERSION=${OSVERSION}		# ${_tpl}
-UNAME_ENV+= UNAME_s=FreeBSD			# ${_tpl}
-UNAME_ENV+= UNAME_r=${RELEASE}			# ${_tpl}
-UNAME_ENV+= UNAME_v="\${UNAME_s} \${UNAME_r}"	# ${_tpl}
-.MAKEFLAGS: \${UNAME_ENV}			# ${_tpl}
-MAKE_ENV+= \${UNAME_ENV}			# ${_tpl}
-CONFIGURE_ENV+= \${UNAME_ENV}			# ${_tpl}
-SCRIPTS_ENV+= \${UNAME_ENV}			# ${_tpl}
-
-EOF
-
-	${CAT_CMD} >> ${data}/etc/profile << EOF
-
-OSVERSION=${OSVERSION}; export OSVERSION		# ${_tpl}
-UNAME_s=FreeBSD; export UNAME_s				# ${_tpl}
-UNAME_r=${RELEASE}; export UNAME_v			# ${_tpl}
-UNAME_v="\${UNAME_s} \${UNAME_r}"; export UNAME_v	# ${_tpl}
-
-EOF
-
-	${CAT_CMD} >> ${data}/etc/csh.cshrc << EOF
-
-setenv OSVERSION ${OSVERSION}			# ${_tpl}
-setenv UNAME_s FreeBSD				# ${_tpl}
-setenv UNAME_r ${RELEASE}			# ${_tpl}
-setenv UNAME_v "\${UNAME_s} \${UNAME_r}"	# ${_tpl}
-
-EOF
-	unset_bsdenv
-}
-
-unset_changes_20140930()
-{
-	local _tpl="CBSD autotpl for CHANGES 20140930"
-
-	if ${GREP_CMD} "${_tpl}" ${data}/etc/make.conf >/dev/null 2>&1; then
-		${CP_CMD} -a ${data}/etc/make.conf ${data}/etc/make.conf.bak
-		${GREP_CMD} -v "${_tpl}" ${data}/etc/make.conf.bak | ${GREP_CMD} "." > ${data}/etc/make.conf
-	fi
-
-	if ${GREP_CMD} "${_tpl}" ${data}/etc/profile >/dev/null 2>&1; then
-		${CP_CMD} -a ${data}/etc/profile ${data}/etc/profile.bak
-		${GREP_CMD} -v "${_tpl}" ${data}/etc/profile.bak | ${GREP_CMD} "." > ${data}/etc/profile
-	fi
-
-	if ${GREP_CMD} "${_tpl}" ${data}/etc/csh.cshrc >/dev/null 2>&1; then
-		${CP_CMD} -a ${data}/etc/csh.cshrc ${data}/etc/csh.cshrc.bak
-		${GREP_CMD} -v "${_tpl}" ${data}/etc/csh.cshrc.bak | ${GREP_CMD} "." > ${data}/etc/csh.cshrc
-	fi
-}
+. ${subrdir}/jstart.subr
 
 emulator="jail"	# for jname_is_multiple
 jname_is_multiple
