@@ -226,7 +226,7 @@ main(int argc, char *argv[])
 
 	// %s/modules must be first for opportunity to have a module commands greater priority than the original CBSD command.
 	// This makes it possible to write a 3rd party modules with altered functionality of the original code.
-	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir);
+	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:%s/tui:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir);
 	setvarsafe("PATH",cbsdpath,1);
 	ckfree(cbsdpath);
 
