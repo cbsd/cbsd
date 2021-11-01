@@ -1,13 +1,31 @@
 #!/usr/local/bin/cbsd
 #v13.0.1
 MYARG=""
-MYOPTARG="inter jname remote src_session user"
+MYOPTARG="jname remote src_session user"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
-ADDHELP="\
-  If you are in the CBSDfile directory, these environments will always have priority\n\
-  remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
-  user= login from the specified user. Default is: root\n\
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Login info jail environment via login(1).
+ If you are in the CBSDfile directory, these environments will always have priority
+  user= login from the specified user. Default is: root
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname${N0_COLOR}   - target jail;
+ ${N2_COLOR}remote=${N0_COLOR} - '1' prevent to searching in remote node base. 
+                 For the avoid the looping.
+ ${N2_COLOR}user${N0_COLOR}  - login via another user. Default is 'root'.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jlogin
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jexec --help
+
 "
 EXTHELP="wf_jlogin"
 
@@ -16,6 +34,7 @@ EXTHELP="wf_jlogin"
 . ${subrdir}/nc.subr
 cbsd_api=0
 . ${cbsdinit}
+[ -n "${user}" ] && ouser="${user}"
 readconf jlogin.conf
 
 try_remote()
@@ -93,6 +112,7 @@ login_internal()
 			fi
 			;;
 		*)
+			[ -n "${ouser}" ] && user="${ouser}"
 			if [ "${user}" != "root" ]; then
 				# additional check for user existance
 				_res=$( ${PW_CMD} -R ${path} usershow ${user} 2>&1 )
@@ -146,6 +166,37 @@ login_custom()
 	export PATH="${CBSDPATH}"
 }
 
+# jname must be set
+jname_jlogin()
+{
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && try_remote
+	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}for bhyve please use: ${N2_COLOR}cbsd blogin=${jname} ${N1_COLOR}instead${N0_COLOR}"
+	[ "${baserw}" = "1" ] && path=${data}
+	[ ${jid} -eq 0 ] && err 1 "not running"
+
+	readconf jlogin.conf
+
+	cbsdlogger NOTICE ${CBSD_APP}: login into ${jname}
+
+	case "${login_cmd}" in
+		internal)
+			login_internal
+			;;
+		*)
+			login_custom
+			;;
+	esac
+}
+
+if [ -z "${user}" ]; then
+	user="root"
+else
+	shift
+fi
+
+emulator="jail"		# for jname_is_multiple
+
 # check for cloud function when CBSDfile exist
 Makefile="${CBSD_PWD}/CBSDfile"
 if [ -r ${Makefile} ]; then
@@ -154,7 +205,7 @@ if [ -r ${Makefile} ]; then
 
 	all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
 	[ -z "${all_jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no jail found${N0_COLOR}"
-	[ -z "${jname}" ] && jname=$1
+	[ -z "${jname}" ] && jname="${1}"
 
 	if [ -n "${jname}" ]; then
 		found=0
@@ -171,7 +222,12 @@ if [ -r ${Makefile} ]; then
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
 	else
-		cbsd_api=0
+		# CBSDfile without API
+		for jname in ${all_jail_list}; do
+			${ECHO} "${N1_COLOR}exec jlogin to: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+			jname_jlogin
+		done
+		exit 0
 	fi
 else
 	cbsd_api=0
@@ -221,13 +277,6 @@ if [ ${cbsd_api} -eq 1 ]; then
 	exit 0
 fi
 
-if [ -z "${user}" ]; then
-	user="root"
-else
-	shift
-fi
-
-emulator="jail"		# for jname_is_multiple
 jname_is_multiple	# import jail_list if jname is mask
 
 if [ -n "${jail_list}" ]; then
@@ -246,23 +295,6 @@ fi
 
 validate_jname "${jname}" || err 1 "${N1_COLOR}Bad jname${N0_COLOR}"
 
-. ${subrdir}/rcconf.subr
-[ $? -eq 1 ] && try_remote
-[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}for bhyve please use: ${N2_COLOR}cbsd blogin=${jname} ${N1_COLOR}instead${N0_COLOR}"
-[ "${baserw}" = "1" ] && path=${data}
-[ ${jid} -eq 0 ] && err 1 "not running"
-
-readconf jlogin.conf
-
-cbsdlogger NOTICE ${CBSD_APP}: login into ${jname}
-
-case "${login_cmd}" in
-	internal)
-		login_internal
-		;;
-	*)
-		login_custom
-		;;
-esac
+jname_jlogin
 
 exit 0
