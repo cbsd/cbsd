@@ -9,7 +9,7 @@ SHSRCS=	about.c alias.c arith_yacc.c arith_yylex.c cbsdhistory.c cbsd_fwatch.c c
 
 .SILENT:
 
-# HBSD/FBSD/TrueOS
+# HBSD/FBSD
 SHSRCS+=	jail.c
 
 .if defined(WITH_LUA)
@@ -46,7 +46,7 @@ WITHOUT_MAN=	yes
 NOMAN=		yes
 
 DPADD= ${LIBEDIT} ${LIBTERMCAP}
-# HBSD/FBSD/TrueOS but not for DFLY
+# HBSD/FBSD but not for DFLY
 
 .if ${OSTYPE} == DragonFly
 LDADD= -ledit -lm -pthread `pkg-config sqlite3 --libs` -lm
