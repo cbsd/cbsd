@@ -224,12 +224,6 @@ main(int argc, char *argv[])
 		exitshell(1);
 	}
 
-	// %s/modules must be first for opportunity to have a module commands greater priority than the original CBSD command.
-	// This makes it possible to write a 3rd party modules with altered functionality of the original code.
-	sprintf(cbsdpath,"%s/modules:%s/bin:%s/sbin:%s/tools:%s/jailctl:%s/nodectl:%s/system:%s/tui:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",workdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir,cbsd_distdir);
-	setvarsafe("PATH",cbsdpath,1);
-	ckfree(cbsdpath);
-
 	// read global params first (disable/enable colors, repos etc..)
 	read_profile("${workdir}/etc/defaults/global.conf");
 	read_profile("${workdir}/etc/global.conf");
