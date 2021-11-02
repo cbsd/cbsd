@@ -181,18 +181,6 @@ main(int argc, char *argv[])
 	setstackmark(&smark2);
 
 #ifdef CBSD
-	if (argc>1) {
-		if (!strcmp(argv[1],"--help")) {
-			system("/usr/local/bin/cbsd help");
-			exit(0);
-		} else {
-			if (!strcmp(argv[1],"version")) {
-				printf("%s\n",VERSION);
-				exit(0);
-			}
-		}
-	}
-
 	cbsd_disable_history=lookupvar("NO_CBSD_HISTORY");
 
 	if ( cbsd_disable_history != NULL ) cbsd_enable_history=0;
