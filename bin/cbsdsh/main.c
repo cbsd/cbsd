@@ -212,22 +212,13 @@ main(int argc, char *argv[])
 		exitshell(1);
 	}
 
-	// read global params first (disable/enable colors, repos etc..)
-	read_profile("${workdir}/etc/defaults/global.conf");
-	read_profile("${workdir}/etc/global.conf");
-
-	if (lookupvar("NOCOLOR") != NULL ) {
-		putenv("NOCOLOR=1");
-	}
+	read_profile("/usr/local/cbsd/cbsd.conf");
 
 	// non-interactive global env
 	if (lookupvar("NOINTER") != NULL ) {
 		setvarsafe("inter","1",1);
 		putenv("inter=0");
 	}
-	read_profile("/usr/local/cbsd/cbsd.conf");
-	read_profile("${workdir}/etc/defaults/logger.conf");
-	read_profile("${workdir}/etc/logger.conf");
 
 	if (cbsd_enable_history==1) {
 		cbsd_history_file=calloc(MAXPATHLEN, sizeof(char *));
