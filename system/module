@@ -3,14 +3,35 @@
 MYARG="mode"
 MYOPTARG="version"
 MYDESC="Work with cbsd modules"
-ADDHELP="\
-  mode=install to install module\n\
-  mode=update to update module\n\
-  version=tag to install specific version, 'main' as default (master)\n\
-  e.g:\n\
-    cbsd module mode=install forms-redis version=6.1.0\n\
-"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
 
+ You can expand and/or change the functionality of the CBSD through the writing of 
+additional modules. The executed files in the modules have a higher priority, so you can 
+rewrite any CBSD command (for example: 'jstart', 'bdestroy') on your own favorite language 
+and more convenient for you. The 'cbsd module' script allows you to manage ready-made 
+3rd-party modules through Git.
+
+ All modules stored in the /usr/local/cbsd/modules/ directory, but require manual 
+activation through ~cbsd/etc/modules.conf file.
+
+ To work the script, you need an executable 'git; file in the PATH.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode=${N0_COLOR}    - action to be performed, options:
+            'install' - to install module.
+            'list'    - to show installed modules.
+            'upgrade' - to update all or individual module;
+ ${N2_COLOR}version=${N0_COLOR} - tag to install specific version, 'main' as default (master);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd module mode=install forms-redis version=6.1.0
+ # cbsd module mode=upgrade
+ # cbsd module mode=upgrade forms-redis
+
+"
 . ${subrdir}/nc.subr
 . ${cbsdinit}
 
@@ -25,7 +46,10 @@ install_module()
 	local _prefix23
 	local CBSDPATH
 
-	[ -z "${data}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such data variable${N0_COLOR}"
+	if [ -z "${data}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: no such data variable${N0_COLOR}" 1>&2
+		return 1
+	fi
 
 	local _metadata_tmp="/tmp/cbsd_module.$$"
 
@@ -34,27 +58,40 @@ install_module()
 	_ret=$?
 
 	if [ ${_ret} -ne 0 ]; then
-		err 1 "${N1_COLOR}${CBSD_APP}: unable to fetch metadata via: ${FETCH_CMD} ${N2_COLOR}${_gh_raw_content_prefix}-${data}/${version}/metadata.conf${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP}: unable to fetch metadata via: ${FETCH_CMD} ${N2_COLOR}${_gh_raw_content_prefix}-${data}/${version}/metadata.conf${N0_COLOR}" 1>&2
+		return 1
 	fi
 
 	# trim .. in path and "
 	MODULE_DIR=$( ${SU_CMD} -m nobody -c "${GREP_CMD} -E \"${_grep_filter}\" ${_metadata_tmp}" | ${AWK_CMD}  -F"[=]" '{print $2}' | ${SED_CMD} -e 's:\"::g' -e 's:(\.\.:_:g' )
 	_ret=$?
 
-	[ ${_ret} -ne 0 -o -z "${MODULE_DIR}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to extract MODULE_DIR= variable from manifest: ${N2_COLOR}${_gh_raw_content_prefix}-${data}/${version}/metadata.conf${N0_COLOR}"
+	if [ ${_ret} -ne 0 -o -z "${MODULE_DIR}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: unable to extract MODULE_DIR= variable from manifest: ${N2_COLOR}${_gh_raw_content_prefix}-${data}/${version}/metadata.conf${N0_COLOR}" 1>&2
+		return 1
+	fi
 
 	${RM_CMD} ${_metadata_tmp}
 
 	# we do not accept content in places other than CBSD, test it
 	_prefix23=$( substr --pos=0 --len=23 --str="${MODULE_DIR}" )
-	[ "${_prefix23}" != "/usr/local/cbsd/modules" ] && err 1 "${N1_COLOR}${CBSD_APP}: MODULE_DIR != /usr/local/cbsd/modules in manifest: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}"
+	if [ "${_prefix23}" != "/usr/local/cbsd/modules" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: MODULE_DIR != /usr/local/cbsd/modules in manifest: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}" 1>&2
+		return 1
+	fi
 
 	case "${mode}" in
 		install)
-			[ -d "${MODULE_DIR}" ] && err 1 "${N1_COLOR}${CBSD_APP}: MODULE_DIR already exist: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}"
+			if [ -d "${MODULE_DIR}" ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: MODULE_DIR already exist: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}" 1>&2
+				return 1
+			fi
 			;;
-		update)
-			[ ! -d "${MODULE_DIR}" ] && err 1 "${N1_COLOR}${CBSD_APP}: MODULE_DIR doesn't exist: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}"
+		upgrade)
+			if [ ! -d "${MODULE_DIR}" ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: MODULE_DIR doesn't exist: ${N2_COLOR}${MODULE_DIR}${N0_COLOR}" 1>&2
+				return 1
+			fi
 			cd ${MODULE_DIR}
 			CBSDPATH="${PATH}"
 			# reset CBSD PATH
@@ -64,12 +101,15 @@ install_module()
 			_ret=$?
 			# restore CBSD PATH
 			export PATH="${CBSDPATH}"
-			[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: git pull error${N0_COLOR}"
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${N1_COLOR}${CBSD_APP}: git pull error${N0_COLOR}" 1>&2
+				return 1
+			fi
 			return 0
 			;;
 	esac
 
-	${ECHO} "${N1_COLOR}${CBSD_APP}: clonning: ${N2_COLOR}${GIT_CMD} clone --depth=1 --single-branch ${_gh_remote_url} ${MODULE_DIR}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP}: clonning: ${N2_COLOR}${GIT_CMD} clone --depth=1 --single-branch ${_gh_remote_url} ${MODULE_DIR}${N0_COLOR}" 1>&2
 	CBSDPATH="${PATH}"
 	# reset CBSD PATH
 	# it is necessary due to git used external command with conflict with CBSD path
@@ -78,16 +118,61 @@ install_module()
 	_ret=$?
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
-	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: clone error${N0_COLOR}"
+	if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: clone error${N0_COLOR}" 1>&2
+		return 1
+	fi
 
-	${ECHO} "${N1_COLOR}${CBSD_APP}: module installed: ${N2_COLOR}${data}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${CBSD_APP}: module installed: ${N2_COLOR}${data}${N0_COLOR}" 1>&2
 
 	if [ -r "${MODULE_DIR}/message.txt" ]; then
-		${ECHO} "${N1_COLOR}${CBSD_APP}: module post-install message:${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${CBSD_APP}: module post-install message:${N0_COLOR}" 1>&2
 		${CAT_CMD} ${MODULE_DIR}/message.txt
 	fi
 
 	return 0
+}
+
+# list by find on filesystem/modules dir
+list_module()
+{
+	printf "${H1_COLOR}${BOLD}%-18s  %-3s${N0_COLOR}\n" "MODULE" "STATUS"
+
+	${FIND_CMD} ${distdir}/modules/ -type d -depth 1 -maxdepth 1 -name \*.d -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | ${SED_CMD} 's/\.d//g' | while read _dir; do
+		# check for CBSD module signature: metadata.conf
+		[ ! -r ${distdir}/modules/${_dir}.d/metadata.conf ] && continue
+
+		# check if module enabled (todo: via nc.inventory facts?)
+		if [ -r ${workdir}/etc/modules.conf ]; then
+			if ${GREP_CMD} -q -E "^${_dir}.d$" ${workdir}/etc/modules.conf; then
+				_status=1
+			else
+				_status=0
+			fi
+		else
+			_status=0
+		fi
+		if [ ${_status} -eq 1 ]; then
+			printf "${N2_COLOR}%-18s  ( %-3s )${N0_COLOR}\n" ${_dir} "on"
+		else
+			printf "${N4_COLOR}%-18s  ( %-3s )${N0_COLOR}\n" ${_dir} "on"
+		fi
+	done
+
+	# sub-modules for forms.d
+	if [ -d ${distdir}/modules/forms.d ]; then
+
+		${FIND_CMD} ${distdir}/modules/forms.d/ -type d -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | while read _dir; do
+			# check for CBSD module signature: metadata.conf
+
+			[ ! -r ${distdir}/modules/forms.d/${_dir}/metadata.conf ] && continue
+
+			# forms always available
+			_status="on"
+
+			printf "${N2_COLOR}forms-%-12s  ( %-3s )${N0_COLOR}\n" ${_dir} ${_status}
+		done
+	fi
 }
 
 
@@ -106,10 +191,32 @@ for i in $*; do
 done
 
 case "${mode}" in
-	install|update)
+	install|upgrade)
 		[ -z "${version}" ] && version="main"
-		[ -z "${data}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such module name${N0_COLOR}"
-		install_module
+		if [ -z "${data}" ]; then
+			${FIND_CMD} ${distdir}/modules/ -type d -depth 1 -maxdepth 1 -name \*.d -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | ${SED_CMD} 's/\.d//g' | while read data; do
+				# check for CBSD module signature: metadata.conf
+				[ ! -r ${distdir}/modules/${data}.d/metadata.conf ] && continue
+				# skip base/contrib mods
+				case "${data}" in
+					bsdconf|cbsd_queue|pkg|forms-brctl|forms-jrctl)
+						continue
+						;;
+				esac
+				echo "* upgrade for: ${data}" 1>&2
+				install_module
+			done
+			${FIND_CMD} ${distdir}/modules/forms.d/ -type d -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} | while read _tmp; do
+				data="forms-${_tmp}"
+				echo "* upgrade for: ${data}" 1>&2
+				install_module
+			done
+		else
+			install_module
+		fi
+		;;
+	list)
+		list_module
 		;;
 	*)
 		err 1 "${N1_COLOR}${CBSD_APP}: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
