@@ -4,11 +4,11 @@ MYARG=""
 MYOPTARG="cfg_only checkpoint debug debug_engine jname lm"
 MYDESC="Start QEMU domain"
 ADDHELP="\
- cfg_only=<file_path>          - when set, find/create tap/vnc and generate bhyve.conf \n\
+ cfg_only=<file_path>          - when set, find/create tap/vnc and generate qemu.conf \n\
                                  into <file_path> but without run, e.g for debugging\n\
  checkpoint   - start from specified checkpoint name\n\
  debug        - more debug messages\n\
- debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve \n\
+ debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch qemu \n\
                 ( mostly for inherits debug with live migration )\n\
  lm - 0 or 1  - when set to 1: prepare for acceptance of this domain via live migration request\n\
 "
@@ -55,49 +55,6 @@ fi
 . ${subrdir}/jcreate.subr       # for external_exec_master_script
 . ${subrdir}/virtual.subr		# for init_systap
 
-make_freebsd_part()
-{
-${CAT_CMD} >> $1 << EOF
-# $vm_os_type specific:
-builder = "hvm"
-serial="pty"
-vncconsole=1
-EOF
-}
-
-make_linux_part()
-{
-${CAT_CMD} >> $1 << EOF
-
-# $vm_os_type specific:
-builder = "hvm"
-#kernel = "/mnt/iso/isolinux/vmlinuz"
-#ramdisk = "/mnt/iso/isolinux/initrd.img"
-#extra = "debian-installer/exit/always_halt=true -- console=hvc0"
-#sdl=1
-serial='pty'
-EOF
-}
-
-make_windows_part()
-{
-${CAT_CMD} >> $1 << EOF
-
-# $vm_os_type specific:
-builder='hvm'
-acpi = 1
-EOF
-}
-
-make_other_part()
-{
-${CAT_CMD} >> $1 << EOF
-
-# $vm_os_type specific:
-builder='hvm'
-EOF
-}
-
 start_qemu()
 {
 	local QEMUCFG
@@ -119,7 +76,7 @@ start_qemu()
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
 
-	# todo: shared bhyve/qemu virtual
+	# todo: shared qemu/qemu virtual
 	# Cloud-init init. Cloud init only for empty disk
 	if check_for_empty_hdd path=${data}/dsk1.vhd; then
 		if [ -n "${vm_iso_path}" ]; then
@@ -233,17 +190,30 @@ start_qemu()
 	. ${subrdir}/vnet.subr
 
 	#unset zero-value
-	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
+	[ "${qemu_flags}" = "0" ] && unset qemu_flags
 	[ "${vm_os_profile}" = "0" ] && unset vm_os_profile
 
-#	if ! compile_dsk_args; then
-#		${ECHO} "${N1_COLOR}No such disk for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
-#		unset dsk_args
-#	fi
+	# reset global qemu_pci_id_busy_list (used by compile_ func via next_pci_id()
+	# and remove buffer file with old $qemu_pci_id_busy_list ( used by add_qemu_pci_id_busy )
+	qemu_pci_id_busy_list=
 
-#	if ! compile_cd_args; then
-#		unset cd_args
-#	fi
+	qemu_pci_index=1
+	[ -f ${jailsysdir}/${jname}/qemu_pciid ] && ${RM_CMD} -f ${jailsysdir}/${jname}/qemu_pciid
+
+	# mark modified field to FALSE in pcibus table to find unmodified entries for pciid cleanup
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE pcibus SET modified=false
+
+	# truncate pcibus_run table
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus_run
+
+	if ! compile_dsk_args; then
+		${ECHO} "${N1_COLOR}No such disk for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+		unset dsk_args
+	fi
+
+	if ! compile_cd_args; then
+		unset cd_args
+	fi
 
 	# init nic_args
 	if ! compile_nic_args ; then
@@ -273,7 +243,7 @@ start_qemu()
 
 	# Poehali!
 
-	export_bhyve_data_for_external_hook
+	export_qemu_data_for_external_hook
 	external_exec_master_script "master_prestart.d"
 
 	vm_logfile=$( ${MKTEMP_CMD} )
@@ -408,33 +378,13 @@ EOF
 #nographics = 1
 #bios_override = '/usr/share/ovmf/x64/OVMF_CODE.fd'    # Added to try to be explicit, same behavior with or without
 
-	if ! compile_dsk_args ${QEMUCFG}; then
-		${ECHO} "${N1_COLOR}xstart: compile_dsk_args failed for vm: ${N2_COLOR}${jname}${N0_COLOR}"
-		unset dsk_args
-	fi
-
-	case "${vm_os_type}" in
-		"freebsd")
-			make_freebsd_part ${QEMUCFG}
-			;;
-		"linux")
-			make_linux_part ${QEMUCFG}
-			;;
-		"windows")
-			make_windows_part ${QEMUCFG}
-			;;
-		*)
-			make_other_part ${QEMUCFG}
-			;;
-	esac
-
 	# create a configuration only
 	if [ -n "${cfg_only}" ]; then
 		${MV_CMD} ${QEMUCFG} ${cfg_only}
 		err 0 "${N1_COLOR}config created: ${N2_COLOR}${cfg_only}${N0_COLOR}"
 	fi
 
-	# todo: shared bhyve/qemu virtual
+	# todo: shared qemu/qemu virtual
 	# cloud-init enabled?
 	# this section should be AFTER master_prestart
 	# cloud_init and CLOUD_FILES was initialized earlier
@@ -476,20 +426,49 @@ EOF
 #  -machine type=q35,accel=nvmm \
 
 
-qemu_cmd="qemu-system-x86_64 \
-  -smp cpus=${vm_cpus} -m ${xvm_ram} \
-  -cdrom /usr/src-jails/iso/cbsd-iso-FreeBSD-13.0-RELEASE-amd64-disc1.iso \
-  ${boot_arg} \
-  -drive file=/usr/jails/vm/freebsd1/dsk1.vhd,if=none,id=disk0 \
-  -device virtio-blk-pci,drive=disk0 \
-  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:6022-:22 \
-  -device virtio-net-pci,netdev=net0 \
-  -object rng-random,id=rng0,filename=/dev/urandom \
-  -device virtio-rng-pci,rng=rng0 \
-  -display curses \
-  -vga std \
-  -vnc :0
+#-device virtio-net,netdev=network0 -netdev tap,id=network0,ifname=tap0,script=no,downscript=no
+#
+#But if already using a tap device with virtio networking driver, one can even boost the networking performance by enabling vhost, like:
+#
+#-device virtio-net,netdev=network0 -netdev tap,id=network0,ifname=tap0,script=no,downscript=no,vhost=on
 
+
+qemu_cmd="qemu-system-x86_64 \
+-machine type=q35 \
+-smp cpus=${vm_cpus} -m ${xvm_ram} \
+${cd_args} \
+${boot_arg} \
+${dsk_args} \
+${nic_args} \
+-object rng-random,id=rng0,filename=/dev/urandom \
+-device virtio-rng-pci,rng=rng0 \
+-display curses \
+-vga std \
+-vnc :0 \
+-device usb-tablet \
+-usb \
+-name ${jname} \
+"
+
+
+#-device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
+#-device virtio-net-pci,netdev=net0 \
+
+# net work:
+# -device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap100,script=no,downscript=no \
+
+# -netdev user,id=net0,hostfwd=tcp:127.0.0.1:6022-:22 \
+# qemu-system-x86_64: -usbdevice tablet: '-usbdevice' is deprecated, please use '-device usb-...' instead
+#-drive file=/usr/jails/vm/freebsd1/dsk1.vhd,if=none,id=disk0 \
+# # virtio, stdvga, qxl, cirrus
+# -vga std \
+#vga = "stdvga"
+#videoram=32
+
+#vm_vnc_port='5900'
+#opengl=1
+#vncconsole=1
+#vncunused=0
 # https://www.kraxel.org/blog/2019/09/display-devices-in-qemu/
 #  -vga qxl \
 # -device bochs-display  (when UEFI)
@@ -521,7 +500,7 @@ qemu_cmd="qemu-system-x86_64 \
 			echo
 			echo "/usr/bin/lldb -- ${qemu_cmd}"
 			/usr/bin/lldb -- ${qemu_cmd}
-			bhyve_exit=$?
+			qemu_exit=$?
 			${RM_CMD} -f ${tmpdir}/cmds.$$
 			;;
 		*)

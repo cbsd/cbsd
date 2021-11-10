@@ -11,6 +11,194 @@ _CBSD_QEMU_SUBR=1
 
 [ -z "${XL_CMD}" ] && XL_CMD="/usr/local/sbin/xl"
 
+# return 0 or 1 if $1 bus id exist in global $qemu_pci_id_busy_list
+#  if is_qemu_pci_id_busy 5; then
+#         echo "EXIST"
+#  fi
+#
+# if ! is_qemu_pci_id_busy 5; then
+#        echo "NOT EXIST"
+# fi
+is_qemu_pci_id_busy()
+{
+	local _id="${1}"
+	local _i
+	local _buf_file="${jailsysdir}/${jname}/qemu_pciid"
+
+	# use $_buf_file as an intermediate buffer for share
+	# and exchange $qemu_pci_id_busy_list vars
+	[ -r ${_buf_file} ] && . ${_buf_file}
+
+	# free
+	[ -z "${qemu_pci_id_busy_list}" ] && return 1
+
+	for _i in ${qemu_pci_id_busy_list}; do
+		[ ${_i} -eq ${_id} ] && return 0		# already exist
+	done
+
+	# free
+	return 1
+}
+
+# add new $1 bus id in $qemu_pci_id_busy_list array
+add_qemu_pci_id_busy()
+{
+	local _id="${1}"
+	local _buf_file="${jailsysdir}/${jname}/qemu_pciid"
+
+	if is_qemu_pci_id_busy ${_id}; then
+		# already in list
+		return 0
+	fi
+
+	qemu_pci_id_busy_list="${qemu_pci_id_busy_list} ${_id}"
+
+	# use $_buf_file as an intermediate buffer for share
+	# and exchange $qemu_pci_id_busy_list vars
+	${SYSRC_CMD} -qf ${_buf_file} qemu_pci_id_busy_list="${qemu_pci_id_busy_list}" > /dev/null 2>&1
+
+	return 0
+}
+
+# -a _pcislot_bus
+# -b _pcislot_pcislot
+# -c _pcislot_function
+# -n - device name: fbuf,..
+# -d - device descr/args, e.g <path_to_device>
+store_qemu_pci_slot()
+{
+	local _pcislot_bus=0
+	local _pcislot_pcislot=0
+	local _pcislot_function=0
+	local _pcislot_name=
+	local _pcislot_desc=
+	local _mydb _i _res
+
+	while getopts "a:b:c:d:n:" opt; do
+		case "${opt}" in
+			a) _pcislot_bus="${OPTARG}" ;;
+			b) _pcislot_pcislot="${OPTARG}" ;;
+			c) _pcislot_function="${OPTARG}" ;;
+			d) _pcislot_desc="${OPTARG}" ;;
+			n) _pcislot_name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	_mydb="${jailsysdir}/${jname}/local.sqlite"
+
+	[ -z "${_pcislot_name}" ] && err 1 "store_qemu_pci_slot: name is empty"
+
+	for _i in _pcislot_bus _pcislot_pcislot _pcislot_function; do
+		eval _res="\${${_i}}"
+		if is_number ${_res}; then
+			err 1 "store_qemu_pci_slot: ${_i} is not number: ${_res}"
+		fi
+	done
+
+	local _search_condition
+	local _tmp_qemu_pci_index=
+
+	# store into temporary pcibus map to determine/avoid bus id collision
+	cbsdsqlrw ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+
+	_search_condition="pcislot_name=\"${_pcislot_name}\""
+	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
+	_tmp_qemu_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | ${AWK_CMD} '{printf $1}' )
+
+	if [ -n "${_tmp_qemu_pci_index}" ]; then
+		# update modified flags
+		cbsdsqlrw ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+		[ "${_tmp_qemu_pci_index}" = "${_pcislot_bus}" ] && return 0		# record already exist (todo: check for bus/func equal
+		# pci slot not equal, update
+		cbsdsqlrw ${_mydb} "UPDATE pcibus SET pcislot_bus=\"${_pcislot_bus}\" WHERE ${_search_condition}"
+	else
+		# store pci bus map
+		cbsdsqlrw ${_mydb} "INSERT INTO pcibus ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( \"${_pcislot_name}\", \"${_pcislot_bus}\", \"${_pcislot_pcislot}\", \"${_pcislot_function}\", \"${_pcislot_desc}\", true )"
+	fi
+}
+
+# autoincrement for $qemu_pci_index variable which symbolizes pci id bus
+# -e end bus range range (e.g: -e 31), default: 31
+# -o (order): next or prev (default is: next)
+# -s start bus range (e.g: -s 4), default: 3
+# -n - device name: fbuf,..
+# -d - device descr/args, e.g <path_to_device>
+# when (-n name) and/or (-d descr) is specified,
+# lookup for stored pciid information first to
+# get old settings
+# 0 - reserved for hostbridge
+# 1 - reserved for ReFIND device
+# 2 - reserved for boot device
+# normal use:
+#   if ! next_pci_id; then
+#     # no free pci bus
+#     exit 0
+#   fi
+# or:
+#   if ! next_pci_id -n fbuf; then
+#     # no free pci bus
+#     exit 0
+#   fi
+#
+next_pci_id()
+{
+	local _start_bus_id=4 _end_bus_id=31 _order="next"
+	local _pcislot_name=
+	local _pcislot_desc=
+	local _res
+
+	while getopts "d:e:n:o:s:" opt; do
+		case "${opt}" in
+			e) _end_bus_id="${OPTARG}" ;;
+			o) _order="${OPTARG}" ;;
+			s) _start_bus_id="${OPTARG}" ;;
+			d) _pcislot_desc="${OPTARG}" ;;
+			n) _pcislot_name="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	# lookup database stored first
+	if [ -n "${_pcislot_name}" ]; then
+		local _mydb
+		local _search_condition
+		local _tmp_qemu_pci_index=
+
+		_mydb="${jailsysdir}/${jname}/local.sqlite"
+		_search_condition="pcislot_name=\"${_pcislot_name}\""
+		[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc=\"${_pcislot_desc}\""
+		_tmp_qemu_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | ${AWK_CMD} '{printf $1}' )
+		if [ -n "${_tmp_qemu_pci_index}" ]; then
+			# update modified
+			cbsdsqlrw ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
+
+			qemu_pci_index=${_tmp_qemu_pci_index}
+			return 0
+		fi
+	fi
+	# end of lookup database stored first
+
+	[ ${_start_bus_id} -gt ${_end_bus_id} ] && ${ECHO} "${N1_COLOR}next_pci_id: invalid range${N0_COLOR}" && return 1
+	[ -z "${qemu_pci_index}" ] && qemu_pci_index="0"
+
+	qemu_pci_index=0
+
+	for qemu_pci_index in $( ${SEQ_CMD} ${_start_bus_id} ${_end_bus_id} ); do
+		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE pcislot_bus=${qemu_pci_index} LIMIT 1 2>/dev/null )
+		[ -n "${_res}" ] && continue		# probably already used by another devices
+
+		if ! is_qemu_pci_id_busy ${qemu_pci_index}; then
+			# found
+			return 0
+		fi
+	done
+
+	${ECHO} "${N1_COLOR}No free available qemu_pci_index in ${_start_bus_id} ${_end_bus_id} range${N0_COLOR}"
+	return 1
+}
+
+
 init_qemu_usage()
 {
 	echo
@@ -106,54 +294,84 @@ init_qemu()
 	fi
 }
 
-# export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)
-# $iso_img must be present
+# export arguments for qemu cd dsk vms in $cd_args variable
+# $jname must be set's
+# sample:
+# jname="debian"
+# if compile_cd_args; then
+# 	echo $cd_args
+# else
+#	echo "No disks"
+# fi
 compile_cd_args()
 {
-	cd_args=
-	cd_args2=
+	local cd_id=0
+	local sqldelimer=" "
+	local _pcislot_args=
+	local _ext
+	local _device T F
 
-	# Ubuntu has trouble when got two CD
-	#[ "${vm_boot}" = "net" ] && return 0
+	eval $( cbsdsqlro storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
 
-	if [ -z "${iso_img}" ]; then
-		${ECHO} "${N1_COLOR}iso_img variable is not set${N0_COLOR}"
-		return 1
-	fi
+		# check for .fs$ extension: use ahci-hd for this (e.g OpenBSD image)
+		_ext=${path##*.}
 
-	if [ ! -r "${iso_img}" ]; then
-		iso_img2=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
-		if [ ! -r ${iso_img2} ]; then
-			${ECHO} "${N1_COLOR}iso_img in not readable: ${N2_COLOR}${iso_img} ${iso_img2}${N0_COLOR}"
-			return 1
+		# OpenBSD UEFI
+		if [ "${_ext}" = "img" ]; then
+			_device="ahci-hd"
 		else
-			iso_img="${iso_img2}"
+			_device="ahci-cd"
 		fi
+
+#		if ! next_pci_id -n cdrom -d ${path}; then
+#			# no free pci bus
+#			exit 0
+#		fi
+
+		# -drive file=IMAGE.iso,media=cdrom
+#		echo "export cd${cd_id}=\"-drive file=${path},index=${qemu_pci_index},media=cdrom,readonly,format=raw\" ;"
+		echo "export cd${cd_id}=\"-drive file=${path},media=cdrom,readonly,format=raw\" ;"
+
+		# export cdX_path
+		echo "export cd${cd_id}_path=\"${path}\";"
+
+		cd_id=$(( cd_id + 1 ))
+	done ) || err 1 "${N1_COLOR}Error while create cd map${N0_COLOR}"
+
+	cd_args=
+	for i in $( ${SEQ_CMD} 0 31 ); do
+		eval T="\$cd$i"
+		[ -z "${T}" ] && break
+		F=
+		eval F="\$cd${i}_path"
+		if [ -n "${F}" ]; then
+			if [ -z "${mydsk}" ]; then
+				mycd="${F}"
+			else
+				mycd="${mydsk} ${F}"
+			fi
+		fi
+		cd_args="${cd_args} ${T}"
+	done
+
+	# Cloud-init support. Looking for seed.iso in sysdir
+	if [ -r ${jailsysdir}/${jname}/seed.iso ]; then
+		if ! next_pci_id -n cdrom -d ${jailsysdir}/${jname}/seed.iso; then
+			# no free pci bus
+			exit 0
+		fi
+		cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,index=${qemu_pci_index},media=cdrom,readonly,format=raw"
 	fi
 
-	if [ -z "${iso_img}" ]; then
-		${ECHO} "${N1_COLOR}iso_img variable is empty: no ISO or image is not readable${N0_COLOR}"
-		return 1
-	fi
-
-	## for check via ref
-	# cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${distdir}/upgrade/patch/efirefd.fd,ro"
-	#if ! next_pci_id; then
-	#	return 1
-	#fi
-	# cd_args="${cd_args} -s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
-
-	if [ "${vm_os_type}" = "openbsd" ]; then
-		# small hack: openbsd use install.fs as hdd drive, not cd
-		cd_args="-s ${bhyve_pci_index}:0,ahci-hd,${iso_img},ro"
-		cd_args2=""
-	else
-		cd_args="-s ${bhyve_pci_index}:0,ahci-cd,${iso_img}"
-		cd_args2="-s ${bhyve_pci_index}:0,ahci-cd,/usr/local/cbsd/upgrade/patch/efirefd.fd,ro"
-	fi
+# qemu-system-x86_64 -drive format=raw,media=cdrom,readonly,file=debian-8.2.0-amd64-DVD-1.iso 
+	[ -z "${cd_args}" ] && return 1
+	# export for boot/install/eject mode as cd_args
+	#cd_args2=
+	#"${cd_args}"
+	return 0
 }
 
-# export arguments for bhyve about dsk vms in $dsk_args variable
+# export arguments for qemu about dsk vms in $dsk_args variable
 # $jname must be set's
 # sample:
 # jname="debian"
@@ -199,11 +417,6 @@ compile_dsk_args()
 
 	[ ${_media_count} -eq 0 ] && return 0
 
-	# open disk brackets
-	echo "disk = [" >> ${QEMUCFG}
-
-	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
-	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM qemudsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot FROM qemudsk WHERE dsk_type=\"vhd\" | while read dsk_controller dsk_path dsk_slot; do
 
 		# test for full path. If path not started from '/' - append $data dir
@@ -216,68 +429,49 @@ compile_dsk_args()
 			full_dsk_path="${dsk_path}"
 		fi
 
-		# for zvol
-		# phy:${full_dsk_path} ?
-
-		# detect proper drive letter (abc..)
-		case "${dsk_controller}" in
-			xvd|hd)
-				_ascii=$(( 97 + xvd_num ))
-				xvd_num=$(( xvd_num + 1 ))
-				;;
-			sd)
-				_ascii=$(( 97 + sd_num ))
-				sd_num=$(( sd_num + 1 ))
-				;;
-		esac
-
-		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="${dsk_controller}${_dev_letter}"
-
-		if [ ${first_count} -eq 0 ]; then
-			# first record
-			printf "'${full_dsk_path},raw,${_dev},rw'" >> ${QEMUCFG}
-		else
-			printf ", '${full_dsk_path},raw,${_dev},rw'" >> ${QEMUCFG}
+		if ! next_pci_id -n ${dsk_controller} -d ${full_dsk_path}; then
+			# no free pci bus
+			exit 0
 		fi
-		first_count=$(( first_count + 1 ))
+
+		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
+		store_qemu_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${qemu_pci_index}
+
+		#echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path}\" ;"
+		echo "export dsk${dsk_id}=\"-drive format=raw,file=${full_dsk_path},index=${qemu_pci_index},if=none,id=disk${dsk_id} -device virtio-blk-pci,drive=disk${dsk_id}\" ;"
+
+#  index cannot be used with bus and unit
+# index=0
+# -drive file=/home/XXX/devboxes/packer/packer_cache/5f955a9967732c158XXXXXXXXXXXXXXXXXXXXXXX.iso,index=0,media=cdrom: drive with bus=0, unit=0 (index=0) exists
+
+#qemu-system-x86_64 -drive format=raw,media=cdrom,readonly,file=debian-8.2.0-amd64-DVD-1.iso 
+#-drive file=/usr/jails/vm/freebsd1/dsk1.vhd,if=none,id=disk0   -device virtio-blk-pci,drive=disk0
+
+		# export dskX_path
+		echo "export dsk${dsk_id}_path=\"${full_dsk_path}\";"
 
 		echo "xvd_num=${xvd_num}"
 		echo "sd_num=${sd_num}"
 
 	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
-	if [ -n "${iso_img}" ]; then
-		# cdrom
-		dsk_controller="hd"		# always hd
-		_ascii=$(( 97 + xvd_num ))
-		xvd_num=$(( xvd_num + 1 ))
-		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="${dsk_controller}${_dev_letter}"
-		printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${QEMUCFG}
-	fi
-	if [ -n "${iso_img2}" ]; then
-		# secondary cdrom
-		dsk_controller="hd"		# always hd
-		_ascii=$(( 97 + xvd_num ))
-		xvd_num=$(( xvd_num + 1 ))
-		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="${dsk_controller}${_dev_letter}"
-		printf ", '${iso_img2},raw,${_dev}:cdrom,r'" >> ${QEMUCFG}
-	fi
-	# Cloud-init support. Looking for seed.iso in sysdir
-	if [ -r ${jailsysdir}/${jname}/seed.iso ]; then
-		# cdrom for cloud-init
-		dsk_controller="hd"		# always hd
-		_ascii=$(( 97 + xvd_num ))
-		xvd_num=$(( xvd_num + 1 ))
-		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="${dsk_controller}${_dev_letter}"
-		printf ", '${jailsysdir}/${jname}/seed.iso,raw,${_dev}:cdrom,r'" >> ${QEMUCFG}
-	fi
+	cd_args=
+	for i in $( ${SEQ_CMD} 0 31 ); do
+		eval T="\$dsk$i"
+		[ -z "${T}" ] && break
+		F=
+		eval F="\$dsk${i}_path"
+		if [ -n "${F}" ]; then
+			if [ -z "${mydsk}" ]; then
+				mydsk="${F}"
+			else
+				mydsk="${mydsk} ${F}"
+			fi
+		fi
+		dsk_args="${dsk_args} ${T}"
+	done
 
-	# close disk brackets
-	printf "\n]\n" >> ${QEMUCFG}
+
 	return 0
 }
 
@@ -292,7 +486,7 @@ normalize_nic_hwaddr()
 }
 
 
-# export arguments for qemu about nic vms in $nic_args variable
+# export arguments for bhyve about nic vms in $nic_args variable
 # $jname must be set's
 # sample:
 # jname="debian"
@@ -306,56 +500,274 @@ compile_nic_args()
 	local _id=0 i _res taplist=
 	local sqldelimer=" "
 	local mybridge
+	local net_emul=
+	local _parent_mtu=0
+	local _ret=
+	local _is_bridge
+	local autoconn_iface=$( ${SYSRC_CMD} -n cbsd_autoconnect_bridge 2>&1 )
+	local _pcislot_args= _pref
+	local IFS OIFS
 
 	. ${subrdir}/vnet.subr		# for get_vm_uplink_interface
 
 	local errmsg=
 
-	# xstart.conf: clear VM hwaddr in global ARP table
+	# bstart.conf: clear VM hwaddr in global ARP table
 	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM qemunic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags FROM qemunic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit nic_flags; do
 
-		# when ip=0 and interface=auto we must use default interface for upstream
-		if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
-			_is_bridge=
-			[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
-			if [ "${_is_bridge}" != "bridge" ]; then
-				# this is not bridge, detect uplink iface
-				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
-				get_vm_uplink_interface -p ${nic_parent}
-				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+		case "${nic_driver}" in
+			e1000)
+				net_emul="e1000"
+				;;
+			*)
+				net_emul="virtio-net"
+				;;
+			esac
 
-				if [ "${interface}" != "disable" ]; then
-					# always up parent device
-					[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
-					if ! mybridge=$( get_my_device bridge ${interface} ); then
-						err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+		cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: nic driver: ${nic_driver}, nic_parent: ${nic_parent}, nic_flags [${nic_flags}]
+
+		# when nic_persistent=1 just put it to args
+		if [ ${nic_persistent} -eq 1 ]; then
+			_pref3=$( substr --pos=0 --len=3 --str=${nic_parent} )
+			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
+			${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
+			nic_hwaddr="0"
+			mytap="${nic_parent}"
+			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${mytap} marked as persistent
+		else	# << if [ ${nic_persistent} -eq 0 ]
+			case ${nic_parent} in
+
+				cbsdvale*)
+					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				vale*)
+					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				*)
+					# VPC support
+					case "${nic_parent}" in
+						vpc-*)
+							VPC_ROOT_DIR="${dbdir}/vpc"
+							_arg_len=$( strlen ${nic_parent} )
+							vpc_name=$( substr --pos=5 --len=${_arg_len} --str="${nic_parent}" )
+							_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+							[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+							mybridge=
+							if ! mybridge=$( get_my_device vpc vpc-${vpc_name} ); then
+								err 1 "${N1_COLOR}${CBSD_APP} failed to get VPC bridge: ${mybridge}${N0_COLOR}"
+							fi
+							${IFCONFIG_CMD} ${mybridge} > /dev/null 2>&1
+							_ret=$?
+							if [ ${_ret} -ne 0 ]; then
+								err 1 "${N1_COLOR}no such VPC bridge interface: ${N2_COLOR}${mybridge}${N0_COLOR}"
+							fi
+							;;
+						*)
+							if [ "${nic_parent}" != "0" -o "${nic_parent}" = "auto" ]; then
+								_is_bridge=
+								[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+								if [ "${_is_bridge}" != "bridge" ]; then
+									# this is not bridge, detect uplink iface
+									cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
+									get_vm_uplink_interface -p ${nic_parent}
+									cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+
+									if [ "${interface}" != "disable" ]; then
+										# always up parent device
+										[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
+										cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
+										if ! mybridge=$( get_my_device bridge ${interface} ); then
+											err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+										fi
+										cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
+									else
+										# don't create/attach to bridge
+										mybridge="disable"
+									fi
+								else
+									${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+									_ret=$?
+									[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
+									mybridge="${nic_parent}"
+								fi
+							else
+								# don't create/attach to bridge
+								mybridge="disable"
+							fi
+							;;
+					esac
+					mytap=$( get_my_tap ${mybridge} )
+					_ret=$?
+					[ ${_ret} -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
+
+					# MTU management, should be before addm
+					[ -z "${nic_mtu}" ] && nic_mtu=0	# AUTO
+					_parent_mtu=0
+					if [ ${nic_mtu} -eq 0 -a "${mybridge}" != "disable" ]; then
+						# Get parent MTU size
+						_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						_ret=$?
+						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
+
+						if [ ${_ret} -eq 0 ]; then
+							[ -n "${_parent_mtu}" ] && _ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} )
+						fi
+					else
+						# Get parent MTU size
+						# compare MTU with parent
+						#_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						#_ret=$?
+						#if [ ${_ret} -eq 0 ]; then
+						#	[ ${nic_mtu} -gt ${_parent_mtu} ]
+						#fi
+						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
+						_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} )
+						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
-					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
-				else
-					# don't create/attach to bridge
-					mybridge="disable"
-				fi
-			else
-				${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
-				_ret=$?
-				[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
-				mybridge="${nic_parent}"
-			fi
-		else
-			# don't create/attach to bridge
-			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
-			if ! mybridge=$( get_my_device bridge ${interface} ); then
-				err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
-			fi
-			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
+
+					${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
+
+					if [ "${mybridge}" != "disable" ]; then
+						if [ "${autoconn_iface}" = "NO" ]; then
+							${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
+							# export in mytap_X_bridge= as bridge members
+							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
+						else
+							${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+							# export in mytap_X_bridge= as bridge members
+							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
+						fi
+
+						if [ "${nic_flags}" != "0" ]; then
+							OIFS="${IFS}"
+							IFS=","
+							for i in ${nic_flags}; do
+								IFS="${OIFS}"
+								case "${i}" in
+									private)
+										${IFCONFIG_CMD} ${mybridge} private ${mytap}
+										;;
+								esac
+								IFS=","
+							done
+							IFS="${OIFS}"
+						fi
+					fi
+
+					if [ -n "${nic_address}" ]; then
+						OIFS="${OIFS}"
+						if [ "${nic_address}" != "0" -o "${nic_address}" != "disable" ]; then
+							IFS=","
+							for ip in ${nic_address}; do
+								if [ "${ip}" = "DHCP" ]; then
+									ip=$( dhcpd )
+									[ $? -eq 2 ] && err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
+								fi
+								IFS="${OIFS}"
+								ipwmask ${ip}
+								iptype ${IWM}
+								local _inet=$?
+								case "${_inet}" in
+									1)
+										local proto="inet"
+										;;
+									2)
+										local proto="inet6"
+										;;
+									*)
+										continue
+										;;
+								esac
+								# ipv type + mask
+								${IFCONFIG_CMD} ${mytap} ${proto} ${ip} alias
+							IFS=","
+						done
+						IFS="${OIFS}"
+						fi
+					fi
+					;;
+			esac
+		fi	# << if [ ${nic_persistent} -eq 0 ]
+		# MAC MGMT
+		if [ "${nic_hwaddr}" = "0" ]; then
+			nic_hwaddr=$( mac_gen 00:a0:98 )
+			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemunic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic_id}\""
 		fi
 
-		echo "export nic${_id}=\"${mybridge}\" ;"
+		if [ "${clean_arp_table_by_vm}" = "1" ]; then
+			${ARP_CMD} -an | ${AWK_CMD} -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | ${SORT_CMD} | ${TR_CMD} -d '()' | while read _ip; do
+				cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+				${ARP_CMD} -n -d ${_ip} > /dev/null 2>&1 || true
+				#V6
+			done
+		fi
+
+		# todo: name as descr? or mac as desc?
+		if ! next_pci_id -n ${net_emul} -d ${nic_id}; then
+			# no free pci bus
+			exit 0
+		fi
+
+		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
+
+		#-device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap100,script=no,downscript=no \
+		myargs=""
+#		myargs="-s ${_pcislot_args},${net_emul},${mytap}"
+		myargs="-device ${net_emul},netdev=net${_id}"
+
+		# append -device for mtu
+		# virtio-net support for MTU after r359704
+		if [ ${freebsdhostversion} -gt 1300095 ]; then
+			# manage MTU on qemu tap/virtio side
+			[ ${nic_mtu} -eq 0 -a ${_parent_mtu} -ne 0 ] && nic_mtu="${_parent_mtu}"		# adjust nic_mtu by parent value
+
+			case "${nic_mtu}" in
+				0)
+					;;
+				*)
+					# virtio-net support for MTU after r359704
+					myargs="${myargs},host_mtu=${nic_mtu}"
+					;;
+			esac
+		fi
+
+
+		# append -device for mac
+		if [ "${nic_hwaddr}" != "0" ]; then
+			unset mymac
+			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+			myargs="${myargs},mac=${mymac}"
+		fi
+#		if [ "${qemu_have_net_ratelimit}" = "1" ]; then
+#			if [ "${nic_ratelimit}" != "0" ]; then
+#				myargs="${myargs},ratelimit=${nic_ratelimit}"
+#			fi
+#		fi
+#		if [ "${nic_hwaddr}" != "0" ]; then
+#			unset mymac
+#			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+#			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap},mac=${mymac}\" ;"
+#		else
+#			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap}\" ;"
+#		fi
+
+		# append ifname/netdev part
+		myargs="${myargs} -netdev tap,id=net${_id},ifname=${mytap},script=no,downscript=no"
+
+		echo "export nic${_id}=\"${myargs}\" ;"
+
+		# todo: name as descr? or mac as desc?
+		store_qemu_pci_slot -n ${net_emul} -d ${nic_id} -a ${qemu_pci_index}
+		echo "export mytap${_id}=\"${mytap}\";"
+
 		_id=$(( _id + 1 ))
 	done ) || err 1 "${N1_COLOR}Error while creating nic map: ${errmsg}${N0_COLOR}"
+
+	[ -n "${errmsg}" ] && err 1 "${N1_COLOR}Error while creating nic map: ${N2_COLOR}${errmsg}${N0_COLOR}"
 
 	nic_args=
 
@@ -374,6 +786,15 @@ compile_nic_args()
 			mytap="${mytap} ${taplist}"
 		fi
 	done
+
+	# clean_arp extra loop by known IP
+#	if [ "${clean_arp_table_by_vm}" = "1" ]; then
+#		${ARP_CMD} -an | ${AWK_CMD} -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | ${SORT_CMD} | ${TR_CMD} -d '()' | while read _ip; do
+#			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+#			${ARP_CMD} -n -d ${_ip} > /dev/null 2>&1 || true
+#			#V6
+#		done
+#	fi
 
 	[ -z "${nic_args}" ] && return 1
 
@@ -539,7 +960,7 @@ compile_vnc_args()
 			fi
 			;;
 		*)
-			bhyve_vnc_tcp_ipconnect="${vnc_bind}"
+			qemu_vnc_tcp_ipconnect="${vnc_bind}"
 			;;
 	esac
 
@@ -670,7 +1091,7 @@ compile_spice_args()
 			fi
 			;;
 		*)
-			bhyve_spice_tcp_ipconnect="${vnc_bind}"
+			qemu_spice_tcp_ipconnect="${vnc_bind}"
 			;;
 	esac
 
