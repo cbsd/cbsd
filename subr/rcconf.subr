@@ -121,6 +121,55 @@ init_xen_rcconf()
 	fi
 }
 
+# load data from local QEMU settings
+# $jname
+init_qemu_rcconf()
+{
+	local jname="${1}"
+	[ -z "${jname}" ] && return 0
+	local sqldelimer="|"
+	local A
+
+	A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vm_vnc_port,qemu_vnc_tcp_bind,qemu_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password,on_poweroff,on_reboot,on_crash,spice_default,qemu_spice_tcp_bind,qemu_spice_resolution,spice_password,soundhw,debug_engine,qemu_hap,qemu_nestedhvm,vm_iso_path FROM settings ORDER BY (created) DESC LIMIT 1;" )
+
+	if [ -n "${A}" ]; then
+		OIFS="${IFS}"
+		IFS="|"
+		vm_cpus=
+		vm_ram=
+		vm_os_type=
+		vm_boot=
+		vm_os_profile=
+		vm_vnc_port=
+		qemu_vnc_tcp_bind=
+		qemu_vnc_resolution=
+		cd_vnc_wait=
+		protected=
+		hidden=
+		maintenance=
+		ip4_addr=
+		vnc_password=
+		on_poweroff=
+		on_reboot=
+		on_crash=
+		spice_default=
+		qemu_spice_tcp_bind=
+		qemu_spice_resolution=
+		spice_password=
+		soundhw=
+		debug_engine=
+		qemu_hap=
+		qemu_nestedhvm=
+		vm_iso_path=
+		sqllist "${A}" vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vm_vnc_port qemu_vnc_tcp_bind qemu_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr vnc_password on_poweroff on_reboot on_crash spice_default qemu_spice_tcp_bind qemu_spice_resolution spice_password soundhw debug_engine qemu_hap qemu_nestedhvm vm_iso_path
+		IFS="${OIFS}"
+	else
+		err 1 "${N1_COLOR}Unable to fetch vm data from: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+	fi
+}
+
+
+
 # init_rcconf ( $jname must be not empty )
 # ( $sqlfile - specify sqlfile in dbdir for searching data. If empty - local file is prefered )
 init_rcconf()
@@ -182,7 +231,7 @@ init_rcconf()
 	sqllist "${_A}" ${_JCOL}
 
 	case "${emulator}" in
-		bhyve|virtualbox|xen)
+		bhyve|virtualbox|xen|qemu)
 			. ${distsharedir}/${emulator}.conf
 			_BCOL="${MYCOL}"
 			jid=0
@@ -241,7 +290,22 @@ init_rcconf()
 					jid="0"
 				fi
 				;;
-
+			"qemu")
+				. ${subrdir}/qemu.subr
+				_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+				if [ $? -eq 0 ]; then
+					check_for_xen_process -j ${jname}
+					status="1"	# if not in maintenance, update status to online
+					myjid="${vm_pid}"
+					jid="${myjid}"
+					[ -z "${myjid}" ] && myjid=0 && status=0
+					[ -z "${jid}" ] && jid=0 && status=0
+				else
+					status="0"	# if not in maintenance, update status to offline
+					myjid="0"
+					jid="0"
+				fi
+				;;
 		esac
 
 		# check jid when sqlite information is wrong and update it
@@ -282,7 +346,7 @@ init_rcconf()
 	[ "${exec_prestop}" = "0" ] && unset ${exec_prestop}
 
 	case "${emulator}" in
-		bhyve|xen)
+		bhyve|xen|qemu)
 			init_${emulator}_rcconf ${1}
 	esac
 }

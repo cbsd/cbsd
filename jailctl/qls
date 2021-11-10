@@ -1,0 +1,424 @@
+#!/usr/local/bin/cbsd
+#v11.1.12
+CBSDMODULE="qemu"
+MYARG=""
+MYOPTARG="alljails display header hidden node order shownode"
+MYDESC="List QEMU domain and status"
+ADDHELP="\
+ alljails=1 - (0 or 1): force to display foreign/remote resources\n\
+  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
+ display= list by comma for column.\n\
+  Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc\n\
+  If ZFS features on: vm_zfs_guid\n\
+  If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+  If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
+   additional field: path\n\
+  Notes: vnc data is meta info from: qemu_vnc_tcp_bind:vnc_port\n\
+ header=0 don't print header\n\
+ hidden= show hidden env as well? 1 (default) - show, 0 - skipp\n\
+ node= only for current node\n\
+ order= asc (default) or desc\n\
+ shownode=1 - show nodename for domains\n\
+"
+EXTHELP="wf_xls"
+
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+. ${nodes}
+
+readconf qls.conf
+. ${cbsdinit}
+
+[ ! -d "${workdir}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
+
+[ -n "${display}" ] && odisplay="${display}"	# store original display settings
+oalljails="${alljails}"				# store original settings, they have more weight vs auto
+oshownode="${shownode}"				# store original settings, they have more weight vs auto
+ohidden="${hidden}"				# show hidden env?
+
+# autosettings for alljails and shownode
+is_cluster_mode
+cluster_mode=$?         # cluster_mode=0 when we have any node
+
+if [ ${cluster_mode} -eq 0 ]; then
+
+	if [ "${oshownode}" != "0" ]; then
+		alljails=1
+		shownode=1
+	fi
+
+fi
+
+# restore manual settings
+[ -n "${oalljails}" ] && alljails="${oalljails}"
+[ -n "${oshownode}" ] && alljails="${oshownode}"
+[ -n "${ohidden}" ] && hidden="${ohidden}"
+
+# defaults
+[ -z "${hidden}" ] && hidden=1
+show_hidden="${hidden}"
+unset hidden
+
+if [ -z "${display}" -a -z "${odisplay}" ]; then
+	case "${racct}" in
+		1)
+			display="jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc"
+			;;
+		*)
+			display="jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc"
+			;;
+	esac
+fi
+
+[ "${shownode}" = "1" -a -z "${odisplay}" ] && display="nodename,${display}"
+[ -z "${order}" ] && order="asc"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+JLS=
+
+conv_status()
+{
+	local _maintain_reason=
+
+	case "${status}" in
+		0)
+			status="Off"
+			;;
+		1)
+			status="On"
+			;;
+		2)
+			status="Slave"
+			;;
+		3)
+			_maintain_reason=$( cbsdsqlro local SELECT maintenance FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+			if [ -n "${_maintain_reason}" -a "${_maintain_reason}" != "0" ]; then
+				status="Maintenance:${_maintain_reason}"
+			else
+				status="Maintenance"
+			fi
+			;;
+		*)
+			status="Unknown"
+			;;
+	esac
+}
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -eq 1 ] && ${ECHO} ${_header}
+}
+
+# $1 - pid
+get_rctl()
+{
+	local _val
+
+	get_rctl_values -m process -p ${1} -j ${jname}
+}
+
+# -j $jname
+# -s alternative SQL file
+# -u 1 - always show status as "Unregister"
+populate_output_data()
+{
+	local unregister="0"
+	local _tmpport _tmpbind
+	local _pid=0 _node_is_online=0 _md5_node_name
+	local _A _ALLJCOL _state
+
+	printf "${N0_COLOR}" # for column sort
+
+	while getopts "j:s:u:" opt; do
+		case "${opt}" in
+			j) jname="${OPTARG}" ;;
+			s) sqlfile="${OPTARG}" ;;
+			u) unregister="1" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${sqlfile}" ] && sqlfile="local"
+
+	_pid="0"
+
+	if [ "${sqlfile}" = "local" ]; then
+		. ${subrdir}/qemu.subr
+		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+		if [ $? -eq 0 ]; then
+			# qemu is active
+			printf "${N2_COLOR}"
+
+			if [ "${racct}" = "1" ]; then
+				memoryuse=0
+				pcpu=0
+				_pid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+				if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
+					_val="0"
+				else
+					get_rctl ${_pid}
+				fi
+			fi
+		else
+			myjid="0"
+			jid="0"
+			printf "${N4_COLOR}"
+		fi
+	else
+		# pop status variable from node_is_online()
+		_md5_node_name=$( ${MD5_CMD} -q -s ${sqlfile} )
+		eval _node_is_online=\$node_${_md5_node_name}_online
+		if [ "${_node_is_online}" = "1" ]; then
+			# retr from sql
+			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+			case ${jid} in
+				0)
+					printf "${N4_COLOR}"
+					;;
+				*)
+					printf "${N2_COLOR}"
+					;;
+			esac
+		else
+			printf "${N4_COLOR}"
+		fi
+	fi
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="0"
+
+		# todo: remote sql fetch via retrinv
+		#if [ "${sqlfile}" != "local" ]; then
+		#	[ "${_i}" != "jname" ] && _val="x"
+		#	printf "${_val} "
+		#	continue
+		#fi
+
+		# search for custom column output helper first
+		if [ -x "${jailsysdir}/${jname}/facts.d/${_i}" ]; then
+			. ${subrdir}/jcreate.subr               # for export_jail_data_for_external_hook
+			geniplist ${ip4_addr}                   # for ipvX_first_public-like vars
+			export_jail_data_for_external_hook
+			_val=$( ${jailsysdir}/${jname}/facts.d/${_i} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
+		else
+			case "${_i}" in
+				vm_ram)
+					# convert to MB
+					if ! is_number "${_val}"; then
+						_val=$(( _val / 1024 / 1024 ))
+					else
+						_val="0"
+					fi
+					;;
+				vm_curmem)
+					# convert to MB
+					if [ "${_pid}" != "0" ]; then
+						if ! is_number "${memoryuse}"; then
+							_val=$(( memoryuse / 1024 / 1024 ))
+						else
+							_val=0
+						fi
+						[ -z "${_val}" ] && _val=0
+					else
+						_val="0"
+					fi
+					;;
+				pcpu)
+					if [ "${_pid}" != "0" ]; then
+						if ! is_number "${pcpu}"; then
+							_val="${pcpu}"
+						else
+							_val=0
+						fi
+						[ -z "${_val}" ] && _val=0
+					else
+						_val="0"
+					fi
+					;;
+				vnc_port)
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+					if [ -n "${_tmpport}" ]; then
+						_val="${_tmpport}"
+					else
+						_val="0"
+					fi
+					;;
+				vnc)
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+					if [ -n "${_tmpport}" ]; then
+						if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+							# we need for special route of tcpbind presentation for foreign qemu. replace 0.0.0.0 by nodeip
+							if [ "${sqlfile}" != "local" ]; then
+								_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+							else
+								_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+							fi
+						else
+							_tmpbind="Unk"
+						fi
+						_val="${_tmpbind}:${_tmpport}"
+					else
+						_val="0"
+					fi
+					;;
+				ip4_addr)
+					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+					else
+						_val="Unk"
+					fi
+					[ "${_val}" = "(null)" ] && _val="DHCP"
+					;;
+				vm_zfs_guid)
+					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
+					else
+						_val="0"
+					fi
+					[ "${_val}" = "(null)" ] && _val="DHCP"
+					;;
+				status)
+					[ "${unregister}" = "1" ] && _val="Unregister"
+					;;
+			esac
+		fi
+		[ -z "${_val}" ] && _val="\-"
+		printf "${_val} "
+	done
+
+	printf "${N0_COLOR}\n"
+}
+
+
+# $1 - which file from. Eg: local
+show_jaildata_from_sql()
+{
+	local _i
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	if [ "${sqlfile}" = "local" ]; then
+		sqlfile_sysdir="${jailsysdir}"
+	else
+		sqlfile_sysdir="${tmpdir}/${1}"
+	fi
+
+	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"qemu\" ORDER BY jname ASC | while read jname; do
+		_status=
+
+		if [ "${sqlfile}" = "local" ]; then
+			. ${subrdir}/rcconf.subr
+		else
+			RHST="${sqlfile}"
+			. ${subrdir}/rrcconf.subr
+		fi
+
+		# skip hidden env when show_hidden=0
+		[ ${hidden} -eq 1 -a ${show_hidden} -eq 0 ] && continue
+		if [ ! -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+			# skip invalid vms
+			${ECHO} "${N1_COLOR}Can't open database file for ${jname}: ${N2_COLOR}${sqlfile_sysdir}/${jname}/local.sqlite${N0_COLOR}" >> ${my_err_file}
+			continue
+		fi
+
+		conv_status
+		populate_output_data -j ${jname} -s ${sqlfile}
+	done
+}
+
+
+show_local()
+{
+	local _errcode _status
+
+	show_header
+	show_jaildata_from_sql local
+
+	# Unregister area
+	[ ! -d "${jailrcconfdir}" ] && return 0
+	ip4_addr="-"
+	host_hostname="-"
+	path="-"
+	jid="0"
+	vm_ram="-"
+	vm_cpus="-"
+	vm_os_type="-"
+	path="-"
+	status="-"
+	vnc="-"
+
+	for J in $( ${LS_CMD} ${jailrcconfdir} ); do
+		[ "${J}" = "dir.id" ] && continue
+		jname=
+		[ ! -r ${jailrcconfdir}/${J} ] && continue
+		. ${jailrcconfdir}/${J}
+		# for QEMU vm only
+		[ "${emulator}" != "qemu" ] && continue
+		[ -z "${jname}" ] && continue
+		populate_output_data -u 1 -j ${jname}
+		${ECHO} ${_status}
+	done
+}
+
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && node=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null | ${XARGS_CMD} )
+
+	for _n in ${node}; do
+		nodename="${_n}"
+		# init and export into $node_${md5_node_name}_online node status
+		node_is_online -n ${nodename} -e 1
+		show_jaildata_from_sql ${_n}
+	done
+}
+
+show_jails()
+{
+	if [ -n "${node}" ]; then
+		show_remote
+		exit 0
+	fi
+
+	if [ "${alljails}" = "1" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+}
+
+. ${subrdir}/jrctl.subr
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+
+my_err_file="${ftmpdir}/ls.$$"
+show_jails | ${COLUMN_CMD} -t
+
+if [ -r ${my_err_file} ]; then
+	${ECHO} "${N1_COLOR}Error:${N0_COLOR}" 1>&2
+	${CAT_CMD} ${my_err_file} 1>&2
+	${RM_CMD} -f ${my_err_file}
+fi
+
+exit 0

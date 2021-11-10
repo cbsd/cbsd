@@ -15,7 +15,7 @@ Also please get next files from the bsdconfig distribution:
 
  * You can get a copy of these files from here:
 
-   git clone https://github.com/cbsd/cbsd_useful_stuff.git /tmp
+   git clone https://github.com/cbsd/cbsd_useful_stuff.git /tmp/cbsd_useful_stuff
    cp -a /tmp/cbsd_useful_stuff/dflybsd/usr/libexec/bsdconfig /usr/libexec/
    cp -a /tmp/cbsd_useful_stuff/dflybsd/usr/share/bsdconfig /usr/share/
 

@@ -22,6 +22,7 @@ register_delete_full()
 	cbsdsqlrw local "DELETE FROM rctl WHERE jname='${jname}'" 2>/dev/null
 	cbsdsqlrw local "DELETE FROM bhyve WHERE jname='${jname}'" 2>/dev/null
 	cbsdsqlrw local "DELETE FROM xen WHERE jname='${jname}'" 2>/dev/null
+	cbsdsqlrw local "DELETE FROM qemu WHERE jname='${jname}'" 2>/dev/null
 	cbsdsqlrw local "DELETE FROM virtualbox WHERE jname='${jname}'" 2>/dev/null
 
 	cbsdsqlrw local "DELETE FROM virtualboxdsk WHERE jname=\"${jname}\" 2>/dev/null
@@ -71,13 +72,17 @@ register_insert_full()
 	[ -f "${LIMITS}" ] && jmkrctlconf jname=${jname} type=rctl mode=tosql file=${LIMITS}
 	[ -f "${LIMITS}.extra" ] && jmkrctlconf jname=${jname} type=extra mode=tosql file=${LIMITS}.extra
 
-	if [ "${emulator}" = "bhyve" -o "${emulator}" = "xen" ]; then
-		local MEDIASQL="${jailsysdir}/${jname}/media.sql"
-		if [ -r "${MEDIASQL}" ]; then
-			${SQLITE3_CMD} ${dbdir}/storage_media.sqlite < ${MEDIASQL}
-			[ $? -eq 0 ] && /bin/rm -f ${MEDIASQL}
-		fi
-	fi
+	case "${emulator}" in
+		bhyve|xen|qemu)
+			local MEDIASQL="${jailsysdir}/${jname}/media.sql"
+			if [ -r "${MEDIASQL}" ]; then
+				${SQLITE3_CMD} ${dbdir}/storage_media.sqlite < ${MEDIASQL}
+				[ $? -eq 0 ] && /bin/rm -f ${MEDIASQL}
+			fi
+			;;
+		*)
+			;;
+	esac
 }
 
 register_insert_bhyve()
@@ -299,6 +304,103 @@ register_insert_xen()
 
 	# new schema:
 	. ${distsharedir}/xen_settings.conf
+
+	_sqlparam=
+	_sqlvalue=
+
+	# back compatible - old schema
+	for _i in ${MYCOL}; do
+		eval _val="\$${_i}"
+
+		# workaround for CBSD < 11.1.0 with default VNC password 'cbsd'. Remove this on next release
+		# todo: hidden, protected?
+		case "${_i}" in
+			vnc_password)
+				;;
+			*)
+				[ -z "${_val}" ] && continue
+				;;
+		esac
+
+		if [ -z "${_sqlparam}" ]; then
+			_sqlparam="${_i}"
+		else
+			_sqlparam="${_sqlparam}, ${_i}"
+		fi
+
+		case "${_i}" in
+			vm_ram)
+				# if its not number, then convert
+				if is_number ${_val}; then
+					conv2bytes ${_val};
+					_val="${convval}"
+				fi
+				;;
+		esac
+
+		if [ -z "${_sqlvalue}" ]; then
+			_sqlvalue="'${_val}'"
+		else
+			_sqlvalue="${_sqlvalue}, '${_val}'"
+		fi
+	done
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO settings ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+}
+
+
+register_insert_qemu()
+{
+	local MYCOL _val _i _n _sql _sqlparam _sqlvalue _jid
+
+	. ${distsharedir}/qemu.conf
+
+	_sqlparam="jname "
+	_sqlvalue="'${jname}'"
+
+	[ -n "${register_iso_as}" -a -z "${vm_iso_path}" ] && vm_iso_path="${register_iso_as}"
+
+	# back compatible - old schema
+	for _i in ${MYCOL}; do
+		eval _val="\$${_i}"
+
+		# workaround for CBSD < 11.1.0 with default VNC password 'cbsd'. Remove this on next release
+		# todo: hidden, protected?
+		case "${_i}" in
+			vnc_password)
+				;;
+			*)
+				[ -z "${_val}" ] && continue
+				;;
+		esac
+
+		_sqlparam="${_sqlparam}, ${_i}"
+
+		case "${_i}" in
+			vm_ram)
+				# if its not number, then convert
+				if is_number ${_val}; then
+					conv2bytes ${_val};
+					_val="${convval}"
+				fi
+				;;
+		esac
+
+		_sqlvalue="${_sqlvalue}, '${_val}'"
+	done
+
+	cbsdsqlrw local "INSERT INTO qemu ( ${_sqlparam} ) VALUES ( ${_sqlvalue} )"
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemudsk set jname=\"${jname}\""
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemunic set jname=\"${jname}\""
+
+	# settings already exist?
+	_ret=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT created FROM settings LIMIT 1" )
+
+	[ -n "${_ret}" ] && return 0
+
+	# new schema:
+	. ${distsharedir}/qemu_settings.conf
 
 	_sqlparam=
 	_sqlvalue=

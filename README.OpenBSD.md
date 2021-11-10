@@ -1,8 +1,6 @@
-### To get CBSD work in DFLYBSD platform, you need to install extra packages:
+### To get CBSD work in OpenBSD platform, you need to install extra packages:
 
-% pkg_add flock
- ins sysrc libelf pkgconf sqlite3 rsync
-
+% pkg_add flock pkgconf
 
 Also please get next files from the bsdconfig distribution:
 
@@ -15,16 +13,10 @@ Also please get next files from the bsdconfig distribution:
 /usr/share/bsdconfig/variable.subr
 
  * You can get a copy of these files from here:
-   git clone https://github.com/cbsd/cbsd_useful_stuff.git
 
-### To obtain source tree via 'srcup':
-
-Please copy ~cbsd/etc/defaults/srcup.conf to ~cbsd/etc/srcup.conf
-
-Edit ~cbsd/etc/srcup.conf:
-
-a) Uncomment GITBASE for DFLYBSD
-b) change checkout_method="svn" to checkout_method="git"
+   git clone https://github.com/cbsd/cbsd_useful_stuff.git /tmp/cbsd_useful_stuff
+   cp -a /tmp/cbsd_useful_stuff/dflybsd/usr/libexec/bsdconfig /usr/libexec/
+   cp -a /tmp/cbsd_useful_stuff/dflybsd/usr/share/bsdconfig /usr/share/
 
 ## Missed tools:
 

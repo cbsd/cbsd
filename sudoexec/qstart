@@ -1,0 +1,719 @@
+#!/usr/local/bin/cbsd
+#v12.0.5
+MYARG=""
+MYOPTARG="cfg_only checkpoint debug debug_engine jname lm"
+MYDESC="Start QEMU domain"
+ADDHELP="\
+ cfg_only=<file_path>          - when set, find/create tap/vnc and generate bhyve.conf \n\
+                                 into <file_path> but without run, e.g for debugging\n\
+ checkpoint   - start from specified checkpoint name\n\
+ debug        - more debug messages\n\
+ debug_engine - overwrite debug_engine settings: use gdb or lldb as debugger when launch bhyve \n\
+                ( mostly for inherits debug with live migration )\n\
+ lm - 0 or 1  - when set to 1: prepare for acceptance of this domain via live migration request\n\
+"
+
+CBSDMODULE="qemu"
+EXTHELP="wf_xstop_xstart"
+
+# by default - no live-migrated domain
+lm="0"
+lm_dport=
+lm_rnodename=
+odebug_engine=
+
+cfg_only=		# create a configuration and run immediately
+
+. ${subrdir}/nc.subr
+. ${tools}		# for select_jail_by_list
+
+readconf buildworld.conf
+readconf jail-freebsd-default.conf
+
+[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e qls -r ${sqlreplica}
+
+odebug_engine=		# overwrite debug_engine variable
+debug_engine=		# reset debug_engine before init
+
+. ${cbsdinit}
+
+# live migration
+if [ "${lm}" = "1" ]; then
+	exec /usr/local/sbin/xl -t migrate-receive
+	exit 0
+fi
+
+. ${system}
+. ${subrdir}/universe.subr
+. ${subrdir}/qemu.subr
+. ${subrdir}/vnet.subr 		# get_vm_uplink_interface
+
+[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No QEMU domain specified${N0_COLOR}"
+[ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
+
+. ${subrdir}/fetch.subr
+. ${subrdir}/jcreate.subr       # for external_exec_master_script
+. ${subrdir}/virtual.subr		# for init_systap
+
+make_freebsd_part()
+{
+${CAT_CMD} >> $1 << EOF
+# $vm_os_type specific:
+builder = "hvm"
+serial="pty"
+vncconsole=1
+EOF
+}
+
+make_linux_part()
+{
+${CAT_CMD} >> $1 << EOF
+
+# $vm_os_type specific:
+builder = "hvm"
+#kernel = "/mnt/iso/isolinux/vmlinuz"
+#ramdisk = "/mnt/iso/isolinux/initrd.img"
+#extra = "debian-installer/exit/always_halt=true -- console=hvc0"
+#sdl=1
+serial='pty'
+EOF
+}
+
+make_windows_part()
+{
+${CAT_CMD} >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+acpi = 1
+EOF
+}
+
+make_other_part()
+{
+${CAT_CMD} >> $1 << EOF
+
+# $vm_os_type specific:
+builder='hvm'
+EOF
+}
+
+start_qemu()
+{
+	local QEMUCFG
+	local xvm_ram
+
+	# profile
+	readconf vm-${vm_os_type}-${vm_os_profile}.conf
+	if [ -z "${vm_profile}" ]; then
+		${ECHO} "${N1_COLOR}No such profile: ${N2_COLOR}vm-${vm_os_type}-${vm_os_profile}.conf${N0_COLOR}"
+		sleep 2
+	fi
+	# re-read jail params and apply personal after profile
+	. ${subrdir}/rcconf.subr
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_qemu_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=xstart status=1 workdir="${workdir}"
+	fi
+
+	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
+
+	# todo: shared bhyve/qemu virtual
+	# Cloud-init init. Cloud init only for empty disk
+	if check_for_empty_hdd path=${data}/dsk1.vhd; then
+		if [ -n "${vm_iso_path}" ]; then
+			local prefix=
+			local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+			if [ "${prefix6}" = "cloud-" ]; then
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${N1_COLOR}No such cloud source: ${N2_COLOR}${vm_iso_path}/${iso_img}${N0_COLOR}"
+				fi
+				vm_boot="hdd"
+				${ECHO} "${N1_COLOR}cloud init image initialization..${N0_COLOR}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: xstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
+
+				. ${subrdir}/zfs.subr
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some 
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
+					# to generic clonedata (add dd method)?
+					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					echo
+					# adjust original image size
+					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
+					# to generic clonedata ?
+						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						_ret=$?
+						if [ ${_ret} -eq 1 ]; then
+							# create cloud snapshot for $jname
+							${ZFS_CMD} snapshot ${_cloud_source_zvol}@boot-${jname}
+							# destory original zvol disk for vm
+							${ZFS_CMD} destroy ${_dsk_source_zvol}
+							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
+							${GPART_CMD} commit zvol/${_dsk_source_zvol}
+							# restore original size
+							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# bug here, need for atomic ops ^^ in clone action
+							${ZFS_CMD} set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+						else
+							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
+						fi
+				fi
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+			else
+				manage_boot_by_empty_hdd
+			fi
+		fi
+	else
+		manage_boot_by_empty_hdd
+	fi
+
+	if [ "${vm_boot}" = "cd" ]; then
+		init_iso
+		if [ $? -eq 1 ]; then
+			printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
+				for i in $( ${JOT_CMD} 5 ); do
+					printf "."
+					sleep 1
+				done
+				echo
+		fi
+	fi
+
+	case "${vm_boot}" in
+		"hdd")
+			boot_arg='-boot c'
+			;;
+		"cd")
+			boot_arg='-boot d'
+			;;
+	esac
+
+	# for vnet we can make another action
+	. ${subrdir}/vnet.subr
+
+	#unset zero-value
+	[ "${bhyve_flags}" = "0" ] && unset bhyve_flags
+	[ "${vm_os_profile}" = "0" ] && unset vm_os_profile
+
+#	if ! compile_dsk_args; then
+#		${ECHO} "${N1_COLOR}No such disk for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+#		unset dsk_args
+#	fi
+
+#	if ! compile_cd_args; then
+#		unset cd_args
+#	fi
+
+	# init nic_args
+	if ! compile_nic_args ; then
+		${ECHO} "${N1_COLOR}No such nic for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+		unset nic_args
+	fi
+
+	# init console_args
+	#if ! compile_console_args; then
+	#	${ECHO} "${N1_COLOR}No such console for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+	#	unset console_args
+	#fi
+
+	if [ "${spice_default}" != "1" ]; then
+		# init vnc_args
+		if ! compile_vnc_args ; then
+			unset vnc_args
+		fi
+	else
+		# init vnc_args
+		if ! compile_spice_args ; then
+			unset vnc_spice
+		fi
+	fi
+
+	xvm_ram=$(( vm_ram / 1024 / 1024  ))
+
+	# Poehali!
+
+	export_bhyve_data_for_external_hook
+	external_exec_master_script "master_prestart.d"
+
+	vm_logfile=$( ${MKTEMP_CMD} )
+
+	QEMUCFG="${jailsysdir}/${jname}/qemu.cfg"
+	${TRUNCATE_CMD} -s0 ${QEMUCFG}
+
+	# restore overwrite debug_engine
+	[ -n "${odebug_engine}" ] && debug_engine="${odebug_engine}"
+
+	# todo: loop for multiple devices
+	eval mybridge="\$nic0"
+
+	${CAT_CMD} >> ${QEMUCFG} << EOF
+name = "${jname}"
+memory = ${xvm_ram}
+vcpus = ${vm_cpus}
+
+# Network devices
+vif = [ "bridge=${mybridge}" ]
+
+# Boot args
+${boot_arg}
+
+#vnc = 1
+#vnclisten = "${qemu_vnc_tcp_bind}"
+#vncpasswd="${vnc_password}"
+#vncdisplay="${vncdisplay}"
+
+# larger resolution
+#vga="stdvga"
+# virtio, stdvga, qxl, cirrus
+vga = "stdvga"
+videoram=32
+
+#vm_vnc_port='${vm_vnc_port}'
+opengl=1
+vncconsole=1
+vncunused=0
+
+debug_engine='${debug_engine}'
+
+on_poweroff="${on_poweroff}";
+on_reboot="${on_reboot}";
+on_crash="${on_crash}";
+
+usbdevice = 'tablet'
+
+# SPICE
+#vnc=0
+#on_crash="destroy"
+#spice=1
+#spicehost='0.0.0.0'
+#spiceport=6000
+# spicedisable_ticketing enabled is for no spice password, instead use spicepasswd
+#spicedisable_ticketing=1
+#spicepasswd="test"
+#spicevdagent=1
+#spice_clipboard_sharing=1
+# this will automatically redirect up to 4 usb devices from spice client to domUs
+#spiceusbredirection=4
+# This adds intel hd audio emulated card used for spice audio
+#soundhw="hda"
+#localtime=1
+
+hap="${qemu_hap}"
+nestedhvm="${qemu_nestedhvm}"
+# L1
+#cpuid = ['0x1:ecx=0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
+
+#nographics = 1
+#bios = "ovmf"
+#bios_override = "/usr/local/share/edk2-qemu/QEMU_X64_EFI.fd"
+
+apic=1
+acpi=1
+localtime=1
+usb=1
+
+EOF
+
+	case ${spice_default} in
+		0)
+			${CAT_CMD} >> ${QEMUCFG} <<EOF
+vnc = 1
+spice = 0
+# todo: check v6:
+# QEMU confuses the presence of a port if we use in6 ( [::] )
+vnclisten = "${qemu_vnc_tcp_bind}"
+vncpasswd="${vnc_password}"
+vncdisplay="${vncdisplay}"
+EOF
+			;;
+		1)
+			${CAT_CMD} >> ${QEMUCFG} <<EOF
+vnc = 0
+spice=1
+spicehost="${qemu_spice_tcp_bind}"
+spiceport="${vncdisplay}"
+spicepasswd="${spice_password}"
+EOF
+			;;
+	esac
+
+	if [ -n "${soundhw}" -a "${soundhw}" != "none" ]; then
+		${CAT_CMD} >> ${QEMUCFG} <<EOF
+soundhw="${soundhw}"
+EOF
+	fi
+
+#builder = "hvm"
+#name = "current0"
+#disk = [
+#'/dev/zvol/zroot/current0,raw,xvda,w'
+#]
+#boot = "c"
+#bios = "ovmf"
+#usbdevice = 'tablet'
+##nographics = 1
+#serial = [ "/dev/nmdm0A" ]
+#vnc = 1
+##vnclisten = '0.0.0.0'
+#vif = ['bridge=bridge0,mac=00:02:04:15:fd:e1','bridge=bridge1,mac=00:02:04:15:fd:e2']
+#memory=8192
+#vcpus=6
+#vga = "stdvga"
+#videoram = 16
+#;qemu_platform_pci=1
+
+# UEFI
+#bios = 'ovmf'
+#nographics = 1
+#bios_override = '/usr/share/ovmf/x64/OVMF_CODE.fd'    # Added to try to be explicit, same behavior with or without
+
+	if ! compile_dsk_args ${QEMUCFG}; then
+		${ECHO} "${N1_COLOR}xstart: compile_dsk_args failed for vm: ${N2_COLOR}${jname}${N0_COLOR}"
+		unset dsk_args
+	fi
+
+	case "${vm_os_type}" in
+		"freebsd")
+			make_freebsd_part ${QEMUCFG}
+			;;
+		"linux")
+			make_linux_part ${QEMUCFG}
+			;;
+		"windows")
+			make_windows_part ${QEMUCFG}
+			;;
+		*)
+			make_other_part ${QEMUCFG}
+			;;
+	esac
+
+	# create a configuration only
+	if [ -n "${cfg_only}" ]; then
+		${MV_CMD} ${QEMUCFG} ${cfg_only}
+		err 0 "${N1_COLOR}config created: ${N2_COLOR}${cfg_only}${N0_COLOR}"
+	fi
+
+	# todo: shared bhyve/qemu virtual
+	# cloud-init enabled?
+	# this section should be AFTER master_prestart
+	# cloud_init and CLOUD_FILES was initialized earlier
+	if [ ${cloud_init} -eq 1 ]; then
+			${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
+			if [ "${vm_os_type}" = "windows" ]; then
+				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
+				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
+				${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+			else
+				GENISOIMAGE_CMD=$( which makefs )
+				${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+				# why upper here, whereis spec?
+				${SED_CMD} -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+			fi
+	fi
+
+	# xl restore/checkpoint
+	if [ -n "${checkpoint}" ]; then
+		CHECKPOINT_DIR="${jailsysdir}/${jname}/checkpoints"
+		CHECKPOINT="${CHECKPOINT_DIR}/${checkpoint}.ckp"
+		if [ -r ${CHECKPOINT} ]; then
+			${ECHO} "${N1_COLOR}Checkpoint found, starting from: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
+			qemu_cmd="${XL_CMD} -vvv restore ${CHECKPOINT}"
+		else
+			err 1 "${N1_COLOR}Checkpoint not found: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
+		fi
+	else
+		qemu_cmd="${XL_CMD} -vvv create -c ${QEMUCFG}"
+	fi
+
+	echo "[debug]: $qemu_cmd"
+	#${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${qemu_cmd}"
+
+#memory = ${xvm_ram}
+#vcpus = ${vm_cpus}
+
+#  -machine type=q35,accel=nvmm \
+
+
+qemu_cmd="qemu-system-x86_64 \
+  -smp cpus=${vm_cpus} -m ${xvm_ram} \
+  -cdrom /usr/src-jails/iso/cbsd-iso-FreeBSD-13.0-RELEASE-amd64-disc1.iso \
+  ${boot_arg} \
+  -drive file=/usr/jails/vm/freebsd1/dsk1.vhd,if=none,id=disk0 \
+  -device virtio-blk-pci,drive=disk0 \
+  -netdev user,id=net0,hostfwd=tcp:127.0.0.1:6022-:22 \
+  -device virtio-net-pci,netdev=net0 \
+  -object rng-random,id=rng0,filename=/dev/urandom \
+  -device virtio-rng-pci,rng=rng0 \
+  -display curses \
+  -vga std \
+  -vnc :0
+
+# https://www.kraxel.org/blog/2019/09/display-devices-in-qemu/
+#  -vga qxl \
+# -device bochs-display  (when UEFI)
+#  -vnc :0,cbsd
+
+#  -spice addr=0.0.0.0,port=5900,ipv4=on,disable-ticketing=on,seamless-migration=on"
+
+	case "${debug_engine}" in
+		gdb)
+			if [ -x /usr/local/bin/gdb ]; then
+				gdb_cmd="/usr/local/bin/gdb"
+			elif [ -x /usr/libexec/gdb ]; then
+				gdb_cmd="/usr/libexec/gdb"
+			elif [ -x /usr/bin/gdb ]; then
+				gdb_cmd="/usr/bin/gdb"
+			fi
+			# break while loop
+			echo
+			echo "Warning"
+			echo "Run xl throuch GDB. Please execute 'run' to launch QEMU instance"
+			echo
+			echo "${gdb_cmd} -batch --args ${qemu_cmd}"
+			${gdb_cmd} -ex run --args ${qemu_cmd}
+			;;
+		lldb)
+			echo
+			echo "Warning"
+			echo "Run xl throuch LLDB. Please execute 'run' to launch QEMU instance"
+			echo
+			echo "/usr/bin/lldb -- ${qemu_cmd}"
+			/usr/bin/lldb -- ${qemu_cmd}
+			bhyve_exit=$?
+			${RM_CMD} -f ${tmpdir}/cmds.$$
+			;;
+		*)
+			echo "QEMU: ${qemu_cmd}"
+			#${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${qemu_cmd}"
+			;;
+	esac
+
+	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
+	printf "${N1_COLOR}Waiting for PID"
+#	for i in $( ${SEQ_CMD} 10 ); do
+#		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+#		if [ $? -eq 0 ]; then
+#				sleep 1
+#				printf "."
+#		else
+#				break
+#		fi
+#	done
+
+	[ -z "${vm_pid}" ] && vm_pid="0"
+
+	echo
+
+	external_exec_master_script "master_poststart.d"
+
+	# CBSD QUEUE
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}"
+	fi
+
+	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
+	cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
+
+	# update state_time
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+
+	# update state_time, local SQLite for back compatible
+	cbsdsqlrw local "UPDATE jails SET state_time=\"(strftime('%s','now'))\" WHERE jname=\"${jname}\""
+
+	exit 0
+}
+
+
+# MAIN for multiple jails
+TRAP=""
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
+emulator="qemu"        # for jname_is_multiple
+jname_is_multiple
+
+if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+	# multiple astart always non interactive
+	export inter=0
+	# recursive
+	if [ -n "${jail_list}" ]; then
+		JLIST="${jail_list}"
+	else
+		JLIST=$*
+	fi
+
+	for jname in ${JLIST}; do
+		[ "${jname}" = "inter=0" ] && continue
+		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/xstart.${jname}.$$;"
+		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+		env NOINTER=1 /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
+		#lets save .pid file
+		sleep 1
+		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
+		trap "" HUP INT ABRT BUS TERM EXIT
+		# Artificial delay to create a sequence (for order compliance)
+		# todo: determine VM complete starting
+		sleep 12
+	done
+
+	wait_for_fpid -a start -t ${parallel}
+
+	err 0 "${N1_COLOR}Multiple xstart: ${N2_COLOR}done${N0_COLOR}"
+fi
+
+# MAIN
+. ${distsharedir}/qemu.conf		# only for for MYCOL variables: used in exports below
+
+init_qemu
+init_systap
+
+st_time=$( ${DATE_CMD} +%s )
+. ${subrdir}/time.subr
+st_time=$( ${DATE_CMD} +%s )
+[ -z "${jname}" ] && jname=${1}
+
+# cloud-init enabled?
+# we need this section (besides section cloud-init section in start_qemu() to allocate pci bus id via touching seed.iso
+# since some helpers may work with runtime (e.g pcibus + cloudinit) config
+if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
+	CLOUD_FILES=$( ${FIND_CMD} ${jailsysdir}/${jname}/cloud-init/ -type f | ${XARGS_CMD} )
+	# gen seed only if files exist
+	if [ -n "${CLOUD_FILES}" ]; then
+		cloud_init=1
+		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
+		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
+	else
+		cloud_init=0
+		unset CLOUD_FILES
+	fi
+else
+	cloud_init=0
+fi
+
+
+default_profile="qemu-default-default.conf"
+readconf vnc.conf
+readconf spice.conf
+readconf xstart.conf
+
+readconf ${default_profile}
+
+. ${subrdir}/rcconf.subr
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+[ ${status} -eq 2 ] && err 1 "${N1_COLOR}Domain in slave mode. Please ${N2_COLOR}cbsd jswmode mode=master${N1_COLOR} first${N0_COLOR}"
+
+[ ${jid} -ne 0 ] && err 1 "${N1_COLOR}Jail ${jname} already running, jid: ${N2_COLOR}${jid}${N0_COLOR}"
+[ "${emulator}" != "qemu" ] && err 1 "${N1_COLOR}Not qemu mode${N0_COLOR}"
+[ -z "${vm_ram}" -o -z "${vm_cpus}" -o -z "${vm_os_type}" ] && err 1 "${N1_COLOR}Parameter is mandatory: ${N2_COLOR}vm_ram, vm_cpus, vm_os_type${N0_COLOR}"
+[ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
+[ -z "${debug}" ] && debug=0
+
+if [ ${vm_cpus} -gt ${ncpu} -a ${vm_cpus} -lt ${vm_cpus_max} ]; then
+	${ECHO} "${N1_COLOR}Warning! Current node cpu: ${N2_COLOR}${ncpu}${N1_COLOR}, guest cpu: ${N2_COLOR}${vm_cpus}. ${N1_COLOR}Overcommitting vCPUs can hurt perfomance.${N0_COLOR}"
+elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt ${vm_cpus_max} ]; then
+	err 1 "${N1_COLOR}Valid number of guest CPUs within 1 - ${vm_cpus_max} range. Current vm_cpus: ${N2_COLOR}${vm_cpus}${N0_COLOR}"
+fi
+
+main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
+
+# hardcoded first disk path from SQL. Todo: mark bootable disk(s)
+MDFILE=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM qemudsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+
+if [ -z "${MDFILE}" ]; then
+	${ECHO} "${N1_COLOR}Warning: no any storage device found for this VM${N0_COLOR}"
+else
+	if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
+		${ECHO} "${N1_COLOR}No such ${data}/${MDFILE} but mdsize flags is not null.${N0_COLOR}"
+
+		# if zfsfeat=1, try scan for zvol
+		[ "${zfsfeat}" != "1" ] && break
+
+		readconf zfs.conf
+		. ${subrdir}/zfs.subr
+		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
+
+		[ -z "${DATA}" ] && break
+
+		for lunname in $( ${SEQ_CMD} 0 10 ); do
+			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
+				${LN_CMD} -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
+				${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
+			fi
+		done
+	fi
+fi
+
+# export variables for external hooks
+export jname=${jname}
+
+for _i in ${JARG} ${MYCOL}; do
+	T=
+	eval T="\$$_i"
+	export ${_i}="${T}"
+done
+
+# test for incorrect state
+if [ ${status} -eq 3 ]; then
+	cbsdsqlrw local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
+	comment="cbsdsqlro local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
+	if [ "${comment}" = "Stopping_VM" ]; then
+		jswmode jname=${jname} mode=master comment='0'
+	else
+		${ECHO} "${N1_COLOR}Xen in maintenance: ${N2_COLOR}${comment}${N0_COLOR}"
+		err 1 "${N1_COLOR}Please finish maintenance and switch mode via: ${N2_COLOR}jswmode jname=${jname} mode=master comment='0'${N0_COLOR}"
+	fi
+fi
+
+start_qemu
+
+end_time=$( ${DATE_CMD} +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+cbsdlogger NOTICE ${CBSD_APP}: QEMU domain ${jname} started in ${diff_time}
+
+exit 0
