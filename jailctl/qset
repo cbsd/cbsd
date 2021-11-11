@@ -1,16 +1,16 @@
 #!/usr/local/bin/cbsd
 #v11.1.4
 MYARG="jname"
-CBSDMODULE="bhyve"
+CBSDMODULE="qemu"
 
 . ${subrdir}/nc.subr
-. ${distsharedir}/bhyve.conf
+. ${distsharedir}/qemu.conf
 
-#concat for bhyve arg
-JARG="${MYCOL} nice vm_pid soundhw soundhw_play soundhw_rec nic_ratelimit dsk_iops_limit dsk_mbps_limit gid"
+#concat for qemu arg
+JARG="${MYCOL} nice gid"
 
 MYOPTARG="jconf ${JARG}"
-MYDESC="Modify parameters for bhyve domain"
+MYDESC="Modify parameters for qemu domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -20,23 +20,22 @@ but most will require a VM restart.
 
 You can change multiple parameters at one time separated by space.
 
-For interactive (dialog(1)-based) edit, please use 'cbsd bconfig' instead.
+For interactive (dialog(1)-based) edit, please use 'cbsd qconfig' instead.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}jconf=${N0_COLOR}     - <path_to_file>, load and set settings from jconf
- ${N2_COLOR}mode=${N0_COLOR}      - set 'force' for modification on the running bhyve
- ${N2_COLOR}vm_pid=${N0_COLOR}    - when 'auto', force to update pid from process list
+ ${N2_COLOR}mode=${N0_COLOR}      - set 'force' for modification on the running qemu
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
- # cbsd bset jname=myvmm vm_ram="4g"
- # cbsd bset jname='*' cpus=8 hdd_boot_firmware=refind
+ # cbsd qset jname=myvmm vm_ram="4g"
+ # cbsd qset jname='*' cpus=8 xhci=0
 
 ${H3_COLOR}See also${N0_COLOR}:
 
-  cbsd bget --help
-  cbsd bconfig --help
+  cbsd qget --help
+  cbsd qconfig --help
 
 "
 
@@ -44,7 +43,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${strings}
 . ${cbsdinit}
 
-emulator="bhyve"	# for jname_is_multiple
+emulator="qemu"	# for jname_is_multiple
 jname_is_multiple
 
 if [ -n "${jail_list}" ]; then
@@ -57,7 +56,7 @@ if [ -n "${jail_list}" ]; then
 	done
 
 	for jname in ${jail_list}; do
-		bset jname=${jname} ${new_arg}
+		qset jname=${jname} ${new_arg}
 	done
 	exit 0
 fi
@@ -85,28 +84,6 @@ update_jails()
 				VAL=$(( ${VAL} * 1024 * 1024 ))
 			fi
 			;;
-		vm_pid)
-			VAL=
-			case "${vm_pid}" in
-				[Aa][Uu][Tt][Oo])
-					. ${subrdir}/bhyve.subr
-					check_for_bhyve_process -j ${jname}
-					if [ $? -eq 0 ]; then
-						VAL=0
-					else
-						VAL="${vm_pid}"
-					fi
-					;;
-				*)
-					VAL="${vm_pid}"
-					;;
-			esac
-			[ -z "${VAL}" ] && err 1 "${N1_COLOR}bset vm_pid: unable to determine pid for: ${N2_COLOR}${jname}${N0_COLOR}"
-
-			if is_number ${VAL}; then
-				err 1 "${N1_COLOR}bset vm_pid: not number: ${N2_COLOR}${VAL}${N0_COLOR}"
-			fi
-			;;
 	esac
 
 	[ -z "${i}" ] && return 0
@@ -121,30 +98,9 @@ update_jails()
 			cbsdsqlrw ${_formfile} UPDATE forms set cur=\"${VAL}\" WHERE param=\"nice\"
 			brenice jname=${jname}
 			;;
-		vm_pid)
-			# pid stored in jails settings as JID (should be moved to settings table)
-			cbsdsqlrw local "UPDATE jails SET jid=\"${VAL}\" WHERE jname=\"${jname}\""
-			;;
-		gid)
-			# pid stored in jails settings as JID (should be moved to settings table)
-			cbsdsqlrw local "UPDATE jails SET gid=\"${VAL}\" WHERE jname=\"${jname}\""
-			;;
-		soundhw_play|soundhw_rec)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyve_soundhw SET ${i}=\"${VAL}\""
-			;;
-		nic_ratelimit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_ratelimit=\"${VAL}\" WHERE id=\"1\""
-			;;
-		dsk_iops_limit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_iops_limit=\"${VAL}\" WHERE dsk_path=\"dsk1.vhd\""
-			;;
-		dsk_mbps_limit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_mbps_limit=\"${VAL}\" WHERE dsk_path=\"dsk1.vhd\""
-			;;
 		ip4_addr)
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
 			# back compatible
-			cbsdsqlrw local UPDATE bhyve SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
 			cbsdsqlrw local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
 			if [ -f "${jailsysdir}/${jname}/rc.conf_${jname}" ]; then
 				# current setting used by cloud-init helper/blogin
@@ -154,7 +110,11 @@ update_jails()
 		*)
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
 			# back compatible
-			cbsdsqlrw local UPDATE bhyve SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+			case "${i}" in
+				vm_cpus|vm_ram)
+					cbsdsqlrw local UPDATE qemu SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+					;;
+			esac
 			;;
 	esac
 
@@ -164,21 +124,21 @@ update_jails()
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
 jid=$( jstatus jname=${jname} )
-[ $? -eq 0 ] && err 1 "${N1_COLOR}No such bhyve: ${N2_COLOR}${jname}${N0_COLOR}"
+[ $? -eq 0 ] && err 1 "${N1_COLOR}No such qemu: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${N1_COLOR}No such jconf file: ${N2_COLOR}${jconf}${N0_COLOR}"
 	#jset jname=${jname} `${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} .| ${TR_CMD} -d ";"`
 	my_arg=$( ${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} . | ${TR_CMD} -d ";" | ${SED_CMD} 's/"/\\"/g' | ${XARGS_CMD} )
 	exec /bin/sh << EOF
-/usr/local/bin/cbsd bset jname=${jname} "${my_arg}" autorestart=${autorestart}
+/usr/local/bin/cbsd qset jname=${jname} "${my_arg}" autorestart=${autorestart}
 EOF
 	exit 0
 fi
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	allstr="$@"
-	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=update ${allstr}
+	[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_qemu_queue_name} id="${jname}" cmd=update ${allstr}
 fi
 
 for n in "$@"; do
