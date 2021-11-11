@@ -4,23 +4,41 @@ CBSDMODULE="qemu"
 MYARG=""
 MYOPTARG="alljails display header hidden node order shownode"
 MYDESC="List QEMU domain and status"
-ADDHELP="\
- alljails=1 - (0 or 1): force to display foreign/remote resources\n\
-  when sqlreplica=1 and node available, alljails sets to 1 automatically\n\
- display= list by comma for column.\n\
-  Default: if RCTL enabled: jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc\n\
-  If ZFS features on: vm_zfs_guid\n\
-  If RCTL unavailable: jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
-  If sqlrepica and node available: nodename,jname,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc\n\
-   additional field: path\n\
-  Notes: vnc data is meta info from: qemu_vnc_tcp_bind:vnc_port\n\
- header=0 don't print header\n\
- hidden= show hidden env as well? 1 (default) - show, 0 - skipp\n\
- node= only for current node\n\
- order= asc (default) or desc\n\
- shownode=1 - show nodename for domains\n\
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Print list of bhyve VMs including remote domains.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR} - (0 or 1): force to display foreign/remote resources
+             when sqlreplica=1 and node available, alljails sets to 1 automatically.
+ ${N2_COLOR}display=${N0_COLOR}  - list by comma for column.
+             Default:
+               if RCTL enabled: 
+                 'jname,jid,vm_ram,vm_curmem,vm_cpus,pcpu,vm_os_type,ip4_addr,status,vnc';
+               if ZFS features on, availabled params:
+                 'vm_zfs_guid';
+               if RCTL unavailable:
+                 'jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc';
+               if sqlrepica and node available:
+                 'nodename,jname,jid,vm_ram,vm_cpus,vm_os_type,ip4_addr,status,vnc';
+               additional field:
+                 'path'
+             Notes: 'vnc' data column is meta info from: 'bhyve_vnc_tcp_bind':'vnc_port'.
+ ${N2_COLOR}header=${N0_COLOR}   - when set to 0 - don't print header.
+ ${N2_COLOR}hidden=${N0_COLOR}   - show hidden env as well? 1 (default) - show, 0 - skip.
+ ${N2_COLOR}node=${N0_COLOR}     - only for current node.
+ ${N2_COLOR}order=${N0_COLOR}    - [asc|desc] sort order, default is: 'asc'.
+ ${N2_COLOR}shownode=${N0_COLOR} - whe set to 1 - show nodename for domains.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd qls display=jname,vm_os_profile,vm_ram,vnc header=0
+
 "
-EXTHELP="wf_xls"
+
+EXTHELP="wf_qls"
 
 . ${subrdir}/nc.subr
 . ${strings}
@@ -132,7 +150,7 @@ populate_output_data()
 	local unregister="0"
 	local _tmpport _tmpbind
 	local _pid=0 _node_is_online=0 _md5_node_name
-	local _A _ALLJCOL _state
+	local _A _ALLJCOL _state _ret _test_pid
 
 	printf "${N0_COLOR}" # for column sort
 
@@ -151,20 +169,32 @@ populate_output_data()
 
 	if [ "${sqlfile}" = "local" ]; then
 		. ${subrdir}/qemu.subr
-		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
-		if [ $? -eq 0 ]; then
-			# qemu is active
-			printf "${N2_COLOR}"
-
-			if [ "${racct}" = "1" ]; then
-				memoryuse=0
-				pcpu=0
-				_pid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
-				if [ "${_pid}" = "0" -o "${_pid}" = "1" ]; then
-					_val="0"
+		if [ -r ${jailsysdir}/${jname}/qemu.pid ]; then
+			_test_pid=$( ${CAT_CMD} ${jailsysdir}/${jname}/qemu.pid 2>/dev/null )
+			if [ -n "${_test_pid}" ]; then
+				${PS_CMD} -p ${_test_pid} > /dev/null 2>&1
+				_ret=$?
+				if [ ${_ret} -eq 0 ]; then
+					# qemu is active
+					printf "${N2_COLOR}"
+					myjid="${_test_pid}"
+					jid="${_test_pid}"
+					if [ "${racct}" = "1" ]; then
+						memoryuse=0
+						pcpu=0
+						get_rctl ${jid}
+					fi
 				else
-					get_rctl ${_pid}
+					# qemu is inactive
+					myjid="0"
+					jid="0"
+					printf "${N4_COLOR}"
 				fi
+			else
+				# qemu is inactive
+				myjid="0"
+				jid="0"
+				printf "${N4_COLOR}"
 			fi
 		else
 			myjid="0"
@@ -177,7 +207,7 @@ populate_output_data()
 		eval _node_is_online=\$node_${_md5_node_name}_online
 		if [ "${_node_is_online}" = "1" ]; then
 			# retr from sql
-			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" )
+			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
 			case ${jid} in
 				0)
 					printf "${N4_COLOR}"
@@ -246,7 +276,7 @@ populate_output_data()
 					fi
 					;;
 				vnc_port)
-					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
 					if [ -n "${_tmpport}" ]; then
 						_val="${_tmpport}"
 					else
@@ -254,17 +284,38 @@ populate_output_data()
 					fi
 					;;
 				vnc)
-					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
 					if [ -n "${_tmpport}" ]; then
-						if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-							# we need for special route of tcpbind presentation for foreign qemu. replace 0.0.0.0 by nodeip
-							if [ "${sqlfile}" != "local" ]; then
-								_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
-							else
-								_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
-							fi
+						# jailed?
+						_jailed=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+						[ -z "${_jailed}" ] && _jailed="0"
+						if [ "${_jailed}" != "0" ]; then
+							# this is jailed qemu, try to obtain jail IPs
+							_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
+							iptype ${_jip} >/dev/null 2>&1
+							_ret=$?
+							case ${_ret} in
+							1)
+								# jail have valid IPv4
+								_tmpbind="${_jip}"
+								;;
+							*)
+								# ipv6 or invalid IP
+								_tmpbind="Unk"
+								;;
+							esac
 						else
-							_tmpbind="Unk"
+							# not jailed
+							if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
+								# we need for special route of tcpbind presentation for foreign qemu. replace 0.0.0.0 by nodeip
+								if [ "${sqlfile}" != "local" ]; then
+									_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+								else
+									_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+								fi
+							else
+								_tmpbind="Unk"
+							fi
 						fi
 						_val="${_tmpbind}:${_tmpport}"
 					else
@@ -351,16 +402,15 @@ show_local()
 
 	# Unregister area
 	[ ! -d "${jailrcconfdir}" ] && return 0
-	ip4_addr="-"
-	host_hostname="-"
-	path="-"
+	ip4_addr="\-"
+	host_hostname="\-"
+	path="\-"
 	jid="0"
-	vm_ram="-"
-	vm_cpus="-"
-	vm_os_type="-"
-	path="-"
-	status="-"
-	vnc="-"
+	vm_ram="\-"
+	vm_cpus="\-"
+	vm_os_type="\-"
+	status="\-"
+	vnc="\-"
 
 	for J in $( ${LS_CMD} ${jailrcconfdir} ); do
 		[ "${J}" = "dir.id" ] && continue

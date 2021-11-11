@@ -434,7 +434,6 @@ compile_dsk_args()
 			exit 0
 		fi
 
-		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
 		store_qemu_pci_slot -n ${dsk_controller} -d ${full_dsk_path} -a ${qemu_pci_index}
 
 		#echo "export dsk${dsk_id}=\"-s ${_pcislot_args},${dsk_controller},${full_dsk_path}\" ;"
@@ -486,7 +485,7 @@ normalize_nic_hwaddr()
 }
 
 
-# export arguments for bhyve about nic vms in $nic_args variable
+# export arguments for qemu about nic vms in $nic_args variable
 # $jname must be set's
 # sample:
 # jname="debian"
@@ -712,8 +711,6 @@ compile_nic_args()
 			exit 0
 		fi
 
-		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
-
 		#-device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap100,script=no,downscript=no \
 		myargs=""
 #		myargs="-s ${_pcislot_args},${net_emul},${mytap}"
@@ -845,19 +842,20 @@ qemu_remove_nic()
 	return 0
 }
 
-
-# export vncdisplay
 compile_vnc_args()
 {
 	local vm_port
 	local vnc_bind
+	local _jip _ret
+	local width height
+	local _pcislot_args=
+	local _vnc_bind=127.0.0.1
+	local _skip_ports i _vms _tmpport
+
+	vnc_args=
 
 	# spice by default?
 	[ ${spice_default} -eq 1 ] && return 1
-
-	local width height
-
-	vnc_args=
 
 	case "${vm_vnc_port}" in
 		0)
@@ -875,9 +873,9 @@ compile_vnc_args()
 			# build skip list
 			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"qemu\"" )
 			for i in ${_vms}; do
-				[ "${i}" = "${jname}" ] && continue             # its me
+				[ "${i}" = "${jname}" ] && continue		# its me
 				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
-				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vm_vnc_port FROM settings LIMIT 1" )
+				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
 				if [ -n "${_tmpport}" ]; then
 					if ! is_number ${_tmpport}; then
 						[ ${_tmpport} -eq 0 ] && continue
@@ -891,33 +889,21 @@ compile_vnc_args()
 					fi
 				fi
 			done
+
 			vm_port=$( get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\" )
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
 			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
-##
-			vnc_args="--vrde on --vrdeport ${vm_port}"
-			vncdisplay=$(( ${vm_port} - 5900 ))
-			${ECHO} "${N1_COLOR}VRDP is enabled. VNC port: ${N2_COLOR}${vm_port}. ${N1_COLOR}VNC pass: ${N2_COLOR}cbsd${N0_COLOR}${N0_COLOR}"
 			;;
 		1)
-			vncdisplay=0
-			vm_port=0
-			vnc_args="--vrde off"
-		;;
-	*)
-			vm_port=${vm_vnc_port}
-			if [ ${vm_port} -ge 5900 ]; then
-				vncdisplay=$(( ${vm_port} - 5900 ))
-			else
-				# unknown
-				vncdisplay=0
-			fi
-			vnc_args="--vrde on --vrdeport ${vm_port}"
+			return 1
+			;;
+		*)
+			vm_port="${vm_vnc_port}"
 			;;
 	esac
 
-	# update vm_vnc_port in SQL and duplicate it in the ascii file
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vm_vnc_port=\"${vm_port}\""
+	# update vnc_port in SQL and duplicate it in the ascii file
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_port=\"${vm_port}\""
 	echo "${vm_port}" > ${jailsysdir}/${jname}/vnc_port
 
 	if [ -n "${qemu_vnc_tcp_bind}" ]; then
@@ -926,20 +912,24 @@ compile_vnc_args()
 		vnc_bind="${default_vnc_tcp_bind}"
 	fi
 
-	# add qemu_vnc_tcp_ipconnect variables, used in
-	# vncviewer promt and exported hooks variables
-	if [ "${vnc_bind}" = "0.0.0.0" ]; then
-		qemu_vnc_tcp_ipconnect="${nodeip}"
-	else
-		qemu_vnc_tcp_ipconnect="${vnc_bind}"
-	fi
+	# jailed?
+	_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	[ -z "${_jailed}" ] && _jailed="0"
 
-	if [ -n "${qemu_vnc_resolution}" ]; then
-		width=${qemu_vnc_resolution%%x*}
-		height=${qemu_vnc_resolution##*x}
-	else
-		width="${default_vnc_width}"
-		heigh="${default_vnc_height}"
+	# this is jailed qemu, try to obtain jail IPs
+	if [ "${_jailed}" != "0" ]; then
+		_jip=$( jget mode=quiet jname=${_jailed} ip4_addr )
+		iptype ${_jip} >/dev/null 2>&1
+		_ret=$?
+		case ${_ret} in
+		1)
+			# jail have valid IPv4
+			vnc_bind="${_jip}"
+			;;
+		*)
+			# ipv6 or invalid IP
+			;;
+		esac
 	fi
 
 	# add qemu_vnc_tcp_ipconnect variables, used in
@@ -964,7 +954,26 @@ compile_vnc_args()
 			;;
 	esac
 
-	${ECHO} "${N1_COLOR}VRDP is enabled. VNC bind/port: ${N2_COLOR}${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
+	if [ -n "${qemu_vnc_resolution}" ]; then
+		width=${qemu_vnc_resolution%%x*}
+		height=${qemu_vnc_resolution##*x}
+	else
+		width="${default_vnc_width}"
+		heigh="${default_vnc_height}"
+	fi
+
+	#vnc_args="-s ${_pcislot_args},fbuf,tcp=${vnc_bind}:${vm_port},w=${width},h=${height}"
+	local _vm_screen=$(( vm_port - 5900 ))
+	vnc_args="-vnc ${vnc_bind}:${_vm_screen}"
+
+	if [ "${vnc_password}" = "0" -o -z "${vnc_password}" ]; then
+		unset vnc_password
+	else
+		#vnc_args="${vnc_args},password=on"
+		# change password via qemu-monitor
+	fi
+
+	${ECHO} "${N1_COLOR}VNC is enabled. VNC bind/port: ${N2_COLOR}${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Resolution: ${N2_COLOR}${width}x${height}.${N0_COLOR}"
 	[ -n "${vnc_password}" ] && ${ECHO} "${N1_COLOR}VNC pass: ${N2_COLOR}${vnc_password}${N0_COLOR}"
@@ -1030,7 +1039,7 @@ compile_spice_args()
 			cbsdlogger NOTICE ${CBSD_APP}: auto-detected free Spice port [skip for: ${_skip_ports}]: ${vm_port} for ${_spice_bind}
 ##
 			spice_args="--vrde on --vrdeport ${vm_port}"
-			${ECHO} "${N1_COLOR}VRDP is enabled. Spice port: ${N2_COLOR}${vm_port}. ${N1_COLOR}Spicy pass: ${N2_COLOR}cbsd${N0_COLOR}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}SPICE is enabled. Spice port: ${N2_COLOR}${vm_port}. ${N1_COLOR}Spicy pass: ${N2_COLOR}cbsd${N0_COLOR}${N0_COLOR}"
 			;;
 		1)
 			vncdisplay=0
@@ -1114,7 +1123,8 @@ compile_spice_args()
 # e.g: check_for_qemu_process -j vm1
 check_for_qemu_process()
 {
-	local jname b_jname _state _domid
+	local jname b_jname _state _domid _ret _test_pid
+
 	unset vm_pid vm_state
 
 	while getopts "j:" opt; do
@@ -1126,26 +1136,32 @@ check_for_qemu_process()
 
 	[ -z "${jname}" ] && return 0
 
-	_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
-	[ $? -ne 0 ] && return 0
-	_domid=$( ${XL_CMD} domid ${jname} )
-	. ${strings}
+	if [ -r ${jailsysdir}/${jname}/qemu.pid ]; then
+		_test_pid=$( ${CAT_CMD} ${jailsysdir}/${jname}/qemu.pid 2>/dev/null )
+		if [ -n "${_test_pid}" ]; then
+			${PS_CMD} -p ${_test_pid} > /dev/null 2>&1
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				return 0
+			fi
+		else
+			return 0
+		fi
+	else
+		return 0
+	fi
 
-	local search_cmd=" -qemu-domid ${_domid} "
-
-	eval $( ${PS_CMD} axopid,state,ucomm,command -ww | while read pid state ucomm command; do
+	eval $( ${PS_CMD} axopid,state,ucomm,command -ww -p ${_test_pid} | while read pid state ucomm command; do
 		case ${ucomm} in
-			qemu-system-i386)
+			qemu-system-x86_64)
+				echo vm_state=\"${state}\"
+				echo vm_pid=\"${_test_pid}\"
+				break
 				;;
 			*)
 				continue
 				;;
 		esac
-
-		if echo "${command}" | ${GREP_CMD} -q "${search_cmd}" 2>/dev/null; then
-			echo vm_state=\"${state}\"
-			echo vm_pid=\"${pid}\"
-		fi
 	done )
 
 	[ -z "${vm_pid}" ] && return 0
