@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.5
 MYARG=""
-MYOPTARG="cfg_only debug debug_engine jname lm"
+MYOPTARG="cfg_only debug debug_engine delay jname lm"
 MYDESC="Start QEMU domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -15,13 +15,13 @@ ${H3_COLOR}Options${N0_COLOR}:
                      generate qemu args but without run, e.g for debugging.
  ${N2_COLOR}debug=${N0_COLOR}            - more debug messages.
  ${N2_COLOR}debug_engine=${N0_COLOR}     - overwrite debug_engine settings: use gdb or lldb
-                     as debugger when launch bhyve ( mostly for inherits debug
+                     as debugger when launch qemu ( mostly for inherits debug
                      with live migration ).
  ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N secbefore start, mainly to smooth
                      the astart, default is: '0', no delay.
  ${N2_COLOR}inter=${N0_COLOR}            - set 1 to prevent any questions and to accept answers by default.
  ${N2_COLOR}jname=${N0_COLOR}            - Target VM. If jail='*' or jail='vm*' then start  all
-                     bhyve or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
+                     qemu or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
  ${N2_COLOR}lm=${N0_COLOR}               - 0,1: when set to 1: prepare for acceptance of this
                      domain via live migration request ( used by 'bmigrate').
  ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration.
@@ -40,7 +40,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 CBSDMODULE="qemu"
-EXTHELP="wf_xstop_xstart"
+EXTHELP="wf_xstop_qstart"
 
 # by default - no live-migrated domain
 lm="0"
@@ -56,12 +56,20 @@ cfg_only=		# create a configuration and run immediately
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
-[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e qls -r ${sqlreplica}
+jname=
+
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ ! -r ${Makefile} ]; then
+	[ -z "${1}" ] && select_jail_by_list -s "List of offline VMs" -a "Off" -e qls -r ${sqlreplica}
+fi
 
 odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 
+delay=0
 . ${cbsdinit}
+ojname="${jname}"
 
 # live migration
 if [ "${lm}" = "1" ]; then
@@ -74,7 +82,45 @@ fi
 . ${subrdir}/qemu.subr
 . ${subrdir}/vnet.subr 		# get_vm_uplink_interface
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No QEMU domain specified${N0_COLOR}"
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. ${Makefile}
+	all_qemu_list=$( ${EGREP_CMD} '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
+	jname="${all_qemu_list}"
+
+	if [ -n "${ojname}" ]; then
+		jname="${ojname}"
+	fi
+
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+fi
+
+# trim args from "$*"
+ARGS=
+for i in $*; do
+	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+
+	[ "${prefix6}" = "delay=" ] && shift && continue
+	[ "${prefix6}" = "jname=" ] && shift && continue
+	[ "${prefix6}" = "quiet=" ] && shift && continue
+	[ "${prefix6}" = "inter=" ] && shift && continue
+
+	if [ -n "${ARGS}" ]; then
+		ARGS="${ARGS} ${i}"
+	else
+		ARGS="${i}"
+	fi
+done
+
+[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}no qemu specified${N0_COLOR}"
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"	# store overwrite debug_engine
 
 . ${subrdir}/fetch.subr
@@ -97,7 +143,7 @@ start_qemu()
 
 	# CBSD QUEUE
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_qemu_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=xstart status=1 workdir="${workdir}"
+		[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_qemu_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=qstart status=1 workdir="${workdir}"
 	fi
 
 	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
@@ -118,7 +164,7 @@ start_qemu()
 				vm_boot="hdd"
 				${ECHO} "${N1_COLOR}cloud init image initialization..${N0_COLOR}"
 				local _myfile="${iso_img}"
-				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: xstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
+				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: qstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
 
 				. ${subrdir}/zfs.subr
 
@@ -436,14 +482,12 @@ ${vnc_args} \
 
 # MAIN for multiple jails
 TRAP=""
-
+emulator="qemu"		# for jname_is_multiple
+jname_is_multiple
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
-
-emulator="qemu"        # for jname_is_multiple
-jname_is_multiple
 
 if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	# multiple astart always non interactive
@@ -456,13 +500,12 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	fi
 
 	for jname in ${JLIST}; do
-		[ "${jname}" = "inter=0" ] && continue
-		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/xstart.${jname}.$$;"
+		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/qstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-		env NOINTER=1 /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/qstart.${jname}.$$ /usr/local/bin/cbsd qstart jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
-		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
+		[ -f "${ftmpdir}/qstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/qstart.${jname}.$$ ) --timeout=${parallel}
 		trap "" HUP INT ABRT BUS TERM EXIT
 		# Artificial delay to create a sequence (for order compliance)
 		# todo: determine VM complete starting
@@ -471,19 +514,25 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	wait_for_fpid -a start -t ${parallel}
 
-	err 0 "${N1_COLOR}Multiple xstart: ${N2_COLOR}done${N0_COLOR}"
+	err 0 "${N1_COLOR}Multiple qstart: ${N2_COLOR}done${N0_COLOR}"
 fi
 
 # MAIN
 . ${distsharedir}/qemu.conf		# only for for MYCOL variables: used in exports below
+. ${subrdir}/time.subr
+[ -z "${jname}" ] && jname=${1}
 
-init_qemu
 [ "${create_cbsdsystem_tap}" = "1" ] && init_systap
 
+# mainly to smooth mass start in astart.
+if [ ${delay} -ne 0 ]; then
+	[ -z "${boot_delay}" ] && boot_delay=1
+		cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname}: ${boot_delay} sec.
+		sleep ${boot_delay}
+fi
+
+# start qemu
 st_time=$( ${DATE_CMD} +%s )
-. ${subrdir}/time.subr
-st_time=$( ${DATE_CMD} +%s )
-[ -z "${jname}" ] && jname=${1}
 
 # cloud-init enabled?
 # we need this section (besides section cloud-init section in start_qemu() to allocate pci bus id via touching seed.iso
@@ -507,7 +556,7 @@ fi
 default_profile="qemu-default-default.conf"
 readconf vnc.conf
 readconf spice.conf
-readconf xstart.conf
+readconf qstart.conf
 
 readconf ${default_profile}
 
