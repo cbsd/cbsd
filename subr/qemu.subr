@@ -198,7 +198,6 @@ next_pci_id()
 	return 1
 }
 
-
 init_qemu_usage()
 {
 	echo
@@ -211,7 +210,6 @@ init_qemu_usage()
 	esac
 	echo
 }
-
 
 # test environment for qemuing
 # init tmuxcmd
@@ -311,8 +309,8 @@ compile_cd_args()
 #		fi
 
 		# -drive file=IMAGE.iso,media=cdrom
-#		echo "export cd${cd_id}=\"-drive file=${path},index=${qemu_pci_index},media=cdrom,readonly,format=raw\" ;"
-		echo "export cd${cd_id}=\"-drive file=${path},media=cdrom,readonly,format=raw\" ;"
+#		echo "export cd${cd_id}=\"-drive file=${path},index=${qemu_pci_index},media=cdrom,readonly=on,format=raw\" ;"
+		echo "export cd${cd_id}=\"-drive file=${path},media=cdrom,readonly=on,format=raw\" ;"
 
 		# export cdX_path
 		echo "export cd${cd_id}_path=\"${path}\";"
@@ -342,7 +340,7 @@ compile_cd_args()
 			# no free pci bus
 			exit 0
 		fi
-		cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,index=${qemu_pci_index},media=cdrom,readonly,format=raw"
+		cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw"
 	fi
 
 # qemu-system-x86_64 -drive format=raw,media=cdrom,readonly,file=debian-8.2.0-amd64-DVD-1.iso 
@@ -379,7 +377,11 @@ compile_dsk_args()
 	local xvd_num=0		# vxd + hd have same counter
 	local sd_num=0
 
-	dsk_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM qemudsk' )
+	dsk_args=
+
+#	return 0
+
+#	dsk_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM qemudsk' )
 
 	iso_img2=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
 
@@ -495,6 +497,16 @@ compile_nic_args()
 
 	# bstart.conf: clear VM hwaddr in global ARP table
 	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
+
+	nic_args=
+
+	# -device e1000,netdev=net0,host_mtu=1500,mac=00:a0:98:b9:dd:60 -netdev tap,id=net0,ifname=tap1,script=no,downscript=no
+	# -device e1000,netdev=net1 
+	#nic_args="-device e1000,netdev=net0,host_mtu=1500,mac=00:a0:98:b9:dd:60 -netdev tap,id=net0,ifname=tap1,script=no,downscript=no"
+#	nic_args="-net nic,model=e1000 -net tap,id=tap1,script=no"
+#	return 0
+
+	#nic_args="-net nic,model=e1000 -net tap,id=tap${tap_id},script=no"
 
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags FROM qemunic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit nic_flags; do
 
@@ -714,7 +726,6 @@ compile_nic_args()
 			esac
 		fi
 
-
 		# append -device for mac
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
@@ -824,6 +835,65 @@ qemu_remove_nic()
 	return 0
 }
 
+compile_kernel_args()
+{
+	kernel_args=
+
+	[ -z "${kernel}" ] && return 0
+	[ "${kernel}" = "0" ] && return 0
+
+	kernel_args="-kernel ${kernel}"
+	return 0
+}
+
+compile_bios_args()
+{
+	bios_args=
+
+	[ -z "${bios}" ] && return 0
+	[ "${bios}" = "0" ] && return 0
+
+	bios_args="-bios ${bios}"
+	return 0
+}
+
+compile_cpu_args()
+{
+	cpu_args=
+
+	[ -z "${cpu}" ] && return 0
+	[ "${cpu}" = "0" ] && return 0
+
+	# todo: auto
+	if [ "${cpu}" = "auto" ]; then
+		# ???
+	else
+		cpu_args="-cpu ${cpu}"
+	fi
+	return 0
+}
+
+# todo: 'auto' by -vga help
+compile_vga_args()
+{
+	vga_args=
+
+	[ -z "${vga}" ] && return 0
+	if [ "${vga}" = "0" ]; then
+		vga_args="-nographic"
+		return 0
+	fi
+
+	# todo: auto/qxl..
+	if [ "${vga}" = "std" ]; then
+		vga_args="-vga std"
+	else
+		vga_args="-vga ${vga}"
+	fi
+
+	return 0
+}
+
 compile_machine_args()
 {
 	local _ret _accel=0
@@ -831,6 +901,24 @@ compile_machine_args()
 	machine_args=
 
 	[ -z "${machine}" ] && err 1 "${CBSD_APP}: compile_machine_args: no such machine settings${N0_COLOR}"
+
+	# RISC64: qemu -machine help
+	#Supported machines are:
+	#none                 empty machine
+	#sifive_e             RISC-V Board compatible with SiFive E SDK
+	#sifive_u             RISC-V Board compatible with SiFive U SDK
+	#spike                RISC-V Spike Board (default)
+	#spike_v1.10          RISC-V Spike Board (Privileged ISA v1.10)
+	#spike_v1.9.1         RISC-V Spike Board (Privileged ISA v1.9.1)
+	#virt                 RISC-V VirtIO board
+
+	#machine_args="-machine spike"
+	machine_args="-machine virt"
+
+	# riscv need for sysutils/opensbi for bios options
+	# riscv need for sysutils/u-boot-qemu-riscv64 for -kernel options
+
+	return 0
 
 	machine_args="-machine type=${machine}"
 
@@ -860,7 +948,9 @@ compile_machine_args()
 			machine_args="${machine_args},accel=nvmm"
 		fi
 	else
-		machine_args="${machine_args},accel=${machine_accel}"
+		if [ -n "${machine_accel}" -a "${machine_accel}" != "0" ]; then
+			machine_args="${machine_args},accel=${machine_accel}"
+		fi
 	fi
 
 	return 0
@@ -1013,9 +1103,6 @@ compile_vnc_args()
 
 	return 0
 }
-
-
-
 
 # export vncdisplay
 compile_spice_args()
@@ -1179,9 +1266,14 @@ check_for_qemu_process()
 		return 0
 	fi
 
+	# on DFLY, 'qemu-system-x86_64' does not fit into UCOMM column (even with -ww options), unlike FreeBSD.
+	# looking for a non-strict match:
+	# qemu-system*)
+	# instead of
+	# qemu-system-x86_64)
 	eval $( ${PS_CMD} axopid,state,ucomm,command -ww -p ${_test_pid} | while read pid state ucomm command; do
 		case ${ucomm} in
-			qemu-system-x86_64)
+			qemu-system*)
 				echo vm_state=\"${state}\"
 				echo vm_pid=\"${_test_pid}\"
 				break

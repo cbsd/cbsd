@@ -1,0 +1,180 @@
+#!/usr/local/bin/cbsd
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt=" Virtual Machine: ${jname} "
+	local menu_list="
+		'A $msg_add_new_img'	'${msg_add_new_img_desc}'	'Add and configure new virtual image'
+		'-'	'-'	''
+	" # END-QUOTE
+	local defaultitem=
+	local hline="$hline_arrows_tab_enter"
+
+	local n=1
+
+	for last_disk in $( ${SEQ_CMD} 1 16 ); do
+		unset dsk_controller dsk_path dsk_slot dsk_type controller_id
+		eval dsk_controller="\$dsk_controller$last_disk"
+		[ -z "${dsk_controller}" ] && break
+		eval dsk_path="\$dsk_path$last_disk"
+		eval dsk_slot="\$dsk_slot$last_disk"
+		eval dsk_type="\$dsk_type$last_disk"
+		eval controller_id="\$controller_id$last_disk"
+		dsk_fullpath="${data}/${dsk_path}"
+
+		dsk_realsize=$( /usr/bin/du -sh ${dsk_fullpath} | ${AWK_CMD} '{printf $1}' 2>/dev/null )
+		dsk_size=$( /usr/bin/stat -f "%z" ${dsk_fullpath} 2>/dev/null )
+
+		if conv2human "${dsk_size}"; then
+			dsk_size=${convval}
+		fi
+		[ -z "${dsk_size}" ] && dsk_size="?"
+		[ -z "${dsk_realsize}" ] && dsk_realsize="?"
+
+		dsk=$( echo ${dsk_path} | ${CUT_CMD} -d "." -f 1 )
+		menu_list="${menu_list} '${n} ${dsk}'	'${dsk_controller}'	'pci=${dsk_slot},type=${dsk_type},size=${dsk_realsize}/${dsk_size},ctr_id=${controller_id}'"
+		n=$(( $n + 1 ))
+	done
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${cbsd_help}                            \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+find_first_free_dsk_id()
+{
+	local last_disk _res
+
+	for last_disk in $( ${SEQ_CMD} 1 16 ); do
+		unset _res
+		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM qemudsk WHERE jname=\"${jname}\" AND dsk_path=\"dsk${last_disk}.vhd\" 2>&1 )
+		[ -z "${_res}" ] && echo "${last_disk}" && break
+	done
+
+	echo "${last_disk}"
+}
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname"
+MYOPTARG=""
+MYDESC="Bhyve disk image dialog"
+CBSDMODULE="qemu"
+
+globalconf="${distdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+. ${cbsdinit}
+
+. ${subrdir}/bsdconfig.subr
+. ${BSDCFG_LIBE}/${APP_DIR}/include/messages-qemudsk.subr
+
+. ${subrdir}/rcconf.subr
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such VM: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "qemu" ] && err 1 "${N1_COLOR}Not in qemu mode${N0_COLOR}"
+
+. ${distdir}/share/qemu/qemu-dsk.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_configure_qemudsk "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	load_dsk_info
+	dialog_menu_main || break
+	f_dialog_menutag_fetch mtag
+
+	[ -z "${mtag}" ] && exit $SUCCESS
+
+	command=
+
+	case "$mtag" in
+		?" $msg_exit") break ;;
+		?" $msg_add_new_img")
+			last_disk=$( find_first_free_dsk_id )
+			dsk="dsk${last_disk}"
+			command="qemudsk-newdsk jname=${jname} dsk=${dsk}"
+			;;
+		*)
+			[ "${mtag}" = "-" ] && continue
+			index=${mtag%% *}
+			dsk=${mtag##* }
+			command="qemudsk-cfgdsk jname=${jname} dsk=${dsk}"
+			;;
+	esac
+
+	if [ "$command" ]; then
+		$BSDCFG_LIBE/$APP_DIR/$command ${USE_XDIALOG:+-X}
+	fi
+
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################

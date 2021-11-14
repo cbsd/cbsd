@@ -1,0 +1,221 @@
+#!/usr/local/bin/cbsd
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+
+readconf qemu-default-default.conf		# qemu_have_dsk_ratelimit?
+
+# dialog_menu_main
+#
+# Display the dialog(1)-based application main menu.
+#
+dialog_menu_main()
+{
+	local _input _retval _controller_desc _dsk_controller_type
+
+	local btitle="$DIALOG_BACKTITLE"
+	local title=" ${jname} ${dsk}: New Image "
+	hline=
+
+	local prompt="${_desc}"
+
+	_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM qemu_dskcontroller WHERE name=\"${new_dsk_controller}\" )
+
+	# if no controller with specific name, than set controller type as controller name - probable direct connect via xvd/sd/hd
+	[ -z "${_dsk_controller_type}" ] && _dsk_controller_type="${new_dsk_controller}"
+
+	case "${_dsk_controller_type}" in
+		xvd|sd|hd)
+			_controller_desc="connected directly to motherboard"
+			;;
+		nvme)
+			_controller_desc="connected to NVM Express (NVMe) controller"
+			;;
+		ahci)
+			_controller_desc="connected to AHCI controller"
+			;;
+		*)
+			_controller_desc="unknown"
+			;;
+	esac
+
+
+	local menu_list="
+		'size'		'${new_dsk_size}'	'Current disk image size. Resize currently is not supported'
+		'controller'	'${new_dsk_controller}'	'Select controller. current: ${_dsk_controller_type} ${_controller_desc}'
+		'slot'		'0'			'Bus slot. 0 - auto'
+		'dsk_type'	'vhd'			'Disk type ( vhd, vmdk, vdi, qcow )'
+	" # END-QUOTE
+
+	if [ "${qemu_have_dsk_ratelimit}" = "1" ]; then
+		menu_list="${menu_list}	'dsk_iops_limit'	'${dsk_iops_limit}'	'Disk IOPS limit'"
+		menu_list="${menu_list}	'dsk_mbps_limit'	'${dsk_mbps_limit}'	'Disk Mbit/s limit'"
+	fi
+
+	menu_list="${menu_list}	'-'		'-'			''"
+	menu_list="${menu_list}	'COMMIT'	'COMMIT'		'Create and attach new disk'"
+
+	local height width rows
+	eval f_dialog_menu_with_help_size height width rows \
+		\"\$title\"  \
+		\"\$btitle\" \
+		\"\$prompt\" \
+		\"\$hline\"  \
+		$menu_list
+
+	# Obtain default-item from previously stored selection
+	f_dialog_default_fetch defaultitem
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--clear                                 \
+		--title \"\$title\"                     \
+		--backtitle \"\$btitle\"                \
+		--hline \"\$hline\"                     \
+		--item-help                             \
+		--ok-label \"\$msg_ok\"                 \
+		--cancel-label \"Exit\"                 \
+		${USE_XDIALOG:+--help \"\"}             \
+		--default-item \"\$defaultitem\"        \
+		--menu \"\$prompt\"                     \
+		$height $width $rows                    \
+		$menu_list                              \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
+	return $retval
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+MYARG="jname dsk"
+MYOPTARG=""
+MYDESC="Add and attach new vitual image to VM"
+CBSDMODULE="qemu"
+
+globalconf="${distdir}/cbsd.conf";
+
+set -e
+. ${globalconf}
+set +e
+
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+. ${cbsdinit}
+
+. ${dialog}
+. ${subrdir}/bsdconfig.subr
+. ${BSDCFG_LIBE}/${APP_DIR}/include/messages-qemudsk.subr
+
+. ${subrdir}/rcconf.subr
+[ $? -eq 1 ] && err 1 "${N1_COLOR}No such VM: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "qemu" ] && err 1 "${N1_COLOR}Not in qemu mode${N0_COLOR}"
+
+. ${distdir}/share/qemu/qemu-dsk.subr
+. ${subrdir}/qemu.subr
+
+readconf qemu-default-default.conf
+[ -z "${dsk_sectorsize}" ] && dsk_sectorsize="${default_sectorsize}"
+
+#load_dsk_info
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
+	esac
+done
+shift $(( $OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_add_qemudsk "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_mustberoot_init
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main
+	ret=$?
+
+	command=
+	case $ret in
+		${DIALOG_OK})
+			f_dialog_menutag_fetch mtag
+			case "$mtag" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|slot|dsk_type)
+					continue
+					;;
+				"controller")
+					get_dsk_controller
+					;;
+				"size")
+					get_dsk_size
+					;;
+				sectorsize)
+					f_dialog_title " set sectorsize "
+					f_dialog_input _input "Specify the logical and physical sector sized of the\n
+emulator disk: sectorsize=logical[/physical]\n\n\
+The physical sector size is optional and is equal to the \n\
+logical sector size if not explicitly specified. \n
+e.g: 512 or 4096 or 512/4096" "${dsk_sectorsize}" "${_message}" || return $?
+					if [ -n "${_input}" ]; then
+						dsk_sectorsize="${_input}"
+						new_dsk_sectorsize="${_input}"
+					fi
+					;;
+				"COMMIT")
+					if [ -z "${new_dsk_size}" -o -z "${new_dsk_controller}" ]; then
+						f_dialog_msgbox "disk size and disk controller field is mandatory"
+						continue
+					fi
+					#_res=$( qemu-dsk jname=${jname} mode=attach controller="${new_dsk_controller}" dsk="${dsk}" dsk_size="${new_dsk_size}" dsk_sectorsize="${dsk_sectorsize}" )
+					_res=$( qemu-dsk jname=${jname} mode=attach dsk_controller="${new_dsk_controller}" dsk="${dsk}" dsk_size="${new_dsk_size}" dsk_sectorsize="${dsk_sectorsize}" )
+					if [ $? -ne 0 ]; then
+						f_dialog_msgbox "Error: ${_res}"
+					else
+						f_die
+					fi
+					;;
+				*)
+					index=${mtag%% *}
+					dsk=${mtag##* }
+					command="qemudsk-cfgdsk jname=${jname} dsk=${dsk}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			f_die
+			;;
+	esac
+done
+
+return $SUCCESS
+
+################################################################################
+# END
+################################################################################
