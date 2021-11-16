@@ -1,32 +1,79 @@
 #!/usr/local/bin/cbsd
 #v12.1.14
 MYARG="search_profile"
-MYOPTARG="display header active uniq show_bhyve show_xen show_jail show_cloud"
-MYDESC="Operate with bhyve disk images and database"
-CBSDMODULE="sys"
-ADDHELP="search_profile= - prefix for filename, e.g: vm-${vm_os_type}, ${emulator}-freebsd- \n\
-header=0 don't print header\n\
-display= list by comma for column: path,name,active,contrib. Default: path,name,active\n\
-show_bhyve=0,1,2 show only active=0 (disabled), 1-(enabled) and 2 - (any). default is: 2\n\
-show_xen=0,1,2 show only active=0 (disabled), 1-(enabled) and 2 - (any). default is: 2\n\
-show_jail=0,1,2 show only active=0 (disabled), 1-(enabled) and 2 - (any). default is: 2\n\
-show_cloud=0,1,2 show only cloud=0 (disabled), 1-(enabled) and 2 - (any). default is: 0\n\
-uniq=0,1 - 0 (default) - show all profiles, 1 - sort uniq by name with ~cbsd/etc/ win over ~cbsd/etc/defaults\n"
+MYOPTARG="active arch_only display header show_bhyve show_cloud show_jail show_qemu show_xen uniq"
+MYDESC="Scan/print virtual machine profiles"
+CBSDMODULE="bhyve,qemu,xen"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+The CBSD includes profiles (text files) of virtual machines that are available to run 
+through supported hypervisors (bhyve, QEMU/NVMM, XEN). 'show_profile_list' script scan 
+relevant directories for vm- profiles and print list.
+
+Standard profile directories:
+
+  ~cbsd/etc/defaults - for build-in/contrib CBSD profiles;
+  ~cbsd/etc - for user's profiles;
+
+profiles have a filename starting with 'vm-' prefix.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}arch_only=${N0_COLOR}      - show profiles for the specified architecture, e.g.: 'aarch64',
+                   when not set, 'amd64' architecture is used by default;
+ ${N2_COLOR}display=${N0_COLOR}        - list by comma for column: path,name,active,contrib.
+                   Default value: 'path,name,active';
+ ${N2_COLOR}header=${N0_COLOR}         - set '0' to skip print header;
+ ${N2_COLOR}search_profile=${N0_COLOR} - prefix/mask for filename, e.g: vm-\${vm_os_type}, \${emulator}-freebsd-;
+ ${N2_COLOR}show_bhyve=${N0_COLOR}     - '0','1','2': show only active=0 (disabled), 1-(enabled) and 2 - (any).
+                   Default is: 2;
+ ${N2_COLOR}show_qemu=${N0_COLOR}      - '0','1','2': show only active=0 (disabled), 1-(enabled) and 2 - (any).
+                   Default is: 2;
+ ${N2_COLOR}show_xen=${N0_COLOR}       - '0','1','2' show only active=0 (disabled), 1-(enabled) and 2 - (any).
+                   Default is: 2;
+ ${N2_COLOR}show_jail=${N0_COLOR}      - '0','1','2' show only active=0 (disabled), 1-(enabled) and 2 - (any).
+                   Default is: 2;
+ ${N2_COLOR}show_cloud=${N0_COLOR}     - '0','1','2' show only cloud=0 (disabled), 1-(enabled) and 2 - (any).
+                   Default is: 0;
+ ${N2_COLOR}uniq=${N0_COLOR}           - '0','1'. When '0' (default) - show all profiles, 
+                   when '1' - sort uniq by name with ~cbsd/etc/ win over ~cbsd/etc/defaults;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd show_profile_list search_profile=vm-linux show_cloud=1 show_bhyve=1 uniq=1
+ # env NOCOLOR=1 cbsd show_profile_list search_profile=vm-freebsd show_cloud=0 show_qemu=1 uniq=1 display=path,name,contrib header=0 arch_only=riscv64
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd summary --help
+ cbsd bconstruct-tui --help
+ cbsd qconstruct-tui --help
+ cbsd xconstruct-tui --help
+
+"
 
 . ${subrdir}/nc.subr
+arch_only="native"
 
 . ${cbsdinit}
-
 . ${system}
 
 [ -z "${show_bhyve}" ] && show_bhyve=0
 [ -z "${show_jail}" ] && show_jail=0
+[ -z "${show_qemu}" ] && show_qemu=0
 [ -z "${show_xen}" ] && show_xen=0
 [ -z "${show_cloud}" ] && show_cloud=0
 [ -z "${uniq}" ] && uniq=0
 [ -z "${display}" ] && display="path,name,active"
 [ -z "${only_bhyve_active}" ] && only_bhyve_active=2
 [ -z "${only_xen_active}" ] && only_xen_active=2
+
+case "${arch_only}" in
+	native)
+		arch_only=$( ${UNAME_CMD} -m )
+		;;
+esac
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
@@ -98,21 +145,24 @@ show_jaildata_from_sql()
 
 	for _i in ${_tmp_profile_list}; do
 		vm_profile=
+		vm_arch=
 		bhyve_active=0
 		xen_active=0
 		jail_active=0
 		is_cloud=0
-		eval $( ${GREP_CMD} -E "(^jail_profile=)|(^vm_profile=)|(^bhyve_active=)|(^xen_active=)|(^jail_active)|(^is_cloud)" ${_i} )
-		if [ ${show_bhyve} -eq 1 -o ${show_xen} -eq 1 ]; then
-			[ -z "${vm_profile}" ] && continue
-		fi
+		eval $( ${GREP_CMD} -E "(^jail_profile=)|(^vm_profile=)|(^bhyve_active=)|(^qemu_active=)|(^xen_active=)|(^jail_active)|(^is_cloud)|(^vm_arch)" ${_i} )
+		[ ${show_bhyve} -eq 1 -a -z "${vm_profile}" ] && continue
+		[ ${show_xen} -eq 1 -a -z "${vm_profile}" ] && continue
+		[ ${show_qemu} -eq 1 -a -z "${vm_profile}" ] && continue
 		path="${_i}"
 		[ -z "${is_cloud}" ] && is_cloud=0
 		[ -z "${xen_active}" ] && xen_active=0
+		[ -z "${qemu_active}" ] && qemu_active=0
 		[ -z "${jail_active}" ] && jail_active=0
 		[ -z "${bhyve_active}" ] && bhyve_active="99"
 		[ -n "${jail_profile}" ] && name="${jail_profile}"
 		[ -n "${vm_profile}" ] && name="${vm_profile}"
+		[ -z "${vm_arch}" ] && vm_arch=0
 
 		case "${show_cloud}" in
 			0)
@@ -120,12 +170,21 @@ show_jaildata_from_sql()
 				;;
 			1)
 				[ "${is_cloud}" = "0" ] && continue
+				;;
 		esac
 
 		if [ ${show_bhyve} -eq 1 ]; then
 			case "${show_bhyve}" in
 				0|1)
 					[ "${bhyve_active}" != "${show_bhyve}" ] && continue
+					;;
+			esac
+		fi
+
+		if [ ${show_qemu} -eq 1 ]; then
+			case "${show_qemu}" in
+				0|1)
+					[ "${qemu_active}" != "${show_qemu}" ] && continue
 					;;
 			esac
 		fi
@@ -151,6 +210,15 @@ show_jaildata_from_sql()
 				continue
 			fi
 			vm_name_list="${vm_name_list} ${name}"
+		fi
+
+		if [ -n "${arch_only}" ]; then
+			if [ "${vm_arch}" != "0" ]; then
+				[ "${arch_only}" != "${vm_arch}" ] && continue
+			else
+				# amd64 arch is default
+				[ "${arch_only}" != "amd64" ] && continue
+			fi
 		fi
 
 		contrib=0
@@ -183,3 +251,5 @@ show_vhid()
 [ -z "${header}" ] && header=1
 sqldelimer=" "
 show_local | ${COLUMN_CMD} -t
+
+exit 0
