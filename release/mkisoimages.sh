@@ -27,7 +27,7 @@ fat16min=2100
 get_uefi_bootname()
 {
 	case ${TARGET:=$(uname -m)} in
-		amd64) echo bootx64 ;;
+		amd64|x86_64) echo bootx64 ;;
 		arm64) echo bootaa64 ;;
 		i386) echo bootia32 ;;
 		arm) echo bootarm ;;
