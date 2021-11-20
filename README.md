@@ -80,7 +80,7 @@ e) Follow 'initial setup' section [as usual](https://www.bsdstore.ru/en/installi
 env workdir=/usr/jails /usr/local/cbsd/sudoexec/initenv
 ```
 
-when you run the script, all binaries and components will be compiled and installed.
+Notes: when you run the `initenv` script, all binaries and components will be compiled and installed.
 
 ## Contributors
 
