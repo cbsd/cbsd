@@ -74,6 +74,14 @@ mkdir -p /usr/local/libexec/bsdconfig
 ln -s /usr/local/cbsd/share/bsdconfig/cbsd /usr/local/libexec/bsdconfig/cbsd
 ```
 
+e) Follow 'initial setup' section [as usual](https://www.bsdstore.ru/en/installing_cbsd.html):
+
+```
+env workdir=/usr/jails /usr/local/cbsd/sudoexec/initenv
+```
+
+when you run the script, all binaries and components will be compiled and installed.
+
 ## Contributors
 
 ### Code Contributors
