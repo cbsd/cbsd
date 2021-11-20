@@ -15,58 +15,54 @@
 int
 cbsdjlscmd(int argc, char **argv)
 {
-        size_t len;
-        char *jls; /* Jail list */
-        char *curpos;
-        char *nextpos;
+	size_t len;
+	char *jls; /* Jail list */
+	char *curpos;
+	char *nextpos;
 
-        if (sysctlbyname("jail.list", NULL, &len, NULL, 0) == -1)
-                err(1, "sysctlbyname(): jail.list");
+	if (sysctlbyname("jail.list", NULL, &len, NULL, 0) == -1)
+		err(1, "sysctlbyname(): jail.list");
 retry:
-        if (len == 0)
-                return(0);
+	if (len == 0)
+		return(0);
 
-        jls = malloc(len);
-        if (jls == NULL)
-                err(1, "malloc failed");
+	jls = malloc(len);
+	if (jls == NULL)
+		err(1, "malloc failed");
 
-        if (sysctlbyname("jail.list", jls, &len, NULL, 0) == -1) {
-                if (errno == ENOMEM) {
-                        free(jls);
-                        goto retry;
-                }
-                err(1, "sysctlbyname(): jail.list");
-        }
+	if (sysctlbyname("jail.list", jls, &len, NULL, 0) == -1) {
+		if (errno == ENOMEM) {
+			free(jls);
+			goto retry;
+		}
+		err(1, "sysctlbyname(): jail.list");
+	}
 //      printf("JID\tHostname\tPath\t\tIPs\n");
-        curpos = jls;
-        while (curpos) {
-                char *str_jid;
-                char *str_host;
-                char *str_path;
-                char *str_ips;
-                char *jname;
-                nextpos = strchr(curpos, '\n');
-                if (nextpos)
-                        *nextpos++ = 0;
-                str_jid = strtok(curpos, " ");
-                str_host = strtok(NULL, " ");
-                str_path = strtok(NULL, " ");
-                str_ips = strtok(NULL, "\n");
+	curpos = jls;
+	while (curpos) {
+		char *str_jid;
+		char *str_host;
+		char *str_path;
+		char *str_ips;
+		char *jname;
+		nextpos = strchr(curpos, '\n');
+		if (nextpos)
+			*nextpos++ = 0;
+		str_jid = strtok(curpos, " ");
+		str_host = strtok(NULL, " ");
+		str_path = strtok(NULL, " ");
+		str_ips = strtok(NULL, "\n");
 
-                jname = strrchr(str_path, '/') + 1;
+		jname = strrchr(str_path, '/') + 1;
 
 		//use vars to elimiate clang/gcc warning (-Wunused-but-set-variable)
 		free(str_host);
 		free(str_ips);
 
 		out1fmt("%s %s\n",str_jid, jname);
-
-//                printf("%s %s\n",
-//                        str_jid,
-//                        jname );
-                curpos = nextpos;
-        }
-        free(jls);
+		curpos = nextpos;
+	}
+	free(jls);
 	return 0;
 }
 // no jail.h
@@ -105,43 +101,11 @@ static int print_jids(int pflags, int jflags);
 int
 cbsdjlscmd(int argc, char **argv)
 {
-	char *ep, *jname;
 	int c, jflags, jid, lastjid, pflags, jid_only=0;
 
-	jname = NULL;
 	pflags = jflags = jid = 0;
-	while ((c = getopt(argc, argv, "adj:hNnqsvq")) >= 0)
+	while ((c = getopt(argc, argv, "q")) >= 0)
 		switch (c) {
-		case 'a':
-		case 'd':
-			jflags |= JAIL_DYING;
-			break;
-		case 'j':
-			jid = strtoul(optarg, &ep, 10);
-			if (!jid || *ep) {
-				jid = 0;
-				jname = optarg;
-			}
-			break;
-		case 'h':
-			pflags = (pflags & ~(PRINT_SKIP | PRINT_VERBOSE)) |
-			    PRINT_HEADER;
-			break;
-		case 'N':
-			pflags |= PRINT_JAIL_NAME;
-			break;
-		case 'n':
-			pflags = (pflags & ~PRINT_VERBOSE) | PRINT_NAMEVAL;
-			break;
-		case 's':
-			pflags = (pflags & ~(PRINT_HEADER | PRINT_VERBOSE)) |
-			    PRINT_NAMEVAL | PRINT_QUOTED | PRINT_SKIP;
-			break;
-		case 'v':
-			pflags = (pflags &
-			    ~(PRINT_HEADER | PRINT_NAMEVAL | PRINT_SKIP)) |
-			    PRINT_VERBOSE;
-			break;
 		case 'q':
 			jid_only=1;
 			break;
@@ -166,9 +130,7 @@ cbsdjlscmd(int argc, char **argv)
 		/* Fetch the jail(s) and print the parameters. */
 		for (lastjid = 0; (lastjid = print_jail(pflags, jflags)) >= 0; ) {
 		}
-
 	}
-
 
 	return 0;
 
