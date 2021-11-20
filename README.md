@@ -12,14 +12,6 @@ Yet one more wrapper around [jail](https://man.freebsd.org/jail/8),
 ![demo](https://www.bsdstore.ru/gif/jdemo.gif)
 ![demo](https://www.bsdstore.ru/gif/bdemo.gif)
 
-#### Table of Contents
-
-1. [Project Description - What does the project do?](#project-description)
-2. [Usage - Configuration options and additional functionality](#usage)
-3. [Limitations - OS compatibility, etc.](#limitations)
-4. [Contributing - Contribute to the project](#contributing)
-5. [Support - Mailing List, Talks, Contacts](#support)
-
 ## Usage
 
 Quick start: https://www.bsdstore.ru/en/cbsd_quickstart.html
