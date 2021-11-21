@@ -1,4 +1,5 @@
 #!/usr/local/bin/cbsd
+# shellcheck shell=sh disable=2034,1090,1091,2154
 #v12.1.2
 MYARG=""
 MYOPTARG="cmd jname script"
@@ -14,7 +15,7 @@ ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}cmd=${N0_COLOR}    - command to execute inside VM, e.g. "pwd".
+ ${N2_COLOR}cmd=${N0_COLOR}    - command to execute inside VM, e.g. \"pwd\".
  ${N2_COLOR}jname=${N0_COLOR}  - target bhyve. If bhyve='*' or bhyve='vm*' then execute command on all
               bhyve VM or in VM whose names begin with 'vm', e.g. 'vm1', 'vmX'...
  ${N2_COLOR}script=${N0_COLOR} - path to script instead of command.
@@ -33,18 +34,25 @@ EOF
 
 CBSDMODULE="bhyve"
 
-. ${subrdir}/nc.subr
+. "${subrdir}"/nc.subr
 script=
 cbsd_api=0
 jname=
-. ${cbsdinit}
+. "${subrdir}"/cbsdinit.subr
 ojname="${jname}"
 
-# check for cloud function when CBSDfile exist
+
+#######################################
+# Process CBSDfile
+#######################################
+
 Makefile="${CBSD_PWD}/CBSDfile"
-if [ -r ${Makefile} ]; then
+
+# check for cloud function when CBSDfile exist
+if [ -r "${Makefile}" ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
+	. "${Makefile}"
+	# shellcheck disable=2086
 	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 	jname="${all_bhyve_list}"
 
@@ -54,7 +62,7 @@ if [ -r ${Makefile} ]; then
 
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
 
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+	if [ -n "${CLOUD_URL}" ] && [ -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
 	else
 		cbsd_api=0
@@ -75,6 +83,11 @@ else
 	fi
 fi
 
+
+#######################################
+# If we haven't external script
+#######################################
+
 if [ -z "${script}" ]; then
 	# Pass '"' as ' in cmd
 	INIT_IFS="${IFS}"
@@ -88,15 +101,16 @@ if [ -z "${script}" ]; then
 		if [ ${_pos} -eq 0 ]; then
 			# not params=value form
 			#printf "${1} "		# -x args trouble
+			# shellcheck disable=3037
 			echo -n "${1} "
 			shift
 			continue
 		fi
 
-		_arg_len=$( strlen ${1} )
+		_arg_len=$( strlen "${1}" )
 		_pref=$(( _arg_len - _pos ))
 		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		VAL=$( substr --pos=$(( _pos +2 )) --len=${_pref} --str="${1}" )
 
 		if [ "${ARG}" = "jname" ]; then
 			shift
@@ -104,6 +118,7 @@ if [ -z "${script}" ]; then
 		fi
 
 		#printf "${ARG}=\"${VAL}\" "
+		# shellcheck disable=3037
 		echo -n "${ARG}=\"${VAL}\" "
 		shift
 	done )
@@ -111,26 +126,36 @@ else
 	unset cmd
 fi
 
+
+#######################################
+# If we haven`t cmd read from STDIN
+#######################################
+
 if [ -z "${cmd}" ]; then
 	batchfile=$( ${MKTEMP_CMD} )
-	script_name=$( ${BASENAME_CMD} ${batchfile} )
+	script_name=$( ${BASENAME_CMD} "${batchfile}" )
 	# todo: test/chec for stdin/blocked
-	while read _line; do
-		echo "${_line}" >> ${batchfile}
+	while read -r _line; do
+		echo "${_line}" >> "${batchfile}"
 	done
-	bscp ${batchfile} ${jname}:${script_name}
-	bexec /bin/sh ./${script_name}
+	bscp "${batchfile}" "${jname}":"${script_name}"
+	bexec /bin/sh ./"${script_name}"
 	ret=$?
-	${RM_CMD} -f ${batchfile}
+	${RM_CMD} -f "${batchfile}"
 	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
 	exit ${ret}
 fi
+
+
+#######################################
+# Multiple jails case
+#######################################
 
 emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple	# import jail_list if jname is mask
 
 if [ -n "${jail_list}" ]; then
-	. ${subrdir}/multiple.subr
+	. "${subrdir}"/multiple.subr
 
 	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
 	task_owner="bexec_multiple"
@@ -140,30 +165,38 @@ if [ -n "${jail_list}" ]; then
 
 	# spawn command for all jail
 	for jname in ${jail_list}; do
-		. ${subrdir}/rcconf.subr
-		[ ${myjid} -eq 0 ] && continue
+		. "${subrdir}"/rcconf.subr
+		[ "${myjid}" -eq 0 ] && continue
 		if [ -n "${script}" ]; then
+			# shellcheck disable=2086
 			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
 		else
+			# shellcheck disable=2086
 			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
 		fi
 		task_id="${task_id} ${task_id_cur}"
 	done
 
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	multiple_task_id_all=$( echo "${task_id}" | ${TR_CMD} " " "," )
 	sleep 1
 	multiple_processing_spawn -o ${task_owner} -n "bexec"
 	echo
 	exit 0
 fi
 
-if [ ${cbsd_api} -eq 0 ]; then
-	. ${subrdir}/rcconf.subr
+
+#######################################
+# API-related justifications
+#######################################
+
+if [ ${cbsd_api} -eq 0 ]; then # we don't use API
+	. "${subrdir}"/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}for bhyve emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
-	[ ${jid} -ne 0 ] || err 1 "Not running"
+	[ "${jid}" -ne 0 ] || err 1 "Not running"
 	readconf bexec.conf
-else
+
+else # we use API
 	CURL_CMD=$( which curl )
 	JQ_CMD=$( which jq )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
@@ -174,7 +207,7 @@ else
 	_global_ret=0
 
 	for jname in ${all_bhyve_list}; do
-		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" "${CLOUD_URL}"/api/v1/status/"${jname}" 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
@@ -194,16 +227,18 @@ else
 		fi
 
 		_ssh_len=$( strlen "${_ssh_string}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
+		_ssh_post=$( substr --pos=5 --len="${_ssh_len}" --str="${_ssh_string}" )
 		#echo "${SSH_CMD} ${_ssh_post}"
-		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
-		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+		# shellcheck disable=2016
+		_ssh_ip=$( echo "${_ssh_post}" | ${AWK_CMD} '{printf $1}' )
+		# shellcheck disable=2016
+		_ssh_port=$( echo "${_ssh_post}" | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
 
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
-			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+			if [ -r /home/"${SUDO_USER}"/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
-			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+			elif [ -r /home/"${SUDO_USER}"/.ssh/id_rsa ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
 			else
 				date
@@ -220,18 +255,22 @@ CBSD_EOF
 	exit ${_global_ret}
 fi
 
-if [ -n "${cmd}" ]; then
-	exec ${bexec_cmd} <<CBSD_EOF
-${cmd}
-CBSD_EOF
-elif [ -n "${script}" ]; then
+
+#######################################
+# Do exec
+#######################################
+
+if [ -n "${cmd}" ]; then # cmd
+	exec ${bexec_cmd} "${cmd}"
+
+elif [ -n "${script}" ]; then # script
 	[ ! -r "${script}" ] && err 1 "${N1_COLOR}No such script: ${N2_COLOR}${script}${N0_COLOR}"
-	scr_name=$( ${BASENAME_CMD} ${script} )
-	orig_path=$( ${REALPATH_CMD} ${script} )
+	scr_name=$( ${BASENAME_CMD} "${script}" )
+	orig_path=$( ${REALPATH_CMD} "${script}" )
 	[ ! -x "${orig_path}" ] && err 1 "${N1_COLOR}not executable: ${N2_COLOR}${orig_path}${N0_COLOR}"
 	echo "bscp ${orig_path} ${jname}:${scr_name}"
-	bscp ${orig_path} ${jname}:${scr_name}
-	bexec jname=${jname} ./${scr_name}
+	bscp "${orig_path}" "${jname}":"${scr_name}"
+	bexec jname="${jname}" ./"${scr_name}"
 fi
 
 exit 0
