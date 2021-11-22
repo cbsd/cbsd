@@ -1,6 +1,6 @@
---- if_vxlan.c.orig	2021-04-01 10:36:57.568756000 +0300
-+++ if_vxlan.c	2021-04-02 10:35:25.147957000 +0300
-@@ -2769,7 +2769,10 @@
+--- if_vxlan.c.orig	2021-11-22 11:04:14.856310000 +0300
++++ if_vxlan.c	2021-11-22 11:22:40.117280000 +0300
+@@ -2771,7 +2771,10 @@
  	vso = xvso;
  	offset += sizeof(struct udphdr);
  
@@ -12,7 +12,7 @@
  		goto out;
  
  	if (__predict_false(m->m_len < offset + sizeof(struct vxlan_header))) {
-@@ -2810,7 +2813,7 @@
+@@ -2812,7 +2815,7 @@
  	struct ifnet *ifp;
  	struct mbuf *m;
  	struct ether_header *eh;
@@ -21,7 +21,7 @@
  
  	sc = vxlan_socket_lookup_softc(vso, vni);
  	if (sc == NULL)
-@@ -2857,7 +2860,7 @@
+@@ -2859,7 +2862,7 @@
  		m->m_pkthdr.csum_data = 0;
  	}
  
