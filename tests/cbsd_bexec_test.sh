@@ -28,6 +28,10 @@ EOF
 	)
 }
 
+oneTimeTearDown() {
+	cbsd bdestroy jname="${jname}"
+}
+
 testBexec() {
 	test=$(	cbsd bexec jname="${jname}" whoami )
 	assertEquals "failed to run simple exec" "ubuntu" "${test}" 
