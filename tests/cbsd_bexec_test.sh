@@ -8,9 +8,9 @@
 oneTimeSetUp() {
 	jname="bexec1"
 	cbsd bdestroy jname=${jname} || true
+	workdir=$(mktemp -d)
 	(
-	dir=$(mktemp -d)
-	cd "${dir}" || exit
+	cd "${workdir}" || exit
 cat > CBSDfile << EOF
 bhyve_${jname}()
 {
@@ -26,6 +26,7 @@ bhyve_${jname}()
 EOF
 	cbsd up
 	)
+	rm -rf "${workdir}"
 }
 
 oneTimeTearDown() {
