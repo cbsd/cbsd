@@ -1315,20 +1315,26 @@ compile_virtio_9p_args()
 
 	sqldelimer=" "
 
-	eval $( cbsdsqlro ${mydb} SELECT p9path,p9device FROM p9shares 2>/dev/null | while read _p9path _p9device; do
+	eval $( cbsdsqlro ${mydb} SELECT p9path,p9device,ro,options FROM p9shares 2>/dev/null | while read _p9path _p9device _ro _options; do
 		echo "p9path${shares_num}=\"${_p9path}\""
 		echo "p9device${shares_num}=\"${_p9device}\""
+		echo "ro${shares_num}=\"${_ro}\""
+		echo "options${shares_num}=\"${_options}\""
 		shares_num=$(( shares_num + 1 ))
 	done )
 
 	for last_share in $( ${SEQ_CMD} 1 24 ); do
-		unset p9path p9device
+		unset p9path p9device ro options
 		eval p9path="\$p9path$last_share"
 		[ -z "${p9path}" ] && break
 		eval p9device="\$p9device$last_share"
+		eval ro="\$ro$last_share"
+		eval options="\$options$last_share"
 
 		unset \$p9path$last_share
 		unset \$p9device$last_share
+		unset \$ro$last_share
+		unset \$options$last_share
 
 		if [ -d ${p9path} ]; then
 			if ! next_pci_id -n virtio-9p -d ${p9device}; then
@@ -1337,10 +1343,27 @@ compile_virtio_9p_args()
 			fi
 
 			_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-
-			${ECHO} "${N1_COLOR}virtio_p9_shares: shared directory enabled: ${H3_COLOR}${p9device} ${N1_COLOR} ${N1_COLOR}-> ${p9path}${N0_COLOR}"
-			${ECHO} "  ${N1_COLOR}Use to mount: mount -t 9p -o trans=virtio ${p9device} /mnt"
 			virtio_9p_args="${virtio_9p_args} -s ${_pcislot_args},virtio-9p,${p9device}=${p9path}"
+			case "${ro}" in
+				1|true)
+					${ECHO} "${N1_COLOR}virtio_p9_shares: shared directory enabled: ${H3_COLOR}${p9device} ${N1_COLOR} ${N1_COLOR}-> ${p9path} (${W1_COLOR}RO${N1_COLOR})" 2>&1
+					virtio_9p_args="${virtio_9p_args},ro"
+					;;
+				*)
+					;;
+			esac
+
+			${ECHO} "  ${N1_COLOR}Use to mount: ${N2_COLOR}mount -t 9p -o trans=virtio ${p9device} /mnt${N0_COLOR}" 2>&1
+
+			case "${options}" in
+				0)
+					;;
+				*)
+					${ECHO} "  ${N1_COLOR}Additional 9P options: ${N2_COLOR}${options}${N0_COLOR}"
+					virtio_9p_args="${virtio_9p_args},${options}"
+					;;
+			esac
+
 			store_bhyve_pci_slot -n virtio-9p -d ${p9device} -a ${bhyve_pci_index}
 		else
 			${ECHO} "${N1_COLOR}virtio_p9_shares error: directory doesn't exist, skipp for share: ${N2_COLOR}${p9path}${N0_COLOR}"

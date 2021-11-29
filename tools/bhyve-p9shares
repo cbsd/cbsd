@@ -1,11 +1,10 @@
 #!/usr/local/bin/cbsd
 #v11.1.7
 MYARG="mode"
-MYOPTARG="jname header display p9device p9path"
-MYDESC="Manage bhyve p9 shared folders"
+MYOPTARG="jname header display options p9device p9path ro"
+MYDESC="Manage bhyve 9P (Plan 9 Filesystem Protocol) shared folders"
 CBSDMODULE="bhyve"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
 bhyve-p9shares manage directories that CBSD uses as shared folders to exchange files between virtual 
@@ -19,11 +18,15 @@ ${H3_COLOR}Options${N0_COLOR}:
       'list'   - show shares.
       'attach' - attach shared folder to jname, p9device= and p9path= required.
       'detach' - detach shared folder from jname, p9device= required;
+ ${N2_COLOR}options=${N0_COLOR}      - custom 9p-device-options, see man bhyve(8);
  ${N2_COLOR}p9device=${N0_COLOR}     - share name, one-word;
  ${N2_COLOR}p9path=${N0_COLOR}       - shared folders path;
+ ${N2_COLOR}ro=${N0_COLOR}           - when '1' or 'true' - expose the share in read-only mode,
+                 default is '0' - RW mode;
  ${N2_COLOR}header=${N0_COLOR}       - when '0' - don't print header;
  ${N2_COLOR}display=${N0_COLOR}      - list by comma for column, 
-       default: 'jname,p9path,p9device';
+                 default: 'jname,p9path,p9device,ro',
+                   additional: 'options';
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -45,16 +48,26 @@ ${H3_COLOR}Examples${N0_COLOR}:
   6) mount share:
   # mount -t 9p -o trans=virtio sharename /mnt
 
+  # read-only mode:
+  # cbsd bhyve-p9shares mode=attach ro=true p9device=share1 p9path=/var/cache/share1 jname=deb9p
+
 "
 
 . ${subrdir}/nc.subr
-
 . ${subrdir}/virtual.subr
-
+oro=
+ro=
+ooptions=
+options=
 . ${cbsdinit}
+[ -n "${ro}" ] && oro="${ro}"
+[ -z "${ro}" ] && ro="0"		# default mode: RW
+[ -n "${options}" ] && ooptions="${options}"
+[ -z "${options}" ] && options="0"
+
 . ${system}
 
-[ -z "${display}" ] && display="jname,p9path,p9device"
+[ -z "${display}" ] && display="jname,p9path,p9device,ro"
 
 #remove commas for loop action on header
 mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ')
@@ -105,8 +118,8 @@ show_jaildata_from_sql()
 	[ -n "${2}" ] && local jname="${2}"
 
 	_status=
-	_sql="SELECT p9path,p9device FROM p9shares"
-	cbsdsqlro ${sqlfile} ${_sql}| while read p9path p9device; do
+	_sql="SELECT p9path,p9device,ro,options FROM p9shares"
+	cbsdsqlro ${sqlfile} ${_sql}| while read p9path p9device ro options; do
 		populate_output_data
 		printf "${N2_COLOR}"
 		printf "${_status}"
@@ -148,10 +161,7 @@ sqldelimer=" "
 case "${mode}" in
 	list)
 		[ -z "${jname}" ] && jname=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
-
-		show_shares | /usr/bin/column -t
-
-		err 0 ""
+		show_shares | ${COLUMN_CMD} -t
 		;;
 	attach)
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}Please set ${N2_COLOR}jname=${N0_COLOR}"
@@ -164,8 +174,17 @@ case "${mode}" in
 
 		[ ! -d ${p9path} ] && err 1 "${N1_COLOR}Path not exist: ${N2_COLOR}${p9path}${N0_COLOR}"
 
-		cbsdsqlrw ${mydb} "INSERT INTO p9shares ( p9path, p9device ) VALUES ( \"${p9path}\", \"${p9device}\" )"
-		err 0 "${N1_COLOR}Attached${N0_COLOR}"
+		[ -n "${oro}" ] && ro="${oro}"
+		case "${ro}" in
+			0)
+				ro="false"
+				;;
+			1)
+				ro="true"
+				;;
+		esac
+		cbsdsqlrw ${mydb} "INSERT INTO p9shares ( p9path, p9device, ro, options ) VALUES ( \"${p9path}\", \"${p9device}\", \"${ro}\", \"${options}\" )"
+		${ECHO} "${N1_COLOR}Attached${N0_COLOR}" 2>&1
 		;;
 	detach)
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}Please set ${N2_COLOR}jname=${N0_COLOR}"
@@ -178,8 +197,10 @@ case "${mode}" in
 			err 1 "${N1_COLOR}Share with p9device=${N2_COLOR}${p9device}${N1_COLOR} not exist${N0_COLOR}"
 		fi
 		cbsdsqlrw ${mydb} "DELETE FROM p9shares WHERE p9device=\"${p9device}\""
-		err 0 "${N1_COLOR}Dettached${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Dettached${N0_COLOR}" 2>&1
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 esac
+
+exit 0
