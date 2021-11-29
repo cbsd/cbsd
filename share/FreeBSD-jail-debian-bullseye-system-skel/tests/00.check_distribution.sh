@@ -1,0 +1,106 @@
+#!/usr/local/bin/cbsd
+# Wrapper for creating debootstrap environvent via 2 phases:
+# 1) Get distribution into skel dir from FTP
+# 2) Get distribution into data dir from skel dir
+
+. ${subrdir}/nc.subr
+. ${cbsdinit}
+: ${distdir="/usr/local/cbsd"}
+unset workdir
+
+# MAIN
+[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
+if [ -z "${cbsd_workdir}" ]; then
+	echo "No workdir"
+	exit 1
+else
+	workdir="${cbsd_workdir}"
+fi
+[ ! -r "${distdir}/cbsd.conf" ] && exit 1
+
+. ${distdir}/cbsd.conf
+. ${subrdir}/nc.subr
+. ${system}
+. ${strings}
+. ${tools}
+. ${subrdir}/fetch.subr
+
+
+SRC_MIRROR="\
+http://deb.debian.org/debian/ \
+ftp2.cn.debian.org/debian/ \
+http://ftp.de.debian.org/debian/ \
+http://ftp.uk.debian.org/debian/ \
+http://ftp.us.debian.org/debian/ \
+http://ftp.fi.debian.org/debian/ \
+http://ftp.hk.debian.org/debian/ \
+"
+
+rootfs_dir="${sharedir}/jail-debian-bullseye-rootfs"
+
+[ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
+[ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
+
+if [ ! -x /usr/local/sbin/debootstrap ]; then
+	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
+fi
+
+for module in linprocfs fdescfs tmpfs linsysfs; do
+	${KLDSTAT_CMD} -m "${module}" > /dev/null 2>&1 || ${KLDLOAD_CMD} ${module}
+done
+
+${KLDSTAT_CMD} -m linuxelf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux
+${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
+
+if [ ! -f ${rootfs_dir}/bin/bash ]; then
+	export INTER=1
+
+	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
+
+		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
+		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/bullseye/main/Contents-amd64.gz"
+		for i in ${FASTEST_SRC_MIRROR}; do
+			${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}bullseye ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			/bin/sh <<EOF
+/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg bullseye ${rootfs_dir} ${i}
+EOF
+			ret=$?
+			[ ${ret} -eq 0 ] && break
+		done
+		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
+		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
+deb http://ftp.debian.org/debian/ bullseye main
+deb-src http://ftp.debian.org/debian/ bullseye main
+
+deb http://security.debian.org/debian-security bullseye-security main contrib
+deb-src http://security.debian.org/debian-security bullseye-security main contrib
+
+deb http://ftp.debian.org/debian/ bullseye-updates main contrib
+deb-src http://ftp.debian.org/debian/ bullseye-updates main contrib
+
+#deb http://ftp.debian.org/debian/ bullseye-backports main
+#deb-src http://ftp.debian.org/debian/ bullseye-backports main
+
+EOF
+
+	else
+		echo "canceled"
+		exit 1
+	fi
+fi
+
+[ ! -f ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}No such distribution in ${N2_COLOR}${rootfs_dir}${N0_COLOR}"
+
+. ${subrdir}/rcconf.subr
+[ "${baserw}" = "1" ] && path=${data}
+
+if [ ! -r ${data}/bin/bash ]; then
+	${ECHO} "${N1_COLOR}populate jails data from: ${N2_COLOR}${rootfs_dir} ...${N0_COLOR}"
+	# populate jails data from rootfs?
+	. ${subrdir}/freebsd_world.subr
+	customskel -s ${rootfs_dir}
+fi
+
+[ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
+
+exit 0
