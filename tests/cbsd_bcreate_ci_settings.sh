@@ -34,13 +34,15 @@ tearDown() {
 test_ci_ip4_addr() {
 	local test
 
-	test=$( grep ${ci_ip4_addr} ~cbsd/jails-system/${jname}/cloud-init/network-config | cut -d : -f 2 | awk '{printf $1}' )
+	test=$( grep ${ci_ip4_addr} ~cbsd/jails-system/${jname}/cloud-init/network-config | awk '/address:/{print $2}' )
 	echo "test val: ${test}"
 	[ "${ci_ip4_addr}" != "${test}" ] && assertNull "ci_ip4_addr not equal: ${ci_ip4_addr} != ${test}" "${test}"
 	return 0
 }
 test_ci_gw4() {
 	local test
+
+	# multiple gw?
 	test=$( grep gateway: ~cbsd/jails-system/${jname}/cloud-init/network-config | awk '/gateway:/{print $2}' )
 	echo "test val: ${test}"
 	[ "${ci_gw4}" != "${test}" ] && assertNull "ci_gw4 not equal: ${ci_gw4} != ${test}" "${test}"
