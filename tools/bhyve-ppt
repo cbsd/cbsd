@@ -1,18 +1,56 @@
 #!/usr/local/bin/cbsd
 #v10.1.0
 MYARG="mode"
-MYOPTARG="jname ppt"
+MYOPTARG="jname ppt rom"
 MYDESC="Manage bhyve ppt devices"
 CBSDMODULE="bhyve"
-ADDHELP="mode=list - show ppt\n\
-mode=attach - attach ppt to jname\n\
-mode=detach - detach ppt from jname\n\
-ppt - ppt\n
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+CBSD allows you to configure bhyve arguments to throw devices into the guest, 
+if your hardware supports it. 'bhyve-ppt' can manage PPT devices list.
+
+Before 'bhyve-ppt', you need to find a device for passthru, e.g.:
+
+'pciconv -vl'
+
+And use /boot/loader.conf to configure PPT, e.g. 'pciconf -vl' for GPU/display passthru:
+
+vgapci0@pci0:0:2:0:     class=0x030000 rev=0x06 hdr=0x00 vendor=0x8086 device=0x0412 subvendor=0x1462 subdevice=0x7816
+    vendor     = 'Intel Corporation'
+    device     = 'Xeon E3-1200 v3/4th Gen Core Processor Integrated Graphics Controller'
+    class      = display
+    subclass   = VGA
+
+Add into /boot/loader.conf:
+
+pptdevs=\"0/2/0\"
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode=${N0_COLOR} - action, available:
+         - 'attach' - attach PPT to jname
+         - 'detach' - detach PPT from jname;
+ ${N2_COLOR}ppt=${N0_COLOR}  - target PPT;
+ ${N2_COLOR}rom=${N0_COLOR}  - path to rom, e.g: /path/to/gop.rom (see https://reviews.freebsd.org/D26209);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-ppt mode=list
+ # cbsd bhyve-ppt mode=attach ppt=0/2/0 jname=vmname
+ # cbsd bhyve-ppt mode=detach ppt=0/2/0 jname=vmname
+
 "
 
 . ${subrdir}/nc.subr
-
+oppt=
+orom=
+rom=
+ppt=
 . ${cbsdinit}
+[ -z "${rom}" ] && rom="0"
+[ -n "${ppt}" ] && oppt="${ppt}"
+[ -n "${rom}" ] && orom="${rom}"
 
 . ${subrdir}/virtual.subr
 . ${system}
@@ -99,6 +137,7 @@ case "${mode}" in
 			ppt=
 			device=
 			vendor=
+			rom=
 			jname=0
 
 			eval ppt="\$ppt${id}"
@@ -106,17 +145,19 @@ case "${mode}" in
 
 			eval device="\$device${id}"
 			eval vendor="\$vendor${id}"
+			eval rom="\$rom${id}"
 
 			jname=$( cbsdsqlro local SELECT jname FROM bhyveppt WHERE ppt=\"${ppt}\" 2>/dev/null )
-			[ -z "${jname}" -o "${jname}" = "0" ] && jname="-"
+			[ -z "${jname}" -o "${jname}" = "0" ] && jname="\-"
+			[ -z "${rom}" -o "${rom}" = "0" ] && rom="\-"
 			[ -n "${ppt}" ] && echo "${ppt} : ${device} : ${vendor} : ${jname}"
 		done
 		;;
 	attach)
 		init_ppt_action
 		[ -n "${tmp_jname}" -a "${tmp_jname}" != "0" ] && err 1 "${N1_COLOR}ppt already used by: ${N2_COLOR}${tmp_jname}${N1_COLOR}. Please detach first${N0_COLOR}"
-
-		cbsdsqlrw local "INSERT INTO bhyveppt ( ppt, device, vendor, jname ) VALUES ( \"${ppt}\", \"device\", \"${vendor}\", \"${jname}\" )"
+		[ -n "${orom}" ] && rom="${orom}"
+		cbsdsqlrw local "INSERT INTO bhyveppt ( ppt, device, vendor, jname, rom ) VALUES ( \"${ppt}\", \"device\", \"${vendor}\", \"${jname}\", \"${rom}\" )"
 		err 0 "${N1_COLOR}Attached${N0_COLOR}"
 		;;
 	detach)
@@ -125,7 +166,7 @@ case "${mode}" in
 		[ -z "${tmp_jname}" -a "${tmp_jname}" = "0" ] && err 1 "${N1_COLOR}ppt is not attached: ${N2_COLOR}${ppt}${N1_COLOR}"
 
 		cbsdsqlrw local "DELETE FROM bhyveppt WHERE ppt=\"${ppt}\""
-		err 0 "${N1_COLOR}Dettached${N0_COLOR}"
+		err 0 "${N1_COLOR}Detached${N0_COLOR}"
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
