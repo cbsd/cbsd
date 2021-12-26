@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.6
 MYARG="mode"
-MYOPTARG="bootable display dsk_controller dsk_path dsk_sectorsize dsk_size header jname zvol_opts"
+MYOPTARG="bootable display dsk_controller dsk_path dsk_sectorsize dsk_serial dsk_size header jname zvol_opts"
 MYDESC="Manage bhyve ahci/virtio disk"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
@@ -16,8 +16,8 @@ ${H3_COLOR}Options${N0_COLOR}:
       - 'attach'             - create and attach new disk;
       - 'detach'             - detach disk from controller (without removing dsk);
       - 'delete' or 'remove' - detach and remove disk;
-      - 'modify'             - modify disk properties (e.g: bootable=, dsk_sectorsize=, 
-                               dsk_size=, ..);
+      - 'modify'             - modify disk properties (e.g: bootable=, dsk_sectorsize=,
+                               dsk_serial=, dsk_size=, ..);
       - 'get_next_free_dsk'  - out next available dsk name for jname;
       - 'get'                - get properties;
 
@@ -25,6 +25,8 @@ ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}bootable${N0_COLOR}       - set bootable flag (1 - true, - false);
  ${N2_COLOR}dsk_sectorsize${N0_COLOR} - set sectorsize (e.g: 512, 4096, 512/4096);
+ ${N2_COLOR}dsk_serial${N0_COLOR}     - set Serial Number with maximum 20 characters,
+                  '0' for default/auto-generated value, see man bhyve_config(5);
  ${N2_COLOR}dsk_size${N0_COLOR}       - increase disk size (e.g: 20g, +30g );
  ${N2_COLOR}dsk_zfs_guid${N0_COLOR}   - can be: 'auto';
 
@@ -39,17 +41,18 @@ ${H3_COLOR}Options${N0_COLOR}:
 
   ${N2_COLOR}display=${N0_COLOR}      - customize output, list item by comma, default values:
                  'jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable'
-                  also available: 'dsk_zfs_guid';
+                  also available: 'dsk_zfs_guid,dsk_serial';
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
 * Lets increase the size of the 'dsk1' for the 'freebsd2' virtual machine by '30g':
 
   # cbsd bhyve-dsk mode=modify dsk_size=+30g jname=freebsd2 dsk_controller=virtio-blk dsk_path=dsk1.vhd
+  # cbsd bhyve-dsk mode=modify dsk_serial=\"BHYVE-1234567890\" jname=freebsd2 dsk_controller=virtio-blk dsk_path=dsk1.vhd
 
 * List of registered disks:
 
-  # cbsd bhyve-dsk mode=list
+  # cbsd bhyve-dsk mode=list display=jname,dsk_size,dsk_zfs_guid,dsk_serial
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -67,8 +70,8 @@ dsk_mbps_limit=
 zvol_opts=
 . ${cbsdinit}
 
-available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_size"
-available_get_properties="dsk_path bootable dsk_sectorsize dsk_zfs_guid"
+available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_serial dsk_size"
+available_get_properties="dsk_path bootable dsk_sectorsize dsk_serial dsk_zfs_guid"
 
 . ${subrdir}/bhyve.subr
 . ${subrdir}/virtual.subr
@@ -121,16 +124,20 @@ dsk_attach()
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	if [ -n "${zvol_opts}" ]; then
-		for i in ${zvol_opts}; do
-			if [ -z "${_zvol_opts}" ]; then
-				_zvol_opts="-o ${i}"
-			else
-				_zvol_opts="${_zvol_opts} -o ${i}"
-			fi
-		done
-	else
-		_zvol_opts=
+	zvol_opts=
+
+	if [ ${zfsfeat} -eq 1 ]; then
+		if [ -n "${zvol_opts}" ]; then
+			for i in ${zvol_opts}; do
+				if [ -z "${_zvol_opts}" ]; then
+					_zvol_opts="-o ${i}"
+				else
+					_zvol_opts="${_zvol_opts} -o ${i}"
+				fi
+			done
+		else
+			_zvol_opts=
+		fi
 	fi
 
 	if [ -n "${_zvol_opts}" ]; then
@@ -140,11 +147,23 @@ dsk_attach()
 		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -s "${dsk_size}" -z "${dsk_sectorsize}"
 		_ret=$?
 	fi
+
 	if [ ${_ret} -eq 0 ]; then
 		${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} attached${N0_COLOR}"
 	else
-		${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} attach failed${N0_COLOR}"
+		err 1 "${N2_COLOR}${dsk_path}${N1_COLOR} attach failed${N0_COLOR}"
 	fi
+
+
+	# ! guid for VM, not for dsk: todo: remove from bhyve-dsk list ?
+#	if [ ${zfsfeat} -eq 1 ]; then
+#		. ${subrdir}/zfs.subr
+#		dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${dsk_path}.vhd )
+#		_ret=$?
+#		[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
+#	fi
+#	[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
+
 	return ${_ret}
 }
 
@@ -332,7 +351,6 @@ dsk_modify_dsk_sectorsize()
 				esac
 				;;
 		esac
-
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
@@ -345,6 +363,46 @@ dsk_modify_dsk_sectorsize()
 
 	cbsdlogger NOTICE "${CBSD_APP}: modify sectorsize ${_old_val} -> ${dsk_sectorsize} (controller: ${dsk_controller}, dsk: ${dsk_path})"
 	${ECHO} "${N1_COLOR}dsk_sectorsize: ${N2_COLOR}changed${N0_COLOR}"
+	return 0
+}
+
+dsk_modify_dsk_serial()
+{
+	local _res _old_val
+
+	for i in jname dsk_controller dsk_path; do
+		_val=
+		eval _val="\$$i"
+		case "${i}" in
+			dsk_path)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# trim .vhd if necessary
+				dsk_path=$( echo ${_val} | ${SED_CMD} 's:\.vhd::g' )
+				;;
+			dsk_controller)
+				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				# check for valid controller
+				case "${_val}" in
+					virtio-blk|ahci-hd)
+						;;
+					*)
+						err 1 "${N1_COLOR}bhyve-dsk error: bhyve-dsk: unknown dsk_controller ${_val}, valid: ${N2_COLOR}virtio-blk, ahci-hd${N0_COLOR}"
+						;;
+				esac
+				;;
+		esac
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && err 1 "${N1_COLOR}No such database: ${N2_COLOR}${jailsysdir}/${jname}/local.sqlite${N0_COLOR}"
+
+	_old_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_serial FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" LIMIT 1 | ${AWK_CMD} '{printf $1}' )
+	[ -z "${_old_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to get current dsk_serial values for: dsk_controller=${N2_COLOR}${dsk_controller}${N1_COLOR} AND dsk_path=${N2_COLOR}${dsk_path}${N0_COLOR}"
+	[ "${_old_val}" = "${dsk_serial}" ] && return 0
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_serial=\"${dsk_serial}\" WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\"
+
+	cbsdlogger NOTICE "${CBSD_APP}: modify sectorsize ${_old_val} -> ${dsk_serial} (controller: ${dsk_controller}, dsk: ${dsk_path})"
+	${ECHO} "${N1_COLOR}dsk_serial: ${N2_COLOR}changed${N0_COLOR}"
 	return 0
 }
 
@@ -396,7 +454,7 @@ dsk_modify_dsk_zfs_guid()
 	[ -z "${_res}" ] && err 0 "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}"
 	[ "${_old_val}" = "${_res}" ] && return 0
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_zfs_guid=\"${_res}\" WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\"
-	cbsdlogger NOTICE "${CBSD_APP}: modify dsk_zfs_guid ${_old_val} -> ${dsk_sectorsize} (controller: ${dsk_controller}, dsk: ${dsk_path})"
+	cbsdlogger NOTICE "${CBSD_APP}: modify dsk_zfs_guid ${_old_val} -> ${dsk_zfs_guid} (controller: ${dsk_controller}, dsk: ${dsk_path})"
 	${ECHO} "${N1_COLOR}dsk_zfs_guid: ${N2_COLOR}changed${N0_COLOR}"
 	return 0
 }
