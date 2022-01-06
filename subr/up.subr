@@ -212,7 +212,7 @@ EOF
 
 run_jail()
 {
-	local _val _ret MYOPTARG JAIL_ARGS i ojname
+	local _val _ret MYOPTARG JAIL_ARGS i ojname _delpkglist _res _tmp
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
 
 	# should be in sync with jcreate script
@@ -269,6 +269,29 @@ run_jail()
 	for i in ${MYOPTARG} ${RCTL} ${RCTL_EXTRA}; do
 		eval _val="\$$i"
 		[ -z "${_val}" ] && continue
+
+		case "${i}" in
+			pkglist)
+				# check if pkglist is file
+				strpos --str="${_val}" --search=" "
+				if [ $? -eq 0 ]; then
+					_res=$( ${REALPATH_CMD} ${myworkdir}/${_val} )
+					# check if pkgplist outside CBSDfile directory? ../../
+					if [ -r "${_res}" ]; then
+						_tmp=$( ${REALPATH_CMD} ${myworkdir} )
+						_ret=$( strlen ${_tmp} )
+						_checkpath=$( substr --pos=0 --len=${_ret} --str=${_res} )
+						if [ "${_checkpath}" = "${_tmp}" ]; then
+							_val="${_res}"
+							_delpkglist=0
+						else
+							${ECHO} "${N1_COLOR}${CBSD_APP} warning: pkglist outside the CBSDfile directory?: ${N2_COLOR}[${_res}][${_tmp}]${N0_COLOR}"
+						fi
+					fi
+				fi
+				;;
+		esac
+
 		if [ -z "${JAIL_ARGS}" ]; then
 			JAIL_ARGS="${i}=\"${_val}\""
 		else
@@ -289,6 +312,19 @@ run_jail()
 
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
 
+	# check for pkglist file exist when vars is empty
+	if [ -z "${pkglist}" ]; then
+		if [ -r "${myworkdir}/pkglist" ]; then
+			JAIL_ARGS="${JAIL_ARGS} pkglist=\"${myworkdir}/pkglist\""
+			_delpkglist=0
+		fi
+	fi
+
+	if [ "${_delpkglist}" = "0" ]; then
+		# don't delete pkglist from file
+		JAIL_ARGS="${JAIL_ARGS} delpkglist=0"
+	fi
+
 	# per-env preup func
 	if fn_exists preup_${jname} 2>/dev/null; then
 		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
@@ -303,6 +339,7 @@ run_jail()
 	if [ -d ${myworkdir}/jails-system ]; then
 		JAIL_ARGS="${JAIL_ARGS} jailsysskeldir=${myworkdir}/jails-system"
 	fi
+
 
 	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${N1_COLOR}${JAIL_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
 	set -o errexit
