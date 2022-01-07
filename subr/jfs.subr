@@ -277,6 +277,7 @@ removedir()
 remove_data_dir()
 {
 	local _data _test _res _jaildatadir ZPOOL _jailfs data _ret
+	local _retry _max_retry
 
 	[ -z "${1}"  ] && err 1 "remove_data_dir: empty arguments"
 	[ -z "${jname}"  ] && err 1 "remove_data_dir: jname variable must be set"
@@ -326,7 +327,24 @@ remove_data_dir()
 			unmountdata ${_data}
 			${ZFS_CMD} list ${ZPOOL}/${jname} >/dev/null 2>/dev/null
 			if [ $? -eq 0 ]; then
-				${ZFS_CMD} destroy ${ZPOOL}/${jname}
+				# sometimes these errors happen:
+				# cannot unmount 'XXX': pool or dataset is busy
+				# needs some timeout/retry
+				_retry=0
+				_max_retry=4
+				. ${system}     # for is_mounted
+				while [ ${_retry} -lt ${_max_retry} ]; do
+					if is_mounted ${_data}; then
+						# fstat/processes?
+						${UMOUNT_CMD} -f ${_data} 2>/dev/null
+					fi
+					${ZFS_CMD} destroy ${ZPOOL}/${jname}
+					${ZFS_CMD} list ${ZPOOL}/${jname} >/dev/null 2>/dev/null
+					[ $? -ne 0 ] && break
+					${ECHO} "${N1_COLOR}${CBSD_APP}: cannot destroy ${ZPOOL}/${jname} (${_data}), retry: ${N2_COLOR}${_retry}/${_max_retry}${N0_COLOR}" 1>&2
+					sleep 1
+					_retry=$(( _retry + 1 ))
+				done
 			fi
 		fi
 	elif [ "${hammerfeat}" = "1" ]; then
