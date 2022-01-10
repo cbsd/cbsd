@@ -1,0 +1,58 @@
+#!/bin/sh
+# todo: to C? get rid of sed/grep/awk..)
+# -i <sw> -e "exclude list"
+# -i cbsdng_ng0
+# -e "link2 link3"
+usage()
+{
+	printf "[bhyve] Return next free netgraph port/link\n"
+	printf " -e \"exclude list\""
+	printf " -i node name, e.g: cbsdng_ng0\n"
+	exit 0
+}
+
+[ -z "${1}" -o "${1}" = "--help" ] && usage
+
+# MAIN
+while getopts "e:i:h:" opt; do
+	case "${opt}" in
+		e) exclude_list="${OPTARG}" ;;
+		i) ngpath="${OPTARG}:" ;;			# append ':'
+		h) usage ;;
+	esac
+	shift $(($OPTIND - 1))
+done
+
+if [ -z "${ngpath}" ]; then
+	echo "empty node path, -i"
+	exit 1
+fi
+
+link_list=$( /usr/sbin/ngctl show ${ngpath} 2>/dev/null | grep 'socket' | awk '{printf $1" "}' )
+ret=$?
+if [ ${ret} -ne 0 ]; then
+	echo "next-ng-port: ngctl show ${ngpath} failed"
+	exit ${ret}
+fi
+
+for i in $( seq 1 255 ); do
+	check_link="link${i}"
+	exist=0
+	for x in ${link_list}; do
+		for s in ${exclude_list}; do
+			[ "${check_link}" = "${s}" ] && exist=1
+		done
+		[ ${exist} -eq 1 ] && continue
+		[ "${check_link}" = "${x}" ] && exist=$(( exist + 1 ))
+	done
+	[ ${exist} -eq 0 ] && break
+done
+
+if [ ${i} -lt 255 ]; then
+	echo "${check_link}"
+else
+	echo "next-ng-port: ngctl show ${ngpath}: no free link port? 255+"
+	exit 1
+fi
+
+exit 0

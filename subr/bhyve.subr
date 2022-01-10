@@ -822,6 +822,7 @@ compile_nic_args()
 	local _parent_mtu=0
 	local _ret=
 	local _is_bridge
+	local _is_graph
 	local autoconn_iface=$( ${SYSRC_CMD} -n cbsd_autoconnect_bridge 2>&1 )
 	local _pcislot_args= _pref
 	local IFS OIFS
@@ -834,6 +835,8 @@ compile_nic_args()
 	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
 
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit nic_flags; do
+
+		_is_graph=0
 
 		case "${nic_driver}" in
 			e1000)
@@ -857,9 +860,17 @@ compile_nic_args()
 			cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${mytap} marked as persistent
 		else	# << if [ ${nic_persistent} -eq 0 ]
 			case ${nic_parent} in
-
 				cbsdvale*)
 					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				cbsdng_ng*)
+					# -s X:Y:Z,[virtio-net,e1000],netgraph,socket=vmX,path=vmbridge:,hook=vmlink,peerhook=link0
+					# netgraph,socket=vm0,path=vmbridge:,hook=vm0link,peerhook=link0
+					_is_graph=1
+					#myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=${jname}_${_id},path=${nic_parent}:,hook=${jname}_${_id}link,peerhook=link${_id}"
+
+					mytap="${nic_parent}:${jname}_${_id}link"
+					cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: netgraph backend selected for nic: ${_id}: ${nic_parent}
 					;;
 				vale*)
 					get_vm_uplink_interface -p ${nic_parent} -u
@@ -1032,7 +1043,17 @@ compile_nic_args()
 
 		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 
-		myargs="-s ${_pcislot_args},${net_emul},${mytap}"
+		if [ ${_is_graph} -eq 1 ]; then
+			# tmp hack - to external script with locking/mutual protection
+			mylink=$( get-next-ng-port ngid=${nic_parent} )
+			ret=$?
+			[ ${ret} -ne 0 ] && err 1 "errmsg=\"Error:get_my_tap_for_${nic_parent}: get-next-ng-port ngid=${nic_parent}\""
+			[ -z "${mylink}" ] && err 1 "errmsg=\"Error:get_my_tap_for_${nic_parent}: empty: get-next-ng-port ngid=${nic_parent}\" "
+			myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=${jname}_${_id},path=${nic_parent}:,hook=${jname}_${_id}link,peerhook=${mylink}"
+			#myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=vm1,path=vmbridge:,hook=vm1link,peerhook=link1"
+		else
+			myargs="-s ${_pcislot_args},${net_emul},${mytap}"
+		fi
 
 		# virtio-net support for MTU after r359704
 		if [ ${freebsdhostversion} -gt 1300095 ]; then
@@ -1067,6 +1088,8 @@ compile_nic_args()
 #			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap}\" ;"
 #		fi
 
+		cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: myargs for nic ${_id}: ${myargs}
+
 		echo "export nic${_id}=\"${myargs}\" ;"
 
 		# todo: name as descr? or mac as desc?
@@ -1083,6 +1106,7 @@ compile_nic_args()
 	# export in mytap fill list of vm NICs
 	mytap=
 
+	# vale/netgraph skip taplist?
 	for i in $( ${SEQ_CMD} 0 31 ); do
 		eval T="\$nic$i"
 		eval taplist="\$mytap$i"
@@ -1104,6 +1128,8 @@ compile_nic_args()
 #			#V6
 #		done
 #	fi
+
+	cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: full nic_args: ${nic_args}
 
 	[ -z "${nic_args}" ] && return 1
 
