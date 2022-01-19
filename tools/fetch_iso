@@ -1,25 +1,76 @@
 #!/usr/local/bin/cbsd
 #v12.0.8
+# calc_raw_data check_sha256 cloud conv2zvol convonly dstdir fastscan gensha256 keepname name path purge purgeonly
 MYARG="dstdir"
-MYOPTARG="gensha256 keepname name path purge purgeonly cloud calc_raw_data convonly fastscan conv2zvol"
+MYOPTARG="calc_raw_data check_sha256 cloud conv2zvol convonly fastscan gensha256 keepname name path purge purgeonly"
 MYDESC="Fetch ISO images from mirror sites"
 CBSDMODULE="sys"
-ADDHELP="\
- dstdir        - destination directory. Use dstdir=default for using default iso dir: \$cbsd_workdir/src/iso\n\
- gensha256     - re-generate sha256sum files\n\
- keepname      - when 0, save ISO as register_iso_name variable, e.g cbsd-iso-${iso_img}\n\
-                 when 1, save ISO as original name on remote site (for mirroring)\n\
- name          - fetch by profile name, e.g: FreeBSD-x64-11.1, Debian-x86-9\n\
- path          - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf\n\
- purge         - when 1, purge ISO which are not referenced by any profiles\n\
- purgeonly     - when 1, no download, just purge ISO which are not referenced by any profiles\n\
- cloud         - when 1, work with cloud image instead of iso ( 0 by default )\n\
- conv2zvol     - when 1, try to convert ( keepname = 0 ) cloud images to ZVOL ( 0 by default )\n\
- calc_raw_data - when 1, calculate and update imgsize_min for cloud image\n\
- convonly      - convonly=/path/to/raw - apply conv2zvol to /path/to/raw only\n\
- fastscan      - when 1, scan for fastest mirror first ( 0 by default )\n\
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Script for downloading ISO/VM images according to profile templates ( ~cbsd/etc/defaults/vm-* + ~cbsd/etc/vm-*.conf )
+ Mainly used in two scenarios.
+
+1) Warming up images and creating a full mirror locally;
+2) Check and update CRC SHA256 sum;
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}calc_raw_data=${N0_COLOR} - when 1, calculate and update imgsize_min for cloud image;
+ ${N2_COLOR}check_sha256=${N0_COLOR}  - when 0, skip SHA256 CRC verification ( mutually exclusive for 'check_sha256' options,
+                  if the sum does not match, the image will not be saved. default values is '1';
+ ${N2_COLOR}cloud=${N0_COLOR}         - when 1, work with cloud image instead of iso ( 0 by default );
+ ${N2_COLOR}conv2zvol=${N0_COLOR}     - when 1, try to convert ( keepname = 0 ) cloud images to ZVOL ( 0 by default );
+ ${N2_COLOR}convonly=${N0_COLOR}      - convonly=/path/to/raw - apply conv2zvol to /path/to/raw only;
+ ${N2_COLOR}dstdir=${N0_COLOR}        - destination directory. Use dstdir=default for using default iso dir: \$cbsd_workdir/src/iso;
+ ${N2_COLOR}fastscan=${N0_COLOR}      - when 1, scan for fastest mirror first ( 0 by default );
+ ${N2_COLOR}gensha256=${N0_COLOR}     - when 1: force to re-generate sha256sum files ( mutually exclusive for 'check_sha256' options,
+                  default values is '0';
+ ${N2_COLOR}keepname=${N0_COLOR}      - when 0, save ISO as register_iso_name variable, e.g cbsd-iso-${iso_img}
+                  when '1', save ISO as original name on remote site (for mirroring);
+ ${N2_COLOR}name=${N0_COLOR}          - fetch by profile name, e.g: FreeBSD-x64-11.1, Debian-x86-9;
+ ${N2_COLOR}path=${N0_COLOR}          - fetch by profile path, e.g: /usr/jails/etc/defaults/vm-openbsd-x86-6.conf;
+ ${N2_COLOR}purge=${N0_COLOR}         - when 1, purge ISO which are not referenced by any profiles;
+ ${N2_COLOR}purgeonly=${N0_COLOR}     - when 1, no download, just purge ISO which are not referenced by any profiles;
+
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ 1) Warm up ISO image for FreeBSD 13.0-RELEASE:
+
+   a) by name:
+   # cbsd fetch_iso name=FreeBSD-x64-13.0 dstdir=default fastscan=1
+
+   b) by path:
+   # cbsd fetch_iso path=/usr/jails/etc/defaults/vm-freebsd-FreeBSD-x64-13.0.conf dstdir=default fastscan=1
+
+ 2) Warm up FreeBSD 13.0-ZFS CLOUD image and convert to ZVOL as gold-image:
+
+   # cbsd fetch_iso path="/usr/jails/etc/defaults/vm-freebsd-cloud-FreeBSD-zfs-x64-13.0.conf" conv2zvol=1 keepname=0 dstdir=default fastscan=1 cloud=1
+
+ 3) Warm up ALL images:
+
+   # cbsd fetch_iso dstdir=default fastscan=1
+
+ 4) Create FULL mirror in /tmp/mirror with original images name ( profiles referenced name ):
+
+   a) for ISO images:
+   # mkdir /tmp/mirror/iso
+   # cbsd fetch_iso dstdir=/tmp/mirror/iso keepname=1 purge=1 cloud=0
+
+   # mkdir /tmp/mirror/cloud
+   # cbsd fetch_iso dstdir=/tmp/mirror/iso keepname=1 purge=1 cloud=1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ # cbsd media --help
+
+ cat ~cbsd/etc/defaults/fetch_iso.conf - config file, use ~cbsd/etc/fetch_iso.conf to overwrite.
+ url: https://www.bsdstore.ru/en/cbsd_fetch.html
+
 "
 
+check_sha256=1
 fastscan=0
 calc_raw_data=0
 cloud=0
@@ -47,10 +98,11 @@ processed_iso_bad_list=
 purged_iso_count=0
 purged_iso_list=
 
-readconf fetch_iso
+readconf fetch_iso.conf
 
 . ${cbsdinit}
 . ${system}
+. ${subrdir}/virtual.subr
 
 [ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
 [ ! -d ${dstdir} ] && ${MKDIR_CMD} -p ${dstdir}
@@ -109,6 +161,17 @@ obtain_iso()
 		if [ $? -ne 0 ]; then
 			${RM_CMD} -f ${dstdir}/${fout}	# remove broken ISO
 			continue
+		fi
+
+		if [ ${check_sha256} -eq 1 ]; then
+			check_iso_sha256sum -f ${dstdir}/${fout} -m ${sha256sum}
+			sha256sum_passed=$?
+			if [ ${sha256sum_passed} -ne 1 ]; then
+				${ECHO} "${N1_COLOR}SHA256 sum wrong. Please update profiles or use ${N2_COLOR}CBSD_ISO_SKIP_CHECKSUM=yes${N1_COLOR} variable" 1>&2
+				${ECHO} "via env(1) or ${emulator}-default-default.conf config file to disable sha256sum validating${N0_COLOR}" 1>&2
+				${RM_CMD} -f ${dstdir}/${fout}	# remove broken ISO
+				continue
+			fi
 		fi
 
 		if [ ${cloud} -eq 1 -a ${calc_raw_data} -eq 1 ]; then
