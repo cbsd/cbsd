@@ -246,7 +246,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 				if [ ${tablet} -eq 1 ]; then
 					xhci_args="-s 30,xhci,tablet"
 				else
-					xhci_args="-s 30,xhci,"		# , is mandatory
+					xhci_args="-s 30,xhci"		# , is mandatory
 				fi
 			else
 				xhci_args=
@@ -275,6 +275,20 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	[ "${bhyve_mptable_gen}" = "0" ] && add_bhyve_opts="${add_bhyve_opts} -Y" # disable mptable gen
 	[ "${bhyve_ignore_msr_acc}" = "1" ] && add_bhyve_opts="${add_bhyve_opts} -w"
 	[ -n "${uuid}" -a "${uuid}" != "0" ] && add_bhyve_opts="${add_bhyve_opts} -U ${uuid}"
+
+	# bhyve_vnc_kbdlayout
+	if [ ${freebsdhostversion} -gt 1300134 ]; then
+		# hardcoded?
+		if [ -r /usr/share/bhyve/kbdlayout/uk ]; then
+			if [ -n "${bhyve_vnc_kbdlayout}" -a "${bhyve_vnc_kbdlayout}" != "0" ]; then
+				if [ -r "/usr/share/bhyve/kbdlayout/${bhyve_vnc_kbdlayout}" ]; then
+					add_bhyve_opts="${add_bhyve_opts} -K ${bhyve_vnc_kbdlayout}"
+				else
+					echo "bhyverun.sh: no such keyboard layout /usr/share/bhyve/kbdlayout: ${bhyve_vnc_kbdlayout}"
+				fi
+			fi
+		fi
+	fi
 
 	if [ -n "${soundhw_args}" ]; then
 		if [ "${soundhw_args}" = "none" -o ${freebsdhostversion} -lt 1300034 ]; then
