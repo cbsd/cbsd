@@ -166,6 +166,11 @@ show()
 
 						IFS="${OIFS}"
 
+						if [ "${_pureip}" = "REALDHCP" ]; then
+							${CAT_CMD} ${_tpldir}/30-${_source}-dhcp4
+							continue
+						fi
+
 						ipwmask ${_pureip}
 						[ -z "${IWM}" -o "${_i}" = "0" ] && continue
 
@@ -315,62 +320,72 @@ show()
 
 			iface=0
 
+			# wait for regen cloud-apply with 'dhcp4' and 'dhcp6' support
+			dhcp_work_around=0
+
 			for _pureip in ${ci_ip4_addr}; do
 				IFS="${OIFS}"
 
-				ipwmask ${_pureip}
-				[ -z "${IWM}" -o "${_i}" = "0" ] && continue
+				if [ "${_pureip}" != "REALDHCP" ]; then
 
-				strpos --str="${_pureip}" --search="/"
-				_nomask=$?
+					ipwmask ${_pureip}
+					[ -z "${IWM}" -o "${_i}" = "0" ] && continue
 
-				iptype ${IWM}
-				_inet=$?
+					strpos --str="${_pureip}" --search="/"
+					_nomask=$?
 
-				case ${_inet} in
-					1)
-						ipv4_true="true"
-						ipv6_true="false"
-						if [ ${_nomask} -eq 0 ]; then
-							_pureip="${_pureip}/24"
-						else
-							_mask="${_pureip#*/}"
-							if is_number "${_mask}"; then
-								err 1 "${N1_COLOR}${CBSD_APP}: prefix not a number: ${_mask}: ${N2_COLOR}${_pureip}${N1_COLOR}"
+					iptype ${IWM}
+					_inet=$?
+
+					case ${_inet} in
+						1)
+							ipv4_true="true"
+							ipv6_true="false"
+							if [ ${_nomask} -eq 0 ]; then
+								_pureip="${_pureip}/24"
 							else
-								_pureip="${IWM}/${_mask}"
+								_mask="${_pureip#*/}"
+								if is_number "${_mask}"; then
+									err 1 "${N1_COLOR}${CBSD_APP}: prefix not a number: ${_mask}: ${N2_COLOR}${_pureip}${N1_COLOR}"
+								else
+									_pureip="${IWM}/${_mask}"
+								fi
 							fi
-						fi
-						;;
-					2)
-						ipv4_true="false"
-						ipv6_true="true"
-						if [ ${_nomask} -eq 0 ]; then
-							_pureip="${_pureip}/64"
-						else
-							_mask="${_pureip#*/}"
-							if is_number "${_mask}"; then
-								err 1 "${N1_COLOR}${CBSD_APP}: prefix not a number: ${_mask}: ${N2_COLOR}${_pureip}${N1_COLOR}"
+							;;
+						2)
+							ipv4_true="false"
+							ipv6_true="true"
+							if [ ${_nomask} -eq 0 ]; then
+								_pureip="${_pureip}/64"
 							else
-								_pureip="${IWM}/${_mask}"
+								_mask="${_pureip#*/}"
+								if is_number "${_mask}"; then
+									err 1 "${N1_COLOR}${CBSD_APP}: prefix not a number: ${_mask}: ${N2_COLOR}${_pureip}${N1_COLOR}"
+								else
+									_pureip="${IWM}/${_mask}"
+								fi
 							fi
-						fi
-						;;
-					*)
-						log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
-						;;
-				esac
+							;;
+						*)
+							log_err 1 "${N1_COLOR}Unknown IP address for ${jname}: ${N2_COLOR}${IWM}${N0_COLOR}"
+							;;
+					esac
 
-				if [ ${iface} -eq 1 ]; then
-					oci_gw4="${ci_gw42}"
+					if [ ${iface} -eq 1 ]; then
+						oci_gw4="${ci_gw42}"
+					fi
+
+					echo "ip${iface}=\"${_pureip}\""
+					echo "gw${iface}=\"${oci_gw4}\""
+					#echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
+					iface=$(( iface + 1 ))
+				else
+					dhcp_work_around=1		# remove me after regen gold images with new cloud-init 'dhcp[4,6]' support
+					echo "ip${iface}=\"dhcp4\""
+					# REALDHCP
+					# todo: REALDHCPv6 ?
 				fi
-
-				echo "ip${iface}=\"${_pureip}\""
-				echo "gw${iface}=\"${oci_gw4}\""
-				#echo "gw${iface}=\"${ci_gw42}%vtnet${iface}\""
-				iface=$(( iface + 1 ))
 				IFS=","
-
 			done
 			IFS="${OIFS}"
 
@@ -523,6 +538,9 @@ if [ -n "${fromfile}" ]; then
 					[ ! -d "${master_prestart_dir}" ] && ${MKDIR_CMD} -p ${master_prestart_dir}
 					${CP_CMD} -a ${_MYDIR}/cloud-master_prestart.d/cloud_init_set_netname.sh ${master_prestart_dir}/
 				fi
+
+				# remove me after regen gold/cloud-init image with 'dhcp[4,6] support
+				[ "${dhcp_work_around}" = "1" ] && ${RM_CMD} -f ${cloud_init_dir}/cbsd-network-config
 
 				;;
 			*)
