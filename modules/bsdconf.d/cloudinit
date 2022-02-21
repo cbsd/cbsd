@@ -82,31 +82,6 @@ show()
 		shift $(($OPTIND - 1))
 	done
 
-	if [ -n "${ci_pubkey}" ]; then
-		# ci_pubkey test
-		. ${subrdir}/settings-tui-virtual.subr	# for is_valid_ssh_key
-		if [ -r "${workdir}/${ci_pubkey}" ]; then
-			_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${ci_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
-			if ! is_valid_ssh_key "${_keytest}"; then
-				echo "cloudinit: invalid ssh key from ${workdir}/${ci_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-				echo "found: [${_keytest}]"
-				return 1
-			fi
-		elif [ -r "${ci_pubkey}" ]; then
-			_keytest=$( ${GREP_CMD} -v '#' ${ci_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
-			if ! is_valid_ssh_key "${_keytest}"; then
-				echo "cloudinit: invalid ssh key from ${ci_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-				echo "found: [${_keytest}]"
-				return 1
-			fi
-		else
-			if ! is_valid_ssh_key "${ci_pubkey}"; then
-				echo "cloudinit: invalid ssh key: [${ci_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
-				return 1
-			fi
-			_keytest="${ci_pubkey}"
-		fi
-	fi
 
 	ci_user_pw_user_lock="false"
 	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user='*'
@@ -414,32 +389,82 @@ show()
 			# This is a multi-part compound file.
 			# Without jinja/erb this is really entangled code ;-(
 
-			# change user password needed?
-			need_user_chpasswd=0
 			# change root password needed?
 			need_root_chpasswd=0
 
-			prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_user} )
-			if [ "${prefix}" = "*" ]; then
-				ci_user_pw_user_lock="true"
-			else
-				ci_user_pw_user_lock="false"
-				need_user_chpasswd=1
-			fi
-
 			${CAT_CMD} ${_tpldir}/10-user-data		# header
-			if [ "${ci_user_pw_user_lock}" = "false" ]; then
-				${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
-				-e "s:%%ci_shell%%:${ci_shell}:g" \
-				-e "s:%%ci_pubkey%%:${_keytest}:g" \
-				-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
-				${_tpldir}/20-user-data-user-password
-			else
-				${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
-				-e "s:%%ci_shell%%:${ci_shell}:g" \
-				-e "s:%%ci_pubkey%%:${_keytest}:g" \
-				${_tpldir}/20-user-data-user-lockpassword
-			fi
+
+			for i in ${ci_user_add}; do
+				# change user password needed?
+				need_user_chpasswd=0
+
+				unset login epw ci_pw ci_fullname ci_secgroup ci_group ci_shell res err
+				unset ci_pubkey
+				ci_login="${i}"
+
+				f_getvar ci_user_pw_${i} ci_pw
+				f_getvar ci_user_pw_${i}_crypt ci_epw
+				f_getvar ci_user_gecos_${i} ci_fullname
+				f_getvar ci_user_home_${i} ci_home
+				f_getvar ci_user_shell_${i} ci_shell
+				f_getvar ci_user_member_groups_${i} ci_secgroup
+				f_getvar ci_user_pubkey_${i} ci_pubkey
+
+				[ -z "${ci_shell}" ] && ci_shell="/bin/sh"
+
+				# global pubkey
+				if [ -z "${ci_pubkey}" ]; then
+					ci_pubkey="${ci_user_pubkey}"
+				fi
+
+				if [ -n "${ci_pubkey}" ]; then
+					# ci_pubkey test
+					. ${subrdir}/settings-tui-virtual.subr	# for is_valid_ssh_key
+					if [ -r "${workdir}/${ci_pubkey}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${workdir}/${ci_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							echo "cloudinit: invalid ssh key from ${workdir}/${ci_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							echo "found: [${_keytest}]"
+							return 1
+						fi
+					elif [ -r "${ci_pubkey}" ]; then
+						_keytest=$( ${GREP_CMD} -v '#' ${ci_pubkey} | ${GREP_CMD} . | ${HEAD_CMD} -n1 )
+						if ! is_valid_ssh_key "${_keytest}"; then
+							echo "cloudinit: invalid ssh key from ${ci_pubkey} file. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							echo "found: [${_keytest}]"
+							return 1
+						fi
+					else
+						if ! is_valid_ssh_key "${ci_pubkey}"; then
+							echo "cloudinit: invalid ssh key: [${ci_pubkey}]. valid key: ssh-rsa,ssh-ed25519,ecdsa-*,ssh-dsa"
+							return 1
+						fi
+						_keytest="${ci_pubkey}"
+					fi
+				fi
+
+
+				prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_user} )
+				if [ "${prefix}" = "*" ]; then
+					ci_user_pw_user_lock="true"
+				else
+					ci_user_pw_user_lock="false"
+					need_user_chpasswd=1
+				fi
+
+				if [ "${ci_user_pw_user_lock}" = "false" ]; then
+					${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
+					-e "s:%%ci_shell%%:${ci_shell}:g" \
+					-e "s:%%ci_pubkey%%:${_keytest}:g" \
+					-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
+					${_tpldir}/20-user-data-user-password
+				else
+					${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
+					-e "s:%%ci_shell%%:${ci_shell}:g" \
+					-e "s:%%ci_pubkey%%:${_keytest}:g" \
+					${_tpldir}/20-user-data-user-lockpassword
+				fi
+			done
 
 			# root user ( combine with users ^^ ? )
 			prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_root} )
@@ -463,15 +488,6 @@ show()
 				[ "${need_root_chpasswd}" = "1" ] && ${SED_CMD} -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" ${_tpldir}/40-user-data-chpasswd-root
 				${CAT_CMD} ${_tpldir}/50-user-data-chpasswd
 			fi
-
-#			${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
-#			-e "s:%%ci_shell%%:${ci_shell}:g" \
-#			-e "s:%%ci_pubkey%%:${_keytest}:g" \
-#			-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
-#			-e "s:%%ci_user_pw_user_lock%%:${ci_user_pw_user_lock}:g" \
-#			-e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
-#			-e "s:%%ci_user_pw_root_lock%%:${ci_user_pw_root_lock}:g" \
-#			${_tpldir}/${_source}
 			;;
 	esac
 }
@@ -495,58 +511,36 @@ if [ -n "${fromfile}" ]; then
 			;;
 	esac
 
-	for i in ${ci_user_add}; do
-		unset login epw ci_pw ci_fullname ci_secgroup ci_group ci_shell res err
-		unset ci_pubkey
-		ci_login="${i}"
-
-		f_getvar ci_user_pw_${i} ci_pw
-		f_getvar ci_user_pw_${i}_crypt ci_epw
-		f_getvar ci_user_gecos_${i} ci_fullname
-		f_getvar ci_user_home_${i} ci_home
-		f_getvar ci_user_shell_${i} ci_shell
-		f_getvar ci_user_member_groups_${i} ci_secgroup
-		f_getvar ci_user_pubkey_${i} ci_pubkey
-
-		# global pubkey
-		if [ -n "${ci_user_pubkey}" ]; then
-			ci_pubkey="${ci_user_pubkey}"
-			eval "ci_user_pubkey_${i}=\"${ci_pubkey}\""
-		fi
-
-		case "${mode}" in
-			show)
-				echo $cloud_data_files
-				for i in ${cloud_data_files}; do
-					show -s ${i}
-					ret=$?
-					[ ${ret} -ne 0 ] && err ${ret} "cloudinit error"
-				done
-				;;
-			gen)
-				[ ! -d "${cloud_init_dir}" ] && ${MKDIR_CMD} -p ${cloud_init_dir}
-				for i in ${cloud_data_files}; do
-					show -s ${i} > ${cloud_init_dir}/${i}
-					ret=$?
-					if [ ${ret} -ne 0 ]; then
-						${CAT_CMD} ${cloud_init_dir}/${i}
-						err ${ret} "cloudinit error"
-					fi
-				done
-
-				if [ "${ci_adjust_inteface_helper}" = "1" ]; then
-					[ ! -d "${master_prestart_dir}" ] && ${MKDIR_CMD} -p ${master_prestart_dir}
-					${CP_CMD} -a ${_MYDIR}/cloud-master_prestart.d/cloud_init_set_netname.sh ${master_prestart_dir}/
+	case "${mode}" in
+		show)
+			echo $cloud_data_files
+			for i in ${cloud_data_files}; do
+				show -s ${i}
+				ret=$?
+				[ ${ret} -ne 0 ] && err ${ret} "cloudinit error"
+			done
+			;;
+		gen)
+			[ ! -d "${cloud_init_dir}" ] && ${MKDIR_CMD} -p ${cloud_init_dir}
+			for i in ${cloud_data_files}; do
+				show -s ${i} > ${cloud_init_dir}/${i}
+				ret=$?
+				if [ ${ret} -ne 0 ]; then
+					${CAT_CMD} ${cloud_init_dir}/${i}
+					err ${ret} "cloudinit error"
 				fi
+			done
 
-				# remove me after regen gold/cloud-init image with 'dhcp[4,6] support
-				[ "${dhcp_work_around}" = "1" ] && ${RM_CMD} -f ${cloud_init_dir}/cbsd-network-config
-
-				;;
-			*)
-				err 1 "${N1_COLOR}cloudinit helper: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
-		esac
-	done
+			if [ "${ci_adjust_inteface_helper}" = "1" ]; then
+				[ ! -d "${master_prestart_dir}" ] && ${MKDIR_CMD} -p ${master_prestart_dir}
+				${CP_CMD} -a ${_MYDIR}/cloud-master_prestart.d/cloud_init_set_netname.sh ${master_prestart_dir}/
+			fi
+			# remove me after regen gold/cloud-init image with 'dhcp[4,6] support
+			[ "${dhcp_work_around}" = "1" ] && ${RM_CMD} -f ${cloud_init_dir}/cbsd-network-config
+			;;
+		*)
+			err 1 "${N1_COLOR}cloudinit helper: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+	esac
 
 	exit ${ret}
 fi
