@@ -1,16 +1,31 @@
 #!/usr/local/bin/cbsd
 #v10.1.2
-MYARG=""
-MYOPTARG="controlmaster out repo conf"
+MYARG=
+MYOPTARG="conf controlmaster out repo"
 MYDESC="Generate choosen package list from repository"
-ADDHELP="out=path_to_file with result, instead of random\n\
-repo= use this repository\n\
-conf= use this pkg.conf\n"
+CBSDMODULE="jail"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+TUI-based dialog for select package list from ports category. The result can be 
+saved to a file. Used by TUI dialog for data exchange.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}conf${N0_COLOR}          - use this pkg.conf;
+ ${N2_COLOR}controlmaster${N0_COLOR} - use this pkg.conf;
+ ${N2_COLOR}out${N0_COLOR}           - path_to_file with result, instead of random;
+ ${N2_COLOR}repo${N0_COLOR}          - use this repository;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd pkgbrowser controlmaster=/tmp/test
+ # cat /tmp/test
+
+"
 
 . ${subrdir}/nc.subr
-
 . ${cbsdinit}
-
 . ${dialog}
 
 f_dialog_title "$msg_system_console_configuration"
@@ -34,27 +49,34 @@ input_manual()
 
 populate_menu_by_category()
 {
+	local width
+
 	cat_id="${1}"
-	shift
-	cat_name="${1}"
-	shift
+	cat_name="${2}"
+
 	[ -z "${cat_id}" -o -z "${cat_name}" ] && return 1
 
 	local _tmpdir="${tmpdir}/pkg"
-	[ ! -d "${_tmpdir}" ] && mkdir "${_tmpdir}"
+	[ ! -d "${_tmpdir}" ] && ${MKDIR_CMD} "${_tmpdir}"
 
-	[ -f "${_tmpdir}/${cat_name}.mnu" -a ${UPDATED} -eq 0 ] && return 0
+	[ -r "${_tmpdir}/${cat_name}.mnu" -a ${UPDATED} -eq 0 ] && return 0
 
 	echo 'menu_list="' > ${_tmpdir}/${cat_name}.mnu
 	echo "'EXIT'	'EXIT'	'Exit this menu'" >> ${_tmpdir}/${cat_name}.mnu
 
 	${TRUNCATE_CMD} -s0 ${_tmpdir}/${cat_name}.idx
-	/bin/rm -f ${_tmpdir}/${cat_name}.idx.gz
+	${RM_CMD} -f ${_tmpdir}/${cat_name}.idx.gz
 
-	f_dialog_title " Repo updated "
-	f_dialog_info "Re-index and dialogizing for ${cat_name}..."
+	local msg="Re-index and dialogizing for ${cat_name}..."
+	width=50
+
+	$DIALOG \
+		--title " repo updated "   \
+		--backtitle " pkgbrowser " \
+		--infobox "${msg}" 4 ${width}
 
 	local sqldelimer="|"
+	local OIFS="${IFS}"
 	local IFS="|"
 
 	local i=0
@@ -62,7 +84,8 @@ populate_menu_by_category()
 	local prefix=X
 	local cur_prefix=Y
 
-	cbsdsqlro /var/db/pkg/${repofile} "SELECT name,origin,comment,flatsize FROM packages WHERE id IN ( SELECT package_id FROM pkg_categories WHERE category_id=\"${cat_id}\" ) AND id IN ( SELECT packages.id FROM packages LEFT JOIN deps ON packages.origin = deps.origin WHERE deps.origin IS NULL ) ORDER BY name" |while read name origin comment flatsize; do
+	cbsdsqlro /var/db/pkg/${repofile} "SELECT name,origin,comment,flatsize FROM packages WHERE id IN ( SELECT package_id FROM pkg_categories WHERE category_id=\"${cat_id}\" ) AND id IN ( SELECT packages.id FROM packages LEFT JOIN deps ON packages.origin = deps.origin WHERE deps.origin IS NULL ) ORDER BY name" | while read name origin comment flatsize; do
+		IFS="${OIFS}"
 		prefix=$( substr --pos=0 --len=1 --str=${name} )
 
 		if [ "${prefix}" != "${cur_prefix}" ]; then
@@ -71,19 +94,25 @@ populate_menu_by_category()
 			prefix=""
 		fi
 
-		comment=$( echo "${comment}" |${TR_CMD} -d "\"()'\`" )
-		markname=$( echo "${name}" |${TR_CMD} -d "\"()'\`-.+" )
+		comment=$( echo "${comment}"  | ${TR_CMD} -d "\"()'\`" )
+		markname=$( echo "${name}" | ${TR_CMD} -d "\"()'\`-.+" )
 
-		if conv2human "$flatsize"; then
-			flatsize=${convval}
+		if ! is_number ${flatsize}; then
+			if conv2human "${flatsize}"; then
+				flatsize=${convval}
+			fi
+		else
+			flatsize="0"
 		fi
 
 		echo "export pkgmark_${markname}_origin='${origin}'" >> ${_tmpdir}/${cat_name}.idx
 		echo "'${prefix} ${name}'	'[\$pkgmark_${markname}] ${origin}'	'${comment}. Size: ${flatsize}'" >> ${_tmpdir}/${cat_name}.mnu
-
+		IFS="|"
 	done
 
-	/usr/bin/gzip -9 ${_tmpdir}/${cat_name}.idx
+	IFS="${OIFS}"
+
+	${GZIP_CMD} -9 ${_tmpdir}/${cat_name}.idx
 	echo '"' >> ${_tmpdir}/${cat_name}.mnu
 }
 
@@ -111,7 +140,7 @@ browse_category()
 	local sqldelimer="|"
 	local IFS="|"
 
-	eval $( cbsdsqlro /var/db/pkg/${repofile} 'SELECT id,name FROM categories ORDER BY name'| while read id name; do
+	eval $( cbsdsqlro /var/db/pkg/${repofile} 'SELECT id,name FROM categories ORDER BY name' | while read id name; do
 			echo "local id_${num}=\"${id}\""
 			echo "local name_${num}=\"${name}\""
 			num=$(( num + 1 ))
@@ -120,7 +149,8 @@ browse_category()
 	unset IFS
 	unset sqldelimer
 
-	for num in $( seq 0 200 ); do
+
+	for num in $( ${SEQ_CMD} 0 200 ); do
 		eval id="\$id_${num}"
 		[ -z "${id}" ] && break
 		eval name="\$name_${num}"
@@ -134,7 +164,7 @@ browse_category()
 
 		[ ${skip} -eq 1 ] && continue
 
-		populate_menu_by_category ${id} ${name}
+		populate_menu_by_category "${id}" "${name}"
 		menu_list="${menu_list} '${name}'	''	''"
 	done
 
@@ -160,21 +190,21 @@ UPDATED="0"
 
 # controlmaster for submenu
 CONTROLMASTER=$( ${MKTEMP_CMD} )
-/usr/bin/touch ${CONTROLMASTER}
+${TOUCH_CMD} ${CONTROLMASTER}
 
-trap "/bin/rm -f ${CONTROLMASTER}" HUP INT ABRT BUS TERM EXIT
+trap "${RM_CMD} -f ${CONTROLMASTER}" HUP INT ABRT BUS TERM EXIT
 
 f_dialog_info "Executing pkg update..."
 
 #printf "${N1_COLOR}Update local copy of repository catalogues...${N0_COLOR}"
-tst=$( ${PKG_CMD} update 2>&1 )
-[ $? -ne 0 ] && err 1 "${N1_COLOR}pkg update failed: ${N0_COLOR}${tst}"
+#tst=$( ${ENV_CMD} IGNORE_OSVERSION=yes SIGNATURE_TYPE=none ${TIMEOUT_CMD} 60 ${PKG_CMD} update -f 2>&1 )
+#[ $? -ne 0 ] && err 1 "${N1_COLOR}pkg update failed: ${N0_COLOR}${tst}"
 
-allrepos=$( /usr/bin/find /var/db/pkg/ -type f -depth 1 -maxdepth 1 -name repo-\*.sqlite -exec /sbin/md5 -qs {} \; | /usr/bin/xargs)
-tst=$( /sbin/md5 -qs "${allrepos}" )
+allrepos=$( ${FIND_CMD} /var/db/pkg/ -type f -depth 1 -maxdepth 1 -name repo-\*.sqlite -exec ${MD5_CMD} -qs {} \; | ${XARGS_CMD} )
+tst=$( ${MD5_CMD} -qs "${allrepos}" )
 
 if [ -f "${PKG_MODIFIED}" ]; then
-	oldmd5=$( ${CAT_CMD} ${PKG_MODIFIED})
+	oldmd5=$( ${CAT_CMD} ${PKG_MODIFIED} )
 	if [ "${oldmd5}" != "${tst}" ]; then
 		UPDATED="1"
 		echo "${tst}" > ${PKG_MODIFIED}
@@ -192,9 +222,9 @@ while :; do
 
 	# calculate num of selected pkg. pkglist variable from input_manual method is preferred.
 	if [ -z "${pkglist}" ]; then
-		pkgnum=$( ${EGREP_CMD} -v '(pkgmark_)*(_origin=)' ${CONTROLMASTER} |/usr/bin/wc -l |${AWK_CMD} '{printf $1}' )
+		pkgnum=$( ${EGREP_CMD} -v '(pkgmark_)*(_origin=)' ${CONTROLMASTER} | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
 	else
-		pkgnum=$( echo $pkglist |/usr/bin/wc -w| ${AWK_CMD} '{printf $1}' )
+		pkgnum=$( echo ${pkglist} | ${WC_CMD} -w | ${AWK_CMD} '{printf $1}' )
 	fi
 
 	browse_category || break
@@ -213,7 +243,7 @@ while :; do
 
 			# store selected pkg. pkglist variable from input_manual method is preferred
 			if [ -z "${pkglist}" ]; then
-				for i in $( printenv |${EGREP_CMD} '(pkgmark_)*(_origin=)' |${CUT_CMD} -d "=" -f 2 ); do
+				for i in $( printenv | ${EGREP_CMD} '(pkgmark_)*(_origin=)' | ${CUT_CMD} -d "=" -f 2 ); do
 					echo "${i}" >> ${controlmaster}
 				done
 			else
@@ -221,9 +251,9 @@ while :; do
 			fi
 
 			if [ -f "${controlmaster}" ]; then
-				/bin/mv ${controlmaster} ${controlmaster}.$$
-				/usr/bin/sort -u ${controlmaster}.$$ > ${controlmaster}
-				/bin/rm -f ${controlmaster}.$$
+				${MV_CMD} ${controlmaster} ${controlmaster}.$$
+				${SORT_CMD} -u ${controlmaster}.$$ > ${controlmaster}
+				${RM_CMD} -f ${controlmaster}.$$
 			fi
 			f_die
 			;;
