@@ -94,7 +94,7 @@ fetch_files(char *urls, char *fout)
 {
 	FILE           *fetch_out, *file_out;
 	struct url_stat	ustat;
-	off_t		total_bytes, fsize;
+	off_t		total_bytes, fsize = 0;
 	uint8_t		block  [4096];
 	size_t		chunk;
 	int		progress  , last_progress;
