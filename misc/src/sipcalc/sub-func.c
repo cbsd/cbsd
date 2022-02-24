@@ -114,7 +114,7 @@ validate_v4addr (char *addr)
 	for (x = 0; x < 4; x++) {
 		z = 0;
 		safe_bzero (buf);
-		while (addr[y] != '.' && y < strlen (addr)) {
+		while (y < strlen(addr) && addr[y] != '.') {
 			buf[z] = addr[y];
 			y++;
 			z++;
