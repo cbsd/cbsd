@@ -141,13 +141,13 @@ add_param(const char *name, void *value, size_t valuelen,
     struct jailparam *source, unsigned flags)
 {
 	struct jailparam *param, *tparams;
-	int i, tnparams;
+	int i;
 
 	static int paramlistsize;
 
 	/* The pseudo-parameter "all" scans the list of available parameters. */
 	if (!strcmp(name, "all")) {
-		tnparams = jailparam_all(&tparams);
+		int tnparams = jailparam_all(&tparams);
 		if (tnparams < 0) {
 			out1fmt("error: %s", jail_errmsg);
 			return 1;
