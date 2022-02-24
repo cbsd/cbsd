@@ -722,7 +722,7 @@ int get_pmem() {
 	size_t active_count_size_len = 0;
 	size_t wire_size_len = 0;
 	int i;
-	int errno;
+	errno = 0;
 	int calc_pmem;
 
 	realmem_len = sizeof(realmem);
