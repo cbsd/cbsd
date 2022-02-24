@@ -262,7 +262,7 @@ void parse (char* sData, long nDataLen) {
  */
 void trim (const char* szInput, char* szOutput) {
 	int i= 0;
-	while (szInput[i] != 0 && i < 512) {
+	while (i < 512 && szInput[i] != 0) {
 		if (szInput[i] < ' ') {
 			szOutput[i]= ' ';
 		} else {
