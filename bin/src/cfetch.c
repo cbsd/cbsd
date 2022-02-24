@@ -104,7 +104,6 @@ fetch_files(char *urls, char *fout)
 	struct sigaction sa;
 	sigset_t mask;
 	struct timeval now_time;
-	int cur_time=0;
 	int diff_time=0;
 
 	sa.sa_handler = &handle_sigalrm; // Intercept and ignore SIGALRM
