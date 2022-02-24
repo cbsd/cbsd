@@ -694,11 +694,17 @@ add_param(const char *name, void *value, size_t valuelen,
 		}
 	} else if (nparams >= paramlistsize) {
 		paramlistsize *= 2;
-		params = realloc(params, paramlistsize * sizeof(*params));
-		param_parent = realloc(param_parent, paramlistsize * sizeof(*param_parent));
-		if (params == NULL || param_parent == NULL) {
+		void *tmp_params = realloc(params, paramlistsize * sizeof(*params));
+		void *tmp_param_parent = realloc(param_parent, paramlistsize * sizeof(*param_parent));
+		if (tmp_params == NULL || tmp_param_parent == NULL) {
 			printf("realloc");
+			free(params);
+			free(param_parent);
 			return 1;
+		}
+		else {
+                  params = tmp_params;
+                  param_parent = tmp_param_parent;
 		}
 	}
 

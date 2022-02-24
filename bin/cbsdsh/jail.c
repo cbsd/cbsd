@@ -189,7 +189,7 @@ add_param(const char *name, void *value, size_t valuelen,
 		void *tmp_params = realloc(params, paramlistsize * sizeof(*params));
 		void *tmp_param_parent = realloc(param_parent,
 		    paramlistsize * sizeof(*param_parent));
-                if (params == NULL || param_parent == NULL) {
+                if (tmp_params == NULL || tmp_param_parent == NULL) {
                         free(params);
                         free(param_parent);
 			out1fmt("realloc");
