@@ -114,7 +114,7 @@ validate_v4addr (char *addr)
 	for (x = 0; x < 4; x++) {
 		z = 0;
 		safe_bzero (buf);
-		while (addr[y] != '.' && y < strlen (addr)) {
+		while (y < strlen(addr) && addr[y] != '.') {
 			buf[z] = addr[y];
 			y++;
 			z++;
@@ -178,7 +178,7 @@ validate_netmask (char *in_addr)
 	safe_bzero (addr);
 	if (strstr (in_addr, "/")) {
 		x = 0;
-		while (in_addr[x] != '/' && x < 15) {
+		while (x < 15 && in_addr[x] != '/') {
 			addr[x] = in_addr[x];
 			x++;
 		}

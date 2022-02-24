@@ -141,13 +141,13 @@ add_param(const char *name, void *value, size_t valuelen,
     struct jailparam *source, unsigned flags)
 {
 	struct jailparam *param, *tparams;
-	int i, tnparams;
+	int i;
 
 	static int paramlistsize;
 
 	/* The pseudo-parameter "all" scans the list of available parameters. */
 	if (!strcmp(name, "all")) {
-		tnparams = jailparam_all(&tparams);
+		int tnparams = jailparam_all(&tparams);
 		if (tnparams < 0) {
 			out1fmt("error: %s", jail_errmsg);
 			return 1;
@@ -186,13 +186,19 @@ add_param(const char *name, void *value, size_t valuelen,
 			}
 	} else if (nparams >= paramlistsize) {
 		paramlistsize *= 2;
-		params = realloc(params, paramlistsize * sizeof(*params));
-		param_parent = realloc(param_parent,
+		void *tmp_params = realloc(params, paramlistsize * sizeof(*params));
+		void *tmp_param_parent = realloc(param_parent,
 		    paramlistsize * sizeof(*param_parent));
-		if (params == NULL || param_parent == NULL) {
+                if (tmp_params == NULL || tmp_param_parent == NULL) {
+                        free(params);
+                        free(param_parent);
 			out1fmt("realloc");
 			return 1;
 			}
+                else {
+                  params = tmp_params;
+                  param_parent = tmp_param_parent;
+                }
 	}
 
 	/* Look up the parameter. */

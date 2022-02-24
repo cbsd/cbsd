@@ -115,7 +115,7 @@ int list_sockets()
 	struct socket_data *ch;
 
 	for (ch = sockets_list; ch; ch = ch->next) {
-		printf("ID: %d\n",ch->id);
+		printf("ID: %u\n",ch->id);
 	}
 	return 0;
 }
@@ -131,10 +131,10 @@ int print_cores_by_sock(int socket)
 	fprintf(stderr,"\nHERE CORE\n");
 
 	for (cch = cores_list; cch; cch = cch->next) {
-		fprintf(stderr,"\nCORE::%d\n",cch->socket);
+		fprintf(stderr,"\nCORE::%u\n",cch->socket);
 		if (cch->socket != socket) continue;
 		memset(buffer,0,sizeof(buffer));
-		sprintf(buffer, "%d ", cch->id);
+		sprintf(buffer, "%u ", cch->id);
 		strcat(tmp,buffer);
 	}
 
@@ -153,10 +153,10 @@ int print_threads_by_sock(int socket)
 	fprintf(stderr,"\nHERE\n");
 
 	for (tch = threads_list; tch; tch = tch->next) {
-		fprintf(stderr,"\n::%d\n",tch->socket);
+		fprintf(stderr,"\n::%u\n",tch->socket);
 		if (tch->socket != socket) continue;
 		memset(buffer,0,sizeof(buffer));
-		sprintf(buffer, "%d ", tch->id);
+		sprintf(buffer, "%u ", tch->id);
 		strcat(tmp,buffer);
 	}
 
@@ -176,18 +176,18 @@ int topology_status()
 	int i;
 
 	for (sch = sockets_list; sch; sch = sch->next) {
-		fprintf(stderr,"Socket ID: %d\n",sch->id);
+		fprintf(stderr,"Socket ID: %u\n",sch->id);
 		s_max++;
 	}
 
 	for (cch = cores_list; cch; cch = cch->next) {
-		fprintf(stderr,"Core ID: %d (socket %d)\n",cch->id,cch->socket);
+		fprintf(stderr,"Core ID: %u (socket %u)\n",cch->id,cch->socket);
 		c_max++;
 		core_max++;
 	}
 
 	for (tch = threads_list; tch; tch = tch->next) {
-		fprintf(stderr,"Threads ID: %d (socket %d)\n",tch->id,tch->socket);
+		fprintf(stderr,"Threads ID: %u (socket %u)\n",tch->id,tch->socket);
 		t_max++;
 		core_max++;
 	}
@@ -475,7 +475,7 @@ void parse (char* sData, long nDataLen) {
  */
 void trim (const char* szInput, char* szOutput) {
 	int i= 0;
-	while (szInput[i] != 0 && i < 32) {
+	while (i < 32 && szInput[i] != 0) {
 		if (szInput[i] < ' ') {
 			szOutput[i]= ' ';
 		} else {
@@ -560,6 +560,7 @@ int readFileData (char* sFileName, char** psData, long *pnDataLen) {
 		} else {
 			*psData= malloc(fstat.st_size);
 			if (*psData == NULL) {
+				fclose(file);
 				return READ_FILE_OUT_OF_MEMORY;
 			} else {
 				size_t len= fread(*psData, 1, fstat.st_size, file);

@@ -262,7 +262,7 @@ void parse (char* sData, long nDataLen) {
  */
 void trim (const char* szInput, char* szOutput) {
 	int i= 0;
-	while (szInput[i] != 0 && i < 512) {
+	while (i < 512 && szInput[i] != 0) {
 		if (szInput[i] < ' ') {
 			szOutput[i]= ' ';
 		} else {
@@ -347,6 +347,7 @@ int readFileData (char* sFileName, char** psData, long *pnDataLen) {
 		} else {
 			*psData= malloc(fstat.st_size);
 			if (*psData == NULL) {
+				fclose(file);
 				return READ_FILE_OUT_OF_MEMORY;
 			} else {
 				size_t len= fread(*psData, 1, fstat.st_size, file);
