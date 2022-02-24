@@ -347,6 +347,7 @@ int readFileData (char* sFileName, char** psData, long *pnDataLen) {
 		} else {
 			*psData= malloc(fstat.st_size);
 			if (*psData == NULL) {
+				fclose(file);
 				return READ_FILE_OUT_OF_MEMORY;
 			} else {
 				size_t len= fread(*psData, 1, fstat.st_size, file);
