@@ -9,7 +9,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -25,7 +25,8 @@
 
 #include <sys/cdefs.h>
 #ifdef __FBSDID
-__FBSDID("$FrauBSD: pkgcenter/depend/cputools/ept.c 2019-02-19 11:43:31 -0800 freebsdfrau $");
+__FBSDID(
+    "$FrauBSD: pkgcenter/depend/cputools/ept.c 2019-02-19 11:43:31 -0800 freebsdfrau $");
 #endif
 
 #include <sys/types.h>
@@ -73,8 +74,7 @@ main(int argc, char *argv[])
 
 		/* As of the Nehalem architecture (Intel Xeon 55xx CPUs),
 		 * VT-x includes the Intel Extended Page Tables (EPT). */
-		if (strncmp(cpu_vendor, "GenuineIntel", 12) == 0)
-		{
+		if (strncmp(cpu_vendor, "GenuineIntel", 12) == 0) {
 			/* Check for VT-x feature */
 			do_cpuid(0x1, regs);
 			has_feature = (regs[2] & VMX_FLAG);
@@ -98,8 +98,7 @@ main(int argc, char *argv[])
 	}
 
 print_status:
-	printf("VT-x EPT support: %s\n",
-	    has_feature ? "YES" : "NO" );
+	printf("VT-x EPT support: %s\n", has_feature ? "YES" : "NO");
 
 	return (EXIT_SUCCESS);
 }

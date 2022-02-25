@@ -38,41 +38,43 @@ static char sccsid[] = "@(#)miscbltin.c	8.4 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/miscbltin.c 361384 2020-05-22 14:46:23Z jilles $");
+__FBSDID(
+    "$FreeBSD: head/bin/sh/miscbltin.c 361384 2020-05-22 14:46:23Z jilles $");
 
 /*
  * Miscellaneous builtins.
  */
 
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/resource.h>
-#include <unistd.h>
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
-#include "shell.h"
-#include "options.h"
-#include "var.h"
-#include "output.h"
-#include "memalloc.h"
 #include "error.h"
+#include "memalloc.h"
 #include "mystring.h"
+#include "options.h"
+#include "output.h"
+#include "shell.h"
 #include "syntax.h"
 #include "trap.h"
+#include "var.h"
 
 #undef eflag
 
-#define	READ_BUFLEN	1024
+#define READ_BUFLEN 1024
 struct fdctx {
-	int	fd;
-	size_t	off;	/* offset in buf */
-	size_t	buflen;
-	char	*ep;	/* tail pointer */
-	char	buf[READ_BUFLEN];
+	int fd;
+	size_t off; /* offset in buf */
+	size_t buflen;
+	char *ep; /* tail pointer */
+	char buf[READ_BUFLEN];
 };
 
 static void fdctx_init(int, struct fdctx *);
@@ -89,10 +91,10 @@ fdctx_init(int fd, struct fdctx *fdc)
 
 	/* Check if fd is seekable. */
 	cur = lseek(fd, 0, SEEK_CUR);
-	*fdc = (struct fdctx){
+	*fdc = (struct fdctx) {
 		.fd = fd,
 		.buflen = (cur != -1) ? READ_BUFLEN : 1,
-		.ep = &fdc->buf[0],	/* No data */
+		.ep = &fdc->buf[0], /* No data */
 	};
 }
 
@@ -120,22 +122,22 @@ fdctx_destroy(struct fdctx *fdc)
 	off_t residue;
 
 	if (fdc->buflen > 1) {
-	/*
-	 * Reposition the file offset.  Here is the layout of buf:
-	 *
-	 *     | off
-	 *     v
-	 * |*****************|-------|
-	 * buf               ep   buf+buflen
-	 *     |<- residue ->|
-	 *
-	 * off: current character
-	 * ep:  offset just after read(2)
-	 * residue: length for reposition
-	 */
+		/*
+		 * Reposition the file offset.  Here is the layout of buf:
+		 *
+		 *     | off
+		 *     v
+		 * |*****************|-------|
+		 * buf               ep   buf+buflen
+		 *     |<- residue ->|
+		 *
+		 * off: current character
+		 * ep:  offset just after read(2)
+		 * residue: length for reposition
+		 */
 		residue = (fdc->ep - fdc->buf) - fdc->off;
 		if (residue > 0)
-			(void) lseek(fdc->fd, -residue, SEEK_CUR);
+			(void)lseek(fdc->fd, -residue, SEEK_CUR);
 	}
 }
 
@@ -182,7 +184,7 @@ readcmd(int argc __unused, char **argv __unused)
 	tv.tv_sec = -1;
 	tv.tv_usec = 0;
 	while ((i = nextopt("erp:t:")) != '\0') {
-		switch(i) {
+		switch (i) {
 		case 'p':
 			prompt = shoptarg;
 			break;
@@ -195,7 +197,7 @@ readcmd(int argc __unused, char **argv __unused)
 			tv.tv_sec = strtol(shoptarg, &tvptr, 0);
 			if (tvptr == shoptarg)
 				error("timeout value");
-			switch(*tvptr) {
+			switch (*tvptr) {
 			case 0:
 			case 's':
 				break;
@@ -348,8 +350,6 @@ readcmd(int argc __unused, char **argv __unused)
 	return status;
 }
 
-
-
 int
 umaskcmd(int argc __unused, char **argv __unused)
 {
@@ -414,10 +414,10 @@ umaskcmd(int argc __unused, char **argv __unused)
 		} else {
 			void *set;
 			INTOFF;
-			if ((set = setmode (ap)) == NULL)
+			if ((set = setmode(ap)) == NULL)
 				error("Illegal number: %s", ap);
 
-			mask = getmode (set, ~mask & 0777);
+			mask = getmode(set, ~mask & 0777);
 			umask(~mask & 0777);
 			free(set);
 			INTON;
@@ -439,58 +439,58 @@ umaskcmd(int argc __unused, char **argv __unused)
 struct limits {
 	const char *name;
 	const char *units;
-	int	cmd;
-	short	factor;	/* multiply by to get rlim_{cur,max} values */
-	char	option;
+	int cmd;
+	short factor; /* multiply by to get rlim_{cur,max} values */
+	char option;
 };
 
 static const struct limits limits[] = {
 #ifdef RLIMIT_CPU
-	{ "cpu time",		"seconds",	RLIMIT_CPU,	   1, 't' },
+	{ "cpu time", "seconds", RLIMIT_CPU, 1, 't' },
 #endif
 #ifdef RLIMIT_FSIZE
-	{ "file size",		"512-blocks",	RLIMIT_FSIZE,	 512, 'f' },
+	{ "file size", "512-blocks", RLIMIT_FSIZE, 512, 'f' },
 #endif
 #ifdef RLIMIT_DATA
-	{ "data seg size",	"kbytes",	RLIMIT_DATA,	1024, 'd' },
+	{ "data seg size", "kbytes", RLIMIT_DATA, 1024, 'd' },
 #endif
 #ifdef RLIMIT_STACK
-	{ "stack size",		"kbytes",	RLIMIT_STACK,	1024, 's' },
+	{ "stack size", "kbytes", RLIMIT_STACK, 1024, 's' },
 #endif
-#ifdef  RLIMIT_CORE
-	{ "core file size",	"512-blocks",	RLIMIT_CORE,	 512, 'c' },
+#ifdef RLIMIT_CORE
+	{ "core file size", "512-blocks", RLIMIT_CORE, 512, 'c' },
 #endif
 #ifdef RLIMIT_RSS
-	{ "max memory size",	"kbytes",	RLIMIT_RSS,	1024, 'm' },
+	{ "max memory size", "kbytes", RLIMIT_RSS, 1024, 'm' },
 #endif
 #ifdef RLIMIT_MEMLOCK
-	{ "locked memory",	"kbytes",	RLIMIT_MEMLOCK, 1024, 'l' },
+	{ "locked memory", "kbytes", RLIMIT_MEMLOCK, 1024, 'l' },
 #endif
 #ifdef RLIMIT_NPROC
-	{ "max user processes",	(char *)0,	RLIMIT_NPROC,      1, 'u' },
+	{ "max user processes", (char *)0, RLIMIT_NPROC, 1, 'u' },
 #endif
 #ifdef RLIMIT_NOFILE
-	{ "open files",		(char *)0,	RLIMIT_NOFILE,     1, 'n' },
+	{ "open files", (char *)0, RLIMIT_NOFILE, 1, 'n' },
 #endif
 #ifdef RLIMIT_VMEM
-	{ "virtual mem size",	"kbytes",	RLIMIT_VMEM,	1024, 'v' },
+	{ "virtual mem size", "kbytes", RLIMIT_VMEM, 1024, 'v' },
 #endif
 #ifdef RLIMIT_SWAP
-	{ "swap limit",		"kbytes",	RLIMIT_SWAP,	1024, 'w' },
+	{ "swap limit", "kbytes", RLIMIT_SWAP, 1024, 'w' },
 #endif
 #ifdef RLIMIT_SBSIZE
-	{ "socket buffer size",	"bytes",	RLIMIT_SBSIZE,	   1, 'b' },
+	{ "socket buffer size", "bytes", RLIMIT_SBSIZE, 1, 'b' },
 #endif
 #ifdef RLIMIT_NPTS
-	{ "pseudo-terminals",	(char *)0,	RLIMIT_NPTS,	   1, 'p' },
+	{ "pseudo-terminals", (char *)0, RLIMIT_NPTS, 1, 'p' },
 #endif
 #ifdef RLIMIT_KQUEUES
-	{ "kqueues",		(char *)0,	RLIMIT_KQUEUES,	   1, 'k' },
+	{ "kqueues", (char *)0, RLIMIT_KQUEUES, 1, 'k' },
 #endif
 #ifdef RLIMIT_UMTXP
-	{ "umtx shared locks",	(char *)0,	RLIMIT_UMTXP,	   1, 'o' },
+	{ "umtx shared locks", (char *)0, RLIMIT_UMTXP, 1, 'o' },
 #endif
-	{ (char *) 0,		(char *)0,	0,		   0, '\0' }
+	{ (char *)0, (char *)0, 0, 0, '\0' }
 };
 
 enum limithow { SOFT = 0x1, HARD = 0x2 };
@@ -507,8 +507,7 @@ printlimit(enum limithow how, const struct rlimit *limit,
 		val = limit->rlim_max;
 	if (val == RLIM_INFINITY)
 		out1str("unlimited\n");
-	else
-	{
+	else {
 		val /= l->factor;
 		out1fmt("%jd\n", (intmax_t)val);
 	}
@@ -519,10 +518,10 @@ ulimitcmd(int argc __unused, char **argv __unused)
 {
 	rlim_t val = 0;
 	enum limithow how = SOFT | HARD;
-	const struct limits	*l;
-	int		set, all = 0;
-	int		optc, what;
-	struct rlimit	limit;
+	const struct limits *l;
+	int set, all = 0;
+	int optc, what;
+	struct rlimit limit;
 
 	what = 'f';
 	while ((optc = nextopt("HSatfdsmcnuvlbpwko")) != '\0')
@@ -579,11 +578,11 @@ ulimitcmd(int argc __unused, char **argv __unused)
 				error("can't get limit: %s", strerror(errno));
 
 			if (l->units)
-				snprintf(optbuf, sizeof(optbuf),
-					"(%s, -%c) ", l->units, l->option);
+				snprintf(optbuf, sizeof(optbuf), "(%s, -%c) ",
+				    l->units, l->option);
 			else
-				snprintf(optbuf, sizeof(optbuf),
-					"(-%c) ", l->option);
+				snprintf(optbuf, sizeof(optbuf), "(-%c) ",
+				    l->option);
 			out1fmt("%-18s %18s ", l->name, optbuf);
 			printlimit(how, &limit, l);
 		}

@@ -33,19 +33,21 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/arith_yylex.c 343981 2019-02-10 22:23:05Z jilles $");
+__FBSDID(
+    "$FreeBSD: head/bin/sh/arith_yylex.c 343981 2019-02-10 22:23:05Z jilles $");
 
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
-#include "shell.h"
+
 #include "arith_yacc.h"
-#include "expand.h"
 #include "error.h"
+#include "expand.h"
 #include "memalloc.h"
 #include "parser.h"
+#include "shell.h"
 #include "syntax.h"
 
 #if ARITH_BOR + 11 != ARITH_BORASS || ARITH_ASS + 11 != ARITH_EQ
@@ -60,21 +62,21 @@ strtoarith_t(const char *restrict nptr, char **restrict endptr)
 	while (isspace((unsigned char)*nptr))
 		nptr++;
 	switch (*nptr) {
-		case '-':
-			return strtoimax(nptr, endptr, 0);
-		case '0':
-			return (arith_t)strtoumax(nptr, endptr, 0);
-		default:
-			val = (arith_t)strtoumax(nptr, endptr, 0);
-			if (val >= 0)
-				return val;
-			else if (val == ARITH_MIN) {
-				errno = ERANGE;
-				return ARITH_MIN;
-			} else {
-				errno = ERANGE;
-				return ARITH_MAX;
-			}
+	case '-':
+		return strtoimax(nptr, endptr, 0);
+	case '0':
+		return (arith_t)strtoumax(nptr, endptr, 0);
+	default:
+		val = (arith_t)strtoumax(nptr, endptr, 0);
+		if (val >= 0)
+			return val;
+		else if (val == ARITH_MIN) {
+			errno = ERANGE;
+			return ARITH_MIN;
+		} else {
+			errno = ERANGE;
+			return ARITH_MAX;
+		}
 	}
 }
 
@@ -172,9 +174,9 @@ yylex(void)
 			goto out;
 		case '=':
 			value += ARITH_ASS - '=';
-checkeq:
+		checkeq:
 			buf++;
-checkeqcur:
+		checkeqcur:
 			if (*buf != '=')
 				goto out;
 			value += 11;

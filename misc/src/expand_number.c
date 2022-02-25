@@ -26,9 +26,11 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/lib/libutil/expand_number.c 255069 2013-08-30 11:21:52Z pluknet $");
+__FBSDID(
+    "$FreeBSD: head/lib/libutil/expand_number.c 255069 2013-08-30 11:21:52Z pluknet $");
 
 #include <sys/types.h>
+
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>

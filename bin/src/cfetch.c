@@ -10,26 +10,28 @@
 // eg:fetch url localfile Q(quiet)
 // eg:fetch url localfile E(printf errorcode to stdout)
 #include <sys/param.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <sys/time.h>
+
 #include <errno.h>
 #include <fetch.h>
 #include <signal.h> // sigaction(), sigsuspend(), sig*()
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-#include <sys/time.h>
 
-static int	fetch_files(char *, char *);
-void		handle_signal(int);
-void		handle_sigalrm(int);
+static int fetch_files(char *, char *);
+void handle_signal(int);
+void handle_sigalrm(int);
 
-off_t		current_bytes=0;
-int		speedtest=0;
+off_t current_bytes = 0;
+int speedtest = 0;
 
-int		start_time=0;
-int		end_time=0;
+int start_time = 0;
+int end_time = 0;
 
-int usage()
+int
+usage()
 {
 	printf("fetch remove file via http[s]\n");
 	printf("require: -u url -o out\n\n");
@@ -41,10 +43,11 @@ int usage()
 int
 main(int argc, char *argv[])
 {
-	int		c;
-	char		*url = NULL, *fout = NULL;
+	int c;
+	char *url = NULL, *fout = NULL;
 
-	if(argc<2) usage();
+	if (argc < 2)
+		usage();
 
 	if (!strcmp(argv[1], "--help"))
 		usage();
@@ -92,19 +95,19 @@ main(int argc, char *argv[])
 static int
 fetch_files(char *urls, char *fout)
 {
-	FILE           *fetch_out, *file_out;
-	struct url_stat	ustat;
-	off_t		total_bytes, fsize = 0;
-	uint8_t		block  [4096];
-	size_t		chunk;
-	int		progress  , last_progress;
-	int		nsuccess = 0;	/* Number of files successfully
-					 * downloaded */
-	int		lprg = 0;
+	FILE *fetch_out, *file_out;
+	struct url_stat ustat;
+	off_t total_bytes, fsize = 0;
+	uint8_t block[4096];
+	size_t chunk;
+	int progress, last_progress;
+	int nsuccess = 0; /* Number of files successfully
+			   * downloaded */
+	int lprg = 0;
 	struct sigaction sa;
 	sigset_t mask;
 	struct timeval now_time;
-	int diff_time=0;
+	int diff_time = 0;
 
 	sa.sa_handler = &handle_sigalrm; // Intercept and ignore SIGALRM
 	sa.sa_flags = SA_RESETHAND; // Remove the handler after first signal
@@ -117,20 +120,20 @@ fetch_files(char *urls, char *fout)
 	// Unblock SIGALRM
 	sigdelset(&mask, SIGALRM);
 
-//	// Wait with this mask
-//	alarm(1);
-//	sigsuspend(&mask);
+	//	// Wait with this mask
+	//	alarm(1);
+	//	sigsuspend(&mask);
 
 	progress = 0;
 	total_bytes = 0;
 
 	gettimeofday(&now_time, NULL);
-	start_time = (time_t) now_time.tv_sec;
+	start_time = (time_t)now_time.tv_sec;
 
 	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0)
 		total_bytes += ustat.size;
 
-	if (speedtest==1)
+	if (speedtest == 1)
 		fetchTimeout = 5;
 	else
 		fetchTimeout = 20;
@@ -141,7 +144,7 @@ fetch_files(char *urls, char *fout)
 
 	file_out = fopen(fout, "w+");
 
-	if (speedtest!=1)
+	if (speedtest != 1)
 		printf("Size: %d Mb\n", ((int)total_bytes / 1024 / 1024));
 
 	current_bytes = 0;
@@ -158,14 +161,14 @@ fetch_files(char *urls, char *fout)
 		}
 		if ((progress % 10 == 0) && (lprg != progress)) {
 			lprg = progress;
-			if (speedtest!=1)
+			if (speedtest != 1)
 				printf("Progress: %d%% \n", progress);
 		}
 	}
 
 	if (ustat.size > 0 && fsize < ustat.size) {
 		if (fetchLastErrCode == 0) {
-			//small chunk
+			// small chunk
 			fclose(fetch_out);
 			fclose(file_out);
 			return 0;
@@ -177,62 +180,64 @@ fetch_files(char *urls, char *fout)
 	fclose(file_out);
 
 	gettimeofday(&now_time, NULL);
-	end_time = (time_t) now_time.tv_sec;
-	diff_time=end_time-start_time;
-	if (diff_time==0)
-		diff_time=1;
+	end_time = (time_t)now_time.tv_sec;
+	diff_time = end_time - start_time;
+	if (diff_time == 0)
+		diff_time = 1;
 
 	/*
-	 * Please note that printf et al. are NOT safe to use in signal handlers.
-	 * Look for async safe functions.
+	 * Please note that printf et al. are NOT safe to use in signal
+	 * handlers. Look for async safe functions.
 	 */
-	if (speedtest==1)
-		printf("%ld\n", current_bytes / diff_time );
+	if (speedtest == 1)
+		printf("%ld\n", current_bytes / diff_time);
 
 	return (0);
 }
 
-
-void handle_signal(int signal) {
+void
+handle_signal(int signal)
+{
 	const char *signal_name;
 	sigset_t pending;
 	struct timeval now_time;
-	int diff_time=0;
+	int diff_time = 0;
 
 	// Find out which signal we're handling
 	switch (signal) {
-		case SIGHUP:
-			signal_name = "SIGHUP";
-			break;
-		case SIGUSR1:
-			signal_name = "SIGUSR1";
-			break;
-		case SIGINT:
-			printf("Caught SIGINT, exiting now\n");
-			exit(0);
-		default:
-			fprintf(stderr, "Caught wrong signal: %d\n", signal);
-			return;
+	case SIGHUP:
+		signal_name = "SIGHUP";
+		break;
+	case SIGUSR1:
+		signal_name = "SIGUSR1";
+		break;
+	case SIGINT:
+		printf("Caught SIGINT, exiting now\n");
+		exit(0);
+	default:
+		fprintf(stderr, "Caught wrong signal: %d\n", signal);
+		return;
 	}
 
 	gettimeofday(&now_time, NULL);
-	end_time = (time_t) now_time.tv_sec;
-	diff_time=end_time-start_time;
-	if (diff_time==0)
-		diff_time=1;
+	end_time = (time_t)now_time.tv_sec;
+	diff_time = end_time - start_time;
+	if (diff_time == 0)
+		diff_time = 1;
 
 	/*
-	 * Please note that printf et al. are NOT safe to use in signal handlers.
-	 * Look for async safe functions.
+	 * Please note that printf et al. are NOT safe to use in signal
+	 * handlers. Look for async safe functions.
 	 */
-	if (speedtest==1)
-		printf("%ld\n", current_bytes / diff_time );
+	if (speedtest == 1)
+		printf("%ld\n", current_bytes / diff_time);
 
 	exit(0);
 }
 
-
-void handle_sigalrm(int signal) {
+void
+handle_sigalrm(int signal)
+{
 	if (signal != SIGALRM) {
 		fprintf(stderr, "Caught wrong signal: %d\n", signal);
 	}

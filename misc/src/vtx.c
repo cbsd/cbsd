@@ -9,7 +9,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -25,7 +25,8 @@
 
 #include <sys/cdefs.h>
 #ifdef __FBSDID
-__FBSDID("$FrauBSD: pkgcenter/depend/cputools/vtx.c 2019-02-19 10:16:31 -0800 freebsdfrau $");
+__FBSDID(
+    "$FrauBSD: pkgcenter/depend/cputools/vtx.c 2019-02-19 10:16:31 -0800 freebsdfrau $");
 #endif
 
 #include <sys/types.h>
@@ -69,16 +70,14 @@ main(int argc, char *argv[])
 
 		/* Check for vendors that support features */
 		if (strncmp(cpu_vendor, "GenuineIntel", 12) == 0 ||
-		    strncmp(cpu_vendor, "AuthenticAMD", 12) == 0)
-		{
+		    strncmp(cpu_vendor, "AuthenticAMD", 12) == 0) {
 			/* Check for VT-x feature */
 			do_cpuid(0x1, regs);
 			has_feature = (regs[2] & VMX_FLAG);
 		}
 	}
 
-	printf("VT-x Status: %s\n",
-	    has_feature ? "YES" : "NO" );
+	printf("VT-x Status: %s\n", has_feature ? "YES" : "NO");
 
 	return (EXIT_SUCCESS);
 }

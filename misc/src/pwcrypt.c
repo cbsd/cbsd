@@ -3,16 +3,18 @@
 #include <string.h>
 #include <unistd.h>
 
-#define	SALTSIZE	32	// from pw.c
+#define SALTSIZE 32 // from pw.c
 
-static char const chars[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ./";
+static char const chars[] =
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ./";
 
 char *pw_pwcrypt(char *);
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
 
-	if (argc!=2) {
+	if (argc != 2) {
 		printf("Give me password\n");
 		return 1;
 	}
@@ -22,13 +24,13 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	printf("%s",pw_pwcrypt(argv[1]));
+	printf("%s", pw_pwcrypt(argv[1]));
 
 	return 0;
 }
 
-
-char *pw_pwcrypt(char *password)
+char *
+pw_pwcrypt(char *password)
 {
 	int i;
 	char salt[SALTSIZE + 1];
@@ -46,6 +48,6 @@ char *pw_pwcrypt(char *password)
 	if (cryptpw == NULL) {
 		printf("crypt(3) failure");
 		exit(1);
-		}
+	}
 	return strcpy(buf, cryptpw);
 }

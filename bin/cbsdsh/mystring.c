@@ -48,20 +48,23 @@ __FBSDID("$FreeBSD: head/bin/sh/mystring.c 326025 2017-11-20 19:49:47Z pfg $");
  *	is_number(s)		Return true if s is a string of digits.
  */
 #ifdef CBSD
-#include <stdio.h>
-#include "output.h"
 #include <sys/types.h>
-#include <unistd.h>
-#include <getopt.h>
+
 #include <errno.h>
+#include <getopt.h>
+#include <stdio.h>
 #include <string.h>
 #include <sysexits.h>
+#include <unistd.h>
+
+#include "output.h"
 #endif
 #include <stdlib.h>
-#include "shell.h"
-#include "syntax.h"
+
 #include "error.h"
 #include "mystring.h"
+#include "shell.h"
+#include "syntax.h"
 
 #ifdef CBSD
 enum {
@@ -84,12 +87,11 @@ enum {
 #define TRUE 1
 #endif
 
-char nullstr[1];		/* zero length string */
+char nullstr[1]; /* zero length string */
 
 /*
  * equal - #defined in mystring.h
  */
-
 
 /*
  * Convert a string of digits to an integer, printing an error message on
@@ -99,12 +101,10 @@ char nullstr[1];		/* zero length string */
 int
 number(const char *s)
 {
-	if (! is_number(s))
+	if (!is_number(s))
 		error("Illegal number: %s", s);
 	return atoi(s);
 }
-
-
 
 /*
  * Check for a valid number.  This should be elsewhere.
@@ -120,11 +120,10 @@ is_number(const char *p)
 	while (*p == '0')
 		p++;
 	for (q = p; *q != '\0'; q++)
-		if (! is_digit(*q))
+		if (!is_digit(*q))
 			return 0;
 #ifndef CBSD
-	if (q - p > 10 ||
-	    (q - p == 10 && memcmp(p, "2147483647", 10) > 0))
+	if (q - p > 10 || (q - p == 10 && memcmp(p, "2147483647", 10) > 0))
 		return 0;
 #endif
 	return 1;
@@ -144,7 +143,7 @@ int
 strlencmd(int argc, char **argv)
 {
 	if (argv[1])
-		out1fmt("%u",(unsigned int)strlen(argv[1]));
+		out1fmt("%u", (unsigned int)strlen(argv[1]));
 	else
 		out1fmt("0");
 	return 0;
@@ -161,7 +160,8 @@ substr_usage(void)
 int
 strpos_usage(void)
 {
-	out1fmt("Find first include of --search in --str. Return 0 if no any match\n");
+	out1fmt(
+	    "Find first include of --search in --str. Return 0 if no any match\n");
 	out1fmt("require: --search, --str\n");
 	return (EX_USAGE);
 }
@@ -177,68 +177,67 @@ substrcmd(int argc, char **argv)
 	int pos = 0;
 	int len = 0;
 
-	struct option long_options[] = {
-		{ "pos", required_argument, 0 , C_POS },
-		{ "len", required_argument, 0 , C_LEN },
-		{ "str", required_argument, 0 , C_STR },
+	struct option long_options[] = { { "pos", required_argument, 0, C_POS },
+		{ "len", required_argument, 0, C_LEN },
+		{ "str", required_argument, 0, C_STR },
 		/* End of options marker */
-		{ 0, 0, 0, 0 }
-	};
+		{ 0, 0, 0, 0 } };
 
 	if (argc != 4)
 		substr_usage();
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
-		if (optcode == -1) break;
+		optcode = getopt_long_only(argc, argv, "", long_options,
+		    &option_index);
+		if (optcode == -1)
+			break;
 		switch (optcode) {
-			case C_POS:
-				pos = atoi(optarg);
-				break;
-			case C_LEN:
-				len=atoi(optarg);
-				break;
-			case C_STR:
-				str = malloc(strlen(optarg) + 1);
-				memset(str, 0, strlen(optarg) + 1);
-				strcpy(str, optarg);
-				break;
+		case C_POS:
+			pos = atoi(optarg);
+			break;
+		case C_LEN:
+			len = atoi(optarg);
+			break;
+		case C_STR:
+			str = malloc(strlen(optarg) + 1);
+			memset(str, 0, strlen(optarg) + 1);
+			strcpy(str, optarg);
+			break;
 		}
-	} //while
+	} // while
 
-	if ( len == 0 ) len=strlen(str);
+	if (len == 0)
+		len = strlen(str);
 
-	//zero for getopt* variables for next execute
-	optarg=NULL;
-	optind=0;
-	optopt=0;
-	opterr=0;
-	optreset=0;
+	// zero for getopt* variables for next execute
+	optarg = NULL;
+	optind = 0;
+	optopt = 0;
+	opterr = 0;
+	optreset = 0;
 
-	if (str == NULL) return 1;
-	pointer = malloc(len+1);
+	if (str == NULL)
+		return 1;
+	pointer = malloc(len + 1);
 
-	if (pointer == NULL)
-	{
+	if (pointer == NULL) {
 		out1fmt("Unable to allocate memory.\n");
 		free(str);
 		return 1;
 	}
 
-	for (c = 0 ; c < pos -1 ; c++)
+	for (c = 0; c < pos - 1; c++)
 		str++;
 
-	for (c = 0 ; c < len ; c++)
-	{
-		*(pointer+c) = *str;
+	for (c = 0; c < len; c++) {
+		*(pointer + c) = *str;
 		str++;
 	}
-	*(pointer+c) = '\0';
-	out1fmt("%s",pointer);
+	*(pointer + c) = '\0';
+	out1fmt("%s", pointer);
 	free(pointer);
 	return 0;
 }
-
 
 int
 strposcmd(int argc, char **argv)
@@ -249,47 +248,50 @@ strposcmd(int argc, char **argv)
 	char *search = NULL;
 	int pos = 0;
 
-	struct option long_options[] = {
-		{ "search", required_argument, 0 , D_SEARCH },
-		{ "str", required_argument, 0 , D_STR },
+	struct option long_options[] = { { "search", required_argument, 0,
+					     D_SEARCH },
+		{ "str", required_argument, 0, D_STR },
 		/* End of options marker */
-		{ 0, 0, 0, 0 }
-	};
+		{ 0, 0, 0, 0 } };
 
 	if (argc != 3)
 		strpos_usage();
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
-		if (optcode == -1) break;
+		optcode = getopt_long_only(argc, argv, "", long_options,
+		    &option_index);
+		if (optcode == -1)
+			break;
 		switch (optcode) {
-			case D_SEARCH:
-				search = malloc(strlen(optarg) + 1);
-				memset(search, 0, strlen(optarg) + 1);
-				strcpy(search, optarg);
-				break;
-			case D_STR:
-				str = malloc(strlen(optarg) + 1);
-				memset(str, 0, strlen(optarg) + 1);
-				strcpy(str, optarg);
-				break;
+		case D_SEARCH:
+			search = malloc(strlen(optarg) + 1);
+			memset(search, 0, strlen(optarg) + 1);
+			strcpy(search, optarg);
+			break;
+		case D_STR:
+			str = malloc(strlen(optarg) + 1);
+			memset(str, 0, strlen(optarg) + 1);
+			strcpy(str, optarg);
+			break;
 		}
-	} //while
+	} // while
 
-	//zero for getopt* variables for next execute
-	optarg=NULL;
-	optind=0;
-	optopt=0;
-	opterr=0;
-	optreset=0;
+	// zero for getopt* variables for next execute
+	optarg = NULL;
+	optind = 0;
+	optopt = 0;
+	opterr = 0;
+	optreset = 0;
 
-	if (str == NULL) return 1;
+	if (str == NULL)
+		return 1;
 
 	char *p = strstr(str, search);
 	if (p)
 		pos = p - str;
 
-	if (pos<0) pos=0;
+	if (pos < 0)
+		pos = 0;
 	return pos;
 }
 
@@ -302,58 +304,60 @@ roundup_usage(void)
 	return (EX_USAGE);
 }
 
-
 // roundup num by multiple
 // todo: long long? :
 //   roundup --num=1231332132132132132 --multiple=100
 //   roundup --num=12313321321321321321 --multiple=100
-int roundupcmd(int argc, char **argv) {
+int
+roundupcmd(int argc, char **argv)
+{
 	unsigned long long numtoround = 0;
 	unsigned long long multiple = 0;
 	int optcode = 0;
 	int option_index = 0;
 
-	struct option long_options[] = {
-		{ "num", required_argument, 0 , C_NUM },
-		{ "multiple", required_argument, 0 , C_MULTIPLE },
+	struct option long_options[] = { { "num", required_argument, 0, C_NUM },
+		{ "multiple", required_argument, 0, C_MULTIPLE },
 		/* End of options marker */
-		{ 0, 0, 0, 0 }
-	};
+		{ 0, 0, 0, 0 } };
 
-	//zero for getopt* variables for next execute
-	optarg=NULL;
-	optind=0;
-	optopt=0;
-	opterr=0;
-	optreset=0;
+	// zero for getopt* variables for next execute
+	optarg = NULL;
+	optind = 0;
+	optopt = 0;
+	opterr = 0;
+	optreset = 0;
 
 	if (argc != 3)
 		roundup_usage();
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
-		if (optcode == -1) break;
+		optcode = getopt_long_only(argc, argv, "", long_options,
+		    &option_index);
+		if (optcode == -1)
+			break;
 		switch (optcode) {
-			case C_NUM:
-				numtoround=atoll(optarg);
-				break;
-			case C_MULTIPLE:
-				multiple=atol(optarg);
-				break;
+		case C_NUM:
+			numtoround = atoll(optarg);
+			break;
+		case C_MULTIPLE:
+			multiple = atol(optarg);
+			break;
 		}
-	} //while
+	} // while
 
-	if(multiple == 0)
-	{
-		out1fmt("%llu",numtoround);
+	if (multiple == 0) {
+		out1fmt("%llu", numtoround);
 		return 0;
 	}
 
-	unsigned long long rounddown = ( (unsigned long long) (numtoround) / multiple) * multiple;
+	unsigned long long rounddown = ((unsigned long long)(numtoround) /
+					   multiple) *
+	    multiple;
 	unsigned long long roundup = rounddown + multiple;
 	unsigned long long roundcalc = roundup;
 
-	out1fmt("%llu",roundcalc);
+	out1fmt("%llu", roundcalc);
 	return 0;
 }
 

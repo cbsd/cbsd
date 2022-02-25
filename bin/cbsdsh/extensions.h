@@ -1,7 +1,6 @@
 #ifndef CBSDEXTENSIONS_H
 #define CBSDEXTENSIONS_H
 
-
 #ifdef WITH_REDIS
 #include "cbsdredis.h"
 #define _REDIS(cmds) cmds
@@ -24,4 +23,3 @@
 #endif
 
 #endif
-

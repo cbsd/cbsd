@@ -20,6 +20,7 @@
 #include <sys/bitypes.h>
 #endif
 #include <sys/socket.h>
+
 #include <net/if.h>
 
 #ifdef PACKAGE
@@ -75,11 +76,14 @@
 #define V6ADDR_VAL "0123456789ABCDEFabcdef:"
 #define NETMASK_VAL "0123456789"
 
-#define TERMINATE(x) (x[sizeof(x)-1]='\0')
-#define safe_strncpy(dest,src) strncpy(dest,src,sizeof(dest)-1+TERMINATE(dest)*0)
-#define safe_strncat(dest,src) strncat(dest,src,sizeof(dest)-1+TERMINATE(dest)*0)
-#define safe_snprintf(dest,whatever...) snprintf(dest,sizeof(dest),## whatever)
-#define safe_bzero(dest) bzero((char *)dest,sizeof(dest))
+#define TERMINATE(x) (x[sizeof(x) - 1] = '\0')
+#define safe_strncpy(dest, src) \
+	strncpy(dest, src, sizeof(dest) - 1 + TERMINATE(dest) * 0)
+#define safe_strncat(dest, src) \
+	strncat(dest, src, sizeof(dest) - 1 + TERMINATE(dest) * 0)
+#define safe_snprintf(dest, whatever...) \
+	snprintf(dest, sizeof(dest), ##whatever)
+#define safe_bzero(dest) bzero((char *)dest, sizeof(dest))
 
 /*
  * Easier to define this ourselves then to use all the different
@@ -91,10 +95,10 @@ struct sip_in6_addr {
 		uint16_t u6_addr16[8];
 		uint32_t u6_addr32[4];
 	} sip_in6_u;
-#define sip6_addr	sip_in6_u.u6_addr8
-#define sip6_addr8	sip_in6_u.u6_addr8
-#define sip6_addr16	sip_in6_u.u6_addr16
-#define sip6_addr32	sip_in6_u.u6_addr32
+#define sip6_addr sip_in6_u.u6_addr8
+#define sip6_addr8 sip_in6_u.u6_addr8
+#define sip6_addr16 sip_in6_u.u6_addr16
+#define sip6_addr32 sip_in6_u.u6_addr32
 };
 
 struct v4addr {
@@ -183,20 +187,20 @@ struct dnsresp {
 #define IFT_UNKWN 5
 
 /* v4 args */
-#define CF_INFO     0x01
-#define CF_BITMAP   0x02
-#define CIDR_INFO   0x04
+#define CF_INFO 0x01
+#define CF_BITMAP 0x02
+#define CIDR_INFO 0x04
 #define CIDR_BITMAP 0x08
-#define NET_INFO    0x10
-#define V4SPLIT     0x20
+#define NET_INFO 0x10
+#define V4SPLIT 0x20
 #define V4VERBSPLIT 0x40
-#define C_WILDCARD  0x80
+#define C_WILDCARD 0x80
 
 /* v6 args */
-#define V6_INFO     0x01
-#define V4INV6      0x02
-#define V6SPLIT     0x04
-#define V6REV       0x08
+#define V6_INFO 0x01
+#define V4INV6 0x02
+#define V6SPLIT 0x04
+#define V6REV 0x08
 #define V6VERBSPLIT 0x10
 
 #define V6TYPE_STANDARD 1
@@ -208,51 +212,50 @@ struct dnsresp {
 /*
  * sub.c
  */
-int out_int (struct if_info *if_cur, struct if_info *ifarg_cur, int v4args,
-	     struct misc_args m_argv4, int v6args, struct misc_args m_argv6);
-int out_cmdline (struct if_info *ifarg_cur, int v4args,
-		 struct misc_args m_argv4, int v6args,
-		 struct misc_args m_argv6, int recurse, int index);
-int cleanline (char *sbuf, char *dbuf);
-int get_stdin (char *args[]);
+int out_int(struct if_info *if_cur, struct if_info *ifarg_cur, int v4args,
+    struct misc_args m_argv4, int v6args, struct misc_args m_argv6);
+int out_cmdline(struct if_info *ifarg_cur, int v4args, struct misc_args m_argv4,
+    int v6args, struct misc_args m_argv6, int recurse, int index);
+int cleanline(char *sbuf, char *dbuf);
+int get_stdin(char *args[]);
 
 /*
  * sub-func.c
  */
-int count (char *buf, char ch);
-int validate_v4addr (char *addr);
-int validate_netmask (char *in_addr);
-int getsplitnumv4 (char *buf, u_int32_t * splitmask);
-int getsplitnumv6 (char *buf, struct sip_in6_addr *splitmask, int *v6splitnum);
-int quadtonum (char *quad, u_int32_t * num);
-char *numtoquad (u_int32_t num);
-char *numtobitmap (u_int32_t num);
-int parse_addr (struct if_info *ifi);
-int get_addrv4 (struct if_info *ifi);
-int get_addrv6 (struct if_info *ifi);
-int split_ipv6addr (char *addr, struct ipv6_split *spstr);
-int validate_s_v6addr (char *addr, int type);
-int getcolon (char *addr, int pos, int type);
-int v6addrtonum (struct ipv6_split spstr, struct v6addr *in6_addr, int type);
-int v6masktonum (char *nmask, int *nmaskbits, struct sip_in6_addr *in6_addr);
-int validate_v6addr (char *addr);
-int v6addrtoprefix (struct v6addr *in6_addr);
-int v6addrtosuffix (struct v6addr *in6_addr);
-int v6addrtobroadcast (struct v6addr *in6_addr);
-void v6_type (struct v6addr *in6_addr);
-void v6_comment (struct v6addr *in6_addr);
-int v6verifyv4 (struct sip_in6_addr addr);
-char *get_comp_v6 (struct sip_in6_addr addr);
-int mk_ipv6addr (struct v6addr *in6_addr, char *addr);
-struct dnsresp *new_dnsresp (struct dnsresp *d_resp);
-void free_dnsresp (struct dnsresp *d_resp);
-char *resolve_addr (char *addr, int family, struct dnsresp *);
+int count(char *buf, char ch);
+int validate_v4addr(char *addr);
+int validate_netmask(char *in_addr);
+int getsplitnumv4(char *buf, u_int32_t *splitmask);
+int getsplitnumv6(char *buf, struct sip_in6_addr *splitmask, int *v6splitnum);
+int quadtonum(char *quad, u_int32_t *num);
+char *numtoquad(u_int32_t num);
+char *numtobitmap(u_int32_t num);
+int parse_addr(struct if_info *ifi);
+int get_addrv4(struct if_info *ifi);
+int get_addrv6(struct if_info *ifi);
+int split_ipv6addr(char *addr, struct ipv6_split *spstr);
+int validate_s_v6addr(char *addr, int type);
+int getcolon(char *addr, int pos, int type);
+int v6addrtonum(struct ipv6_split spstr, struct v6addr *in6_addr, int type);
+int v6masktonum(char *nmask, int *nmaskbits, struct sip_in6_addr *in6_addr);
+int validate_v6addr(char *addr);
+int v6addrtoprefix(struct v6addr *in6_addr);
+int v6addrtosuffix(struct v6addr *in6_addr);
+int v6addrtobroadcast(struct v6addr *in6_addr);
+void v6_type(struct v6addr *in6_addr);
+void v6_comment(struct v6addr *in6_addr);
+int v6verifyv4(struct sip_in6_addr addr);
+char *get_comp_v6(struct sip_in6_addr addr);
+int mk_ipv6addr(struct v6addr *in6_addr, char *addr);
+struct dnsresp *new_dnsresp(struct dnsresp *d_resp);
+void free_dnsresp(struct dnsresp *d_resp);
+char *resolve_addr(char *addr, int family, struct dnsresp *);
 
 /*
  * interface.c
  */
-struct if_info *new_if (struct if_info *ifarg_cur);
-void free_if (struct if_info *ifa);
-struct if_info *get_if_ext ();
+struct if_info *new_if(struct if_info *ifarg_cur);
+void free_if(struct if_info *ifa);
+struct if_info *get_if_ext();
 
-#endif				/* SUB_H */
+#endif /* SUB_H */

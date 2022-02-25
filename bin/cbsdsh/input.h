@@ -41,8 +41,8 @@
  * package must set its value.
  */
 extern int plinno;
-extern int parsenleft;		/* number of characters left in input buffer */
-extern const char *parsenextc;	/* next character in input buffer */
+extern int parsenleft;	       /* number of characters left in input buffer */
+extern const char *parsenextc; /* next character in input buffer */
 
 struct alias;
 struct parsefile;
@@ -66,4 +66,4 @@ void popfilesupto(struct parsefile *);
 void popallfiles(void);
 void closescript(void);
 
-#define pgetc_macro()	(--parsenleft >= 0? *parsenextc++ : preadbuffer())
+#define pgetc_macro() (--parsenleft >= 0 ? *parsenextc++ : preadbuffer())

@@ -31,8 +31,7 @@
  */
 
 #ifndef lint
-static char const copyright[] =
-"@(#) Copyright (c) 1991, 1993\n\
+static char const copyright[] = "@(#) Copyright (c) 1991, 1993\n\
 	The Regents of the University of California.  All rights reserved.\n";
 #endif /* not lint */
 
@@ -42,7 +41,8 @@ static char sccsid[] = "@(#)mkinit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/9.2/bin/sh/mkinit.c 223494 2011-06-24 07:29:04Z kevlo $");
+__FBSDID(
+    "$FreeBSD: releng/9.2/bin/sh/mkinit.c 223494 2011-06-24 07:29:04Z kevlo $");
 
 /*
  * This program scans all the source files for code to handle various
@@ -54,15 +54,14 @@ __FBSDID("$FreeBSD: releng/9.2/bin/sh/mkinit.c 223494 2011-06-24 07:29:04Z kevlo
  * Usage:  mkinit sourcefile...
  */
 
-
 #include <sys/types.h>
+
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <errno.h>
-
 
 /*
  * OUTFILE is the name of the output file.  Output is initially written
@@ -71,7 +70,6 @@ __FBSDID("$FreeBSD: releng/9.2/bin/sh/mkinit.c 223494 2011-06-24 07:29:04Z kevlo
 
 #define OUTFILE "init.c"
 #define OUTTEMP "init.c.new"
-
 
 /*
  * A text structure is basically just a string that grows as more characters
@@ -95,18 +93,16 @@ struct block {
 	char text[BLOCKSIZE];
 };
 
-
 /*
  * There is one event structure for each event that mkinit handles.
  */
 
 struct event {
-	const char *name;	/* name of event (e.g. INIT) */
-	const char *routine;	/* name of routine called on event */
-	const char *comment;	/* comment describing routine */
-	struct text code;	/* code for handling event */
+	const char *name;    /* name of event (e.g. INIT) */
+	const char *routine; /* name of routine called on event */
+	const char *comment; /* comment describing routine */
+	struct text code;    /* code for handling event */
 };
-
 
 char writer[] = "\
 /*\n\
@@ -125,21 +121,16 @@ char reset[] = "\
  * interactive shell and control is returned to the main command loop.\n\
  */\n";
 
-
-struct event event[] = {
-	{ "INIT", "init", init, { NULL, 0, NULL, NULL } },
+struct event event[] = { { "INIT", "init", init, { NULL, 0, NULL, NULL } },
 	{ "RESET", "reset", reset, { NULL, 0, NULL, NULL } },
-	{ NULL, NULL, NULL, { NULL, 0, NULL, NULL } }
-};
+	{ NULL, NULL, NULL, { NULL, 0, NULL, NULL } } };
 
-
-const char *curfile;			/* current file */
-int linno;				/* current line */
-char *header_files[200];		/* list of header files */
-struct text defines;			/* #define statements */
-struct text decls;			/* declarations */
-int amiddecls;				/* for formatting */
-
+const char *curfile;	 /* current file */
+int linno;		 /* current line */
+char *header_files[200]; /* list of header files */
+struct text defines;	 /* #define statements */
+struct text decls;	 /* declarations */
+int amiddecls;		 /* for formatting */
 
 void readfile(const char *);
 int match(const char *, const char *);
@@ -156,7 +147,7 @@ void *ckmalloc(size_t);
 char *savestr(const char *);
 void error(const char *);
 
-#define equal(s1, s2)	(strcmp(s1, s2) == 0)
+#define equal(s1, s2) (strcmp(s1, s2) == 0)
 
 int
 main(int argc __unused, char *argv[])
@@ -166,13 +157,12 @@ main(int argc __unused, char *argv[])
 	header_files[0] = savestr("\"shell.h\"");
 	header_files[1] = savestr("\"mystring.h\"");
 	header_files[2] = savestr("\"init.h\"");
-	for (ap = argv + 1 ; *ap ; ap++)
+	for (ap = argv + 1; *ap; ap++)
 		readfile(*ap);
 	output();
 	rename(OUTTEMP, OUTFILE);
 	exit(0);
 }
-
 
 /*
  * Parse an input file.
@@ -191,7 +181,7 @@ readfile(const char *fname)
 	amiddecls = 0;
 	while (fgets(line, sizeof line, fp) != NULL) {
 		linno++;
-		for (ep = event ; ep->name ; ep++) {
+		for (ep = event; ep->name; ep++) {
 			if (line[0] == ep->name[0] && match(ep->name, line)) {
 				doevent(ep, fp, fname);
 				break;
@@ -209,18 +199,18 @@ readfile(const char *fname)
 			strcpy(line2, line);
 			memcpy(line2, undef, sizeof(undef) - 1);
 			cp = line2 + sizeof(undef) - 1;
-			while(*cp && (*cp == ' ' || *cp == '\t'))
-			        cp++;
-			while(*cp && *cp != ' ' && *cp != '\t' && *cp != '\n')
-			        cp++;
-			*cp++ = '\n'; *cp = '\0';
+			while (*cp && (*cp == ' ' || *cp == '\t'))
+				cp++;
+			while (*cp && *cp != ' ' && *cp != '\t' && *cp != '\n')
+				cp++;
+			*cp++ = '\n';
+			*cp = '\0';
 			addstr(line2, &defines);
 			addstr(line, &defines);
 		}
 	}
 	fclose(fp);
 }
-
 
 int
 match(const char *name, const char *line)
@@ -237,29 +227,27 @@ match(const char *name, const char *line)
 	return 1;
 }
 
-
 int
 gooddefine(const char *line)
 {
 	const char *p;
 
-	if (! match("#define", line))
-		return 0;			/* not a define */
+	if (!match("#define", line))
+		return 0; /* not a define */
 	p = line + 7;
 	while (*p == ' ' || *p == '\t')
 		p++;
 	while (*p != ' ' && *p != '\t') {
 		if (*p == '(')
-			return 0;		/* macro definition */
+			return 0; /* macro definition */
 		p++;
 	}
 	while (*p != '\n' && *p != '\0')
 		p++;
 	if (p[-1] == '\\')
-		return 0;			/* multi-line definition */
+		return 0; /* multi-line definition */
 	return 1;
 }
-
 
 void
 doevent(struct event *ep, FILE *fp, const char *fname)
@@ -278,9 +266,9 @@ doevent(struct event *ep, FILE *fp, const char *fname)
 		if (equal(line, "}\n"))
 			break;
 		indent = 6;
-		for (p = line ; *p == '\t' ; p++)
+		for (p = line; *p == '\t'; p++)
 			indent += 8;
-		for ( ; *p == ' ' ; p++)
+		for (; *p == ' '; p++)
 			indent++;
 		if (*p == '\n' || *p == '#')
 			indent = 0;
@@ -297,7 +285,6 @@ doevent(struct event *ep, FILE *fp, const char *fname)
 	addstr("      }\n", &ep->code);
 }
 
-
 void
 doinclude(char *line)
 {
@@ -305,7 +292,8 @@ doinclude(char *line)
 	char *name;
 	char **pp;
 
-	for (p = line ; *p != '"' && *p != '<' && *p != '\0' ; p++);
+	for (p = line; *p != '"' && *p != '<' && *p != '\0'; p++)
+		;
 	if (*p == '\0')
 		error("Expecting '\"' or '<'");
 	name = p;
@@ -316,11 +304,11 @@ doinclude(char *line)
 	*p = '\0';
 
 	/* name now contains the name of the include file */
-	for (pp = header_files ; *pp && ! equal(*pp, name) ; pp++);
+	for (pp = header_files; *pp && !equal(*pp, name); pp++)
+		;
 	if (*pp == NULL)
 		*pp = savestr(name);
 }
-
 
 void
 dodecl(char *line1, FILE *fp)
@@ -338,13 +326,14 @@ dodecl(char *line1, FILE *fp)
 		} while (line[0] != '}');
 		amiddecls = 0;
 	} else {
-		if (! amiddecls)
+		if (!amiddecls)
 			addchar('\n', &decls);
 		q = NULL;
-		for (p = line1 + 6 ; *p && strchr("=/\n", *p) == NULL; p++)
+		for (p = line1 + 6; *p && strchr("=/\n", *p) == NULL; p++)
 			continue;
-		if (*p == '=') {		/* eliminate initialization */
-			for (q = p ; *q && *q != ';' ; q++);
+		if (*p == '=') { /* eliminate initialization */
+			for (q = p; *q && *q != ';'; q++)
+				;
 			if (*q == '\0')
 				q = NULL;
 			else {
@@ -361,8 +350,6 @@ dodecl(char *line1, FILE *fp)
 	}
 }
 
-
-
 /*
  * Write the output to the file OUTTEMP.
  */
@@ -376,13 +363,13 @@ output(void)
 
 	fp = ckfopen(OUTTEMP, "w");
 	fputs(writer, fp);
-	for (pp = header_files ; *pp ; pp++)
+	for (pp = header_files; *pp; pp++)
 		fprintf(fp, "#include %s\n", *pp);
 	fputs("\n\n\n", fp);
 	writetext(&defines, fp);
 	fputs("\n\n", fp);
 	writetext(&decls, fp);
-	for (ep = event ; ep->name ; ep++) {
+	for (ep = event; ep->name; ep++) {
 		fputs("\n\n\n", fp);
 		fputs(ep->comment, fp);
 		fprintf(fp, "\nvoid\n%s(void)\n{\n", ep->routine);
@@ -391,7 +378,6 @@ output(void)
 	}
 	fclose(fp);
 }
-
 
 /*
  * A text structure is simply a block of text that is kept in memory.
@@ -409,7 +395,6 @@ addstr(const char *s, struct text *text)
 			*text->nextc++ = *s++;
 	}
 }
-
 
 void
 addchar(int c, struct text *text)
@@ -438,9 +423,9 @@ writetext(struct text *text, FILE *fp)
 	struct block *bp;
 
 	if (text->start != NULL) {
-		for (bp = text->start ; bp != text->last ; bp = bp->next)
-			fwrite(bp->text, sizeof (char), BLOCKSIZE, fp);
-		fwrite(bp->text, sizeof (char), BLOCKSIZE - text->nleft, fp);
+		for (bp = text->start; bp != text->last; bp = bp->next)
+			fwrite(bp->text, sizeof(char), BLOCKSIZE, fp);
+		fwrite(bp->text, sizeof(char), BLOCKSIZE - text->nleft, fp);
 	}
 }
 

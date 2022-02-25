@@ -2,35 +2,34 @@
  * return 0 if success 1 if no connection 2 if no file "sftp 192.168.0.1 port
  * user password /remote/file /local/file" -p|-i|-k"
  */
-#include <libssh2.h>
-#include <libssh2_sftp.h>
-
-#include <stdlib.h>
+#include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <arpa/inet.h>
 #include <sys/time.h>
 
-#include <sys/types.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <stdio.h>
+#include <netinet/in.h>
+
+#include <arpa/inet.h>
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <libssh2.h>
+#include <libssh2_sftp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
-const char     *keyfile1 = "~/.ssh/id_rsa.pub";
-const char     *keyfile2 = "~/.ssh/id_rsa";
-const char     *username = "username";
-const char     *password = "password";
-const char     *sftppath = "/tmp/TEST";
-const char     *localpath = "/tmp/TEST";
+const char *keyfile1 = "~/.ssh/id_rsa.pub";
+const char *keyfile2 = "~/.ssh/id_rsa";
+const char *username = "username";
+const char *password = "password";
+const char *sftppath = "/tmp/TEST";
+const char *localpath = "/tmp/TEST";
 
-static void 
-kbd_callback(const char *name, int name_len,
-	     const char *instruction, int instruction_len, int num_prompts,
-	     const LIBSSH2_USERAUTH_KBDINT_PROMPT * prompts,
-	     LIBSSH2_USERAUTH_KBDINT_RESPONSE * responses,
-	     void **abstract)
+static void
+kbd_callback(const char *name, int name_len, const char *instruction,
+    int instruction_len, int num_prompts,
+    const LIBSSH2_USERAUTH_KBDINT_PROMPT *prompts,
+    LIBSSH2_USERAUTH_KBDINT_RESPONSE *responses, void **abstract)
 {
 	(void)name;
 	(void)name_len;
@@ -42,31 +41,32 @@ kbd_callback(const char *name, int name_len,
 	}
 	(void)prompts;
 	(void)abstract;
-}				/* kbd_callback */
+} /* kbd_callback */
 
-int 
+int
 usage()
 {
 	printf("secure file transfer (via ssh) program\n");
 	printf("require:\n");
-	printf("opt: 192.168.0.1 port user password /remote/file /local/file\n\n");
+	printf(
+	    "opt: 192.168.0.1 port user password /remote/file /local/file\n\n");
 	printf("return 0 if success\n");
-	printf("Example: cbsd cbsdsftp 192.168.0.1 22 cbsd password ${DATE_CMD} /tmp/date\n");
+	printf(
+	    "Example: cbsd cbsdsftp 192.168.0.1 22 cbsd password ${DATE_CMD} /tmp/date\n");
 	exit(0);
 }
 
-
-int 
+int
 main(int argc, char *argv[])
 {
-	unsigned long	hostaddr;
-	int		sock      , i, auth_pw = 0, port = 22;
+	unsigned long hostaddr;
+	int sock, i, auth_pw = 0, port = 22;
 	struct sockaddr_in sin;
-	const char     *fingerprint;
-	char           *userauthlist;
+	const char *fingerprint;
+	char *userauthlist;
 	LIBSSH2_SESSION *session;
-	int		rc;
-	LIBSSH2_SFTP   *sftp_session;
+	int rc;
+	LIBSSH2_SFTP *sftp_session;
 	LIBSSH2_SFTP_HANDLE *sftp_handle;
 	struct hostent *server;
 
@@ -100,7 +100,7 @@ main(int argc, char *argv[])
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = hostaddr;
 	if (connect(sock, (struct sockaddr *)(&sin),
-		    sizeof(struct sockaddr_in)) != 0) {
+		sizeof(struct sockaddr_in)) != 0) {
 		fprintf(stderr, "failed to connect!\n");
 		return -1;
 	}
@@ -116,7 +116,8 @@ main(int argc, char *argv[])
 		return -1;
 	}
 	fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_MD5);
-	userauthlist = libssh2_userauth_list(session, username, strlen(username));
+	userauthlist = libssh2_userauth_list(session, username,
+	    strlen(username));
 	if (strstr(userauthlist, "password") != NULL) {
 		auth_pw |= 1;
 	}
@@ -144,12 +145,14 @@ main(int argc, char *argv[])
 			goto shutdown;
 		}
 	} else if (auth_pw & 2) {
-		if (libssh2_userauth_keyboard_interactive(session, username, &kbd_callback)) {
+		if (libssh2_userauth_keyboard_interactive(session, username,
+			&kbd_callback)) {
 			return 1;
 			goto shutdown;
 		}
 	} else if (auth_pw & 4) {
-		if (libssh2_userauth_publickey_fromfile(session, username, keyfile1, keyfile2, password)) {
+		if (libssh2_userauth_publickey_fromfile(session, username,
+			keyfile1, keyfile2, password)) {
 			printf("\tAuthentication by public key failed!\n");
 			return 1;
 			goto shutdown;
@@ -167,16 +170,16 @@ main(int argc, char *argv[])
 		return 1;
 		goto shutdown;
 	}
-	sftp_handle =
-		libssh2_sftp_open(sftp_session, sftppath, LIBSSH2_FXF_READ, 0);
+	sftp_handle = libssh2_sftp_open(sftp_session, sftppath,
+	    LIBSSH2_FXF_READ, 0);
 
 	if (!sftp_handle) {
 		return 2;
 		goto shutdown;
 	}
-	FILE           *fp = fopen(localpath, "w");
+	FILE *fp = fopen(localpath, "w");
 	if (fp) {
-		char		mem       [1024];
+		char mem[1024];
 		do {
 			rc = libssh2_sftp_read(sftp_handle, mem, sizeof(mem));
 			if (rc > 0) {
@@ -192,7 +195,8 @@ main(int argc, char *argv[])
 
 shutdown:
 
-	libssh2_session_disconnect(session, "Normal Shutdown, Thank you for playing");
+	libssh2_session_disconnect(session,
+	    "Normal Shutdown, Thank you for playing");
 	libssh2_session_free(session);
 
 #ifdef WIN32

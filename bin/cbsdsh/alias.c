@@ -39,14 +39,15 @@ static char sccsid[] = "@(#)alias.c	8.3 (Berkeley) 5/4/95";
 __FBSDID("$FreeBSD: head/bin/sh/alias.c 317039 2017-04-16 22:10:02Z jilles $");
 
 #include <stdlib.h>
-#include "shell.h"
-#include "output.h"
+
+#include "alias.h"
+#include "builtins.h"
 #include "error.h"
 #include "memalloc.h"
 #include "mystring.h"
-#include "alias.h"
 #include "options.h"
-#include "builtins.h"
+#include "output.h"
+#include "shell.h"
 
 #define ATABSIZE 39
 
@@ -57,8 +58,7 @@ static void setalias(const char *, const char *);
 static int unalias(const char *);
 static struct alias **hashalias(const char *);
 
-static
-void
+static void
 setalias(const char *name, const char *val)
 {
 	struct alias *ap, **app;
@@ -66,7 +66,7 @@ setalias(const char *name, const char *val)
 	unalias(name);
 	app = hashalias(name);
 	INTOFF;
-	ap = ckmalloc(sizeof (struct alias));
+	ap = ckmalloc(sizeof(struct alias));
 	ap->name = savestr(name);
 	ap->val = savestr(val);
 	ap->flag = 0;
@@ -212,7 +212,7 @@ aliascmd(int argc __unused, char **argv __unused)
 		return (0);
 	}
 	while ((n = *argptr++) != NULL) {
-		if ((v = strchr(n+1, '=')) == NULL) /* n+1: funny ksh stuff */
+		if ((v = strchr(n + 1, '=')) == NULL) /* n+1: funny ksh stuff */
 			if ((ap = lookupalias(n, 0)) == NULL) {
 				warning("%s: not found", n);
 				ret = 1;
@@ -251,6 +251,6 @@ hashalias(const char *p)
 
 	hashval = (unsigned char)*p << 4;
 	while (*p)
-		hashval+= *p++;
+		hashval += *p++;
 	return &atab[hashval % ATABSIZE];
 }

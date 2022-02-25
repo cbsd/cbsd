@@ -36,16 +36,14 @@
  */
 
 struct shparam {
-	int nparam;		/* # of positional parameters (without $0) */
-	unsigned char malloc;	/* if parameter list dynamically allocated */
-	unsigned char reset;	/* if getopts has been reset */
-	char **p;		/* parameter list */
-	char **optp;		/* parameter list for getopts */
-	char **optnext;		/* next parameter to be processed by getopts */
-	char *optptr;		/* used by getopts */
+	int nparam;	      /* # of positional parameters (without $0) */
+	unsigned char malloc; /* if parameter list dynamically allocated */
+	unsigned char reset;  /* if getopts has been reset */
+	char **p;	      /* parameter list */
+	char **optp;	      /* parameter list for getopts */
+	char **optnext;	      /* next parameter to be processed by getopts */
+	char *optptr;	      /* used by getopts */
 };
-
-
 
 #define eflag optval[0]
 #define fflag optval[1]
@@ -57,58 +55,55 @@ struct shparam {
 #define xflag optval[7]
 #define vflag optval[8]
 #define Vflag optval[9]
-#define	Eflag optval[10]
-#define	Cflag optval[11]
-#define	aflag optval[12]
-#define	bflag optval[13]
-#define	uflag optval[14]
-#define	privileged optval[15]
-#define	Tflag optval[16]
-#define	Pflag optval[17]
-#define	hflag optval[18]
-#define	nologflag optval[19]
-#define	pipefailflag optval[20]
+#define Eflag optval[10]
+#define Cflag optval[11]
+#define aflag optval[12]
+#define bflag optval[13]
+#define uflag optval[14]
+#define privileged optval[15]
+#define Tflag optval[16]
+#define Pflag optval[17]
+#define hflag optval[18]
+#define nologflag optval[19]
+#define pipefailflag optval[20]
 
-#define NSHORTOPTS	19
-#define NOPTS		21
+#define NSHORTOPTS 19
+#define NOPTS 21
 
 extern char optval[NOPTS];
 extern const char optletter[NSHORTOPTS];
 #ifdef DEFINE_OPTIONS
 char optval[NOPTS];
 const char optletter[NSHORTOPTS] = "efIimnsxvVECabupTPh";
-static const unsigned char optname[] =
-	"\007errexit"
-	"\006noglob"
-	"\011ignoreeof"
-	"\013interactive"
-	"\007monitor"
-	"\006noexec"
-	"\005stdin"
-	"\006xtrace"
-	"\007verbose"
-	"\002vi"
-	"\005emacs"
-	"\011noclobber"
-	"\011allexport"
-	"\006notify"
-	"\007nounset"
-	"\012privileged"
-	"\012trapsasync"
-	"\010physical"
-	"\010trackall"
-	"\005nolog"
-	"\010pipefail"
-;
+static const unsigned char optname[] = "\007errexit"
+				       "\006noglob"
+				       "\011ignoreeof"
+				       "\013interactive"
+				       "\007monitor"
+				       "\006noexec"
+				       "\005stdin"
+				       "\006xtrace"
+				       "\007verbose"
+				       "\002vi"
+				       "\005emacs"
+				       "\011noclobber"
+				       "\011allexport"
+				       "\006notify"
+				       "\007nounset"
+				       "\012privileged"
+				       "\012trapsasync"
+				       "\010physical"
+				       "\010trackall"
+				       "\005nolog"
+				       "\010pipefail";
 #endif
 
-
-extern char *minusc;		/* argument to -c option */
-extern char *arg0;		/* $0 */
-extern struct shparam shellparam;  /* $@ */
-extern char **argptr;		/* argument list for builtin commands */
-extern char *shoptarg;		/* set by nextopt */
-extern char *nextopt_optptr;	/* used by nextopt */
+extern char *minusc;		  /* argument to -c option */
+extern char *arg0;		  /* $0 */
+extern struct shparam shellparam; /* $@ */
+extern char **argptr;		  /* argument list for builtin commands */
+extern char *shoptarg;		  /* set by nextopt */
+extern char *nextopt_optptr;	  /* used by nextopt */
 
 void procargs(int, char **);
 void optschanged(void);

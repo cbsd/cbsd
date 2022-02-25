@@ -1,36 +1,34 @@
 /*
-* ./ssh2_exec 127.0.0.1 22222 user password "uptime" return 0 if success 1
-* if no connection 2 if no file
-*/
+ * ./ssh2_exec 127.0.0.1 22222 user password "uptime" return 0 if success 1
+ * if no connection 2 if no file
+ */
 
-#include <libssh2.h>
-
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <sys/select.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-
-#include <sys/time.h>
 #include <sys/types.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <stdio.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+
+#include <netinet/in.h>
+
+#include <arpa/inet.h>
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <libssh2.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define MAXCMD 10000
 
-const char     *username = "user";
-const char     *password = "password";
+const char *username = "user";
+const char *password = "password";
 
 static void
-kbd_callback(const char *name, int name_len,
-	     const char *instruction, int instruction_len,
-	     int num_prompts,
-	     const LIBSSH2_USERAUTH_KBDINT_PROMPT * prompts,
-	     LIBSSH2_USERAUTH_KBDINT_RESPONSE * responses,
-	     void **abstract)
+kbd_callback(const char *name, int name_len, const char *instruction,
+    int instruction_len, int num_prompts,
+    const LIBSSH2_USERAUTH_KBDINT_PROMPT *prompts,
+    LIBSSH2_USERAUTH_KBDINT_RESPONSE *responses, void **abstract)
 {
 	(void)name;
 	(void)name_len;
@@ -42,18 +40,17 @@ kbd_callback(const char *name, int name_len,
 	}
 	(void)prompts;
 	(void)abstract;
-}				/* kbd_callback */
-
+} /* kbd_callback */
 
 static int
-waitsocket(int socket_fd, LIBSSH2_SESSION * session)
+waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 {
-	struct timeval	timeout;
-	int		rc;
-	fd_set		fd;
-	fd_set         *writefd = NULL;
-	fd_set         *readfd = NULL;
-	int		dir;
+	struct timeval timeout;
+	int rc;
+	fd_set fd;
+	fd_set *writefd = NULL;
+	fd_set *readfd = NULL;
+	int dir;
 
 	timeout.tv_sec = 10;
 	timeout.tv_usec = 0;
@@ -90,24 +87,24 @@ usage()
 int
 main(int argc, char *argv[])
 {
-	const char	*hostname = "127.0.0.1";
-	char		commandline[MAXCMD];
-	int		port = 22;
-	unsigned long	hostaddr;
-	int		sock;
+	const char *hostname = "127.0.0.1";
+	char commandline[MAXCMD];
+	int port = 22;
+	unsigned long hostaddr;
+	int sock;
 	struct sockaddr_in sin;
-	const char	*fingerprint;
+	const char *fingerprint;
 	LIBSSH2_SESSION *session;
 	LIBSSH2_CHANNEL *channel;
-	int		rc        , i;
-	int		exitcode = 0;
-	char		*exitsignal = (char *)"none";
-	int		bytecount = 0;
-	size_t		len;
+	int rc, i;
+	int exitcode = 0;
+	char *exitsignal = (char *)"none";
+	int bytecount = 0;
+	size_t len;
 	LIBSSH2_KNOWNHOSTS *nh;
-	int		type;
-	char		*userauthlist;
-	int		auth_pw = 0;
+	int type;
+	char *userauthlist;
+	int auth_pw = 0;
 
 	if (!strcmp(argv[1], "--help"))
 		usage();
@@ -150,7 +147,7 @@ main(int argc, char *argv[])
 	sin.sin_port = htons(port);
 	sin.sin_addr.s_addr = hostaddr;
 	if (connect(sock, (struct sockaddr *)(&sin),
-		    sizeof(struct sockaddr_in)) != 0) {
+		sizeof(struct sockaddr_in)) != 0) {
 		fprintf(stderr, "failed to connect!\n");
 		return 1;
 	}
@@ -168,7 +165,8 @@ main(int argc, char *argv[])
 	fingerprint = libssh2_hostkey_hash(session, LIBSSH2_HOSTKEY_HASH_SHA1);
 
 	/* check what authentication methods are available */
-	userauthlist = libssh2_userauth_list(session, username, strlen(username));
+	userauthlist = libssh2_userauth_list(session, username,
+	    strlen(username));
 
 	if (strstr(userauthlist, "password") != NULL) {
 		auth_pw |= 1;
@@ -188,7 +186,7 @@ main(int argc, char *argv[])
 	} else if (auth_pw & 2) {
 		/* Or via keyboard-interactive */
 		if (libssh2_userauth_keyboard_interactive(session, username,
-							  &kbd_callback)) {
+			&kbd_callback)) {
 			exitcode = 1;
 			goto shutdown;
 		}
@@ -199,8 +197,8 @@ main(int argc, char *argv[])
 
 	/* Exec non-blocking on the remove host */
 	while ((channel = libssh2_channel_open_session(session)) == NULL &&
-	       libssh2_session_last_error(session, NULL, NULL, 0) ==
-	       LIBSSH2_ERROR_EAGAIN) {
+	    libssh2_session_last_error(session, NULL, NULL, 0) ==
+		LIBSSH2_ERROR_EAGAIN) {
 		waitsocket(sock, session);
 	}
 	if (channel == NULL) {
@@ -208,7 +206,7 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 	while ((rc = libssh2_channel_exec(channel, commandline)) ==
-	       LIBSSH2_ERROR_EAGAIN) {
+	    LIBSSH2_ERROR_EAGAIN) {
 		waitsocket(sock, session);
 	}
 	if (rc != 0) {
@@ -217,18 +215,18 @@ main(int argc, char *argv[])
 	}
 	for (;;) {
 		/* loop until we block */
-		int		rc;
+		int rc;
 		do {
-			char		buffer    [0x4000];
-			rc = libssh2_channel_read(channel, buffer, sizeof(buffer));
+			char buffer[0x4000];
+			rc = libssh2_channel_read(channel, buffer,
+			    sizeof(buffer));
 			if (rc > 0) {
-				int		i;
+				int i;
 				bytecount += rc;
 				for (i = 0; i < rc; ++i)
 					fputc(buffer[i], stdout);
 			}
-		}
-		while (rc > 0);
+		} while (rc > 0);
 
 		/*
 		 * this is due to blocking that would occur otherwise so we
@@ -245,8 +243,8 @@ main(int argc, char *argv[])
 
 	if (rc == 0) {
 		exitcode = libssh2_channel_get_exit_status(channel);
-		libssh2_channel_get_exit_signal(channel, &exitsignal,
-					      NULL, NULL, NULL, NULL, NULL);
+		libssh2_channel_get_exit_signal(channel, &exitsignal, NULL,
+		    NULL, NULL, NULL, NULL);
 	}
 	libssh2_channel_free(channel);
 	channel = NULL;
@@ -254,7 +252,7 @@ main(int argc, char *argv[])
 shutdown:
 
 	libssh2_session_disconnect(session,
-				   "Normal Shutdown, Thank you for playing");
+	    "Normal Shutdown, Thank you for playing");
 	libssh2_session_free(session);
 
 #ifdef WIN32
@@ -262,7 +260,7 @@ shutdown:
 #else
 	close(sock);
 #endif
-	//fprintf(stderr, "all done\n");
+	// fprintf(stderr, "all done\n");
 
 	libssh2_exit();
 

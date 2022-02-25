@@ -50,32 +50,31 @@ __FBSDID("$FreeBSD: head/bin/sh/output.c 344306 2019-02-19 21:27:30Z jilles $");
  *		output of the command via a pipe.
  */
 
-#include <stdio.h>	/* defines BUFSIZ */
-#include <string.h>
-#include <stdarg.h>
 #include <errno.h>
-#include <unistd.h>
+#include <stdarg.h>
+#include <stdio.h> /* defines BUFSIZ */
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <wchar.h>
 #include <wctype.h>
 
+#include "error.h"
+#include "memalloc.h"
+#include "output.h"
 #include "shell.h"
 #include "syntax.h"
-#include "output.h"
-#include "memalloc.h"
-#include "error.h"
 #include "var.h"
 
-
 #define OUTBUFSIZ BUFSIZ
-#define MEM_OUT -2		/* output to dynamically allocated memory */
-#define OUTPUT_ERR 01		/* error occurred on output */
+#define MEM_OUT -2    /* output to dynamically allocated memory */
+#define OUTPUT_ERR 01 /* error occurred on output */
 
 static int doformat_wr(void *, const char *, int);
 
-struct output output = {NULL, NULL, NULL, OUTBUFSIZ, 1, 0};
-struct output errout = {NULL, NULL, NULL, 256, 2, 0};
-struct output memout = {NULL, NULL, NULL, 64, MEM_OUT, 0};
+struct output output = { NULL, NULL, NULL, OUTBUFSIZ, 1, 0 };
+struct output errout = { NULL, NULL, NULL, 256, 2, 0 };
+struct output memout = { NULL, NULL, NULL, 64, MEM_OUT, 0 };
 struct output *out1 = &output;
 struct output *out2 = &errout;
 
@@ -187,7 +186,7 @@ outqstr(const char *p, struct output *file)
 	}
 
 	if (p[strcspn(p, "|&;<>()$`\\\" \n*?[~#=")] == '\0' ||
-			strcmp(p, "[") == 0) {
+	    strcmp(p, "[") == 0) {
 		outstr(p, file);
 		return;
 	}
@@ -232,14 +231,12 @@ emptyoutbuf(struct output *dest)
 	}
 }
 
-
 void
 flushall(void)
 {
 	flushout(&output);
 	flushout(&errout);
 }
-
 
 void
 flushout(struct output *dest)
@@ -252,13 +249,11 @@ flushout(struct output *dest)
 	dest->nextc = dest->buf;
 }
 
-
 void
 freestdout(void)
 {
 	output.nextc = output.buf;
 }
-
 
 int
 outiserror(struct output *file)
@@ -266,13 +261,11 @@ outiserror(struct output *file)
 	return (file->flags & OUTPUT_ERR);
 }
 
-
 void
 outclearerror(struct output *file)
 {
 	file->flags &= ~OUTPUT_ERR;
 }
-
 
 void
 outfmt(struct output *file, const char *fmt, ...)
@@ -283,7 +276,6 @@ outfmt(struct output *file, const char *fmt, ...)
 	doformat(file, fmt, ap);
 	va_end(ap);
 }
-
 
 void
 out1fmt(const char *fmt, ...)

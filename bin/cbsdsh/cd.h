@@ -29,7 +29,7 @@
  * $FreeBSD: head/bin/sh/cd.h 314436 2017-02-28 23:42:47Z imp $
  */
 
-void	 pwd_init(int);
+void pwd_init(int);
 #ifdef CBSD
-int	cbsd_pwd_init(void);
+int cbsd_pwd_init(void);
 #endif

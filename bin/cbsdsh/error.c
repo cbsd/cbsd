@@ -42,20 +42,20 @@ __FBSDID("$FreeBSD: head/bin/sh/error.c 340284 2018-11-09 14:58:24Z jilles $");
  * Errors and exceptions.
  */
 
-#include "shell.h"
-#include "eval.h"
-#include "main.h"
-#include "options.h"
-#include "output.h"
-#include "error.h"
-#include "nodes.h" /* show.h needs nodes.h */
-#include "show.h"
-#include "trap.h"
+#include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <errno.h>
 
+#include "error.h"
+#include "eval.h"
+#include "main.h"
+#include "nodes.h" /* show.h needs nodes.h */
+#include "options.h"
+#include "output.h"
+#include "shell.h"
+#include "show.h"
+#include "trap.h"
 
 /*
  * Code to handle exceptions in C.
@@ -66,8 +66,8 @@ volatile sig_atomic_t exception;
 volatile sig_atomic_t suppressint;
 volatile sig_atomic_t intpending;
 
-
-static void verrorwithstatus(int, const char *, va_list) __printf0like(2, 0) __dead2;
+static void verrorwithstatus(int, const char *, va_list)
+    __printf0like(2, 0) __dead2;
 
 /*
  * Called to raise an exception.  Since C doesn't include exceptions, we
@@ -87,7 +87,6 @@ exraise(int e)
 	exception = e;
 	longjmp(handler->loc, 1);
 }
-
 
 /*
  * Called from trap.c when a SIGINT is received and not suppressed, or when
@@ -125,7 +124,6 @@ onint(void)
 	}
 }
 
-
 static void
 vwarning(const char *msg, va_list ap)
 {
@@ -137,7 +135,6 @@ vwarning(const char *msg, va_list ap)
 	out2fmt_flush("\n");
 }
 
-
 void
 warning(const char *msg, ...)
 {
@@ -146,7 +143,6 @@ warning(const char *msg, ...)
 	vwarning(msg, ap);
 	va_end(ap);
 }
-
 
 /*
  * Exverror is called to raise the error exception.  If the first argument
@@ -168,11 +164,11 @@ verrorwithstatus(int status, const char *msg, va_list ap)
 
 #ifdef DEBUG
 	if (msg)
-		TRACE(("verrorwithstatus(%d, \"%s\") pid=%d\n",
-		    status, msg, getpid()));
+		TRACE(("verrorwithstatus(%d, \"%s\") pid=%d\n", status, msg,
+		    getpid()));
 	else
-		TRACE(("verrorwithstatus(%d, NULL) pid=%d\n",
-		    status, getpid()));
+		TRACE(
+		    ("verrorwithstatus(%d, NULL) pid=%d\n", status, getpid()));
 #endif
 	if (msg)
 		vwarning(msg, ap);
@@ -180,7 +176,6 @@ verrorwithstatus(int status, const char *msg, va_list ap)
 	exitstatus = status;
 	exraise(EXERROR);
 }
-
 
 void
 error(const char *msg, ...)
@@ -190,7 +185,6 @@ error(const char *msg, ...)
 	verrorwithstatus(2, msg, ap);
 	va_end(ap);
 }
-
 
 void
 errorwithstatus(int status, const char *msg, ...)

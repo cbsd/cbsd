@@ -35,8 +35,7 @@
 
 #ifndef SHELL
 #ifndef lint
-static char const copyright[] =
-"@(#) Copyright (c) 1989, 1993\n\
+static char const copyright[] = "@(#) Copyright (c) 1989, 1993\n\
 	The Regents of the University of California.  All rights reserved.\n";
 #endif /* not lint */
 #endif
@@ -46,7 +45,7 @@ static char const copyright[] =
 static char const sccsid[] = "@(#)printf.c	8.1 (Berkeley) 7/20/93";
 #endif
 static const char rcsid[] =
-  "$FreeBSD: head/usr.bin/printf/printf.c 279503 2015-03-01 21:46:55Z jilles $";
+    "$FreeBSD: head/usr.bin/printf/printf.c 279503 2015-03-01 21:46:55Z jilles $";
 #endif /* not lint */
 
 #pragma unused(rcsid)
@@ -66,45 +65,46 @@ static const char rcsid[] =
 #include <wchar.h>
 
 #ifdef SHELL
-#define	main printfcmd
+#define main printfcmd
 #include "bltin/bltin.h"
 #include "options.h"
 #endif
 
-#define	PF(f, func) do {						\
-	char *b = NULL;							\
-	if (havewidth)							\
-		if (haveprec)						\
-			(void)asprintf(&b, f, fieldwidth, precision, func); \
-		else							\
-			(void)asprintf(&b, f, fieldwidth, func);	\
-	else if (haveprec)						\
-		(void)asprintf(&b, f, precision, func);			\
-	else								\
-		(void)asprintf(&b, f, func);				\
-	if (b) {							\
-		(void)fputs(b, stdout);					\
-		free(b);						\
-	}								\
-} while (0)
+#define PF(f, func)                                                          \
+	do {                                                                 \
+		char *b = NULL;                                              \
+		if (havewidth)                                               \
+			if (haveprec)                                        \
+				(void)asprintf(&b, f, fieldwidth, precision, \
+				    func);                                   \
+			else                                                 \
+				(void)asprintf(&b, f, fieldwidth, func);     \
+		else if (haveprec)                                           \
+			(void)asprintf(&b, f, precision, func);              \
+		else                                                         \
+			(void)asprintf(&b, f, func);                         \
+		if (b) {                                                     \
+			(void)fputs(b, stdout);                              \
+			free(b);                                             \
+		}                                                            \
+	} while (0)
 
-static int	 asciicode(void);
-static char	*printf_doformat(char *, int *);
-static int	 escape(char *, int, size_t *);
-static int	 getchr(void);
-static int	 getfloating(long double *, int);
-static int	 getint(int *);
-static int	 getnum(intmax_t *, uintmax_t *, int);
-static const char
-		*getstr(void);
-static char	*mknum(char *, char);
-static void	 usage(void);
+static int asciicode(void);
+static char *printf_doformat(char *, int *);
+static int escape(char *, int, size_t *);
+static int getchr(void);
+static int getfloating(long double *, int);
+static int getint(int *);
+static int getnum(intmax_t *, uintmax_t *, int);
+static const char *getstr(void);
+static char *mknum(char *, char);
+static void usage(void);
 
 static const char digits[] = "0123456789";
 
 static char end_fmt[1];
 
-static int  myargc;
+static int myargc;
 static char **myargv;
 static char **gargv;
 static char **maxargv;
@@ -118,7 +118,7 @@ main(int argc, char *argv[])
 #ifndef SHELL
 	int ch;
 
-	(void) setlocale(LC_ALL, "");
+	(void)setlocale(LC_ALL, "");
 #endif
 
 #ifdef SHELL
@@ -154,7 +154,7 @@ main(int argc, char *argv[])
 	 * up the format string.
 	 */
 	fmt = format = *argv;
-	escape(fmt, 1, &len);		/* backslash interpretation */
+	escape(fmt, 1, &len); /* backslash interpretation */
 	rval = end = 0;
 	gargv = ++argv;
 
@@ -210,7 +210,6 @@ main(int argc, char *argv[])
 	}
 	/* NOTREACHED */
 }
-
 
 static char *
 printf_doformat(char *fmt, int *rval)
@@ -406,7 +405,12 @@ printf_doformat(char *fmt, int *rval)
 		PF(start, p);
 		break;
 	}
-	case 'd': case 'i': case 'o': case 'u': case 'x': case 'X': {
+	case 'd':
+	case 'i':
+	case 'o':
+	case 'u':
+	case 'x':
+	case 'X': {
 		char *f;
 		intmax_t val;
 		uintmax_t uval;
@@ -423,10 +427,14 @@ printf_doformat(char *fmt, int *rval)
 			PF(f, uval);
 		break;
 	}
-	case 'e': case 'E':
-	case 'f': case 'F':
-	case 'g': case 'G':
-	case 'a': case 'A': {
+	case 'e':
+	case 'E':
+	case 'f':
+	case 'F':
+	case 'g':
+	case 'G':
+	case 'a':
+	case 'A': {
 		long double p;
 
 		if (getfloating(&p, mod_ldbl))
@@ -484,19 +492,19 @@ escape(char *fmt, int percent, size_t *len)
 			continue;
 		}
 		switch (*++fmt) {
-		case '\0':		/* EOS, user error */
+		case '\0': /* EOS, user error */
 			*store = '\\';
 			*++store = '\0';
 			*len = store - save;
 			return (0);
-		case '\\':		/* backslash */
-		case '\'':		/* single quote */
+		case '\\': /* backslash */
+		case '\'': /* single quote */
 			*store = *fmt;
 			break;
-		case 'a':		/* bell/alert */
+		case 'a': /* bell/alert */
 			*store = '\a';
 			break;
-		case 'b':		/* backspace */
+		case 'b': /* backspace */
 			*store = '\b';
 			break;
 		case 'c':
@@ -507,27 +515,33 @@ escape(char *fmt, int percent, size_t *len)
 			}
 			*store = 'c';
 			break;
-		case 'f':		/* form-feed */
+		case 'f': /* form-feed */
 			*store = '\f';
 			break;
-		case 'n':		/* newline */
+		case 'n': /* newline */
 			*store = '\n';
 			break;
-		case 'r':		/* carriage-return */
+		case 'r': /* carriage-return */
 			*store = '\r';
 			break;
-		case 't':		/* horizontal tab */
+		case 't': /* horizontal tab */
 			*store = '\t';
 			break;
-		case 'v':		/* vertical tab */
+		case 'v': /* vertical tab */
 			*store = '\v';
 			break;
-					/* octal constant */
-		case '0': case '1': case '2': case '3':
-		case '4': case '5': case '6': case '7':
+			/* octal constant */
+		case '0':
+		case '1':
+		case '2':
+		case '3':
+		case '4':
+		case '5':
+		case '6':
+		case '7':
 			c = (!percent && *fmt == '0') ? 4 : 3;
-			for (value = 0;
-			    c-- && *fmt >= '0' && *fmt <= '7'; ++fmt) {
+			for (value = 0; c-- && *fmt >= '0' && *fmt <= '7';
+			     ++fmt) {
 				value <<= 3;
 				value += *fmt - '0';
 			}
@@ -608,8 +622,7 @@ getnum(intmax_t *ip, uintmax_t *uip, int signedconv)
 	if (ep == *gargv) {
 		warnx("%s: expected numeric value", *gargv);
 		rval = 1;
-	}
-	else if (*ep != '\0') {
+	} else if (*ep != '\0') {
 		warnx("%s: not completely converted", *gargv);
 		rval = 1;
 	}

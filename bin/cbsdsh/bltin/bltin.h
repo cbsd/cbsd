@@ -41,8 +41,8 @@
  * routines to ash routines using defines.
  */
 
-#include "../shell.h"
 #include "../mystring.h"
+#include "../shell.h"
 #ifdef SHELL
 #include "../error.h"
 #include "../output.h"
@@ -54,9 +54,9 @@
 #define stderr out2
 #define printf out1fmt
 #undef putc
-#define putc(c, file)	outc(c, file)
+#define putc(c, file) outc(c, file)
 #undef putchar
-#define putchar(c)	out1c(c)
+#define putchar(c) out1c(c)
 #define fprintf outfmt
 #define fputs outstr
 #define fwrite(ptr, size, nmemb, file) outbin(ptr, (size) * (nmemb), file)
@@ -70,7 +70,11 @@
 #undef NULL
 #include <stdio.h>
 #undef main
-#define INITARGS(argv)	if ((commandname = argv[0]) == NULL) {fputs("Argc is zero\n", stderr); exit(2);} else
+#define INITARGS(argv)                           \
+	if ((commandname = argv[0]) == NULL) {   \
+		fputs("Argc is zero\n", stderr); \
+		exit(2);                         \
+	} else
 #endif
 
 #include <unistd.h>

@@ -36,9 +36,11 @@ static char sccsid[] = "@(#)histedit.c	8.2 (Berkeley) 5/4/95";
 #endif
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/histedit.c 360139 2020-04-21 00:37:55Z bdrewery $");
+__FBSDID(
+    "$FreeBSD: head/bin/sh/histedit.c 360139 2020-04-21 00:37:55Z bdrewery $");
 
 #include <sys/param.h>
+
 #include <limits.h>
 #include <paths.h>
 #include <stdio.h>
@@ -47,25 +49,25 @@ __FBSDID("$FreeBSD: head/bin/sh/histedit.c 360139 2020-04-21 00:37:55Z bdrewery 
 /*
  * Editline and history functions (and glue).
  */
-#include "shell.h"
-#include "parser.h"
-#include "var.h"
-#include "options.h"
-#include "main.h"
-#include "output.h"
-#include "mystring.h"
 #include "builtins.h"
+#include "main.h"
+#include "mystring.h"
+#include "options.h"
+#include "output.h"
+#include "parser.h"
+#include "shell.h"
+#include "var.h"
 #ifndef NO_HISTORY
-#include "myhistedit.h"
 #include "error.h"
 #include "eval.h"
 #include "memalloc.h"
+#include "myhistedit.h"
 
-#define MAXHISTLOOPS	4	/* max recursions through fc */
-#define DEFEDITOR	"ed"	/* default editor *should* be $EDITOR */
+#define MAXHISTLOOPS 4 /* max recursions through fc */
+#define DEFEDITOR "ed" /* default editor *should* be $EDITOR */
 
-History *hist;	/* history cookie */
-EditLine *el;	/* editline cookie */
+History *hist; /* history cookie */
+EditLine *el;  /* editline cookie */
 int displayhist;
 static FILE *el_in, *el_out;
 
@@ -122,11 +124,10 @@ histedit(void)
 				el_set(el, EL_PROMPT, getprompt);
 #ifndef CBSD
 				el_set(el, EL_ADDFN, "sh-complete",
-				    "Filename completion",
-				    _el_fn_sh_complete);
+				    "Filename completion", _el_fn_sh_complete);
 #endif
 			} else {
-bad:
+			bad:
 				out2fmt_flush("sh: can't initialize editing\n");
 			}
 			INTON;
@@ -148,7 +149,7 @@ bad:
 		}
 	} else {
 		INTOFF;
-		if (el) {	/* no editing if not interactive */
+		if (el) { /* no editing if not interactive */
 			el_end(el);
 			el = NULL;
 		}
@@ -159,7 +160,6 @@ bad:
 		INTON;
 	}
 }
-
 
 void
 sethistsize(const char *hs)
@@ -233,7 +233,7 @@ histcmd(int argc, char **argv __unused)
 	 * If executing...
 	 */
 	if (lflg == 0 || editor || sflg) {
-		lflg = 0;	/* ignore */
+		lflg = 0; /* ignore */
 		editfile = NULL;
 		/*
 		 * Catch interrupts to reset active counter and
@@ -261,7 +261,7 @@ histcmd(int argc, char **argv __unused)
 			    (editor = bltinlookup("EDITOR", 1)) == NULL)
 				editor = DEFEDITOR;
 			if (editor[0] == '-' && editor[1] == '\0') {
-				sflg = 1;	/* no edit */
+				sflg = 1; /* no edit */
 				editor = NULL;
 			}
 		}
@@ -271,7 +271,7 @@ histcmd(int argc, char **argv __unused)
 	 * If executing, parse [old=new] now
 	 */
 	if (lflg == 0 && *argptr != NULL &&
-	     ((repl = strchr(*argptr, '=')) != NULL)) {
+	    ((repl = strchr(*argptr, '=')) != NULL)) {
 		pat = *argptr;
 		*repl++ = '\0';
 		argptr++;
@@ -313,7 +313,7 @@ histcmd(int argc, char **argv __unused)
 	 */
 	if (editor) {
 		int fd;
-		INTOFF;		/* easier */
+		INTOFF; /* easier */
 		sprintf(editfilestr, "%s/_shXXXXXX", _PATH_TMP);
 		if ((fd = mkstemp(editfilestr)) < 0)
 			error("can't create temporary file %s", editfile);
@@ -334,14 +334,14 @@ histcmd(int argc, char **argv __unused)
 	 */
 	history(hist, &he, H_FIRST);
 	retval = history(hist, &he, H_NEXT_EVENT, first);
-	for (;retval != -1; retval = history(hist, &he, direction)) {
+	for (; retval != -1; retval = history(hist, &he, direction)) {
 		if (lflg) {
 			if (!nflg)
 				out1fmt("%5d ", he.num);
 			out1str(he.str);
 		} else {
-			const char *s = pat ?
-			   fc_replace(he.str, pat, repl) : he.str;
+			const char *s = pat ? fc_replace(he.str, pat, repl) :
+						    he.str;
 
 			if (sflg) {
 				if (displayhist) {
@@ -361,8 +361,8 @@ histcmd(int argc, char **argv __unused)
 					 * cursor, set it back to the current
 					 * entry.
 					 */
-					history(hist, &he,
-					    H_NEXT_EVENT, oldhistnum);
+					history(hist, &he, H_NEXT_EVENT,
+					    oldhistnum);
 				}
 			} else
 				fputs(s, efp);
@@ -381,7 +381,7 @@ histcmd(int argc, char **argv __unused)
 		INTON;
 		editcmd = stalloc(strlen(editor) + strlen(editfile) + 2);
 		sprintf(editcmd, "%s %s", editor, editfile);
-		evalstring(editcmd, 0);	/* XXX - should use no JC command */
+		evalstring(editcmd, 0); /* XXX - should use no JC command */
 		readcmdfile(editfile);	/* XXX - should read back - quick tst */
 		unlink(editfile);
 	}
@@ -405,7 +405,7 @@ fc_replace(const char *s, char *p, char *r)
 		if (*s == *p && strncmp(s, p, plen) == 0) {
 			STPUTS(r, dest);
 			s += plen;
-			*p = '\0';	/* so no more matches */
+			*p = '\0'; /* so no more matches */
 		} else
 			STPUTC(*s++, dest);
 	}
@@ -456,12 +456,13 @@ str_to_event(const char *str, int last)
 				 * the notion of first and last is
 				 * backwards to that of the history package
 				 */
-				retval = history(hist, &he, last ? H_FIRST : H_LAST);
+				retval = history(hist, &he,
+				    last ? H_FIRST : H_LAST);
 			}
 		}
 		if (retval == -1)
 			error("history number %s not found (internal error)",
-			       str);
+			    str);
 	} else {
 		/*
 		 * pattern
