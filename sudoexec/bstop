@@ -59,11 +59,49 @@ if [ -r ${Makefile} ]; then
 	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 	jname="${all_bhyve_list}"
 
+	jname_in_args=0
+
 	if [ -n "${ojname}" ]; then
 		jname="${ojname}"
+	else
+		# cbsd bstart <env1> <env2> route
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			if [ $? -eq 0 ]; then
+				jname_in_args=1
+				# not param=value - jail?
+				jname_in_cbsdfile=0
+				for j in ${all_bhyve_list}; do
+					[ "${i}" != "${j}" ] && continue
+					jname_in_cbsdfile=1
+				done
+				if [ ${jname_in_cbsdfile} -eq 1 ]; then
+					if [ -z "${ojname}" ]; then
+						ojname="${i}"
+					else
+						ojname="${ojname} ${i}"
+					fi
+				else
+					${ECHO} "${N1_COLOR}${CBSD_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
+				fi
+			fi
+		done
+		if [ ${jname_in_args} -eq 1 ]; then
+			jname="${ojname}"
+		else
+			jname="${all_bhyve_list}"
+		fi
 	fi
 
+	unset ojname
+
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	# multiple?
+	strpos --str="${jname}" --search=" "
+	if [ $? -ne 0 ]; then
+		jail_list="${jname}"
+	fi
 
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
@@ -93,7 +131,9 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 fi
 
 emulator="bhyve" # for jname_is_multiple
-jname_is_multiple
+
+# jail_list can be init in CBSDfile case
+[ -z "${jail_list}" ] && jname_is_multiple
 
 if [ -n "${jail_list}" ]; then
 	TMP_JLIST="${jail_list}"
@@ -256,12 +296,14 @@ if [ "${_jailed}" != "0" ]; then
 fi
 
 # chrooted?
-_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" )
-[ -z "${_chrooted}" ] && _chrooted="0"
+# disable for a while
+_chrooted=0
+#_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" )
+#[ -z "${_chrooted}" ] && _chrooted="0"
 
-if [ "${_chrooted}" != "0" ]; then
-	${ECHO} "${N1_COLOR}CHROOTED bstop: ${N2_COLOR}${_chrooted}${N0_COLOR}"
-fi
+#if [ "${_chrooted}" != "0" ]; then
+#	${ECHO} "${N1_COLOR}CHROOTED bstop: ${N2_COLOR}${_chrooted}${N0_COLOR}"
+#fi
 
 ${TMUX_CMD} -Lcbsd-"${jname}" kill-server 2>/dev/null || true
 

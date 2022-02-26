@@ -77,7 +77,6 @@ bhyverun_wrapper=	# reset bhyverun_wrapper
 
 delay=0
 . ${cbsdinit}
-
 ojname="${jname}"
 
 . ${system}
@@ -91,11 +90,49 @@ if [ -r ${Makefile} ]; then
 	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 	jname="${all_bhyve_list}"
 
+	jname_in_args=0
+
 	if [ -n "${ojname}" ]; then
 		jname="${ojname}"
+	else
+		# cbsd bstart <env1> <env2> route
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			if [ $? -eq 0 ]; then
+				jname_in_args=1
+				# not param=value - jail?
+				jname_in_cbsdfile=0
+				for j in ${all_bhyve_list}; do
+					[ "${i}" != "${j}" ] && continue
+					jname_in_cbsdfile=1
+				done
+				if [ ${jname_in_cbsdfile} -eq 1 ]; then
+					if [ -z "${ojname}" ]; then
+						ojname="${i}"
+					else
+						ojname="${ojname} ${i}"
+					fi
+				else
+					${ECHO} "${N1_COLOR}${CBSD_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
+				fi
+			fi
+		done
+		if [ ${jname_in_args} -eq 1 ]; then
+			jname="${ojname}"
+		else
+			jname="${all_bhyve_list}"
+		fi
 	fi
 
+	unset ojname
+
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	# multiple?
+	strpos --str="${jname}" --search=" "
+	if [ $? -ne 0 ]; then
+		jail_list="${jname}"
+	fi
 
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
@@ -821,7 +858,8 @@ EOF
 # MAIN for multiple jails
 TRAP=""
 emulator="bhyve"	# for jname_is_multiple
-jname_is_multiple
+# jail_list can be init in CBSDfile case
+[ -z "${jail_list}" ] && jname_is_multiple
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
@@ -858,7 +896,7 @@ fi
 # MAIN
 . ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 . ${subrdir}/time.subr
-[ -z "${jname}" ] && jname=${1}
+[ -z "${jname}" ] && jname="${1}"
 
 if [ "${lm}" = "0" ]; then
 	. ${subrdir}/rcconf.subr
@@ -952,6 +990,7 @@ else
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}Request for live migration: no such VM in cluster: ${N2_COLOR}${jname}${N1_COLOR}. Perhaps you forget to: ${N2_COLOR}cbsd node mode=add${N1_COLOR} ?${N0_COLOR}"
 fi
 
+
 # cloud-init enabled?
 # we need this section (besides section cloud-init section in start_bhyve() to allocate pci bus id via touching seed.iso
 # since some helpers may work with runtime (e.g pcibus + cloudinit) config
@@ -970,18 +1009,19 @@ else
 	cloud_init=0
 fi
 
-
+# disable for a while
 # jailed bhyve? chrooted?
-_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
-[ -z "${_jailed}" ] && _jailed="0"
-_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" 2>/dev/null )
-[ -z "${_chrooted}" ] && _chrooted="0"
-
+#_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" 2>/dev/null )
+#[ -z "${_jailed}" ] && _jailed="0"
+#_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" 2>/dev/null )
+#[ -z "${_chrooted}" ] && _chrooted="0"
 _secured=
-[ "${_jailed}" = "${_chrooted}" -a "${_jailed}" = "1" ] && err 1 "${N1_COLOR}${CBSD_APP}: chrooted=1 and jailed=1 is mutually exclusive. There can be only one${N2_COLOR}"
+_jailed=0
+_chrooted=0
+#[ "${_jailed}" = "${_chrooted}" -a "${_jailed}" = "1" ] && err 1 "${N1_COLOR}${CBSD_APP}: chrooted=1 and jailed=1 is mutually exclusive. There can be only one${N2_COLOR}"
 
-[ "${_jailed}" != "0" ] && _secured="jail"
-[ "${_chrooted}" != "0" ] && _secured="chroot"
+#[ "${_jailed}" != "0" ] && _secured="jail"
+#[ "${_chrooted}" != "0" ] && _secured="chroot"
 
 if [ -n "${_secured}" ]; then
 	_jname=$( freejname default_jailname=J${jname} )
