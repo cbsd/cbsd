@@ -40,42 +40,41 @@
 #define CTLVAR '\301'
 #define CTLENDVAR '\371'
 #define CTLBACKQ '\372'
-#define CTLQUOTE 01		/* ored with CTLBACKQ code if in quotes */
+#define CTLQUOTE 01 /* ored with CTLBACKQ code if in quotes */
 /*	CTLBACKQ | CTLQUOTE == '\373' */
-#define	CTLARI	'\374'
-#define	CTLENDARI '\375'
-#define	CTLQUOTEMARK '\376'
-#define	CTLQUOTEEND '\377' /* only for ${v+-...} */
+#define CTLARI '\374'
+#define CTLENDARI '\375'
+#define CTLQUOTEMARK '\376'
+#define CTLQUOTEEND '\377' /* only for ${v+-...} */
 
 /* variable substitution byte (follows CTLVAR) */
-#define VSTYPE		0x0f	/* type of variable substitution */
-#define VSNUL		0x10	/* colon--treat the empty string as unset */
-#define VSLINENO	0x20	/* expansion of $LINENO, the line number \
-				   follows immediately */
-#define VSQUOTE		0x80	/* inside double quotes--suppress splitting */
+#define VSTYPE 0x0f /* type of variable substitution */
+#define VSNUL 0x10  /* colon--treat the empty string as unset */
+#define VSLINENO                                              \
+	0x20	     /* expansion of $LINENO, the line number \
+			follows immediately */
+#define VSQUOTE 0x80 /* inside double quotes--suppress splitting */
 
 /* values of VSTYPE field */
-#define VSNORMAL	0x1		/* normal variable:  $var or ${var} */
-#define VSMINUS		0x2		/* ${var-text} */
-#define VSPLUS		0x3		/* ${var+text} */
-#define VSQUESTION	0x4		/* ${var?message} */
-#define VSASSIGN	0x5		/* ${var=text} */
-#define VSTRIMLEFT	0x6		/* ${var#pattern} */
-#define VSTRIMLEFTMAX	0x7		/* ${var##pattern} */
-#define VSTRIMRIGHT	0x8		/* ${var%pattern} */
-#define VSTRIMRIGHTMAX 	0x9		/* ${var%%pattern} */
-#define VSLENGTH	0xa		/* ${#var} */
-#define VSERROR		0xb		/* Syntax error, issue when expanded */
-
+#define VSNORMAL 0x1	   /* normal variable:  $var or ${var} */
+#define VSMINUS 0x2	   /* ${var-text} */
+#define VSPLUS 0x3	   /* ${var+text} */
+#define VSQUESTION 0x4	   /* ${var?message} */
+#define VSASSIGN 0x5	   /* ${var=text} */
+#define VSTRIMLEFT 0x6	   /* ${var#pattern} */
+#define VSTRIMLEFTMAX 0x7  /* ${var##pattern} */
+#define VSTRIMRIGHT 0x8	   /* ${var%pattern} */
+#define VSTRIMRIGHTMAX 0x9 /* ${var%%pattern} */
+#define VSLENGTH 0xa	   /* ${#var} */
+#define VSERROR 0xb	   /* Syntax error, issue when expanded */
 
 /*
  * NEOF is returned by parsecmd when it encounters an end of file.  It
  * must be distinct from NULL.
  */
 #define NEOF ((union node *)-1)
-extern int whichprompt;		/* 1 == PS1, 2 == PS2 */
+extern int whichprompt; /* 1 == PS1, 2 == PS2 */
 extern const char *const parsekwd[];
-
 
 union node *parsecmd(int);
 union node *parsewordexp(void);

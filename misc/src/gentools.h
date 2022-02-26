@@ -1,4 +1,4 @@
-extern int	debug;
+extern int debug;
 
-int		debugmsg   (int level, const char *format,...);
-int		errmsg     (const char *format,...);
+int debugmsg(int level, const char *format, ...);
+int errmsg(const char *format, ...);

@@ -1,8 +1,9 @@
 // CBSD Project
-// Special version of daemon which execute the process but displays output data from it
-// only if they do not start with a dot. This is necessary primarily for running on a
-// remote server for cbsd_dot who writes in output except dots fact updates lokal.sqlite
-// This is a temporary solution to send any signal when inventory of node is update.
+// Special version of daemon which execute the process but displays output data
+// from it only if they do not start with a dot. This is necessary primarily for
+// running on a remote server for cbsd_dot who writes in output except dots fact
+// updates lokal.sqlite This is a temporary solution to send any signal when
+// inventory of node is update.
 #include <stdio.h>
 #include <string.h>
 #include <err.h>
@@ -31,18 +32,18 @@
 
 #ifdef __DragonFly__
 // sys/mman.h:
-#define      MADV_PROTECT    10      /* protect process from pageout kill */
+#define MADV_PROTECT 10 /* protect process from pageout kill */
 #endif
 
 static void dummy_sighandler(int);
 static void restrict_process(const char *);
-static int  wait_child(pid_t pid, sigset_t *mask);
+static int wait_child(pid_t pid, sigset_t *mask);
 static void usage(void);
 int touch(char *);
 
 int
 daemon(nochdir, noclose)
-	int nochdir, noclose;
+int nochdir, noclose;
 {
 	struct sigaction osa, sa;
 	int fd;
@@ -84,10 +85,10 @@ daemon(nochdir, noclose)
 
 	if (!noclose && (fd = _open(_PATH_DEVNULL, O_RDWR, 0)) != -1) {
 		(void)_dup2(fd, STDIN_FILENO);
-//		(void)_dup2(fd, STDOUT_FILENO);
+		//		(void)_dup2(fd, STDOUT_FILENO);
 		(void)_dup2(fd, STDERR_FILENO);
-//		if (fd > 2)
-//			(void)_close(fd);
+		//		if (fd > 2)
+		//			(void)_close(fd);
 	}
 	return (0);
 }
@@ -95,18 +96,18 @@ daemon(nochdir, noclose)
 int
 main(int argc, char *argv[])
 {
-	struct pidfh  *ppfh, *pfh;
+	struct pidfh *ppfh, *pfh;
 	sigset_t mask, oldmask;
 	int ch, nochdir, noclose, restart, serrno;
-	const char *pidfile, *ppidfile,  *user;
+	const char *pidfile, *ppidfile, *user;
 	pid_t otherpid, pid;
 	FILE *fp;
-	int i=0;
+	int i = 0;
 	char buffer[1024];
 	char line[20];
 
 	char *workdir = NULL;
-	char dbfile[]="/var/db/cbsdtaskd.sqlite";
+	char dbfile[] = "/var/db/cbsdtaskd.sqlite";
 	char *dbpath = NULL;
 
 	if ((workdir = getenv("workdir")) == NULL) {
@@ -121,11 +122,11 @@ main(int argc, char *argv[])
 
 	while ((ch = getopt(argc, argv, "u:")) != -1) {
 		switch (ch) {
-			case 'u':
-				user = optarg;
-				break;
-			default:
-				usage();
+		case 'u':
+			user = optarg;
+			break;
+		default:
+			usage();
 		}
 	}
 
@@ -135,14 +136,14 @@ main(int argc, char *argv[])
 	if (argc == 0)
 		usage();
 
-	memset(buffer,0,sizeof(buffer));
+	memset(buffer, 0, sizeof(buffer));
 
-	for ( i=0; i<argc; i++ ) {
-		strncat( buffer, argv[i], strlen(argv[i]) );
-		strncat( buffer, " ", 1 );
+	for (i = 0; i < argc; i++) {
+		strncat(buffer, argv[i], strlen(argv[i]));
+		strncat(buffer, " ", 1);
 	}
 
-	buffer[strlen(buffer)-1]='\0';
+	buffer[strlen(buffer) - 1] = '\0';
 
 	nochdir = 1;
 	noclose = 0;
@@ -173,7 +174,7 @@ main(int argc, char *argv[])
 			errno = serrno;
 			if (errno == EEXIST) {
 				errx(3, "process already running, pid: %d",
-				     otherpid);
+				    otherpid);
 			}
 			err(2, "ppidfile ``%s''", ppidfile);
 		}
@@ -229,7 +230,7 @@ main(int argc, char *argv[])
 		 * not have superuser privileges.
 		 */
 		(void)madvise(NULL, 0, MADV_PROTECT);
-restart:
+	restart:
 		/*
 		 * Spawn a child to exec the command, so in the parent
 		 * we could wait for it to exit and remove pidfile.
@@ -255,22 +256,23 @@ restart:
 		(void)fflush(NULL);
 		(void)fflush(stdout);
 
-		fp=popen(buffer,"r");
+		fp = popen(buffer, "r");
 
 		if (fp) {
 			while (!feof(fp)) {
 				fgets(line, sizeof(line), fp);
-				if (feof(fp)) break;
-				if (line[0]!='.') {
-					fprintf(stdout,"%s",line);
+				if (feof(fp))
+					break;
+				if (line[0] != '.') {
+					fprintf(stdout, "%s", line);
 					fflush(stdout);
-					// add something with local.sqlite for sending notify to wakeup in cbsdd
+					// add something with local.sqlite for
+					// sending notify to wakeup in cbsdd
 					// todo: just send signal to cbsdd
 					touch(dbpath);
 				}
 			}
-		}
-		else {
+		} else {
 			err(1, "%s", argv[0]);
 		}
 	}
@@ -366,19 +368,18 @@ touch(char *mypath)
 
 	/* See if the file exists. */
 	if (stat_f(mypath, &sb) != 0) {
-			if (errno != ENOENT) {
-				rval = 1;
-				warn("%s", mypath);
-				return 1;
-			}
-			/* Create the file. */
-			fd = _open(mypath,
-				O_WRONLY | O_CREAT, DEFFILEMODE);
-			if (fd == -1 || fstat(fd, &sb) || _close(fd)) {
-				rval = 1;
-				warn("%s", mypath);
-				return 1;
-			}
+		if (errno != ENOENT) {
+			rval = 1;
+			warn("%s", mypath);
+			return 1;
+		}
+		/* Create the file. */
+		fd = _open(mypath, O_WRONLY | O_CREAT, DEFFILEMODE);
+		if (fd == -1 || fstat(fd, &sb) || _close(fd)) {
+			rval = 1;
+			warn("%s", mypath);
+			return 1;
+		}
 	}
 
 	/* Try utimes(2). */
@@ -391,7 +392,7 @@ touch(char *mypath)
 	 * The permission checks are different, too, in that the
 	 * ability to write the file is sufficient.  Take a shot.
 	 */
-	 if (!utimes_f(mypath, NULL))
+	if (!utimes_f(mypath, NULL))
 		return 1;
 
 	rval = 1;

@@ -6,13 +6,13 @@
 int
 aboutcmd(int argc, char **argv)
 {
-	out1fmt("CBSD Project. Version %s\n",VERSION);
+	out1fmt("CBSD Project. Version %s\n", VERSION);
 	return 0;
 }
 
 int
 versioncmd(int argc, char **argv)
 {
-	out1fmt("%s\n",VERSION);
+	out1fmt("%s\n", VERSION);
 	return 0;
 }

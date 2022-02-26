@@ -79,9 +79,12 @@ void doformat(struct output *, const char *, va_list) __printflike(2, 0);
 FILE *out1fp(void);
 int xwrite(int, const char *, int);
 
-#define outc(c, file)	((file)->nextc == (file)->bufend ? (emptyoutbuf(file), *(file)->nextc++ = (c)) : (*(file)->nextc++ = (c)))
-#define out1c(c)	outc(c, out1);
-#define out2c(c)	outcslow(c, out2);
+#define outc(c, file)                                         \
+	((file)->nextc == (file)->bufend ?                    \
+		(emptyoutbuf(file), *(file)->nextc++ = (c)) : \
+		      (*(file)->nextc++ = (c)))
+#define out1c(c) outc(c, out1);
+#define out2c(c) outcslow(c, out2);
 
 #define OUTPUT_INCL
 #endif

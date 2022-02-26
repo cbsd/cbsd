@@ -38,7 +38,8 @@ cbsd_fwatch_usage(void)
 {
 	out1fmt("Wait for file modification to terminate\n");
 	out1fmt("require: --file, --timeout\n");
-	out1fmt("usage: cbsd_fwatch --file=path_to_file --timeout=0 (in seconds, 0 is infinity)\n");
+	out1fmt(
+	    "usage: cbsd_fwatch --file=path_to_file --timeout=0 (in seconds, 0 is infinity)\n");
 	return (EX_USAGE);
 }
 
@@ -55,12 +56,11 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	int timeout = 10;
 	char cmd[10];
 
-	struct option   long_options[] = {
-		{ "file", required_argument, 0, C_FILE },
+	struct option long_options[] = { { "file", required_argument, 0,
+					     C_FILE },
 		{ "timeout", required_argument, 0, C_TIMEOUT },
 		/* End of options marker */
-		{ 0, 0, 0, 0 }
-	};
+		{ 0, 0, 0, 0 } };
 
 	if (argc < 2) {
 		cbsd_fwatch_usage();
@@ -68,22 +68,23 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	}
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
+		optcode = getopt_long_only(argc, argv, "", long_options,
+		    &option_index);
 		if (optcode == -1)
 			break;
 		switch (optcode) {
-			case C_FILE:
-				watchfile = malloc(strlen(optarg) + 1);
-				memset(watchfile, 0, strlen(optarg) + 1);
-				strcpy(watchfile, optarg);
+		case C_FILE:
+			watchfile = malloc(strlen(optarg) + 1);
+			memset(watchfile, 0, strlen(optarg) + 1);
+			strcpy(watchfile, optarg);
 			break;
-			case C_TIMEOUT:
-				timeout = atoi(optarg);
+		case C_TIMEOUT:
+			timeout = atoi(optarg);
 			break;
 		}
-	} //while
+	} // while
 
-	//zero for getopt *variables for next execute
+	// zero for getopt *variables for next execute
 	optarg = NULL;
 	optind = 0;
 	optopt = 0;
@@ -99,7 +100,7 @@ cbsd_fwatchcmd(int argc, char *argv[])
 		out2fmt_flush("Cannot open: %s\n", watchfile);
 		if (watchfile != NULL)
 			free(watchfile);
-		return(1);
+		return (1);
 	}
 
 	if ((kq = kqueue()) == -1) {
@@ -111,8 +112,9 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	}
 
 	EV_SET(&ev, fd, EVFILT_VNODE, EV_ADD | EV_ENABLE | EV_CLEAR,
-		NOTE_DELETE|NOTE_WRITE|NOTE_EXTEND|NOTE_ATTRIB|NOTE_LINK|
-		NOTE_RENAME|NOTE_REVOKE, 0, 0);
+	    NOTE_DELETE | NOTE_WRITE | NOTE_EXTEND | NOTE_ATTRIB | NOTE_LINK |
+		NOTE_RENAME | NOTE_REVOKE,
+	    0, 0);
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
 		out2fmt_flush("kevent\n");
@@ -126,7 +128,7 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	tv.tv_sec = timeout;
 	tv.tv_nsec = 0;
 
-	memset(cmd,0,sizeof(cmd));
+	memset(cmd, 0, sizeof(cmd));
 
 	if (timeout == 0)
 		nev = kevent(kq, NULL, 0, &ev, 1, NULL);

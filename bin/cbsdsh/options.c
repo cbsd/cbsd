@@ -48,7 +48,7 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 326025 2017-11-20 19:49:47Z pfg $");
 #define DEFINE_OPTIONS
 #include "options.h"
 #undef DEFINE_OPTIONS
-#include "nodes.h"	/* for other header files */
+#include "nodes.h" /* for other header files */
 #include "eval.h"
 #include "jobs.h"
 #include "input.h"
@@ -68,14 +68,13 @@ __FBSDID("$FreeBSD: head/bin/sh/options.c 326025 2017-11-20 19:49:47Z pfg $");
 #include "main.h"
 #endif
 
-char *arg0;			/* value of $0 */
-struct shparam shellparam;	/* current positional parameters */
-char **argptr;			/* argument list for builtin commands */
-char *shoptarg;			/* set by nextopt (like getopt) */
-char *nextopt_optptr;		/* used by nextopt */
+char *arg0;		   /* value of $0 */
+struct shparam shellparam; /* current positional parameters */
+char **argptr;		   /* argument list for builtin commands */
+char *shoptarg;		   /* set by nextopt (like getopt) */
+char *nextopt_optptr;	   /* used by nextopt */
 
-char *minusc;			/* argument to -c option */
-
+char *minusc; /* argument to -c option */
 
 static void options(int);
 static void minus_o(char *, int);
@@ -83,7 +82,6 @@ static void setoption(int, int);
 static void setoptionbyindex(int, int);
 static void setparam(int, char **);
 static int getopts(char *, char *, char **, char ***, char **);
-
 
 /*
  * Process the shell command line arguments.
@@ -118,8 +116,8 @@ procargs(int argc, char **argv)
 	if (sflag == 0 && minusc == NULL) {
 		scriptname = *argptr++;
 #ifdef CBSD
-		if (setinputfile(scriptname, 0)==2) {
-			if ( cbsd_enable_history == 1 ) {
+		if (setinputfile(scriptname, 0) == 2) {
+			if (cbsd_enable_history == 1) {
 				historycmd(argc, argv);
 			}
 			shellexec(argv + 1, environment(), pathval(), 0);
@@ -142,7 +140,6 @@ procargs(int argc, char **argv)
 	}
 	optschanged();
 }
-
 
 void
 optschanged(void)
@@ -273,14 +270,13 @@ minus_o(char *name, int val)
 			out1str("Current option settings\n");
 			for (i = 0, on = optname; i < NOPTS; i++, on += *on + 1)
 				out1fmt("%-16.*s%s\n", *on, on + 1,
-					optval[i] ? "on" : "off");
+				    optval[i] ? "on" : "off");
 		} else {
 			/* Output suitable for re-input to shell. */
 			for (i = 0, on = optname; i < NOPTS; i++, on += *on + 1)
 				out1fmt("%s %co %.*s%s",
 				    i % 6 == 0 ? "set" : "",
-				    optval[i] ? '-' : '+',
-				    *on, on + 1,
+				    optval[i] ? '-' : '+', *on, on + 1,
 				    i % 6 == 5 || i == NOPTS - 1 ? "\n" : "");
 		}
 	} else {
@@ -293,7 +289,6 @@ minus_o(char *name, int val)
 		error("Illegal option -o %s", name);
 	}
 }
-
 
 static void
 setoptionbyindex(int idx, int val)
@@ -327,7 +322,6 @@ setoption(int flag, int val)
 	error("Illegal option -%c", flag);
 }
 
-
 /*
  * Set the shell parameters.
  */
@@ -352,7 +346,6 @@ setparam(int argc, char **argv)
 	shellparam.optnext = NULL;
 }
 
-
 /*
  * Free the list of positional parameters.
  */
@@ -363,18 +356,16 @@ freeparam(struct shparam *param)
 	char **ap;
 
 	if (param->malloc) {
-		for (ap = param->p ; *ap ; ap++)
+		for (ap = param->p; *ap; ap++)
 			ckfree(*ap);
 		ckfree(param->p);
 	}
 	if (param->optp) {
-		for (ap = param->optp ; *ap ; ap++)
+		for (ap = param->optp; *ap; ap++)
 			ckfree(*ap);
 		ckfree(param->optp);
 	}
 }
-
-
 
 /*
  * The shift builtin command.
@@ -402,8 +393,6 @@ shiftcmd(int argc, char **argv)
 	return 0;
 }
 
-
-
 /*
  * The set builtin command.
  */
@@ -422,7 +411,6 @@ setcmd(int argc, char **argv)
 	INTON;
 	return 0;
 }
-
 
 void
 getoptsreset(const char *value)
@@ -452,7 +440,7 @@ getoptscmd(int argc, char **argv)
 	if (shellparam.reset == 1) {
 		INTOFF;
 		if (shellparam.optp) {
-			for (ap = shellparam.optp ; *ap ; ap++)
+			for (ap = shellparam.optp; *ap; ap++)
 				ckfree(*ap);
 			ckfree(shellparam.optp);
 			shellparam.optp = NULL;
@@ -472,7 +460,7 @@ getoptscmd(int argc, char **argv)
 		optbase = shellparam.optp ? shellparam.optp : shellparam.p;
 
 	return getopts(argv[1], argv[2], optbase, &shellparam.optnext,
-		       &shellparam.optptr);
+	    &shellparam.optptr);
 }
 
 static int
@@ -493,7 +481,7 @@ getopts(char *optstr, char *optvar, char **optfirst, char ***optnext,
 			return 1;
 		p = **optnext;
 		if (p == NULL || *p != '-' || *++p == '\0') {
-atend:
+		atend:
 			ind = *optnext - optfirst + 1;
 			*optnext = NULL;
 			p = NULL;
@@ -501,19 +489,18 @@ atend:
 			goto out;
 		}
 		(*optnext)++;
-		if (p[0] == '-' && p[1] == '\0')	/* check for "--" */
+		if (p[0] == '-' && p[1] == '\0') /* check for "--" */
 			goto atend;
 	}
 
 	c = *p++;
-	for (q = optstr; *q != c; ) {
+	for (q = optstr; *q != c;) {
 		if (*q == '\0') {
 			if (optstr[0] == ':') {
 				s[0] = c;
 				s[1] = '\0';
 				newoptarg = s;
-			}
-			else
+			} else
 				out2fmt_flush("Illegal option -%c\n", c);
 			c = '?';
 			goto out;
@@ -529,8 +516,7 @@ atend:
 				s[1] = '\0';
 				newoptarg = s;
 				c = ':';
-			}
-			else {
+			} else {
 				out2fmt_flush("No arg for -%c option\n", c);
 				c = '?';
 			}
@@ -587,11 +573,11 @@ nextopt(const char *optstring)
 		if (p == NULL || *p != '-' || *++p == '\0')
 			return '\0';
 		argptr++;
-		if (p[0] == '-' && p[1] == '\0')	/* check for "--" */
+		if (p[0] == '-' && p[1] == '\0') /* check for "--" */
 			return '\0';
 	}
 	c = *p++;
-	for (q = optstring ; *q != c ; ) {
+	for (q = optstring; *q != c;) {
 		if (*q == '\0')
 			error("Illegal option -%c", c);
 		if (*++q == ':')

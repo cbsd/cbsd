@@ -18,7 +18,7 @@
 #define FALSE 0
 #define TRUE 1
 
-static int	timeout = 0;
+static int timeout = 0;
 
 /* List of all nodesql */
 enum {
@@ -31,37 +31,38 @@ usage(void)
 {
 	printf("Wait for processes to terminate\n");
 	printf("require: --pid, --timeout\n");
-	printf("usage: pwait --pid=pid --timeout=0 (in seconds, 0 is infinity)\n");
+	printf(
+	    "usage: pwait --pid=pid --timeout=0 (in seconds, 0 is infinity)\n");
 	exit(EX_USAGE);
 }
 
 int
 main(int argc, char *argv[])
 {
-	int		kq;
-	struct kevent  *e;
-	int		verbose = 0;
-	int		opt       , n, i, duplicate, status;
-	long		pid = 0;
-	char           *s, *end;
-	int		win = FALSE;
-	int		optcode = 0;
-	int		option_index = 0, ret = 0;
-	int		action = 0;
-	struct timespec	tv;
+	int kq;
+	struct kevent *e;
+	int verbose = 0;
+	int opt, n, i, duplicate, status;
+	long pid = 0;
+	char *s, *end;
+	int win = FALSE;
+	int optcode = 0;
+	int option_index = 0, ret = 0;
+	int action = 0;
+	struct timespec tv;
 
-	static struct option long_options[] = {
-		{"pid", required_argument, 0, C_PID},
-		{"timeout", required_argument, 0, C_TIMEOUT},
+	static struct option long_options[] = { { "pid", required_argument, 0,
+						    C_PID },
+		{ "timeout", required_argument, 0, C_TIMEOUT },
 		/* End of options marker */
-		{0, 0, 0, 0}
-	};
+		{ 0, 0, 0, 0 } };
 
 	if (argc != 3)
 		usage();
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options, &option_index);
+		optcode = getopt_long_only(argc, argv, "", long_options,
+		    &option_index);
 		if (optcode == -1)
 			break;
 		switch (optcode) {
@@ -72,9 +73,9 @@ main(int argc, char *argv[])
 			timeout = atoi(optarg);
 			break;
 		}
-	} //while
+	} // while
 
-		if (pid <= 0)
+	if (pid <= 0)
 		exit(0);
 
 	kq = kqueue();
@@ -95,7 +96,7 @@ main(int argc, char *argv[])
 
 	tv.tv_sec = timeout;
 	tv.tv_nsec = 0;
-	//tv.tv_usec = 0;
+	// tv.tv_usec = 0;
 
 	while (i > 0) {
 		if (timeout == 0)

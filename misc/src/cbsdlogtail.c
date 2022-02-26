@@ -4,31 +4,32 @@
 #include <libgen.h>
 #include <string.h>
 
-#define B_SIZE         4096
+#define B_SIZE 4096
 
-char           *offsetext = ".syncoff";
-char           *offsetdir = "/tmp/";
-char           *facil;
-char           *myname;
-char           *findex = NULL;
+char *offsetext = ".syncoff";
+char *offsetdir = "/tmp/";
+char *facil;
+char *myname;
+char *findex = NULL;
 
-int 
+int
 usage(char *myname)
 {
 	printf("incremental tail for ascii files\n");
-	printf("Usage: cbsd %s [-f facil -d offsetdir - %s default) asciifile\n", myname, offsetdir);
+	printf(
+	    "Usage: cbsd %s [-f facil -d offsetdir - %s default) asciifile\n",
+	    myname, offsetdir);
 	exit(0);
 }
 
-
-long int 
+long int
 getoffset(char *offsetfile)
 {
 	unsigned long long offset = 0;
-	FILE           *fp, *fo;
-	char		tmp       [B_SIZE + sizeof(long)];
-	char		tmp2      [B_SIZE + sizeof(long)];
-	int		i = 0,	n = 0, tmplen = 0;
+	FILE *fp, *fo;
+	char tmp[B_SIZE + sizeof(long)];
+	char tmp2[B_SIZE + sizeof(long)];
+	int i = 0, n = 0, tmplen = 0;
 
 	fp = fopen(offsetfile, "r");
 	if (fp) {
@@ -49,8 +50,8 @@ getoffset(char *offsetfile)
 			memset(tmp2, 0, sizeof(tmp2));
 			sscanf(tmp, "%llu", &offset);
 			strncpy(tmp2, tmp + n + 1, strlen(tmp) - n - 1);
-	//+-1 =:	symbol
-				fo = fopen(findex, "r");
+			//+-1 =:	symbol
+			fo = fopen(findex, "r");
 			if (fo == NULL)
 				return 0;
 			fseek(fo, offset, SEEK_SET);
@@ -67,10 +68,10 @@ getoffset(char *offsetfile)
 	return offset;
 }
 
-int 
+int
 putoffset(char *offsetfile, char *str)
 {
-	FILE           *fp;
+	FILE *fp;
 	fp = fopen(offsetfile, "w");
 	if (fp) {
 		fputs(str, fp);
@@ -79,13 +80,12 @@ putoffset(char *offsetfile, char *str)
 	return 0;
 }
 
-
-char           *
+char *
 show_myportion(long int offset)
 {
-	FILE           *fp;
-	char		line      [B_SIZE];
-	char           *lst;
+	FILE *fp;
+	char line[B_SIZE];
+	char *lst;
 	unsigned long long ipos;
 
 	fp = fopen(findex, "r");
@@ -110,15 +110,15 @@ show_myportion(long int offset)
 	return lst;
 }
 
-
-int 
+int
 get_myportion()
 {
-	char           *offsetfile;
-	int		i = 0;
-	long int	ipos;
-	char           *lst;
-	offsetfile = malloc(sizeof(offsetdir) + sizeof(offsetext) + sizeof(facil));
+	char *offsetfile;
+	int i = 0;
+	long int ipos;
+	char *lst;
+	offsetfile = malloc(
+	    sizeof(offsetdir) + sizeof(offsetext) + sizeof(facil));
 	strcpy(offsetfile, offsetdir);
 	strcat(offsetfile, facil);
 	strcat(offsetfile, offsetext);
@@ -130,19 +130,16 @@ get_myportion()
 	return 0;
 }
 
-
 int
 main(int argc, char **argv)
 {
-	int		i = 0,	c = 0;
+	int i = 0, c = 0;
 
 	myname = argv[0];
 	if (!strcmp(argv[1], "--help"))
 		usage(myname);
 	findex = argv[argc - 1];
 	facil = basename(findex);
-
-
 
 	while (1) {
 		c = getopt(argc, argv, "d:f:");
