@@ -18,7 +18,7 @@ nm(void)
 	return "sqlcli";
 }
 
-void 
+void
 usage()
 {
 	printf("Tools for execute SQLite query from CLI\n");
@@ -26,16 +26,16 @@ usage()
 }
 
 int
-sqlCB(sqlite3_stmt * stmt)
+sqlCB(sqlite3_stmt *stmt)
 {
-	int		icol, irow;
-	const char	*colname;
-	int		allcol;
-	char		*delim;
-	char		*cp;
-	int		printheader = 0;
-	char		*sqlcolnames = NULL;
-	int		ret = 0;
+	int icol, irow;
+	const char *colname;
+	int allcol;
+	char *delim;
+	char *cp;
+	int printheader = 0;
+	char *sqlcolnames = NULL;
+	int ret = 0;
 
 	if (stmt == NULL)
 		return 1;
@@ -59,32 +59,33 @@ sqlCB(sqlite3_stmt * stmt)
 	}
 	for (icol = 0; icol < allcol; icol++) {
 		if (sqlcolnames)
-			printf("%s=\"%s\"\n", sqlite3_column_name(stmt, icol), sqlite3_column_text(stmt, icol));
+			printf("%s=\"%s\"\n", sqlite3_column_name(stmt, icol),
+			    sqlite3_column_text(stmt, icol));
 		else {
 			if (icol == (allcol - 1))
 				printf("%s\n", sqlite3_column_text(stmt, icol));
 			else
-				printf("%s%s", sqlite3_column_text(stmt, icol), delim);
+				printf("%s%s", sqlite3_column_text(stmt, icol),
+				    delim);
 		}
 	}
 
 	return 0;
-
 }
 
 int
 main(int argc, char **argv)
 {
-	sqlite3        *db;
-	int		res;
-	int		i;
-	char           *query;
-	char           *tmp;
-	char           *err = NULL;
-	int		maxretry = 40;
-	int		retry = 0;
-	sqlite3_stmt   *stmt;
-	int		ret;
+	sqlite3 *db;
+	int res;
+	int i;
+	char *query;
+	char *tmp;
+	char *err = NULL;
+	int maxretry = 40;
+	int retry = 0;
+	sqlite3_stmt *stmt;
+	int ret;
 
 	if (argc < 3) {
 		usage();
@@ -124,19 +125,19 @@ main(int argc, char **argv)
 		sqlite3_exec(db, "BEGIN", 0, 0, 0);
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 		sqlite3_exec(db, "COMMIT", 0, 0, 0);
-		if (ret==SQLITE_OK)
+		if (ret == SQLITE_OK)
 			break;
-		if (ret==SQLITE_BUSY)
+		if (ret == SQLITE_BUSY)
 			usleep(5000);
 		retry++;
-		if (retry>maxretry)
+		if (retry > maxretry)
 			break;
 	} while (ret != SQLITE_OK);
 
 	if (ret == SQLITE_OK) {
 		ret = sqlite3_step(stmt);
 
-		while ( ret == SQLITE_ROW ) {
+		while (ret == SQLITE_ROW) {
 			sqlCB(stmt);
 			ret = sqlite3_step(stmt);
 		}

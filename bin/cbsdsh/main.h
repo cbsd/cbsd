@@ -35,14 +35,16 @@
  * $FreeBSD: head/bin/sh/main.h 326025 2017-11-20 19:49:47Z pfg $
  */
 
-extern int rootpid;	/* pid of main shell */
-extern int rootshell;	/* true if we aren't a child of the main shell */
-extern struct jmploc main_handler;	/* top level exception handler */
+extern int rootpid;   /* pid of main shell */
+extern int rootshell; /* true if we aren't a child of the main shell */
+extern struct jmploc main_handler; /* top level exception handler */
 
 void readcmdfile(const char *);
 
 #ifdef CBSD
-#define CBSD_HISTORYFILE	".cbsd_history"
-extern char *cbsd_history_file;	/* full path to history for "cbsd history" command */
-extern int cbsd_enable_history;	/* true if we must register command in history journal */
+#define CBSD_HISTORYFILE ".cbsd_history"
+extern char
+    *cbsd_history_file; /* full path to history for "cbsd history" command */
+extern int cbsd_enable_history; /* true if we must register command in history
+				   journal */
 #endif

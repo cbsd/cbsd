@@ -52,7 +52,7 @@ __FBSDID("$FreeBSD: head/bin/sh/cd.c 356251 2020-01-01 12:06:37Z jilles $");
 
 #include "shell.h"
 #include "var.h"
-#include "nodes.h"	/* for jobs.h */
+#include "nodes.h" /* for jobs.h */
 #include "jobs.h"
 #include "options.h"
 #include "output.h"
@@ -74,7 +74,7 @@ static void updatepwd(char *);
 static char *getpwd(void);
 static char *getpwd2(void);
 
-static char *curdir = NULL;	/* current working directory */
+static char *curdir = NULL; /* current working directory */
 
 int
 cdcmd(int argc __unused, char **argv __unused)
@@ -117,7 +117,8 @@ cdcmd(int argc __unused, char **argv __unused)
 	}
 	if (dest[0] == '/' ||
 	    (dest[0] == '.' && (dest[1] == '/' || dest[1] == '\0')) ||
-	    (dest[0] == '.' && dest[1] == '.' && (dest[2] == '/' || dest[2] == '\0')) ||
+	    (dest[0] == '.' && dest[1] == '.' &&
+		(dest[2] == '/' || dest[2] == '\0')) ||
 	    (path = bltinlookup("CDPATH", 1)) == NULL)
 		path = "";
 	while ((p = padvance(&path, NULL, dest)) != NULL) {
@@ -147,7 +148,6 @@ cdcmd(int argc __unused, char **argv __unused)
 	/*NOTREACHED*/
 	return 0;
 }
-
 
 /*
  * Actually change the directory.  In an interactive shell, print the
@@ -206,7 +206,7 @@ cdlogical(char *dest)
 	while ((q = getcomponent(&path)) != NULL) {
 		if (q[0] == '\0' || (q[0] == '.' && q[1] == '\0'))
 			continue;
-		if (! first)
+		if (!first)
 			STPUTC('/', p);
 		first = 0;
 		component = q;
@@ -275,7 +275,6 @@ getcomponent(char **path)
 	return start;
 }
 
-
 static char *
 findcwd(char *dir)
 {
@@ -299,8 +298,10 @@ findcwd(char *dir)
 	}
 	while ((p = getcomponent(&path)) != NULL) {
 		if (equal(p, "..")) {
-			while (new > stackblock() && (STUNPUTC(new), *new) != '/');
-		} else if (*p != '\0' && ! equal(p, ".")) {
+			while (
+			    new > stackblock() && (STUNPUTC(new), *new) != '/')
+				;
+		} else if (*p != '\0' && !equal(p, ".")) {
 			STPUTC('/', new);
 			STPUTS(p, new);
 		}
@@ -321,7 +322,7 @@ updatepwd(char *dir)
 {
 	char *prevdir;
 
-	hashcd();				/* update command hash table */
+	hashcd(); /* update command hash table */
 
 	setvar("PWD", dir, VEXPORT);
 	setvar("OLDPWD", curdir, VEXPORT);
@@ -431,7 +432,6 @@ cbsd_pwd_init(void)
 }
 #endif
 
-
 /*
  * Initialize PWD in a new shell.
  * If the shell is interactive, we need to warn if this fails.
@@ -444,8 +444,7 @@ pwd_init(int warn)
 
 	pwd = lookupvar("PWD");
 	if (pwd && *pwd == '/' && stat(".", &stdot) != -1 &&
-	    stat(pwd, &stpwd) != -1 &&
-	    stdot.st_dev == stpwd.st_dev &&
+	    stat(pwd, &stpwd) != -1 && stdot.st_dev == stpwd.st_dev &&
 	    stdot.st_ino == stpwd.st_ino) {
 		if (curdir)
 			ckfree(curdir);

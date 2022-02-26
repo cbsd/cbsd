@@ -28,7 +28,8 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FrauBSD: pkgcenter/depend/cputools/cputools.h 2019-02-18 19:21:12 -0800 freebsdfrau $
+ * $FrauBSD: pkgcenter/depend/cputools/cputools.h 2019-02-18 19:21:12 -0800
+ * freebsdfrau $
  */
 
 #ifndef _CPUTOOLS_H_
@@ -43,37 +44,37 @@
 static __inline u_long
 read_rflags(void)
 {
-	u_long	rf;
+	u_long rf;
 
-	__asm __volatile("pushfq; popq %0" : "=r" (rf));
+	__asm __volatile("pushfq; popq %0" : "=r"(rf));
 	return (rf);
 }
 static __inline void
 write_rflags(u_long rf)
 {
-	__asm __volatile("pushq %0;  popfq" : : "r" (rf));
+	__asm __volatile("pushq %0;  popfq" : : "r"(rf));
 }
 #else
 static __inline u_int
 read_eflags(void)
 {
-	u_int	ef;
+	u_int ef;
 
-	__asm __volatile("pushfl; popl %0" : "=r" (ef));
+	__asm __volatile("pushfl; popl %0" : "=r"(ef));
 	return (ef);
 }
 static __inline void
 write_eflags(u_int ef)
 {
-	__asm __volatile("pushl %0; popfl" : : "r" (ef));
+	__asm __volatile("pushl %0; popfl" : : "r"(ef));
 }
 #endif /* !__amd64__ */
 static __inline void
 do_cpuid(u_int ax, u_int *p)
 {
 	__asm __volatile("cpuid"
-			 : "=a" (p[0]), "=b" (p[1]), "=c" (p[2]), "=d" (p[3])
-			 :  "0" (ax));
+			 : "=a"(p[0]), "=b"(p[1]), "=c"(p[2]), "=d"(p[3])
+			 : "0"(ax));
 }
 #endif /* !HAVE_MACHINE_CPUFUNC_H */
 #ifdef HAVE_MACHINE_PSL_H

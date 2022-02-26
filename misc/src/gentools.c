@@ -9,11 +9,11 @@
 
 #include "gentools.h"
 
-int 
-debugmsg(int level, const char *format,...)
+int
+debugmsg(int level, const char *format, ...)
 {
-	va_list		arg;
-	int		done;
+	va_list arg;
+	int done;
 
 	if (debug < level)
 		return 0;
@@ -24,11 +24,11 @@ debugmsg(int level, const char *format,...)
 	return 0;
 }
 
-int 
-errmsg(const char *format,...)
+int
+errmsg(const char *format, ...)
 {
-	va_list		arg;
-	int		done;
+	va_list arg;
+	int done;
 
 	va_start(arg, format);
 	done = vfprintf(stderr, format, arg);

@@ -35,7 +35,8 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/bin/sh/bltin/echo.c 326025 2017-11-20 19:49:47Z pfg $");
+__FBSDID(
+    "$FreeBSD: head/bin/sh/bltin/echo.c 326025 2017-11-20 19:49:47Z pfg $");
 
 /*
  * Echo command.
@@ -77,20 +78,39 @@ main(int argc, char *argv[])
 		while ((c = *p++) != '\0') {
 			if (c == '\\' && eflag) {
 				switch (*p++) {
-				case 'a':  c = '\a';  break;
-				case 'b':  c = '\b';  break;
-				case 'c':  return 0;		/* exit */
-				case 'e':  c = '\033';  break;
-				case 'f':  c = '\f';  break;
-				case 'n':  c = '\n';  break;
-				case 'r':  c = '\r';  break;
-				case 't':  c = '\t';  break;
-				case 'v':  c = '\v';  break;
-				case '\\':  break;		/* c = '\\' */
+				case 'a':
+					c = '\a';
+					break;
+				case 'b':
+					c = '\b';
+					break;
+				case 'c':
+					return 0; /* exit */
+				case 'e':
+					c = '\033';
+					break;
+				case 'f':
+					c = '\f';
+					break;
+				case 'n':
+					c = '\n';
+					break;
+				case 'r':
+					c = '\r';
+					break;
+				case 't':
+					c = '\t';
+					break;
+				case 'v':
+					c = '\v';
+					break;
+				case '\\':
+					break; /* c = '\\' */
 				case '0':
 					c = 0;
 					count = 3;
-					while (--count >= 0 && (unsigned)(*p - '0') < 8)
+					while (--count >= 0 &&
+					    (unsigned)(*p - '0') < 8)
 						c = (c << 3) + (*p++ - '0');
 					break;
 				default:
@@ -103,7 +123,7 @@ main(int argc, char *argv[])
 		if (*ap)
 			putchar(' ');
 	}
-	if (! nflag)
+	if (!nflag)
 		putchar('\n');
 	return 0;
 }

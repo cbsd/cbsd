@@ -49,4 +49,3 @@ extern int displayhist;
 void histedit(void);
 void sethistsize(const char *);
 void setterm(const char *);
-

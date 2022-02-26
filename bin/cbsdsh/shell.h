@@ -50,26 +50,25 @@
  * a quit signal will generate a core dump.
  */
 
-
-#define	JOBS 1
+#define JOBS 1
 /* #define DEBUG 1 */
 
 /*
  * Type of used arithmetics. SUSv3 requires us to have at least signed long.
  */
 typedef intmax_t arith_t;
-#define	ARITH_FORMAT_STR  "%" PRIdMAX
-#define	ARITH_MIN INTMAX_MIN
-#define	ARITH_MAX INTMAX_MAX
+#define ARITH_FORMAT_STR "%" PRIdMAX
+#define ARITH_MIN INTMAX_MIN
+#define ARITH_MAX INTMAX_MAX
 
 typedef void *pointer;
 
 #include <sys/cdefs.h>
 
-extern char nullstr[1];		/* null string */
+extern char nullstr[1]; /* null string */
 
 #ifdef DEBUG
-#define TRACE(param)  sh_trace param
+#define TRACE(param) sh_trace param
 #else
 #define TRACE(param)
 #endif

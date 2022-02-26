@@ -2,12 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-char 
+char
 isIP(char *str)
 {
-	char           *c;
-	int		i;
-	int		j;
+	char *c;
+	int i;
+	int j;
 
 	c = str;
 	i = 0;
@@ -25,12 +25,12 @@ isIP(char *str)
 	return (i && (j == 3));
 }
 
-unsigned long 
+unsigned long
 str2ip(char *str)
 {
-	char           *c;
-	unsigned long	res;
-	unsigned char	n;
+	char *c;
+	unsigned long res;
+	unsigned char n;
 
 	if (!isIP(str))
 		return 0;
@@ -50,13 +50,13 @@ str2ip(char *str)
 	return res;
 }
 
-unsigned long 
+unsigned long
 str2mask(char *str)
 {
-	char           *c;
-	unsigned long	res;
-	unsigned int	n;
-	unsigned int	i;
+	char *c;
+	unsigned long res;
+	unsigned int n;
+	unsigned int i;
 
 	if (isIP(str))
 		return str2ip(str);
@@ -76,7 +76,7 @@ str2mask(char *str)
 	return res;
 }
 
-int 
+int
 usage()
 {
 	printf("return the sign of entry into the subnet ip\n");
@@ -84,12 +84,12 @@ usage()
 	exit(0);
 }
 
-int 
+int
 main(int argc, char **args)
 {
-	unsigned long	ip;
-	unsigned long	mask;
-	unsigned long	test;
+	unsigned long ip;
+	unsigned long mask;
+	unsigned long test;
 
 	if (!strcmp(args[1], "--help"))
 		usage();
@@ -102,12 +102,12 @@ main(int argc, char **args)
 	test = str2ip(args[3]);
 
 	if (ip && mask && test) {
-		//printf("%08x\t%08x\t%08x\n", ip, mask, test);
+		// printf("%08x\t%08x\t%08x\n", ip, mask, test);
 		if ((ip & mask) == (test & mask)) {
-			//printf("yes\n");
+			// printf("yes\n");
 			return 1;
 		}
-		//printf("no\n");
+		// printf("no\n");
 		return 0;
 	}
 	return 2;

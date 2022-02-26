@@ -197,10 +197,9 @@ usage(void)
 {
 
 	(void)fprintf(stderr, "%s\n%s\n%s\n%s\n",
-		"usage: kill [-s signal_name] pid ...",
-		"       kill -l [exit_status]",
-		"       kill -signal_name pid ...",
-		"       kill -signal_number pid ...");
+	    "usage: kill [-s signal_name] pid ...",
+	    "       kill -l [exit_status]", "       kill -signal_name pid ...",
+	    "       kill -signal_number pid ...");
 #ifdef SHELL
 	error(NULL);
 #else

@@ -9,7 +9,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -25,7 +25,8 @@
 
 #include <sys/cdefs.h>
 #ifdef __FBSDID
-__FBSDID("$FrauBSD: pkgcenter/depend/cputools/x86_64.c 2019-02-18 19:14:24 -0800 freebsdfrau $");
+__FBSDID(
+    "$FrauBSD: pkgcenter/depend/cputools/x86_64.c 2019-02-18 19:14:24 -0800 freebsdfrau $");
 #endif
 
 #include <sys/types.h>
@@ -69,12 +70,10 @@ main(int argc, char *argv[])
 
 		/* Check for vendors that support AMD features */
 		if (strncmp(cpu_vendor, "GenuineIntel", 12) == 0 ||
-		    strncmp(cpu_vendor, "AuthenticAMD", 12) == 0)
-		{
+		    strncmp(cpu_vendor, "AuthenticAMD", 12) == 0) {
 			/* Has to support AMD features */
 			do_cpuid(0x80000000, regs);
-			if (regs[0] >= 0x80000001)
-			{
+			if (regs[0] >= 0x80000001) {
 				/* Check for long mode */
 				do_cpuid(0x80000001, regs);
 				has_feature = (regs[3] & AMDID_LM);
@@ -82,8 +81,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	printf("x86_64 support: %s\n",
-	    has_feature ? "YES" : "NO" );
+	printf("x86_64 support: %s\n", has_feature ? "YES" : "NO");
 
 	return (EXIT_SUCCESS);
 }

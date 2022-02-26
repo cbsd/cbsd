@@ -28,23 +28,24 @@
 #define NETMAP_WITH_LIBS
 
 // CBSD back compatible
-// #net/netmap_legacy.h:#define NETMAP_BDG_POLLING_ON       10      /* delete polling kthread */
-// #net/netmap_legacy.h:#define NETMAP_BDG_POLLING_OFF      11      /* delete polling kthread */
-#define NETMAP_BDG_POLLING_ON       10      /* delete polling kthread */
-#define NETMAP_BDG_POLLING_OFF      11      /* delete polling kthread */
+// #net/netmap_legacy.h:#define NETMAP_BDG_POLLING_ON       10      /* delete
+// polling kthread */ #net/netmap_legacy.h:#define NETMAP_BDG_POLLING_OFF 11 /*
+// delete polling kthread */
+#define NETMAP_BDG_POLLING_ON 10  /* delete polling kthread */
+#define NETMAP_BDG_POLLING_OFF 11 /* delete polling kthread */
 
 #include <net/netmap_user.h>
 #include <net/netmap.h>
 
 #include <errno.h>
 #include <stdio.h>
-#include <inttypes.h>	/* PRI* macros */
-#include <string.h>	/* strcmp */
-#include <fcntl.h>	/* open */
-#include <unistd.h>	/* close */
-#include <sys/ioctl.h>	/* ioctl */
+#include <inttypes.h>  /* PRI* macros */
+#include <string.h>    /* strcmp */
+#include <fcntl.h>     /* open */
+#include <unistd.h>    /* close */
+#include <sys/ioctl.h> /* ioctl */
 #include <sys/param.h>
-#include <sys/socket.h>	/* apple needs sockaddr */
+#include <sys/socket.h> /* apple needs sockaddr */
 #include <net/if.h>	/* ifreq */
 #include <libgen.h>	/* basename */
 #include <stdlib.h>	/* atoi, free */
@@ -52,14 +53,15 @@
 /* XXX cut and paste from pkt-gen.c because I'm not sure whether this
  * program may include nm_util.h
  */
-void parse_nmr_config(const char* conf, struct nmreq *nmr)
+void
+parse_nmr_config(const char *conf, struct nmreq *nmr)
 {
 	char *w, *tok;
 	int i, v;
 
 	nmr->nr_tx_rings = nmr->nr_rx_rings = 0;
 	nmr->nr_tx_slots = nmr->nr_rx_slots = 0;
-	if (conf == NULL || ! *conf)
+	if (conf == NULL || !*conf)
 		return;
 	w = strdup(conf);
 	for (i = 0, tok = strtok(w, ","); tok; i++, tok = strtok(NULL, ",")) {
@@ -82,9 +84,8 @@ void parse_nmr_config(const char* conf, struct nmreq *nmr)
 			break;
 		}
 	}
-	D("txr %d txd %d rxr %d rxd %d",
-			nmr->nr_tx_rings, nmr->nr_tx_slots,
-			nmr->nr_rx_rings, nmr->nr_rx_slots);
+	D("txr %d txd %d rxr %d rxd %d", nmr->nr_tx_rings, nmr->nr_tx_slots,
+	    nmr->nr_rx_rings, nmr->nr_rx_slots);
 	free(w);
 }
 
@@ -103,7 +104,7 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 	bzero(&nmr, sizeof(nmr));
 	nmr.nr_version = NETMAP_API;
 	if (name != NULL) /* might be NULL */
-		strncpy(nmr.nr_name, name, sizeof(nmr.nr_name)-1);
+		strncpy(nmr.nr_name, name, sizeof(nmr.nr_name) - 1);
 	nmr.nr_cmd = nr_cmd;
 	parse_nmr_config(nmr_config, &nmr);
 	nmr.nr_arg2 = nr_arg2;
@@ -113,10 +114,14 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 	case NETMAP_BDG_NEWIF:
 		error = ioctl(fd, NIOCREGIF, &nmr);
 		if (error == -1) {
-			ND("Unable to %s %s", nr_cmd == NETMAP_BDG_DELIF ? "delete":"create", name);
+			ND("Unable to %s %s",
+			    nr_cmd == NETMAP_BDG_DELIF ? "delete" : "create",
+			    name);
 			perror(name);
 		} else {
-			ND("Success to %s %s", nr_cmd == NETMAP_BDG_DELIF ? "delete":"create", name);
+			ND("Success to %s %s",
+			    nr_cmd == NETMAP_BDG_DELIF ? "delete" : "create",
+			    name);
 		}
 		break;
 	case NETMAP_BDG_ATTACH:
@@ -129,12 +134,14 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 		nmr.nr_arg1 = nr_arg;
 		error = ioctl(fd, NIOCREGIF, &nmr);
 		if (error == -1) {
-			ND("Unable to %s %s to the bridge", nr_cmd ==
-			    NETMAP_BDG_DETACH?"detach":"attach", name);
+			ND("Unable to %s %s to the bridge",
+			    nr_cmd == NETMAP_BDG_DETACH ? "detach" : "attach",
+			    name);
 			perror(name);
 		} else
-			ND("Success to %s %s to the bridge", nr_cmd ==
-			    NETMAP_BDG_DETACH?"detach":"attach", name);
+			ND("Success to %s %s to the bridge",
+			    nr_cmd == NETMAP_BDG_DETACH ? "detach" : "attach",
+			    name);
 		break;
 
 	case NETMAP_BDG_LIST:
@@ -169,8 +176,8 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 		 *   nr_tx_rings: (REG_ONE_NIC only) indicates the
 		 *                number of CPU cores or the last queue
 		 */
-		nmr.nr_flags |= nmr.nr_tx_slots ?
-			NR_REG_ONE_NIC : NR_REG_ALL_NIC;
+		nmr.nr_flags |= nmr.nr_tx_slots ? NR_REG_ONE_NIC :
+							NR_REG_ALL_NIC;
 		nmr.nr_ringid = nmr.nr_rx_slots;
 		/* number of cores/rings */
 		if (nmr.nr_flags == NR_REG_ALL_NIC)
@@ -181,12 +188,13 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 		error = ioctl(fd, NIOCREGIF, &nmr);
 		if (!error)
 			D("polling on %s %s", nmr.nr_name,
-				nr_cmd == NETMAP_BDG_POLLING_ON ?
-				"started" : "stopped");
+			    nr_cmd == NETMAP_BDG_POLLING_ON ? "started" :
+								    "stopped");
 		else
 			D("polling on %s %s (err %d)", nmr.nr_name,
-				nr_cmd == NETMAP_BDG_POLLING_ON ?
-				"couldn't start" : "couldn't stop", error);
+			    nr_cmd == NETMAP_BDG_POLLING_ON ? "couldn't start" :
+								    "couldn't stop",
+			    error);
 		break;
 
 	default: /* GINFO */
