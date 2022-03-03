@@ -84,16 +84,18 @@ ojname="${jname}"
 . ${subrdir}/bhyve.subr
 . ${subrdir}/vnet.subr		# for get_vm_uplink_interface
 
+# adjust bhyve_list by CBSDfile
 if [ -r ${Makefile} ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
 	. ${Makefile}
 	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
 	jname="${all_bhyve_list}"
 
+	# cbsd jstart <env1> <env2> route
 	jname_in_args=0
 
 	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
+		bhyve_list="${ojname}"
 	else
 		# cbsd bstart <env1> <env2> route
 		for i in $*; do
@@ -118,20 +120,22 @@ if [ -r ${Makefile} ]; then
 			fi
 		done
 		if [ ${jname_in_args} -eq 1 ]; then
-			jname="${ojname}"
+			bhyve_list="${ojname}"
 		else
-			jname="${all_bhyve_list}"
+			bhyve_list="${all_bhyve_list}"
 		fi
 	fi
 
-	unset ojname
+	unset ojname jname
 
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+	[ -z "${bhyve_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
 
 	# multiple?
 	strpos --str="${jname}" --search=" "
 	if [ $? -ne 0 ]; then
-		jail_list="${jname}"
+		# alone
+		jname="${bhyve_list}"
+		unset bhyve_list
 	fi
 
 	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
@@ -141,33 +145,40 @@ if [ -r ${Makefile} ]; then
 	fi
 else
 	cbsd_api=0
+	# trim args from "$*"
+
+	if [ -n "${ojname}" ]; then
+		bhyve_list="${ojname}"
+	else
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			[ $? -ne 0 ] && continue
+
+			if [ -z "${bhyve_list}" ]; then
+				bhyve_list="${i}"
+			else
+				bhyve_list="${bhyve_list} ${i}"
+			fi
+		done
+	fi
+
+	# multiple?
+	strpos --str="${bhyve_list}" --search=" "
+	if [ $? -eq 0 ]; then
+		# alone
+		jname="${bhyve_list}"
+		unset bhyve_list
+	fi
 fi
 
-# trim args from "$*"
-ARGS=
-for i in $*; do
-	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
-
-	[ "${prefix6}" = "delay=" ] && shift && continue
-	[ "${prefix6}" = "jname=" ] && shift && continue
-	[ "${prefix6}" = "quiet=" ] && shift && continue
-	[ "${prefix6}" = "inter=" ] && shift && continue
-
-	if [ -n "${ARGS}" ]; then
-		ARGS="${ARGS} ${i}"
-	else
-		ARGS="${i}"
-	fi
-done
-
-[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}no bhyve specified${N0_COLOR}"
-
+[ -z "${jname}" -a -z "${bhyve_list}" ] && err 1 "${N1_COLOR}No vm specified${N0_COLOR}"
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"		# store overwrite debug_engine
 [ -n "${bhyverun_wrapper}" ] && obhyverun_wrapper="${bhyverun_wrapper}"	# store overwrite bhyverun_wrapper
 
 . ${subrdir}/fetch.subr
 . ${subrdir}/jcreate.subr	# for external_exec_master_script
 . ${subrdir}/virtual.subr	# for init_systap
+. ${subrdir}/time.subr
 
 create_from_jail()
 {
@@ -286,7 +297,7 @@ start_bhyve()
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
 						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
-						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
+						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}" 2>&1
 						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
 						_ret=$?
 						if [ ${_ret} -eq 1 ]; then
@@ -307,8 +318,8 @@ start_bhyve()
 							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
 						fi
 				fi
-				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
-				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}" 2>&1
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} 2>&1
 			fi
 		fi
 	fi
@@ -854,35 +865,55 @@ EOF
 	expose mode=apply
 }
 
-
 # MAIN for multiple jails
-TRAP=""
-emulator="bhyve"	# for jname_is_multiple
-# jail_list can be init in CBSDfile case
-[ -z "${jail_list}" ] && jname_is_multiple
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
-if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+TRAP=""
+emulator="bhyve"	# for jname_is_multiple
+# bhyve_list can be init in CBSDfile case
+[ -z "${bhyve_list}" ] && jname_is_multiple
+
+if [ -n "${bhyve_list}" ]; then
+	TMP_JLIST="${bhyve_list}"
+else
+	TMP_JLIST="${jname}"
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+jname=
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsqlro local SELECT jname FROM bhyve WHERE jname=\"${i}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		if [ ${jail_num} -eq 0 ]; then
+			jname="${i}"
+		else
+			# when > 1, jname unused below
+			unset jname
+		fi
+		jail_num=$(( jail_num + 1 ))
+	fi
+done
+
+# this is multiple list, split it by parallel jstart execution
+if [ ${jail_num} -gt 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple starting: ${JLIST}
 	# multiple astart always non interactive
 	export inter=0
-	# recursive
-	if [ -n "${jail_list}" ]; then
-		JLIST="${jail_list}"
-	else
-		JLIST=$*
-	fi
+
+	st_time=$( ${DATE_CMD} +%s )
 
 	for jname in ${JLIST}; do
-		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/bstart.${jname}.$$;"
-		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
-		trap "" HUP INT ABRT BUS TERM EXIT
 		# Artificial delay to create a sequence (for order compliance)
 		# todo: determine VM complete starting
 		sleep 12
@@ -890,19 +921,26 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	wait_for_fpid -a start -t ${parallel}
 
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple done in ${diff_time}: ${JLIST}
 	err 0 "${N1_COLOR}Multiple bstart: ${N2_COLOR}done${N0_COLOR}"
 fi
 
 # MAIN
-. ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
-. ${subrdir}/time.subr
+# single jname
 [ -z "${jname}" ] && jname="${1}"
+[ -z "${jname}" ] && err 1 "${N1_COLOR}Give me jail name${N0_COLOR}"
+
+. ${distsharedir}/bhyve.conf		# only for for MYCOL variables: used in exports below
 
 if [ "${lm}" = "0" ]; then
 	. ${subrdir}/rcconf.subr
 	if [ $? -eq 1 ]; then
 		# remote start
-		[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
+		[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such bhyve domain: ${N2_COLOR}${jname}${N0_COLOR}"
 		remotenode=$( bwhereis ${jname} )
 		[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 		for i in ${remotenode}; do

@@ -6,7 +6,8 @@ MYDESC="Start jail"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
- Start the container.
+ Start the jail container. When used in a directory with a CBSDfile,
+the jstart command only processes the environments described in the CBSDfile.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -37,6 +38,8 @@ EXTHELP="wf_jstop_jstart"
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
 
+jname=
+
 if [ -n "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
 	oci_gw4="${ci_gw4}"
 else
@@ -45,9 +48,15 @@ else
 	fi
 fi
 
-[ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ ! -r ${Makefile} ]; then
+		[ -z "${1}" ] && select_jail_by_list -s "List of offline jail" -a "Off" -r ${sqlreplica}
+fi
 
 delay=0
+. ${cbsdinit}
+ojname="${jname}"
 
 . ${subrdir}/cbsdinit.subr
 . ${subrdir}/system.subr
@@ -56,49 +65,147 @@ delay=0
 
 [ -z "${quiet}" ] && quiet=0
 
-# trim args from "$*"
-ARGS=
-for i in $*; do
-	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+# adjust jail_list by CBSDfile
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. ${Makefile}
+	all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
 
-	[ "${prefix6}" = "delay=" ] && shift && continue
-	[ "${prefix6}" = "jname=" ] && shift && continue
-	[ "${prefix6}" = "quiet=" ] && shift && continue
-	[ "${prefix6}" = "inter=" ] && shift && continue
+	# cbsd jstart <env1> <env2> route
+	jname_in_args=0
 
-	if [ -n "${ARGS}" ]; then
-		ARGS="${ARGS} ${i}"
+	if [ -n "${ojname}" ]; then
+		jail_list="${ojname}"
 	else
-		ARGS="${i}"
+		# cbsd jstart <env1> <env2> route
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			if [ $? -eq 0 ]; then
+				jname_in_args=1
+				# not param=value - jail?
+				jname_in_cbsdfile=0
+				for j in ${all_jail_list}; do
+					[ "${i}" != "${j}" ] && continue
+					jname_in_cbsdfile=1
+				done
+				if [ ${jname_in_cbsdfile} -eq 1 ]; then
+					if [ -z "${ojname}" ]; then
+						ojname="${i}"
+					else
+						ojname="${ojname} ${i}"
+					fi
+				else
+					${ECHO} "${N1_COLOR}${CBSD_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
+				fi
+			fi
+		done
+		if [ ${jname_in_args} -eq 1 ]; then
+			jail_list="${ojname}"
+		else
+			jail_list="${all_jail_list}"
+		fi
 	fi
-done
 
-[ -z "${jname}" -a -z "${ARGS}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
+	unset ojname jname
+
+	[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	# multiple?
+	strpos --str="${jail_list}" --search=" "
+	if [ $? -eq 0 ]; then
+		# alone
+		jname="${jail_list}"
+		unset jail_list
+	fi
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+	# trim args from "$*"
+
+	if [ -n "${ojname}" ]; then
+		jail_list="${ojname}"
+	else
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			[ $? -ne 0 ] && continue
+
+			if [ -z "${jail_list}" ]; then
+				jail_list="${i}"
+			else
+				jail_list="${jail_list} ${i}"
+			fi
+		done
+	fi
+
+	# multiple?
+	strpos --str="${jail_list}" --search=" "
+	if [ $? -eq 0 ]; then
+		# alone
+		jname="${jail_list}"
+		unset jail_list
+	fi
+fi
+
+[ -z "${jname}" -a -z "${jail_list}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
 
 # for external_exec-related command
 . ${subrdir}/jcreate.subr
 
-my_name="jstart"
-
 . ${subrdir}/jstart.subr
-
-emulator="jail"	# for jname_is_multiple
-jname_is_multiple
+. ${subrdir}/time.subr
 
 # MAIN for multiple jails
-if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
 
+TRAP=""
+emulator="jail"	# for jname_is_multiple
+# jail_list can be init in CBSDfile case
+[ -z "${jail_list}" ] && jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	TMP_JLIST="${jail_list}"
+else
+	TMP_JLIST="${jname}"
+fi
+
+JLIST=
+
+# check for actual vm list in arg list
+jail_num=0
+jname=
+for i in ${TMP_JLIST}; do
+	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	if [ -n "${exist}" ]; then
+		JLIST="${exist} ${JLIST}"
+		if [ ${jail_num} -eq 0 ]; then
+			jname="${i}"
+		else
+			# when > 1, jname unused below
+			unset jname
+		fi
+		jail_num=$(( jail_num + 1 ))
+	fi
+done
+
+
+# this is multiple list, split it by parallel jstart execution
+if [ ${jail_num} -gt 1 ]; then
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple starting: ${JLIST}
 	# multiple astart always non interactive
 	export inter=0
-	# recursive
-	if [ -n "${jail_list}" ]; then
-		JLIST="${jail_list}"
-	else
-		JLIST=$*
-	fi
+
+	st_time=$( ${DATE_CMD} +%s )
 
 	for jname in ${JLIST}; do
-		${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} delay=1
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} delay=1
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel}
@@ -106,12 +213,19 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 
 	wait_for_fpid -a start -t ${parallel}
 
-	err 0 "${N1_COLOR}Multiple jstart: ${N2_COLOR}done${N0_COLOR}"
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple done in ${diff_time}: ${JLIST}
+	err 0 "${N1_COLOR}Multiple start: ${N2_COLOR}done${N0_COLOR}"
 fi
 
 # MAIN
-. ${subrdir}/time.subr
-[ -z "${jname}" ] && jname=${1}
+# single jname
+[ -z "${jname}" ] && jname="${1}"
+[ -z "${jname}" ] && err 1 "${N1_COLOR}Give me jail name${N0_COLOR}"
+
 . ${subrdir}/rcconf.subr
 
 if [ $? -eq 1 ]; then

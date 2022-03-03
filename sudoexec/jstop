@@ -5,11 +5,11 @@ MYOPTARG="fast inter jname"
 MYDESC="Stop jail"
 CBSDMODULE="jail"
 EXTHELP="wf_jstop_jstart"
-ADDHELP="\
-
+ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
- Stop the container.
+ Stop the jail container. When used in a directory with a CBSDfile,
+the jstop command only processes the environments described in the CBSDfile.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -32,9 +32,17 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${subrdir}/nc.subr
 . ${tools}		# for select_jail_by_list
 
-[ -z "${1}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
+jname=
+
+# check for cloud function when CBSDfile exist
+Makefile="${CBSD_PWD}/CBSDfile"
+if [ ! -r ${Makefile} ]; then
+	[ -z "${1}" ] && select_jail_by_list -s "List of online jail" -a "On" -r ${sqlreplica}
+fi
+
 fast=
 . ${cbsdinit}
+ojname="${jname}"
 
 [ -n "${fast}" ] && ofast="${fast}"
 [ -z "${fast}" ] && fast=0
@@ -42,32 +50,129 @@ fast=
 . ${system}
 . ${mdtools}
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
+# adjust jail_list by CBSDfile
+if [ -r ${Makefile} ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. ${Makefile}
+	all_jail_list=$( ${EGREP_CMD} '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
 
-[ -n "${inter}" ] && shift
+	# cbsd jstart <env1> <env2> route
+	jname_in_args=0
+
+	if [ -n "${ojname}" ]; then
+		jail_list="${ojname}"
+	else
+		# cbsd jstart <env1> <env2> route
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			if [ $? -eq 0 ]; then
+				jname_in_args=1
+				# not param=value - jail?
+				jname_in_cbsdfile=0
+				for j in ${all_jail_list}; do
+					[ "${i}" != "${j}" ] && continue
+					jname_in_cbsdfile=1
+				done
+				if [ ${jname_in_cbsdfile} -eq 1 ]; then
+					if [ -z "${ojname}" ]; then
+						ojname="${i}"
+					else
+						ojname="${ojname} ${i}"
+					fi
+				else
+					${ECHO} "${N1_COLOR}${CBSD_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
+				fi
+			fi
+		done
+		if [ ${jname_in_args} -eq 1 ]; then
+			jail_list="${ojname}"
+		else
+			jail_list="${all_jail_list}"
+		fi
+	fi
+
+	unset ojname jname
+
+	[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+
+	# multiple?
+	strpos --str="${jail_list}" --search=" "
+	if [ $? -eq 0 ]; then
+		# alone
+		jname="${jail_list}"
+		unset jail_list
+	fi
+
+	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+	# trim args from "$*"
+
+	if [ -n "${ojname}" ]; then
+		jail_list="${ojname}"
+	else
+		for i in $*; do
+			strpos --str="${i}" --search="="
+			[ $? -ne 0 ] && continue
+
+			if [ -z "${jail_list}" ]; then
+				jail_list="${i}"
+			else
+				jail_list="${jail_list} ${i}"
+			fi
+		done
+	fi
+
+	# multiple?
+	strpos --str="${jail_list}" --search=" "
+	if [ $? -eq 0 ]; then
+		# alone
+		jname="${jail_list}"
+		unset jail_list
+	fi
+fi
+
+[ -z "${jname}" -a -z "${jail_list}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
 
 # for external_exec-related command
 . ${subrdir}/jcreate.subr
 
-emulator="jail"		# for jname_is_multiple
-jname_is_multiple
-
 # MAIN
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
+TRAP=""
+emulator="jail" # for jname_is_multiple
+# jail_list can be init in CBSDfile case
+[ -z "${jail_list}" ] && jname_is_multiple
 
 if [ -n "${jail_list}" ]; then
 	TMP_JLIST="${jail_list}"
 else
-	TMP_JLIST=$*
+	TMP_JLIST="${jname}"
 fi
 
 JLIST=
-my_name="jstop"
+
 # check for actual vm list in arg list
 jail_num=0
+jname=
 for i in ${TMP_JLIST}; do
 	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
+		if [ ${jail_num} -eq 0 ]; then
+			jname="${i}"
+		else
+			# when > 1, jname unused below
+			unset jname
+		fi
 		jail_num=$(( jail_num + 1 ))
 	fi
 done
@@ -75,12 +180,13 @@ done
 . ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
 
-# this is multiple list, split it by parallel bstop execution
+# this is multiple list, split it by parallel jstop execution
 if [ ${jail_num} -gt 1 ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: executing for multiple stopping: ${JLIST}
-
+	# multiple astart always non interactive
+	export inter=0
 	for jname in ${JLIST}; do
-		${DAEMON_CMD} -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
+		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
 		#lets save .pid file
 		sleep 1
 		[ -f "${ftmpdir}/jstop.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstop.${jname}.$$ ) --timeout=${parallel}
@@ -96,7 +202,7 @@ if [ ${jail_num} -gt 1 ]; then
 	err 0 "${N1_COLOR}Multiple stop: ${N2_COLOR}done${N0_COLOR}"
 fi
 
-[ -z "${jname}" ] && jname=$( echo ${JLIST} | ${AWK_CMD} '{printf $1}' )
+# single jname
 [ -z "${jname}" ] && jname="${1}"
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Give me jail name${N0_COLOR}"
 
