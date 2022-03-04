@@ -19,9 +19,9 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-static int fetch_files(char *, char *);
-void handle_signal(int);
-void handle_sigalrm(int);
+static int fetch_files(char * /*urls*/, char * /*fout*/);
+void handle_signal(int /*signal*/);
+void handle_sigalrm(int /*signal*/);
 
 off_t current_bytes = 0;
 int speedtest = 0;
@@ -43,13 +43,16 @@ int
 main(int argc, char *argv[])
 {
 	int c;
-	char *url = NULL, *fout = NULL;
+	char *url = NULL;
+	char *fout = NULL;
 
-	if (argc < 2)
+	if (argc < 2) {
 		usage();
+	}
 
-	if (!strcmp(argv[1], "--help"))
+	if (!strcmp(argv[1], "--help")) {
 		usage();
+	}
 
 	struct sigaction sa;
 	// Setup the sighub handler
@@ -69,8 +72,9 @@ main(int argc, char *argv[])
 	while (1) {
 		c = getopt(argc, argv, "u:o:s:");
 		/* Detect the end of the options. */
-		if (c == -1)
+		if (c == -1) {
 			break;
+		}
 		switch (c) {
 		case 'u':
 			url = optarg;
@@ -84,8 +88,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if ((!url) || (!fout))
+	if ((!url) || (!fout)) {
 		usage();
+	}
 
 	c = fetch_files(url, fout);
 	return c;
@@ -94,12 +99,15 @@ main(int argc, char *argv[])
 static int
 fetch_files(char *urls, char *fout)
 {
-	FILE *fetch_out, *file_out;
+	FILE *fetch_out;
+	FILE *file_out;
 	struct url_stat ustat;
-	off_t total_bytes, fsize = 0;
+	off_t total_bytes;
+	off_t fsize = 0;
 	uint8_t block[4096];
 	size_t chunk;
-	int progress, last_progress;
+	int progress;
+	int last_progress;
 	int nsuccess = 0; /* Number of files successfully
 			   * downloaded */
 	int lprg = 0;
@@ -129,27 +137,32 @@ fetch_files(char *urls, char *fout)
 	gettimeofday(&now_time, NULL);
 	start_time = (time_t)now_time.tv_sec;
 
-	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0)
+	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0) {
 		total_bytes += ustat.size;
+	}
 
-	if (speedtest == 1)
+	if (speedtest == 1) {
 		fetchTimeout = 5;
-	else
+	} else {
 		fetchTimeout = 20;
+	}
 
 	fetch_out = fetchXGetURL(urls, &ustat, "");
-	if (fetch_out == NULL)
+	if (fetch_out == NULL) {
 		return 1;
+	}
 
 	file_out = fopen(fout, "w+");
 
-	if (speedtest != 1)
+	if (speedtest != 1) {
 		printf("Size: %d Mb\n", ((int)total_bytes / 1024 / 1024));
+	}
 
 	current_bytes = 0;
 	while ((chunk = fread(block, 1, sizeof(block), fetch_out)) > 0) {
-		if (fwrite(block, 1, chunk, file_out) < chunk)
+		if (fwrite(block, 1, chunk, file_out) < chunk) {
 			break;
+		}
 
 		current_bytes += chunk;
 		fsize += chunk;
@@ -160,8 +173,9 @@ fetch_files(char *urls, char *fout)
 		}
 		if ((progress % 10 == 0) && (lprg != progress)) {
 			lprg = progress;
-			if (speedtest != 1)
+			if (speedtest != 1) {
 				printf("Progress: %d%% \n", progress);
+			}
 		}
 	}
 
@@ -172,8 +186,9 @@ fetch_files(char *urls, char *fout)
 			fclose(file_out);
 			return 0;
 		}
-	} else
+	} else {
 		nsuccess++;
+	}
 
 	fclose(fetch_out);
 	fclose(file_out);
@@ -181,15 +196,17 @@ fetch_files(char *urls, char *fout)
 	gettimeofday(&now_time, NULL);
 	end_time = (time_t)now_time.tv_sec;
 	diff_time = end_time - start_time;
-	if (diff_time == 0)
+	if (diff_time == 0) {
 		diff_time = 1;
+	}
 
 	/*
 	 * Please note that printf et al. are NOT safe to use in signal
 	 * handlers. Look for async safe functions.
 	 */
-	if (speedtest == 1)
+	if (speedtest == 1) {
 		printf("%ld\n", current_bytes / diff_time);
+	}
 
 	return (0);
 }
@@ -221,15 +238,17 @@ handle_signal(int signal)
 	gettimeofday(&now_time, NULL);
 	end_time = (time_t)now_time.tv_sec;
 	diff_time = end_time - start_time;
-	if (diff_time == 0)
+	if (diff_time == 0) {
 		diff_time = 1;
+	}
 
 	/*
 	 * Please note that printf et al. are NOT safe to use in signal
 	 * handlers. Look for async safe functions.
 	 */
-	if (speedtest == 1)
+	if (speedtest == 1) {
 		printf("%ld\n", current_bytes / diff_time);
+	}
 
 	exit(0);
 }

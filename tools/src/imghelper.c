@@ -36,7 +36,8 @@ int
 main(int argc, char *argv[])
 {
 	int ch;
-	FILE *fp, *fo;
+	FILE *fp;
+	FILE *fo;
 	int c;
 	int prev_c;
 	int len_st = 0;
@@ -50,7 +51,8 @@ main(int argc, char *argv[])
 	char *newval = NULL;
 	int win = FALSE;
 	int optcode = 0;
-	int option_index = 0, ret = 0;
+	int option_index = 0;
+	int ret = 0;
 	int is_header = 0;  // search for first MByte only
 	int find_param = 0; // also find and replace param= by newval
 	char *newval_buf;
@@ -70,8 +72,9 @@ main(int argc, char *argv[])
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_END_SIGN:
 			end = malloc(strlen(optarg) + 1);
@@ -92,9 +95,10 @@ main(int argc, char *argv[])
 			st = malloc(strlen(optarg) + 1);
 			memset(st, 0, strlen(optarg) + 1);
 			strcpy(st, optarg);
-			if (!strcmp(st, "___NCSTART_HEADER=1"))
+			if (!strcmp(st, "___NCSTART_HEADER=1")) {
 				is_header = 1; // we are looking header only at
-					       // the beginning
+			}
+			// the beginning
 			break;
 		case C_PARAM:
 			param = malloc(strlen(optarg) + 1);
@@ -117,8 +121,9 @@ main(int argc, char *argv[])
 		usage();
 	}
 
-	if (!outfile)
+	if (!outfile) {
 		outfile = "/dev/stdout";
+	}
 
 	len_st = strlen(st);
 	len_end = strlen(end);
@@ -156,8 +161,9 @@ main(int argc, char *argv[])
 	while (hammer != 2) {
 		c = getc(fp);
 		total_bytes++;
-		if (feof(fp))
+		if (feof(fp)) {
 			break;
+		}
 
 		if ((is_header == 1) && (total_bytes > 1048576)) {
 			fclose(fp);
@@ -252,8 +258,9 @@ main(int argc, char *argv[])
 		break;
 	}
 
-	if (start_pos == stop_pos)
+	if (start_pos == stop_pos) {
 		exit(0);
+	}
 
 	// second pass
 	if ((fp = fopen(infile, "r")) == NULL) {
@@ -268,8 +275,9 @@ main(int argc, char *argv[])
 
 	while (!feof(fp)) {
 		start_pos++;
-		if (start_pos == stop_pos)
+		if (start_pos == stop_pos) {
 			break;
+		}
 
 		c = getc(fp);
 		fputc(c, fo);

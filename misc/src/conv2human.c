@@ -54,8 +54,9 @@ main(int argc, char *argv[])
 	char buf[MAX_VAL_LEN];
 	float f = 0;
 
-	if (argc != 2)
+	if (argc != 2) {
 		return (1);
+	}
 
 	len = strlen(argv[1]);
 
@@ -70,11 +71,13 @@ main(int argc, char *argv[])
 	if (is_number(argv[1]) == 1) {
 		// is float?
 		for (i = 0; i < len; i++) {
-			if (argv[1][i] == '.')
+			if (argv[1][i] == '.') {
 				is_float = 1;
+			}
 			if ((argv[1][i] >= '.') &&
-			    (argv[1][i] <= '9')) // '.' - 46 code
+			    (argv[1][i] <= '9')) { // '.' - 46 code
 				stringnum[i] = argv[1][i];
+			}
 		}
 		if (is_float == 1) {
 			char in_metrics = argv[1][len - 1];
@@ -94,8 +97,9 @@ main(int argc, char *argv[])
 			new_val = f * 1024; // convert to prev metrics
 			sprintf(buf, "%d%c", new_val,
 			    metrics[in_index - 1]); // and shift metrics index
-		} else
+		} else {
 			strncpy(buf, argv[1], strlen(argv[1]));
+		}
 
 		if (expand_number(buf, &number) == -1) {
 			// invalid value for val argument
@@ -105,7 +109,8 @@ main(int argc, char *argv[])
 			printf("%lu", (unsigned long)number);
 			exit(0);
 		}
-	} else
+	} else {
 		prthumanval(atol(argv[1]));
+	}
 	return 0;
 }

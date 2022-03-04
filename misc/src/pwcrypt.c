@@ -8,7 +8,7 @@
 static char const chars[] =
     "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ./";
 
-char *pw_pwcrypt(char *);
+char *pw_pwcrypt(char * /*password*/);
 
 int
 main(int argc, char *argv[])
@@ -40,8 +40,9 @@ pw_pwcrypt(char *password)
 	/*
 	 * Calculate a salt value
 	 */
-	for (i = 0; i < SALTSIZE; i++)
+	for (i = 0; i < SALTSIZE; i++) {
 		salt[i] = chars[arc4random_uniform(sizeof(chars) - 1)];
+	}
 	salt[SALTSIZE] = '\0';
 	cryptpw = crypt(password, salt);
 

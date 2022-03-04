@@ -61,7 +61,10 @@ usage()
 int
 main(int argc, char *argv[])
 {
-	int sock, i, auth_pw = 0, port = 22;
+	int sock;
+	int i;
+	int auth_pw = 0;
+	int port = 22;
 	struct sockaddr_in6 sin;
 
 	const char *fingerprint;
@@ -72,8 +75,9 @@ main(int argc, char *argv[])
 	LIBSSH2_SFTP_HANDLE *sftp_handle;
 	struct hostent *server;
 
-	if (!strcmp(argv[1], "--help"))
+	if (!strcmp(argv[1], "--help")) {
 		usage();
+	}
 
 	if (argc > 1) {
 		inet_pton(AF_INET6, argv[1], sin.sin6_addr.s6_addr);
@@ -116,8 +120,9 @@ main(int argc, char *argv[])
 		return -1;
 	}
 	session = libssh2_session_init();
-	if (!session)
+	if (!session) {
 		return -1;
+	}
 
 	libssh2_session_set_blocking(session, 1);
 

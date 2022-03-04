@@ -33,7 +33,8 @@ sigint_h(int sig)
 int
 pkt_queued(struct nm_desc *d, int tx)
 {
-	u_int i, tot = 0;
+	u_int i;
+	u_int tot = 0;
 
 	if (tx) {
 		for (i = d->first_tx_ring; i <= d->last_tx_ring; i++) {
@@ -54,20 +55,25 @@ static int
 process_rings(struct netmap_ring *rxring, struct netmap_ring *txring,
     u_int limit, const char *msg)
 {
-	u_int j, k, m = 0;
+	u_int j;
+	u_int k;
+	u_int m = 0;
 
 	/* print a warning if any of the ring flags is set (e.g. NM_REINIT) */
-	if (rxring->flags || txring->flags)
+	if (rxring->flags || txring->flags) {
 		D("%s rxflags %x txflags %x", msg, rxring->flags,
 		    txring->flags);
+	}
 	j = rxring->cur; /* RX */
 	k = txring->cur; /* TX */
 	m = nm_ring_space(rxring);
-	if (m < limit)
+	if (m < limit) {
 		limit = m;
+	}
 	m = nm_ring_space(txring);
-	if (m < limit)
+	if (m < limit) {
 		limit = m;
+	}
 	m = limit;
 	while (limit-- > 0) {
 		struct netmap_slot *rs = &rxring->slot[j];
@@ -108,8 +114,9 @@ process_rings(struct netmap_ring *rxring, struct netmap_ring *txring,
 	}
 	rxring->head = rxring->cur = j;
 	txring->head = txring->cur = k;
-	if (verbose && m > 0)
+	if (verbose && m > 0) {
 		D("%s sent %d packets to %p", msg, m, txring);
+	}
 
 	return (m);
 }
@@ -118,8 +125,11 @@ process_rings(struct netmap_ring *rxring, struct netmap_ring *txring,
 static int
 move(struct nm_desc *src, struct nm_desc *dst, u_int limit)
 {
-	struct netmap_ring *txring, *rxring;
-	u_int m = 0, si = src->first_rx_ring, di = dst->first_tx_ring;
+	struct netmap_ring *txring;
+	struct netmap_ring *rxring;
+	u_int m = 0;
+	u_int si = src->first_rx_ring;
+	u_int di = dst->first_tx_ring;
 	const char *msg = (src->req.nr_flags == NR_REG_SW) ? "host->net" :
 								   "net->host";
 
@@ -173,9 +183,12 @@ main(int argc, char **argv)
 {
 	struct pollfd pollfd[2];
 	int ch;
-	u_int burst = 1024, wait_link = 4;
-	struct nm_desc *pa = NULL, *pb = NULL;
-	char *ifa = NULL, *ifb = NULL;
+	u_int burst = 1024;
+	u_int wait_link = 4;
+	struct nm_desc *pa = NULL;
+	struct nm_desc *pb = NULL;
+	char *ifa = NULL;
+	char *ifb = NULL;
 	char ifabuf[64] = { 0 };
 	int loopback = 0;
 
@@ -193,13 +206,14 @@ main(int argc, char **argv)
 			burst = atoi(optarg);
 			break;
 		case 'i': /* interface */
-			if (ifa == NULL)
+			if (ifa == NULL) {
 				ifa = optarg;
-			else if (ifb == NULL)
+			} else if (ifb == NULL) {
 				ifb = optarg;
-			else
+			} else {
 				D("%s ignored, already have 2 interfaces",
 				    optarg);
+			}
 			break;
 		case 'c':
 			zerocopy = 0; /* do not zerocopy */
@@ -219,14 +233,18 @@ main(int argc, char **argv)
 	argc -= optind;
 	argv += optind;
 
-	if (argc > 0)
+	if (argc > 0) {
 		ifa = argv[0];
-	if (argc > 1)
+	}
+	if (argc > 1) {
 		ifb = argv[1];
-	if (argc > 2)
+	}
+	if (argc > 2) {
 		burst = atoi(argv[2]);
-	if (!ifb)
+	}
+	if (!ifb) {
 		ifb = ifa;
+	}
 	if (!ifa) {
 		D("missing interface");
 		usage();
@@ -279,7 +297,9 @@ main(int argc, char **argv)
 	/* main loop */
 	signal(SIGINT, sigint_h);
 	while (!do_abort) {
-		int n0, n1, ret;
+		int n0;
+		int n1;
+		int ret;
 		pollfd[0].events = pollfd[1].events = 0;
 		pollfd[0].revents = pollfd[1].revents = 0;
 		n0 = pkt_queued(pa, 0);
@@ -299,19 +319,21 @@ main(int argc, char **argv)
 		}
 		ret = 1;
 #else
-		if (n0)
+		if (n0) {
 			pollfd[1].events |= POLLOUT;
-		else
+		} else {
 			pollfd[0].events |= POLLIN;
-		if (n1)
+		}
+		if (n1) {
 			pollfd[0].events |= POLLOUT;
-		else
+		} else {
 			pollfd[1].events |= POLLIN;
+		}
 
 		/* poll() also cause kernel to txsync/rxsync the NICs */
 		ret = poll(pollfd, 2, 2500);
 #endif /* defined(_WIN32) || defined(BUSYWAIT) */
-		if (ret <= 0 || verbose)
+		if (ret <= 0 || verbose) {
 			D("poll %s [0] ev %x %x rx %d@%d tx %d,"
 			  " [1] ev %x %x rx %d@%d tx %d",
 			    ret <= 0 ? "timeout" : "ok", pollfd[0].events,
@@ -321,8 +343,10 @@ main(int argc, char **argv)
 			    pollfd[1].revents, pkt_queued(pb, 0),
 			    NETMAP_RXRING(pb->nifp, pb->cur_rx_ring)->cur,
 			    pkt_queued(pb, 1));
-		if (ret < 0)
+		}
+		if (ret < 0) {
 			continue;
+		}
 		if (pollfd[0].revents & POLLERR) {
 			struct netmap_ring *rx = NETMAP_RXRING(pa->nifp,
 			    pa->cur_rx_ring);
@@ -335,11 +359,13 @@ main(int argc, char **argv)
 			D("error on fd1, rx [%d,%d,%d)", rx->head, rx->cur,
 			    rx->tail);
 		}
-		if (pollfd[0].revents & POLLOUT)
+		if (pollfd[0].revents & POLLOUT) {
 			move(pb, pa, burst);
+		}
 
-		if (pollfd[1].revents & POLLOUT)
+		if (pollfd[1].revents & POLLOUT) {
 			move(pa, pb, burst);
+		}
 
 		/* We don't need ioctl(NIOCTXSYNC) on the two file descriptors
 		 * here, kernel will txsync on next poll(). */

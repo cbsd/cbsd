@@ -81,9 +81,8 @@ magicIndex(char *magicValue)
 	}
 	if (found) {
 		return mime_info[i].mimeCode;
-	} else {
-		return 0;
 	}
+	return 0;
 }
 
 static void
@@ -127,7 +126,8 @@ int
 main(int argc, char *argv[])
 {
 	int optcode = 0;
-	int option_index = 0, ret = 0;
+	int option_index = 0;
+	int ret = 0;
 	char *file = NULL;
 	int method = MAGIC_DEVICES;
 	char *tmp_method = NULL;
@@ -142,14 +142,16 @@ main(int argc, char *argv[])
 		/* End of options marker */
 		{ 0, 0, 0, 0 } };
 
-	if (argc < 2)
+	if (argc < 2) {
 		usage();
+	}
 
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_FILE:
 			file = malloc(strlen(optarg) + 1);

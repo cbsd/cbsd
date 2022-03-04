@@ -60,18 +60,15 @@ static struct jailparam *params;
 static int *param_parent;
 static int nparams;
 unsigned int running_jails;
-static int add_param(const char *name, void *value, size_t valuelen,
-    struct jailparam *source, unsigned flags);
-static int sort_param(const void *a, const void *b);
-static int print_jail(int pflags, int jflags);
 
 int list_data();
-int update_racct_jail(char *, char *, int);
 
 int
 sum_data()
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	char sql[512];
 	char stats_file[1024];
 	const char *hostname = getenv(
@@ -88,7 +85,8 @@ sum_data()
 
 	struct sum_item_data *newd;
 	struct sum_item_data *temp;
-	struct sum_item_data *sumch, *next_sumch;
+	struct sum_item_data *sumch;
+	struct sum_item_data *next_sumch;
 
 	tolog(log_level, "\n ***---calc jail avgdata---*** \n");
 
@@ -96,10 +94,12 @@ sum_data()
 	cur_time = (time_t)now_time.tv_sec;
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (strlen(ch->orig_name) < 1)
+		if (strlen(ch->orig_name) < 1) {
 			continue;
-		if (ch->modified == 0)
+		}
+		if (ch->modified == 0) {
 			continue;
+		}
 		i = sum_jname_exist(ch->orig_name);
 
 		if (i) {
@@ -142,8 +142,9 @@ sum_data()
 
 	memset(json_str, 0, sizeof(json_str));
 	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
-		if (strlen(sumch->name) < 1)
+		if (strlen(sumch->name) < 1) {
 			continue;
+		}
 		tolog(log_level,
 		    " ***[%s]SUM|PCPU:%d,MEM:%ld,PROC:%d,OPENFILES:%d,RBPS:%d,WBPS:%d,RIOPS:%d,WIOPS:%d,PMEM:%d,TIME:%ld\n",
 		    sumch->name, sumch->pcpu / round_total,
@@ -198,7 +199,7 @@ sum_data()
 
 			influx->items++;
 			//			tolog(log_level,"%d RACCT items
-			//queued for storage\n", influx->items);
+			// queued for storage\n", influx->items);
 		}
 #endif
 
@@ -219,9 +220,8 @@ sum_data()
 				// jail was removed in directory not exist
 				// anymore
 				continue;
-			} else {
-				fclose(fp);
 			}
+			fclose(fp);
 
 			sprintf(sql,
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
@@ -255,18 +255,20 @@ sum_data()
 	if (OUTPUT_BEANSTALKD & output_flags) {
 		strcat(json_str, "]}");
 		bs_tick = 0;
-	} else
+	} else {
 		skip_beanstalk = 1;
+	}
 
-	if (cur_round != save_loop_count || skip_beanstalk == 1)
+	if (cur_round != save_loop_count || skip_beanstalk == 1) {
 		return 0;
+	}
 
 	if (strlen(json_str) > 3) {
 		tolog(log_level, "bs_put: (%s)\n", json_str);
 		ret = bs_put(bs_socket, 0, 0, 0, json_str, strlen(json_str));
-		if (ret > 0)
+		if (ret > 0) {
 			bs_tick = 1;
-		else {
+		} else {
 			tolog(log_level,
 			    "bs_put failed, trying to reconnect...\n");
 			bs_disconnect(bs_socket);
@@ -282,17 +284,21 @@ sum_data()
 int
 update_racct_jail(char *jname, char *orig_jname, int jid)
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	struct timeval now_time;
 	int cur_time = 0;
 	int error;
-	char *copy, *outbuf = NULL, *tmp;
+	char *copy;
+	char *outbuf = NULL;
+	char *tmp;
 	char *var;
 	size_t outbuflen = RCTL_DEFAULT_BUFSIZE / 4;
 	int store = 0;
 	char param_name[512];
-	char filter[MAXJNAME + 7],
-	    unexpanded_rule[MAXJNAME + 7]; // 7 - extra "jail::\0"
+	char filter[MAXJNAME + 7];
+	char unexpanded_rule[MAXJNAME + 7]; // 7 - extra "jail::\0"
 
 	sprintf(filter, "jail:%s:", orig_jname);
 	sprintf(unexpanded_rule, "jail:%s", orig_jname);
@@ -311,16 +317,20 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 			for (;;) {
 				outbuflen *= 4;
 				outbuf = realloc(outbuf, outbuflen);
-				if (outbuf == NULL)
+				if (outbuf == NULL) {
 					err(1, "realloc");
+				}
 				error = rctl_get_racct(filter,
 				    strlen(filter) + 1, outbuf, outbuflen);
-				if (error == 0)
+				if (error == 0) {
 					break;
-				if (errno == ERANGE)
+				}
+				if (errno == ERANGE) {
 					continue;
-				if (errno == ENOSYS)
+				}
+				if (errno == ENOSYS) {
 					enosys();
+				}
 
 				warn(
 				    "failed to show resource consumption for '%s'",
@@ -331,13 +341,15 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 			copy = outbuf;
 			int i = 0;
 			while ((tmp = strsep(&copy, ",")) != NULL) {
-				if (tmp[0] == '\0')
+				if (tmp[0] == '\0') {
 					break; /* XXX */
+				}
 
 				while ((var = strsep(&tmp, "=")) != NULL) {
 					i++;
-					if (var[0] == '\0')
+					if (var[0] == '\0') {
 						break; /* XXX */
+					}
 					if (i == 1) {
 						memset(param_name, 0,
 						    sizeof(param_name));
@@ -346,74 +358,78 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 					if (i == 2) {
 						// printf("val* %s\n",var);
 						if (!strcmp(param_name,
-							"cputime"))
+							"cputime")) {
 							ch->cputime = atoi(var);
-						else if (!strcmp(param_name,
-							     "datasize"))
+						} else if (!strcmp(param_name,
+							       "datasize")) {
 							ch->datasize = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "stacksize"))
+						} else if (!strcmp(param_name,
+							       "stacksize")) {
 							ch->stacksize = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "memoryuse"))
+						} else if (!strcmp(param_name,
+							       "memoryuse")) {
 							ch->memoryuse = atol(
 							    var);
-						else if (!strcmp(param_name,
-							     "memorylocked"))
+						} else if (
+						    !strcmp(param_name,
+							"memorylocked")) {
 							ch->memorylocked = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "maxproc"))
+						} else if (!strcmp(param_name,
+							       "maxproc")) {
 							ch->maxproc = atoi(var);
-						else if (!strcmp(param_name,
-							     "openfiles"))
+						} else if (!strcmp(param_name,
+							       "openfiles")) {
 							ch->openfiles = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "vmemoryuse"))
+						} else if (!strcmp(param_name,
+							       "vmemoryuse")) {
 							ch->vmemoryuse = atol(
 							    var);
-						else if (!strcmp(param_name,
-							     "swapuse"))
+						} else if (!strcmp(param_name,
+							       "swapuse")) {
 							ch->swapuse = atoi(var);
-						else if (!strcmp(param_name,
-							     "nthr"))
+						} else if (!strcmp(param_name,
+							       "nthr")) {
 							ch->nthr = atoi(var);
-						else if (!strcmp(param_name,
-							     "readbps"))
+						} else if (!strcmp(param_name,
+							       "readbps")) {
 							ch->readbps = atoi(var);
-						else if (!strcmp(param_name,
-							     "writebps"))
+						} else if (!strcmp(param_name,
+							       "writebps")) {
 							ch->writebps = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "readiops"))
+						} else if (!strcmp(param_name,
+							       "readiops")) {
 							ch->readiops = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "writeiops"))
+						} else if (!strcmp(param_name,
+							       "writeiops")) {
 							ch->writeiops = atoi(
 							    var);
-						else if (!strcmp(param_name,
-							     "pcpu")) {
-							if (ncpu > 1)
+						} else if (!strcmp(param_name,
+							       "pcpu")) {
+							if (ncpu > 1) {
 								ch->pcpu =
 								    (atoi(var) /
 									ncpu);
-							else
+							} else {
 								ch->pcpu = atoi(
 								    var);
-							if (ch->pcpu > 100)
+							}
+							if (ch->pcpu > 100) {
 								ch->pcpu = 100;
+							}
 						} else {
 							// calculate pmem
 							ch->pmem = 100.0 *
 							    ch->memoryuse /
 							    maxmem;
-							if (ch->pmem > 100)
+							if (ch->pmem > 100) {
 								ch->pmem = 100;
+							}
 						}
 						i = 0;
 					}
@@ -428,8 +444,17 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 int
 main(int argc, char **argv)
 {
-	char *dot, *ep, *jname, *pname;
-	int c, i, jflags, jid, lastjid, pflags, spc;
+	char *dot;
+	char *ep;
+	char *jname;
+	char *pname;
+	int c;
+	int i;
+	int jflags;
+	int jid;
+	int lastjid;
+	int pflags;
+	int spc;
 	struct item_data *newd;
 	struct item_data *temp;
 	struct timeval now_time;
@@ -472,8 +497,9 @@ main(int argc, char **argv)
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_HELP:
 			usage();
@@ -488,19 +514,22 @@ main(int argc, char **argv)
 			loop_interval = atoi(optarg);
 			break;
 		case C_PROMETHEUS_EXPORTER:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_PROMETHEUS;
+			}
 			break;
 		case C_SAVE_LOOP_COUNT:
 			save_loop_count = atoi(optarg);
 			break;
 		case C_SAVE_BEANSTALKD:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_BEANSTALKD;
+			}
 			break;
 		case C_SAVE_SQLITE3:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_SQLITE3;
+			}
 			break;
 #ifdef WITH_INFLUX
 		case C_SAVE_INFLUX:
@@ -512,8 +541,9 @@ main(int argc, char **argv)
 	}
 
 	printf("CBSD jail racct statistics exporter\n");
-	if (log_file)
+	if (log_file) {
 		printf("log_file: %s\n", log_file);
+	}
 	printf("log_level: %d\n", log_level);
 	printf("loop_interval: %d seconds\n", loop_interval);
 	printf("save_loop_count: %d\n", save_loop_count);
@@ -604,23 +634,26 @@ main(int argc, char **argv)
 		printf("Cannot open or create pidfile: %s", path_my_pidfile);
 	}
 
-	if (pidfile != NULL)
+	if (pidfile != NULL) {
 		pidfile_write(pidfile);
+	}
 
 	i = sysctlbyname("hw.physmem", &maxmem, &maxmem_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster physical memory via sysctl hw.physmem");
+		}
 		err(1, "sysctlbyname");
 	}
 
 	i = sysctlbyname("hw.ncpu", &ncpu, &ncpu_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1, "Unable to determine CPU count via hw.ncpu");
+		}
 		err(1, "sysctlbyname");
 	}
 
@@ -641,16 +674,19 @@ main(int argc, char **argv)
 		tolog(log_level, "main loop\n");
 
 		if ((OUTPUT_BEANSTALKD & output_flags) && bs_connected != 1) {
-			if (bs_socket != -1)
+			if (bs_socket != -1) {
 				bs_disconnect(bs_socket);
+			}
 			bs_socket = init_bs("racct-jail");
-		} else if (!(OUTPUT_BEANSTALKD & output_flags))
+		} else if (!(OUTPUT_BEANSTALKD & output_flags)) {
 			bs_connected = 0;
+		}
 
 		while (true) {
 			if ((OUTPUT_BEANSTALKD & output_flags) &&
-			    bs_connected != 1)
+			    bs_connected != 1) {
 				break;
+			}
 
 #ifdef WITH_INFLUX
 			if (OUTPUT_INFLUX & output_flags) {
@@ -678,10 +714,12 @@ main(int argc, char **argv)
 			for (lastjid = 0; lastjid >= 0;) {
 				memset(cur_jname, 0, sizeof(cur_jname));
 				lastjid = print_jail(pflags, jflags);
-				if (cur_jid == 0)
+				if (cur_jid == 0) {
 					continue;
-				if (strlen(cur_jname) < 1)
+				}
+				if (strlen(cur_jname) < 1) {
 					continue;
+				}
 
 				memset(tmpjname, 0, sizeof(tmpjname));
 				strcpy(tmpjname, cur_jname);
@@ -771,10 +809,12 @@ main(int argc, char **argv)
 					//(i=0;i<current_jobs_ready;i++) {
 					////remove
 					//						bs_reserve_with_timeout(bs_socket,
-					//1, &job); 						bs_release(bs_socket,
-					//job->id, 0, 0); 						bs_free_job(job);
+					// 1, &job);
+					// bs_release(bs_socket, job->id, 0, 0);
+					// bs_free_job(job);
 					//						bs_peek_ready(bs_socket,
-					//&job); 						bs_delete(bs_socket, job->id);
+					//&job);
+					//bs_delete(bs_socket, job->id);
 					//						bs_free_job(job);
 					//					}
 				} else if (current_jobs_ready > 20) {
@@ -782,8 +822,9 @@ main(int argc, char **argv)
 					tolog(log_level,
 					    "[debug]too many ready jobs in bs: %d. skip for beanstalk\n",
 					    current_jobs_ready);
-				} else
+				} else {
 					skip_beanstalk = 0;
+				}
 			}
 
 			// giant cycle sleep
@@ -791,15 +832,18 @@ main(int argc, char **argv)
 
 			sleep(loop_interval);
 			cur_round++;
-			if (cur_round > save_loop_count)
+			if (cur_round > save_loop_count) {
 				cur_round = 0;
-			if (cur_round == save_loop_count)
+			}
+			if (cur_round == save_loop_count) {
 				sum_data();
+			}
 		}
 	}
 
-	if (pidfile != NULL)
+	if (pidfile != NULL) {
 		pidfile_remove(pidfile);
+	}
 
 #ifdef WITH_INFLUX
 	cbsd_influx_free();
@@ -812,8 +856,10 @@ static int
 add_param(const char *name, void *value, size_t valuelen,
     struct jailparam *source, unsigned flags)
 {
-	struct jailparam *param, *tparams;
-	int i, tnparams;
+	struct jailparam *param;
+	struct jailparam *tparams;
+	int i;
+	int tnparams;
 
 	static int paramlistsize;
 
@@ -827,16 +873,17 @@ add_param(const char *name, void *value, size_t valuelen,
 		qsort(tparams, (size_t)tnparams, sizeof(struct jailparam),
 		    sort_param);
 
-		for (i = 0; i < tnparams; i++)
+		for (i = 0; i < tnparams; i++) {
 			add_param(tparams[i].jp_name, NULL, (size_t)0,
 			    tparams + i, flags);
+		}
 
 		free(tparams);
 		return -1;
 	}
 
 	/* Check for repeat parameters. */
-	for (i = 0; i < nparams; i++)
+	for (i = 0; i < nparams; i++) {
 		if (!strcmp(name, params[i].jp_name)) {
 			if (value != NULL &&
 			    jailparam_import_raw(params + i, value, valuelen) <
@@ -846,10 +893,12 @@ add_param(const char *name, void *value, size_t valuelen,
 			}
 			params[i].jp_flags |= flags;
 
-			if (source != NULL)
+			if (source != NULL) {
 				jailparam_free(source, 1);
+			}
 			return i;
 		}
+	}
 
 	/* Make sure there is room for the new param record. */
 	if (!nparams) {
@@ -871,10 +920,9 @@ add_param(const char *name, void *value, size_t valuelen,
 			free(params);
 			free(param_parent);
 			return 1;
-		} else {
-			params = tmp_params;
-			param_parent = tmp_param_parent;
 		}
+		params = tmp_params;
+		param_parent = tmp_param_parent;
 	}
 
 	/* Look up the parameter. */
@@ -902,18 +950,22 @@ add_param(const char *name, void *value, size_t valuelen,
 static int
 sort_param(const void *a, const void *b)
 {
-	const struct jailparam *parama, *paramb;
-	char *ap, *bp;
+	const struct jailparam *parama;
+	const struct jailparam *paramb;
+	char *ap;
+	char *bp;
 
 	/* Put top-level parameters first. */
 	parama = a;
 	paramb = b;
 	ap = strchr(parama->jp_name, '.');
 	bp = strchr(paramb->jp_name, '.');
-	if (ap && !bp)
+	if (ap && !bp) {
 		return (1);
-	if (bp && !ap)
+	}
+	if (bp && !ap) {
 		return (-1);
+	}
 
 	return (strcmp(parama->jp_name, paramb->jp_name));
 }
@@ -923,12 +975,18 @@ print_jail(int pflags, int jflags)
 {
 	char *nname;
 	char **param_values;
-	int i, ai, jid, count, n, spc;
+	int i;
+	int ai;
+	int jid;
+	int count;
+	int n;
+	int spc;
 
 	jid = jailparam_get(params, nparams, jflags);
 
-	if (jid < 0)
+	if (jid < 0) {
 		return jid;
+	}
 
 	cur_jid = *(int *)params[0].jp_value;
 	strcpy(cur_jname, (char *)params[1].jp_value);
@@ -939,17 +997,21 @@ print_jail(int pflags, int jflags)
 int
 list_data()
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	int ret = 0;
 
-	if (log_level == 0)
+	if (log_level == 0) {
 		return 0;
+	}
 
 	tolog(log_level, "---listdata---\n");
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (ch->modified == 0)
+		if (ch->modified == 0) {
 			continue;
+		}
 		tolog(log_level,
 		    "TIME:%ld,NAME:%s,ORIGNAME:%s,PID:%d,PCPU:%d,MEM:%lu,PROC:%d,OPENFILES:%d,RB:%d,WB:%d,RIO:%d,WIO:%d,PMEM:%d\n",
 		    ch->modified, ch->name, ch->orig_name, ch->pid, ch->pcpu,

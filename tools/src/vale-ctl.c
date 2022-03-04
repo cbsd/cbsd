@@ -56,13 +56,16 @@
 void
 parse_nmr_config(const char *conf, struct nmreq *nmr)
 {
-	char *w, *tok;
-	int i, v;
+	char *w;
+	char *tok;
+	int i;
+	int v;
 
 	nmr->nr_tx_rings = nmr->nr_rx_rings = 0;
 	nmr->nr_tx_slots = nmr->nr_rx_slots = 0;
-	if (conf == NULL || !*conf)
+	if (conf == NULL || !*conf) {
 		return;
+	}
 	w = strdup(conf);
 	for (i = 0, tok = strtok(w, ","); tok; i++, tok = strtok(NULL, ",")) {
 		v = atoi(tok);
@@ -103,8 +106,9 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 
 	bzero(&nmr, sizeof(nmr));
 	nmr.nr_version = NETMAP_API;
-	if (name != NULL) /* might be NULL */
+	if (name != NULL) { /* might be NULL */
 		strncpy(nmr.nr_name, name, sizeof(nmr.nr_name) - 1);
+	}
 	nmr.nr_cmd = nr_cmd;
 	parse_nmr_config(nmr_config, &nmr);
 	nmr.nr_arg2 = nr_arg2;
@@ -138,10 +142,11 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 			    nr_cmd == NETMAP_BDG_DETACH ? "detach" : "attach",
 			    name);
 			perror(name);
-		} else
+		} else {
 			ND("Success to %s %s to the bridge",
 			    nr_cmd == NETMAP_BDG_DETACH ? "detach" : "attach",
 			    name);
+		}
 		break;
 
 	case NETMAP_BDG_LIST:
@@ -150,9 +155,10 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 			if (error) {
 				ND("Unable to obtain info for %s", name);
 				perror(name);
-			} else
+			} else {
 				D("%s at bridge:%d port:%d", name, nmr.nr_arg1,
 				    nmr.nr_arg2);
+			}
 			break;
 		}
 
@@ -180,21 +186,23 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 							NR_REG_ALL_NIC;
 		nmr.nr_ringid = nmr.nr_rx_slots;
 		/* number of cores/rings */
-		if (nmr.nr_flags == NR_REG_ALL_NIC)
+		if (nmr.nr_flags == NR_REG_ALL_NIC) {
 			nmr.nr_arg1 = 1;
-		else
+		} else {
 			nmr.nr_arg1 = nmr.nr_tx_rings;
+		}
 
 		error = ioctl(fd, NIOCREGIF, &nmr);
-		if (!error)
+		if (!error) {
 			D("polling on %s %s", nmr.nr_name,
 			    nr_cmd == NETMAP_BDG_POLLING_ON ? "started" :
 								    "stopped");
-		else
+		} else {
 			D("polling on %s %s (err %d)", nmr.nr_name,
 			    nr_cmd == NETMAP_BDG_POLLING_ON ? "couldn't start" :
 								    "couldn't stop",
 			    error);
+		}
 		break;
 
 	default: /* GINFO */
@@ -203,8 +211,9 @@ bdg_ctl(const char *name, int nr_cmd, int nr_arg, char *nmr_config, int nr_arg2)
 		if (error) {
 			ND("Unable to get if info for %s", name);
 			perror(name);
-		} else
+		} else {
 			D("%s: %d queues.", name, nmr.nr_rx_rings);
+		}
 		break;
 	}
 	close(fd);
@@ -237,13 +246,17 @@ usage(int errcode)
 int
 main(int argc, char *argv[])
 {
-	int ch, nr_cmd = 0, nr_arg = 0;
-	char *name = NULL, *nmr_config = NULL;
+	int ch;
+	int nr_cmd = 0;
+	int nr_arg = 0;
+	char *name = NULL;
+	char *nmr_config = NULL;
 	int nr_arg2 = 0;
 
 	while ((ch = getopt(argc, argv, "d:a:h:g:l:n:r:C:p:P:m:")) != -1) {
-		if (ch != 'C' && ch != 'm')
+		if (ch != 'C' && ch != 'm') {
 			name = optarg; /* default */
+		}
 		switch (ch) {
 		default:
 			fprintf(stderr, "bad option %c %s", ch, optarg);

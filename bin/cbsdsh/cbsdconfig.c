@@ -16,7 +16,7 @@ config_handler(void *user, const char *section, const char *name,
 
 		if (!seek) {
 			//			printf("sql: added database
-			//settings
+			// settings
 			//'%s'\n",section+4);
 
 			seek = malloc(sizeof(sql_database_t));

@@ -13,13 +13,14 @@ isIP(char *str)
 	i = 0;
 	j = 0;
 	while (*c) {
-		if ((*c >= '0') && (*c <= '9'))
+		if ((*c >= '0') && (*c <= '9')) {
 			i++;
-		else if ((*c == '.') && i) {
+		} else if ((*c == '.') && i) {
 			i = 0;
 			j++;
-		} else
+		} else {
 			return 0;
+		}
 		c++;
 	}
 	return (i && (j == 3));
@@ -32,15 +33,16 @@ str2ip(char *str)
 	unsigned long res;
 	unsigned char n;
 
-	if (!isIP(str))
+	if (!isIP(str)) {
 		return 0;
+	}
 	res = 0;
 	n = 0;
 	c = str;
 	while (*c) {
-		if ((*c >= '0') && (*c <= '9'))
+		if ((*c >= '0') && (*c <= '9')) {
 			n = n * 10 + (*c - '0');
-		else {
+		} else {
 			res = (res << 8) | n;
 			n = 0;
 		}
@@ -58,15 +60,17 @@ str2mask(char *str)
 	unsigned int n;
 	unsigned int i;
 
-	if (isIP(str))
+	if (isIP(str)) {
 		return str2ip(str);
+	}
 	n = 0;
 	c = str;
 	while (*c) {
-		if ((*c >= '0') && (*c <= '9'))
+		if ((*c >= '0') && (*c <= '9')) {
 			n = n * 10 + (*c - '0');
-		else
+		} else {
 			return 0;
+		}
 		c++;
 	}
 	res = 0;
@@ -91,8 +95,9 @@ main(int argc, char **args)
 	unsigned long mask;
 	unsigned long test;
 
-	if (!strcmp(args[1], "--help"))
+	if (!strcmp(args[1], "--help")) {
 		usage();
+	}
 
 	if (argc != 4) {
 		return 2;

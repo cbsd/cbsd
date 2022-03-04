@@ -106,7 +106,7 @@ cbsd_node_ls(int argc, char **argv)
 				row_color = "\033[0;39m";
 
 				//				out1fmt("Found
-				//node: %s\n",valv[i]);
+				// node: %s\n",valv[i]);
 				for (int j = 0; j < nodevc; j++) {
 					if (strcmp(nodevv[j], "ip") == 0)
 						node_ip = nodevv[j] +

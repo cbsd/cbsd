@@ -140,23 +140,23 @@ static int nargc;
 static char **t_wp;
 static int parenlevel;
 
-static int aexpr(enum token);
-static int binop(enum token);
-static int equalf(const char *, const char *);
-static int filstat(char *, enum token);
-static int getn(const char *);
-static intmax_t getq(const char *);
-static int intcmp(const char *, const char *);
+static int aexpr(enum token /*n*/);
+static int binop(enum token /*n*/);
+static int equalf(const char * /*f1*/, const char * /*f2*/);
+static int filstat(char * /*nm*/, enum token /*mode*/);
+static int getn(const char * /*s*/);
+static intmax_t getq(const char * /*s*/);
+static int intcmp(const char * /*s1*/, const char * /*s2*/);
 static int isunopoperand(void);
 static int islparenoperand(void);
 static int isrparenoperand(void);
-static int newerf(const char *, const char *);
-static int nexpr(enum token);
-static int oexpr(enum token);
-static int olderf(const char *, const char *);
-static int primary(enum token);
-static void syntax(const char *, const char *);
-static enum token t_lex(char *);
+static int newerf(const char * /*f1*/, const char * /*f2*/);
+static int nexpr(enum token /*n*/);
+static int oexpr(enum token /*n*/);
+static int olderf(const char * /*f1*/, const char * /*f2*/);
+static int primary(enum token /*n*/);
+static void syntax(const char * /*op*/, const char * /*msg*/);
+static enum token t_lex(char * /*s*/);
 
 int
 main(int argc, char **argv)
@@ -164,19 +164,22 @@ main(int argc, char **argv)
 	int res;
 	char *p;
 
-	if ((p = strrchr(argv[0], '/')) == NULL)
+	if ((p = strrchr(argv[0], '/')) == NULL) {
 		p = argv[0];
-	else
+	} else {
 		p++;
+	}
 	if (strcmp(p, "[") == 0) {
-		if (strcmp(argv[--argc], "]") != 0)
+		if (strcmp(argv[--argc], "]") != 0) {
 			error("missing ]");
+		}
 		argv[argc] = NULL;
 	}
 
 	/* no expression => false */
-	if (--argc <= 0)
+	if (--argc <= 0) {
 		return 1;
+	}
 
 #ifndef SHELL
 	(void)setlocale(LC_CTYPE, "");
@@ -189,11 +192,13 @@ main(int argc, char **argv)
 		--nargc;
 		++t_wp;
 		res = oexpr(t_lex(*t_wp));
-	} else
+	} else {
 		res = !oexpr(t_lex(*t_wp));
+	}
 
-	if (--nargc > 0)
+	if (--nargc > 0) {
 		syntax(*t_wp, "unexpected operator");
+	}
 
 	return res;
 }
@@ -202,10 +207,11 @@ static void
 syntax(const char *op, const char *msg)
 {
 
-	if (op && *op)
+	if (op && *op) {
 		error("%s: %s", op, msg);
-	else
+	} else {
 		error("%s", msg);
+	}
 }
 
 static int
@@ -214,9 +220,10 @@ oexpr(enum token n)
 	int res;
 
 	res = aexpr(n);
-	if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) == BOR)
+	if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) == BOR) {
 		return oexpr(t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL)) ||
 		    res;
+	}
 	t_wp--;
 	nargc++;
 	return res;
@@ -228,9 +235,10 @@ aexpr(enum token n)
 	int res;
 
 	res = nexpr(n);
-	if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) == BAND)
+	if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) == BAND) {
 		return aexpr(t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL)) &&
 		    res;
+	}
 	t_wp--;
 	nargc++;
 	return res;
@@ -239,8 +247,9 @@ aexpr(enum token n)
 static int
 nexpr(enum token n)
 {
-	if (n == UNOT)
+	if (n == UNOT) {
 		return !nexpr(t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL));
+	}
 	return primary(n);
 }
 
@@ -250,8 +259,9 @@ primary(enum token n)
 	enum token nn;
 	int res;
 
-	if (n == EOI)
+	if (n == EOI) {
 		return 0; /* missing expression */
+	}
 	if (n == LPAREN) {
 		parenlevel++;
 		if ((nn = t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL)) ==
@@ -260,15 +270,17 @@ primary(enum token n)
 			return 0; /* missing expression */
 		}
 		res = oexpr(nn);
-		if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) != RPAREN)
+		if (t_lex(nargc > 0 ? (--nargc, *++t_wp) : NULL) != RPAREN) {
 			syntax(NULL, "closing paren expected");
+		}
 		parenlevel--;
 		return res;
 	}
 	if (TOKEN_TYPE(n) == UNOP) {
 		/* unary expression */
-		if (--nargc == 0)
+		if (--nargc == 0) {
 			syntax(NULL, "argument expected"); /* impossible */
+		}
 		switch (n) {
 		case STREZ:
 			return strlen(*++t_wp) == 0;
@@ -282,8 +294,9 @@ primary(enum token n)
 	}
 
 	nn = t_lex(nargc > 0 ? t_wp[1] : NULL);
-	if (TOKEN_TYPE(nn) == BINOP)
+	if (TOKEN_TYPE(nn) == BINOP) {
 		return binop(nn);
+	}
 
 	return strlen(*t_wp) > 0;
 }
@@ -291,13 +304,16 @@ primary(enum token n)
 static int
 binop(enum token n)
 {
-	const char *opnd1, *op, *opnd2;
+	const char *opnd1;
+	const char *op;
+	const char *opnd2;
 
 	opnd1 = *t_wp;
 	op = nargc > 0 ? (--nargc, *++t_wp) : NULL;
 
-	if ((opnd2 = nargc > 0 ? (--nargc, *++t_wp) : NULL) == NULL)
+	if ((opnd2 = nargc > 0 ? (--nargc, *++t_wp) : NULL) == NULL) {
 		syntax(op, "argument expected");
+	}
 
 	switch (n) {
 	case STREQ:
@@ -337,8 +353,9 @@ filstat(char *nm, enum token mode)
 {
 	struct stat s;
 
-	if (mode == FILSYM ? lstat(nm, &s) : stat(nm, &s))
+	if (mode == FILSYM ? lstat(nm, &s) : stat(nm, &s)) {
 		return 0;
+	}
 
 	switch (mode) {
 	case FILRD:
@@ -347,10 +364,12 @@ filstat(char *nm, enum token mode)
 		return (eaccess(nm, W_OK) == 0);
 	case FILEX:
 		/* XXX work around eaccess(2) false positives for superuser */
-		if (eaccess(nm, X_OK) != 0)
+		if (eaccess(nm, X_OK) != 0) {
 			return 0;
-		if (S_ISDIR(s.st_mode) || geteuid() != 0)
+		}
+		if (S_ISDIR(s.st_mode) || geteuid() != 0) {
 			return 1;
+		}
 		return (s.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
 	case FILEXIST:
 		return (eaccess(nm, F_OK) == 0);
@@ -399,8 +418,9 @@ t_lex(char *s)
 				 TOKEN_TYPE(op->op_num) == BUNOP) &&
 				isunopoperand()) ||
 			    (op->op_num == LPAREN && islparenoperand()) ||
-			    (op->op_num == RPAREN && isrparenoperand()))
+			    (op->op_num == RPAREN && isrparenoperand())) {
 				break;
+			}
 			return op->op_num;
 		}
 		op++;
@@ -415,16 +435,19 @@ isunopoperand(void)
 	char *s;
 	char *t;
 
-	if (nargc == 1)
+	if (nargc == 1) {
 		return 1;
+	}
 	s = *(t_wp + 1);
-	if (nargc == 2)
+	if (nargc == 2) {
 		return parenlevel == 1 && strcmp(s, ")") == 0;
+	}
 	t = *(t_wp + 2);
 	while (*op->op_text) {
-		if (strcmp(s, op->op_text) == 0)
+		if (strcmp(s, op->op_text) == 0) {
 			return TOKEN_TYPE(op->op_num) == BINOP &&
 			    (parenlevel == 0 || t[0] != ')' || t[1] != '\0');
+		}
 		op++;
 	}
 	return 0;
@@ -436,16 +459,20 @@ islparenoperand(void)
 	struct t_op const *op = ops;
 	char *s;
 
-	if (nargc == 1)
+	if (nargc == 1) {
 		return 1;
+	}
 	s = *(t_wp + 1);
-	if (nargc == 2)
+	if (nargc == 2) {
 		return parenlevel == 1 && strcmp(s, ")") == 0;
-	if (nargc != 3)
+	}
+	if (nargc != 3) {
 		return 0;
+	}
 	while (*op->op_text) {
-		if (strcmp(s, op->op_text) == 0)
+		if (strcmp(s, op->op_text) == 0) {
 			return TOKEN_TYPE(op->op_num) == BINOP;
+		}
 		op++;
 	}
 	return 0;
@@ -456,11 +483,13 @@ isrparenoperand(void)
 {
 	char *s;
 
-	if (nargc == 1)
+	if (nargc == 1) {
 		return 0;
+	}
 	s = *(t_wp + 1);
-	if (nargc == 2)
+	if (nargc == 2) {
 		return parenlevel == 1 && strcmp(s, ")") == 0;
+	}
 	return 0;
 }
 
@@ -474,18 +503,22 @@ getn(const char *s)
 	errno = 0;
 	r = strtol(s, &p, 10);
 
-	if (s == p)
+	if (s == p) {
 		error("%s: bad number", s);
+	}
 
-	if (errno != 0)
+	if (errno != 0) {
 		error((errno == EINVAL) ? "%s: bad number" : "%s: out of range",
 		    s);
+	}
 
-	while (isspace((unsigned char)*p))
+	while (isspace((unsigned char)*p)) {
 		p++;
+	}
 
-	if (*p)
+	if (*p) {
 		error("%s: bad number", s);
+	}
 
 	return (int)r;
 }
@@ -500,18 +533,22 @@ getq(const char *s)
 	errno = 0;
 	r = strtoimax(s, &p, 10);
 
-	if (s == p)
+	if (s == p) {
 		error("%s: bad number", s);
+	}
 
-	if (errno != 0)
+	if (errno != 0) {
 		error((errno == EINVAL) ? "%s: bad number" : "%s: out of range",
 		    s);
+	}
 
-	while (isspace((unsigned char)*p))
+	while (isspace((unsigned char)*p)) {
 		p++;
+	}
 
-	if (*p)
+	if (*p) {
 		error("%s: bad number", s);
+	}
 
 	return r;
 }
@@ -519,16 +556,19 @@ getq(const char *s)
 static int
 intcmp(const char *s1, const char *s2)
 {
-	intmax_t q1, q2;
+	intmax_t q1;
+	intmax_t q2;
 
 	q1 = getq(s1);
 	q2 = getq(s2);
 
-	if (q1 > q2)
+	if (q1 > q2) {
 		return 1;
+	}
 
-	if (q1 < q2)
+	if (q1 < q2) {
 		return -1;
+	}
 
 	return 0;
 }
@@ -536,15 +576,19 @@ intcmp(const char *s1, const char *s2)
 static int
 newerf(const char *f1, const char *f2)
 {
-	struct stat b1, b2;
+	struct stat b1;
+	struct stat b2;
 
-	if (stat(f1, &b1) != 0 || stat(f2, &b2) != 0)
+	if (stat(f1, &b1) != 0 || stat(f2, &b2) != 0) {
 		return 0;
+	}
 
-	if (b1.st_mtim.tv_sec > b2.st_mtim.tv_sec)
+	if (b1.st_mtim.tv_sec > b2.st_mtim.tv_sec) {
 		return 1;
-	if (b1.st_mtim.tv_sec < b2.st_mtim.tv_sec)
+	}
+	if (b1.st_mtim.tv_sec < b2.st_mtim.tv_sec) {
 		return 0;
+	}
 
 	return (b1.st_mtim.tv_nsec > b2.st_mtim.tv_nsec);
 }
@@ -558,7 +602,8 @@ olderf(const char *f1, const char *f2)
 static int
 equalf(const char *f1, const char *f2)
 {
-	struct stat b1, b2;
+	struct stat b1;
+	struct stat b2;
 
 	return (stat(f1, &b1) == 0 && stat(f2, &b2) == 0 &&
 	    b1.st_dev == b2.st_dev && b1.st_ino == b2.st_ino);

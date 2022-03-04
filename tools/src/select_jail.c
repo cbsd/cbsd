@@ -66,7 +66,8 @@ int
 mygetch(void)
 {
 	int c = 0;
-	struct termios term, oterm;
+	struct termios term;
+	struct termios oterm;
 
 	tcgetattr(0, &oterm);
 	memcpy(&term, &oterm, sizeof(term));
@@ -92,11 +93,13 @@ is_number(const char *p)
 	int i;
 	int n = 0;
 
-	for (i = 0; i < strlen(p) - 1; i++)
-		if ((p[i] > 47) && (p[i] < 58))
+	for (i = 0; i < strlen(p) - 1; i++) {
+		if ((p[i] > 47) && (p[i] < 58)) {
 			continue;
-		else
+		} else {
 			n = 1;
+		}
+	}
 
 	return n;
 }
@@ -129,7 +132,8 @@ void
 reverse()
 {
 	// curdata traverses the list, first is reset to empty list.
-	struct item_data *curdata = item_list, *nxtNode;
+	struct item_data *curdata = item_list;
+	struct item_data *nxtNode;
 	item_list = NULL;
 
 	// Until no more in list, insert current before first and advance.
@@ -153,7 +157,9 @@ main(int argc, char **argv)
 	int max_choice = 0;
 	char tmp_id;
 	struct item_data *m_item;
-	char *token, *string, *tofree;
+	char *token;
+	char *string;
+	char *tofree;
 	FILE *fp;
 	FILE *fo;
 	char buf[BUFLEN];
@@ -175,8 +181,9 @@ main(int argc, char **argv)
 	int n = 0;
 	char mylist[100][MAXFNAME];
 
-	if (argc < 3)
+	if (argc < 3) {
 		usage(argv[0]);
+	}
 	memset(ext, 0, sizeof(ext));
 
 	if (argv[3] != NULL) {
@@ -212,14 +219,16 @@ main(int argc, char **argv)
 	// load data
 	while ((dp = readdir(dirp)) != NULL &&
 	    listmax < sizeof mylist / sizeof mylist[0]) {
-		if (dp->d_name[0] == '.')
+		if (dp->d_name[0] == '.') {
 			continue;
+		}
 		strncpy(mylist[listmax++], dp->d_name, MAXFNAME);
 	}
 	(void)closedir(dirp);
 	free(dp);
-	if (listmax < 1)
+	if (listmax < 1) {
 		exit(0);
+	}
 
 	qsort(mylist, listmax, sizeof(mylist[0]), compare_fun);
 
@@ -247,8 +256,9 @@ main(int argc, char **argv)
 
 		if (!strncmp(m_item->ext, ext, strlen(ext))) {
 			// пропустим latest симлинк
-			if (!strncmp(m_item->name, "latest", 6))
+			if (!strncmp(m_item->name, "latest", 6)) {
 				continue;
+			}
 
 			tmp_id++;
 			id++;
@@ -311,9 +321,10 @@ main(int argc, char **argv)
 				case 2:
 					memset(m_item->node, 0,
 					    sizeof(m_item->node));
-					if (strlen(token) > 1)
+					if (strlen(token) > 1) {
 						sprintf(m_item->node, "on %s",
 						    token);
+					}
 					break;
 				}
 				x++;
@@ -337,9 +348,11 @@ main(int argc, char **argv)
 				memset(m_item->descr, 0, MAXDESCRLEN);
 				fgets(m_item->descr, MAXDESCRLEN, fp);
 				fclose(fp);
-				for (i = 0; i < strlen(m_item->descr); i++)
-					if (m_item->descr[i] == '\n')
+				for (i = 0; i < strlen(m_item->descr); i++) {
+					if (m_item->descr[i] == '\n') {
 						m_item->descr[i] = '\0';
+					}
+				}
 				fprintf(stderr, "new descr: %s descr!\n",
 				    m_item->descr);
 			} else {
@@ -368,7 +381,7 @@ main(int argc, char **argv)
 	item = 1;
 	i = 1;
 
-	if (strcmp(def_item, "CANCEL")) {
+	if (strcmp(def_item, "CANCEL") != 0) {
 		for (m_item = item_list; m_item; m_item = m_item->next) {
 			i++;
 			if (!strcmp(m_item->name, def_item)) {
@@ -393,8 +406,9 @@ main(int argc, char **argv)
 		item = 1;
 		special = 0; // is special key? (started with \033, aka '[' )
 
-		if (item == cur_choice)
+		if (item == cur_choice) {
 			printf("%s", SELECT);
+		}
 
 		printf(" %s0 .. CANCEL%s\n", BOLD, NORMAL);
 
@@ -412,29 +426,31 @@ main(int argc, char **argv)
 					}
 				}
 				if (item == cur_choice) {
-					if (manual_input == 1)
+					if (manual_input == 1) {
 						printf(" %s%d .. %s%s %s%s\n",
 						    BOLD, m_item->id, GREEN,
 						    m_item->name, m_item->node,
 						    NORMAL);
-					else
+					} else {
 						printf(" %s%c .. %s %s%s\n",
 						    SELECT, m_item->cid,
 						    m_item->name, m_item->node,
 						    NORMAL);
+					}
 				} else {
-					if (manual_input == 1)
+					if (manual_input == 1) {
 						printf(" %s%d .. %s%s %s%s\n",
 						    BOLD, m_item->id, GREEN,
 						    m_item->name, m_item->node,
 						    NORMAL);
-					else
+					} else {
 						printf(
 						    " %s%c .. %s%s%s %s%s%s\n",
 						    BOLD, m_item->cid, GREEN,
 						    m_item->name, NORMAL,
 						    LGREEN, m_item->node,
 						    NORMAL);
+					}
 				}
 			} else {
 				if (item == cur_choice) {
@@ -446,29 +462,31 @@ main(int argc, char **argv)
 					} else {
 						memset(descr, 0, MAXDESCRLEN);
 					}
-					if (manual_input == 1)
+					if (manual_input == 1) {
 						printf(" %s%d .. %s%s %s%s\n",
 						    BOLD, m_item->id, LGREEN,
 						    m_item->name, m_item->node,
 						    NORMAL);
-					else
+					} else {
 						printf(" %s%c .. %s%s %s%s%s\n",
 						    SELECT, m_item->cid, LGREEN,
 						    m_item->name, LGREEN,
 						    m_item->node, NORMAL);
+					}
 				} else {
-					if (manual_input == 1)
+					if (manual_input == 1) {
 						printf(" %s%d .. %s%s %s%s\n",
 						    BOLD, m_item->id, LGREEN,
 						    m_item->name, m_item->node,
 						    NORMAL);
-					else
+					} else {
 						printf(
 						    " %s%c .. %s%s%s %s%s%s\n",
 						    BOLD, m_item->cid, LGREEN,
 						    m_item->name, NORMAL,
 						    LGREEN, m_item->node,
 						    NORMAL);
+					}
 				}
 			}
 		}
@@ -513,8 +531,9 @@ main(int argc, char **argv)
 		}
 
 		// show descr if not cancel
-		if (cur_choice > 1)
+		if (cur_choice > 1) {
 			printf("%s", descr);
+		}
 
 		i = mygetch();
 		if (i == 27) { // if the first value is esc, [
@@ -532,30 +551,38 @@ main(int argc, char **argv)
 
 		if (special == 1) {
 
-			if (i == KEY_UP)
+			if (i == KEY_UP) {
 				cur_choice--;
+			}
 
-			if (i == KEY_DOWN)
+			if (i == KEY_DOWN) {
 				cur_choice++;
+			}
 
-			if ((i == KEY_PGUP) || (i == KEY_HOME))
+			if ((i == KEY_PGUP) || (i == KEY_HOME)) {
 				cur_choice = 1;
+			}
 
-			if ((i == KEY_PGDN) || (i == KEY_END))
+			if ((i == KEY_PGDN) || (i == KEY_END)) {
 				cur_choice = max_choice;
+			}
 		}
 
-		if (i == '0')
+		if (i == '0') {
 			cur_choice = 1; // jump to CANCEL
+		}
 
-		if (cur_choice > max_choice)
+		if (cur_choice > max_choice) {
 			cur_choice = 1; // jump to first value after CANCEL
+		}
 
-		if (cur_choice == 0)
+		if (cur_choice == 0) {
 			cur_choice = max_choice;
+		}
 
-		if (special == 1)
+		if (special == 1) {
 			continue;
+		}
 
 		// a-z 97-122
 		// A-Z 65-90
@@ -563,20 +590,23 @@ main(int argc, char **argv)
 		//  in a-z + 1-9 - range
 		if (special == 0) {
 			if ((i > 96) && (i < 123)) {
-				if (i <= 95 + max_choice)
+				if (i <= 95 + max_choice) {
 					cur_choice = i -
 					    95; // 96 = 'a' minus extra CANCEL
+				}
 			}
 			if ((i > 64) && (i < 91)) {
-				if (i <= 63 + max_choice)
+				if (i <= 63 + max_choice) {
 					cur_choice = i - 63 +
 					    26; // 96 = 'a' minus extra CANCEL +
-						// 26 symbols
+				}
+				// 26 symbols
 			}
 			if ((i > 48) && (i < 58)) {
-				if (i <= 47 + max_choice)
+				if (i <= 47 + max_choice) {
 					cur_choice = i - 47 + 26 +
 					    26; // 96 = 'a' minus extra CANCEL
+				}
 			}
 		}
 	}

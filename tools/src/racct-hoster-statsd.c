@@ -51,7 +51,7 @@
 #define CP_IDLE 4
 #define CPUSTATES 5
 
-int update_racct_hoster(char *, char *);
+int update_racct_hoster(char * /*vmname*/, char * /*orig_jname*/);
 int sum_data_hoster();
 int list_data();
 int get_pmem();
@@ -110,9 +110,11 @@ void *
 doWork(void *param)
 {
 
-	long cur[CPUSTATES], last[CPUSTATES];
+	long cur[CPUSTATES];
+	long last[CPUSTATES];
 	size_t cur_sz = sizeof cur;
-	int state, i;
+	int state;
+	int i;
 	long sum;
 	double util;
 
@@ -148,7 +150,8 @@ doWork(void *param)
 		    0); // We should get avg of all cores maybe?!
 		sysctlbyname("kern.openfiles", &openfiles, &len, NULL, 0);
 
-		uint32_t tmp, tmp2;
+		uint32_t tmp;
+		uint32_t tmp2;
 		sysctlbyname("vm.stats.vm.v_active_count", &tmp, &len, NULL, 0);
 		sysctlbyname("vm.stats.vm.v_wire_count", &tmp2, &len, NULL, 0);
 		memoryused = ((tmp * page_size) + (tmp2 * page_size)) / 1024;
@@ -162,7 +165,9 @@ doWork(void *param)
 int
 sum_data_hoster()
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	char sql[512];
 	char stats_file[1024];
 	int ret = 0;
@@ -176,7 +181,8 @@ sum_data_hoster()
 
 	struct sum_item_data *newd;
 	struct sum_item_data *temp;
-	struct sum_item_data *sumch, *next_sumch;
+	struct sum_item_data *sumch;
+	struct sum_item_data *next_sumch;
 
 	tolog(log_level, "\n ***---calc hoster avgdata---*** \n");
 
@@ -184,10 +190,12 @@ sum_data_hoster()
 	cur_time = (time_t)now_time.tv_sec;
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (ch->modified == 0)
+		if (ch->modified == 0) {
 			continue;
-		if (strlen(ch->orig_name) < 1)
+		}
+		if (strlen(ch->orig_name) < 1) {
 			continue;
+		}
 		i = sum_jname_exist(ch->orig_name);
 
 		if (i) {
@@ -232,8 +240,9 @@ sum_data_hoster()
 
 	memset(json_str, 0, sizeof(json_str));
 	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
-		if (strlen(sumch->name) < 1)
+		if (strlen(sumch->name) < 1) {
 			continue;
+		}
 		tolog(log_level, " ***[%s]SUM|PCPU:%d,MEM:%ld,TIME:%ld\n",
 		    sumch->name, sumch->pcpu / round_total,
 		    sumch->memoryuse / round_total,
@@ -286,7 +295,7 @@ sum_data_hoster()
 			*/
 			influx->items++;
 			//			tolog(log_level,"%d RACCT items
-			//queued for storage\n", influx->items);
+			// queued for storage\n", influx->items);
 		}
 #endif
 #ifdef WITH_REDIS
@@ -310,9 +319,8 @@ sum_data_hoster()
 				// jail was removed in directory not exist
 				// anymore
 				continue;
-			} else {
-				fclose(fp);
 			}
+			fclose(fp);
 
 			sprintf(sql,
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d' );\n",
@@ -345,13 +353,16 @@ sum_data_hoster()
 		bs_tick = 0;
 	}
 
-	if (cur_round != save_loop_count)
+	if (cur_round != save_loop_count) {
 		return 0;
-	if (!(OUTPUT_BEANSTALKD & output_flags))
+	}
+	if (!(OUTPUT_BEANSTALKD & output_flags)) {
 		skip_beanstalk = 1;
+	}
 
-	if (skip_beanstalk == 1)
+	if (skip_beanstalk == 1) {
 		return 0;
+	}
 
 	if (strlen(json_str) > 3) {
 		tolog(log_level, "bs_put: (%s)\n", json_str);
@@ -374,17 +385,21 @@ sum_data_hoster()
 int
 update_racct_hoster(char *vmname, char *orig_jname)
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	struct timeval now_time;
 	int cur_time = 0;
 	int error;
-	char *copy, *outbuf = NULL, *tmp;
+	char *copy;
+	char *outbuf = NULL;
+	char *tmp;
 	char *var;
 	size_t outbuflen = RCTL_DEFAULT_BUFSIZE / 4;
 	int store = 0;
 	char param_name[512];
-	char filter[MAXJNAME + 10],
-	    unexpanded_rule[MAXJNAME + 10]; // 10 - extra "process::\0"
+	char filter[MAXJNAME + 10];
+	char unexpanded_rule[MAXJNAME + 10]; // 10 - extra "process::\0"
 	pid_t oldpid = 0;
 	int vm_cpus = 0;
 	unsigned long maxmem = 0;
@@ -413,8 +428,17 @@ update_racct_hoster(char *vmname, char *orig_jname)
 int
 main(int argc, char **argv)
 {
-	char *dot, *ep, *jname, *pname;
-	int c, i, jflags, jid, lastjid, pflags, spc;
+	char *dot;
+	char *ep;
+	char *jname;
+	char *pname;
+	int c;
+	int i;
+	int jflags;
+	int jid;
+	int lastjid;
+	int pflags;
+	int spc;
 	struct item_data *newd;
 	struct item_data *temp;
 	struct timeval now_time;
@@ -458,8 +482,9 @@ main(int argc, char **argv)
 	while (true) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_HELP:
 			usage();
@@ -474,19 +499,22 @@ main(int argc, char **argv)
 			loop_interval = atoi(optarg);
 			break;
 		case C_PROMETHEUS_EXPORTER:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_PROMETHEUS;
+			}
 			break;
 		case C_SAVE_LOOP_COUNT:
 			save_loop_count = atoi(optarg);
 			break;
 		case C_SAVE_BEANSTALKD:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_BEANSTALKD;
+			}
 			break;
 		case C_SAVE_SQLITE3:
-			if (atoi(optarg) == 1)
+			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_SQLITE3;
+			}
 			break;
 #ifdef WITH_INFLUX
 		case C_SAVE_INFLUX:
@@ -498,8 +526,9 @@ main(int argc, char **argv)
 	}
 
 	printf("CBSD hoster racct statistics exporter\n");
-	if (log_file)
+	if (log_file) {
 		printf("log_file: %s\n", log_file);
+	}
 
 	printf("log_level: %d\n", log_level);
 	printf("loop_interval: %d seconds\n", loop_interval);
@@ -597,23 +626,26 @@ main(int argc, char **argv)
 		printf("Cannot open or create pidfile: %s", path_my_pidfile);
 	}
 
-	if (pidfile != NULL)
+	if (pidfile != NULL) {
 		pidfile_write(pidfile);
+	}
 
 	i = sysctlbyname("hw.physmem", &maxmem, &maxmem_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster physical memory via sysctl hw.physmem");
+		}
 		err(1, "sysctlbyname");
 	}
 
 	i = sysctlbyname("hw.ncpu", &ncpu, &ncpu_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1, "Unable to determine CPU count via hw.ncpu");
+		}
 		err(1, "sysctlbyname");
 	}
 
@@ -650,16 +682,19 @@ main(int argc, char **argv)
 		//		tolog(log_level,"main loop\n");
 
 		if ((OUTPUT_BEANSTALKD & output_flags) && bs_connected != 1) {
-			if (bs_socket != -1)
+			if (bs_socket != -1) {
 				bs_disconnect(bs_socket);
+			}
 			bs_socket = init_bs("racct-jail");
-		} else if (!(OUTPUT_BEANSTALKD & output_flags))
+		} else if (!(OUTPUT_BEANSTALKD & output_flags)) {
 			bs_connected = 0;
+		}
 
 		while (true) {
 			if ((OUTPUT_BEANSTALKD & output_flags) &&
-			    bs_connected != 1)
+			    bs_connected != 1) {
 				break;
+			}
 
 #ifdef WITH_INFLUX
 			if (OUTPUT_INFLUX & output_flags) {
@@ -674,9 +709,10 @@ main(int argc, char **argv)
 			}
 #endif
 
-			//			if (pthread_join(threads[thread],
-			//NULL)) { 				printf("Error waiting for thread %i of %i\n",
-			//thread, numThreads);
+			//			if
+			//(pthread_join(threads[thread], NULL)) {
+			// printf("Error waiting for thread %i of %i\n", thread,
+			// numThreads);
 			//			}
 			//            tolog(log_level," round %d/%d\n
 			//            ----------------
@@ -764,10 +800,12 @@ main(int argc, char **argv)
 					//(i=0;i<current_jobs_ready;i++) {
 					////remove
 					//							bs_reserve_with_timeout(bs_socket,
-					//1, &job); 							bs_release(bs_socket,
-					//job->id, 0, 0); 							bs_free_job(job);
+					// 1, &job);
+					// bs_release(bs_socket, job->id, 0, 0);
+					// bs_free_job(job);
 					//							bs_peek_ready(bs_socket,
-					//&job); 							bs_delete(bs_socket, job->id);
+					//&job);
+					//bs_delete(bs_socket, job->id);
 					//							bs_free_job(job);
 					//						}
 				} else if (current_jobs_ready > 20) {
@@ -783,15 +821,17 @@ main(int argc, char **argv)
 			tolog(log_level, "\n");
 			sleep(loop_interval);
 			cur_round++;
-			if (cur_round > save_loop_count)
+			if (cur_round > save_loop_count) {
 				cur_round = 0;
-			else if (cur_round == save_loop_count)
+			} else if (cur_round == save_loop_count) {
 				sum_data_hoster();
+			}
 		}
 	}
 
-	if (pidfile != NULL)
+	if (pidfile != NULL) {
 		pidfile_remove(pidfile);
+	}
 
 	pthread_exit(NULL);
 
@@ -830,9 +870,10 @@ get_pmem()
 	i = sysctlbyname("hw.realmem", &realmem, &realmem_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster physical memory via sysctl hw.realmem");
+		}
 	}
 
 	page_size_len = sizeof(page_size);
@@ -840,9 +881,10 @@ get_pmem()
 	    NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster page_size via sysctl vm.stats.vm.v_page_size");
+		}
 	}
 
 	active_count_len = sizeof(active_count);
@@ -850,9 +892,10 @@ get_pmem()
 	    &active_count_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster active_count via sysctl vm.stats.vm.v_active_count");
+		}
 	}
 
 	wire_count_len = sizeof(wire_count);
@@ -860,9 +903,10 @@ get_pmem()
 	    &wire_count_len, NULL, 0);
 
 	if (i != 0) {
-		if (errno == ENOENT)
+		if (errno == ENOENT) {
 			errx(1,
 			    "Unable to determine hoster physical memory via sysctl vm.stats.vm.v_wire_count");
+		}
 	}
 
 	active_size = page_size * active_count;
@@ -872,8 +916,9 @@ get_pmem()
 
 	// calculate calc_pmem
 	calc_pmem = 100.0 * mem_use / realmem;
-	if (calc_pmem > 100)
+	if (calc_pmem > 100) {
 		calc_pmem = 100;
+	}
 
 	// printf("calc_pmem: %d\n",calc_pmem);
 	return calc_pmem;
@@ -882,17 +927,21 @@ get_pmem()
 int
 list_data()
 {
-	struct item_data *target = NULL, *ch, *next_ch;
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
 	int ret = 0;
 
-	if (log_level == 0)
+	if (log_level == 0) {
 		return 0;
+	}
 
 	tolog(log_level, "---listdata---\n");
 
 	for (ch = item_list; ch; ch = ch->next) {
-		if (ch->modified == 0)
+		if (ch->modified == 0) {
 			continue;
+		}
 		tolog(log_level,
 		    "TIME:%ld,NAME:%s,ORIGNAME:%s,PCPU:%d,PMEM:%d\n",
 		    ch->modified, ch->name, ch->orig_name, ch->pcpu, ch->pmem);

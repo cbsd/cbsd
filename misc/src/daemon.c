@@ -35,17 +35,18 @@
 #define MADV_PROTECT 10 /* protect process from pageout kill */
 #endif
 
-static void dummy_sighandler(int);
-static void restrict_process(const char *);
+static void dummy_sighandler(int /*sig*/);
+static void restrict_process(const char * /*user*/);
 static int wait_child(pid_t pid, sigset_t *mask);
 static void usage(void);
-int touch(char *);
+int touch(char * /*mypath*/);
 
 int
 daemon(nochdir, noclose)
 int nochdir, noclose;
 {
-	struct sigaction osa, sa;
+	struct sigaction osa;
+	struct sigaction sa;
 	int fd;
 	pid_t newgrp;
 	int oerrno;
@@ -72,16 +73,18 @@ int nochdir, noclose;
 
 	newgrp = setsid();
 	oerrno = errno;
-	if (osa_ok != -1)
+	if (osa_ok != -1) {
 		_sigaction(SIGHUP, &osa, NULL);
+	}
 
 	if (newgrp == -1) {
 		errno = oerrno;
 		return (-1);
 	}
 
-	if (!nochdir)
+	if (!nochdir) {
 		(void)chdir("/");
+	}
 
 	if (!noclose && (fd = _open(_PATH_DEVNULL, O_RDWR, 0)) != -1) {
 		(void)_dup2(fd, STDIN_FILENO);
@@ -96,11 +99,20 @@ int nochdir, noclose;
 int
 main(int argc, char *argv[])
 {
-	struct pidfh *ppfh, *pfh;
-	sigset_t mask, oldmask;
-	int ch, nochdir, noclose, restart, serrno;
-	const char *pidfile, *ppidfile, *user;
-	pid_t otherpid, pid;
+	struct pidfh *ppfh;
+	struct pidfh *pfh;
+	sigset_t mask;
+	sigset_t oldmask;
+	int ch;
+	int nochdir;
+	int noclose;
+	int restart;
+	int serrno;
+	const char *pidfile;
+	const char *ppidfile;
+	const char *user;
+	pid_t otherpid;
+	pid_t pid;
 	FILE *fp;
 	int i = 0;
 	char buffer[1024];
@@ -133,8 +145,9 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc == 0)
+	if (argc == 0) {
 		usage();
+	}
 
 	memset(buffer, 0, sizeof(buffer));
 
@@ -244,14 +257,16 @@ main(int argc, char *argv[])
 	if (pid <= 0) {
 		if (pid == 0) {
 			/* Restore old sigmask in the child. */
-			if (sigprocmask(SIG_SETMASK, &oldmask, NULL) == -1)
+			if (sigprocmask(SIG_SETMASK, &oldmask, NULL) == -1) {
 				err(1, "sigprocmask");
+			}
 		}
 		/* Now that we are the child, write out the pid. */
 		pidfile_write(pfh);
 
-		if (user != NULL)
+		if (user != NULL) {
 			restrict_process(user);
+		}
 
 		(void)fflush(NULL);
 		(void)fflush(stdout);
@@ -261,8 +276,9 @@ main(int argc, char *argv[])
 		if (fp) {
 			while (!feof(fp)) {
 				fgets(line, sizeof(line), fp);
-				if (feof(fp))
+				if (feof(fp)) {
 					break;
+				}
 				if (line[0] != '.') {
 					fprintf(stdout, "%s", line);
 					fflush(stdout);
@@ -300,17 +316,20 @@ restrict_process(const char *user)
 	struct passwd *pw = NULL;
 
 	pw = getpwnam(user);
-	if (pw == NULL)
+	if (pw == NULL) {
 		errx(1, "unknown user: %s", user);
+	}
 
-	if (setusercontext(NULL, pw, pw->pw_uid, LOGIN_SETALL) != 0)
+	if (setusercontext(NULL, pw, pw->pw_uid, LOGIN_SETALL) != 0) {
 		errx(1, "failed to set user environment");
+	}
 }
 
 static int
 wait_child(pid_t pid, sigset_t *mask)
 {
-	int terminate, signo;
+	int terminate;
+	int signo;
 
 	terminate = 0;
 	for (;;) {
@@ -355,13 +374,15 @@ touch(char *mypath)
 	struct timeval tv[2];
 	int (*stat_f)(const char *, struct stat *);
 	int (*utimes_f)(const char *, const struct timeval *);
-	int fd, rval = 0;
+	int fd;
+	int rval = 0;
 	char *p;
 
 	stat_f = stat;
 	utimes_f = utimes;
-	if (gettimeofday(&tv[0], NULL) == -1)
+	if (gettimeofday(&tv[0], NULL) == -1) {
 		err(1, "gettimeofday");
+	}
 
 	/* Both times default to the same. */
 	tv[1] = tv[0];
@@ -383,8 +404,9 @@ touch(char *mypath)
 	}
 
 	/* Try utimes(2). */
-	if (!utimes_f(mypath, tv))
+	if (!utimes_f(mypath, tv)) {
 		return 1;
+	}
 
 	/*
 	 * System V and POSIX 1003.1 require that a NULL argument
@@ -392,8 +414,9 @@ touch(char *mypath)
 	 * The permission checks are different, too, in that the
 	 * ability to write the file is sufficient.  Take a shot.
 	 */
-	if (!utimes_f(mypath, NULL))
+	if (!utimes_f(mypath, NULL)) {
 		return 1;
+	}
 
 	rval = 1;
 	warn("%s", mypath);

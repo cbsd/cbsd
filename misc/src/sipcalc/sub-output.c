@@ -172,8 +172,7 @@ show_networks_v4(struct if_info *ifi, int count)
 
 	x = 0;
 	while (!x && count) {
-		printf("Network			- %-15s - ",
-		    numtoquad(start));
+		printf("Network			- %-15s - ", numtoquad(start));
 		printf("%s", numtoquad(end));
 		if (start == ifi->v4ad.n_naddr)
 			printf(" (current)\n");
@@ -201,8 +200,7 @@ print_cf_info_v4(struct if_info *ifi)
 	printf("Host address		- %s\n", numtoquad(ifi->v4ad.n_haddr));
 	printf("Host address (decimal)	- %u\n", ifi->v4ad.n_haddr);
 	printf("Host address (hex)	- %X\n", ifi->v4ad.n_haddr);
-	printf("Network address		- %s\n",
-	    numtoquad(ifi->v4ad.n_cnaddr));
+	printf("Network address		- %s\n", numtoquad(ifi->v4ad.n_cnaddr));
 	printf("Network class		- %c%s\n", ifi->v4ad.class,
 	    ifi->v4ad.class_remark);
 	printf("Network mask		- %s\n", numtoquad(ifi->v4ad.n_cnmask));
@@ -234,8 +232,7 @@ print_cidr_info_v4_orig(struct if_info *ifi)
 	printf("Host address		- %s\n", numtoquad(ifi->v4ad.n_haddr));
 	printf("Host address (decimal)	- %u\n", ifi->v4ad.n_haddr);
 	printf("Host address (hex)	- %X\n", ifi->v4ad.n_haddr);
-	printf("Network address		- %s\n",
-	    numtoquad(ifi->v4ad.n_naddr));
+	printf("Network address		- %s\n", numtoquad(ifi->v4ad.n_naddr));
 	printf("Network mask		- %s\n", numtoquad(ifi->v4ad.n_nmask));
 	printf("Network mask (bits)	- %d\n", ifi->v4ad.n_nmaskbits);
 	printf("Network mask (hex)	- %X\n", ifi->v4ad.n_nmask);
@@ -298,10 +295,12 @@ void
 print_cidr_bitmap_v4(struct if_info *ifi)
 {
 	printf("[CIDR bitmaps]\n");
-	printf("Host address		- %s\n", numtobitmap(ifi->v4ad.n_haddr));
+	printf("Host address		- %s\n",
+	    numtobitmap(ifi->v4ad.n_haddr));
 	printf("Network address		- %s\n",
 	    numtobitmap(ifi->v4ad.n_naddr));
-	printf("Network mask		- %s\n", numtobitmap(ifi->v4ad.n_nmask));
+	printf("Network mask		- %s\n",
+	    numtobitmap(ifi->v4ad.n_nmask));
 	printf("Broadcast address	- %s\n",
 	    numtobitmap(ifi->v4ad.n_broadcast));
 	printf("Cisco wildcard		- %s\n",
@@ -519,8 +518,7 @@ print_v6_orig(struct if_info *ifi)
 	printf("Prefix length		- %d\n", ifi->v6ad.nmaskbits);
 	printf("Address type		- %s\n", ifi->v6ad.class_remark);
 	if (ifi->v6ad.comment[0])
-		printf("Comment			- %s\n",
-		    ifi->v6ad.comment);
+		printf("Comment			- %s\n", ifi->v6ad.comment);
 	printf("Network range		- ");
 	print_exp_v6(ifi->v6ad.prefix);
 	printf(" -\n			  ");

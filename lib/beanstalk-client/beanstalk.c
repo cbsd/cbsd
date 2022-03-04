@@ -54,11 +54,13 @@ int
 bs_resolve_address(const char *host, int port, struct sockaddr_in *server)
 {
 	char service[64];
-	struct addrinfo *addr, *rec;
+	struct addrinfo *addr;
+	struct addrinfo *rec;
 
 	snprintf(service, 64, "%d", port);
-	if (getaddrinfo(host, service, 0, &addr) != 0)
+	if (getaddrinfo(host, service, 0, &addr) != 0) {
 		return BS_STATUS_FAIL;
+	}
 
 	for (rec = addr; rec != 0; rec = rec->ai_next) {
 		if (rec->ai_family == AF_INET) {
@@ -74,12 +76,14 @@ bs_resolve_address(const char *host, int port, struct sockaddr_in *server)
 int
 bs_connect(const char *host, int port)
 {
-	int fd, state = 1;
+	int fd;
+	int state = 1;
 	struct sockaddr_in server;
 
 	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0 || bs_resolve_address(host, port, &server) < 0)
+	if (fd < 0 || bs_resolve_address(host, port, &server) < 0) {
 		return BS_STATUS_FAIL;
+	}
 
 	if (connect(fd, (struct sockaddr *)&server, sizeof(server)) != 0) {
 		close(fd);
@@ -95,13 +99,17 @@ int
 bs_connect_with_timeout(const char *host, int port, float secs)
 {
 	struct sockaddr_in server;
-	int fd, res, option, state = 1;
+	int fd;
+	int res;
+	int option;
+	int state = 1;
 	socklen_t option_length;
 	struct pollfd pfd;
 
 	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0 || bs_resolve_address(host, port, &server) < 0)
+	if (fd < 0 || bs_resolve_address(host, port, &server) < 0) {
 		return BS_STATUS_FAIL;
+	}
 
 	// Set non-blocking
 	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, NULL) | O_NONBLOCK);
@@ -149,18 +157,21 @@ bs_disconnect(int fd)
 void
 bs_free_message(BSM *m)
 {
-	if (m->status)
+	if (m->status) {
 		free(m->status);
-	if (m->data)
+	}
+	if (m->data) {
 		free(m->data);
+	}
 	free(m);
 }
 
 void
 bs_free_job(BSJ *job)
 {
-	if (job->data)
+	if (job->data) {
 		free(job->data);
+	}
 	free(job);
 }
 
@@ -182,13 +193,18 @@ bs_reset_polling()
 BSM *
 bs_recv_message(int fd, int expect_data)
 {
-	char *token, *data;
-	size_t bytes, data_size, status_size, status_max = 512,
-					      expect_data_bytes = 0;
+	char *token;
+	char *data;
+	size_t bytes;
+	size_t data_size;
+	size_t status_size;
+	size_t status_max = 512;
+	size_t expect_data_bytes = 0;
 	ssize_t ret;
 	BSM *message = (BSM *)calloc(1, sizeof(BSM));
-	if (!message)
+	if (!message) {
 		return 0;
+	}
 
 	message->status = (char *)calloc(1, status_max);
 	if (!message->status) {
@@ -197,15 +213,15 @@ bs_recv_message(int fd, int expect_data)
 	}
 
 	// poll until ready to read
-	if (bs_poll)
+	if (bs_poll) {
 		bs_poll(1, fd);
+	}
 	ret = recv(fd, message->status, status_max - 1, 0);
 	if (ret < 0) {
 		bs_free_message(message);
 		return 0;
-	} else {
-		bytes = (size_t)ret;
 	}
+	bytes = (size_t)ret;
 
 	token = strstr(message->status, "\r\n");
 	if (!token) {
@@ -221,8 +237,9 @@ bs_recv_message(int fd, int expect_data)
 		expect_data_bytes = token ? strtoul(token + 1, NULL, 10) : 0;
 	}
 
-	if (!expect_data || expect_data_bytes == 0)
+	if (!expect_data || expect_data_bytes == 0) {
 		return message;
+	}
 
 	message->size = bytes - status_size - 2;
 	data_size = message->size > BS_READ_CHUNK_SIZE ?
@@ -246,16 +263,17 @@ bs_recv_message(int fd, int expect_data)
 
 	while (1) {
 		// poll until ready to read.
-		if (bs_poll)
+		if (bs_poll) {
 			bs_poll(1, fd);
+		}
 		ret = recv(fd, data, data_size - message->size, 0);
 		if (ret < 0) {
-			if (bs_poll && DATA_PENDING)
+			if (bs_poll && DATA_PENDING) {
 				continue;
-			else {
-				bs_free_message(message);
-				return 0;
 			}
+			bs_free_message(message);
+			return 0;
+
 		} else {
 			bytes = (size_t)ret;
 		}
@@ -285,8 +303,9 @@ ssize_t
 bs_send_message(int fd, char *message, size_t size)
 {
 	// poll until ready to write.
-	if (bs_poll)
+	if (bs_poll) {
 		bs_poll(2, fd);
+	}
 	return send(fd, message, size,
 	    bs_poll ? MSG_DONTWAIT | MSG_NOSIGNAL : MSG_NOSIGNAL);
 }
@@ -341,24 +360,24 @@ bs_message_packet_free(BSMP *packet)
 
 #define BS_CHECK_MESSAGE(message)              \
 	{                                      \
-		if (!message)                  \
+		if (!(message))                \
 			return BS_STATUS_FAIL; \
 	}
 
-#define BS_RETURN_OK_WHEN(message, okstatus)                   \
-	{                                                      \
-		if (BS_STATUS_IS(message->status, okstatus)) { \
-			bs_free_message(message);              \
-			return BS_STATUS_OK;                   \
-		}                                              \
+#define BS_RETURN_OK_WHEN(message, okstatus)                     \
+	{                                                        \
+		if (BS_STATUS_IS((message)->status, okstatus)) { \
+			bs_free_message(message);                \
+			return BS_STATUS_OK;                     \
+		}                                                \
 	}
 
-#define BS_RETURN_FAIL_WHEN(message, nokstatus, nokcode)        \
-	{                                                       \
-		if (BS_STATUS_IS(message->status, nokstatus)) { \
-			bs_free_message(message);               \
-			return nokcode;                         \
-		}                                               \
+#define BS_RETURN_FAIL_WHEN(message, nokstatus, nokcode)          \
+	{                                                         \
+		if (BS_STATUS_IS((message)->status, nokstatus)) { \
+			bs_free_message(message);                 \
+			return nokcode;                           \
+		}                                                 \
 	}
 
 #define BS_RETURN_INVALID(message)        \

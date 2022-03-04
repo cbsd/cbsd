@@ -48,9 +48,11 @@ elf_corres_to_string(struct _elf_corres *m, int e)
 {
 	int i;
 
-	for (i = 0; m[i].string != NULL; i++)
-		if (m[i].elf_nb == e)
+	for (i = 0; m[i].string != NULL; i++) {
+		if (m[i].elf_nb == e) {
 			return (m[i].string);
+		}
+	}
 
 	return ("unknown");
 }
@@ -68,14 +70,16 @@ aeabi_parse_arm_attributes(void *data, size_t length)
 		length -= (len);         \
 	} while (0)
 
-	if (length == 0 || *section != 'A')
+	if (length == 0 || *section != 'A') {
 		return (NULL);
+	}
 
 	MOVE(1);
 
 	/* Read the section length */
-	if (length < sizeof(sect_len))
+	if (length < sizeof(sect_len)) {
 		return (NULL);
+	}
 
 	memcpy(&sect_len, section, sizeof(sect_len));
 
@@ -83,19 +87,22 @@ aeabi_parse_arm_attributes(void *data, size_t length)
 	 * The section length should be no longer than the section it is
 	 * within
 	 */
-	if (sect_len > length)
+	if (sect_len > length) {
 		return (NULL);
+	}
 
 	MOVE(sizeof(sect_len));
 
 	/* Skip the vendor name */
 	while (length != 0) {
-		if (*section == '\0')
+		if (*section == '\0') {
 			break;
+		}
 		MOVE(1);
 	}
-	if (length == 0)
+	if (length == 0) {
 		return (NULL);
+	}
 	MOVE(1);
 
 	while (length != 0) {
@@ -104,8 +111,9 @@ aeabi_parse_arm_attributes(void *data, size_t length)
 		switch (*section) {
 		case 1: /* Tag_File */
 			MOVE(1);
-			if (length < sizeof(tag_length))
+			if (length < sizeof(tag_length)) {
 				return (NULL);
+			}
 			memcpy(&tag_length, section, sizeof(tag_length));
 			break;
 		case 2: /* Tag_Section */
@@ -114,12 +122,14 @@ aeabi_parse_arm_attributes(void *data, size_t length)
 			return (NULL);
 		}
 		/* At least space for the tag and size */
-		if (tag_length <= 5)
+		if (tag_length <= 5) {
 			return (NULL);
+		}
 		tag_length--;
 		/* Check the tag fits */
-		if (tag_length > length)
+		if (tag_length > length) {
 			return (NULL);
+		}
 
 #define MOVE_TAG(len)                        \
 	do {                                 \
@@ -153,34 +163,40 @@ aeabi_parse_arm_attributes(void *data, size_t length)
 				 * We don't support values that require more
 				 * than one byte.
 				 */
-				if (val & (1 << 7))
+				if (val & (1 << 7)) {
 					return (NULL);
+				}
 
 				/* We have an ARMv4 or ARMv5 */
-				if (val <= 5)
+				if (val <= 5) {
 					return ("arm");
-				else /* We have an ARMv6+ */
-					return ("armv6");
+				} /* We have an ARMv6+ */
+				return ("armv6");
 			} else if (tag == 4 || tag == 5 || tag == 32 ||
 			    tag == 65 || tag == 67) {
-				while (*section != '\0' && length != 0)
+				while (*section != '\0' && length != 0) {
 					MOVE_TAG(1);
-				if (tag_length == 0)
+				}
+				if (tag_length == 0) {
 					return (NULL);
+				}
 				/* Skip the last byte */
 				MOVE_TAG(1);
 			} else if ((tag >= 7 && tag <= 31) || tag == 34 ||
 			    tag == 36 || tag == 38 || tag == 42 || tag == 44 ||
 			    tag == 64 || tag == 66 || tag == 68 || tag == 70) {
 				/* Skip the uleb128 data */
-				while (*section & (1 << 7) && length != 0)
+				while (*section & (1 << 7) && length != 0) {
 					MOVE_TAG(1);
-				if (tag_length == 0)
+				}
+				if (tag_length == 0) {
 					return (NULL);
+				}
 				/* Skip the last byte */
 				MOVE_TAG(1);
-			} else
+			} else {
 				return (NULL);
+			}
 #undef MOVE_TAG
 		}
 
@@ -197,12 +213,18 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 	Elf_Data *data;
 	Elf_Note note;
 	Elf_Scn *scn;
-	char *src, *osname;
-	const char *arch, *abi, *fpu, *endian_corres_str;
+	char *src;
+	char *osname;
+	const char *arch;
+	const char *abi;
+	const char *fpu;
+	const char *endian_corres_str;
 	const char *wordsize_corres_str;
 	GElf_Ehdr elfhdr;
 	GElf_Shdr shdr;
-	int fd, i, ret;
+	int fd;
+	int i;
+	int ret;
 	uint32_t version;
 	uint32_t freebsd_version;
 	int first_par = 0;
@@ -237,8 +259,9 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 			warn("getshdr() failed: %s.", elf_errmsg(-1));
 			goto cleanup;
 		}
-		if (shdr.sh_type == SHT_NOTE)
+		if (shdr.sh_type == SHT_NOTE) {
 			break;
+		}
 	}
 
 	if (scn == NULL) {
@@ -257,20 +280,23 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 			strcpy(src, "unknown");
 			break; // empty or no elf?
 		}
-		if (note.n_type == NT_VERSION)
+		if (note.n_type == NT_VERSION) {
 			break;
+		}
 		src += note.n_namesz + note.n_descsz;
 	}
 	osname = src;
 
 	src += roundup2(note.n_namesz, 4);
-	if (elfhdr.e_ident[EI_DATA] == ELFDATA2MSB)
+	if (elfhdr.e_ident[EI_DATA] == ELFDATA2MSB) {
 		version = be32dec(src);
-	else
+	} else {
 		version = le32dec(src);
+	}
 
-	for (i = 0; osname[i] != '\0'; i++)
+	for (i = 0; osname[i] != '\0'; i++) {
 		osname[i] = (char)tolower(osname[i]);
+	}
 
 	wordsize_corres_str = elf_corres_to_string(wordsize_corres,
 	    (int)elfhdr.e_ident[EI_CLASS]);
@@ -280,20 +306,23 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 	freebsd_version = version / 100000;
 
 	if (show_osname) {
-		if (first_par)
+		if (first_par) {
 			snprintf(dest + strlen(dest), sz - strlen(dest), ":");
+		}
 		snprintf(dest, sz, "%s", osname);
 		first_par++;
 	}
 	if (show_ver) {
-		if (first_par)
+		if (first_par) {
 			snprintf(dest + strlen(dest), sz - strlen(dest), ":");
+		}
 		snprintf(dest + strlen(dest), sz - strlen(dest), "%d", version);
 		first_par++;
 	}
 	if (show_freebsdver) {
-		if (first_par)
+		if (first_par) {
 			snprintf(dest + strlen(dest), sz - strlen(dest), ":");
+		}
 		snprintf(dest + strlen(dest), sz - strlen(dest), "%d.%d",
 		    freebsd_version, version / 1000 % 100);
 		first_par++;
@@ -323,10 +352,12 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 				}
 				sh_name = elf_strptr(elf, shstrndx,
 				    shdr.sh_name);
-				if (sh_name == NULL)
+				if (sh_name == NULL) {
 					continue;
-				if (strcmp(".ARM.attributes", sh_name) == 0)
+				}
+				if (strcmp(".ARM.attributes", sh_name) == 0) {
 					break;
+				}
 			}
 			if (scn != NULL && sh_name != NULL) {
 				data = elf_getdata(scn, NULL);
@@ -384,10 +415,11 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 			abi = "n32";
 			break;
 		default:
-			if (elfhdr.e_ident[EI_DATA] == ELFCLASS32)
+			if (elfhdr.e_ident[EI_DATA] == ELFCLASS32) {
 				abi = "o32";
-			else if (elfhdr.e_ident[EI_DATA] == ELFCLASS64)
+			} else if (elfhdr.e_ident[EI_DATA] == ELFCLASS64) {
 				abi = "n64";
+			}
 			break;
 		}
 		endian_corres_str = elf_corres_to_string(endian_corres,
@@ -399,25 +431,28 @@ pkg_get_myabi(char *myfile, char *dest, size_t sz)
 		break;
 	default:
 		if (show_arch) {
-			if (first_par)
+			if (first_par) {
 				snprintf(dest + strlen(dest), sz - strlen(dest),
 				    ":");
+			}
 			snprintf(dest + strlen(dest), sz - strlen(dest), "%s",
 			    arch);
 			first_par++;
 		}
 		if (show_wordsize) {
-			if (first_par)
+			if (first_par) {
 				snprintf(dest + strlen(dest), sz - strlen(dest),
 				    ":");
+			}
 			snprintf(dest + strlen(dest), sz - strlen(dest), "%s",
 			    wordsize_corres_str);
 		}
 	}
 
 cleanup:
-	if (elf != NULL)
+	if (elf != NULL) {
 		elf_end(elf);
+	}
 
 	close(fd);
 
@@ -433,10 +468,12 @@ main(int argc, char *argv[])
 	char buf[MAXPATHLEN];
 	int win = FALSE;
 	int optcode = 0;
-	int option_index = 0, ret = 0;
+	int option_index = 0;
+	int ret = 0;
 
-	if (argc < 2)
+	if (argc < 2) {
 		usage();
+	}
 
 	static struct option long_options[] = { { "help", no_argument, 0,
 						    C_HELP },
@@ -451,8 +488,9 @@ main(int argc, char *argv[])
 	while (TRUE) {
 		optcode = getopt_long(argc, argv, "h", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		int this_option_optind = optind ? optind : 1;
 		switch (optcode) {
 		case C_ARCH:
@@ -475,12 +513,15 @@ main(int argc, char *argv[])
 
 	memset(buf, 0, sizeof(buf));
 
-	if (optind < argc)
-		while (optind < argc)
+	if (optind < argc) {
+		while (optind < argc) {
 			strcat(buf, argv[optind++]);
+		}
+	}
 
-	if (strlen(buf) < 2)
+	if (strlen(buf) < 2) {
 		usage();
+	}
 
 	// If no argument choose, invert all trigger into 1
 	//  so we show all output

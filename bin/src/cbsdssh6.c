@@ -64,11 +64,13 @@ waitsocket(int socket_fd, LIBSSH2_SESSION *session)
 	/* now make sure we wait in the correct direction */
 	dir = libssh2_session_block_directions(session);
 
-	if (dir & LIBSSH2_SESSION_BLOCK_INBOUND)
+	if (dir & LIBSSH2_SESSION_BLOCK_INBOUND) {
 		readfd = &fd;
+	}
 
-	if (dir & LIBSSH2_SESSION_BLOCK_OUTBOUND)
+	if (dir & LIBSSH2_SESSION_BLOCK_OUTBOUND) {
 		writefd = &fd;
+	}
 
 	rc = select(socket_fd + 1, readfd, writefd, NULL, &timeout);
 
@@ -99,7 +101,8 @@ main(int argc, char *argv[])
 	const char *fingerprint;
 	LIBSSH2_SESSION *session;
 	LIBSSH2_CHANNEL *channel;
-	int rc, i;
+	int rc;
+	int i;
 	int exitcode = 0;
 	char *exitsignal = (char *)"none";
 	int bytecount = 0;
@@ -110,12 +113,14 @@ main(int argc, char *argv[])
 	int auth_pw = 0;
 	struct hostent *server;
 
-	if (!strcmp(argv[1], "--help"))
+	if (!strcmp(argv[1], "--help")) {
 		usage();
+	}
 
-	if (argc > 1)
+	if (argc > 1) {
 		/* must be ip address only */
 		hostname = argv[1];
+	}
 
 	if (argc > 1) {
 		inet_pton(AF_INET6, argv[1], sin.sin6_addr.s6_addr);
@@ -134,8 +139,9 @@ main(int argc, char *argv[])
 
 	for (i = 5; i < argc; i++) {
 		strcat(commandline, argv[i]);
-		if (i + 1 != argc)
+		if (i + 1 != argc) {
 			strcat(commandline, " ");
+		}
 	}
 
 	rc = libssh2_init(0);
@@ -245,8 +251,9 @@ main(int argc, char *argv[])
 			if (rc > 0) {
 				int i;
 				bytecount += rc;
-				for (i = 0; i < rc; ++i)
+				for (i = 0; i < rc; ++i) {
 					fputc(buffer[i], stdout);
+				}
 			}
 		} while (rc > 0);
 
@@ -256,12 +263,14 @@ main(int argc, char *argv[])
 		 */
 		if (rc == LIBSSH2_ERROR_EAGAIN) {
 			waitsocket(sock, session);
-		} else
+		} else {
 			break;
+		}
 	}
 	exitcode = 127;
-	while ((rc = libssh2_channel_close(channel)) == LIBSSH2_ERROR_EAGAIN)
+	while ((rc = libssh2_channel_close(channel)) == LIBSSH2_ERROR_EAGAIN) {
 		waitsocket(sock, session);
+	}
 
 	if (rc == 0) {
 		exitcode = libssh2_channel_get_exit_status(channel);
