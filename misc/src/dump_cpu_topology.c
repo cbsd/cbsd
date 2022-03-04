@@ -575,8 +575,8 @@ getIndent(int nDepth)
 	if (szIndent == NULL) {
 		szIndent = malloc(1024);
 	}
-	memset(szIndent, ' ', (unsigned long)(nDepth *)2);
-	szIndent[(ptrdiff_t)(nDepth *)2] = '\0';
+	memset(szIndent, ' ', (size_t)(nDepth * 2));
+	szIndent[(ptrdiff_t)(nDepth * 2)] = '\0';
 	return szIndent;
 }
 
