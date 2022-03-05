@@ -55,20 +55,20 @@ out_cmdline(struct if_info *ifarg_cur, int v4args, struct misc_args m_argv4,
 	ret = 0;
 
 	if (ifarg_cur->type == IFT_V4) {
-		//		printf ("-[ipv4 : %s] - %d\n", ifarg_cur->cmdstr,
-		//index);
+		//		printf ("-[ipv4 : %s] - %d\n",
+		//ifarg_cur->cmdstr, index);
 		ret = get_addrv4(ifarg_cur);
 	}
 
 	if (ifarg_cur->type == IFT_V6) {
-		//		printf ("-[ipv6 : %s] - %d\n", ifarg_cur->cmdstr,
-		//index);
+		//		printf ("-[ipv6 : %s] - %d\n",
+		//ifarg_cur->cmdstr, index);
 		ret = get_addrv6(ifarg_cur);
 	}
 
 	if (ifarg_cur->type == IFT_INTV4 || ifarg_cur->type == IFT_INTV6) {
 		//		printf ("-[int-ipv4 : %s] - %d\n",
-		//ifarg_cur->cmdstr, index);
+		// ifarg_cur->cmdstr, index);
 		if (ifarg_cur->errorstr[0] != '\0') {
 			printf("\n-[ERR : %s]\n\n-\n", ifarg_cur->errorstr);
 			return 1;
@@ -565,8 +565,8 @@ parse_abox(struct argbox *abox, struct if_info *if_start)
 				//(ifarg_cur->cmdstr, abox->str);
 				//				safe_snprintf(ifarg_cur->errorstr,
 				//"Unable to retrieve interface information");
-				//				ifarg_cur->type =
-				//IFT_INTV4;
+				//				ifarg_cur->type
+				//= IFT_INTV4;
 				exit(1);
 			}
 		}
@@ -597,8 +597,8 @@ parse_abox(struct argbox *abox, struct if_info *if_start)
 				//(ifarg_cur->cmdstr, abox->str);
 				//				safe_snprintf(ifarg_cur->errorstr,
 				//"Unable to retrieve interface information");
-				//				ifarg_cur->type =
-				//IFT_INTV4;
+				//				ifarg_cur->type
+				//= IFT_INTV4;
 				exit(1);
 			}
 		}
@@ -959,17 +959,17 @@ main(int argc, char *argv[])
 	if (!(if_cur = if_start = get_if_ext())) {
 		//		printf
 		//		    ("-[INFO : Unable to retrieve interface
-		//information]\n"); 		printf
+		// information]\n"); 		printf
 		//		    ("-[INFO : Will only parse none interface
-		//arguments]\n\n");
+		// arguments]\n\n");
 	}
 
 	if (!parse_stdin)
 		ifarg_cur = ifarg_start = parse_abox(abox_start, if_start);
 
 	if (!ifarg_start && !parse_stdin) {
-		//		printf ("-[FATAL : No valid commandline arguments
-		//found]\n\n");
+		//		printf ("-[FATAL : No valid commandline
+		//arguments found]\n\n");
 		return -1;
 	}
 

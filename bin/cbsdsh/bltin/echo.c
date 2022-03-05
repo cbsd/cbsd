@@ -61,8 +61,9 @@ main(int argc, char *argv[])
 #endif
 
 	ap = argv;
-	if (argc)
+	if (argc) {
 		ap++;
+	}
 	if ((p = *ap) != NULL) {
 		if (equal(p, "-n")) {
 			nflag++;
@@ -110,8 +111,9 @@ main(int argc, char *argv[])
 					c = 0;
 					count = 3;
 					while (--count >= 0 &&
-					    (unsigned)(*p - '0') < 8)
+					    (unsigned)(*p - '0') < 8) {
 						c = (c << 3) + (*p++ - '0');
+					}
 					break;
 				default:
 					p--;

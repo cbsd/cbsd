@@ -48,7 +48,8 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	int s, af = AF_INET;
+	int s;
+	int af = AF_INET;
 	struct ifreq ifr;
 	char *nic = NULL;
 	char *nic_family = NULL;
@@ -83,8 +84,9 @@ main(int argc, char *argv[])
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_HELP:
 			usage();
@@ -106,7 +108,7 @@ main(int argc, char *argv[])
 			strcpy(nic, optarg);
 			x = 0;
 			y = 0;
-			for (i = 0; i < strlen(nic); i++)
+			for (i = 0; i < strlen(nic); i++) {
 				if ((nic[i] >= 48) && (nic[i] <= 57)) {
 					tmpstr[x] = nic[i];
 					x++;
@@ -114,6 +116,7 @@ main(int argc, char *argv[])
 					nic_family[y] = nic[i];
 					y++;
 				}
+			}
 			nic_id = atoi(tmpstr);
 			free(tmpstr);
 			break;
@@ -130,19 +133,24 @@ main(int argc, char *argv[])
 		usage();
 	}
 
-	if ((s = socket(af, SOCK_DGRAM, 0)) < 0)
+	if ((s = socket(af, SOCK_DGRAM, 0)) < 0) {
 		err(1, "socket");
+	}
 
 	ifr.ifr_addr.sa_family = AF_INET;
 	strcpy(ifr.ifr_name, nic);
 
-	if (show_media == 1)
-		if (ioctl(s, SIOCGIFMEDIA, (caddr_t)&ifr) < 0)
+	if (show_media == 1) {
+		if (ioctl(s, SIOCGIFMEDIA, (caddr_t)&ifr) < 0) {
 			err(1, "ioctl (get media)");
+		}
+	}
 
-	if (show_mtu == 1)
-		if (ioctl(s, SIOCGIFMTU, (caddr_t)&ifr) < 0)
+	if (show_mtu == 1) {
+		if (ioctl(s, SIOCGIFMTU, (caddr_t)&ifr) < 0) {
 			err(1, "ioctl (get mtu)");
+		}
+	}
 
 	if (show_phys == 1) {
 		i = strlen(nic) + 30;
@@ -161,19 +169,25 @@ main(int argc, char *argv[])
 	close(s);
 
 	if (quiet) {
-		if (show_media == 1)
+		if (show_media == 1) {
 			fprintf(stdout, "%d\n", ifr.ifr_media);
-		if (show_mtu == 1)
+		}
+		if (show_mtu == 1) {
 			fprintf(stdout, "%d\n", ifr.ifr_mtu);
-		if (show_phys == 1)
+		}
+		if (show_phys == 1) {
 			fprintf(stdout, "%d\n", phys);
+		}
 	} else {
-		if (show_media == 1)
+		if (show_media == 1) {
 			fprintf(stdout, "media:%d\n", ifr.ifr_media);
-		if (show_mtu == 1)
+		}
+		if (show_mtu == 1) {
 			fprintf(stdout, "mtu:%d\n", ifr.ifr_mtu);
-		if (show_phys == 1)
+		}
+		if (show_phys == 1) {
 			fprintf(stdout, "phys:%d\n", phys);
+		}
 	}
 
 	return (0);

@@ -3,6 +3,7 @@
 // 0.1
 // Obtain CPU topology from kern.sched.topology_spec sysctl MIB
 // TODO: DEEP REFACTORING WITH DYNAMIC 'cpu count="2"' PARSER, NO MAGIC IN CODE!
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -88,7 +89,7 @@ int readFileData(char *sFileName, char **sData, long *pnDataLen);
 
 #define REMOVE_FROM_LIST(item, head, next)             \
 	if ((item) == (head))                          \
-		head = (item)->next;                   \
+		(head) = (item)->next;                 \
 	else {                                         \
 		temp = head;                           \
 		while (temp && (temp->next != (item))) \
@@ -99,7 +100,8 @@ int readFileData(char *sFileName, char **sData, long *pnDataLen);
 void
 trim_spaces(char *input)
 {
-	char *dst = input, *src = input;
+	char *dst = input;
+	char *src = input;
 	char *end;
 
 	while (isspace((unsigned char)*src)) {
@@ -112,8 +114,9 @@ trim_spaces(char *input)
 	}
 
 	if (src != dst) {
-		while ((*dst++ = *src++))
+		while ((*dst++ = *src++)) {
 			;
+		}
 	}
 }
 
@@ -141,8 +144,9 @@ print_cores_by_sock(int socket)
 
 	for (cch = cores_list; cch; cch = cch->next) {
 		fprintf(stderr, "\nCORE::%u\n", cch->socket);
-		if (cch->socket != socket)
+		if (cch->socket != socket) {
 			continue;
+		}
 		memset(buffer, 0, sizeof(buffer));
 		sprintf(buffer, "%u ", cch->id);
 		strcat(tmp, buffer);
@@ -165,8 +169,9 @@ print_threads_by_sock(int socket)
 
 	for (tch = threads_list; tch; tch = tch->next) {
 		fprintf(stderr, "\n::%u\n", tch->socket);
-		if (tch->socket != socket)
+		if (tch->socket != socket) {
 			continue;
+		}
 		memset(buffer, 0, sizeof(buffer));
 		sprintf(buffer, "%u ", tch->id);
 		strcat(tmp, buffer);
@@ -291,8 +296,9 @@ pop_core_id()
 	int id = 0;
 
 	ch = core_id_list;
-	if (!ch)
+	if (!ch) {
 		return -1;
+	}
 
 	id = ch->id;
 
@@ -323,8 +329,9 @@ pop_socket_id()
 	int id = 0;
 
 	ch = socket_id_list;
-	if (!ch)
+	if (!ch) {
 		return -1;
+	}
 
 	id = ch->id;
 
@@ -370,7 +377,7 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 		nDepth++;
 	} else if (event == ADD_ATTRIBUTE) {
 		//		printf("attribute tag:%s %s=%s\n",szHandlerName,
-		//szHandlerAttribute, szHandlerValue);
+		// szHandlerAttribute, szHandlerValue);
 		fprintf(stderr,
 		    "%6li: %s ///add attribute to tag %s ([%s]=[%s])\n",
 		    simpleXmlGetLineNumber(parser), getIndent(nDepth),
@@ -435,8 +442,9 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 				    szHandlerValue, last_sid - 1);
 				while ((tmp = strsep(&szHandlerValue, ",")) !=
 				    NULL) {
-					if (tmp[0] == '\0')
+					if (tmp[0] == '\0') {
 						break; /* XXX */
+					}
 					trim_spaces(tmp);
 					// comment for no SMP?
 					push_core_id(atoi(tmp));
@@ -458,8 +466,9 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 				    szHandlerValue, last_sid - 1);
 				while ((tmp = strsep(&szHandlerValue, ",")) !=
 				    NULL) {
-					if (tmp[0] == '\0')
+					if (tmp[0] == '\0') {
 						break; /* XXX */
+					}
 					trim_spaces(tmp);
 					// comment for no SMP?
 					push_core_id(atoi(tmp));
@@ -489,8 +498,9 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 		    szHandlerName);
 		nDepth--;
 		if (level == 10) {
-			if (!strcmp(szHandlerName, "cpu"))
+			if (!strcmp(szHandlerName, "cpu")) {
 				level = 0;
+			}
 		}
 	}
 
@@ -565,8 +575,8 @@ getIndent(int nDepth)
 	if (szIndent == NULL) {
 		szIndent = malloc(1024);
 	}
-	memset(szIndent, ' ', nDepth * 2);
-	szIndent[nDepth * 2] = '\0';
+	memset(szIndent, ' ', (size_t)(nDepth * 2));
+	szIndent[(ptrdiff_t)(nDepth * 2)] = '\0';
 	return szIndent;
 }
 
@@ -619,27 +629,25 @@ readFileData(char *sFileName, char **psData, long *pnDataLen)
 	*pnDataLen = 0;
 	if (stat(sFileName, &fstat) == -1) {
 		return READ_FILE_STAT_ERROR;
+	}
+	FILE *file = fopen(sFileName, "r");
+	if (file == NULL) {
+		return READ_FILE_OPEN_ERROR;
 	} else {
-		FILE *file = fopen(sFileName, "r");
-		if (file == NULL) {
-			return READ_FILE_OPEN_ERROR;
+		*psData = malloc(fstat.st_size);
+		if (*psData == NULL) {
+			fclose(file);
+			return READ_FILE_OUT_OF_MEMORY;
 		} else {
-			*psData = malloc(fstat.st_size);
-			if (*psData == NULL) {
-				fclose(file);
-				return READ_FILE_OUT_OF_MEMORY;
-			} else {
-				size_t len = fread(*psData, 1, fstat.st_size,
-				    file);
-				fclose(file);
-				if (len != fstat.st_size) {
-					free(*psData);
-					*psData = NULL;
-					return READ_FILE_READ_ERROR;
-				}
-				*pnDataLen = len;
-				return READ_FILE_NO_ERROR;
+			size_t len = fread(*psData, 1, fstat.st_size, file);
+			fclose(file);
+			if (len != fstat.st_size) {
+				free(*psData);
+				*psData = NULL;
+				return READ_FILE_READ_ERROR;
 			}
+			*pnDataLen = len;
+			return READ_FILE_NO_ERROR;
 		}
 	}
 }

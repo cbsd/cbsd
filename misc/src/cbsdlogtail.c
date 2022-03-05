@@ -26,10 +26,13 @@ long int
 getoffset(char *offsetfile)
 {
 	unsigned long long offset = 0;
-	FILE *fp, *fo;
+	FILE *fp;
+	FILE *fo;
 	char tmp[B_SIZE + sizeof(long)];
 	char tmp2[B_SIZE + sizeof(long)];
-	int i = 0, n = 0, tmplen = 0;
+	int i = 0;
+	int n = 0;
+	int tmplen = 0;
 
 	fp = fopen(offsetfile, "r");
 	if (fp) {
@@ -37,14 +40,16 @@ getoffset(char *offsetfile)
 		fgets(tmp, B_SIZE + sizeof(long), fp);
 		fclose(fp);
 		tmplen = strlen(tmp);
-		if (tmplen == 0)
+		if (tmplen == 0) {
 			return 0;
-		for (i = 0; i < tmplen; i++)
+		}
+		for (i = 0; i < tmplen; i++) {
 			if (tmp[i] == ':') {
 				tmp[i] = ' ';
 				n = i;
 				break;
 			}
+		}
 		tmplen = 0;
 		if (n > 0) {
 			memset(tmp2, 0, sizeof(tmp2));
@@ -52,19 +57,22 @@ getoffset(char *offsetfile)
 			strncpy(tmp2, tmp + n + 1, strlen(tmp) - n - 1);
 			//+-1 =:	symbol
 			fo = fopen(findex, "r");
-			if (fo == NULL)
+			if (fo == NULL) {
 				return 0;
+			}
 			fseek(fo, offset, SEEK_SET);
 			memset(tmp, 0, sizeof(tmp));
 			fgets(tmp, B_SIZE, fo);
 			fclose(fo);
 			if ((strlen(tmp2) != 0) && (!strcmp(tmp, tmp2))) {
 				offset = offset + strlen(tmp2);
-			} else
+			} else {
 				offset = 0;
+			}
 		}
-	} else
+	} else {
 		offset = 0;
+	}
 	return offset;
 }
 
@@ -96,8 +104,9 @@ show_myportion(long int offset)
 	fseek(fp, offset, SEEK_SET);
 
 	while (!feof(fp)) {
-		if (fgets(line, sizeof(line), fp) != NULL)
+		if (fgets(line, sizeof(line), fp) != NULL) {
 			printf("%s", line);
+		}
 	}
 
 	ipos = ftell(fp) - strlen(line);
@@ -124,8 +133,9 @@ get_myportion()
 	strcat(offsetfile, offsetext);
 	i = getoffset(offsetfile);
 	lst = show_myportion(i);
-	if (lst)
+	if (lst) {
 		putoffset(offsetfile, lst);
+	}
 	free(offsetfile);
 	return 0;
 }
@@ -133,19 +143,22 @@ get_myportion()
 int
 main(int argc, char **argv)
 {
-	int i = 0, c = 0;
+	int i = 0;
+	int c = 0;
 
 	myname = argv[0];
-	if (!strcmp(argv[1], "--help"))
+	if (!strcmp(argv[1], "--help")) {
 		usage(myname);
+	}
 	findex = argv[argc - 1];
 	facil = basename(findex);
 
 	while (1) {
 		c = getopt(argc, argv, "d:f:");
 		/* Detect the end of the options. */
-		if (c == -1)
+		if (c == -1) {
 			break;
+		}
 		switch (c) {
 		case 'd':
 			offsetdir = optarg;
@@ -157,8 +170,9 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (findex == myname)
+	if (findex == myname) {
 		usage(myname);
+	}
 
 	get_myportion();
 	return 0;

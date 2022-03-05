@@ -90,14 +90,14 @@ static const char rcsid[] =
 	} while (0)
 
 static int asciicode(void);
-static char *printf_doformat(char *, int *);
-static int escape(char *, int, size_t *);
+static char *printf_doformat(char * /*fmt*/, int * /*rval*/);
+static int escape(char * /*fmt*/, int /*percent*/, size_t * /*len*/);
 static int getchr(void);
-static int getfloating(long double *, int);
-static int getint(int *);
-static int getnum(intmax_t *, uintmax_t *, int);
+static int getfloating(long double * /*dp*/, int /*mod_ldbl*/);
+static int getint(int * /*ip*/);
+static int getnum(intmax_t * /*ip*/, uintmax_t * /*uip*/, int /*signedconv*/);
 static const char *getstr(void);
-static char *mknum(char *, char);
+static char *mknum(char * /*str*/, char /*ch*/);
 static void usage(void);
 
 static const char digits[] = "0123456789";
@@ -113,8 +113,11 @@ int
 main(int argc, char *argv[])
 {
 	size_t len;
-	int end, rval;
-	char *format, *fmt, *start;
+	int end;
+	int rval;
+	char *format;
+	char *fmt;
+	char *start;
 #ifndef SHELL
 	int ch;
 
@@ -162,8 +165,9 @@ main(int argc, char *argv[])
 		maxargv = gargv;
 
 		myargv = gargv;
-		for (myargc = 0; gargv[myargc]; myargc++)
+		for (myargc = 0; gargv[myargc]; myargc++) {
 			/* nop */;
+		}
 		start = fmt;
 		while (fmt < format + len) {
 			if (fmt[0] == '%') {
@@ -183,10 +187,12 @@ main(int argc, char *argv[])
 					end = 0;
 				}
 				start = fmt;
-			} else
+			} else {
 				fmt++;
-			if (gargv > maxargv)
+			}
+			if (gargv > maxargv) {
 				maxargv = gargv;
+			}
 		}
 		gargv = maxargv;
 
@@ -215,8 +221,13 @@ static char *
 printf_doformat(char *fmt, int *rval)
 {
 	static const char skip1[] = "#'-+ 0";
-	int fieldwidth, haveprec, havewidth, mod_ldbl, precision;
-	char convch, nextch;
+	int fieldwidth;
+	int haveprec;
+	int havewidth;
+	int mod_ldbl;
+	int precision;
+	char convch;
+	char nextch;
 	char start[strlen(fmt) + 1];
 	char **fargv;
 	char *dptr;
@@ -237,8 +248,9 @@ printf_doformat(char *fmt, int *rval)
 		} else {
 			gargv = &myargv[myargc];
 		}
-		if (gargv > maxargv)
+		if (gargv > maxargv) {
 			maxargv = gargv;
+		}
 		fmt += l + 1;
 
 		/* save format argument */
@@ -274,10 +286,12 @@ printf_doformat(char *fmt, int *rval)
 			return (NULL);
 		}
 
-		if (getint(&fieldwidth))
+		if (getint(&fieldwidth)) {
 			return (NULL);
-		if (gargv > maxargv)
+		}
+		if (gargv > maxargv) {
 			maxargv = gargv;
+		}
 		havewidth = 1;
 
 		*dptr++ = '*';
@@ -318,10 +332,12 @@ printf_doformat(char *fmt, int *rval)
 				return (NULL);
 			}
 
-			if (getint(&precision))
+			if (getint(&precision)) {
 				return (NULL);
-			if (gargv > maxargv)
+			}
+			if (gargv > maxargv) {
 				maxargv = gargv;
+			}
 			haveprec = 1;
 			*dptr++ = '*';
 			*dptr = 0;
@@ -334,8 +350,9 @@ printf_doformat(char *fmt, int *rval)
 				*dptr = 0;
 			}
 		}
-	} else
+	} else {
 		haveprec = 0;
+	}
 	if (!*fmt) {
 		warnx("missing format character");
 		return (NULL);
@@ -387,8 +404,9 @@ printf_doformat(char *fmt, int *rval)
 		getout = escape(p, 0, &len);
 		fputs(p, stdout);
 		free(p);
-		if (getout)
+		if (getout) {
 			return (end_fmt);
+		}
 		break;
 	}
 	case 'c': {
@@ -417,14 +435,17 @@ printf_doformat(char *fmt, int *rval)
 		int signedconv;
 
 		signedconv = (convch == 'd' || convch == 'i');
-		if ((f = mknum(start, convch)) == NULL)
+		if ((f = mknum(start, convch)) == NULL) {
 			return (NULL);
-		if (getnum(&val, &uval, signedconv))
+		}
+		if (getnum(&val, &uval, signedconv)) {
 			*rval = 1;
-		if (signedconv)
+		}
+		if (signedconv) {
 			PF(f, val);
-		else
+		} else {
 			PF(f, uval);
+		}
 		break;
 	}
 	case 'e':
@@ -437,12 +458,14 @@ printf_doformat(char *fmt, int *rval)
 	case 'A': {
 		long double p;
 
-		if (getfloating(&p, mod_ldbl))
+		if (getfloating(&p, mod_ldbl)) {
 			*rval = 1;
-		if (mod_ldbl)
+		}
+		if (mod_ldbl) {
 			PF(start, p);
-		else
+		} else {
 			PF(start, (double)p);
+		}
 		break;
 	}
 	default:
@@ -460,7 +483,8 @@ mknum(char *str, char ch)
 	static char *copy;
 	static size_t copy_size;
 	char *newcopy;
-	size_t len, newlen;
+	size_t len;
+	size_t newlen;
 
 	len = strlen(str) + 2;
 	if (len > copy_size) {
@@ -483,7 +507,9 @@ mknum(char *str, char ch)
 static int
 escape(char *fmt, int percent, size_t *len)
 {
-	char *save, *store, c;
+	char *save;
+	char *store;
+	char c;
 	int value;
 
 	for (save = store = fmt; ((c = *fmt) != 0); ++fmt, ++store) {
@@ -549,8 +575,9 @@ escape(char *fmt, int percent, size_t *len)
 			if (percent && value == '%') {
 				*store++ = '%';
 				*store = '%';
-			} else
+			} else {
 				*store = (char)value;
+			}
 			break;
 		default:
 			*store = *fmt;
@@ -565,16 +592,18 @@ escape(char *fmt, int percent, size_t *len)
 static int
 getchr(void)
 {
-	if (!*gargv)
+	if (!*gargv) {
 		return ('\0');
+	}
 	return ((int)**gargv++);
 }
 
 static const char *
 getstr(void)
 {
-	if (!*gargv)
+	if (!*gargv) {
 		return ("");
+	}
 	return (*gargv++);
 }
 
@@ -585,8 +614,9 @@ getint(int *ip)
 	uintmax_t uval;
 	int rval;
 
-	if (getnum(&val, &uval, 1))
+	if (getnum(&val, &uval, 1)) {
 		return (1);
+	}
 	rval = 0;
 	if (val < INT_MIN || val > INT_MAX) {
 		warnx("%s: %s", *gargv, strerror(ERANGE));
@@ -607,18 +637,20 @@ getnum(intmax_t *ip, uintmax_t *uip, int signedconv)
 		return (0);
 	}
 	if (**gargv == '"' || **gargv == '\'') {
-		if (signedconv)
+		if (signedconv) {
 			*ip = asciicode();
-		else
+		} else {
 			*uip = asciicode();
+		}
 		return (0);
 	}
 	rval = 0;
 	errno = 0;
-	if (signedconv)
+	if (signedconv) {
 		*ip = strtoimax(*gargv, &ep, 0);
-	else
+	} else {
 		*uip = strtoumax(*gargv, &ep, 0);
+	}
 	if (ep == *gargv) {
 		warnx("%s: expected numeric value", *gargv);
 		rval = 1;
@@ -650,10 +682,11 @@ getfloating(long double *dp, int mod_ldbl)
 	}
 	rval = 0;
 	errno = 0;
-	if (mod_ldbl)
+	if (mod_ldbl) {
 		*dp = strtold(*gargv, &ep);
-	else
+	} else {
 		*dp = strtod(*gargv, &ep);
+	}
 	if (ep == *gargv) {
 		warnx("%s: expected numeric value", *gargv);
 		rval = 1;

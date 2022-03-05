@@ -186,15 +186,13 @@ simpleXmlPopUserData(SimpleXmlParser parser)
 	}
 	if (((SimpleXmlParserState)parser)->pUserData == NULL) {
 		return NULL;
-	} else {
-		void *pData;
-		SimpleXmlUserData ud =
-		    ((SimpleXmlParserState)parser)->pUserData;
-		((SimpleXmlParserState)parser)->pUserData = ud->next;
-		pData = ud->pData;
-		free(ud);
-		return pData;
 	}
+	void *pData;
+	SimpleXmlUserData ud = ((SimpleXmlParserState)parser)->pUserData;
+	((SimpleXmlParserState)parser)->pUserData = ud->next;
+	pData = ud->pData;
+	free(ud);
+	return pData;
 }
 
 void *
@@ -740,7 +738,8 @@ readChar(SimpleXmlParserState parser)
 	char c = readInputChar(parser);
 	if (c == '\0' && parser->nError != NO_ERROR) {
 		return FAIL;
-	} else if (c == '&') {
+	}
+	if (c == '&') {
 
 		if (peekInputCharAt(parser, 0) == '#') {
 			int nCode = 0;

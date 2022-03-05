@@ -100,17 +100,18 @@ u_char icmp_type_rsp = ICMP_ECHOREPLY;
 int ping(struct sockaddr_in *);
 static int flags, doing_proxy;
 static time_t expire_time;
-static int delete (struct sockaddr_in *);
-static int valid_type(int);
-static struct rt_msghdr *rtmsg(int, struct sockaddr_in *, struct sockaddr_dl *);
+static int delete (struct sockaddr_in * /*dst*/);
+static int valid_type(int /*type*/);
+static struct rt_msghdr *rtmsg(int /*cmd*/, struct sockaddr_in * /*dst*/,
+    struct sockaddr_dl * /*sdl*/);
 typedef void(
     action_fn)(struct sockaddr_dl *, struct sockaddr_in *, struct rt_msghdr *);
-static int get(struct sockaddr_in *);
+static int get(struct sockaddr_in * /*addr*/);
 static char *rifname;
 static int flags, doing_proxy, nflag;
 static time_t expire_time;
 static struct sockaddr_in *getaddr(char *host);
-static int search(u_long);
+static int search(u_long /*addr*/);
 int ping4(struct sockaddr_in *addr);
 int ping6(struct sockaddr *addr, size_t addrlen);
 
@@ -134,8 +135,9 @@ usage(char *myname)
 int
 is_ipv6(char *ip)
 {
-	if ((isxdigit(ip[0]) || ip[0] == ':') && (strchr(ip, ':') != NULL))
+	if ((isxdigit(ip[0]) || ip[0] == ':') && (strchr(ip, ':') != NULL)) {
 		return 1;
+	}
 	return 0;
 }
 
@@ -145,8 +147,9 @@ debugmsg(int level, const char *format, ...)
 	va_list arg;
 	int done;
 
-	if (debug < level)
+	if (debug < level) {
 		return 0;
+	}
 	va_start(arg, format);
 	done = vfprintf(stdout, format, arg);
 	va_end(arg);
@@ -172,7 +175,8 @@ errmsg(const char *format, ...)
 u_short
 in_cksum(u_short *addr, int len)
 {
-	int nleft, sum;
+	int nleft;
+	int sum;
 	u_short *w;
 
 	union {
@@ -218,7 +222,8 @@ int
 ping4(struct sockaddr_in *addr)
 {
 	const int val = 255;
-	int i, sd;
+	int i;
+	int sd;
 	u_char *packet;
 	outpack = outpackhdr + sizeof(struct ip);
 	packet = outpack;
@@ -241,8 +246,9 @@ ping4(struct sockaddr_in *addr)
 		return 1;
 	}
 
-	if (setsockopt(sd, SOL_SOCKET, IP_TTL, &val, sizeof(val)) != 0)
+	if (setsockopt(sd, SOL_SOCKET, IP_TTL, &val, sizeof(val)) != 0) {
 		errmsg("setsockopt error\r\n");
+	}
 
 	if (fcntl(sd, F_SETFL, O_NONBLOCK) != 0) {
 		errmsg("Request nonblocking I/O");
@@ -255,8 +261,9 @@ ping4(struct sockaddr_in *addr)
 
 		icp->icmp_cksum = in_cksum((u_short *)icp, cc);
 		if (sendto(sd, (char *)packet, cc, 0, (struct sockaddr *)addr,
-			sizeof(*addr)) <= 0)
+			sizeof(*addr)) <= 0) {
 			return 1;
+		}
 		usleep(pingtimeout);
 	}
 
@@ -271,8 +278,12 @@ main(int argc, char *argv[])
 	char *myname;
 	float t = 0;
 	myname = argv[0];
-	int optcode = 0, option_index = 0, ret = 0, status;
-	struct addrinfo hints, *res;
+	int optcode = 0;
+	int option_index = 0;
+	int ret = 0;
+	int status;
+	struct addrinfo hints;
+	struct addrinfo *res;
 
 	pingtimeout = PINGTIMEOUT * 1000000;
 	pingnum = PINGNUM;
@@ -290,8 +301,9 @@ main(int argc, char *argv[])
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_IP:
 			if (strlen(optarg) >= 40) {
@@ -321,10 +333,11 @@ main(int argc, char *argv[])
 		errmsg("--ip argument is mandatory\n");
 		exit(1);
 	}
-	if (is_ipv6(testip))
+	if (is_ipv6(testip)) {
 		ipv6 = 1;
-	else
+	} else {
 		ipv6 = 0;
+	}
 
 	switch (ipv6) {
 	case 0:
@@ -368,8 +381,9 @@ static int delete (struct sockaddr_in *dst)
 	struct sockaddr_dl *sdl;
 	struct sockaddr_dl sdl_m;
 
-	if (dst == NULL)
+	if (dst == NULL) {
 		return (1);
+	}
 
 	/*
 	 * Perform a regular entry delete first.
@@ -404,9 +418,8 @@ static int delete (struct sockaddr_in *dst)
 		    valid_type(sdl->sdl_type)) {
 			addr->sin_addr.s_addr = dst->sin_addr.s_addr;
 			break;
-		} else
-			// this is not for me, possible external via RTF_GATEWAY
-			return 1;
+		} // this is not for me, possible external via RTF_GATEWAY
+		return 1;
 	}
 	rtm->rtm_flags |= RTF_LLDATA;
 	if (rtmsg(RTM_DELETE, dst, NULL) != NULL) {
@@ -467,7 +480,8 @@ rtmsg(int cmd, struct sockaddr_in *dst, struct sockaddr_dl *sdl)
 	static int seq;
 	int rlen;
 	int l;
-	struct sockaddr_in so_mask, *som = &so_mask;
+	struct sockaddr_in so_mask;
+	struct sockaddr_in *som = &so_mask;
 	static int s = -1;
 	static pid_t pid;
 
@@ -483,8 +497,9 @@ rtmsg(int cmd, struct sockaddr_in *dst, struct sockaddr_dl *sdl)
 
 	if (s < 0) { /* first time: open socket, get pid */
 		s = socket(PF_ROUTE, SOCK_RAW, 0);
-		if (s < 0)
+		if (s < 0) {
 			err(1, "socket");
+		}
 		pid = getpid();
 	}
 	bzero(&so_mask, sizeof(so_mask));
@@ -496,8 +511,9 @@ rtmsg(int cmd, struct sockaddr_in *dst, struct sockaddr_dl *sdl)
 	 * XXX RTM_DELETE relies on a previous RTM_GET to fill the buffer
 	 * appropriately.
 	 */
-	if (cmd == RTM_DELETE)
+	if (cmd == RTM_DELETE) {
 		goto doit;
+	}
 	bzero((char *)&m_rtmsg, sizeof(m_rtmsg));
 	rtm->rtm_flags = flags;
 	rtm->rtm_version = RTM_VERSION;
@@ -552,8 +568,9 @@ doit:
 static int
 get(struct sockaddr_in *addr)
 {
-	if (addr == NULL)
+	if (addr == NULL) {
 		return (1);
+	}
 	if (search(addr->sin_addr.s_addr) == 1) {
 		return 1;
 	}
@@ -565,12 +582,15 @@ search(u_long addr)
 {
 	int mib[6];
 	size_t needed;
-	char *lim, *buf, *next;
+	char *lim;
+	char *buf;
+	char *next;
 	struct rt_msghdr *rtm;
 	struct sockaddr_in *sin2;
 	struct sockaddr_dl *sdl;
 	char ifname[IF_NAMESIZE];
-	int st, found_entry = 0;
+	int st;
+	int found_entry = 0;
 
 	mib[0] = CTL_NET;
 	mib[1] = PF_ROUTE;
@@ -582,22 +602,27 @@ search(u_long addr)
 #else
 	mib[5] = 0;
 #endif
-	if (sysctl(mib, 6, NULL, &needed, NULL, 0) < 0)
+	if (sysctl(mib, 6, NULL, &needed, NULL, 0) < 0) {
 		err(1, "route-sysctl-estimate");
-	if (needed == 0) /* empty table */
+	}
+	if (needed == 0) { /* empty table */
 		return 0;
+	}
 	buf = NULL;
 	for (;;) {
 		buf = reallocf(buf, needed);
-		if (buf == NULL)
+		if (buf == NULL) {
 			errx(1, "could not reallocate memory");
+		}
 		st = sysctl(mib, 6, buf, &needed, NULL, 0);
-		if (st == 0 || errno != ENOMEM)
+		if (st == 0 || errno != ENOMEM) {
 			break;
+		}
 		needed += needed / 8;
 	}
-	if (st == -1)
+	if (st == -1) {
 		err(1, "actual retrieval of routing table");
+	}
 	lim = buf + needed;
 
 	for (next = buf; next < lim; next += rtm->rtm_msglen) {
@@ -605,16 +630,19 @@ search(u_long addr)
 		sin2 = (struct sockaddr_in *)(rtm + 1);
 		sdl = (struct sockaddr_dl *)((char *)sin2 + SA_SIZE(sin2));
 		if (rifname && if_indextoname(sdl->sdl_index, ifname) &&
-		    strcmp(ifname, rifname))
+		    strcmp(ifname, rifname) != 0) {
 			continue;
+		}
 		if (addr) {
-			if (addr != sin2->sin_addr.s_addr)
+			if (addr != sin2->sin_addr.s_addr) {
 				continue;
+			}
 			// olevole: if sdl_alen = 0 it is incomplete
 			// records(record exist in fast cache without solve to
 			// mac)
-			if (sdl->sdl_alen != 0)
+			if (sdl->sdl_alen != 0) {
 				found_entry = 1;
+			}
 		}
 	}
 	free(buf);
@@ -624,12 +652,20 @@ search(u_long addr)
 int
 ping6(struct sockaddr *addr, size_t addrlen)
 {
-	int sd, cmsglen, datalen, hoplimit, psdhdrlen, i;
+	int sd;
+	int cmsglen;
+	int datalen;
+	int hoplimit;
+	int psdhdrlen;
+	int i;
 	struct icmp6_hdr *icmphdr;
-	unsigned char *data, *outpack, *psdhdr;
+	unsigned char *data;
+	unsigned char *outpack;
+	unsigned char *psdhdr;
 	struct sockaddr_in6 dst;
 	struct msghdr msghdr;
-	struct cmsghdr *cmsghdr1, *cmsghdr2;
+	struct cmsghdr *cmsghdr1;
+	struct cmsghdr *cmsghdr2;
 	struct in6_pktinfo *pktinfo;
 	struct iovec iov[2];
 	struct iovec riov[2];

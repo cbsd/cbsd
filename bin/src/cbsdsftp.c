@@ -60,7 +60,10 @@ int
 main(int argc, char *argv[])
 {
 	unsigned long hostaddr;
-	int sock, i, auth_pw = 0, port = 22;
+	int sock;
+	int i;
+	int auth_pw = 0;
+	int port = 22;
 	struct sockaddr_in sin;
 	const char *fingerprint;
 	char *userauthlist;
@@ -70,8 +73,9 @@ main(int argc, char *argv[])
 	LIBSSH2_SFTP_HANDLE *sftp_handle;
 	struct hostent *server;
 
-	if (!strcmp(argv[1], "--help"))
+	if (!strcmp(argv[1], "--help")) {
 		usage();
+	}
 
 	if (argc > 1) {
 		hostaddr = inet_addr(argv[1]);
@@ -105,8 +109,9 @@ main(int argc, char *argv[])
 		return -1;
 	}
 	session = libssh2_session_init();
-	if (!session)
+	if (!session) {
 		return -1;
+	}
 
 	libssh2_session_set_blocking(session, 1);
 

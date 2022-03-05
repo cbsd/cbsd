@@ -8,7 +8,8 @@
 int
 main(int argc, char *argv[])
 {
-	struct in6_addr sn, en;
+	struct in6_addr sn;
+	struct in6_addr en;
 	char output[64];
 	int octet;
 
@@ -33,20 +34,22 @@ main(int argc, char *argv[])
 		printf("%s\n", output);
 
 		/* break if we hit the last address or (sn > en) */
-		if (memcmp(sn.s6_addr, en.s6_addr, 16) >= 0)
+		if (memcmp(sn.s6_addr, en.s6_addr, 16) >= 0) {
 			break;
+		}
 
 		/* increment sn, and move towards en */
 		for (octet = 15; octet >= 0; --octet) {
 			if (sn.s6_addr[octet] < 255) {
 				sn.s6_addr[octet]++;
 				break;
-			} else
-				sn.s6_addr[octet] = 0;
+			}
+			sn.s6_addr[octet] = 0;
 		}
 
-		if (octet < 0)
+		if (octet < 0) {
 			break; /* top of logical address range */
+		}
 	}
 	return 0;
 }

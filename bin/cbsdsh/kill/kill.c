@@ -58,37 +58,46 @@ __FBSDID("$FreeBSD: head/bin/kill/kill.c 279503 2015-03-01 21:46:55Z jilles $");
 #include "bltin/bltin.h"
 #endif
 
-static void nosig(const char *);
+static void nosig(const char * /*name*/);
 static void printsignals(FILE *);
-static int signame_to_signum(const char *);
+static int signame_to_signum(const char * /*sig*/);
 static void usage(void);
 
 int
 main(int argc, char *argv[])
 {
-	int errors, numsig, pid, ret;
+	int errors;
+	int numsig;
+	int pid;
+	int ret;
 	char *ep;
 
-	if (argc < 2)
+	if (argc < 2) {
 		usage();
+	}
 
 	numsig = SIGTERM;
 
 	argc--, argv++;
 	if (!strcmp(*argv, "-l")) {
 		argc--, argv++;
-		if (argc > 1)
+		if (argc > 1) {
 			usage();
+		}
 		if (argc == 1) {
-			if (!isdigit(**argv))
+			if (!isdigit(**argv)) {
 				usage();
+			}
 			numsig = strtol(*argv, &ep, 10);
-			if (!**argv || *ep)
+			if (!**argv || *ep) {
 				errx(2, "illegal signal number: %s", *argv);
-			if (numsig >= 128)
+			}
+			if (numsig >= 128) {
 				numsig -= 128;
-			if (numsig <= 0 || numsig >= sys_nsig)
+			}
+			if (numsig <= 0 || numsig >= sys_nsig) {
 				nosig(*argv);
+			}
 			printf("%s\n", sys_signame[numsig]);
 			return (0);
 		}
@@ -102,44 +111,53 @@ main(int argc, char *argv[])
 			warnx("option requires an argument -- s");
 			usage();
 		}
-		if (strcmp(*argv, "0")) {
-			if ((numsig = signame_to_signum(*argv)) < 0)
+		if (strcmp(*argv, "0") != 0) {
+			if ((numsig = signame_to_signum(*argv)) < 0) {
 				nosig(*argv);
-		} else
+			}
+		} else {
 			numsig = 0;
+		}
 		argc--, argv++;
 	} else if (**argv == '-' && *(*argv + 1) != '-') {
 		++*argv;
 		if (isalpha(**argv)) {
-			if ((numsig = signame_to_signum(*argv)) < 0)
+			if ((numsig = signame_to_signum(*argv)) < 0) {
 				nosig(*argv);
+			}
 		} else if (isdigit(**argv)) {
 			numsig = strtol(*argv, &ep, 10);
-			if (!**argv || *ep)
+			if (!**argv || *ep) {
 				errx(2, "illegal signal number: %s", *argv);
-			if (numsig < 0)
+			}
+			if (numsig < 0) {
 				nosig(*argv);
-		} else
+			}
+		} else {
 			nosig(*argv);
+		}
 		argc--, argv++;
 	}
 
-	if (argc > 0 && strncmp(*argv, "--", 2) == 0)
+	if (argc > 0 && strncmp(*argv, "--", 2) == 0) {
 		argc--, argv++;
+	}
 
-	if (argc == 0)
+	if (argc == 0) {
 		usage();
+	}
 
 	for (errors = 0; argc; argc--, argv++) {
 #ifdef SHELL
-		if (**argv == '%')
+		if (**argv == '%') {
 			ret = killjob(*argv, numsig);
-		else
+		} else
 #endif
 		{
 			pid = strtol(*argv, &ep, 10);
-			if (!**argv || *ep)
+			if (!**argv || *ep) {
 				errx(2, "illegal process id: %s", *argv);
+			}
 			ret = kill(pid, numsig);
 		}
 		if (ret == -1) {
@@ -156,11 +174,13 @@ signame_to_signum(const char *sig)
 {
 	int n;
 
-	if (strncasecmp(sig, "SIG", 3) == 0)
+	if (strncasecmp(sig, "SIG", 3) == 0) {
 		sig += 3;
+	}
 	for (n = 1; n < sys_nsig; n++) {
-		if (!strcasecmp(sys_signame[n], sig))
+		if (!strcasecmp(sys_signame[n], sig)) {
 			return (n);
+		}
 	}
 	return (-1);
 }
@@ -185,10 +205,11 @@ printsignals(FILE *fp)
 
 	for (n = 1; n < sys_nsig; n++) {
 		(void)fprintf(fp, "%s", sys_signame[n]);
-		if (n == (sys_nsig / 2) || n == (sys_nsig - 1))
+		if (n == (sys_nsig / 2) || n == (sys_nsig - 1)) {
 			(void)fprintf(fp, "\n");
-		else
+		} else {
 			(void)fprintf(fp, " ");
+		}
 	}
 }
 

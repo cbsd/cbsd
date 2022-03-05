@@ -2,6 +2,7 @@
 // Oleg Ginzburg <olevole@olevole.ru>
 // 0.1
 // Obtain ISCSI discovery result
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -61,7 +62,7 @@ int readFileData(char *sFileName, char **sData, long *pnDataLen);
 
 #define REMOVE_FROM_LIST(item, head, next)             \
 	if ((item) == (head))                          \
-		head = (item)->next;                   \
+		(head) = (item)->next;                 \
 	else {                                         \
 		temp = head;                           \
 		while (temp && (temp->next != (item))) \
@@ -72,7 +73,8 @@ int readFileData(char *sFileName, char **sData, long *pnDataLen);
 void
 trim_spaces(char *input)
 {
-	char *dst = input, *src = input;
+	char *dst = input;
+	char *src = input;
 	char *end;
 
 	while (isspace((unsigned char)*src)) {
@@ -85,8 +87,9 @@ trim_spaces(char *input)
 	}
 
 	if (src != dst) {
-		while ((*dst++ = *src++))
+		while ((*dst++ = *src++)) {
 			;
+		}
 	}
 }
 
@@ -118,8 +121,9 @@ portal_status()
 
 	for (sch = portals_list; sch; sch = sch->next) {
 		if ((strlen(sch->portal) < 1) || (strlen(sch->name) < 1) ||
-		    (strlen(sch->state) < 1))
+		    (strlen(sch->state) < 1)) {
 			continue;
+		}
 		printf("portal%d=\"%s\"\n", num, sch->portal);
 		printf("portal_name%d=\"%s\"\n", num, sch->name);
 		printf("portal_state%d=\"%s\"\n", num, sch->state);
@@ -135,8 +139,9 @@ new_portal(char *portal, char *name, char *state)
 {
 	struct portal_data *news;
 
-	if (strlen(portal) < 1)
+	if (strlen(portal) < 1) {
 		return 0;
+	}
 
 	// add socket
 	CREATE(news, struct portal_data, 1);
@@ -209,9 +214,10 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 					fprintf(stderr, " NEW NAME : %s\n",
 					    szHandlerValue);
 					memset(cur_name, 0, sizeof(cur_name));
-					if (strlen(szHandlerValue) > 1)
+					if (strlen(szHandlerValue) > 1) {
 						strcpy(cur_name,
 						    szHandlerValue);
+					}
 				}
 			} else if (!strcmp(szHandlerName, "state")) {
 				fprintf(stderr,
@@ -254,8 +260,9 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 		    szHandlerName);
 		nDepth--;
 		if (level == 10) {
-			if (!strcmp(szHandlerName, "cpu"))
+			if (!strcmp(szHandlerName, "cpu")) {
 				level = 0;
+			}
 		}
 	}
 
@@ -330,8 +337,8 @@ getIndent(int nDepth)
 	if (szIndent == NULL) {
 		szIndent = malloc(1024);
 	}
-	memset(szIndent, ' ', nDepth * 2);
-	szIndent[nDepth * 2] = '\0';
+	memset(szIndent, ' ', (size_t)(nDepth * 2));
+	szIndent[(ptrdiff_t)(nDepth * 2)] = '\0';
 	return szIndent;
 }
 
@@ -384,27 +391,25 @@ readFileData(char *sFileName, char **psData, long *pnDataLen)
 	*pnDataLen = 0;
 	if (stat(sFileName, &fstat) == -1) {
 		return READ_FILE_STAT_ERROR;
+	}
+	FILE *file = fopen(sFileName, "r");
+	if (file == NULL) {
+		return READ_FILE_OPEN_ERROR;
 	} else {
-		FILE *file = fopen(sFileName, "r");
-		if (file == NULL) {
-			return READ_FILE_OPEN_ERROR;
+		*psData = malloc(fstat.st_size);
+		if (*psData == NULL) {
+			fclose(file);
+			return READ_FILE_OUT_OF_MEMORY;
 		} else {
-			*psData = malloc(fstat.st_size);
-			if (*psData == NULL) {
-				fclose(file);
-				return READ_FILE_OUT_OF_MEMORY;
-			} else {
-				size_t len = fread(*psData, 1, fstat.st_size,
-				    file);
-				fclose(file);
-				if (len != fstat.st_size) {
-					free(*psData);
-					*psData = NULL;
-					return READ_FILE_READ_ERROR;
-				}
-				*pnDataLen = len;
-				return READ_FILE_NO_ERROR;
+			size_t len = fread(*psData, 1, fstat.st_size, file);
+			fclose(file);
+			if (len != fstat.st_size) {
+				free(*psData);
+				*psData = NULL;
+				return READ_FILE_READ_ERROR;
 			}
+			*pnDataLen = len;
+			return READ_FILE_NO_ERROR;
 		}
 	}
 }

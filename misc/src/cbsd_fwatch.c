@@ -35,7 +35,9 @@ cbsd_fwatch_usage(void)
 int
 main(int argc, char *argv[])
 {
-	int fd, kq, nev;
+	int fd;
+	int kq;
+	int nev;
 	struct kevent ev;
 	//	static const struct timespec tout = { 1, 0 };
 
@@ -60,8 +62,9 @@ main(int argc, char *argv[])
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1)
+		if (optcode == -1) {
 			break;
+		}
 		switch (optcode) {
 		case C_FILE:
 			watchfile = malloc(strlen(optarg) + 1);
@@ -112,10 +115,11 @@ main(int argc, char *argv[])
 
 	memset(cmd, 0, sizeof(cmd));
 
-	if (timeout == 0)
+	if (timeout == 0) {
 		nev = kevent(kq, NULL, 0, &ev, 1, NULL);
-	else
+	} else {
 		nev = kevent(kq, NULL, 0, &ev, 1, &tv);
+	}
 
 	if (nev == -1) {
 		printf("kevent\n");

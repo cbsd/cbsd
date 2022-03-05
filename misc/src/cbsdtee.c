@@ -14,14 +14,14 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef struct _list {
-	struct _list *next;
+typedef struct list {
+	struct list *next;
 	int fd;
 	const char *name;
 } LIST;
 static LIST *head;
 
-static void add(int, const char *);
+static void add(int /*fd*/, const char * /*name*/);
 static void usage(void);
 
 int
@@ -42,11 +42,13 @@ generate_random_pct(int lower, int upper)
 	}
 	num = (rand() % (upper - lower + 1)) + lower;
 
-	if (num < 0)
+	if (num < 0) {
 		num = 0;
+	}
 
-	if (num > 100)
+	if (num > 100) {
 		num = 99; // ;-)
+	}
 
 	return num;
 }
@@ -55,9 +57,13 @@ int
 main(int argc, char *argv[])
 {
 	LIST *p;
-	int n, fd, rval, wval;
+	int n;
+	int fd;
+	int rval;
+	int wval;
 	char *bp;
-	int ch, exitval;
+	int ch;
+	int exitval;
 	char *buf;
 	off_t received = 0;
 	off_t bytes_expected = 0;
@@ -72,7 +78,7 @@ main(int argc, char *argv[])
 	srand(time(0)); // for rounded percent
 #define BSIZE (8 * 1024)
 
-	while ((ch = getopt(argc, argv, "f:e:")) != -1)
+	while ((ch = getopt(argc, argv, "f:e:")) != -1) {
 		switch ((char)ch) {
 		case 'e':
 			bytes_expected = atoll(optarg);
@@ -84,14 +90,17 @@ main(int argc, char *argv[])
 		default:
 			usage();
 		}
+	}
 	argv += optind;
 	argc -= optind;
 
-	if ((!filename) && (bytes_expected == 0))
+	if ((!filename) && (bytes_expected == 0)) {
 		usage();
+	}
 
-	if ((buf = malloc(BSIZE)) == NULL)
+	if ((buf = malloc(BSIZE)) == NULL) {
 		err(1, "malloc");
+	}
 
 	if (bytes_expected > 0) {
 		fprintf(stderr, "WIP: [0%%");
@@ -102,15 +111,17 @@ main(int argc, char *argv[])
 	}
 	add(STDOUT_FILENO, "stdout");
 
-	for (exitval = 0; *argv; ++argv)
+	for (exitval = 0; *argv; ++argv) {
 		if ((fd = open(*argv, O_WRONLY | O_CREAT | O_TRUNC,
 			 DEFFILEMODE)) < 0) {
 			warn("%s", *argv);
 			exitval = 1;
-		} else
+		} else {
 			add(fd, *argv);
+		}
+	}
 
-	while ((rval = read(STDIN_FILENO, buf, BSIZE)) > 0)
+	while ((rval = read(STDIN_FILENO, buf, BSIZE)) > 0) {
 		for (p = head; p; p = p->next) {
 			n = rval;
 			bp = buf;
@@ -138,8 +149,10 @@ main(int argc, char *argv[])
 				}
 			} while (n -= wval);
 		}
-	if (rval < 0)
+	}
+	if (rval < 0) {
 		err(1, "read");
+	}
 
 	if (filename) {
 		fp = fopen(filename, "w");
@@ -151,8 +164,9 @@ main(int argc, char *argv[])
 			fclose(fp);
 		}
 	}
-	if (bytes_expected > 0)
+	if (bytes_expected > 0) {
 		fprintf(stderr, "...100%%]\n");
+	}
 	exit(exitval);
 }
 
@@ -168,8 +182,9 @@ static void
 add(int fd, const char *name)
 {
 	LIST *p;
-	if ((p = malloc(sizeof(LIST))) == NULL)
+	if ((p = malloc(sizeof(LIST))) == NULL) {
 		err(1, "malloc");
+	}
 	p->fd = fd;
 	p->name = name;
 	p->next = head;

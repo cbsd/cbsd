@@ -27,10 +27,10 @@ nm_ioctl(struct nmreq_header *hdr)
 		int err = errno;
 		close(fd);
 
-		if (hdr->nr_reqtype == NETMAP_REQ_VALE_LIST && err == ENOENT)
+		if (hdr->nr_reqtype == NETMAP_REQ_VALE_LIST && err == ENOENT) {
 			return;
-		else
-			fprintf(stderr, "netmap NIOCTRL\n");
+		}
+		fprintf(stderr, "netmap NIOCTRL\n");
 		exit(1);
 	}
 }
@@ -50,15 +50,20 @@ is_number(const char *p)
 {
 	const char *q;
 
-	if (*p == '\0')
+	if (*p == '\0') {
 		return 0;
-	while (*p == '0')
+	}
+	while (*p == '0') {
 		p++;
-	for (q = p; *q != '\0'; q++)
-		if (!is_digit(*q))
+	}
+	for (q = p; *q != '\0'; q++) {
+		if (!is_digit(*q)) {
 			return 0;
-	if (q - p > 10000)
+		}
+	}
+	if (q - p > 10000) {
 		return 0;
+	}
 	return 1;
 }
 
@@ -75,8 +80,9 @@ in_exclude_list(int port, char *exclude_list)
 	pch = strtok(ex, " ,.-");
 	while (pch != NULL) {
 		tmp = atoi(pch);
-		if (tmp == port)
+		if (tmp == port) {
 			return 1;
+		}
 		pch = strtok(NULL, " ,.-");
 	}
 	return 0;
@@ -87,10 +93,15 @@ main(int argc, char *argv[])
 {
 	struct nmreq_header hdr;
 	struct nmreq_vale_list req;
-	int i = 0, j = 0, x = 0, sw_id;
+	int i = 0;
+	int j = 0;
+	int x = 0;
+	int sw_id;
 	char *token = NULL;
 	int target_vale_id = -1;
-	int ch, nr_cmd = 0, nr_arg = 0;
+	int ch;
+	int nr_cmd = 0;
+	int nr_arg = 0;
 	int port;
 	int switch_found;
 	int first_free = -1;
@@ -134,8 +145,9 @@ main(int argc, char *argv[])
 			switch_ports[i] = in_exclude_list(i, exclude_list);
 		}
 	} else {
-		for (i = 0; i < 255; i++)
+		for (i = 0; i < 255; i++) {
 			switch_ports[i] = 0;
+		}
 	}
 
 	// scan for 255 switch ID
@@ -196,8 +208,9 @@ main(int argc, char *argv[])
 					;
 					;
 				case 1:
-					if (switch_found == 0)
+					if (switch_found == 0) {
 						continue;
+					}
 					fprintf(stderr, "  port name: %s\n",
 					    token);
 					if (!is_number(token)) {
@@ -225,8 +238,9 @@ main(int argc, char *argv[])
 	}
 	fprintf(stderr, "SWITCH MAP:\n");
 	for (i = 0; i < 255; i++) {
-		if ((switch_ports[i] == 0) && (first_free < 0))
+		if ((switch_ports[i] == 0) && (first_free < 0)) {
 			first_free = i;
+		}
 		fprintf(stderr, "%d ", switch_ports[i]);
 	}
 	fprintf(stderr, "\n");
