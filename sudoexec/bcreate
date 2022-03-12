@@ -180,6 +180,15 @@ really_create_vm()
 {
 	local _res _msg
 
+	# do not create disk
+	[ "${imgtype}" = "none" ] && return 0
+
+	_res=$( substr --pos=0 --len=5 --str=${imgtype} )
+	if [ "${_res}" = "/dev/" ]; then
+		echo "IMGTYPE = raw: ${imgtype}"
+		return 0
+	fi
+
 	#test for imgtype
 	case ${zfsfeat} in
 			1)
@@ -622,37 +631,43 @@ fi
 
 ${RM_CMD} -f ${rcconf}
 
-if [ -z "${sectorsize}" ]; then
-	sectorsize="${default_sectorsize}"
-	[ -z "${sectorsize}" ] && sectorsize="4096"
-fi
-
-if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
-	. ${subrdir}/zfs.subr
-	dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
-	_ret=$?
-	[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
-fi
-
-[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
-
-dsk_bsize=0
-
-if is_number "${imgsize}"; then
-	if conv2bytes ${imgsize}; then
-		dsk_bsize="${convval}"
-	else
-		dsk_bsize=0
+# todo: move to dsk function
+if [ "${imgtype}" != "none" ]; then
+	if [ -z "${sectorsize}" ]; then
+		sectorsize="${default_sectorsize}"
+		[ -z "${sectorsize}" ] && sectorsize="4096"
 	fi
-else
-	# already on bytes ?
-	dsk_bsize="${imgsize}"
-fi
 
-if [ -n "${virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
-else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\",\"${dsk_zfs_guid}\" )"
+	if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
+		. ${subrdir}/zfs.subr
+		dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
+	fi
+
+	[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
+
+	dsk_bsize=0
+
+	if is_number "${imgsize}"; then
+		if conv2bytes ${imgsize}; then
+			dsk_bsize="${convval}"
+		else
+			dsk_bsize=0
+		fi
+	else
+		# already on bytes ?
+		dsk_bsize="${imgsize}"
+	fi
+
+	if [ -n "${virtio_type}" ]; then
+		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
+	else
+		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\",\"${dsk_zfs_guid}\" )"
+	fi
+
+	# mark the first disk bootable
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
 fi
 
 if [ -n "${nic_driver}" ]; then
@@ -948,8 +963,6 @@ if [ ${is_cloud} -eq 1 ]; then
 	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 
-# mark the first disk bootable
-cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
 
 # unset vnc_password when vnc_password=0 (reserved)
 [ "${vnc_password}" = "0" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
