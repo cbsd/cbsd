@@ -1,17 +1,52 @@
 #!/usr/local/bin/cbsd
 #v11.1.0
 MYARG="mode"
-MYOPTARG="jname snapname snapfs header display"
+MYOPTARG="display header jname snapfs snapname"
 MYDESC="Jail snapshot management"
-ADDHELP="mode can: list, create, destroy, destroyall, destroyall_original, clone, rollback\n\
-snapfs can be: rsync\n\
-snapname can be: \"gettimeofday\" or any arbitrary word\n\
-header=0 don't print header\n\
-display= list by comma for column. Default: snapname,jname,creation,refer\n\
-mode:\n\
-  - destroyall: remove all snapshot for current jail\n\
-  - destroyall_original: remove all original snapshot, ZPOOL@cbsd-original-<jname>, <CLOUD>@boot-<jname>\n"
-CBSDMODULE="jail"
+CBSDMODULE="bhyve,jail"
+
+# display header jname mode snapfs snapname
+
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Сreates file snapshots of data on filesystems that support it.
+Do not confuse with 'checkpoint'.
+
+On ZFS-based filesystems, the 'jsnapshot' script mark/labels the snapshots 
+with 'cbsdsnap' PROPERTY:
+
+        ${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath}
+        ${ZFS_CMD} set cbsdsnap:snapname=${snapname} ${snappath}
+
+and ignores other snapshots that don't have 'cbsdsnap' attrubute.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}display=${N0_COLOR} - list by comma for column,
+                      default: snapname,jname,creation,refer;
+ ${N2_COLOR}header=${N0_COLOR}  - don't print header;
+ ${N2_COLOR}jname=${N0_COLOR}   - target environment;
+ ${N2_COLOR}mode=${N0_COLOR}    - action, can be:
+              clone               - clone snapshot;
+              create              - create new snapshot;
+              destroy             - destroy snapshot;
+              destroyall          - remove all snapshot for current jail;
+              destroyall_original - remove all original snapshot, e.g:
+                                      ZPOOL@cbsd-original-<jname>, <CLOUD>@boot-<jname>, ...;
+              list                - list of CBSD snapshots, jname= to limit by <jname> only;
+              rollback            - rollback the snapshot;
+ ${N2_COLOR}snapfs=${N0_COLOR}   - can be: rsync
+ ${N2_COLOR}snapname=${N0_COLOR} - can be: \"gettimeofday\" or any arbitrary word
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jsnapshot mode=create jname=jail1 snapname=gettimeofday
+ # cbsd jsnapshot mode=list
+ # cbsd jsnapshot mode=list jname=jail1
+ # cbsd jsnapshot mode=rollback jname=jail1 snapname=20220319193339
+
+"
 
 . ${subrdir}/nc.subr
 . ${strings}
@@ -20,7 +55,7 @@ CBSDMODULE="jail"
 show_header()
 {
 	local _header="${BOLD}${myheader}${N0_COLOR}"
-	[ ${header} -ne 0 ] && $ECHO ${_header}
+	[ ${header} -ne 0 ] && ${ECHO} ${_header}
 }
 
 init_zfs_mod_by_jname()
@@ -50,7 +85,6 @@ init_zfs_mod_by_jname()
 	fi
 }
 
-
 init_zfs_snappath_by_jname()
 {
 	snappath=
@@ -75,7 +109,6 @@ init_zfs_snappath_by_jname()
 	esac
 }
 
-
 check_jname()
 {
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}Please set ${N2_COLOR}jname=${N0_COLOR}"
@@ -89,6 +122,7 @@ check_jname()
 	fi
 }
 
+# -c <print count only>
 zfs_snapshot_list()
 {
 	local _fs _p1 _jname _createtime _status _snaptime _snapname _refer
@@ -98,7 +132,7 @@ zfs_snapshot_list()
 	show_header
 
 	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
-		_status=""
+		_status=
 		_jname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
 
 		[ -z "${_jname}" ] && continue		# not my snap
@@ -108,18 +142,18 @@ zfs_snapshot_list()
 		#populate values for in output string
 		for _i in ${mydisplay}; do
 			case "${_i}" in
-				"snapname")
+				snapname)
 					_status="${_status}${_snapname} "
 					;;
-				"jname")
+				jname)
 					_status="${_status}${_jname} "
 					;;
-				"creation")
+				creation)
 					_createtime=$( ${ZFS_CMD} get -H -o value creation "${_fs}" 2>/dev/null )
 					_snaptime=$( ${DATE_CMD} -j -f "%a %b %d %H:%M %Y" "${_createtime}" "+%Y-%m-%d__%H:%M" )
 					_status="${_status}${_snaptime} "
 					;;
-				"refer")
+				refer)
 					_refer=$( ${ZFS_CMD} get -H -o value refer "${_fs}" 2>/dev/null )
 					_status="${_status}${_refer} "
 					;;
@@ -197,35 +231,35 @@ ufs_snapshot_list()
 	err 1 "${N1_COLOR}jsnapshot: ufs not implemented${N0_COLOR}"
 	fs_type="ufs"
 
-	for snap in $( snapinfo $fs_dir 2>/dev/null ); do
-		[ ! -f $snap ] && continue
+	for snap in $( snapinfo ${fs_dir} 2>/dev/null ); do
+		[ ! -f ${snap} ] && continue
 
 		#   determine sizes
-		fs_size=$( ${DF_CMD} -k $fs_dir | ${TAIL_CMD} -n1 | ${AWK_CMD} '{ print $2; }' )
-		used_size=$( ${DF_CMD} -k $fs_dir | ${TAIL_CMD} -n1 | ${AWK_CMD} '{ print $3; }' )
-		snap_size=$( /usr/bin/du -k $snap | ${AWK_CMD} '{ print $1; }' )
+		fs_size=$( ${DF_CMD} -k ${fs_dir} | ${TAIL_CMD} -n1 | ${AWK_CMD} '{ print $2; }' )
+		used_size=$( ${DF_CMD} -k ${fs_dir} | ${TAIL_CMD} -n1 | ${AWK_CMD} '{ print $3; }' )
+		snap_size=$( ${DU_CMD} -k ${snap} | ${AWK_CMD} '{ print $1; }' )
 
 		#   determine snapshot creation time
-		if [ ".$verbose" = .yes ]; then
-			snap_time=$( /usr/bin/stat -f "%B" $snap )
-			snap_time=$( ${DATE_CMD} -r "$snap_time" "+%Y-%m-%dT%H:%M" )
+		if [ ".${verbose}" = .yes ]; then
+			snap_time=$( ${STAT_CMD} -f "%B" $snap )
+			snap_time=$( ${DATE_CMD} -r "${snap_time}" "+%Y-%m-%dT%H:%M" )
 		fi
 
 		#   calculate percentages
-		snap_percent=` echo . | ${AWK_CMD} '{ printf("%.1f%%", (snap / fs) * 100); }' snap="$snap_size" fs="$fs_size" `
-		used_percent=` echo . | ${AWK_CMD} '{ printf("%.1f%%", (used / fs) * 100); }' used="$used_size" fs="$fs_size" `
+		snap_percent=` echo . | ${AWK_CMD} '{ printf("%.1f%%", (snap / fs) * 100); }' snap="${snap_size}" fs="${fs_size}" `
+		used_percent=` echo . | ${AWK_CMD} '{ printf("%.1f%%", (used / fs) * 100); }' used="${used_size}" fs="${fs_size}" `
 
 		#   canonicalize for output
-		fs_size=$( canonksize $fs_size )
-		snap_size=$( canonksize $snap_size )
-		used_size=$( canonksize $used_size )
-		snap_file=`echo "$snap" | ${SED_CMD} -e 's;.*/\([^/]*\)$;\1;'`
+		fs_size=$( canonksize ${fs_size} )
+		snap_size=$( canonksize ${snap_size} )
+		used_size=$( canonksize ${used_size} )
+		snap_file=`echo "${snap}" | ${SED_CMD} -e 's;.*/\([^/]*\)$;\1;'`
 
 		#   output snapshot information
-		if [ ".$verbose" = .yes ]; then
-			printf "%-15s %4s %8s %7s %8s %7s  %-15s %s\n" "$fs_dir" "$fs_type" "$used_size" "$used_percent" "$snap_size" "$snap_percent" "$snap_file" "$snap_time"
+		if [ ".${verbose}" = .yes ]; then
+			printf "%-15s %4s %8s %7s %8s %7s  %-15s %s\n" "${fs_dir}" "${fs_type}" "${used_size}" "${used_percent}" "${snap_size}" "${snap_percent}" "${snap_file}" "${snap_time}"
 		else
-			printf "%-15s %8s %7s %8s %7s  %-15s\n" "$fs_dir" "$used_size" "$used_percent" "$snap_size" "$snap_percent" "$snap_file"
+			printf "%-15s %8s %7s %8s %7s  %-15s\n" "$fs_dir" "${used_size}" "${used_percent}" "${snap_size}" "${snap_percent}" "${snap_file}"
 		fi
 	done
 }
@@ -242,7 +276,7 @@ zfs_snapshot_create()
 
 	init_zfs_snappath_by_jname
 
-	_tst=$( ${ZFS_CMD} snapshot ${snappath} 2>&1)
+	_tst=$( ${ZFS_CMD} snapshot ${snappath} 2>&1 )
 
 	[ $? -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot error: ${N0_COLOR}${_tst}"
 	${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath}
@@ -335,29 +369,31 @@ myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
 [ -z "${header}" ] && header=1
 
 case "${mode}" in
-	"list")
-		${snapfs}_snapshot_list |/usr/bin/column -t
+	list)
+		${snapfs}_snapshot_list | ${COLUMN_CMD} -t
 		;;
-	"create")
+	create)
 		check_jname
 		${snapfs}_snapshot_create
 		;;
-	"destroy")
+	destroy)
 		check_jname
 		${snapfs}_snapshot_destroy_by_snapname
 		;;
-	"destroyall")
+	destroyall)
 		check_jname
 		${snapfs}_snapshot_destroyall
 		;;
-	"destroyall_original")
+	destroyall_original)
 		check_jname
 		${snapfs}_snapshot_destroyall_original
 		;;
-	"rollback")
+	rollback)
 		check_jname
 		${snapfs}_snapshot_rollback
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 esac
+
+exit 0
