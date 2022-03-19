@@ -4,9 +4,6 @@ MYARG="mode"
 MYOPTARG="display header jname snapfs snapname"
 MYDESC="Jail snapshot management"
 CBSDMODULE="bhyve,jail"
-
-# display header jname mode snapfs snapname
-
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -16,15 +13,15 @@ Do not confuse with 'checkpoint'.
 On ZFS-based filesystems, the 'jsnapshot' script mark/labels the snapshots 
 with 'cbsdsnap' PROPERTY:
 
-        ${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath}
-        ${ZFS_CMD} set cbsdsnap:snapname=${snapname} ${snappath}
+  ${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath}
+  ${ZFS_CMD} set cbsdsnap:snapname=${snapname} ${snappath}
 
 and ignores other snapshots that don't have 'cbsdsnap' attrubute.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}display=${N0_COLOR} - list by comma for column,
-                      default: snapname,jname,creation,refer;
+              default: 'snapname,jname,creation,refer';
  ${N2_COLOR}header=${N0_COLOR}  - don't print header;
  ${N2_COLOR}jname=${N0_COLOR}   - target environment;
  ${N2_COLOR}mode=${N0_COLOR}    - action, can be:
@@ -36,8 +33,8 @@ ${H3_COLOR}Options${N0_COLOR}:
                                       ZPOOL@cbsd-original-<jname>, <CLOUD>@boot-<jname>, ...;
               list                - list of CBSD snapshots, jname= to limit by <jname> only;
               rollback            - rollback the snapshot;
- ${N2_COLOR}snapfs=${N0_COLOR}   - can be: rsync
- ${N2_COLOR}snapname=${N0_COLOR} - can be: \"gettimeofday\" or any arbitrary word
+ ${N2_COLOR}snapfs=${N0_COLOR}   - can be: 'rsync', force snapshot engine;
+ ${N2_COLOR}snapname=${N0_COLOR} - can be: 'gettimeofday' or any arbitrary word;
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -51,6 +48,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 . ${subrdir}/nc.subr
 . ${strings}
 . ${cbsdinit}
+. ${subrdir}/time.subr
 
 show_header()
 {
@@ -125,11 +123,21 @@ check_jname()
 # -c <print count only>
 zfs_snapshot_list()
 {
-	local _fs _p1 _jname _createtime _status _snaptime _snapname _refer
+	local _fs _p1 _jname _createtime _status _snaptime
+	local _count_only _snapname _refer _count=0
+
+	_count_only=0
+
+	while getopts "c" opt; do
+		case "${opt}" in
+			c) _count_only="1" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	init_zfs_mod_by_jname
 
-	show_header
+	[ ${_count_only} -eq 0 ] && show_header
 
 	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_status=
@@ -139,6 +147,12 @@ zfs_snapshot_list()
 		[ -n "${jname}" -a "${jname}" != "${_jname}" ] && continue
 		_snapname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null )
 		[ -z "${_snapname}" ] && continue
+
+		if [ ${_count_only} -eq 1 ]; then
+			_count=$(( _count + 1 ))
+			continue
+		fi
+
 		#populate values for in output string
 		for _i in ${mydisplay}; do
 			case "${_i}" in
@@ -161,13 +175,20 @@ zfs_snapshot_list()
 		done
 		${ECHO} "${N0_COLOR}${_status}"
 	done
+
+	[ ${_count_only} -eq 1 ] && printf "${_count}"
+
+	return 0
 }
 
 zfs_snapshot_destroyall()
 {
-	local _fs _jname _snapname
+	local _fs _jname _snapname _count
 
 	init_zfs_mod_by_jname
+
+	st_time=$( ${DATE_CMD} +%s )
+	_count=0
 
 	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_jname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
@@ -176,15 +197,24 @@ zfs_snapshot_destroyall()
 		_snapname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null )
 		[ -z "${_snapname}" ] && continue
 		zfs_snapshot_destroy ${_fs} && ${ECHO} "${N1_COLOR}zfs snapshot for ${jname} destroyed: ${N2_COLOR}${_snapname}${N0_COLOR}"
+		_count=$(( _count + 1 ))
 	done
+
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: destroyed ${N2_COLOR}${_count}${N1_COLOR} snapshots ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 }
 
 zfs_snapshot_destroy_by_snapname()
 {
-	local _fs _jname _snapname
+	local _fs _jname _snapname _count
 
 	[ -z "${snapname}" ] && err 1 "${N1_COLOR}Please set ${N2_COLOR}snapname=${N1_COLOR} or use ${N2_COLOR}mode=destroyall ${N1_COLOR}to destroy all snapshots for this jail${N0_COLOR}"
 	init_zfs_mod_by_jname
+
+	st_time=$( ${DATE_CMD} +%s )
+	_count=0
 
 	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_jname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
@@ -194,13 +224,19 @@ zfs_snapshot_destroy_by_snapname()
 		[ -z "${_snapname}" -o "${_snapname}" != "${snapname}" ] && continue
 		zfs_snapshot_destroy ${_fs} && ${ECHO} "${N1_COLOR}zfs snapshot for ${jname} destroyed: ${N2_COLOR}${_snapname}${N0_COLOR}"
 		# if cycle is not end than something wrong with parsing of snapname
+		_count=$(( _count + 1 ))
 	done
+
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: destroyed ${N2_COLOR}${_count}${N1_COLOR} snapshots ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 }
 
 zfs_snapshot_destroyall_original()
 {
 	local _fs _jname _snapname ZPOOL
-	local _parent
+	local _parent _couunt
 
 	readconf zfs.conf
 
@@ -214,11 +250,20 @@ zfs_snapshot_destroyall_original()
 	[ -z "${ZPOOL}" ] && err 1 "${N1_COLOR}Empty zpool for: ${N2_COLOR}${jaildatadir}${N0_COLOR}"
 	mod="${ZPOOL}"
 
+	st_time=$( ${DATE_CMD} +%s )
+	_count=0
+
 	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${mod} 2>/dev/null ); do
 		_snapname=${_fs##*@}
 		[ "${_snapname}" != "cbsd-original-${jname}" ] && continue
 		zfs_snapshot_destroy ${_fs} && ${ECHO} "${N1_COLOR}zfs original snapshot for ${jname} destroyed: ${N2_COLOR}${_fs}${N0_COLOR}"
+		_count=$(( _count + 1 ))
 	done
+
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: destroyed ${N2_COLOR}${_count}${N1_COLOR} snapshots ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 }
 
 rsync_snapshot_list()
@@ -267,7 +312,7 @@ ufs_snapshot_list()
 zfs_snapshot_create()
 {
 	local _tst _createtime
-	local _zfs _dsk
+	local _zfs _dsk _ret _count
 
 	[ -z "${snapname}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}snapname=${N0_COLOR}"
 
@@ -276,11 +321,26 @@ zfs_snapshot_create()
 
 	init_zfs_snappath_by_jname
 
-	_tst=$( ${ZFS_CMD} snapshot ${snappath} 2>&1 )
+	st_time=$( ${DATE_CMD} +%s )
 
-	[ $? -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot error: ${N0_COLOR}${_tst}"
-	${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath}
-	${ZFS_CMD} set cbsdsnap:snapname=${snapname} ${snappath}
+	_tst=$( ${ZFS_CMD} snapshot ${snappath} 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot error: ${N0_COLOR}${_tst}"
+
+	_tst=$( ${ZFS_CMD} set cbsdsnap:jname=${jname} ${snappath} 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot error, unable to set cbsdsnap:jname=${jname}: ${N0_COLOR}${_tst}"
+
+	_tst=$( ${ZFS_CMD} set cbsdsnap:snapname=${snapname} ${snappath} 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot error: ${N0_COLOR}${_tst}"
+
+	_count=$( zfs_snapshot_list -c )
+
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+	${ECHO} "${N1_COLOR}${CBSD_APP}: created snapshot ${H3_COLOR}#${_count}${N1_COLOR} for ${jname} ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 }
 
 ufs_snapshot_create()
@@ -295,8 +355,13 @@ rsync_snapshot_create()
 
 zfs_snapshot_destroy()
 {
+	local _ret _tst
+
 	[ -z "${1}" ] && return 1
-	${ZFS_CMD} destroy ${1}
+
+	_tst=$( ${ZFS_CMD} destroy ${1} 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}zfs snapshot destroy error: ${N0_COLOR}${_tst}"
 }
 
 ufs_snapshot_destroy()
@@ -319,10 +384,9 @@ rsync_snapshot_destroy()
 	err 1 "${N1_COLOR}jsnapshot: rsync not implemented${N0_COLOR}"
 }
 
-
 zfs_snapshot_rollback()
 {
-	local _createtime _snapname _jname
+	local _createtime _snapname _jname _ret
 	[ -z "${snapname}" ] && err 1 "${N1_COLOR}empty ${N2_COLOR}snapname=${N0_COLOR}"
 
 	init_zfs_snappath_by_jname
@@ -333,7 +397,12 @@ zfs_snapshot_rollback()
 	_snapname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:snapname "${snappath}" )
 	[ -z "${_snapname}" ] && err 1 "${N1_COLOR}Snapshot found but he is not created by ${N2_COLOR}cbsd${N0_COLOR} - skipp${N0_COLOR}"
 	 _createtime=$( ${ZFS_CMD} get -H -o value creation "${snappath}" )
-	${ZFS_CMD} rollback -r ${snappath} && ${ECHO} "${N1_COLOR}Restored state to ${N2_COLOR}${snapname}${N1_COLOR} snapshot created in ${N2_COLOR}${_createtime}${N0_COLOR}"
+
+	_tst=$( ${ZFS_CMD} rollback -r ${snappath} 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}zfs rollback error: ${N0_COLOR}${_tst}"
+
+	${ECHO} "${N1_COLOR}Restored state to ${N2_COLOR}${snapname}${N1_COLOR} snapshot created in ${N2_COLOR}${_createtime}${N0_COLOR}"
 }
 
 ufs_snapshot_rollback()
