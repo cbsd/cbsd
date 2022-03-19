@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.6
 MYARG="mode"
-MYOPTARG="bootable display dsk_controller dsk_path dsk_sectorsize dsk_serial dsk_size header jname zvol_opts"
+MYOPTARG="bootable display dsk_controller dsk_path dsk_sectorsize dsk_serial dsk_size header imgtype jname zvol_opts"
 MYDESC="Manage bhyve ahci/virtio disk"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
@@ -43,12 +43,18 @@ ${H3_COLOR}Options${N0_COLOR}:
                  'jname,dsk_controller,dsk_path,dsk_size,dsk_sectorsize,bootable'
                   also available: 'dsk_zfs_guid,dsk_serial';
 
+ ${N2_COLOR}imgtype${N0_COLOR}        - can be: 'zvol', 'md', 'raw';
+
 ${H3_COLOR}Examples${N0_COLOR}:
 
 * Lets increase the size of the 'dsk1' for the 'freebsd2' virtual machine by '30g':
 
   # cbsd bhyve-dsk mode=modify dsk_size=+30g jname=freebsd2 dsk_controller=virtio-blk dsk_path=dsk1.vhd
   # cbsd bhyve-dsk mode=modify dsk_serial=\"BHYVE-1234567890\" jname=freebsd2 dsk_controller=virtio-blk dsk_path=dsk1.vhd
+  # cbsd bhyve-dsk mode=attach jname=freebsd2 dsk_controller=virtio-blk dsk_size=10g
+  # cbsd bhyve-dsk mode=attach jname=freebsd2 dsk_controller=virtio-blk dsk_size=10g imgtype=md
+  # cbsd bhyve-dsk mode=delete jname=freebsd2 dsk_controller=virtio-blk dsk_path=dsk2
+  # cbsd bhyve-dsk mode=attach jname=freebsd2 dsk_controller=virtio-blk dsk_path=/dev/da2 imgtype=raw
 
 * List of registered disks:
 
@@ -68,7 +74,11 @@ bootable=
 dsk_iops_limit=
 dsk_mbps_limit=
 zvol_opts=
+imgtype=
+oimgtype=
 . ${cbsdinit}
+
+[ -n "${imgtype}" ] && oimgtype="${imgtype}"
 
 available_properties="bootable dsk_sectorsize dsk_zfs_guid dsk_serial dsk_size"
 available_get_properties="dsk_path bootable dsk_sectorsize dsk_serial dsk_zfs_guid"
@@ -129,6 +139,16 @@ dsk_attach()
 	zvol_opts=
 
 	if [ ${zfsfeat} -eq 1 ]; then
+		[ -n "${oimgtype}" ] && imgtype="${oimgtype}"
+		[ -z "${imgtype}" ] && imgtype="zvol"
+	else
+		# turn off zfsfeat
+		zfsfeat=0
+		[ -n "${oimgtype}" ] && imgtype="${oimgtype}"
+		[ -z "${imgtype}" ] && imgtype="md"
+	fi
+
+	if [ ${zfsfeat} -eq 1 ]; then
 		if [ -n "${zvol_opts}" ]; then
 			for i in ${zvol_opts}; do
 				if [ -z "${_zvol_opts}" ]; then
@@ -143,10 +163,10 @@ dsk_attach()
 	fi
 
 	if [ -n "${_zvol_opts}" ]; then
-		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -n "${dsk_serial}" -s "${dsk_size}" -o "${_zvol_opts}"  -z "${dsk_sectorsize}"
+		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -i "${imgtype}" -n "${dsk_serial}" -s "${dsk_size}" -o "${_zvol_opts}"  -z "${dsk_sectorsize}"
 		_ret=$?
 	else
-		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -n "${dsk_serial}" -s "${dsk_size}"  -z "${dsk_sectorsize}"
+		add_dsk -c "${dsk_controller}" -d "${dsk_path}" -i "${imgtype}" -n "${dsk_serial}" -s "${dsk_size}"  -z "${dsk_sectorsize}"
 		_ret=$?
 	fi
 
@@ -155,7 +175,6 @@ dsk_attach()
 	else
 		err 1 "${N2_COLOR}${dsk_path}${N1_COLOR} attach failed${N0_COLOR}"
 	fi
-
 
 	# ! guid for VM, not for dsk: todo: remove from bhyve-dsk list ?
 #	if [ ${zfsfeat} -eq 1 ]; then
@@ -243,12 +262,15 @@ dsk_delete()
 
 	# check in media table
 	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
-	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
+	if [ -z "${_devpath}" ]; then
+		${ECHO} "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}" 2>&1
+	fi
 
 	_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
 	[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
 
 	media mode=delete name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
+
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
 }
 
