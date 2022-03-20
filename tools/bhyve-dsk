@@ -90,6 +90,7 @@ available_get_properties="dsk_path bootable dsk_sectorsize dsk_serial dsk_zfs_gu
 dsk_attach()
 {
 	local _val _ret _zvol_opts _zvol_args _valid_ctrl_list _valid_ctrl _x
+	local _res _raw=0
 
 	if [ -z "${dsk_sectorsize}" ]; then
 		readconf bhyve-default-default.conf
@@ -112,7 +113,14 @@ dsk_attach()
 			dsk_path)
 				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 				# trim .vhd if necessary
-				dsk_path=$( echo ${_val} | ${SED_CMD} 's:\.vhd::g' )
+				_res=$( substr --pos=0 --len=5 --str=${_val} )
+				if [ "${_res}" = "/dev/" ]; then
+					[ ! -c "${_val}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such character device: ${N2_COLOR}${_val}${N0_COLOR}"
+					dsk_path="${_val}"
+					_raw=1
+				else
+					dsk_path=$( echo ${_val} | ${SED_CMD} 's:\.vhd::g' )
+				fi
 				;;
 			dsk_controller)
 				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
@@ -132,9 +140,17 @@ dsk_attach()
 				esac
 				;;
 		esac
-
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
+
+	# not mandatory for raw
+	if [ ${_raw} -ne 1 ]; then
+		for i in dsk_size dsk_sectorsize; do
+			_val=
+			eval _val="\$$i"
+
+			[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+		done
+	fi
 
 	zvol_opts=
 
@@ -176,21 +192,12 @@ dsk_attach()
 		err 1 "${N2_COLOR}${dsk_path}${N1_COLOR} attach failed${N0_COLOR}"
 	fi
 
-	# ! guid for VM, not for dsk: todo: remove from bhyve-dsk list ?
-#	if [ ${zfsfeat} -eq 1 ]; then
-#		. ${subrdir}/zfs.subr
-#		dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${dsk_path}.vhd )
-#		_ret=$?
-#		[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
-#	fi
-#	[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
-
 	return ${_ret}
 }
 
 dsk_detach()
 {
-	local _val
+	local _val _res
 	local _devpath
 
 	for i in jname dsk_controller dsk_path; do
@@ -218,16 +225,42 @@ dsk_detach()
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	# check in media table
-	_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
-	[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
+	_res=$( substr --pos=0 --len=5 --str=${dsk_path} )
+	if [ "${_res}" = "/dev/" ]; then
+		# raw device
+		local lunname=$( ${BASENAME_CMD} ${dsk_path} )
+		_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${lunname}\" LIMIT 1 2>/dev/null )
+		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${lunname}\"${N0_COLOR}"
+	else
+		# check in media table
+		_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
+		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
+	fi
 
-	_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
-	[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
+	if [ "${_res}" = "/dev/" ]; then
+		# raw device
+		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\" 2>/dev/null )
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\"${N0_COLOR}"
+		media mode=detach name=hdd-${lunname} path=${_devpath} type=hdd jname=${jname}
+	else
+		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
+		media mode=detach name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
+	fi
 
-	media mode=detach name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
-	[ $? -eq 1 ] && ${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
+	if [ "${_res}" = "/dev/" ]; then
+		# raw device
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\"
+		# scan for symlink to raw devices
+		${FIND_CMD} ${jaildatadir}/${jname}-${jaildatapref}/ -type l -depth 1 -maxdepth 1 -name dsk\*.vhd | while read _link; do
+			_realpath=$( ${READLINK_CMD} ${_link} )
+			[ "${_realpath}" = "${dsk_path}" ] && ${RM_CMD} ${_link}
+		done
+	else
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
+	fi
+
+	${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
 }
 
 dsk_delete()

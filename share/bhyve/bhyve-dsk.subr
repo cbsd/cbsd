@@ -152,7 +152,13 @@ add_dsk()
 
 	[ -z "${controller}" ] && err 1 "${N1_COLOR}Empty controller${N0_COLOR}"
 	[ -z "${dsk}" ] && err 1 "${N1_COLOR}Empty dsk${N0_COLOR}"
-	[ -z "${size}" ] && err 1 "${N1_COLOR}Empty size${N0_COLOR}"
+
+	# skip size for raw type
+	if [ "${imgtype}" != "raw" ]; then
+		# raw: detect via diskstat?
+		[ -z "${size}" ] && err 1 "${N1_COLOR}Empty size${N0_COLOR}"
+	fi
+
 	if [ -z "${imgtype}" ]; then
 		if [ "${zfsfeat}" = "1" ]; then
 			imgtype="zvol"
@@ -162,11 +168,13 @@ add_dsk()
 		fi
 	fi
 
+	# raw: detect via diskstat?
 	if [ -z "${sectorsize}" ]; then
 		readconf bhyve-default-default.conf
 		sectorsize="${default_sectorsize}"
 	fi
 
+	# raw: detect via diskstat?
 	[ -z "${serial}" ] && serial="0"
 
 	# check for controller exist
@@ -203,12 +211,30 @@ add_dsk()
 			return 1
 		fi
 
-		if [ -n "${_zvol_opt}" ]; then
-			_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} -o "${_zvol_opt}" 2>&1 )
-			_res=$?
+		if [ "${imgtype}" != "raw" ]; then
+			if [ -n "${_zvol_opt}" ]; then
+				_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} -o "${_zvol_opt}" 2>&1 )
+				_res=$?
+			else
+				_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} 2>&1 )
+				_res=$?
+			fi
 		else
-			_msg=$( virtual_create_dsk -p ${data}/${newdsk} -s ${size} 2>&1 )
-			_res=$?
+			# raw disk. When imgtype="dsk" , $dsk always path to /dev/
+			if [ ! -c "${dsk}" ]; then
+				${ECHO} "${N1_COLOR} No such character device: ${N2_COLOR}${dsk}${N0_COLOR}"
+				return 1
+			else
+				# register in media DB
+				local lunname=$( ${BASENAME_CMD} ${dsk} )
+				media mode=register name="hdd-${lunname}" path="${dsk}" type="hdd" jname="${jname}" sectorsize="${sectorsize}"
+				newdsk=$( get_next_free_dsk -j ${jname} -e bhyve )
+				#echo "${LN_CMD} -sf ${dsk} [${data}/${newdsk}]"
+				${LN_CMD} -sf ${dsk} ${data}/${newdsk}
+				_res=$?
+				# revert to original path
+				newdsk="${dsk}"
+			fi
 		fi
 
 		if [ ${_res} -ne 0 ]; then
