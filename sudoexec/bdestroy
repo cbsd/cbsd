@@ -146,12 +146,37 @@ for jname in ${JLIST}; do
 		fi
 		# auto-promote if we have children
 		if [ ${zfsfeat} -eq 1 -a "${mnt_start}" = "0" ]; then
-			base_vm_disks=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
-			for vm_item in $( cbsdsqlro storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
+			obase_vm_disks=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
+			base_vm_disks=
+			# skip for raw disk: /dev/ without zvol
+			for i in ${obase_vm_disks}; do
+				vm=$( echo ${i} | ${CUT_CMD} -f 1 -d '|' )
+				disk_path=$( echo ${i} | ${CUT_CMD} -f 2 -d '|' )
+				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
+				_res=$( substr --pos=0 --len=5 --str=${disk_path} )
+				if [ "${_res}" = "/dev/" ]; then
+					_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+					[ "${_res}" != "/dev/zvol/" ] && continue
+				fi
+				if [ -z "${base_vm_disks}" ]; then
+					base_vm_disks="${disk_zvol}"
+				else
+					base_vm_disks="${base_vm_disks} ${disk_zvol}"
+				fi
+			done
+			unset obase_vm_disks
+
+			for vm_item in ${base_vm_disks}; do
 				# detect for shared disk
 				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
 				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
-				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
+
+				_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+				# can be raw, check for /dev/zvol
+				[ "${_res}" != "/dev/zvol/" ] && continue
+
+				disk_zvol=$( echo ${disk_zvol} | ${SED_CMD} 's;^/dev/zvol/;;' )
 
 				[ -z "${disk_zvol}" ] && continue
 				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )

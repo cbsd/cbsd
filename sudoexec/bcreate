@@ -178,14 +178,17 @@ really_create_base()
 
 really_create_vm()
 {
-	local _res _msg
+	local _res _msg _ret
 
 	# do not create disk
 	[ "${imgtype}" = "none" ] && return 0
 
 	_res=$( substr --pos=0 --len=5 --str=${imgtype} )
 	if [ "${_res}" = "/dev/" ]; then
-		echo "IMGTYPE = raw: ${imgtype}"
+		cbsdlogger NOTICE ${CBSD_APP}: bcreate for ${jname}: imgtype = raw: ${imgtype}
+		 [ ! -c "${imgtype}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such character device: ${N2_COLOR}${imgtype}${N0_COLOR}"
+		oimgtype="raw"
+		raw_path_dsk0="${imgtype}"
 		return 0
 	fi
 
@@ -631,44 +634,58 @@ fi
 
 ${RM_CMD} -f ${rcconf}
 
+[ -n "${oimgtype}" ] && imgtype="${oimgtype}"
+
 # todo: move to dsk function
-if [ "${imgtype}" != "none" ]; then
-	if [ -z "${sectorsize}" ]; then
-		sectorsize="${default_sectorsize}"
-		[ -z "${sectorsize}" ] && sectorsize="4096"
-	fi
-
-	if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
-		. ${subrdir}/zfs.subr
-		dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
+case "${imgtype}" in
+	none)
+		;;
+	raw)
+		# first disk path, todo: multidsk
+		[ -z "${raw_path_dsk0}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: empty raw_path_dsk0 for raw type disk${N0_COLOR}"
+		[ -z "${virtio_type}" ] && virtio_type="virtio-blk"
+		_res=$( bhyve-dsk mode=attach jname=${jname} dsk_controller=${virtio_type} dsk_path=${raw_path_dsk0} imgtype=raw 2>&1 )
 		_ret=$?
-		[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
-	fi
-
-	[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
-
-	dsk_bsize=0
-
-	if is_number "${imgsize}"; then
-		if conv2bytes ${imgsize}; then
-			dsk_bsize="${convval}"
-		else
-			dsk_bsize=0
+		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: bhyve-dsk error:${N2_COLOR}${_res}${N0_COLOR}"
+		;;
+	*)
+		if [ -z "${sectorsize}" ]; then
+			sectorsize="${default_sectorsize}"
+			[ -z "${sectorsize}" ] && sectorsize="4096"
 		fi
-	else
-		# already on bytes ?
-		dsk_bsize="${imgsize}"
-	fi
 
-	if [ -n "${virtio_type}" ]; then
-		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
-	else
-		${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\",\"${dsk_zfs_guid}\" )"
-	fi
+		if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
+			. ${subrdir}/zfs.subr
+			dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
+			_ret=$?
+			[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
+		fi
 
-	# mark the first disk bootable
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
-fi
+		[ -z "${dsk_zfs_guid}" ] && dsk_zfs_guid="0"
+
+		dsk_bsize=0
+
+		if is_number "${imgsize}"; then
+			if conv2bytes ${imgsize}; then
+				dsk_bsize="${convval}"
+			else
+				dsk_bsize=0
+			fi
+		else
+			# already on bytes ?
+			dsk_bsize="${imgsize}"
+		fi
+
+		if [ -n "${virtio_type}" ]; then
+			${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${virtio_type}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\", \"${dsk_zfs_guid}\" )"
+		else
+			${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( \"${jname}\",\"${defdsk}\","0",\"${dsk_bsize}\",\"${sectorsize}\",\"${dsk_zfs_guid}\" )"
+		fi
+
+		# mark the first disk bootable
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path=\"${defdsk}\""
+		;;
+esac
 
 if [ -n "${nic_driver}" ]; then
 	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_driver,nic_parent ) VALUES ( \"${jname}\", \"${nic_driver}\", \"${interface}\" )"
