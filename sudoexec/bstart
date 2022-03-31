@@ -76,8 +76,10 @@ obhyverun_wrapper=	# reset bhyverun_wrapper
 bhyverun_wrapper=	# reset bhyverun_wrapper
 
 delay=0
+odelay=
 . ${cbsdinit}
 ojname="${jname}"
+[ -n "${delay}" ] && odelay="${delay}"
 
 . ${system}
 . ${subrdir}/universe.subr
@@ -909,17 +911,47 @@ if [ ${jail_num} -gt 1 ]; then
 
 	st_time=$( ${DATE_CMD} +%s )
 
-	for jname in ${JLIST}; do
-		env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=1
-		#lets save .pid file
-		sleep 1
-		[ -f "${ftmpdir}/bstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstart.${jname}.$$ ) --timeout=${parallel}
-		# Artificial delay to create a sequence (for order compliance)
-		# todo: determine VM complete starting
-		sleep 12
-	done
+	if [ -z "${parallel}" -o "${parallel}" = "0" ]; then
+		for jname in ${JLIST}; do
+			/usr/local/bin/cbsd bstart inter=0 jname=${jname}
+		done
+	else
+		_seq=0
+		wait_pid_files=
 
-	wait_for_fpid -a start -t ${parallel}
+		for jname in ${JLIST}; do
+			_boot_delay=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT boot_delay FROM settings LIMIT 1 )
+
+			if [ -z "${_boot_delay}" ]; then
+				_boot_delay=0
+			fi
+
+			if [ ${_boot_delay} -eq 0 ]; then
+				_boot_delay="${_seq}"
+			fi
+
+			env NOINTER=1 ${DAEMON_CMD} -p ${ftmpdir}/bstart.${jname}.$$ /usr/local/bin/cbsd bstart jname=${jname} delay=${_boot_delay}
+
+			if [ -z "${wait_pid_files}" ]; then
+				wait_pid_files="${ftmpdir}/bstart.${jname}.$$"
+			else
+				wait_pid_files="${wait_pid_files} ${ftmpdir}/bstart.${jname}.$$"
+			fi
+
+			_seq=$(( _seq + 1 ))
+		done
+
+		#lets save .pid file
+		sleep 2
+
+		# wait loop
+		for i in ${wait_pid_files}; do
+			[ ! -r ${i} ] && continue
+			cbsd_pwait --pid=$( ${CAT_CMD} ${i} ) --timeout=${parallel}
+		done
+
+		wait_for_fpid -a start -t ${parallel}
+	fi
 
 	end_time=$( ${DATE_CMD} +%s )
 	diff_time=$(( end_time - st_time ))
@@ -960,10 +992,10 @@ if [ "${lm}" = "0" ]; then
 	fi
 
 	# mainly to smooth mass start in astart.
+	[ -n "${odelay}" ] && delay="${odelay}"
 	if [ ${delay} -ne 0 ]; then
-		[ -z "${boot_delay}" ] && boot_delay=1
-		cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname}: ${boot_delay} sec.
-		sleep ${boot_delay}
+		cbsdlogger NOTICE ${CBSD_APP}: delayed boot for ${jname} via delay= params: ${delay} sec.
+		sleep ${delay}
 	fi
 
 	# start bhyve
