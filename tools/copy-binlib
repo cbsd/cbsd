@@ -11,6 +11,11 @@ ${H3_COLOR}Description${N0_COLOR}:
  Copy files by index file to \$dstdir. Used by jail2iso script and
  populate basejail from host.
 
+ Filelist support for hardlink, e.g. valid line's:
+
+ % /rescue/cat
+ % /sbin/swapon /sbin/swapctl /sbin/swapoff
+
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}basedir=${N0_COLOR}    - <path> copy files from this place, source dir.
@@ -18,7 +23,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}dstdir=${N0_COLOR}     - <path> copy files to this place, destination dir.
  ${N2_COLOR}excludedir=${N0_COLOR} - skip manage files from this directories list
                (use pipe as delimer, e.g: /dev|/root.
- ${N2_COLOR}filelist=${N0_COLOR}   - (.xz|.tgz)-archived or source with file list to copy.
+ ${N2_COLOR}filelist=${N0_COLOR}   - (.xz|.tgz)-archived or plain text source with file list to copy.
  ${N2_COLOR}mtree=${N0_COLOR}      - create hier by mtree first, default=0 (no).
  ${N2_COLOR}prunelist=${N0_COLOR}  - source with file list to exclude.
  ${N2_COLOR}verbose=${N0_COLOR}    - mode verbose output.
@@ -27,7 +32,7 @@ ${H3_COLOR}Examples${N0_COLOR}
 
  # mkdir /tmp/min /tmp/full
  # cbsd copy-binlib basedir=/ dstdir=/tmp/min filelist=/usr/local/cbsd/share/FreeBSD-filemin_14.txt.xz
- # cbsd copy-binlib basedir=/ dstdir=/tmp/full filelist=/usr/local/cbsd/share/FreeBSD-filebases_14.txt.xz
+ # cbsd copy-binlib chaselibs=1 basedir=/ dstdir=/tmp/full filelist=/usr/local/cbsd/share/FreeBSD-filebases_14.txt.xz
 
 "
 
@@ -35,7 +40,6 @@ ${H3_COLOR}Examples${N0_COLOR}
 
 verbose=0
 chaselibs=0
-
 . ${cbsdinit}
 
 [ -z "${mtree}" ] && mtree=0
@@ -45,6 +49,14 @@ chaselibs=0
 BASE_DIR="${basedir}"
 FILES="${filelist}"
 DST_DIR="${dstdir}"
+
+strip_path()
+{
+	local _path
+
+	_path=$( echo "${1}" | ${TR_CMD} -s "/" )
+	echo -n "${_path}"
+}
 
 make_mtree()
 {
@@ -60,19 +72,26 @@ make_mtree()
 
 make_libmap()
 {
-	A=$( ${MKTEMP_CMD} ${tmpdir}/libtxt.XXX )
+	local _source_path
+	local A=$( ${MKTEMP_CMD} ${tmpdir}/libtxt.XXX )
+
 	B=$( ${MKTEMP_CMD} ${tmpdir}/libtxtsort.XXX )
+
 	TRAP="${TRAP} ${RM_CMD} -f ${A} ${B};"
 	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
-	${XZCAT_CMD} ${FILES} | while read line; do
+	${CAT_FILES_CMD} ${FILES} | while read line; do
 		[ -z "${line}" ] && continue
 		case ":${line}" in
 			:#*)
 				continue
 				;;
 		esac
-		[ -r "${BASE_DIR}${line}" ] && ${LDD_CMD} -f "%p\n" ${BASE_DIR}${line} >> $A 2>/dev/null
+		_source_path=$( strip_path ${BASE_DIR}/${line} )
+		if [ -r "${_source_path}" ]; then
+			[ ${verbose} -eq 1 ] && echo "${LDD_CMD} -f \"%p\n\" ${_source_path}"
+			${LDD_CMD} -f "%p\n" ${_source_path} >> ${A} 2>/dev/null
+		fi
 	done
 	${SORT_CMD} -u ${A} > ${B}
 	${RM_CMD} -f ${A}
@@ -87,7 +106,7 @@ copy_binlib()
 	local _ret
 
 	# pass one: copy files
-	${XZCAT_CMD} ${FILES} | while read line; do
+	${CAT_FILES_CMD} ${FILES} | while read line; do
 		[ -z "${line}" ] && continue
 
 		_prefix=$( substr --pos=0 --len=1 --str="${line}" )
@@ -105,6 +124,7 @@ copy_binlib()
 					[ "${i}" = "%" ] && continue
 					_all_files="${_all_files} ${i}"
 				done
+				#echo "ALL: ${_all_files}"
 				;;
 			*)
 				_all_files="${line}"
@@ -126,54 +146,106 @@ copy_binlib()
 				done
 			fi
 
-			if [ ! -r "${BASE_DIR}${i}" ]; then
-				[ ${verbose} -eq 1 ] && ${ECHO} "\n${N1_COLOR}Notice: Exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${i}${N0_COLOR}\n"
-				continue
-			fi
+			_source_path=$( strip_path ${BASE_DIR}/${i} )
 
-			[ ${verbose} -eq 1 ] && echo "copying ${BASE_DIR}${i} to ${DST_DIR}${D}"
+#			if [ ! -r "${_source_path}" ]; then
+#				[ ${verbose} -eq 1 ] && ${ECHO} "\n${N1_COLOR}Notice: Exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${i}${N0_COLOR}\n"
+#				continue
+#			fi
+
+			_destination_path=$( strip_path ${DST_DIR}/${D} )
+			[ ${verbose} -eq 1 ] && echo "binlib: copying ${_source_path} to ${_destination_path}"
 		done
 
 		[ ${_skip} -eq 1 ] && continue
 
 		if [ ${_hard_link} -eq 0 ]; then
 			D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
-			[ ! -d "{DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
-			if [ -r ${BASE_DIR}${line} -o -h ${BASE_DIR}${line} ]; then
-				if [ ! -r ${DST_DIR}${D} ]; then
-					${CP_CMD} -a ${BASE_DIR}${line} ${DST_DIR}${D}
+			_destination_path=$( strip_path ${DST_DIR}/${D} )
+
+			[ ! -d "{_destination_path}" ] && ${MKDIR_CMD} -p ${_destination_path}
+			_dstfile=$( ${BASENAME_CMD} ${line} )
+			_source_path=$( strip_path ${BASE_DIR}/${line} )
+
+			if [ -r ${_source_path} -o -h ${_source_path} ]; then
+				_destination_path_file=$( strip_path ${_destination_path}/${_dstfile} )
+				if [ ! -r ${_destination_path_file} ]; then
+
+					if [ -h ${_source_path} ]; then
+						_source_readlink=$( ${READLINK_CMD} ${_source_path} )
+
+						_prefix=$( substr --pos=0 --len=1 --str="${_source_readlink}" )
+						if [ "${_prefix}" = "/" ]; then
+							#D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${_source_readlink} )
+							_destination_path_readlink=$( strip_path ${DST_DIR}/${_source_readlink} )
+							_destination_path_readlink=$( ${DIRNAME_CMD} ${DST_DIR}/${_source_readlink} )
+							S="${BASE_DIR}"
+						else
+							# relative link, same dir
+							S=$( ${DIRNAME_CMD} ${_source_path} )
+							_destination_path_readlink=$( strip_path ${DST_DIR}/${S} )
+						fi
+						[ ! -d "{_destination_path_readlink}" ] && ${MKDIR_CMD} -p ${_destination_path_readlink}
+
+						[ ${verbose} -eq 1 ] && echo "binlib: source is symlink: ${_source_path} -> ${_source_readlink}"
+
+						_source_readlink=$( strip_path ${S}/${_source_readlink} )
+
+						[ ${verbose} -eq 1 ] && echo "binlib: sym:  -> ${CP_CMD} -a ${_source_readlink} ${_destination_path_readlink}"
+						${CP_CMD} -a ${_source_readlink} ${_destination_path_readlink}
+					else
+						_source_readlink=
+					fi
+
+
+					[ ${verbose} -eq 1 ] && echo " -> ${CP_CMD} -a ${_source_path} ${_destination_path_file}"
+					${CP_CMD} -a ${_source_path} ${_destination_path_file}
 					_ret=$?
 					if [ ${_ret} -ne 0 ]; then
-						echo "error: ${CP_CMD} -a ${BASE_DIR}${line} ${DST_DIR}${D}"
+						echo "error: ${CP_CMD} -a ${_source_path} ${_destination_path_file}"
 					fi
 				else
-					#echo "already exist: ${DST_DIR}${D}"
+					#echo "already exist: ${_destination_path_file}"
 				fi
 			else
-				${ECHO} "${N1_COLOR}No such file from index in source, skipp: ${N2_COLOR}${BASE_DIR}${line}${N0_COLOR}" 1>&2
+				${ECHO} "${W1_COLOR}No such file from index in source, skipp: ${N2_COLOR}${_source_path}${N0_COLOR}" 1>&2
 			fi
 		else
+			# reset hard count
 			_hard_count=0
 			_hard_dst=		# store destination for hard links
 
 			for i in ${_all_files}; do
+				[ ${verbose} -eq 1 ] && echo "hardlink >[${i}]"
 				D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${i} )
-				[ ! -d "{DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
+				_destination_path=$( strip_path ${DST_DIR}/${D} )
+
+				[ ! -d "{_destination_path}" ] && ${MKDIR_CMD} -p ${_destination_path}
+				_dstfile=$( ${BASENAME_CMD} ${i} )
+				_source_path=$( strip_path ${BASE_DIR}/${i} )
 
 				if [ ${_hard_count} -eq 0 ]; then
-					_hard_dst="${DST_DIR}${i}"
-					${CP_CMD} -a ${BASE_DIR}${i} ${DST_DIR}${D}
+					_hard_dst=$( strip_path ${DST_DIR}/${i} )
+
+					[ ${verbose} -eq 1 ] && echo "hrdlnk -> ${CP_CMD} -a ${_source_path} ${_hard_dst}"
+					${CP_CMD} -a ${_source_path} ${_hard_dst}
 					_hard_count=1
 				else
-					_hard_src="${DST_DIR}${i}"
-					cd ${DST_DIR}${D} && ${LN_CMD} -f ${_hard_dst} ${_hard_src}
+					_hard_src=$( strip_path ${DST_DIR}/${i} )
+					_destination_path_dir=$( normalize_path ${DST_DIR}/${D} )
+					[ ${verbose} -eq 1 ] && echo "hrdlnk -> cd ${_destination_path_dir} && ${LN_CMD} -f ${_hard_dst} ${_hard_src}"
+					cd ${_destination_path_dir} && ${LN_CMD} -f ${_hard_dst} ${_hard_src}
 				fi
 			done
 		fi
 
-		for i in ${_all_files}; do
-			${CP_CMD} -a ${BASE_DIR}${i} ${DST_DIR}${D}
-		done
+		# dup ^^ ??
+#		for i in ${_all_files}; do
+#			_source_path=$( strip_path ${BASE_DIR}/${i} )
+#			_destination_path=$( strip_path ${DST_DIR}/${D} )
+#			[ ${verbose} -eq 1 ] && echo " --> ${CP_CMD} -a ${_source_path} ${_destination_path}"
+#			${CP_CMD} -a ${_source_path} ${_destination_path}
+#		done
 
 		_dotnum=$(( _dotnum + 1 ))
 		if [ ${_dotnum} -gt 100 -a ${verbose} -eq 0 ]; then
@@ -185,15 +257,27 @@ copy_binlib()
 	[ ${chaselibs} -eq 0 ] && return 0
 	_dotnum=0
 
+	[ ! -r ${B} ] && return 0
+
 	# necessary libs
 	${CAT_CMD} ${B} | while read line; do
 		[ -z "${line}" ] && continue
-		[ -f "${DST_DIR}${line}" ] && continue
-		[ ! -r "${BASE_DIR}${line}" -a ${verbose} -eq 1 ] && ${ECHO} "\n${N1_COLOR}Notice: exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${line}${N0_COLOR}\n" && continue
+		_prefix=$( substr --pos=0 --len=1 --str="${line}" )
+		[ "${_prefix}" != "/" ] && continue
+		_destination_path=$( strip_path ${DST_DIR}/${line} )
+		[ ${verbose} -eq 1 ] && echo "deps libs: ${_destination_path}"
+		[ -f "${_destinatione_path}" ] && continue
+
+		_source_path=$( strip_path ${BASE_DIR}/${line} )
+
+		[ ! -r "${_source_path}" -a ${verbose} -eq 1 ] && ${ECHO} "\n${W1_COLOR}Notice: exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${line}${N0_COLOR}\n" && continue
 		D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
-		[ ! -d "${DST_DIR}${D}" ] && ${MKDIR_CMD} -p ${DST_DIR}${D}
-		[ ${verbose} -eq 1 ] && echo "${CP_CMD} -a ${BASE_DIR}${line} ${DST_DIR}${D}"
-		${RSYNC_CMD} -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${BASE_DIR}${line} ${DST_DIR}${D}
+
+		_destination_dir=$( strip_path ${DST_DIR}/${D} )
+
+		[ ! -d "${_destination_dir}" ] && ${MKDIR_CMD} -p ${_destination_dir}
+		[ ${verbose} -eq 1 ] && echo "${RSYNC_CMD} -a ${_source_path} ${_destination_dir}"
+		${RSYNC_CMD} -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${_source_path} ${_destination_dir}
 		_dotnum=$(( _dotnum + 1 ))
 		if [ ${_dotnum} -gt 100 -a ${verbose} -eq 0 ]; then
 			printf "." 1>&2
@@ -226,6 +310,18 @@ prunelist()
 
 [ ! -d "${BASE_DIR}" ] && err 1 "No such ${BASE_DIR}
 [ ! -r "${FILES}" ] && err 1 "No such ${FILES}
+
+ext_list=$( ${BASENAME_CMD} ${FILES} )
+ext=${ext_list##*\.}
+
+case "${ext}" in
+	xz|tgz|txz|gz)
+		CAT_FILES_CMD="${XZCAT_CMD}"
+		;;
+	*)
+		CAT_FILES_CMD="${CAT_CMD}"
+		;;
+esac
 
 if [ -d "${DST_DIR}" ]; then
 	${CHFLAGS_CMD} -R noschg ${DST_DIR}
