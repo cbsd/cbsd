@@ -7,7 +7,7 @@ ADDHELP="
 
 ${H3_COLOR}Description${N0_COLOR}:
 
- By command 'cbsd expose' you can create forward rule for tcp/udp
+ By 'cbsd expose' command you can create forward rule for tcp/udp
  port from external IP (default with 'nodeip' from 'cbsd initenv-tui'
  to bhyve or jail.
  The RDR/FWD rules are generated for NAT framework, 
@@ -15,6 +15,9 @@ ${H3_COLOR}Description${N0_COLOR}:
  located in ~cbsd/etc/pf.conf. For 'ipfw' rules applied in runtime
  and have a comment 'Setup by CBSD expose.'. Each '[jb]stop' or '[jb]start'
  sequence trigger 'expose' script every time (when the environment has rules).
+
+ In addition to the rules for an individual port, you can forward all traffic 
+ from/to another (for example, external) address to the virtual machine address.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -37,7 +40,7 @@ ${H3_COLOR}Options${N0_COLOR}:
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
- Forward all incoming traffic to \$nodeip:2233 to foo:22 jail:
+1) Forward all incoming traffic to \$nodeip:2233 to foo:22 jail:
 
  # cbsd expose mode=add in=2233 out=22 jname=foo
 
@@ -51,6 +54,12 @@ postcreate_foo()
 {
     expose mode=add in=2233 out=22
 }
+
+2) map (forward) all 1:1 traffic (tcp/udp) from EXT_IP4 <-> VM IP address
+   (EXT_IP should be exist on the hoster)
+
+ # cbsd expose mode=add jname=vm1 inaddr=<EXT_IP4>
+
 --
 
 "
@@ -208,15 +217,83 @@ fw_expose_add()
 
 	[ -f ${ftmpdir}/${jname}-expose_fwnum ] && fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 
-	${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR}"
-	cbsdlogger NOTICE ${CBSD_APP}: ${jname}: proto: ${proto}: ${in}:${out}
+	case "${in}" in
+		0)
+			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}ALL via ${inaddr} -> ${jip}${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: ALL ${inaddr}:${jip}
+			;;
+		*)
+			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: proto: ${proto}: ${in}:${out}
+			;;
+	esac
 
 	case "${nat_enable}" in
 		pf)
 			pf_del
-			${CAT_CMD} >> ${etcdir}/pfnat.conf << EOF
+
+			case "${in}" in
+				0)
+					rfcnet=${jip%%\.*}
+					case "${rfcnet}" in
+						10)
+							rfcnet="10.0.0.0/8"
+							;;
+						172)
+							rfcnet="172.16.0.0/12"
+							;;
+						192)
+							rfcnet="192.168.0.0/16"
+							;;
+						*)
+							rfcnet="${jip}/32"
+							;;
+					esac
+
+					_pass_iface=
+
+					for i in $( ${IFCONFIG_CMD} -l ); do
+						case "${i}" in
+							lo*)
+								continue
+								;;
+						esac
+						${IFCONFIG_CMD} ${i} | ${GREP_CMD} "inet " | ${GREP_CMD} -q " ${_inaddr} " > /dev/null
+						_ret=$?
+						if [ ${_ret} -eq 0 ]; then
+							_pass_iface="${i}"
+							break
+						fi
+					done
+
+					if [ -z "${_pass_iface}" ]; then
+						${ECHO} "${N1_COLOR}${CBSD_APP}: unable to determine pass interface for: ${N2_COLOR}${_inaddr}${N0_COLOR}" 1>&2
+						return 1
+					fi
+
+# + iface
+#					cbsdlogger NOTICE "${CBSD_APP}: rdr pass on ${_pass_iface} proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32"
+#					cbsdlogger NOTICE "${CBSD_APP}: nat pass on ${_pass_iface} from ${jip}/32 to !${rfcnet} -> ${_inaddr}"
+
+#					${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
+#rdr pass on ${_pass_iface} proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32 # ${COMMENT}
+#nat pass on ${_pass_iface} from ${jip}/32 to !${rfcnet} -> ${_inaddr} # ${COMMENT}
+#EOF
+
+					cbsdlogger NOTICE "${CBSD_APP}: rdr pass proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32"
+					cbsdlogger NOTICE "${CBSD_APP}: nat pass from ${jip}/32 to !${rfcnet} -> ${_inaddr}"
+
+					${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
+rdr pass proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32 # ${COMMENT}
+nat pass from ${jip}/32 to !${rfcnet} -> ${_inaddr} # ${COMMENT}
+EOF
+					;;
+				*)
+					${CAT_CMD} >> ${etcdir}/pfnat.conf << EOF
 rdr pass proto ${proto} from any to ${_inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
 EOF
+					;;
+			esac
 			# reload rule
 			naton
 			;;
@@ -252,7 +329,14 @@ fw_expose_list()
 	[ ! -r ${exposefile} ] && return 1
 
 	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr; do
-		echo "${in} -> ${out} (via ${inaddr} ${proto})"
+		case "${in}" in
+			0)
+				echo "map all via ${inaddr}"
+				;;
+			*)
+				echo "${in} -> ${out} (via ${inaddr} ${proto})"
+				;;
+		esac
 	done
 }
 
@@ -261,7 +345,7 @@ fw_expose_clear()
 	case "${nat_enable}" in
 		pf)
 			[ ! -f ${etcdir}/pfnat.conf ] && return 0
-			if ${GREP_CMD} -E "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${etcdir}/pfnat.conf 2>&1; then
+			if ${GREP_CMD} -E "([tcp][udp])-([[:digit:]]){1,5}-${jname}"$ ${etcdir}/pfnat.conf 2>&1; then
 				${CP_CMD} -a ${etcdir}/pfnat.conf ${tmpdir}/pfnat.conf
 				cbsdlogger NOTICE ${CBSD_APP}: fw_expose_clear for ${jname}: via pfnat
 				${GREP_CMD} -E -v "([tcp][udp])-([[:digit:]]{1,5})-${jname}"$ ${tmpdir}/pfnat.conf | ${GREP_CMD} "." > ${etcdir}/pfnat.conf
@@ -363,8 +447,25 @@ case "${mode}" in
 		;;
 esac
 
-[ -z "${in}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}in${N0_COLOR}"
-[ -z "${out}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}out${N0_COLOR}"
+if [ -z "${in}" ]; then
+	[ -z "${inaddr}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}in${N0_COLOR}"
+	case "${inaddr}" in
+		[Nn][Oo][Dd][Ee]*)
+			err 1 "${N1_COLOR}${CBSD_APP}: Please use any IPv4 when 'in' args empty: ${N2_COLOR}inaddr=${N0_COLOR}"
+			;;
+	esac
+
+	iptype ${inaddr}
+	ret=$?
+	[ ${ret} -ne 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: not valid IPv4 for 'inaddr': ${N2_COLOR}${inaddr}${N0_COLOR}"
+	in="0"		# 'all'
+fi
+
+if [ "${in}" = "0" ]; then
+	out="0"		# 'all'
+else
+	[ -z "${out}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}out${N0_COLOR}"
+fi
 
 COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
 
