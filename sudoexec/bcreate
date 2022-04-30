@@ -9,7 +9,7 @@ vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_fl
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver vnc_password \
 media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr ci_gw4 \
 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu ci_ip4_addr2 ci_gw42 ci_interface_mtu2 \
-interface2 ci_interface2 nic_flags nic2_flags bhyve_vnc_kbdlayout progress_state_file"
+interface2 ci_interface2 nic_flags nic2_flags bhyve_vnc_kbdlayout progress_state_file extra_profile_dir"
 MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 MYDESC="Create bhyve VM from config file or args"
 ADDHELP="
@@ -50,9 +50,12 @@ And now these settings can be omited:
 
  cbsd bcreate jname=myvm1 [...other params]
 
+You can add custom profile directories via extra_profile_dir= args or ~cbsd/etc/bhyve-default-default.conf
+
 ${H3_COLOR}General Options${N0_COLOR}:
 
  ${N2_COLOR}bhyve_vnc_tcp_bind=${N0_COLOR} - VNC bind, e.g: '127.0.0.1', '0.0.0.0', '::1'.
+ ${N2_COLOR}extra_profile_dir${N0_COLOR}   - Extra directory to search VMs profiles.
  ${N2_COLOR}imgsize=${N0_COLOR}            - VM first/boot disk size, e.g.: '10g', '21474836480000'.
  ${N2_COLOR}inter=${N0_COLOR}              - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}interface2=${N0_COLOR}         - <parent>, create VM with two interfaces, <parent> is uplink for nic2,
@@ -120,7 +123,11 @@ ci_interface2=
 
 readconf buildworld.conf
 readconf zfs.conf
-readconf bhyve-freebsd-default.conf
+
+oextra_profile_dir=
+extra_profile_dir=
+
+readconf bhyve-default-default.conf
 
 . ${subrdir}/universe.subr
 . ${subrdir}/freebsd_world.subr
@@ -313,7 +320,24 @@ ${SYSRC_CMD} -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
 [ -z "${vm_os_type}" ] && log_err 1 "${N1_COLOR}No such vm_os_type=${N0_COLOR}"
 template_profile=
 template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
-[ ! -r ${etcdir}/defaults/${template_profile} -a ! -r ${etcdir}/${template_profile} ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such profile: ${N2_COLOR}${template_profile}${N0_COLOR}"
+
+[ -n "${oextra_profile_dir}" ] && extra_profile_dir="${oextra_profile_dir}"
+
+users_template_profile="${etcdir}/${template_profile}"
+
+if [ ! -r ${etcdir}/defaults/${template_profile} -a ! -r ${etcdir}/${template_profile} ]; then
+	[ -z "${extra_profile_dir}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: no such profile: ${N2_COLOR}${template_profile}${N0_COLOR}"
+	if [ -d "${extra_profile_dir}" ]; then
+		if [ -r ${extra_profile_dir}/${template_profile} ]; then
+			users_template_profile="${etcdir}/${template_profile} ${extra_profile_dir}/${template_profile}"
+		else
+			err 1 "${N1_COLOR}${CBSD_APP} error: no such profile: ${N2_COLOR}${template_profile}${N0_COLOR}"
+		fi
+	else
+		${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}no such extra_profile_dir: ${N2_COLOR}${extra_profile_dir}${N0_COLOR}" >&2
+		err 1 "${N1_COLOR}${CBSD_APP} error: no such profile: ${N2_COLOR}${template_profile}${N0_COLOR}"
+	fi
+fi
 
 [ -z "${mnt_start}" ] && mnt_start="0"
 
@@ -382,8 +406,8 @@ conf_group=$( ${STAT_CMD} -f "%g" ${jconf_tmp} )
 
 ${TRUNCATE_CMD} -s0 ${jconf_tmp}
 
-# Merge with default and profile settings
-for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${etcdir}/${template_profile} ${temprcconf}; do
+# Merge with default and profile settings ( users_template_profile can be '${etcdir}/${template_profile}' + '${extra_profile_dir}/${template_profile}"
+for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${users_template_profile} ${temprcconf}; do
 	[ ! -r "${merge_me}" ] && continue;
 	tmp_merge=$( ${MKTEMP_CMD} )
 	merge from=${jconf_tmp} to=${merge_me} out=${tmp_merge}
