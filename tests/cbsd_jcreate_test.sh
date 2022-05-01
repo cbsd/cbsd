@@ -21,9 +21,9 @@ tearDown() {
 }
 
 testFreeBSDVersion() {
-	cbsd jcreate jname="${jname}"
+	cbsd jcreate jname="${jname}" ver=13.0
 	cbsd jstart jname="${jname}"
-	jail_version=$(cbsd jexec jname="${jname}" freebsd-version)
+	jail_version=$(cbsd jexec jname="${jname}" freebsd-version | cut -d "-" -f 1-2 )		# trim -pXX (e.g.: 13.0-RELEASE-p11 -> 13.0-RELEASE )
 	assertEquals "Jail FreeBSD version" "${jail_version}" "13.0-RELEASE"
 }
 

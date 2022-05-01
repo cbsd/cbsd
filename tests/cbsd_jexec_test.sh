@@ -6,13 +6,13 @@
 #    cbsd jexec jname=exec1
 
 oneTimeSetUp() {
-	ver=14
+	ver="native"
 	jname="jexec1"
 	cbsd jdestroy jname=${jname} || true
 }
 
 setUp() {
-	cbsd jcreate jname=${jname} runasap=1 ver=${ver}
+	cbsd jcreate jname=${jname} runasap=1 ver="native"
 	dir=$(mktemp -d)
 	cd "${dir}" || exit
 }
@@ -55,27 +55,27 @@ quiet=0
 
 jail_${jname}()
 {
-        ip4_addr="DHCP"
-        host_hostname="${jname}.my.domain"
-        pkg_bootstrap=1
-        runasap=1
-        ver="${ver}"
+	ip4_addr="DHCP"
+	host_hostname="${jname}.my.domain"
+	pkg_bootstrap=0
+	runasap=1
+	ver="native"
 }
 
 postcreate_${jname}()
 {
-        set +o xtrace
+	set +o xtrace
 
-        sysrc \
-                syslogd_flags="-ss" \
-                syslogd_enable="YES" \
-                cron_enable="NO" \
-                sendmail_enable="NO" \
-                sendmail_submit_enable="NO"\
-                sendmail_outbound_enable="NO" \
-                sendmail_msp_queue_enable="NO" \
-        # execute cmd inside jail
-        jexec dir=/tmp <<XEOF
+	sysrc \
+		syslogd_flags="-ss" \
+		syslogd_enable="YES" \
+		cron_enable="NO" \
+		sendmail_enable="NO" \
+		sendmail_submit_enable="NO"\
+		sendmail_outbound_enable="NO" \
+		sendmail_msp_queue_enable="NO" \
+	# execute cmd inside jail
+	jexec dir=/tmp <<XEOF
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/root/bin
 pwd > /tmp/jexec.file
 hostname
@@ -85,15 +85,15 @@ XEOF
 EOF
 	cp -a CBSDfile /tmp/
 
+	cbsd jdestroy jname=${jname} || true
+
 	cbsd up
 
 	. /etc/rc.conf
 
 	assertTrue "[ -r ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file ]"
-
-	test=$(cat "${cbsd_workdir}"/jails-data/${jname}-data/tmp/jexec.file)
-
-	assertEquals "failed: no /tmp pwd in ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file" "${test}" "/tmp"
+	test=$( cat ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file | awk '{printf $1}' )
+	assertEquals "failed: not equal ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file:" "${test}" "/tmp"
 }
 
 # TODO1: jexec jname='*'
