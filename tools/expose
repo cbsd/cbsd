@@ -4,7 +4,6 @@ MYARG=""
 MYOPTARG="in inaddr jname mode out outaddr proto"
 MYDESC="Exposing a port (port forwarding) to env via IPFW or PF"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
  By 'cbsd expose' command you can create forward rule for tcp/udp
@@ -179,19 +178,20 @@ fw_expose_add()
 		return 1
 	fi
 
-	if [ "${inaddr}" = "0" ]; then
-		_inaddr="${nodeip}"
-	else
+	if [ "${inaddr}" != "0" ]; then
 		_inaddr="${inaddr}"
-	fi
 
-	ipwmask ${_inaddr}
-	iptype ${IWM}
-	_ret=$?
+		ipwmask ${_inaddr}
+		iptype ${IWM}
+		_ret=$?
 
-	if [ ${_ret} -ne 1 ]; then
-		${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${_inaddr}${N0_COLOR}" 1>&2
-		return 1
+		if [ ${_ret} -ne 1 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: inaddr not IPv4 address, skip: ${N2_COLOR}${_inaddr}${N0_COLOR}" 1>&2
+			return 1
+		fi
+		_inaddr="${IWM}"
+	else
+		_inaddr="${nodeip}"
 	fi
 
 	if [ -z "${jip}" -o "${jip}" = "0" ]; then
@@ -219,8 +219,8 @@ fw_expose_add()
 
 	case "${in}" in
 		0)
-			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}ALL via ${inaddr} -> ${jip}${N0_COLOR}"
-			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: ALL ${inaddr}:${jip}
+			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}ALL via ${_inaddr} -> ${jip}${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: ALL ${_inaddr}:${jip}
 			;;
 		*)
 			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR}"
@@ -307,9 +307,6 @@ EOF
 			;;
 	esac
 
-	# set inaddr, as it is used further in the main case switch
-	inaddr="${_inaddr}"
-
 	return 0
 }
 
@@ -324,17 +321,29 @@ fw_expose_apply()
 # if $1 than use it as exposefile
 fw_expose_list()
 {
+	local _inaddr
+
 	[ -n "${1}" ] && exposefile="${1}"
 
 	[ ! -r ${exposefile} ] && return 1
 
 	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr; do
-		case "${in}" in
-			0)
-				echo "map all via ${inaddr}"
+
+		case "${inaddr}" in
+			nodeip|0)
+				_inaddr="inaddr=0 -> ${nodeip}"
 				;;
 			*)
-				echo "${in} -> ${out} (via ${inaddr} ${proto})"
+				_inaddr="${inaddr}"
+				;;
+		esac
+
+		case "${in}" in
+			0)
+				echo "map all via ${_inaddr}"
+				;;
+			*)
+				echo "${in} -> ${out} (${_inaddr} ${proto})"
 				;;
 		esac
 	done
@@ -366,9 +375,12 @@ fw_expose_clear()
 
 fw_expose_delete()
 {
-	[ "${inaddr}" = "nodeip" ] && inaddr="${nodeip}"
-
-	cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
+	if [ "${inaddr}" = "nodeip" -o "${inaddr}" = "0" ]; then
+		inaddr="${nodeip}"
+		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND ( inaddr=\"${inaddr}\" OR inaddr=\"0\" ) AND outaddr=\"${outaddr}\""
+	else
+		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
+	fi
 	cbsdlogger NOTICE ${CBSD_APP}: fw_expose_delete: delete config for: ${jname}
 
 	case "${nat_enable}" in
@@ -402,7 +414,10 @@ fi
 [ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 [ -z "${proto}" ] && proto="tcp"
-[ -z "${inaddr}" ] && inaddr="nodeip"  # "nodeip"  - reserverd word for $nodeip variable
+[ -z "${inaddr}" ] && inaddr="0"		# inherit $nodeip
+# back compat
+[ "${inaddr}" = "nodeip" ] && inaddr="0"	# "nodeip"  - reserverd word for $nodeip variable, back compatible3
+
 if [ "${nat_enable}" = "ipfw" ]; then
 	[ "$( ${SYSCTL_CMD} -qn net.inet.ip.fw.enable 2>/dev/null )" != "1" ] && err 1 "${N1_COLOR}IPFW is not enabled${N0_COLOR}"
 fi
@@ -455,9 +470,11 @@ if [ -z "${in}" ]; then
 			;;
 	esac
 
-	iptype ${inaddr}
-	ret=$?
-	[ ${ret} -ne 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: not valid IPv4 for 'inaddr': ${N2_COLOR}${inaddr}${N0_COLOR}"
+	if [ "${inaddr}" != "0" -a "${inaddr}" != "nodeip" ]; then
+		iptype ${inaddr}
+		ret=$?
+		[ ${ret} -ne 1 ] && err 1 "${N1_COLOR}${CBSD_APP}: not valid IPv4 for 'inaddr': ${N2_COLOR}${inaddr}${N0_COLOR}"
+	fi
 	in="0"		# 'all'
 fi
 
