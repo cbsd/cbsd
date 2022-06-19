@@ -705,42 +705,49 @@ compile_dsk_controller_args()
 	local prefix
 	local full_dsk_path
 	local _pcislot_args=
+	local _dsk_contoller_name _dsk_controller_list
 
 	dsk_controller_args=
 
 	local _dsk_path=
 	local _i
 
-	_dsk_controller_name=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name!=\"0\" )
-	_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+	_dsk_controller_name_list=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name!=\"0\" | ${XARGS_CMD} )
 
-	[ -z "${_dsk_controller_name}" ] && return 0
+	[ -z "${_dsk_controller_name_list}" ] && return 0
 
-	# todo: controller name as desc ? dsk inherit bus id ?
-	if ! next_pci_id -n ${_dsk_controller_type}; then
-		# no free pci bus
-		exit 0
-	fi
+	for _dsk_controller_name in ${_dsk_controller_name_list}; do
+		_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
 
-	_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
-	store_bhyve_pci_slot -n ${_dsk_controller_name} -a ${bhyve_pci_index}
-
-	dsk_controller_args="-s ${_pcislot_args},${_dsk_controller_type}"
-
-	_dsk_path=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | ${XARGS_CMD} )
-
-	for dsk_path in ${_dsk_path}; do
-		# test for full path. If path not started from '/' - append $data dir
-		full_dsk_path=
-		prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
-
-		if [ "${prefix}" != "/" ]; then
-			full_dsk_path="${data}/${dsk_path}"
-		else
-			full_dsk_path="${dsk_path}"
+		# todo: controller name as desc ? dsk inherit bus id ?
+		if ! next_pci_id -n ${_dsk_controller_type}; then
+			# no free pci bus
+			exit 0
 		fi
 
-		dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+		store_bhyve_pci_slot -n ${_dsk_controller_name} -a ${bhyve_pci_index}
+
+		if [ -z "${dsk_controller_args}" ]; then
+			dsk_controller_args="-s ${_pcislot_args},${_dsk_controller_type}"
+		else
+			dsk_controller_args="${dsk_controller_args} -s ${_pcislot_args},${_dsk_controller_type}"
+		fi
+		_dsk_path=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${_dsk_controller_name}\" | ${XARGS_CMD} )
+
+		for dsk_path in ${_dsk_path}; do
+			# test for full path. If path not started from '/' - append $data dir
+			full_dsk_path=
+			prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
+
+			if [ "${prefix}" != "/" ]; then
+				full_dsk_path="${data}/${dsk_path}"
+			else
+				full_dsk_path="${dsk_path}"
+			fi
+
+			dsk_controller_args="${dsk_controller_args},hd:${full_dsk_path}"
+		done
 	done
 
 	[ -z "${dsk_controller_args}" ] && return 1
