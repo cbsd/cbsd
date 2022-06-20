@@ -5,7 +5,6 @@ MYOPTARG="lease_time lock pass skip"
 MYDESC="return next free available nic by mask"
 CBSDMODULE="sys"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
 Return next free available nic by mask. To avoid collision/race this script
@@ -29,7 +28,10 @@ ${H3_COLOR}Examples${N0_COLOR}:
 lock=1
 pass=
 lease_time=6
+name=
 . ${cbsdinit}
+
+LOCKFILE="${ftmpdir}/get_next_nic.lock"
 
 # $1 - nicname (eg: bridge)
 # if nicname=epair we search as epairXa
@@ -40,27 +42,28 @@ lease_time=6
 get_next_nic()
 {
 	local _i _j _epair _A _skiplist
-	local _num=
+	local _num= _name=
 	local _lease_file="${tmpdir}/get_next_nic.lease"
-	local _lockfile_skiplist=
-	local _cur_time _lease_time_end _lease_time
-	local _skipme
+	local _cur_time _lease_time_end
+	local _skipme _lease_file_skip _newif
 
 	[ -z ${1} ] && return 1
-	[ "${1}" = "epair" ] && _epair="a"
+	_name="${1}"
+	[ "${_name}" = "epair" ] && _epair="a"
 
 	# we need exclusive lock and lease time to prevent race condition
 	# when function called at same time simultaneously.
 	# Use file as lock/lease db.
 
 	# todo: internal lockf for function
-	_rotate_lease_file=$( rotate_lease_file -l ${_lease_file} )
+	_lease_file_skip=$( rotate_lease_file -l ${_lease_file} )
 
+	# append skip list by local ifaces
 	for _i in $( ${IFCONFIG_CMD} -l ); do
-		if [ -n "${_rotate_lease_file}" ]; then
-			_rotate_lease_file="${_rotate_lease_file} ${_i}"
+		if [ -n "${_lease_file_skip}" ]; then
+			_lease_file_skip="${_lease_file_skip} ${_i}"
 		else
-			_rotate_lease_file="${_i}"
+			_lease_file_skip="${_i}"
 		fi
 	done
 
@@ -68,15 +71,18 @@ get_next_nic()
 
 		_skipme=0
 
+		# due to epair has extra postfix (a/b), store parent iface as _newif
+		_newif="${_name}${_num}"
+
 		if [ -n "${_epair}" ]; then
-			_checkif="${1}${_num}${_epair}"
+			_checkif="${_newif}${_epair}"
 		else
-			_checkif="${1}${_num}"
+			_checkif="${_newif}"
 		fi
 
-		if [ -n "${_rotate_lease_file}" ]; then
-			for _j in ${_rotate_lease_file}; do
-				if [ "${_checkif}" = "${_j}" ]; then
+		if [ -n "${_lease_file_skip}" ]; then
+			for _j in ${_lease_file_skip}; do
+				if [ "${_newif}" = "${_j}" ]; then
 					_skipme=1
 					break
 				fi
@@ -91,8 +97,9 @@ get_next_nic()
 			# no such/free interface
 			_cur_time=$( ${DATE_CMD} +%s )
 			_lease_time_end=$(( _cur_time + lease_time ))
-			echo "${1}${_num}:${_lease_time_end}" >> ${_lease_file}
-			echo "${1}${_num}" && return 0
+			echo "${_newif}:${_lease_time_end}" >> ${_lease_file}
+			sync
+			echo "${_newif}" && return 0
 		fi
 	done
 
@@ -129,7 +136,7 @@ if [ -z "${pass}" ]; then
 			#printf "${ARG}='${VAL}' "
 			shift
 		done
-		exec ${LOCKF_CMD} -s -t60 ${LOCKFILE} /usr/local/bin/cbsd get-next-nic ${cmd} pass=1
+		exec ${LOCKF_CMD} -s -t12 ${LOCKFILE} /usr/local/bin/cbsd get-next-nic ${cmd} pass=1
 	fi
 fi
 
