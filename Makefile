@@ -51,7 +51,8 @@ distclean:
 	${RM} -f misc/fmagic
 	${RM} -f misc/conv2human
 	${RM} -f misc/cbsd_fwatch
-.if ${ARCH} == amd64 || ${ARCH} == i386
+# x86_64 for DFLY
+.if ${ARCH} == amd64 || ${ARCH} == i386 || ${ARCH} == x86_64
 	${RM} -f misc/popcnttest
 .endif
 	${RM} -f misc/cbsd_dot
@@ -110,7 +111,8 @@ cbsd: pkg-config-check
 	${CC} misc/src/fmagic.c -lmagic -o misc/fmagic && ${STRIP} misc/fmagic
 	${CC} misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && ${STRIP} misc/conv2human
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && ${STRIP} misc/cbsd_fwatch
-.if ${ARCH} == amd64 || ${ARCH} == i386
+# x86_64 for DFLY
+.if ${ARCH} == amd64 || ${ARCH} == i386 || ${ARCH} == x86_64
 	${CC} misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && ${STRIP} misc/popcnttest > /dev/null 2>&1 || /usr/bin/true
 .endif
 	${CC} misc/src/cbsd_dot.c -o misc/cbsd_dot && ${STRIP} misc/cbsd_dot
