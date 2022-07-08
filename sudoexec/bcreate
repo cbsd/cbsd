@@ -9,7 +9,7 @@ vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_fl
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver vnc_password \
 media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr ci_gw4 \
 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu ci_ip4_addr2 ci_gw42 ci_interface_mtu2 \
-interface2 ci_interface2 nic_flags nic2_flags bhyve_vnc_kbdlayout progress_state_file extra_profile_dir"
+interface2 ci_interface2 nic_flags nic2_flags bhyve_vnc_kbdlayout progress_state_file extra_profile_dir flavor"
 MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
 MYDESC="Create bhyve VM from config file or args"
 ADDHELP="
@@ -56,6 +56,7 @@ ${H3_COLOR}General Options${N0_COLOR}:
 
  ${N2_COLOR}bhyve_vnc_tcp_bind=${N0_COLOR} - VNC bind, e.g: '127.0.0.1', '0.0.0.0', '::1'.
  ${N2_COLOR}extra_profile_dir${N0_COLOR}   - Extra directory to search VMs profiles.
+ ${N2_COLOR}flavor${N0_COLOR}              - Use flavor (named group of vm_cpus/vm_ram/imgsize): see 'cbsd vm-packages';
  ${N2_COLOR}imgsize=${N0_COLOR}            - VM first/boot disk size, e.g.: '10g', '21474836480000'.
  ${N2_COLOR}inter=${N0_COLOR}              - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}interface2=${N0_COLOR}         - <parent>, create VM with two interfaces, <parent> is uplink for nic2,
@@ -127,6 +128,8 @@ readconf zfs.conf
 oextra_profile_dir=
 extra_profile_dir=
 
+flavor=
+oflavor=
 
 . ${subrdir}/universe.subr
 . ${subrdir}/freebsd_world.subr
@@ -277,6 +280,37 @@ ${CAT_CMD} ${jconf_tmp} | ${TR_CMD} -d \\r > ${temprcconf}
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: please set: ${N2_COLOR}jname=${N0_COLOR}"
 
+# map flavor
+[ -n "${oflavor}" ] && flavor="${oflavor}"
+if [ -n "${flavor}" ]; then
+	unset oimgsize imgsize ovm_ram vm_ram ovm_cpus vm_cpus
+	flavors_available=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages" | ${SORT_CMD} | ${XARGS_CMD} )
+	flavor_exist=0
+	for i in ${flavors_available}; do
+		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
+	done
+
+	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
+
+	_res=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name=\"${flavor}\" LIMIT 1" 2>/dev/null )
+ 
+	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	sqllistdelimer="|"
+	sqllist "${_res}" ovm_cpus ovm_ram oimgsize
+	unset sqllistdelimer
+	${ECHO} "${N1_COLOR}${CBSD_APP}: flavor ${flavor} -> vm_cpus/vm_ram/imgsize: ${N2_COLOR}[${_res}]${N0_COLOR}"
+
+	[ -z "${ovm_ram}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'vm_ram' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${oimgsize}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'imgsize' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${ovm_cpus}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'vm_cpus' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+
+	vm_ram="${ovm_ram}"
+	imgsize="${oimgsize}"
+	vm_cpus="${ovm_cpus}"
+
+	unset flavor oflavor flavor_exist flavors_available _res
+fi
+
 # if some of params specified via args, restore them from temporary vars
 for i in ${BHYVE_ARGS}; do
 
@@ -345,6 +379,8 @@ fi
 
 [ -n "${ointer}" ] && inter="${ointer}"
 [ "${inter}" = "0" ] && export NOINTER=1
+
+
 
 if [ "${mnt_start}" != "0" ]; then
 	if [ ! -r "${mnt_start}" -o ! -x "${mnt_start}" ]; then
@@ -520,6 +556,7 @@ if [ -n "${interface}" -a "${inteface}" != "0" ]; then
 			;;
 	esac
 fi
+
 
 # imgsize validate
 if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
@@ -819,7 +856,6 @@ master_reboot.d \
 remove.d \
 start.d \
 stop.d"
-
 
 for i in ${system_dir}; do
 	if [ -n "${systemskeldir}" -a -d "${systemskeldir}/${i}" ]; then

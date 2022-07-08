@@ -8,7 +8,8 @@ XEN_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic
 iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_type vm_os_profile swapsize vm_iso_path vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory \
 bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind bhyve_vnc_vgaconf nic_driver \
 vnc_password media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface ci_ip4_addr \
-ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu ci_ip4_addr2 ci_gw42 ci_interface_mtu2 interface2 ci_interface2"
+ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid ci_interface_mtu ci_ip4_addr2 ci_gw42 ci_interface_mtu2 \
+interface2 ci_interface2 flavor"
 #XEN_ARGS="relative_path jname astart vm_cpus vm_ram vm_os_type vm_boot vm_os_profile vm_vnc_port xen_vnc_tcp_bind xen_vnc_resolution cd_vnc_wait protected hidden maintenance ip4_addr \
 #vnc_password state_time on_poweroff on_reboot on_crash spice_default vm_spice_port xen_spice_tcp_bind xen_spice_resolution spice_password soundhw debug_engine \
 #is_cloud ci_jname ci_fqdn ci_template ci_interface ci_interface_name ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add \
@@ -74,6 +75,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}ci_user_pubkey${N0_COLOR}     - full/relative path to authorized_keys or may contain pubkey
                       string itself, e.g: ci_user_pubkey=\"ssh-ed25519 XXXXX root@my.domain\".
                       (cloud-init profile only): set authorized_keys file for cloud-init user for VM.
+ ${N2_COLOR}flavor${N0_COLOR}             - Use flavor (named group of vm_cpus/vm_ram/imgsize): see 'cbsd vm-packages';
  ${N2_COLOR}imgsize=${N0_COLOR}           - VM first/boot disk size, e.g.: '10g', '21474836480000'.
  ${N2_COLOR}inter=${N0_COLOR}             - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}interface2=${N0_COLOR}        - <parent>, create VM with two interfaces, <parent> is uplink for nic2,
@@ -123,6 +125,9 @@ readconf xen-freebsd-default.conf
 . ${subrdir}/freebsd_world.subr
 . ${subrdir}/xen.subr
 
+flavor=
+oflavor=
+
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -146,6 +151,37 @@ fi
 
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}Please set for xcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -n "${removejconf}" ] && oremovejconf="${removejconf}"
+
+# map flavor
+[ -n "${oflavor}" ] && flavor="${oflavor}"
+if [ -n "${flavor}" ]; then
+	unset oimgsize imgsize ovm_ram vm_ram ovm_cpus vm_cpus
+	flavors_available=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages" | ${SORT_CMD} | ${XARGS_CMD} )
+	flavor_exist=0
+	for i in ${flavors_available}; do
+		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
+	done
+
+	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
+
+	_res=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name=\"${flavor}\" LIMIT 1" 2>/dev/null )
+
+	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	sqllistdelimer="|"
+	sqllist "${_res}" ovm_cpus ovm_ram oimgsize
+	unset sqllistdelimer
+	${ECHO} "${N1_COLOR}${CBSD_APP}: flavor ${flavor} -> vm_cpus/vm_ram/imgsize: ${N2_COLOR}[${_res}]${N0_COLOR}"
+
+	[ -z "${ovm_ram}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'vm_ram' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${oimgsize}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'imgsize' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${ovm_cpus}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'vm_cpus' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+
+	vm_ram="${ovm_ram}"
+	imgsize="${oimgsize}"
+	vm_cpus="${ovm_cpus}"
+
+	unset flavor oflavor flavor_exist flavors_available _res
+fi
 
 really_create_base()
 {

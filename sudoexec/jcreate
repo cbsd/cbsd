@@ -6,7 +6,7 @@
 MYARG=""
 # should be in sync with run_jail() func: tools/up script
 MYOPTARG="jconf inter customskel fstablocal delpkglist removejconf pkglist jprofile zfs_snapsrc pkg_bootstrap autorestart runasap etcupdate_init quiet ci_user_pubkey \
-ci_ip4_addr ci_gw4 sysrc from"
+ci_ip4_addr ci_gw4 sysrc from flavor"
 # allow all jail settings
 . ${distsharedir}/jail-arg
 [ "${racct}" = "1" ] && . ${distsharedir}/rctl.conf
@@ -41,6 +41,7 @@ ${H3_COLOR}Options${N0_COLOR}:
                    This options will customize /root/.ssh/authorized_keys in jail.
  ${N2_COLOR}ci_gw4=${N0_COLOR}         - 0,IP to disable: manage/set defaultrouter= settings in jail rc.conf (for vnet).
  ${N2_COLOR}etcupdate_init=${N0_COLOR} - 1(enable),0(disable) for etcupdate init (overwrite config values).
+ ${N2_COLOR}flavor${N0_COLOR}          - Use flavor (named group of vm_cpus/vm_ram/imgsize): see 'cbsd vm-packages';
  ${N2_COLOR}from=${N0_COLOR}           - <url> or MD5 of image to create jail from CBSD image.
  ${N2_COLOR}inter=${N0_COLOR}          - 0 to prevent any questions and to accept answers by default.
  ${N2_COLOR}customskel=${N0_COLOR}     - <path>: additional skel directory applyed above jail structrure.
@@ -98,6 +99,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 CBSDMODULE="jail"
 EXTHELP="wf_jcreate"
 
+
 . ${subrdir}/nc.subr
 . ${system}
 . ${tools}
@@ -107,6 +109,9 @@ EXTHELP="wf_jcreate"
 ci_user_pubkey=
 sysrc=
 from=
+flavor=
+oflavor=
+
 . ${cbsdinit}
 
 # if some of params specified via args, store them as temporary vars
@@ -187,6 +192,39 @@ install_and_apply_helpers()
 }
 
 ### MAIN
+# map flavor
+[ -n "${oflavor}" ] && flavor="${oflavor}"
+if [ -n "${flavor}" ]; then
+	unset ocpu cpu ovmemoryuse vmemoryuse ofsquota fsquota
+	flavors_available=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages" | ${SORT_CMD} | ${XARGS_CMD} )
+	flavor_exist=0
+	for i in ${flavors_available}; do
+		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
+	done
+
+	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CBSD_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
+
+	_res=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name=\"${flavor}\" LIMIT 1" 2>/dev/null )
+
+	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	sqllistdelimer="|"
+
+	sqllist "${_res}" ocpu ovmemoryuse ofsquota
+	unset sqllistdelimer
+	${ECHO} "${N1_COLOR}${CBSD_APP}: flavor ${flavor} -> cpu/vmemoryusem/fsquota: ${N2_COLOR}[${_res}]${N0_COLOR}"
+
+	[ -z "${ovmemoryuse}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'vmemoryuse' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${ofsquota}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'fsquota' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${ocpu}" ] && log_err 1 "${N1_COLOR}${CBSD_APP}: unable to get 'cpu' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+
+	cpu="${ocpu}"
+	vmemoryuse="${ovmemoryuse}"
+	fsquota="${ofsquota}"
+
+	unset flavor oflavor flavor_exist flavors_available _res
+fi
+
+
 . ${subrdir}/time.subr
 st_time=$( ${DATE_CMD} +%s )
 
