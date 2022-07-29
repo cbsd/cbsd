@@ -340,6 +340,83 @@ start_bhyve()
 				fi
 				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}" 2>&1
 				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} 2>&1
+			elif [ "${iso2img}" = "1" ]; then
+				# Copy ISO as disk ?
+				# Some profiles may use this, for example: Linux Tails
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${N1_COLOR}No such ISO source: ${N2_COLOR}${vm_iso_path}/${iso_img}${N0_COLOR}"
+				fi
+				vm_boot="hdd"
+				${ECHO} "${N1_COLOR}ISO image initialization..${N0_COLOR}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: bstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
+
+				. ${subrdir}/zfs.subr
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some 
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					${ECHO} "${N1_COLOR}ISO into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
+					# to generic clonedata (add dd method)?
+					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					echo
+					# adjust original image size
+					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					${ECHO} "${N1_COLOR}ISO into first/system vm disk (zfs clone method)${N0_COLOR}"
+					# to generic clonedata ?
+						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}" 2>&1
+						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+						_ret=$?
+						if [ ${_ret} -eq 1 ]; then
+							# create cloud snapshot for $jname
+							${ZFS_CMD} snapshot ${_cloud_source_zvol}@boot-${jname}
+							# destory original zvol disk for vm
+							${ZFS_CMD} destroy ${_dsk_source_zvol}
+							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
+							${GPART_CMD} commit zvol/${_dsk_source_zvol}
+							# restore original size
+							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+							# bug here, need for atomic ops ^^ in clone action
+							${ZFS_CMD} set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+							${ZFS_CMD} set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+						else
+							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
+						fi
+				fi
+				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}" 2>&1
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} 2>&1
 			fi
 		fi
 	fi
