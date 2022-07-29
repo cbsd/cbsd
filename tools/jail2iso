@@ -139,6 +139,9 @@ prepare_dir()
 		memstick)
 			MOUNTROOT="${MOUNT_CMD} -oro /dev/ufs/${LABEL} /mnt"
 			;;
+		mfsbsd)
+			MOUNTROOT="${MOUNT_CMD} -oro /dev/ufs/${LABEL} /mnt"
+			;;
 	esac
 
 	${CAT_CMD} > ${DST_DIR}${rcscript} <<EOF
@@ -225,6 +228,7 @@ epilogue_img()
 
 	# for ISO too?
 	[ "${media}" = "memstick" ] && return 0
+	[ "${media}" = "mfsbsd" ] && return 0
 
 	${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
 
@@ -260,6 +264,37 @@ makemfsroot()
 {
 	local _filelist _ver
 	local _tmpdir=$( ${MKTEMP_CMD} -d )
+
+
+	if [ "${media}" = "mfsbsd" ]; then
+		installworld destdir=${_tmpdir} ver=14.0
+		[ ! -d ${_tmpdir}/boot/kernel ] && ${MKDIR_CMD} ${_tmpdir}/boot/kernel
+		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/*.ko ${_tmpdir}/boot/kernel/
+		#${MAKEFS_CMD} -t ffs -m ${MFSROOT_MAXSIZE} -f ${MFSROOT_FREE_INODES} -b ${MFSROOT_FREE_BLOCKS} ${WRKDIR}/disk/mfsroot ${_ROOTDIR}
+		${CAT_CMD} >> ${_tmpdir}/boot/loader.conf << EOF
+hw.efi.poweroff=0
+mfs_load="YES"
+mfs_type="mfs_root"
+mfs_name="/mfsroot"
+vfs.root.mountfrom="ufs:/dev/md0"
+autoboot_delay="-1"
+net.inet.ip.fw.default_to_accept="1"
+vm.pmap.pti="0"
+hw.ibrs_disable="1"
+debug.acpi.disabled="thermal"
+hw.usb.no_shutdown_wait="1"
+hw.mfi.mrsas_enable="1"
+hw.usb.no_pf="1"
+hw.igb.rx_process_limit="-1"
+hw.em.rx_process_limit="-1"
+hw.ix.rx_process_limit="-1"
+EOF
+
+		[ ! -d ${TMP_DIR} ] && ${MKDIR_CMD} -p ${TMP_DIR}
+		${MAKEFS_CMD} -t ffs ${TMP_DIR}/mfsroot ${_tmpdir}
+		gzip -9 ${TMP_DIR}/mfsroot
+		return 0
+	fi
 
 	mfsrootfile="${tmpdir}/mfsroot.$$"
 
@@ -504,10 +539,10 @@ make_ufs()
 	${ECHO} "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
 	# move to kernel init?
 	get_kernel
-
 	[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
+
 	case "${media}" in
-		iso|memstick|bhyve|livecd)
+		iso|memstick|bhyve|livecd|mfsbsd)
 			;;
 		*)
 			err 1 "${N1_COLOR}unknown media type. must be: ${N2_COLOR}iso${N1_COLOR},${N2_COLOR}memstick${N1_COLOR},${N2_COLOR}livecd ${N1_COLOR}or${N2_COLOR} bhyve${N0_COLOR}"
@@ -541,15 +576,19 @@ make_ufs()
 
 	echo "make_ufs: media: ${media}"
 
-	# not for iso too ?
-	# new comment: why skip here ;-)
+	if [ "${media}" != "mfsbsd" ]; then
+	# clean img for mfsbsd (/boot/kernel + loader only )
 #	if [ "${media}" != "memstick" ]; then
 #		echo
 		echo "[debug]cd ${path} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${TMP_DIR}" 1>&2
 		cd ${path} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${TMP_DIR}
 		sync
 #		echo
-#	fi
+	else
+		[ -d "${TMP_DIR}/boot" ] && ${RM_CMD} -rf ${TMP_DIR}/boot
+		${CP_CMD} -a ${path}/boot ${TMP_DIR}/
+		rm -rf ${TMP_DIR}/boot/kernel
+	fi
 
 	[ "${media}" != "bhyve" ] && ${RM_CMD} -rf ${TMP_DIR}/rescue
 	[ "${prunelist}" != "0" ] && prunelist ${TMP_DIR}
@@ -560,7 +599,12 @@ make_ufs()
 
 	[ ! -d ${TMP_DIR}/boot/kernel ] && ${MKDIR_CMD} -p ${TMP_DIR}/boot/kernel
 
-	${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/* ${TMP_DIR}/boot/kernel/
+	if [ "${media}" != "mfsbsd" ]; then
+		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/* ${TMP_DIR}/boot/kernel/
+	else
+		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/kernel ${TMP_DIR}/boot/kernel/
+		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/acpi*.ko ${TMP_DIR}/boot/kernel/
+	fi
 
 	if [ ! -r "${TMP_DIR}/boot/kernel/kernel" -a ! -r "${TMP_DIR}/boot/kernel/kernel.gz" ]; then
 		echo "no such ${TMP_DIR}/boot/kernel/kernel"
@@ -653,42 +697,57 @@ ${ROOTFS}
 tmpfs /boot/zfs tmpfs rw 0 0
 EOF
 			;;
+		mfsbsd)
+			${CAT_CMD} >> ${TMP_DIR}/boot/loader.conf << EOF
+hw.efi.poweroff=0
+mfs_load="YES"
+mfs_type="mfs_root"
+mfs_name="/mfsroot"
+vfs.root.mountfrom="ufs:/dev/md0"
+
+EOF
+			;;
 	esac
 
-
-	if [ "${swapsize}" != "0" ]; then
-		${CAT_CMD} >> ${TMP_DIR}/etc/fstab <<EOF
+	if [ "${media}" != "mfsbsd" ]; then
+		if [ "${swapsize}" != "0" ]; then
+			${CAT_CMD} >> ${TMP_DIR}/etc/fstab <<EOF
 /dev/gpt/swap	none	swap	sw	0	0
 EOF
-	fi
+		fi
 
-	if [ -r "${jailsysdir}/${jname}/fstab" ]; then
-		${ECHO} "${N1_COLOR}Extra fstab found: ${N2_COLOR}${jailsysdir}/${jname}/fstab${N0_COLOR}"
-		${CAT_CMD} ${jailsysdir}/${jname}/fstab
-		${CAT_CMD} ${jailsysdir}/${jname}/fstab >> ${TMP_DIR}/etc/fstab
-	fi
+		if [ -r "${jailsysdir}/${jname}/fstab" ]; then
+			${ECHO} "${N1_COLOR}Extra fstab found: ${N2_COLOR}${jailsysdir}/${jname}/fstab${N0_COLOR}"
+			${CAT_CMD} ${jailsysdir}/${jname}/fstab
+			${CAT_CMD} ${jailsysdir}/${jname}/fstab >> ${TMP_DIR}/etc/fstab
+		fi
 
-	[ ${oapplytpl} -eq 1 ] && echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
+		[ ${oapplytpl} -eq 1 ] && echo "Welcome to ${PRODUCT}" > ${TMP_DIR}/etc/motd
 
-	case "${media}" in
-		bhyve|livecd)
-			${CAT_CMD} > ${TMP_DIR}/etc/ttys <<EOF
+		case "${media}" in
+			bhyve|livecd)
+				${CAT_CMD} > ${TMP_DIR}/etc/ttys <<EOF
 console "/usr/libexec/getty std.9600"   vt100   on secure
 EOF
-			;;
-		*)
-			${MV_CMD} ${mfsrootfile} ${TMP_DIR}/mfsroot
-			cd ${TMP_DIR}
-			nice -n 19 ${IDPRIO_CMD} 29 ${GZIP_CMD} -9 ${TMP_DIR}/mfsroot
-			TRAP="${TRAP} ${RM_CMD} -f ${tmpdir}/usr.img.$$ ;"
-			trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
-			nice -n 19 ${IDPRIO_CMD} 29 ${MAKEFS_CMD} -o optimization=space -t ffs ${tmpdir}/usr.img.$$ ${TMP_DIR}/usr
-			nice -n 19 ${IDPRIO_CMD} 29 ${MKUZIP_CMD} -o ${TMP_DIR}/usr.uzip ${tmpdir}/usr.img.$$
-			${CHFLAGS_CMD} -R noschg ${TMP_DIR}/usr && ${RM_CMD} -rf ${TMP_DIR}/usr && ${MKDIR_CMD} ${TMP_DIR}/usr
-			# LiveCD location
-			[ -f "${jailsysdir}/${jname}/tmpfsdir" ] && ${CP_CMD} ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
-			;;
-	esac
+				;;
+			*)
+				${MV_CMD} ${mfsrootfile} ${TMP_DIR}/mfsroot
+				cd ${TMP_DIR}
+				nice -n 19 ${IDPRIO_CMD} 29 ${GZIP_CMD} -9 ${TMP_DIR}/mfsroot
+				TRAP="${TRAP} ${RM_CMD} -f ${tmpdir}/usr.img.$$ ;"
+				trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+				nice -n 19 ${IDPRIO_CMD} 29 ${MAKEFS_CMD} -o optimization=space -t ffs ${tmpdir}/usr.img.$$ ${TMP_DIR}/usr
+				nice -n 19 ${IDPRIO_CMD} 29 ${MKUZIP_CMD} -o ${TMP_DIR}/usr.uzip ${tmpdir}/usr.img.$$
+				${CHFLAGS_CMD} -R noschg ${TMP_DIR}/usr && ${RM_CMD} -rf ${TMP_DIR}/usr && ${MKDIR_CMD} ${TMP_DIR}/usr
+				# LiveCD location
+				[ -f "${jailsysdir}/${jname}/tmpfsdir" ] && ${CP_CMD} ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
+				;;
+		esac
+	else
+		${MV_CMD} ${mfsrootfile} ${TMP_DIR}/mfsroot
+		cd ${TMP_DIR}
+		nice -n 19 ${IDPRIO_CMD} 29 ${GZIP_CMD} -9 ${TMP_DIR}/mfsroot
+	fi
 
 	# post action inside image
 	[ ${oapplytpl} -eq 1 ] && epilogue_img ${TMP_DIR}
@@ -766,7 +825,7 @@ case "${media}" in
 		echo "/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}"
 		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}
 		;;
-	memstick)
+	memstick|mfsbsd)
 		make_ufs
 
 		${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
