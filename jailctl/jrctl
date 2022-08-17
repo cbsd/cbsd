@@ -3,21 +3,45 @@
 CBSDMODULE="jail"
 MYARG=""
 . ${distsharedir}/rctl.conf
-MYOPTARG="alljails display emulator header human jname mode node prometheus shownode ${RCTL} ${RCTL_EXTRA} quiet"
+MYOPTARG="alljails display emulator header human jname mode node prometheus shownode sort ${RCTL} ${RCTL_EXTRA} quiet"
 MYDESC="Set or flush resource limit for jail"
-ADDHELP="\
-alljails=1 - get jaillist from remote node\n\
-display= list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw\n\
-emulator=[jail,bhyve,xen] - show only emulator engine, default - all\n\
-header=0 don't print header\n\
-human=0 don't convert bytes to human readable form\n\
-jname= show only specified jail\n\
-mode= set (apply), unset, show (show current state) or get (show limits)\n\
-node= only for current node\n\
-prometheus=0 or 1 = prometheus metric mode output\n\
-shownode=1 - show nodename for jails\n\
-rctl params: ${RCTL} ${RCTL_EXTRA}\n\
-quiet= 0,1: be quiet, dont output verbose message\n"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+The 'jrctl' script used to view and manage jail limits.
+By default, 'cbsd jrctl' shows the current usage and limits per jail (if installed).
+Most limits depend on RACCT features, make sure the host is booted with
+
+kern.racct.enable=1
+
+settings in /boot/loader.conf.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR}     - when '1' - get jaillist from remote node, default: '0';
+ ${N2_COLOR}display=${N0_COLOR}      - list by comma for column. Default: jname,memoryuse,maxproc,openfiles,vmemoryuse,swapuse,pcpu,fsquota,nice,bw;
+ ${N2_COLOR}emulator=${N0_COLOR}     - [jail,bhyve,xen] - show only emulator engine, default - all;
+ ${N2_COLOR}header=${N0_COLOR}       - 0 - don't print header;
+ ${N2_COLOR}human=${N0_COLOR}        - 0 - don't convert bytes to human readable form, default: '1';
+ ${N2_COLOR}jname=${N0_COLOR}        - show only specified jail;
+ ${N2_COLOR}mode=${N0_COLOR}         - set (apply), unset, show (show current state) or get (show limits);
+ ${N2_COLOR}node=${N0_COLOR}         - only for current node;
+ ${N2_COLOR}prometheus=${N0_COLOR}   - 1 = prometheus metric mode output;
+ ${N2_COLOR}shownode=${N0_COLOR}     - show nodename for jails;
+ ${N2_COLOR}sort=${N0_COLOR}         - sort by column name (from display list);
+ ${N2_COLOR}rctl params:${N0_COLOR}  - ${RCTL} ${RCTL_EXTRA};
+ ${N2_COLOR}quiet=${N0_COLOR}        - 0,1: be quiet, dont output verbose message;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jrctl human=0
+ # cbsd jrctl display=jname,openfiles,memoryuse,fsquota sort=memoryuse
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jget --help
+
+"
 EXTHELP="wf_jrctl"
 
 . ${subrdir}/nc.subr
@@ -25,6 +49,9 @@ EXTHELP="wf_jrctl"
 . ${tools}
 . ${distsharedir}/rctl.conf
 . ${subrdir}/jrctl.subr
+
+sort=
+quiet=
 
 . ${cbsdinit}
 
@@ -39,7 +66,7 @@ show_header()
 # if $1 = "Unregister" then overwrite status to "Unregister"
 populate_output_data()
 {
-	local _formfile
+	local _formfile _cur_val _val
 
 	local _emulator
 
@@ -54,33 +81,87 @@ populate_output_data()
 			;;
 	esac
 
+	# RACCT
+	eval $( ${RCTL_CMD} -u jail:${jname} )
+
 	#populate values for in output string
 	for _i in ${mydisplay}; do
 
 		_val="0"
 
-		if [ "${_i}" = "jname" ]; then
-			_val="${jname}"
-		else
-			if [ -r "${_formfile}" ]; then
-				_val=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"${_i}\" LIMIT 1" 2>/dev/null )
-				[ -z "${_val}" ] && _val="0"
-			fi
-
-			if rctl_humanize ${_i}; then
-				if conv2human ${_val}; then
-					_val="${convval}"
+		case "${_i}" in
+			jname)
+				_val="${jname}"
+				if [ -z "${_status}" ]; then
+					_status="${_val}"
+				else
+					_status="${_status} ${_val}"
 				fi
-			fi
-		fi
+				;;
+			*)
+				if [ -r "${_formfile}" ]; then
+					_val=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"${_i}\" LIMIT 1" 2>/dev/null )
+					[ -z "${_val}" ] && _val="0"
+				fi
 
-		if [ -z "${_status}" ]; then
-			_status="${_val}"
-		else
-			_status="${_status} ${_val}"
-		fi
+				if rctl_humanize ${_i}; then
+					if conv2human ${_val}; then
+						_val="${convval}"
+					fi
+				fi
+				if [ "${jid}" = "0" ]; then
+					_cur_val="0"
+				else
+					if [ "${_i}" = "memoryuse" ]; then
+						_cur_val="${memoryuse}"
+					elif [ "${_i}" = "maxproc" ]; then
+						_cur_val="${maxproc}"
+					elif [ "${_i}" = "openfiles" ]; then
+						_cur_val="${openfiles}"
+					elif [ "${_i}" = "vmemoryuse" ]; then
+						_cur_val="${vmemoryuse}"
+					elif [ "${_i}" = "swapuse" ]; then
+						_cur_val="${swapuse}"
+					elif [ "${_i}" = "pcpu" ]; then
+						_cur_val="${pcpu}"
+					elif [ "${_i}" = "fsquota" ]; then
+
+						if [ "${zfsfeat}" = "1" ]; then
+							. ${system}			# is_mounted func
+							data="${jaildatadir}/${jname}-${jaildatapref}"
+							. ${subrdir}/jfs.subr
+							if ! zfsmnt ${data}; then
+								ZPOOL=$( ${ZFS_CMD} get -Ho value name ${data} 2>/dev/null )
+								if [ -n "${ZPOOL}" ]; then
+									echo "${ZFS_CMD} get -Hp -o value refer ${ZPOOL}" >> /tmp/pool.txt
+									_cur_val=$( ${ZFS_CMD} get -Hp -o value refer ${ZPOOL} 2>/dev/null )
+									[ -z "${_cur_val}" ] && cur_val="0"
+								else
+									_cur_val="0"
+								fi
+							else
+								_cur_val="0"
+							fi
+						else
+							_cur_val="0"
+						fi
+					elif [ "${_i}" = "nice" ]; then
+						_cur_val="${nice}"
+					elif [ "${_i}" = "bw" ]; then
+						_cur_val="${bw}"
+					else
+						_cur_val="0"
+					fi
+				fi
+
+				if [ -z "${_status}" ]; then
+					_status="${_cur_val}/${_val}"
+				else
+					_status="${_status} ${_cur_val}/${_val}"
+				fi
+				;;
+		esac
 	done
-
 }
 
 # $1 - which file from. Eg: local
@@ -99,13 +180,13 @@ show_jaildata_from_sql()
 		_sqlq="cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE jname=\"${jname}\" AND emulator = \"bhyve\" OR emulator = \"jail\""
 	else
 		if [ -n "${emulator}" ]; then
-			_sqlq="cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator = \"${emulator}\""
+			_sqlq="cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator = \"${emulator}\" ORDER BY jname ASC"
 		else
-			_sqlq="cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator = \"bhyve\" OR emulator = \"jail\""
+			_sqlq="cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator = \"bhyve\" OR emulator = \"jail\" ORDER BY jname ASC"
 		fi
 	fi
 
-	${_sqlq}| while read jname; do
+	${_sqlq} | while read jname; do
 		_status=""
 		. ${subrdir}/rctl.subr
 		. ${subrdir}/rcconf.subr
@@ -118,7 +199,58 @@ show_jaildata_from_sql()
 		fi
 		printf "${_status}"
 		printf "${N0_COLOR}\n"
+	done > /tmp/jrctl.$$
+
+	if [ -n "${sort}" ]; then
+		sort=$( echo ${sort} | ${TR_CMD} '[:upper:]' '[:lower:]' )
+	else
+		reverse=
+	fi
+	sort_column=1
+	column_index=0
+
+	# get column index for sort
+	for _i in ${mydisplay}; do
+		column_index=$(( column_index + 1 ))
+		if [ "${_i}" = "${sort}" ]; then
+			sort_column="${column_index}"
+			reverse="-r"
+			break
+		fi
 	done
+
+	${SORT_CMD} -n -k${sort_column} ${reverse} /tmp/jrctl.$$ | while read ${mydisplay}; do
+		for _i in ${mydisplay}; do
+			_val="0"
+			eval _val="\$${_i}"
+
+			if [ "${human}" = "1" ]; then
+				case "${_i}" in
+					memoryuse|vmemoryuse|swapuse|fsquota)
+						p1=${_val%%/*}
+						p2=${_val##*/}
+						if conv2human ${p1}; then
+							p1="${convval}"
+						fi
+						if conv2human ${p2}; then
+							p2="${convval}"
+						fi
+						[ -z "${p1}" ] && p1="0"
+						[ -z "${p2}" ] && p2="0"
+						printf "${p1}/${p2} "
+						;;
+					*)
+						printf "${_val} "
+						;;
+				esac
+			else
+				printf "${_val} "
+			fi
+		done
+		printf "${N0_COLOR}\n"
+	done
+
+	${RM_CMD} -f /tmp/jrctl.$$
 }
 
 
