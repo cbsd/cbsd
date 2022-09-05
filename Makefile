@@ -132,7 +132,7 @@ cbsd: pkg-config-check
 .endif
 
 .if ${OSTYPE} != DragonFly
-	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
+	${CC} tools/src/racct-jail-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lpthread -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-jail-statsd && ${STRIP} tools/racct-jail-statsd
 	${CC} tools/src/racct-bhyve-statsd.c lib/beanstalk-client/beanstalk.c  ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-bhyve-statsd && ${STRIP} tools/racct-bhyve-statsd
 	${CC} tools/src/racct-hoster-statsd.c lib/beanstalk-client/beanstalk.c ${EXTRAC} -lutil -lprocstat -ljail -lsqlite3 -lpthread -I/usr/local/include -Ilib/beanstalk-client -L/usr/local/lib -o tools/racct-hoster-statsd && ${STRIP} tools/racct-hoster-statsd
 .endif

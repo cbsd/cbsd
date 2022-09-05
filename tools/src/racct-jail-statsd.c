@@ -1,6 +1,8 @@
 // CBSD Project 2017-2018
 // CBSD Team <cbsd+subscribe@lists.tilda.center>
-// 0.2
+// 0.3
+// this is very experimental and quickly written code. a lot of refactoring is needed.
+// TODO: prometheus accept/bind socket thread: drop privileges to nobody users instead of root
 #include <sys/param.h>
 #include <sys/jail.h>
 
@@ -40,6 +42,12 @@
 
 #include "beanstalk.h"
 
+//prom
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+//
+
 #include <pthread.h>
 #include "sqlite3.h"
 
@@ -60,6 +68,23 @@ static struct jailparam *params;
 static int *param_parent;
 static int nparams;
 unsigned int running_jails;
+
+int accept_busy=0;
+// not for global:
+struct sockaddr_in cli_addr;
+int listenfd = 0;
+
+
+//prom
+/* Client structure */
+typedef struct{
+    struct sockaddr_in address;
+    int sockfd;
+    int uid;
+    char name[32];
+} client_t;
+
+
 
 int list_data();
 
@@ -441,6 +466,305 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 	return 0;
 }
 
+
+// prom
+/* Handle all communication with the client */
+void *handle_client(void *arg){
+	client_t *cli = (client_t *)arg;
+
+/*
+    char buff_out[BUFFER_SZ];
+    char name[32];
+    int leave_flag = 0;
+
+    cli_count++;
+    client_t *cli = (client_t *)arg;
+
+    // Name
+    if(recv(cli->sockfd, name, 32, 0) <= 0 || strlen(name) <  2 || strlen(name) >= 32-1){
+	printf("Didn't enter the name.\n");
+	leave_flag = 1;
+    } else{
+	strcpy(cli->name, name);
+	sprintf(buff_out, "%s has joined\n", cli->name);
+	printf("%s", buff_out);
+	send_message(buff_out, cli->uid);
+    }
+
+    bzero(buff_out, BUFFER_SZ);
+
+    while(1){
+	if (leave_flag) {
+	    break;
+	}
+
+	int receive = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
+	if (receive > 0){
+	    if(strlen(buff_out) > 0){
+		send_message(buff_out, cli->uid);
+
+		str_trim_lf(buff_out, strlen(buff_out));
+		printf("%s -> %s\n", buff_out, cli->name);
+	    }
+	} else if (receive == 0 || strcmp(buff_out, "exit") == 0){
+	    sprintf(buff_out, "%s has left\n", cli->name);
+	    printf("%s", buff_out);
+	    send_message(buff_out, cli->uid);
+	    leave_flag = 1;
+	} else {
+	    printf("ERROR: -1\n");
+	    leave_flag = 1;
+	}
+
+	bzero(buff_out, BUFFER_SZ);
+    }
+*/
+
+  char s[2048];
+  memset(s,0,strlen(s));
+
+
+const char *content_encoding = "";
+
+//            /* Gzip compress the output. */
+//                if (gzip_mode) {
+//                        char *buf;
+//                        size_t buflen;
+//        
+//                        buflen = http_buflen;
+//                        buf = malloc(buflen);
+//                        if (buf == NULL)
+//                                err(1, "Cannot allocate compression buffer");
+//                        if (buf_gzip(http_buf, http_buflen, buf, &buflen)) {
+//                                content_encoding = "Content-Encoding: gzip\r\n";
+//                                free(http_buf);
+//                                http_buf = buf;
+//                                http_buflen = buflen;
+//                        } else {
+//                                free(buf);
+//                        }
+//                }
+
+                /* Print HTTP header and metrics. */
+sprintf(s,"\
+HTTP/1.1 200 OK\r\n\
+Connection: close\r\n\
+%s\
+Content-Type: text/plain; version=0.0.4\r\n\
+\r\n",
+    content_encoding);
+
+ if(write(cli->sockfd, s, strlen(s)) < 0){
+	perror("ERROR: write to descriptor failed");
+//	break;
+  }
+
+////////////////
+	struct item_data *target = NULL;
+	struct item_data *ch;
+	struct item_data *next_ch;
+	char sql[512];
+	char stats_file[1024];
+	const char *hostname = getenv(
+	    "HOST"); // Still banging the env every second or so, only do this
+		     // at load?
+	int ret = 0;
+	FILE *fp;
+	char json_str[20000]; // todo: dynamic from number of bhyve/jails
+	char json_buf[1024];  // todo: dynamic from number of bhyve/jails
+	int i;
+	struct timeval now_time;
+	int cur_time = 0;
+	int round_total = save_loop_count + 1;
+
+	struct sum_item_data *newd;
+	struct sum_item_data *temp;
+	struct sum_item_data *sumch;
+	struct sum_item_data *next_sumch;
+
+	tolog(log_level, "\n ***---calc jail avgdata---*** \n");
+
+	gettimeofday(&now_time, NULL);
+	cur_time = (time_t)now_time.tv_sec;
+
+	for (ch = item_list; ch; ch = ch->next) {
+		if (strlen(ch->orig_name) < 1) {
+			continue;
+		}
+		if (ch->modified == 0) {
+			continue;
+		}
+		i = sum_jname_exist(ch->orig_name);
+
+		if (i) {
+			for (sumch = sum_item_list; sumch;
+			     sumch = sumch->next) {
+				if (!strcmp(ch->orig_name, sumch->name)) {
+					sumch->modified += ch->modified;
+					sumch->pcpu += ch->pcpu;
+					sumch->memoryuse += ch->memoryuse;
+					sumch->maxproc += ch->maxproc;
+					sumch->openfiles += ch->openfiles;
+					sumch->readbps += ch->readbps;
+					sumch->writebps += ch->writebps;
+					sumch->readiops += ch->readiops;
+					sumch->writeiops += ch->writeiops;
+					sumch->pmem += ch->pmem;
+					break;
+				}
+			}
+		} else {
+			CREATE(newd, struct sum_item_data, 1);
+			newd->modified = ch->modified;
+			newd->pcpu = ch->pcpu;
+			newd->memoryuse = ch->memoryuse;
+			newd->maxproc = ch->maxproc;
+			newd->openfiles = ch->openfiles;
+			newd->readbps = ch->readbps;
+			newd->writebps = ch->writebps;
+			newd->readiops = ch->readiops;
+			newd->writeiops = ch->writeiops;
+			newd->pmem = ch->pmem;
+			newd->next = sum_item_list;
+			sum_item_list = newd;
+			strcpy(newd->name, ch->orig_name);
+			tolog(log_level,
+			    "[AVGSUM] !! %s struct has been added\n",
+			    newd->name);
+		}
+	}
+
+	memset(json_str, 0, sizeof(json_str));
+	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
+		if (strlen(sumch->name) < 1) {
+			continue;
+		}
+
+		sprintf(json_str,"\
+jail_openfiles{name=\"%s\"} %d\n\
+jail_memoryuse{name=\"%s\"} %lu\n\
+jail_maxproc{name=\"%s\"} %d\n\
+jail_readbps{name=\"%s\"} %d\n\
+jail_writebps{name=\"%s\"} %d\n\
+jail_readiops{name=\"%s\"} %d\n\
+jail_writeiops{name=\"%s\"} %d\n\
+jail_pcpu{name=\"%s\"} %d\n\
+", sumch->name,sumch->openfiles / round_total,
+sumch->name,sumch->memoryuse / round_total,
+sumch->name,sumch->maxproc / round_total,
+sumch->name,sumch->readbps / round_total,
+sumch->name,sumch->writebps / round_total,
+sumch->name,sumch->readiops / round_total,
+sumch->name,sumch->writeiops / round_total,
+sumch->name,sumch->pcpu / round_total );
+
+  if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+	perror("ERROR: write to descriptor failed");
+//	break;
+    }
+
+
+//			sprintf(json_str,
+//			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
+//			    cur_time, sumch->memoryuse / round_total,
+//			    sumch->maxproc / round_total,
+//			    sumch->openfiles / round_total,
+//			    sumch->pcpu / round_total,
+//			    sumch->readbps / round_total,
+//			    sumch->writebps / round_total,
+//			    sumch->readiops / round_total,
+//			    sumch->writeiops / round_total,
+//			    sumch->pmem / round_total);
+		}
+
+////////////////
+
+
+// if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+//	perror("ERROR: write to descriptor failed");
+//	break;
+//    }
+
+
+
+  /* Delete client from queue and yield thread */
+    close(cli->sockfd);
+//  queue_remove(cli->uid);
+  free(cli);
+//  cli_count--;
+//  pthread_detach(pthread_self());
+
+    pthread_exit(NULL);
+
+    return 0;
+}
+//
+
+
+// prom
+/* Handle all communication with the client */
+void *handle_accept() {
+	int connfd=0;
+	int tid;
+	int total = 1;
+	int curThread;
+	pthread_t threads[total];
+
+	tolog(log_level,"thread #%ld, handle accept\n",tid);
+
+//// prom
+	socklen_t clilen = sizeof(cli_addr);
+	connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clilen);
+
+	/* Check if max clients is reached */
+/*
+	if((cli_count + 1) == MAX_CLIENTS){
+	    printf("Max clients reached. Rejected: ");
+	    print_client_addr(cli_addr);
+	    printf(":%d\n", cli_addr.sin_port);
+	    close(connfd);
+	    continue;
+	}
+*/
+
+	/* Client settings */
+	client_t *cli = (client_t *)malloc(sizeof(client_t));
+	cli->address = cli_addr;
+	cli->sockfd = connfd;
+//	cli->uid = uid++;
+
+	/* Add client to the queue and fork thread */
+//	queue_add(cli);
+	for (curThread = 0; curThread < total; curThread++){
+		tid=curThread;
+		tolog(log_level,"* run handle_client thread #%d\n",curThread);
+		if (pthread_create(&threads[curThread], NULL, handle_client, (void*)cli)) {
+			tolog(log_level,"Error creating thread %i of %i\n", curThread, total);
+			exit(1);
+		}
+	}
+
+	for (curThread = 0; curThread < total; curThread++){
+		tolog(log_level,"* waiting #%d\n",curThread);
+		if (pthread_join(threads[curThread], NULL)) {
+			tolog(log_level,"Error waiting for thread %i of %i\n", curThread, total);
+			exit(2);
+		}
+	}
+// prom
+
+	accept_busy=0;
+	tolog(log_level,"reset accept_busy\n");
+//	pthread_detach(pthread_self());
+	pthread_exit(NULL);
+}
+//
+
+
+
+
+
+
 int
 main(int argc, char **argv)
 {
@@ -471,12 +795,17 @@ main(int argc, char **argv)
 	char rnum[5];
 	int optcode = 0;
 	int option_index = 0;
+	int tid;
 
 	struct dirent *dp;
 	char vmname[MAXJNAME];
 	char vmpath[MAXJNAME];
 	char tmpjname[MAXJNAME];
 	pid_t vmpid;
+
+	int total = 1;
+	int curThread;
+	pthread_t threads[total];
 
 	static struct option long_options[] = { { "help", no_argument, 0,
 						    C_HELP },
@@ -669,6 +998,67 @@ main(int argc, char **argv)
 	load_config();
 #endif
 
+/////////// prom
+//  char *ip = "127.0.0.1";
+  char *ip = "::";
+  //int port = atoi(9999);
+  int port = 9999;
+  int option = 1;
+// v4
+//  struct sockaddr_in serv_addr;
+// v6
+  struct sockaddr_in6 serv_addr;
+
+//sock_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+
+  /* Socket settings */
+// v4
+//  listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+// v6
+  listenfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+
+// v4
+//  serv_addr.sin_family = AF_INET;
+// v6
+  serv_addr.sin6_family = AF_INET6;
+
+//v4
+//  serv_addr.sin_addr.s_addr = inet_addr(ip);
+//  serv_addr.sin_port = htons(port);
+
+//v6
+//  inet_pton(AF_INET6, "::1", &serv_addr.sin6_addr);
+
+  serv_addr.sin6_addr = in6addr_any;
+  serv_addr.sin6_port = htons(port);
+
+  /* Ignore pipe signals */
+  signal(SIGPIPE, SIG_IGN);
+
+//    if(setsockopt(listenfd, SOL_SOCKET,(SO_REUSEPORT | SO_REUSEADDR),(char*)&option,sizeof(option)) < 0){
+    if(setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT_LB,(char*)&option,sizeof(option)) < 0){
+	perror("ERROR: setsockopt failed");
+	exit(0);
+//    return EXIT_FAILURE;
+    }
+
+    /* Bind */
+  if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    perror("ERROR: Socket binding failed");
+    close(listenfd);
+//    return EXIT_FAILURE;
+	exit(1);
+  }
+
+  /* Listen */
+  if (listen(listenfd, 10) < 0) {
+    perror("ERROR: Socket listening failed");
+	exit(0);
+//    return EXIT_FAILURE;
+    }
+//////////////// prom
+
+
 	running_jails = 0;
 	while (1) {
 		tolog(log_level, "main loop\n");
@@ -703,6 +1093,22 @@ main(int argc, char **argv)
 				}
 			}
 #endif
+
+			if (accept_busy==0) {
+				for (curThread = 0; curThread < total; curThread++){
+					tid=curThread;
+					tolog(log_level,"* run accept thread #%d\n",curThread);
+					if (pthread_create(&threads[curThread], NULL, handle_accept, &total)) {
+						tolog(log_level,"Error creating accept thread %i of %i\n", curThread, total);
+						exit(1);
+					}
+					tolog(log_level,"accept thread created\n");
+				}
+				accept_busy=1;
+			}
+//			if (pthread_join(threads[1], NULL)) {
+//				tolog(log_level,"Error waiting for thread 1");
+//			}
 
 			tolog(log_level, " round %d/%d\n ---------------- \n",
 			    cur_round, save_loop_count);
