@@ -851,58 +851,107 @@ if [ ${vnet} -eq 1 ]; then
 		# make lock
 		echo "${jname}" > ${tmpdir}/eth${eth_seq}.locked
 		${IFCONFIG_CMD} ${i} name eth${eth_seq} && ${IFCONFIG_CMD} eth${eth_seq} vnet ${jname}
-		case "${ip4_addr}" in
-			[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
-				# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
-				[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
-				if [ -z "${dhclient_program}" ]; then
-					# todo: FIB? NICE?
-					DHCLIENT_PROGRAM=`${CPUSET} ${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
-				else
-					DHCLIENT_PROGRAM=${dhclient_program}
-				fi
-				# todo: FIB? NICE?
-				${CPUSET} ${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
-				;;
-			0|[Dd][Hh][Cc][Pp])
-				# just skip
-				;;
-			*)
-				# alias ? IPv6 ? mtu ?
-				# we need to re-build ifconfig_eth0 vars if values already exist to merge new IP address and
-				# and do not spoil the remaining data
 
-				# Whats about Linux jail?
-				if [ ! -r ${data}/etc/rc.conf ]; then
-					if [ -x ${path}/bin/sh ]; then
-						_osname=$( ${miscdir}/elf_tables --osname /bin/sh )
-						# warning relevant for FreeBSD-based env
-						[ "${osname}" = "freebsd" ] && ${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/rc.conf: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_eth0${N0_COLOR}" 1>&2
+		# more than one IPs in ip4_addr?
+		multi_ip=0
+
+		# duplicate code with cloudinit: todo: merge into generic func
+		OIFS="${IFS}"
+		IFS=","
+
+		for _pureip in ${ip4_addr}; do
+			IFS="${OIFS}"
+
+			multi_ip=$(( multi_ip + 1 ))
+
+			case "${_pureip}" in
+				[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
+					# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
+					[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
+					if [ -z "${dhclient_program}" ]; then
+						# todo: FIB? NICE?
+						DHCLIENT_PROGRAM=`${CPUSET} ${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
+					else
+						DHCLIENT_PROGRAM=${dhclient_program}
 					fi
-				else
-					ifconfig_eth0=
-					new_ifconfig_eth0="${ip4_addr}"
-					eval $( ${GREP_CMD} ^ifconfig_eth0= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
-					#echo "ifconfig old val [${ifconfig_eth0}]"
-					if [ -n "${ifconfig_eth0}" ]; then
-						${ECHO} "${N1_COLOR}adjust IPv4 address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
-						for _part in ${ifconfig_eth0}; do
-							iptype ${_part}
-							if [ $? -eq 1 ]; then
-								#echo "!! IPv4 detected: ${_part}, skipp"
-								continue
-							fi
-							if [ -z "${new_ifconfig_eth0}" ]; then
-								new_ifconfig_eth0="${_part}"
+					# todo: FIB? NICE?
+					${CPUSET} ${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} eth${eth_seq}
+					;;
+				0|[Dd][Hh][Cc][Pp])
+					# just skip
+					;;
+				*)
+					# alias ? mtu ?
+					# we need to re-build ifconfig_eth0 vars if values already exist to merge new IP address and
+					# and do not spoil the remaining data
+
+					# Whats about Linux jail?
+					if [ ! -r ${data}/etc/rc.conf ]; then
+						if [ -x ${path}/bin/sh ]; then
+							_osname=$( ${miscdir}/elf_tables --osname /bin/sh )
+							# warning relevant for FreeBSD-based env
+							[ "${osname}" = "freebsd" ] && ${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/rc.conf: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_eth0${N0_COLOR}" 1>&2
+						fi
+					else
+						# FreeBSD-based env
+						ifconfig_eth0=
+						# build new ifconfig_eth0
+						nomask=0
+						strpos --str="${_pureip}" --search="/"
+						_nomask=$?
+						mask=
+						iptype ${_pureip}
+						myip_type=$?
+						# 1 - ipv4
+						# 2 - ipv6
+						# * - unknown
+						case ${myip_type} in
+							1)
+								modif="inet"
+								[ ${nomask} -eq 0 ] && mask="24"
+								#
+								;;
+							2)
+								modif="inet6"
+								[ ${nomask} -eq 0 ] && mask="64"
+								;;
+							*)
+								modif=
+								;;
+						esac
+
+						if [ -n "${modif}" ]; then
+							if [ -n "${mask}" ]; then
+								new_ifconfig_eth0="${modif} ${_pureip}/${mask}"
 							else
-								new_ifconfig_eth0="${new_ifconfig_eth0} ${_part}"
+								new_ifconfig_eth0="${modif} ${_pureip}/${mask}"
 							fi
-						done
+						else
+							# unknown IP type, pass as-is
+							new_ifconfig_eth0="${_pureip}"
+						fi
+
+						eval $( ${GREP_CMD} ^ifconfig_eth0= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
+						if [ -n "${ifconfig_eth0}" ]; then
+							${ECHO} "${N1_COLOR}adjust IP address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
+							for _part in ${ifconfig_eth0}; do
+								iptype ${_part}
+								if [ $? -eq 1 ]; then
+									#echo "!! IPv4 detected: ${_part}, skipp"
+									continue
+								fi
+								if [ -z "${new_ifconfig_eth0}" ]; then
+									new_ifconfig_eth0="${_part}"
+								else
+									new_ifconfig_eth0="${new_ifconfig_eth0} ${_part}"
+								fi
+							done
+						fi
+						#echo "NEW VAL: [${new_ifconfig_eth0}]"
+						${SYSRC_CMD} -qf ${data}/etc/rc.conf ifconfig_eth0="${new_ifconfig_eth0}" > /dev/null 2>&1
 					fi
-					#echo "NEW VAL: [${new_ifconfig_eth0}]"
-					${SYSRC_CMD} -qf ${data}/etc/rc.conf ifconfig_eth0="${new_ifconfig_eth0}" > /dev/null 2>&1
-				fi
-		esac
+			esac
+		done
 
 		# release lock
 		${RM_CMD} -f ${tmpdir}/eth${eth_seq}.locked
@@ -931,7 +980,21 @@ if [ ${vnet} -eq 1 ]; then
 				fi
 				;;
 			*)
-				${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
+				iptype ${ci_gw4}
+				myip_type=$?
+				# 1 - ipv4
+				# 2 - ipv6
+				# * - unknown
+				case ${myip_type} in
+					1)
+						${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
+						;;
+					2)
+						${SYSRC_CMD} -qf ${data}/etc/rc.conf ipv6_defaultrouter="${ci_gw4}" > /dev/null 2>&1
+						;;
+					*)
+						;;
+				esac
 				;;
 		esac
 	fi
