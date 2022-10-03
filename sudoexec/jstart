@@ -854,6 +854,8 @@ if [ ${vnet} -eq 1 ]; then
 
 		# more than one IPs in ip4_addr?
 		multi_ip=0
+		multi_ip4=0
+		multi_ip6=0
 
 		# duplicate code with cloudinit: todo: merge into generic func
 		OIFS="${IFS}"
@@ -909,10 +911,12 @@ if [ ${vnet} -eq 1 ]; then
 							1)
 								modif="inet"
 								[ ${nomask} -eq 0 ] && mask="24"
+								multi_ip4=$(( multi_ip4 + 1 ))
 								;;
 							2)
 								modif="inet6"
 								[ ${nomask} -eq 0 ] && mask="64"
+								multi_ip6=$(( multi_ip6 + 1 ))
 								;;
 							*)
 								modif=
@@ -930,18 +934,31 @@ if [ ${vnet} -eq 1 ]; then
 							new_ifconfig_eth0="${_pureip}"
 						fi
 
-						if [ ${multi_ip} -lt 2 ]; then
-							find_ifconfig="ifconfig_eth0"
-						else
-							alias_num=$(( multi_ip - 2 ))
-							find_ifconfig="ifconfig_eth0_alias${alias_num}"
-						fi
+						case "${myip_type}" in
+							1)
+								if [ ${multi_ip4} -lt 2 ]; then
+									find_ifconfig="ifconfig_eth0"
+								else
+									alias_num=$(( multi_ip4 - 2 ))
+									find_ifconfig="ifconfig_eth0_alias${alias_num}"
+								fi
+								;;
+							2)
+								if [ ${multi_ip6} -lt 2 ]; then
+									find_ifconfig="ifconfig_eth0_ipv6"
+								else
+									alias_num=$(( multi_ip6 - 2 ))
+									find_ifconfig="ifconfig_eth0_ipv6_alias${alias_num}"
+								fi
+								;;
+						esac
 
-#						eval $( ${GREP_CMD} ^ifconfig_eth0= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
 						eval $( ${GREP_CMD} ^${find_ifconfig}= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
 						if [ -n "${ifconfig_eth0}" ]; then
 							${ECHO} "${N1_COLOR}adjust IP address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
 							for _part in ${ifconfig_eth0}; do
+								[ "${_part}" = "inet" ] && continue
+								[ "${_part}" = "inet6" ] && continue
 								iptype ${_part}
 								if [ $? -eq 1 ]; then
 									#echo "!! IPv4 detected: ${_part}, skipp"
@@ -965,44 +982,55 @@ if [ ${vnet} -eq 1 ]; then
 		IFS=","
 	done
 
+	IFS="${OIFS}"
+
+	[ -n "${oci_gw4}" ] && ci_gw4="${oci_gw4}"
+
 	if [ -n "${ci_gw4}" ]; then
-		case ${ci_gw4} in
-			0)
-				# do nothing
-				;;
-			auto)
-				# always first?
-				nic_address=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_address FROM jailnic LIMIT 1 )
-				# is ip?
-				if [ -n "${nic_address}" -a "${nic_address}" != "0" ]; then
-					echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to nic_address: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
-					${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
-				elif [ -n "${oci_gw4}" ];then
-					nic_address="${oci_gw4}"
-					echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to by config file: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
-					${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
-				else
-					echo "${N1_COLOR}${CBSD_APP}: ci_gw4 sets to auto bit ic_address is empty${N0_COLOR}"
-				fi
-				;;
-			*)
-				iptype ${ci_gw4}
-				myip_type=$?
-				# 1 - ipv4
-				# 2 - ipv6
-				# * - unknown
-				case ${myip_type} in
-					1)
-						${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
-						;;
-					2)
-						${SYSRC_CMD} -qf ${data}/etc/rc.conf ipv6_defaultrouter="${ci_gw4}" > /dev/null 2>&1
-						;;
-					*)
-						;;
-				esac
-				;;
-		esac
+		OIFS="${IFS}"
+		IFS=","
+
+		for _pureip in ${ci_gw4}; do
+			IFS="${OIFS}"
+
+			case ${_pureip} in
+				0)
+					# do nothing
+					;;
+				auto)
+					# always first?
+					nic_address=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_address FROM jailnic LIMIT 1 )
+					# is ip?
+					if [ -n "${nic_address}" -a "${nic_address}" != "0" ]; then
+						echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to nic_address: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+						${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+					elif [ -n "${oci_gw4}" ];then
+						nic_address="${oci_gw4}"
+						echo "${N1_COLOR}${CBSD_APP}: set defaultrouter to by config file: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+						${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+					else
+						echo "${N1_COLOR}${CBSD_APP}: ci_gw4 sets to auto, but nic_address is empty${N0_COLOR}"
+					fi
+					;;
+				*)
+					iptype ${_pureip}
+					myip_type=$?
+					# 1 - ipv4
+					# 2 - ipv6
+					# * - unknown
+					case ${myip_type} in
+						1)
+							${SYSRC_CMD} -qf ${data}/etc/rc.conf defaultrouter="${_pureip}" > /dev/null 2>&1
+							;;
+						2)
+							${SYSRC_CMD} -qf ${data}/etc/rc.conf ipv6_defaultrouter="${_pureip}" > /dev/null 2>&1
+							;;
+						*)
+							;;
+					esac
+					;;
+			esac
+		done
 	fi
 
 	IFS="${OIFS}"
