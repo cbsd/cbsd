@@ -18,7 +18,7 @@ bhyve_${jname}()
 	ssh_wait=1
 	runasap=1
 	vm_os_type="linux"
-	vm_os_profile="cloud-ubuntuserver-amd64-20.04"
+	vm_os_profile="cloud-ubuntuserver-amd64-22.04"
 	vm_ram="1g"
 	vm_cpus="1"
 	imgsize="10g"
