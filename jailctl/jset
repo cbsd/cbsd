@@ -193,6 +193,8 @@ modify_ipaddr()
 	# extra check
 	validate_ipaddr
 
+	data="${jaildatadir}/${jname}-${jaildatapref}"
+
 	IFS=","
 
 	for _pureip in ${_ip4_addr_old}; do
@@ -227,8 +229,16 @@ modify_ipaddr()
 
 	_IP4=
 	_IP6=
+	# more than one IPs in ip4_addr?
+	multi_ip=0
+	multi_ip4=0
+	multi_ip6=0
 
+	# todo: dup code with jstart: merge it
 	for _pureip in ${ip4_addr}; do
+
+		multi_ip=$(( multi_ip + 1 ))
+
 		case "${_pureip}" in
 			[Dd][Hh][Cc][Pp])
 				_dhcp=$( dhcpd )
@@ -257,39 +267,91 @@ modify_ipaddr()
 		else
 			_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
 		fi
-		ipwmask ${_pureip}
-		if [ -n "${IWM}" ]; then
-			case ${_inet} in
-				1)
-					_MODIF="inet"
-					if [ -z "${_IP4}" ]; then
-						_IP4="${_pureip}"
-					else
-						_IP4="${_IP4},${_pureip}"
-					fi
-					;;
-				2)
-					_MODIF="inet6"
-					if [ -z "${_IP6}" ]; then
-						_IP6="${_pureip}"
-					else
-						_IP6="${_IP6},${_pureip}"
-					fi
-					;;
-			esac
-			if [ "${mkhostsfile}" != "0" ]; then
-				[ "${IWM}" != "0" ] && mkjhosts ips="${IWM}" file="${data}/etc/hosts" hosts="${host_hostname}"
-			fi
-			IFS=" "
-			${ECHO} "${N1_COLOR}Setup new IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias${N0_COLOR}"
-			cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: setup new IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
-			if [ ${vnet} -eq 1 ]; then
-				jexec jname=${jname} ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
-			else
-				${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
-			fi
-			IFS=","
+
+		nomask=0
+		strpos --str="${_pureip}" --search="/"
+		nomask=$?
+
+		case ${_inet} in
+			1)
+				_MODIF="inet"
+				if [ ${nomask} -eq 0 ]; then
+					_pureip="${_pureip}/24"
+				fi
+				if [ -z "${_IP4}" ]; then
+					_IP4="${_pureip}"
+				else
+					_IP4="${_IP4},${_pureip}"
+				fi
+				multi_ip4=$(( multi_ip4 + 1 ))
+				if [ ${multi_ip4} -lt 2 ]; then
+					find_ifconfig="ifconfig_eth0"
+				else
+					alias_num=$(( multi_ip4 - 2 ))
+					find_ifconfig="ifconfig_eth0_alias${alias_num}"
+				fi
+				;;
+			2)
+				_MODIF="inet6"
+				if [ ${nomask} -eq 0 ]; then
+					_pureip="${_pureip}/64"
+				fi
+				if [ -z "${_IP6}" ]; then
+					_IP6="${_pureip}"
+				else
+					_IP6="${_IP6},${_pureip}"
+				fi
+				multi_ip6=$(( multi_ip6 + 1 ))
+				if [ ${multi_ip6} -lt 2 ]; then
+					find_ifconfig="ifconfig_eth0_ipv6"
+				else
+					alias_num=$(( multi_ip6 - 2 ))
+					find_ifconfig="ifconfig_eth0_ipv6_alias${alias_num}"
+				fi
+				;;
+			*)
+				_MODIF=
+				;;
+		esac
+		if [ "${mkhostsfile}" != "0" ]; then
+			[ "${IWM}" != "0" ] && mkjhosts ips="${IWM}" file="${data}/etc/hosts" hosts="${host_hostname}"
 		fi
+		IFS=" "
+		${ECHO} "${N1_COLOR}Setup new IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias${N0_COLOR}"
+		cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: setup new IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+		if [ ${vnet} -eq 1 ]; then
+
+			if [ -n "${_MODIF}" ]; then
+				new_ifconfig_eth0="${_MODIF} ${_pureip}"
+			else
+				new_ifconfig_eth0="${_pureip}"
+			fi
+
+			eval $( ${GREP_CMD} ^${find_ifconfig}= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
+			if [ -n "${ifconfig_eth0}" ]; then
+				${ECHO} "${N1_COLOR}adjust IP address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
+				for _part in ${ifconfig_eth0}; do
+					[ "${_part}" = "inet" ] && continue
+					[ "${_part}" = "inet6" ] && continue
+					iptype ${_part}
+					if [ $? -eq 1 ]; then
+						#echo "!! IPv4 detected: ${_part}, skipp"
+						continue
+					fi
+					if [ -z "${new_ifconfig_eth0}" ]; then
+						new_ifconfig_eth0="${_part}"
+					else
+						new_ifconfig_eth0="${new_ifconfig_eth0} ${_part}"
+					fi
+				done
+			fi
+			${SYSRC_CMD} -qf ${data}/etc/rc.conf ${find_ifconfig}="${new_ifconfig_eth0}" > /dev/null 2>&1
+			# not necessary due to netif/routing restart?
+			#jexec jname=${jname} ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+		else
+			${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
+		fi
+		IFS=","
 	done
 
 	IFS=" "
@@ -299,15 +361,16 @@ modify_ipaddr()
 		ip4_addr=$( echo ${ip4_addr} | ${SED_CMD} -e "s#DHCPv6#${_dhcp}#g" -e "s#DHCP#${_dhcp}#g" )
 	fi
 
-	#construct ipX.addr string 
+	#construct ipX.addr string
 	_nIPs="ip4.addr=${_IP4} ip6.addr=${_IP6}"
 
 	cbsdlogger NOTICE ${CBSD_APP}: modify_ipaddr: ${JAIL_CMD} -m ${_nIPs} jid=${jid}
 	if [ ${vnet} -eq 1 ]; then
 		# alias for multiple? IPv6 ? restart routing ? [auto] restart services ?
-		data="${jaildatadir}/${jname}-${jaildatapref}"
-		${SYSRC_CMD} -qf ${data}/etc/rc.conf ifconfig_eth0="inet ${ip4_addr} up" > /dev/null 2>&1
+
+		jexec jname=${jname} /etc/rc.d/netif restart
 		jexec jname=${jname} /etc/rc.d/routing restart
+
 	else
 		${JAIL_CMD} -m ${_nIPs} jid=${jid}
 	fi

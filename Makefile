@@ -171,3 +171,6 @@ bump:
 	${SED} -i '' "s/VERSION.*/VERSION \"${NEWVERSION}a\"/" bin/cbsdsh/about.h
 	${GIT} commit -am \"The Show Must Go On\"
 .endif
+
+test:
+	cd tests && ./runall
