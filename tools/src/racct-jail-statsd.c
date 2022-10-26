@@ -74,17 +74,14 @@ int accept_busy=0;
 struct sockaddr_in cli_addr;
 int listenfd = 0;
 
-
 //prom
 /* Client structure */
 typedef struct{
-    struct sockaddr_in address;
-    int sockfd;
-    int uid;
-    char name[32];
+	struct sockaddr_in address;
+	int sockfd;
+	int uid;
+	char name[32];
 } client_t;
-
-
 
 int list_data();
 
@@ -568,7 +565,6 @@ Content-Type: text/plain; version=0.0.4\r\n\
 	const char *hostname = getenv(
 	    "HOST"); // Still banging the env every second or so, only do this
 		     // at load?
-	int ret = 0;
 	FILE *fp;
 	char json_str[20000]; // todo: dynamic from number of bhyve/jails
 	char json_buf[1024];  // todo: dynamic from number of bhyve/jails
@@ -576,6 +572,16 @@ Content-Type: text/plain; version=0.0.4\r\n\
 	struct timeval now_time;
 	int cur_time = 0;
 	int round_total = save_loop_count + 1;
+	int jails_up=0;
+	int jails_down=0;
+
+	char dbfile[512];
+	char query[100];
+
+	sqlite3 *db;
+	int ret = 0;
+	sqlite3_stmt *stmt;
+	int res = 0;
 
 	struct sum_item_data *newd;
 	struct sum_item_data *temp;
@@ -635,6 +641,11 @@ Content-Type: text/plain; version=0.0.4\r\n\
 	}
 
 	memset(json_str, 0, sizeof(json_str));
+
+	sprintf(json_str,"\
+jails_up: %d\n\
+", jails_up);
+
 	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
 		if (strlen(sumch->name) < 1) {
 			continue;
@@ -675,7 +686,63 @@ sumch->name,sumch->pcpu / round_total );
 //			    sumch->readiops / round_total,
 //			    sumch->writeiops / round_total,
 //			    sumch->pmem / round_total);
+		jails_up=jails_up+1;
 		}
+
+	memset(json_str, 0, sizeof(json_str));
+
+	sprintf(json_str,"\
+jails_up: %d\n\
+", jails_up);
+
+  if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+	perror("ERROR: write to descriptor failed");
+//	break;
+    }
+
+
+	//offline
+	memset(dbfile, 0, sizeof(dbfile));
+	sprintf(dbfile, "%s/var/db/local.sqlite", workdir);
+
+	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
+		tolog(log_level, "%s: Can't open database file: %s\n", nm(), dbfile);
+	} else {
+		res = 1024;
+
+		sprintf(query, "SELECT COUNT(jname) FROM jails WHERE emulator=\"jail\" AND status='0'");
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+
+		if (ret == SQLITE_OK) {
+			ret = sqlite3_step(stmt);
+
+			while (ret == SQLITE_ROW) {
+				jails_down = sql_get_int(stmt);
+				ret = sqlite3_step(stmt);
+			}
+		}
+
+		sqlite3_finalize(stmt);
+		sqlite3_close(db);
+
+		sprintf(json_str,"\
+jails_down: %d\n\
+", jails_down);
+
+
+		if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+			perror("ERROR: write to descriptor failed");
+		}
+
+	memset(json_str, 0, sizeof(json_str));
+	sprintf(json_str,"cbsd_pool_info{nodename=\"%s\"} 1\n", pool_name);
+
+	if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+		perror("ERROR: write to descriptor failed");
+	}
+
+
+	}
 
 ////////////////
 
@@ -802,6 +869,11 @@ main(int argc, char **argv)
 	char vmpath[MAXJNAME];
 	char tmpjname[MAXJNAME];
 	pid_t vmpid;
+	char jailpath[512];
+
+	FILE *fp;
+
+	char *ip;
 
 	int total = 1;
 	int curThread;
@@ -810,10 +882,17 @@ main(int argc, char **argv)
 	static struct option long_options[] = { { "help", no_argument, 0,
 						    C_HELP },
 		{ "log_file", required_argument, 0, C_LOG_FILE },
+		{ "pool_name", required_argument, 0, C_POOL_NAME },
 		{ "log_level", required_argument, 0, C_LOG_LEVEL },
 		{ "loop_interval", required_argument, 0, C_LOOP_INTERVAL },
 		{ "prometheus_exporter", required_argument, 0,
 		    C_PROMETHEUS_EXPORTER },
+		{ "prometheus_listen4", required_argument, 0,
+		    C_PROMETHEUS_LISTEN4 },
+		{ "prometheus_listen6", required_argument, 0,
+		    C_PROMETHEUS_LISTEN6 },
+		{ "prometheus_port", required_argument, 0,
+		    C_PROMETHEUS_PORT },
 		{ "save_loop_count", required_argument, 0, C_SAVE_LOOP_COUNT },
 		{ "save_beanstalkd", required_argument, 0, C_SAVE_BEANSTALKD },
 		{ "save_sqlite3", required_argument, 0, C_SAVE_SQLITE3 },
@@ -836,6 +915,9 @@ main(int argc, char **argv)
 		case C_LOG_FILE:
 			log_file = optarg;
 			break;
+		case C_POOL_NAME:
+			pool_name = optarg;
+			break;
 		case C_LOG_LEVEL:
 			log_level = atoi(optarg);
 			break;
@@ -846,6 +928,15 @@ main(int argc, char **argv)
 			if (atoi(optarg) == 1) {
 				output_flags |= OUTPUT_PROMETHEUS;
 			}
+			break;
+		case C_PROMETHEUS_LISTEN4:
+			prometheus_listen4 = optarg;
+			break;
+		case C_PROMETHEUS_LISTEN6:
+			prometheus_listen6 = optarg;
+			break;
+		case C_PROMETHEUS_PORT:
+			prometheus_port = atoi(optarg);
 			break;
 		case C_SAVE_LOOP_COUNT:
 			save_loop_count = atoi(optarg);
@@ -873,6 +964,13 @@ main(int argc, char **argv)
 	if (log_file) {
 		printf("log_file: %s\n", log_file);
 	}
+	if(!pool_name) {
+		//gethostbyname
+		pool_name="unknown";
+	}
+
+	printf("pool_name: %s\n", pool_name);
+
 	printf("log_level: %d\n", log_level);
 	printf("loop_interval: %d seconds\n", loop_interval);
 	printf("save_loop_count: %d\n", save_loop_count);
@@ -942,8 +1040,11 @@ main(int argc, char **argv)
 	// close(pipe_fd[1]);
 
 	if (path_my_pidfile == NULL) {
-		asprintf(&path_my_pidfile, "%sracct-jail-statsd.pid",
-		    _PATH_VARRUN);
+
+		asprintf(&path_my_pidfile, "%s/var/run/racct-jail-statsd.pid",
+		    workdir);
+//		asprintf(&path_my_pidfile, "%sracct-jail-statsd.pid",
+//		    _PATH_VARRUN);
 		if (path_my_pidfile == NULL) {
 			printf("asprintf");
 			exit(1);
@@ -1000,9 +1101,17 @@ main(int argc, char **argv)
 
 /////////// prom
 //  char *ip = "127.0.0.1";
-  char *ip = "::";
-  //int port = atoi(9999);
-  int port = 9999;
+	if(prometheus_listen6) {
+		ip = prometheus_listen6;
+	} else if(prometheus_listen4) {
+		ip = prometheus_listen4;
+	} else {
+		printf("No --prometheus_listen4 or prometheus_listen6\n");
+	}
+
+	printf("Prometheus listen on: [%s:%d]\n",ip, prometheus_port);
+
+  int port = prometheus_port;
   int option = 1;
 // v4
 //  struct sockaddr_in serv_addr;
@@ -1129,6 +1238,18 @@ main(int argc, char **argv)
 
 				memset(tmpjname, 0, sizeof(tmpjname));
 				strcpy(tmpjname, cur_jname);
+
+				//check if jails outside the CBSD workdir
+				memset(jailpath,0,sizeof(jailpath));
+				sprintf(jailpath, "%s/jails-data/%s-data", workdir,tmpjname);
+				fp=fopen(jailpath,"r");
+				if (!fp) {
+					tolog(log_level,"[JAIL] skipp: %s jail do not belong to [%s] workdir\n", tmpjname, workdir);
+					continue;
+				} else {
+					fclose(fp);
+				}
+
 				cur_jname[strlen(cur_jname)] = '\0';
 				strcat(cur_jname, "_");
 				strcat(cur_jname, rnum);

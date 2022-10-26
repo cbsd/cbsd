@@ -77,9 +77,13 @@ const char *current_waiting_str = "current-waiting: ";
 enum {
 	C_HELP,
 	C_LOG_FILE,
+	C_POOL_NAME,
 	C_LOG_LEVEL,
 	C_LOOP_INTERVAL,
 	C_PROMETHEUS_EXPORTER,
+	C_PROMETHEUS_LISTEN4,
+	C_PROMETHEUS_LISTEN6,
+	C_PROMETHEUS_PORT,
 	C_SAVE_LOOP_COUNT,
 	C_SAVE_BEANSTALKD,
 	C_SAVE_SQLITE3,
@@ -89,12 +93,16 @@ enum {
 };
 
 //
-int cur_round = 0; // current round
-int log_level = 0; // default log_level
+int cur_round = 0;				// current round
+int log_level = 0;				// default log_level
 
-char *log_file = NULL;	 // logfile
-int save_loop_count = 5; // save_loop_count by default
-int loop_interval = 1;	 // loop 1 seconds by default
+char *log_file = NULL;				// logfile
+char *pool_name = NULL;				// logfile
+char *prometheus_listen4 = NULL;		// e.g.: 127.0.0.1
+char *prometheus_listen6 = NULL;		// e.g.: ::
+int prometheus_port = 9999;			// default prometheus exporter port
+int save_loop_count = 5;			// save_loop_count by default
+int loop_interval = 1;				// loop 1 seconds by default
 
 static struct jailparam *params;
 static int *param_parent;
@@ -591,12 +599,13 @@ usage(void)
 {
 	printf("CBSD racct statistics exporter\n");
 	printf("require: --nic\n");
+	printf("warning: --prometheus_listen4 --prometheus_listen6 is mutually exclusive\n");
 #ifdef WITH_INFLUX
 	printf(
-	    "optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1] --save_influx=[0|1]\n");
+	    "optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1] --save_influx=[0|1] --pool_name=<namepool_or_hostname> --prometheus_listen4=127.0.0.1 --prometheus_listen6=:: --prometheus_port=9999\n");
 #else
 	printf(
-	    "optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1]\n");
+	    "optional: --log_file=<file> --log_level=LEVEL --loop_interval=N --prometheus_exporter=[0|1] --save_loop_count=N --save_beanstalkd=[0|1] --save_sqlite3=[0|1] --pool_name=<namepool_or_hostname> --prometheus_listen4=127.0.0.1 --prometheus_listen6=:: --prometheus_port=9999\n");
 #endif
 	exit(1);
 }
