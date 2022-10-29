@@ -2,13 +2,13 @@
 #v11.2.0
 CBSDMODULE="bhyve"
 MYARG=""
-MYOPTARG="alljails display header hidden node order shownode"
+MYOPTARG="alljails display header jname node order shownode"
 MYDESC="List bhyve domain and status"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
 Print list of bhyve VMs including remote domains.
+You can limit scope of environment via arg list: 'cbsd bls vm1 vm2'
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -27,14 +27,15 @@ ${H3_COLOR}Options${N0_COLOR}:
                additional field:
                  'path'
              Notes: 'vnc' data column is meta info from: 'bhyve_vnc_tcp_bind':'vnc_port'.
- ${N2_COLOR}header=${N0_COLOR}   - when set to 0 - don't print header.
+ ${N2_COLOR}jname=${N0_COLOR}    - limit list by 'jname=' env only, alias for: cbsd jls xx';
  ${N2_COLOR}hidden=${N0_COLOR}   - show hidden env as well? 1 (default) - show, 0 - skip.
  ${N2_COLOR}node=${N0_COLOR}     - only for current node.
- ${N2_COLOR}order=${N0_COLOR}    - [asc|desc] sort order, default is: 'asc'.
+ ${N2_COLOR}order=${N0_COLOR}    - sort order, 'asc' (default) or 'desc'.
  ${N2_COLOR}shownode=${N0_COLOR} - whe set to 1 - show nodename for domains.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
+  # cbsd bls vm1
   # cbsd bls display=jname,vm_os_profile,vm_ram,vnc header=0
 
 "
@@ -46,6 +47,10 @@ EXTHELP="wf_bls"
 . ${nodes}
 
 readconf bls.conf
+jname=
+ojname=
+jname_only=
+order=
 . ${cbsdinit}
 
 [ ! -d "${workdir}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
@@ -54,6 +59,7 @@ readconf bls.conf
 oalljails="${alljails}"				# store original settings, they have more weight vs auto
 oshownode="${shownode}"				# store original settings, they have more weight vs auto
 ohidden="${hidden}"				# show hidden env?
+[ -z "${order}" ] && order="asc"
 
 # autosettings for alljails and shownode
 is_cluster_mode
@@ -353,7 +359,17 @@ show_jaildata_from_sql()
 		sqlfile_sysdir="${tmpdir}/${1}"
 	fi
 
-	cbsdsqlro ${sqlfile} SELECT jname,hidden FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname hidden; do
+	cbsdsqlro ${sqlfile} SELECT jname,hidden FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ${order} | while read jname hidden; do
+
+		if [ -n "${jname_only}" ]; then
+			# limited output
+			_skip=1
+			for i in ${jname_only}; do
+				[ "${i}" = "${jname}" ] && _skip=0
+			done
+			[ ${_skip} -eq 1 ] && continue
+		fi
+
 		_status=
 
 		if [ "${sqlfile}" = "local" ]; then
@@ -448,6 +464,71 @@ show_jails()
 #### MAIN
 [ -z "${header}" ] && header=1
 sqldelimer=" "
+
+additional_condition=
+
+# parse args
+OIFS="${IFS}"
+IFS="~"
+cmd="$@"
+IFS="${OIFS}"
+while [ -n "${1}" ]; do
+	IFS="~"
+	strpos --str="${1}" --search="="
+	_pos=$?
+	if [ ${_pos} -eq 0 ]; then
+		# not params=value form
+		#printf "${1} "         # (printf handles -args (with dashes)
+		#echo -n "${1} "
+		if [ -z "${jname}" ]; then
+			jname="${1}"
+		else
+			jname="${jname} ${1}"
+		fi
+		shift
+		IFS="${OIFS}"
+		continue
+#	else
+#		# additional_condition: TODO/WIP: we need use personal SQLite table for env list
+#		# its patam=value data, skip for existed data
+#		param=$( substr --pos=0 --len=${_pos} --str="${1}" )
+#		case "${param}" in
+#			alljails|display|header|jname|node|order|shownode)
+#				# known params, skip
+#				shift
+#				continue
+#				;;
+#			*)
+#				len=$( strlen "${1}" )
+#				VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${len} --str="${1}" )
+#				case "${param}" in
+#					status)
+#						case "${VAL}" in
+#							on|On|ON)
+#								VAL="1"
+#								;;
+#							off|Off|OFF)
+#								VAL="0"
+#								;;
+#						esac
+#						;;
+#				esac
+#
+#				if [ -z "${additional_condition}" ]; then
+#					additional_condition="WHERE ${param}=\"${VAL}\""
+#				else
+#					additional_condition="${additional_condition} AND ${param}=\"${VAL}\""
+#				fi
+#			;;
+#		esac
+	fi
+	shift
+	IFS="${OIFS}"
+done
+
+IFS="${OIFS}"
+
+jname_only="${jname}"
 
 my_err_file="${ftmpdir}/ls.$$"
 show_jails | ${COLUMN_CMD} -t
