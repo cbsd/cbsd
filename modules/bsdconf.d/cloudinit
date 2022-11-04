@@ -11,7 +11,7 @@ ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}cloudengine=${N0_COLOR} - target engine, 'cloud-init' (default) or 'cloudinit-base';
+ ${N2_COLOR}cloudengine=${N0_COLOR} - target engine, 'cloud-init' (default), 'cloudinit-base' or 'fire-*';
  ${N2_COLOR}fromfile=${N0_COLOR}    - load params from file;
  ${N2_COLOR}jname=${N0_COLOR}       - target env;
  ${N2_COLOR}mode=${N0_COLOR}        - mode can be: 'show', 'gen';
@@ -47,8 +47,13 @@ case "${cloudengine}" in
 		cloud_init_dir="${jailsysdir}/${jname}/cloud-init/openstack/latest"
 		cloud_data_files="meta_data.json network_data.json"
 		;;
+	fire*)
+		cloud_init_dir="${jailsysdir}/${jname}/cloud-init"
+		cloud_data_files="network-config user-data zzz_resize"
+		;;
 	*)
 		err 1 "${N1_COLOR}cloudinit: unknown cloud engine: ${L2_COLOR}${cloudengine}${N0_COLOR}"
+		;;
 esac
 
 master_prestart_dir="${jailsysdir}/${jname}/master_prestart.d"
@@ -82,7 +87,6 @@ show()
 		shift $(($OPTIND - 1))
 	done
 
-
 	ci_user_pw_user_lock="false"
 	[ -z "${ci_user_pw_user}" ] && ci_user_pw_user='*'
 	ci_user_pw_root_lock="false"
@@ -98,7 +102,7 @@ show()
 	# todo: test for empty values
 	case "${_source}" in
 		meta-data)
-			${SED_CMD} -e "s:%%ci_jname%%:${ci_jname}:g" \
+			[ -r ${_tpldir}/${_source} ] && ${SED_CMD} -e "s:%%ci_jname%%:${ci_jname}:g" \
 			-e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
 			${_tpldir}/${_source}
 			;;
@@ -110,7 +114,7 @@ show()
 			;;
 		network-config)
 
-			${CAT_CMD} ${_tpldir}/10-${_source}
+			[ -r ${_tpldir}/10-${_source} ] && ${CAT_CMD} ${_tpldir}/10-${_source}
 
 			interface_num=1
 			gw_set=0
@@ -128,7 +132,7 @@ show()
 					ci_interface_mtu="${oci_interface_mtu}"
 				fi
 
-				${SED_CMD} -e "s:%%ci_interface_name%%:${interface_name}:g" \
+				[ -r ${_tpldir}/20-${_source}-interface ] && ${SED_CMD} -e "s:%%ci_interface_name%%:${interface_name}:g" \
 				-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
 				${_tpldir}/20-${_source}-interface
 
@@ -202,10 +206,23 @@ show()
 							fi
 						fi
 
+						# for firestarter only:
+						# "s:%%ci_interface_name%%:${interface_name}:g" \
+						# -e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
+						# -e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+						# -e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
+						# -e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
+
+
 						${SED_CMD} -e "s#%%ipv4_true%%#${ipv4_true}#g" \
 						-e "s#%%ipv6_true%%#${ipv6_true}#g" \
 						-e "s#%%ci_ip4_addr%%#${_pureip}#g" \
 						-e "s#%%ci_gw4%%#${oci_gw4}#g" \
+						-e "s:%%ci_interface_name%%:${interface_name}:g" \
+						-e "s:%%ci_fqdn%%:${ci_fqdn}:g" \
+						-e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+						-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
+						-e "s:%%ci_interface_mtu%%:${ci_interface_mtu}:g" \
 						${_tpldir}/30-${_source}-static
 
 						gw_set=1
@@ -285,7 +302,7 @@ show()
 				gw_set=0
 			done
 
-			${SED_CMD} -e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
+			[ -r ${_tpldir}/40-${_source} ] && ${SED_CMD} -e "s:%%ci_nameserver_address%%:${ci_nameserver_address}:g" \
 			-e "s:%%ci_nameserver_search%%:${ci_nameserver_search}:g" \
 			${_tpldir}/40-${_source}
 			;;
@@ -392,7 +409,7 @@ show()
 			# change root password needed?
 			need_root_chpasswd=0
 
-			${CAT_CMD} ${_tpldir}/10-user-data		# header
+			[ -r ${_tpldir}/10-user-data ] && ${CAT_CMD} ${_tpldir}/10-user-data		# header
 
 			for i in ${ci_user_add}; do
 				# change user password needed?
@@ -470,7 +487,6 @@ show()
 					fi
 				fi
 
-
 				prefix=$( substr --pos=0 --len=1 --str=${ci_user_pw_user} )
 				if [ "${prefix}" = "*" ]; then
 					ci_user_pw_user_lock="true"
@@ -480,13 +496,13 @@ show()
 				fi
 
 				if [ "${ci_user_pw_user_lock}" = "false" ]; then
-					${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
+					[ -r ${_tpldir}/20-user-data-user-password ] && ${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
 					-e "s:%%ci_shell%%:${ci_shell}:g" \
 					-e "s:%%ci_pubkey%%:${_keytest}:g" \
 					-e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" \
 					${_tpldir}/20-user-data-user-password
 				else
-					${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
+					[ -r ${_tpldir}/20-user-data-user-lockpassword ] && ${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" \
 					-e "s:%%ci_shell%%:${ci_shell}:g" \
 					-e "s:%%ci_pubkey%%:${_keytest}:g" \
 					${_tpldir}/20-user-data-user-lockpassword
@@ -502,21 +518,27 @@ show()
 				need_root_chpasswd=1
 			fi
 			if [ "${ci_user_pw_root_lock}" = "false" ]; then
-				${SED_CMD} -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
+				[ -r ${_tpldir}/20-user-data-root-password ] && ${SED_CMD} -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" \
 				${_tpldir}/20-user-data-root-password
 			else
-				${CAT_CMD} ${_tpldir}/20-user-data-root-lockpassword
+				[ -r ${_tpldir}/20-user-data-root-lockpassword ] && ${CAT_CMD} ${_tpldir}/20-user-data-root-lockpassword
 			fi
 
 			# chpasswd
 			if [ "${need_user_chpasswd}" = "1" -o "${need_root_chpasswd}" = "1" ]; then
-				${CAT_CMD} ${_tpldir}/30-user-data-chpasswd
-				[ "${need_user_chpasswd}" = "1" ] && ${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" -e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" ${_tpldir}/40-user-data-chpasswd-user
-				[ "${need_root_chpasswd}" = "1" ] && ${SED_CMD} -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" ${_tpldir}/40-user-data-chpasswd-root
-				${CAT_CMD} ${_tpldir}/50-user-data-chpasswd
+				[ -r ${_tpldir}/30-user-data-chpasswd ] && ${CAT_CMD} ${_tpldir}/30-user-data-chpasswd
+				[ -r ${_tpldir}/40-user-data-chpasswd-user -a "${need_user_chpasswd}" = "1" ] && ${SED_CMD} -e "s:%%ci_login%%:${ci_login}:g" -e "s:%%ci_user_pw_user%%:${ci_user_pw_user}:g" ${_tpldir}/40-user-data-chpasswd-user
+				[ -r ${_tpldir}/40-user-data-chpasswd-root -a "${need_root_chpasswd}" = "1" ] && ${SED_CMD} -e "s:%%ci_user_pw_root%%:${ci_user_pw_root}:g" ${_tpldir}/40-user-data-chpasswd-root
+				[ -r ${_tpldir}/50-user-data-chpasswd ] && ${CAT_CMD} ${_tpldir}/50-user-data-chpasswd
 			fi
 			;;
+		zzz_resize)
+			# must be last
+			[ ${_tpldir}/50-resize ] && ${CAT_CMD} ${_tpldir}/50-resize
+			;;
 	esac
+
+	return 0
 }
 
 # MAIN
@@ -548,7 +570,7 @@ if [ -n "${fromfile}" ]; then
 			done
 			;;
 		gen)
-			[ ! -d "${cloud_init_dir}" ] && ${MKDIR_CMD} -p ${cloud_init_dir}
+			[ -n "${cloud_init_dir}" -a ! -d "${cloud_init_dir}" ] && ${MKDIR_CMD} -p ${cloud_init_dir}
 			for i in ${cloud_data_files}; do
 				show -s ${i} > ${cloud_init_dir}/${i}
 				ret=$?
@@ -562,8 +584,17 @@ if [ -n "${fromfile}" ]; then
 				[ ! -d "${master_prestart_dir}" ] && ${MKDIR_CMD} -p ${master_prestart_dir}
 				${CP_CMD} -a ${_MYDIR}/cloud-master_prestart.d/cloud_init_set_netname.sh ${master_prestart_dir}/
 			fi
+
 			# remove me after regen gold/cloud-init image with 'dhcp[4,6] support
 			[ "${dhcp_work_around}" = "1" ] && ${RM_CMD} -f ${cloud_init_dir}/cbsd-network-config
+
+			case "${cloudengine}" in
+				fire*)
+					if [ ! -r ${data}/dsk2.vhd ]; then
+						bhyve-dsk mode=attach jname=${jname} dsk_controller=virtio-blk dsk_size=1m imgtype=md
+					fi
+					;;
+			esac
 			;;
 		*)
 			err 1 "${N1_COLOR}cloudinit helper: unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
