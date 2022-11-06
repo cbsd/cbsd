@@ -1,9 +1,9 @@
 #!/usr/local/bin/cbsd
-#v11.1.16
+#v13.1.16
 CBSDMODULE="sys"
 MYARG=""
 MYOPTARG="arch basename destdir qemu register_basename stable target_arch ver"
-MYDESC="Install base from obj files after buildworld (basejail)"
+MYDESC="Install base-in-package FreeBSD base"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -56,10 +56,9 @@ oarch="${arch}"
 # By default ver=current version
 . ${subrdir}/build.subr
 
-init_distcc
 init_notify
 init_target_arch
-init_srcdir
+init_srcdir			# TODO: distribution in etcupdate tgz! not for stable version
 init_supported_arch
 
 if [ -n "${register_basename}" ]; then
@@ -68,21 +67,13 @@ else
 	init_basedir
 fi
 
-#TARGET_ARCH="${target_arch}"
+#[ -x "${BASE_DIR}/bin/sh" ] &&  err 1 "${N1_COLOR}${CBSD_APP}: not empty, base already exist: ${N2_COLOR}${BASE_DIR}${N0_COLOR}"
 
 [ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
-#LOCKFILE=${ftmpdir}/$( ${MD5_CMD} -qs ${MAKEOBJDIRPREFIX} ).lock
-#LOCKFILE=${ftmpdir}/$( ${MD5_CMD} -qs ${MAKEOBJDIRPREFIX} ).lock
 makelock ${BASE_DIR_LOCKFILE} "cleanup_bases"
 
 # make base lock
 echo $$ > ${BASE_DIR_LOCKFILE}
-
-#  work-around for:
-# rm -rf /tmp/install.PazxMxWt
-# make[2]: "/usr/jails/src/src_11/src/share/mk/bsd.compiler.mk" line 37: Unable to determine compiler type for cc.  Consider setting COMPILER_TYPE.
-# *** Error code 1
-[ "$arch" = "arm" ] && export COMPILER_TYPE="clang"
 
 if [ -n "${register_basename}" ]; then
 	_basename_args="basename=\"${register_basename}\""
@@ -90,23 +81,13 @@ else
 	_basename_args=
 fi
 
-register_base arch=${arch} ver=${ver} source="installworld" auto_baseupdate=0 ${_basename_args}
+register_base arch=${arch} ver=${ver} source="install-pkg-world" auto_baseupdate=0 ${_basename_args}
 
-if [ -x "${BASE_DIR}/bin/sh" ]; then
-	baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
-	[ -z "${baseelf}" ] && baseelf="0"
-	register_base arch=${arch} ver=${ver} source="installworld" auto_baseupdate=0 ${_basename_args}	# again: update elf
-	base_status_is_maintenance_soft
-else
-	base_status_is_maintenance_hard
-fi
-
-[ ! -r ${SRC_DIR} ] && err 1 "${N1_COLOR}No such Makefile in: ${N2_COLOR}${SRC_DIR}${N0_COLOR}"
-
-[ ! -r ${SRC_DIR}/etc/sendmail/freebsd.cf ] && ${MAKE_CMD} -C ${SRC_DIR}/etc/sendmail >/dev/null 2>&1 ||true
+base_status_is_maintenance_hard
 
 # map amd64 -> x86_64 for DFLY
 if [ "${platform}" = "DragonFly" ]; then
+	err 1 "${N1_COLOR}${CBSD_APP}: base-in-pkg not supported yet for ${N2_COLOR}${platform}${N0_COLOR}"
 	case "${arch}" in
 		amd64)
 			build_arch="x86_64"
@@ -119,25 +100,51 @@ else
 fi
 
 set -o errexit
-cbsdlogger NOTICE ${CBSD_APP}: installdworld started: ${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
-${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
-cbsdlogger NOTICE ${CBSD_APP}: installdworld ended: ${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
+cbsdlogger NOTICE ${CBSD_APP}: install-pkg-world started: ${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
 
-# fix for  (14-CURRENT only?)
-# ./sl_SI.ISO8859-2/LC_MESSAGES: broken symbolic link to ../sr_RS.ISO8859-2/LC_MESSAGES
-#./nn_NO.ISO8859-15/LC_MESSAGES: broken symbolic link to ../nn_NO.ISO8859-15/LC_MESSAGES
-#./nn_NO.ISO8859-1/LC_MESSAGES: broken symbolic link to ../nn_NO.ISO8859-15/LC_MESSAGES
-set +o errexit
-${ECHO} "${N1_COLOR}${CBSD_APP}: find for broken symlinks ${N2_COLOR}${BASE_DIR}/share/locale/${N0_COLOR}"
-${FIND_CMD} "${BASE_DIR}/usr/share/locale/" -type l -print | while read _l; do
-	${FILE_CMD} -s ${_l} | ${GREP_CMD} -q "broken symbolic link" > /dev/null 2>&1
-	_ret=$?
-	if [ ${_ret} -eq 0 ]; then
-		${ECHO} "${W1_COLOR}${CBSD_APP}: purge broken symlink: ${N2_COLOR}${_l}${N0_COLOR}"
-		${RM_CMD} -f ${_l}
-	fi
+${MKDIR_CMD} -p ${BASE_DIR}/usr/share/keys/
+/usr/local/bin/rsync -avz /usr/share/keys/ ${BASE_DIR}/usr/share/keys/
+
+readconf ${platform}-base_in_pkg.conf
+readconf ${platform}-base_in_pkg-${ver}.conf
+
+# we need to use system/global path
+[ ! -d ${BASE_DIR}/etc/pkg ] && ${MKDIR_CMD} -p ${BASE_DIR}/etc/pkg
+${CAT_CMD} > ${BASE_DIR}/etc/pkg/base-in-pkg.conf <<EOF
+base-in-pkg: {
+	conservative_upgrade: no,
+	priority: 10
+	url: "${base_in_pkg_repo_url}",
+	mirror_type: "none",
+	enaled: yes
+}
+EOF
+
+# save/restore old ?
+[ ! -r ${BASE_DIR}/etc ] && ${MKDIR_CMD} ${BASE_DIR}/etc
+${CAT_CMD} > ${BASE_DIR}/etc/resolv.conf <<EOF
+nameserver 8.8.8.8              # CBSD makeresolv function
+nameserver 8.8.4.4              # CBSD makeresolv function
+EOF
+
+env SIGNATURE_TYPE=none ASSUME_ALWAYS_YES=yes /usr/sbin/pkg -r ${BASE_DIR} update
+env SIGNATURE_TYPE=none ASSUME_ALWAYS_YES=yes /usr/sbin/pkg -r ${BASE_DIR} install -y FreeBSD-runtime
+env SIGNATURE_TYPE=none ASSUME_ALWAYS_YES=yes /usr/sbin/pkg -r ${BASE_DIR} install -y ${base_in_pkg_list_active}
+
+${RM_CMD} -f ${BASE_DIR}/usr/local/etc/pkg/repos/pkg.convectix.com.conf
+${CP_CMD} -a /usr/sbin/pkg ${BASE_DIR}/usr/sbin/
+
+# not in PKG ?
+${CP_CMD} -a /sbin/rcorder ${BASE_DIR}/sbin/
+
+#${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
+
+cbsdlogger NOTICE ${CBSD_APP}: install-pkg-world ended: ${MAKE_CMD} -C ${SRC_DIR} installworld DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
+
+# install: target directory `/usr/jails/basejail/base_amd64_amd64_14.0/etc/mail' does not exist
+for i in /etc/mail /boot; do
+	[ ! -d ${BASE_DIR}${i} ] && ${MKDIR_CMD} -p ${BASE_DIR}${i}
 done
-set -o errexit
 
 if [ "${platform}" = "DragonFly" ]; then
 	cbsdlogger NOTICE ${CBSD_APP}: distribution started: ${MAKE_CMD} -C ${SRC_DIR}/etc distribution DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
@@ -162,7 +169,7 @@ baseelf=
 baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
 
 [ -z "${baseelf}" ] && baseelf="0"
-register_base arch=${arch} ver=${ver} target_arch="${target_arch}" source="installworld" auto_baseupdate=0 ${_basename_args}
+register_base arch=${arch} ver=${ver} target_arch="${target_arch}" source="install-pkg-world" auto_baseupdate=0 ${_basename_args}
 
 ${RM_CMD} -f ${BASE_DIR_LOCKFILE}
 
