@@ -20,12 +20,12 @@ For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
 ## Clustering opportunities
 
-* Pool-bindend clustering demo:
+> Pool-bindend clustering demo:
 
 - part1, for jails: https://youtu.be/f3IrLjbr3b4
 - part2, for bhyve (+live migration): https://youtu.be/kC_xyTbRyl4
 
-* Multi-DC VPC/vxlan-based articles:
+> Multi-DC VPC/vxlan-based articles:
 
 - https://www.bsdstore.ru/en/13.0.x/wf_vpc_ssi.html
 
