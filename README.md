@@ -1,6 +1,6 @@
 # CBSD Project
 
-Copyright (c) 2013-2021, The CBSD Development Team
+Copyright (c) 2013-2022, The CBSD Development Team
 
 Homepage: https://bsdstore.ru
 
