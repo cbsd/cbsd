@@ -18,11 +18,22 @@ Quick start: https://www.bsdstore.ru/en/cbsd_quickstart.html
 
 For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
+## Clastering opportunities
+
+* Pool-bindend clustering demo:
+
+- part1, for jails: https://youtu.be/f3IrLjbr3b4
+- part2, for bhyve (+live migration): https://youtu.be/kC_xyTbRyl4
+
+* Multi-DC VPC/vxlan-based articles:
+
+- https://www.bsdstore.ru/en/13.0.x/wf_vpc_ssi.html
+
 ## Limitations
 
 Tested with following OSes and distribution:
 
-- FreeBSD 12.0+
+- FreeBSD 13.0+
 - HardenedBSD
 
 ## Support
