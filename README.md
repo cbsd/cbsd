@@ -18,7 +18,7 @@ Quick start: https://www.bsdstore.ru/en/cbsd_quickstart.html
 
 For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
-## Clastering opportunities
+## Clustering opportunities
 
 * Pool-bindend clustering demo:
 
