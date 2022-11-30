@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-# Wrapper for creating debootstrap environvent via 2 phases:
+# Wrapper for creating Debian environvent via 2 phases:
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
@@ -42,8 +42,14 @@ rootfs_dir="${sharedir}/jail-ubuntu-focal-rootfs"
 [ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
 [ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
 
-if [ ! -x /usr/local/sbin/debootstrap ]; then
-	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
+BASH_CMD=$( which bash 2>/dev/null )
+DEBOOTSTRAP_CMD="/usr/local/sbin/debootstrap"
+
+if [ ! -x ${BASH_CMD} ]; then
+	err 1 "${N1_COLOR}No such bash executable. Please ${N2_COLOR}pkg install -y bash${N1_COLOR} it.${N0_COLOR}"
+fi
+if [ ! -r ${DEBOOTSTRAP_CMD} ]; then
+	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install -y debootstrap${N1_COLOR} it.${N0_COLOR}"
 fi
 
 for module in linprocfs fdescfs tmpfs linsysfs; do
@@ -61,9 +67,9 @@ if [ ! -f ${rootfs_dir}/bin/bash ]; then
 		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
 		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/focal/Contents-amd64.gz"
 		for i in ${FASTEST_SRC_MIRROR}; do
-			${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}focal ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}focal ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
 			/bin/sh <<EOF
-/usr/local/sbin/debootstrap --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg focal ${rootfs_dir} ${i}
+${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg focal ${rootfs_dir} ${i}
 EOF
 			ret=$?
 			[ ${ret} -eq 0 ] && break

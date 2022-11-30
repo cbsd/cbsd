@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-# Wrapper for creating debootstrap environvent via 2 phases:
+# Wrapper for creating Debian environvent via 2 phases:
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
@@ -30,8 +30,14 @@ customskel="${sharedir}/FreeBSD-jail-kfreebsd-wheezy-skel"
 
 [ ! -d ${customskel} ] && ${MKDIR_CMD} -p ${customskel}
 
-if [ ! -x /usr/local/sbin/debootstrap ]; then
-	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install debootstrap${N1_COLOR} it.${N0_COLOR}"
+BASH_CMD=$( which bash 2>/dev/null )
+DEBOOTSTRAP_CMD="/usr/local/sbin/debootstrap"
+
+if [ ! -x ${BASH_CMD} ]; then
+	err 1 "${N1_COLOR}No such bash executable. Please ${N2_COLOR}pkg install -y bash${N1_COLOR} it.${N0_COLOR}"
+fi
+if [ ! -r ${DEBOOTSTRAP_CMD} ]; then
+	err 1 "${N1_COLOR}No such debootstrap. Please ${N2_COLOR}pkg install -y debootstrap${N1_COLOR} it.${N0_COLOR}"
 fi
 
 for module in linprocfs fdescfs tmpfs linsysfs; do
@@ -42,8 +48,8 @@ if [ ! -r ${customskel}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
-		${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib ${H3_COLOR}wheezy ${N1_COLOR}${customskel} ${SRC_MIRROR}${N0_COLOR}"
-		debootstrap --include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib wheezy ${customskel} ${SRC_MIRROR}
+		${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib ${H3_COLOR}wheezy ${N1_COLOR}${customskel} ${SRC_MIRROR}${N0_COLOR}"
+		${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,joe,rsync,sharutils,psmisc,htop,patch,less,apt --components main,contrib wheezy ${customskel} ${SRC_MIRROR}
 		${CHROOT_CMD} ${customskel} dpkg -i /var/cache/apt/archives/*.deb
 	else
 		echo "No such distribution"

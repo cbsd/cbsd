@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-# Wrapper for creating debootstrap environvent via 2 phases:
+# Wrapper for creating centos environvent via 2 phases:
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
@@ -224,7 +224,6 @@ if [ ! -f ${rootfs_dir}/bin/bash ]; then
 	export INTER=1
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
-		#${ECHO} "${N1_COLOR}debootstrap ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}buster ${N1_COLOR}${rootfs_dir} ${SRC_MIRROR}${N0_COLOR}"
 		cd ${rootfs_dir} || exit 1
 		${MKDIR_CMD} pkgtmp
 		for i in ${LIST}; do
