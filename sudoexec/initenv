@@ -218,7 +218,6 @@ phase0()
 	[ ! -f /etc/rc.conf ] && touch /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && return 0
-	[ ! -x ${miscdir}/sqlcli ] && return 0	# no build/first run?
 
 	if [ -r "${cbsd_workdir}/nc.inventory" ]; then
 		first_init=0
@@ -231,6 +230,12 @@ phase0()
 
 	workdir="${cbsd_workdir}"
 	[ -r "${inventory}" ] && . ${inventory}
+	# can be empty in inventory, work-around
+	if [ -z "${workdir}" ]; then
+		workdir="${cbsd_workdir}"
+		sysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
+	fi
+
 	[ -z "${cbsdver}" ] && cbsdver="unknown"
 	if [ -r "${workdir}"/ver ]; then
 		oldver=$( cat "${workdir}"/ver | awk '{printf $1}' )
@@ -243,6 +248,10 @@ phase0X()
 	[ -z "${workdir}" ] && return 0
 	[ ! -d "${workdir}" ] && return 0
 	[ ! -r "${workdir}/var/db/local.sqlite" ] && return 0
+
+	# sometimes we have workdir/DB but no cbsdsql, double check with 'phase0'
+	[ ! -x ${miscdir}/sqlcli ] && return 0	# no build/first run?
+
 	${ECHO} "${N1_COLOR}[Stage 0:${N2_COLOR} upgrading and migration data from ${oldver} to ${newver}${N1_COLOR}]${N0_COLOR}"
 	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${workdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-initenv-\* -exec {} \;
 	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${distdir}/upgrade/ -type f -depth 1 -maxdepth 1 -name pre-patch-\* -exec {} \;
@@ -305,11 +314,17 @@ phase1()
 	env workdir=${workdir} ${distdir}/misc/cmdboot
 	_ret=$?
 	if [ ${_ret} -ne 0 ]; then
-		rm -f ${workdir}/cmd.subr
+		[ -r ${workdir}/cmd.subr ] && rm -f ${workdir}/cmd.subr
 		echo "initenv cmdboot error: missing necessary binaries"
 		exit 1
 	fi
 	# re-read cmd.subr
+
+	if [ ! -r ${workdir}/cmd.subr ]; then
+		echo "initenv cmdboot error: no sch cmd.subr, please check command: env workdir=${workdir} ${distdir}/misc/cmdboot"
+		exit 1
+	fi
+
 	unset _CBSD_CMD_SUBR
 	. ${workdir}/cmd.subr
 	make_fs_id
