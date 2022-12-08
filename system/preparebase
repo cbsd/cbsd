@@ -30,7 +30,17 @@ qemu=
 
 [ ! -d "${dst}" ] && err 1 "No such dir: ${dst}"
 [ ! -d "${dst}/usr/home" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/home"
-[ ! -d "${dst}/usr/ports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/ports"
+
+case "${platform}" in
+	DragonFly)
+		[ ! -d "${dst}/usr/dports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/dports"
+		;;
+	*)
+		[ ! -d "${dst}/usr/ports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/ports"
+		;;
+esac
+
+[ ! -d "${dst}/var/db/pkg" ] && ${MKDIR_CMD} -m 0755 "${dst}/var/db/pkg"
 [ ! -h "${dst}/home" ] && ${LN_CMD} -sf "usr/home" "${dst}/home"
 [ ! -h "${dst}/usr/bin/perl" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl"
 [ ! -h "${dst}/usr/bin/perl5" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl5"
@@ -52,12 +62,69 @@ hoster_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
 base_ver=$( ${miscdir}/elf_tables --freebsdver ${BASE_DIR}/bin/sh )
 
 if [ "${hoster_ver}" = "${base_ver}" ]; then
+	_pkg_bin="pkg"
+
 	CBSDPATH="${PATH}"
-	${MOUNT_CMD} -t devfs devfs ${dst}/dev
-	${CHROOT_CMD} ${dst} /bin/sh <<EOF
-env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 pkg  bootstrap -y -f || true
+
+	# temporary copy resolv.conf
+	_tmp_resolv=0
+	if [ ! -d ${dst}/etc/resolv.conf ]; then
+		_tmp_resolv=1
+		${CP_CMD} /etc/resolv.conf ${dst}/etc/resolv.conf
+	fi
+
+	# temporary copy cert.pem ?
+	_tmp_cert=0
+	if [ ! -e ${dst}/etc/ssl/cert.pem ]; then
+		_tmp_resolv=1
+		${CP_CMD} /etc/ssl/cert.pem ${dst}/etc/ssl/cert.pem
+	fi
+
+	case "${platform}" in
+		DragonFly)
+			# Dfly use already bootstraped pkg, just copy from host system
+			if [ -x /usr/local/sbin/pkg-static ]; then
+				[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
+				${CP_CMD} -a /usr/local/sbin/pkg-static ${dst}/usr/local/sbin/
+				_pkg_bin="pkg-static"
+			fi
+			if [ -x /usr/local/sbin/pkg ]; then
+				[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
+				${CP_CMD} -a /usr/local/sbin/pkg ${dst}/usr/local/sbin/
+				_pkg_bin="pkg"
+			fi
+			# DFLY: no pkg.conf by default?
+			[ ! -d ${dst}/usr/local/etc/pkg ] && ${MKDIR_CMD} -p -m 0755 ${dst}/usr/local/etc/pkg
+			[ -d /usr/local/etc/pkg/repos ] && ${CP_CMD} -a /usr/local/etc/pkg/repos ${dst}/usr/local/etc/pkg/
+			${MOUNT_CMD} -t devfs devfs ${dst}/dev
+			${CHROOT_CMD} ${dst} /bin/sh <<EOF
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} update -f || true
 EOF
-	${UMOUNT_CMD} ${dst}/dev
+			${UMOUNT_CMD} ${dst}/dev
+			;;
+		*)
+			${MOUNT_CMD} -t devfs devfs ${dst}/dev
+			${CHROOT_CMD} ${dst} /bin/sh <<EOF
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} bootstrap -y -f || true
+env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} update -f || true
+EOF
+			${UMOUNT_CMD} ${dst}/dev
+			;;
+	esac
+
+	if [ ${_tmp_resolv} -eq 1 ]; then
+		${RM_CMD} -f ${dst}/etc/resolv.conf
+	fi
+
+	if [ ${_tmp_cert} -eq 1 ]; then
+		${RM_CMD} -f ${dst}/etc/ssl/cert.pem
+	fi
+
+	# this is /usr/local/*, which is jail level, remove after bootstrap.
+	[ -x "${dst}/usr/local/sbin/pkg" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg"
+	[ -x "${dst}/usr/local/sbin/pkg-static" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg-static"
 fi
 
 if [ "${qemu}" = "1" ]; then
