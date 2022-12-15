@@ -1,10 +1,10 @@
 #!/usr/local/bin/cbsd
 #v12.0.12
+# TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
 MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs"
 MYDESC="Convert jail into cd9660 ISO or memstick image"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
  Hint: use ~cbsd/jails-system/\$jname/loader.conf file to extra loader.conf entries.
@@ -22,16 +22,22 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}ip4_addr=${N0_COLOR}      - set ip4 addr or 'DHCP' in rc.conf image (FreeBSD only);
  ${N2_COLOR}jname=${N0_COLOR}         - source data jail name;
  ${N2_COLOR}label=${N0_COLOR}         - label for media;
- ${N2_COLOR}media=${N0_COLOR}         - iso,memstick,livecd or bhyve;
+ ${N2_COLOR}media=${N0_COLOR}         - 'iso','memstick','livecd','bhyve' or 'mfs';
  ${N2_COLOR}name=${N0_COLOR}          - for alternative kernel name (GENERIC is default);
  ${N2_COLOR}nameserver=${N0_COLOR}    - set nameserver in image (freebsd only);
  ${N2_COLOR}nic=${N0_COLOR}           - specify network nic for ip4_addr;
  ${N2_COLOR}prunelist=${N0_COLOR}     - path to prunelist, default is \${sharedir}/jail2iso-prunelist. 0 for disable;
  ${N2_COLOR}swapsize=${N0_COLOR}      - Allocate/configure SWAP partition to X size;
  ${N2_COLOR}timezone=${N0_COLOR}      - set timezone in image (freebsd only);
- ${N2_COLOR}vm_guestfs=${N0_COLOR}    - ufs or zfs. Default is: ufs;
+ ${N2_COLOR}vm_guestfs=${N0_COLOR}    - 'ufs' or 'zfs'. Default is: 'ufs';
 
 ${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd jail2iso jname=micro1 dstdir=/tmp media=bhyve freesize=4m efi=1 ver=native vm_guestfs=zfs
+  # cbsd jail2iso jname=livecd dstdir=/tmp media=mfs efi=1 ver=native ip4_addr=172.16.0.40 gw4=172.16.0.1 nameserver=8.8.8.8
+  # cbsd jail2iso jname=livecd dstdir=/tmp media=iso freesize=4m efi=1 ver=native
+
+  Micro bhyve sample URL: https://github.com/cbsd/microbhyve
 
 "
 EXTHELP="wf_jail2iso"
@@ -44,15 +50,26 @@ readconf jail2iso.conf
 # todo: to conf
 EFI_PART_SIZE="260m"			# default FreeBSD efi partition
 
+# MFS
+MFSROOT_MAXSIZE="120m"
+#MFSROOT_FREE_INODES="10%"
+MFSROOT_FREE_INODES="1%"
+#MFSROOT_FREE_BLOCKS?=  10%
+MFSROOT_FREE_BLOCKS="1%"
+
 applytpl=1
 ver=
 over=
 name=
 oname=
+gw4=
+ip4_addr=
 . ${cbsdinit}
 
 [ -n "${ver}" ] && over="${ver}"
 [ -n "${name}" ] && oname="${name}"
+[ -n "${ip4_addr}" ] && oip4_addr="${ip4_addr}"
+[ -n "${gw4}" ] && ogw4="${gw4}"
 
 oapplytpl="${applytpl}"
 
@@ -88,6 +105,14 @@ init_target_arch
 init_srcdir
 init_supported_arch
 
+if [ -z "${ver}" -o "${ver}" = "native" ]; then
+	# ver=$( ${SYSCTL_CMD} -n kern.osrelease | ${CUT_CMD} -d - -f 1 )
+	# we preffer uname as source, due to some environment have UNAME_r for overwrite version
+	tmpver=$( ${UNAME_CMD} -r )
+	ver=${tmpver%%-*}
+	unset tmpver
+fi
+
 if [ ${baserw} -ne 1 ]; then
 	init_basedir
 else
@@ -97,13 +122,6 @@ fi
 
 [ -n "${oname}" ] && name="${oname}"
 
-if [ -z "${ver}" -o "${ver}" = "native" ]; then
-	# ver=$( ${SYSCTL_CMD} -n kern.osrelease | ${CUT_CMD} -d - -f 1 )
-	# we preffer uname as source, due to some environment have UNAME_r for overwrite version
-	tmpver=$( ${UNAME_CMD} -r )
-	ver=${tmpver%%-*}
-	unset tmpver
-fi
 
 init_kerneldir
 ${ECHO} "${N1_COLOR}${CBSD_APP}: KERNEL_DIR: ${N2_COLOR}${KERNEL_DIR}${N0_COLOR}"
@@ -139,7 +157,7 @@ prepare_dir()
 		memstick)
 			MOUNTROOT="${MOUNT_CMD} -oro /dev/ufs/${LABEL} /mnt"
 			;;
-		mfsbsd)
+		mfs)
 			MOUNTROOT="${MOUNT_CMD} -oro /dev/ufs/${LABEL} /mnt"
 			;;
 	esac
@@ -228,11 +246,13 @@ epilogue_img()
 
 	# for ISO too?
 	[ "${media}" = "memstick" ] && return 0
-	[ "${media}" = "mfsbsd" ] && return 0
 
 	${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
 
 	[ -n "${host_hostname}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
+
+	[ -n "${oip4_addr}" ] && ip4_addr="${oip4_addr}"
+	[ -n "${ogw4}" ] && gw4="${ogw4}"
 
 	if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
 		case "${ip4_addr}" in
@@ -257,6 +277,9 @@ epilogue_img()
 	if [ -n "${timezone}" ]; then
 		[ -f "/usr/share/zoneinfo/${timezone}" ] && ${CP_CMD} /usr/share/zoneinfo/${timezone} ${_rootfs}/etc/localtime
 	fi
+
+	${ECHO} "${N1_COLOR}${CBSD_APP}: epilogue ${N2_COLOR}/etc/rc.conf:${N0_COLOR}"
+	${CAT_CMD} ${_rootfs}/etc/rc.conf
 }
 
 
@@ -265,8 +288,7 @@ makemfsroot()
 	local _filelist _ver
 	local _tmpdir=$( ${MKTEMP_CMD} -d )
 
-
-	if [ "${media}" = "mfsbsd" ]; then
+	if [ "${media}" = "mfs" ]; then
 		installworld destdir=${_tmpdir} ver=14.0
 		[ ! -d ${_tmpdir}/boot/kernel ] && ${MKDIR_CMD} ${_tmpdir}/boot/kernel
 		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/*.ko ${_tmpdir}/boot/kernel/
@@ -495,7 +517,7 @@ bhyve_zfs_install()
 
 	# hack for remove all dirty zpool 
 	${CAT_CMD} > ${mnttmp}/etc/rc.local <<EOF
-${ZPOOL_CMD} list | ${GREP_CMD} UNAVAIL |${AWK_CMD} '{printf \$1"\n"}' |while read _zpool; do
+${ZPOOL_CMD} list | ${GREP_CMD} UNAVAIL | ${AWK_CMD} '{printf \$1"\n"}' | while read _zpool; do
 ${ZPOOL_CMD} destroy \${_zpool} >/dev/null 2>&1
 done
 
@@ -534,15 +556,18 @@ check_for_external_mount()
 }
 
 # Create full FS/data hier in ${TMP_DIR} directory
+# for MFS: ${TMP_DIR}/root - directory for LiveCD
 make_ufs()
 {
+	local _init_bin
+
 	${ECHO} "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
 	# move to kernel init?
 	get_kernel
 	[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
 
 	case "${media}" in
-		iso|memstick|bhyve|livecd|mfsbsd)
+		iso|memstick|bhyve|livecd|mfs)
 			;;
 		*)
 			err 1 "${N1_COLOR}unknown media type. must be: ${N2_COLOR}iso${N1_COLOR},${N2_COLOR}memstick${N1_COLOR},${N2_COLOR}livecd ${N1_COLOR}or${N2_COLOR} bhyve${N0_COLOR}"
@@ -562,7 +587,7 @@ make_ufs()
 
 	BS=8192
 	case "${media}" in
-		bhyve|livecd)
+		bhyve|livecd|mfs)
 			;;
 		*)
 			makemfsroot
@@ -572,22 +597,27 @@ make_ufs()
 	TRAP="${TRAP} clear_tmp_dir;"
 	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 	${MKDIR_CMD} -p ${TMP_DIR}
+	# store orig TMP_DIR for MFS: we build 'rw' part for MFS here
+	if [ "${media}" = "mfs" ]; then
+		OTMP_DIR="${TMP_DIR}"
+		TMP_DIR="${OTMP_DIR}/rw"
+		${MKDIR_CMD} -p ${TMP_DIR}
+		${RSYNC_CMD} -avz --links ${path}/ ${TMP_DIR}/
+	fi
+
 	#echo "[debug] cd ${path} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${TMP_DIR}"
 
-	echo "make_ufs: media: ${media}"
+	${ECHO} "${N1_COLOR}${CBSD_APP}: make_ufs: media: ${N2_COLOR}${media}${N0_COLOR}"
 
-	if [ "${media}" != "mfsbsd" ]; then
-	# clean img for mfsbsd (/boot/kernel + loader only )
-#	if [ "${media}" != "memstick" ]; then
-#		echo
+	if [ "${media}" != "mfs" ]; then
 		echo "[debug]cd ${path} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${TMP_DIR}" 1>&2
 		cd ${path} && nice -n 19 ${IDPRIO_CMD} 29 ${PAX_CMD} -p eme -rw . ${TMP_DIR}
 		sync
-#		echo
 	else
+		# not for MFS
 		[ -d "${TMP_DIR}/boot" ] && ${RM_CMD} -rf ${TMP_DIR}/boot
 		${CP_CMD} -a ${path}/boot ${TMP_DIR}/
-		rm -rf ${TMP_DIR}/boot/kernel
+		${RM_CMD} -rf ${TMP_DIR}/boot/kernel
 	fi
 
 	[ "${media}" != "bhyve" ] && ${RM_CMD} -rf ${TMP_DIR}/rescue
@@ -599,28 +629,24 @@ make_ufs()
 
 	[ ! -d ${TMP_DIR}/boot/kernel ] && ${MKDIR_CMD} -p ${TMP_DIR}/boot/kernel
 
-	if [ "${media}" != "mfsbsd" ]; then
+	if [ "${media}" != "mfs" ]; then
 		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/* ${TMP_DIR}/boot/kernel/
-	else
-		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/kernel ${TMP_DIR}/boot/kernel/
-		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/acpi*.ko ${TMP_DIR}/boot/kernel/
-	fi
+		if [ ! -r "${TMP_DIR}/boot/kernel/kernel" -a ! -r "${TMP_DIR}/boot/kernel/kernel.gz" ]; then
+			echo "no such ${TMP_DIR}/boot/kernel/kernel"
+			echo "check: ${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/* ${TMP_DIR}/boot/kernel/"
+		fi
 
-	if [ ! -r "${TMP_DIR}/boot/kernel/kernel" -a ! -r "${TMP_DIR}/boot/kernel/kernel.gz" ]; then
-		echo "no such ${TMP_DIR}/boot/kernel/kernel"
-		echo "check: ${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/* ${TMP_DIR}/boot/kernel/"
-	fi
+		if [ "${media}" != "bhyve" ]; then
+			${RM_CMD} -f ${TMP_DIR}/boot/kernel/*.symbols
+			cd ${TMP_DIR}/boot/kernel && ${GZIP_CMD} -9 ./kernel
+		fi
 
-	if [ "${media}" != "bhyve" ]; then
-		${RM_CMD} -f ${TMP_DIR}/boot/kernel/*.symbols
-		cd ${TMP_DIR}/boot/kernel && ${GZIP_CMD} -9 ./kernel
-	fi
-
-	if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
-		${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf found${N0_COLOR}"
-		${CP_CMD} ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
-	else
-		${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf absent in ${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
+		if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf found${N0_COLOR}"
+			${CP_CMD} ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
+		else
+			${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf absent in ${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
+		fi
 	fi
 
 	case "${media}" in
@@ -697,19 +723,11 @@ ${ROOTFS}
 tmpfs /boot/zfs tmpfs rw 0 0
 EOF
 			;;
-		mfsbsd)
-			${CAT_CMD} >> ${TMP_DIR}/boot/loader.conf << EOF
-hw.efi.poweroff=0
-mfs_load="YES"
-mfs_type="mfs_root"
-mfs_name="/mfsroot"
-vfs.root.mountfrom="ufs:/dev/md0"
-
-EOF
+		mfs)
 			;;
 	esac
 
-	if [ "${media}" != "mfsbsd" ]; then
+	if [ "${media}" != "mfs" ]; then
 		if [ "${swapsize}" != "0" ]; then
 			${CAT_CMD} >> ${TMP_DIR}/etc/fstab <<EOF
 /dev/gpt/swap	none	swap	sw	0	0
@@ -743,14 +761,192 @@ EOF
 				[ -f "${jailsysdir}/${jname}/tmpfsdir" ] && ${CP_CMD} ${jailsysdir}/${jname}/tmpfsdir ${TMP_DIR}/etc/
 				;;
 		esac
+
+		# post action inside image
+		[ ${oapplytpl} -eq 1 ] && epilogue_img ${TMP_DIR}
 	else
-		${MV_CMD} ${mfsrootfile} ${TMP_DIR}/mfsroot
-		cd ${TMP_DIR}
-		nice -n 19 ${IDPRIO_CMD} 29 ${GZIP_CMD} -9 ${TMP_DIR}/mfsroot
+		# for MFS, TMP_DIR is 'rw' directory, last layer
+		#${MV_CMD} ${mfsrootfile} ${TMP_DIR}/mfsroot
+		# post action inside image
+		[ ${oapplytpl} -eq 1 ] && epilogue_img ${TMP_DIR}
+		cd ${OTMP_DIR}
+		nice -n 19 ${IDPRIO_CMD} 29 ${TAR_CMD} cf rw.tar rw
+		local _ncpu=$( ${SYSCTL_CMD} -n hw.ncpu 2>/dev/null )
+		[ -z "${_ncpu}" ] && _ncpu="1"
+		nice -n 19 ${IDPRIO_CMD} 29 ${XZ_CMD} -T${_ncpu} -v -c rw.tar > root.txz
+		_ret=$?
+		${RM_CMD} -f rw.tar
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: make_ufs error for mfs: ${N2_COLOR}${XZ_CMD} -T${_ncpu} -v -c rw.tar > root.txz${N0_COLOR}"
+		${RM_CMD} -rf ${TMP_DIR}
+		TMP_DIR="${OTMP_DIR}"
+
+		# create first MFS layer hier
+		${MKDIR_CMD} -p ${TMP_DIR}/mfsroot1/boot/modules \
+			${TMP_DIR}/mfsroot1/dev \
+			${TMP_DIR}/mfsroot1/rw \
+			${TMP_DIR}/mfsroot1/sbin \
+			${TMP_DIR}/mfsroot1/usr/lib/debug/boot/kernel
+		${MV_CMD} ${TMP_DIR}/root.txz ${TMP_DIR}/mfsroot1/root.txz
+
+		${CAT_CMD} > ${TMP_DIR}/mfsroot1/boot/loader.conf <<EOF
+aesni_load="YES"
+ahci_load="YES"
+autoboot_delay="-1"
+cpuctl_load="YES"
+debug.acpi.disabled="thermal"
+hw.efi.poweroff="0"
+hw.em.rx_process_limit="-1"
+hw.ibrs_disable="1"
+hw.igb.rx_process_limit="-1"
+hw.ix.rx_process_limit="-1"
+hw.mfi.mrsas_enable="1"
+hw.usb.no_pf="1"
+hw.usb.no_shutdown_wait="1"
+ipfw_load="YES"
+
+mfs_load="YES"
+mfs_name="/mfsroot"
+mfs_type="mfs_root"
+
+#mfsbsd.autodhcp="YES"
+
+net.inet.ip.fw.default_to_accept="1"
+net.isr.maxqlimit="1000000"
+net.link.ifqmaxlen="16384"
+opensolaris_load="YES"
+vfs.mountroot.timeout=5
+vfs.root.mountfrom="ufs:/dev/md0"
+vfs.root_mount_always_wait=1
+vm.pmap.pti="0"
+EOF
+		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/tmpfs.ko ${TMP_DIR}/mfsroot1/boot/modules/
+
+		# ROOTHACK
+		${CP_CMD} -a ${distdir}/modules/hackroot.d/init ${TMP_DIR}/mfsroot1/sbin/init
+		${ECHO} "${N1_COLOR}${CBSD_APP}: MFS: * ${N2_COLOR}Create first layer${N0_COLOR}"
+		echo "${MAKEFS_CMD} -t ffs -f ${MFSROOT_FREE_INODES} -b ${MFSROOT_FREE_BLOCKS} mfsroot ${TMP_DIR}/mfsroot1"
+		#pwd
+
+		#${MAKEFS_CMD} -t ffs -m ${MFSROOT_MAXSIZE} -f ${MFSROOT_FREE_INODES} -b ${MFSROOT_FREE_BLOCKS} mfsroot ${TMP_DIR}/mfsroot1
+
+		${MAKEFS_CMD} -t ffs -f ${MFSROOT_FREE_INODES} -b ${MFSROOT_FREE_BLOCKS} mfsroot ${TMP_DIR}/mfsroot1
+		${CHFLAGS_CMD} -R noschg ${TMP_DIR}/mfsroot1
+		${RM_CMD} -rf ${TMP_DIR}/mfsroot1
+		${GZIP_CMD} -9 mfsroot
+
+
+		# ZERO layer
+		${MKDIR_CMD} -p ${TMP_DIR}/root
+		${CAT_CMD} > ${TMP_DIR}/root/boot.config <<EOF
+-D
+EOF
+		${MKDIR_CMD} -p ${TMP_DIR}/root/boot/defaults \
+			${TMP_DIR}/root/boot/kernel \
+			${TMP_DIR}/root/boot/lua
+
+		# LUA
+MFS_LUA_SCR="\
+cli.lua \
+color.lua \
+config.lua \
+core.lua \
+drawer.lua \
+gfx-beastie.lua \
+gfx-beastiebw.lua \
+gfx-fbsdbw.lua \
+gfx-orb.lua \
+gfx-orbbw.lua \
+hook.lua \
+loader.lua \
+menu.lua \
+password.lua \
+screen.lua \
+"
+		for i in ${MFS_LUA_SCR}; do
+			${CP_CMD} -a ${path}/boot/lua/${i} ${TMP_DIR}/root/boot/lua/${i}
+		done
+
+		${CP_CMD} -a ${path}/boot/defaults/loader.conf ${TMP_DIR}/root/boot/defaults/loader.conf
+
+MFS_KERNEL_FILES="\
+acpi_asus.ko \
+acpi_asus_wmi.ko \
+acpi_dock.ko \
+acpi_fujitsu.ko \
+acpi_hp.ko \
+acpi_ibm.ko \
+acpi_panasonic.ko \
+acpi_sony.ko \
+acpi_toshiba.ko \
+acpi_video.ko \
+acpi_wmi.ko \
+ahci.ko \
+kernel \
+linker.hints \
+"
+
+		for i in ${MFS_KERNEL_FILES}; do
+			${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/${i} ${TMP_DIR}/root/boot/kernel/${i}
+		done
+
+		cd ${TMP_DIR}/root/boot/kernel/
+		${GZIP_CMD} -9 kernel
+		cd ${TMP_DIR}/
+
+MFS_BOOT_FILES="\
+boot1.efi \
+cdboot \
+device.hints \
+gptboot \
+gptboot.efi \
+loader \
+loader.efi \
+pmbr \
+"
+
+		for i in ${MFS_BOOT_FILES}; do
+			${CP_CMD} -a ${path}/boot/${i} ${TMP_DIR}/root/boot/${i}
+		done
+
+		${CAT_CMD} > ${TMP_DIR}/root/boot/loader.conf <<EOF
+aesni_load="YES"
+ahci_load="YES"
+autoboot_delay="-1"
+cpuctl_load="YES"
+debug.acpi.disabled="thermal"
+hw.efi.poweroff="0"
+hw.em.rx_process_limit="-1"
+hw.ibrs_disable="1"
+hw.igb.rx_process_limit="-1"
+hw.ix.rx_process_limit="-1"
+hw.mfi.mrsas_enable="1"
+hw.usb.no_pf="1"
+hw.usb.no_shutdown_wait="1"
+ipfw_load="YES"
+
+mfs_load="YES"
+mfs_name="/mfsroot"
+mfs_type="mfs_root"
+
+#mfsbsd.autodhcp="YES"
+
+net.inet.ip.fw.default_to_accept="1"
+net.isr.maxqlimit="1000000"
+net.link.ifqmaxlen="16384"
+opensolaris_load="YES"
+vfs.mountroot.timeout=5
+vfs.root.mountfrom="ufs:/dev/md0"
+vfs.root_mount_always_wait=1
+vm.pmap.pti="0"
+EOF
+
+		${MV_CMD} ${TMP_DIR}/mfsroot.gz ${TMP_DIR}/root
 	fi
 
-	# post action inside image
-	[ ${oapplytpl} -eq 1 ] && epilogue_img ${TMP_DIR}
+#	echo "${TMP_DIR}/root"
+#	read p
+
+	return 0
 }
 
 
@@ -808,7 +1004,7 @@ EOF
 jcleanup jname=${jname}
 clear_tmp_dir
 
-[ ${baserw} -eq 1 ] && path=${data}
+[ ${baserw} -eq 1 ] && path="${data}"
 
 [ "${prunelist}" != "0" ] && prunelist="${sharedir}/jail2iso-prunelist"
 if [ "${nobase}" != "1" ]; then
@@ -825,11 +1021,56 @@ case "${media}" in
 		echo "/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}"
 		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}
 		;;
-	memstick|mfsbsd)
+	memstick)
 		make_ufs
 
 		${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
-		[ $? -ne 0 ] && err 1 "makefs failed"
+		[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}makefs failed${N0_COLOR}"
+
+		if [ ${efi} -eq 1 ]; then
+			# efifat was deprecated in 12.2-RELEASE
+			if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
+				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			elif [ -r ${TMP_DIR}/boot/boot1.efi ]; then
+				_efi_part=$( ${MKTEMP_CMD} )
+				${TRUNCATE_CMD} -s64M ${_efi_part}
+				unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${_efi_part} 2>&1 )
+				[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: mdconfig ${W1_COLOR}failed${N2_COLOR} ${unit}${N0_COLOR}"
+				echo "stamp loader.efi: ${_efi_part}"
+				tmp_mp=$( ${MKTEMP_CMD} -d )
+				/sbin/newfs_msdos -F 32 -c 1 -L EFISYS /dev/${unit}
+				${MOUNT_CMD} -t msdosfs /dev/${unit} ${tmp_mp}
+				${MKDIR_CMD} -p ${tmp_mp}/EFI/BOOT
+				${CP_CMD} /boot/loader.efi ${tmp_mp}/EFI/BOOT/BOOTX64.efi
+				${UMOUNT_CMD} ${tmp_mp}
+				${RMDIR_CMD} ${tmp_mp}
+				${MDCONFIG_CMD} -d -u ${unit}
+				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+				${RM_CMD} -f ${_efi_part}
+			else
+				err 1 "${N1_COLOR}${CBSD_APP}: no such boot1.efi or loader.efi: ${N2_COLOR}${TMP_DIR}/boot/${N0_COLOR}"
+			fi
+		else
+			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+		fi
+		[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
+		${DU_CMD} -sh "${dstdir}/${dstname}"
+		${ECHO} "${N1_COLOR}Now you can burn image to USB memstick via\n ${N2_COLOR}dd if=${dstdir}/${dstname} of=/dev/da${W2_COLOR}X${N2_COLOR} bs=1m conv=\"sync\"${N0_COLOR}"
+		;;
+	mfs)
+		if [ ! -x ${distdir}/modules/roothack.d/init ]; then
+			${ECHO} "${N1_COLOR}MFS media requires an extra 'init' (roothack) file that is not included in the default CBSD distribution${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Please get this file via 'roothack' module:${N0_COLOR}"
+			${ECHO} "${N2_COLOR}  cbsd module mode=install roothack${N0_COLOR}"
+			${ECHO} "${N2_COLOR}  make -C /usr/local/cbsd/modules/roothack.d${N0_COLOR}"
+			exit 1
+		fi
+		make_ufs
+		echo "${TMP_DIR} done"
+		OTMP_DIR="${TMP_DIR}"
+		TMP_DIR="${TMP_DIR}/root"
+		${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
+		[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}makefs failed${N0_COLOR}"
 
 		if [ ${efi} -eq 1 ]; then
 			# efifat was deprecated in 12.2-RELEASE
@@ -859,6 +1100,8 @@ case "${media}" in
 		fi
 		[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
 
+		${RM_CMD} -rf ${TMP_DIR} ${OTMP_DIR}
+		${DU_CMD} -sh "${dstdir}/${dstname}"
 		${ECHO} "${N1_COLOR}Now you can burn image to USB memstick via\n ${N2_COLOR}dd if=${dstdir}/${dstname} of=/dev/da${W2_COLOR}X${N2_COLOR} bs=1m conv=\"sync\"${N0_COLOR}"
 		;;
 	bhyve|livecd)
@@ -886,6 +1129,7 @@ case "${media}" in
 					if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
 						${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot ${_swap_args} -p freebsd-ufs:=${dstdir}/${dstname}.part -o ${dstdir}/${dstname}
 					elif [ -r ${TMP_DIR}/boot/boot1.efi ]; then
+						[ ! -r ${TMP_DIR}/boot/gptboot ] && err 1 "${N1_COLOR}${CBSD_APP}: no such boot/gptboot in hier: ${N2_COLOR}${TMP_DIR}/boot/gptboot${N0_COLOR}"
 						_efi_part=$( ${MKTEMP_CMD} )
 						${TRUNCATE_CMD} -s64M ${_efi_part}
 						unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${_efi_part} 2>&1 )
