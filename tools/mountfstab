@@ -3,9 +3,34 @@
 MYARG="jroot fstab"
 MYOPTARG="jname"
 MYDESC="Mount jail by fstab file"
-ADDHELP="\
- fstab - fstab file\n\
- jroot - root of jail\n\
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Script for mounting filesystem or files into jail by 'fstab' file.
+Use the normal fstab entry, except that the mountpoint (destination) is 
+relative to the rootfs container.
+
+For mount single file via nullfs you need https://reviews.freebsd.org/D37478.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}fstab${N0_COLOR} - Path to fstab file;
+ ${N2_COLOR}jroot${N0_COLOR} - rootfs of jail (directory);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+1)
+# mkdir /tmp/jail-mnt
+# echo \"/tmp/jail-mnt /mnt rw 0 0\" > /tmp/fstab
+
+2)
+# cbsd mountfstab fstab=/tmp/fstab jroot=/usr/jails/jails/myjail1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd unmountfstab --help
+ cbsd mountmd --help
+
 "
 
 . ${subrdir}/nc.subr
@@ -194,9 +219,13 @@ ${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
 		if [ "${prefix}" != "/" ]; then
 			_device="${workdir}/${_device}"
 		else
-			if ! [ -d "${_device}" -o -c "${_device}" -o -b "${_device}" ]; then
-				${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}mountfstab: no such source directory for jail ${jname}: ${N2_COLOR}${_device}${N0_COLOR}"
-				continue
+			if ! [ -d "${_device}" ]; then
+				if [ ! -c "${_device}" -o ! -b "${_device}" ]; then
+					if [ ! -f "${_device}" ]; then
+						${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}mountfstab: no such source (directory or file) for jail ${jname}: ${N2_COLOR}${_device}${N0_COLOR}"
+						continue
+					fi
+				fi
 			fi
 		fi
 	fi
@@ -211,9 +240,21 @@ ${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
 	# /usr/compat - work-around for migrate from /usr/compat -> /compat introduced in CBSD 11.0.16
 	[ "${_mountpt}" = "/usr/compat" ] && _mountpt="/compat"
 
+	_dst_is_dir=1
+
+	# single file
+	if [ -f "${_device}" ]; then
+		_dst_is_dir=0
+	fi
+
 	if [ ! -d "${jroot}${_mountpt}" ]; then
-		${MKDIR_CMD} -p "${jroot}${_mountpt}"
-		_ret=$?
+		if [ ${_dst_is_dir} -eq 1 ]; then
+			${MKDIR_CMD} -p "${jroot}${_mountpt}"
+			_ret=$?
+		else
+			${TOUCH_CMD} "${jroot}/${_mountpt}"
+			_ret=$?
+		fi
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}mountfstab: unable to create mountpoint for ${_fs} ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
 			${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}mountfstab: read-only location? Skip mount for: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
