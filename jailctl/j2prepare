@@ -2,9 +2,9 @@
 #v12.1.6
 CBSDMODULE="jail"
 MYARG="node jname mkdatadir"
-MYOPTARG="verbose sharedfs tryoffline"
+MYOPTARG="verbose scpdata sharedfs tryoffline"
 MYDESC="Prepare remote node for accepting jail via j2slave"
-ADDHELP="\
+ADDHELP="
  mkdatadir - 0 or 1: create data directory. 1 - create, by default\n\
 "
 
@@ -16,7 +16,7 @@ ADDHELP="\
 sharedfs=0
 mkdatadir=1
 tryoffline=0
-
+scpdata=0
 . ${cbsdinit}
 
 emulator="jail" # for jname_is_multiple
@@ -139,6 +139,8 @@ not_sharedfs_action()
 	cbsdlogger NOTICE ${CBSD_APP}: copy secrets for ${jname} to remote node: ${node}
 	nodescp tryoffline=${tryoffline} ${SECFILE} ${node}:etc > ${DEBLOG} 2>&1
 	dot "scp_secfile"
+
+	# sysdata
 	imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
 	trap "${RM_CMD} -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
 
@@ -151,6 +153,24 @@ not_sharedfs_action()
 	cbsdlogger NOTICE ${CBSD_APP}: copy sysdata for ${jname} to ${node}
 	nodescp tryoffline=${tryoffline} ${tmpdir}/${jname}-sysdata.tgz ${node}:jails-system > ${DEBLOG} 2>&1
 	dot "scp_sysdata"
+	# sysdata
+
+	if [ "${scpdata}" = "1" ]; then
+		# data
+		imgpart mode=pack jname=${jname} part=data out=${tmpdir}/${jname}-data.tgz > ${DEBLOG} 2>&1
+		trap "${RM_CMD} -f ${tmpdir}/${jname}-data.tgz" 0 1 2 3 4
+
+		if [ ! -r ${tmpdir}/${jname}-data.tgz ]; then
+			err 1 "no such ${tmpdir}/${jname}-data.tgz: cbsd imgpart mode=pack jname=${jname} part=data out=${tmpdir}/${jname}-data.tgz"
+		else
+			${DU_CMD} -sh ${tmpdir}/${jname}-data.tgz
+		fi
+
+		cbsdlogger NOTICE ${CBSD_APP}: copy data for ${jname} to ${node}
+		nodescp tryoffline=${tryoffline} ${tmpdir}/${jname}-data.tgz ${node}:jails-system > ${DEBLOG} 2>&1
+		dot "scp_data"
+	fi
+	# data
 
 	rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd secretsfile jname=${jname} mode=on > ${DEBLOG} 2>&1
 	dot "rexe_2"
@@ -209,6 +229,15 @@ not_sharedfs_action()
 
 	rexe tryoffline=${tryoffline} node=${node} ${RM_CMD} -f jails-system/${jname}-sysdata.tgz jails-system/${jname}/locked > ${DEBLOG} 2>&1
 	dot "rexe_rm-f-sysdata"
+
+	if [ "${scpdata}" = "1" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: extract data for ${jname} on ${node}
+		rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd imgpart mode=extract jname=jails-system/${jname}-data.tgz part=data out=jails-data > ${DEBLOG} 2>&1
+		dot "rexe_img_extract_data"
+
+		rexe tryoffline=${tryoffline} node=${node} ${RM_CMD} -f jails-system/${jname}-data.tgz jails-data/${jname}/locked > ${DEBLOG} 2>&1
+		dot "rexe_rm-f-data"
+	fi
 }
 
 printf "   ${H5_COLOR}* ${N1_COLOR}check for remote CBSD version: ${N0_COLOR}"
