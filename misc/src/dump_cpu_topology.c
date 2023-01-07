@@ -3,6 +3,7 @@
 // 0.1
 // Obtain CPU topology from kern.sched.topology_spec sysctl MIB
 // TODO: DEEP REFACTORING WITH DYNAMIC 'cpu count="2"' PARSER, NO MAGIC IN CODE!
+// sysctl kern.smp
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -135,8 +136,8 @@ int
 print_cores_by_sock(int socket)
 {
 	struct core_data *cch;
-	char tmp[256];
-	char buffer[10];
+	char tmp[1024];
+	char buffer[128];
 
 	memset(tmp, 0, sizeof(tmp));
 
@@ -160,15 +161,15 @@ int
 print_threads_by_sock(int socket)
 {
 	struct thread_data *tch;
-	char tmp[256];
-	char buffer[10];
+	char tmp[1024];
+	char buffer[128];
 
 	memset(tmp, 0, sizeof(tmp));
 
-	fprintf(stderr, "\nHERE\n");
+	fprintf(stderr, "\nHERE THREAD\n");
 
 	for (tch = threads_list; tch; tch = tch->next) {
-		fprintf(stderr, "\n::%u\n", tch->socket);
+		fprintf(stderr, "\nTHREAD::%u\n", tch->socket);
 		if (tch->socket != socket) {
 			continue;
 		}
@@ -199,6 +200,8 @@ topology_status()
 	}
 
 	for (cch = cores_list; cch; cch = cch->next) {
+		//work-around
+		if (cch->id > 1024) continue;
 		fprintf(stderr, "Core ID: %u (socket %u)\n", cch->id,
 		    cch->socket);
 		c_max++;
@@ -206,6 +209,7 @@ topology_status()
 	}
 
 	for (tch = threads_list; tch; tch = tch->next) {
+		//if (tch->id > 1024) continue;
 		fprintf(stderr, "Threads ID: %u (socket %u)\n", tch->id,
 		    tch->socket);
 		t_max++;
@@ -383,10 +387,14 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 		    simpleXmlGetLineNumber(parser), getIndent(nDepth),
 		    szHandlerName, szHandlerAttribute, szHandlerValue);
 
+		//cache-level not only new sockets:
+		// AMD Ryzen 9 3900X 12-Core Processor
+		// FreeBSD/SMP: 1 package(s) x 4 cache groups x 3 core(s) x 2 hardware threads
+
 		if ((!strcmp(szHandlerAttribute, "cache-level")) &&
 		    (!strcmp(szHandlerValue, "3"))) {
 			// attribute cache-level=3 detected: new L3 domain
-			fprintf(stderr, "\n* NEW SOCKET *\n");
+			fprintf(stderr, "\n* NEW SOCKET (or CacheGroups) *\n");
 			new_socket(last_sid, last_sid);
 			push_socket_id(last_sid);
 			last_sid++;
@@ -396,21 +404,20 @@ handler(SimpleXmlParser parser, SimpleXmlEvent event, const char *szName,
 		if ((!strcmp(szHandlerAttribute, "name")) &&
 		    (!strcmp(szHandlerValue, "SMT"))) {
 			// attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr, "\n       * NEW CORE, Sock %d *     \n",
-			    last_sid - 1);
+			fprintf(stderr, "\n       * NEW CORE, Sock %d *     \n",last_sid - 1);
 			// uncomment for noSMP:
 			// level=10;
-
 			// ucomment for SMP:
 			last_cid = pop_core_id();
-			new_core(0, last_cid, last_sid - 1);
+			if(last_cid >= 0)
+				new_core(0, last_cid, last_sid - 1);
 		} else if ((!strcmp(szHandlerAttribute, "name")) &&
 		    (!strcmp(szHandlerValue, "THREAD"))) {
 			// attribute cache-level=2 detected: new L2 domain
-			fprintf(stderr, "\n* NEW THREAD, Sock %d *\n",
-			    last_sid - 1);
-			last_cid = pop_core_id();
-			new_thread(0, last_cid, last_sid - 1);
+			fprintf(stderr, "\n* NEW THREAD (core: %d), Sock %d *\n",last_cid,last_sid - 1);
+			last_cid = pop_core_id() + 1;
+			if(last_cid >= 0)
+				new_thread(0, last_cid, last_sid -1 );
 		} else if ((!strcmp(szHandlerAttribute, "count")) &&
 		    (!strcmp(szHandlerValue, "1"))) {
 			last_cid = pop_core_id() + 1;
