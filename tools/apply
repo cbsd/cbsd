@@ -1,0 +1,232 @@
+#!/usr/local/bin/cbsd
+# shellcheck shell=sh disable=2034,2154,1091
+#v13.0.8
+MYARG=""
+MYOPTARG="cbsdfile cur_env cwd jname multiple quiet upfile_destroy_failed"
+MYDESC="apply/re-configure virtual environment via CBSDfile"
+CBSDMODULE="bhyve,jail"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+With a 'apply' script, you can change/apply your virtual environment configuration 
+via a CBSDfile.
+
+The most useful and powerful configurations are achieved using dynamic CBSD 'forms' 
+for various services.
+
+Refer to the appropriate section in the official documentation to view the available 
+classes and helpers and their descriptions.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}cbsdfile${N0_COLOR}              - alternative path to CBSDfile, could be relative to the
+                         working directory, e.g: '/tmp/CBSDfile'.
+ ${N2_COLOR}upfile_destroy_failed${N0_COLOR} - when '0' - do not destroy environment even if the create fails.
+                         Mostly for debug purposes. Default is '1' - auto-destroy.
+                         Same environment variables: UPFILE_DESTROY_FAILED
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd apply
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd up --help
+ cbsd forms --help
+
+"
+
+EXTHELP="wf_cbsdfile"
+
+. "${subrdir}"/nc.subr
+. "${subrdir}"/strings.subr
+
+# push original location: we need restore it before exit
+OCBSD_PWD="${CBSD_PWD}"
+
+cwd=
+jname=
+CLOUD_URL=
+CLOUD_KEY=
+upfile_destroy_failed=
+oupfile_destroy_failed=
+. "${subrdir}"/cbsdinit.subr
+
+[ -n "${upfile_destroy_failed}" ] && oupfile_destroy_failed="${upfile_destroy_failed}"
+[ -z "${upfile_destroy_failed}" ] && upfile_destroy_failed=1
+
+# flags for multiple CBSDfile env
+[ -z "${multiple}" ] && multiple=0
+[ -z "${cur_env}" ] && cur_env=1
+
+# skip notice for subcommand with CBSDfile/API
+export CBSDFILE_RECURSIVE=1
+
+# init CBSDfile data
+if [ -n "${cwd}" ]; then
+	[ ! -r "${cwd}"/CBSDfile ] && err 1 "${N1_COLOR}${CBSD_APP}: no such CBSDfile: ${N2_COLOR}${cwd}/CBSDfile${N0_COLOR}"
+	cbsdfile="${cwd}/CBSDfile"
+	cd "${cwd}" || err 1 "Can not cd to cwd"
+fi
+
+# exported OCBSD_PWD as original PWD path: we neet to restore it on exit
+. "${subrdir}"/cbsdfile.subr
+
+. "${subrdir}"/time.subr
+. "${subrdir}"/up.subr
+
+apply_jail()
+{
+	[ -z "${applyforms}" -o -z "${jname}" ] && return 0
+
+	local _runscript=$( ${MKTEMP_CMD} )
+	local _ret
+
+	${ECHO} "${N1_COLOR}${CBSD_APP}: apply jail-forms class: ${N2_COLOR}${jname}::${applyforms}${N0_COLOR}"
+
+	# generate runscript
+	printf "env " > ${_runscript}
+	${SED_CMD} -n "/^forms_${jname}_${applyforms}(/,/^}/p" ${Makefile} | ${GREP_CMD} -E -v "^forms_${jname}_${applyforms}|^\{|^\}" | ${GREP_CMD} -v '^#' | ${TR_CMD} -d '\r\n' | ${TR_CMD} "\t" " " >> ${_runscript}
+	printf " NOCOLOR=1 /usr/local/bin/cbsd forms module=${applyforms} jname=${jname} inter=0" >> ${_runscript}
+	/bin/sh ${_runscript}
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} ${W1_COLOR}apply failed, runscript:${N0_COLOR}"
+		${CAT_CMD} ${_runscript}
+		echo
+	fi
+	${RM_CMD} -f ${_runscript}
+	return ${_ret}
+}
+
+apply_bhyve()
+{
+	echo "APPLY BHYVE NOT IMPLEMENTED YET"
+	return 1
+}
+
+
+# MAIN
+export NOINTER=1
+
+#echo "num: ${num_env}"
+#echo "forms: ${all_forms_list}"
+#for jname in ${jail_list} ${bhyve_list}; do
+#	echo "$jname"
+#done
+
+# init '$forms_$jname_list, e.g.:
+#  forms_redis_timezone() function ->
+# forms_redis_list="timezone"
+# all_forms_count=0
+for i in ${all_forms_list}; do
+	_len=$( strlen "${i}" )
+	_jname_forms=$( substr --pos=7 --len=${_len} --str=${i} )
+	_len=$( strlen "${_jname_forms}" )
+#	echo "-> [${_jname_forms}]"
+	strpos --str="${_jname_forms}" --search="_"
+	_pos=$?
+	_found_jname=$( substr --pos=0 --len=${_pos} --str="${_jname_forms}" )
+#	echo "J -> [${_found_jname}]"
+
+	_pos=$(( _pos + 2 ))
+	_found_forms=$( substr --pos=${_pos} --len=${_len} --str="${_jname_forms}" )
+
+#	echo "F -> [${_found_forms}]"
+	unset _len
+	eval _test="\$forms_${_found_jname}_list"
+	if [ -z "${_test}" ]; then
+		eval "forms_${_found_jname}_list=\"${_found_forms}\""
+	else
+		eval "forms_${_found_jname}_list=\"${_test} ${_found_forms}\""
+	fi
+	unset _test
+	all_forms_count=$(( all_forms_count + 1 ))
+done
+
+
+if [ "${num_env}" -eq 1 ]; then
+	st_time=$( ${DATE_CMD} +%s )
+
+	if [ ${multiple} -gt 0 ]; then
+		# sleep/delay a random amount of time between 2 and 10
+		# to minimize the probability that a large number of machines 
+		# will simultaneously attempt to up. except first (cur_env=1) env.
+		if [ ${cur_env} -ne 1 ]; then
+			rand_delay=$( ${AWK_CMD} -v min=2 -v max=10 'BEGIN{srand(); print int(min+rand()*(max-min+1))}' )
+			sleep "${rand_delay}"
+		fi
+	fi
+
+	# Apply forms
+	if [ ${all_forms_count} -gt 0 ]; then
+		for jname in ${jail_list} ${bhyve_list}; do
+			eval formslist="\$forms_${jname}_list"
+			[ -z "${formslist}" ] && continue
+			for applyforms in ${formslist}; do
+				if [ "${jail_num}" -eq 1 ]; then
+					jname="${jail_list}"
+					apply_jail
+				elif [ "${bhyve_num}" -eq 1 ]; then
+					jname="${bhyve_list}"
+					apply_bhyve
+				fi
+			done
+		done
+	fi
+
+	unset applyforms
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+
+	${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}" 1>&2
+	cd ${OCBSD_PWD}
+	exit 0
+fi
+
+# multiple run area
+. "${subrdir}"/multiple.subr
+
+${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+task_owner="apply_multiple"
+
+task_id=
+task_id_cur=
+
+# spawn command for all jail
+max_env=0
+for i in ${jail_list} ${bhyve_list}; do
+	max_env=$(( max_env + 1 ))
+done
+
+cur_env=1
+
+# todo:
+# SUDO_USER for DOAS?
+for jname in ${jail_list} ${bhyve_list}; do
+	# we must inherit CBSD_PWD via cwd= for cbsd-related function in postcreate_ action
+	# shellcheck disable=2086
+	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} SUDO_USER="${SUDO_USER}" NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd apply multiple=${max_env} cur_env=${cur_env} cbsdfile=${Makefile} jname=${jname} cwd=${CBSD_PWD} )
+	if [ -z "${task_id}" ]; then
+		task_id="${task_id_cur}"
+	else
+		task_id="${task_id} ${task_id_cur}"
+	fi
+	multiple_task_id_all=$( echo "${task_id}" | ${TR_CMD} " " "," )
+	cur_env=$(( cur_env + 1 ))
+	sleep 1
+done
+
+st_time=$( ${DATE_CMD} +%s )
+
+multiple_processing_spawn -o ${task_owner} -n "apply"
+
+end_time=$( ${DATE_CMD} +%s )
+diff_time=$(( end_time - st_time ))
+diff_time=$( displaytime ${diff_time} )
+${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+
+cd ${OCBSD_PWD}
+
+exit 0
