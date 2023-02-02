@@ -876,6 +876,7 @@ main(int argc, char **argv)
 	char *ip;
 
 	int total = 1;
+	int v6 = 0;
 	int curThread;
 	pthread_t threads[total];
 
@@ -1041,10 +1042,10 @@ main(int argc, char **argv)
 
 	if (path_my_pidfile == NULL) {
 
-		asprintf(&path_my_pidfile, "%s/var/run/racct-jail-statsd.pid",
-		    workdir);
+		asprintf(&path_my_pidfile, "%s/var/run/cbsd_statsd_jail.pid",
+			workdir);
 //		asprintf(&path_my_pidfile, "%sracct-jail-statsd.pid",
-//		    _PATH_VARRUN);
+//			_PATH_VARRUN);
 		if (path_my_pidfile == NULL) {
 			printf("asprintf");
 			exit(1);
@@ -1100,11 +1101,12 @@ main(int argc, char **argv)
 #endif
 
 /////////// prom
-//  char *ip = "127.0.0.1";
 	if(prometheus_listen6) {
 		ip = prometheus_listen6;
+		v6 = 1;
 	} else if(prometheus_listen4) {
 		ip = prometheus_listen4;
+		v6 = 0;
 	} else {
 		printf("No --prometheus_listen4 or prometheus_listen6\n");
 	}
@@ -1113,33 +1115,24 @@ main(int argc, char **argv)
 
   int port = prometheus_port;
   int option = 1;
-// v4
-//  struct sockaddr_in serv_addr;
-// v6
-  struct sockaddr_in6 serv_addr;
 
-//sock_fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+  struct sockaddr_in serv_addr4;
+  struct sockaddr_in6 serv_addr6;
 
-  /* Socket settings */
-// v4
-//  listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-// v6
-  listenfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-
-// v4
-//  serv_addr.sin_family = AF_INET;
-// v6
-  serv_addr.sin6_family = AF_INET6;
-
-//v4
-//  serv_addr.sin_addr.s_addr = inet_addr(ip);
-//  serv_addr.sin_port = htons(port);
-
-//v6
-//  inet_pton(AF_INET6, "::1", &serv_addr.sin6_addr);
-
-  serv_addr.sin6_addr = in6addr_any;
-  serv_addr.sin6_port = htons(port);
+/* Socket settings */
+if ( v6 == 0 ) {
+	// v4
+	listenfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	serv_addr4.sin_family = AF_INET;
+	serv_addr4.sin_addr.s_addr = inet_addr(ip);
+	serv_addr4.sin_port = htons(port);
+} else {
+	// v6
+	listenfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+	serv_addr6.sin6_family = AF_INET6;
+	serv_addr6.sin6_addr = in6addr_any;
+	serv_addr6.sin6_port = htons(port);
+}
 
   /* Ignore pipe signals */
   signal(SIGPIPE, SIG_IGN);
@@ -1152,12 +1145,19 @@ main(int argc, char **argv)
     }
 
     /* Bind */
-  if(bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-    perror("ERROR: Socket binding failed");
-    close(listenfd);
-//    return EXIT_FAILURE;
-	exit(1);
-  }
+if ( v6 == 0 ) {
+	if(bind(listenfd, (struct sockaddr*)&serv_addr4, sizeof(serv_addr4)) < 0) {
+		perror("ERROR: Socket v4 binding failed");
+		close(listenfd);
+		exit(1);
+	}
+} else {
+	if(bind(listenfd, (struct sockaddr*)&serv_addr6, sizeof(serv_addr6)) < 0) {
+		perror("ERROR: Socket v6 binding failed");
+		close(listenfd);
+		exit(1);
+	}
+}
 
   /* Listen */
   if (listen(listenfd, 10) < 0) {
