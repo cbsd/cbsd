@@ -55,11 +55,12 @@ if [ ${baserw} -eq 1 ]; then
 	#test for zfs mounted in baserw=1
 	case ${zfsfeat} in
 		1)
+			[ -z "${zfs_always_unload_key}" ] && zfs_always_unload_key="0"
 			. ${subrdir}/zfs.subr
 			zfsmnt ${data}
 			if [ $? -eq 1 ]; then
 				# dont remove ~cbsd/jails-data/$jname-data
-				rootflags="no_unmount_root"
+				[ "${zfs_always_unload_key}" = "0" ] && rootflags="no_unmount_root"
 			fi
 		;;
 	esac
@@ -75,6 +76,40 @@ else
 fi
 
 [ "${mdsize}" != "0" -a -n "${MDFILE}" ] && unmountmd md=${MDFILE}
+
+case ${zfsfeat} in
+	1)
+		readconf zfs.conf		# lookup for zfs_always_unload_key
+		[ -z "${zfs_always_unload_key}" ] && zfs_always_unload_key="0"
+		if [ "${zfs_always_unload_key}" = "1" ]; then
+			. ${subrdir}/zfs.subr
+			zfsmnt ${data} > /dev/null 2>&1
+			ret=$?
+			if [ ${ret} -ne 0 ]; then
+				# is ZFS
+				encryption=$( ${ZFS_CMD} get -Ho value encryption ${data} 2>/dev/null | ${AWK_CMD} '{printf $1 }' )
+				[ -z "${encryption}" ] && encryption="off"
+				case "${encryption}" in
+					off)
+						continue
+						;;
+					*)
+						cbsdlogger NOTICE ${CBSD_APP}: unload-key for jail ${jname} enabled via zfs_always_unload_key, pool: ${ZPOOL}
+						${ZFS_CMD} unmount ${data}
+						_res=$( ${ZFS_CMD} unload-key ${ZPOOL} 2>&1 )
+						ret=$?
+						if [ ${ret} -ne 0 ]; then
+							${ECHO} "${W1_COLOR}${CBSD_APP} warning: ${N1_COLOR}unload-key error for jail ${jname}, pool: ${ZPOOL}: ${N2_COLOR}${_res}${N0_COLOR}"
+							cbsdlogger WARNING ${CBSD_APP}: unload-key error for jail ${jname}, pool: ${ZPOOL}: ${_res}
+						else
+							${ECHO} "${N1_COLOR}${CBSD_APP}: zfs encription unload-key for: ${N2_COLOR}${ZPOOL}${N0_COLOR}"
+						fi
+						;;
+				esac
+			fi
+		fi
+		;;
+esac
 
 jaillock="${jailsysdir}/${jname}/locked"
 if [ ${sharedfs} -eq 0 ]; then
