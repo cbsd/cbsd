@@ -120,7 +120,9 @@ sync_nat_with_forms()
 
 make_nat()
 {
-	local rfc1918="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+	# defaults. can be overwrited via per-PF config files
+	cbsd_nat_networks="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+
 	local _extiface
 	local _ret
 
@@ -162,6 +164,8 @@ make_nat()
 			return 0
 			;;
 		"pf")
+			readconf cbsd-pf.conf
+
 			if [ $( ${GREP_CMD} ^pf_load= /boot/loader.conf /boot/loader.conf.local 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
 				getyesno "Do you want to modify /boot/loader.conf to set pf_load=YES ?" && ${SYSRC_CMD} -vf /boot/loader.conf pf_load=YES
 				${SYSRC_CMD} -qf ${workdir}/rc.conf pf_load="1" > /dev/null 2>&1
@@ -173,14 +177,18 @@ make_nat()
 			fi
 			${TRUNCATE_CMD} -s0 ${etcdir}/pfnat.conf
 
-			for _net in ${rfc1918}; do
-				_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
-				${distdir}/sbin/netmask ${_nm} ${natip}
-				if [ $? -ne 1 ]; then
-					${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
+			echo "cbsd_nat_skip_natip_network $cbsd_nat_skip_natip_network"
+
+			for _net in ${cbsd_nat_networks}; do
+				if [ "${cbsd_nat_skip_natip_network}" = "1" ]; then
+					_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
+					${distdir}/sbin/netmask ${_nm} ${natip}
+					[ $? -eq 0 ] && continue
+				fi
+
+				${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
 nat on ${_extiface} from ${_net} to ! ${_net} -> ${natip} # // Setup by CBSD NAT
 EOF
-				fi
 			done
 
 			#restore other rule
@@ -198,17 +206,20 @@ EOF
 		"ipfilter")
 			${TRUNCATE_CMD} -s0 ${etcdir}/ipfilter.conf
 
-			for _net in ${rfc1918}; do
-				_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
-				${distdir}/sbin/netmask ${_nm} ${natip}
-				if [ $? -ne 1 ]; then
-					${CAT_CMD} >> ${etcdir}/ipfilter.conf <<EOF
+			for _net in ${cbsd_nat_networks}; do
+				if [ "${cbsd_nat_skip_natip_network}" = "1" ]; then
+					_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
+					${distdir}/sbin/netmask ${_nm} ${natip}
+					[ $? -eq 0 ] && continue
+				fi
+
+				${CAT_CMD} >> ${etcdir}/ipfilter.conf <<EOF
 map ${_extiface} ${_net} -> ${natip}/32 proxy port ftp ftp/tcp
 map ${_extiface} ${_net} -> ${natip}/32 portmap tcp/udp 10000:20000
 map ${_extiface} ${_net} -> ${natip}/32
 EOF
-				fi
 			done
+
 			answ="${ok}"
 			ok="ok"
 			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
@@ -238,7 +249,7 @@ EOF
 				fi
 			fi
 			${TRUNCATE_CMD} -s0 ${etcdir}/ipfw.conf
-			_nm=$( echo ${rfc1918} | ${TR_CMD} " " "," )
+			_nm=$( echo ${cbsd_nat_networks} | ${TR_CMD} " " "," )
 			${CAT_CMD} >> ${etcdir}/ipfw.conf << EOF
 /sbin/ipfw -q add ${fwcount_end} nat 123 all from ${_nm} to not ${_nm} any via ${_extiface}
 /sbin/ipfw -q nat 123 config ip ${natip}
