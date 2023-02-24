@@ -3,7 +3,7 @@
 profile_dir="/tmp/cbsd-profiles"
 jname="custprofvm"
 vm_os_type="freebsd"
-vm_os_profile="cloud-FreeBSD-ufs-x64-13.1"
+vm_os_profile="cloud-FreeBSD-ufs-x64-13.2"
 imgsize="1g"
 
 oneTimeSetUp() {

@@ -2,7 +2,7 @@
 # check for valid cloud-init yaml generate
 jname="vmciset"
 vm_os_type="freebsd"
-vm_os_profile="cloud-FreeBSD-ufs-x64-13.1"
+vm_os_profile="cloud-FreeBSD-ufs-x64-13.2"
 ci_ip4_addr="10.0.1.88/22"
 ci_gw4="10.0.1.1"
 imgsize="10g"
