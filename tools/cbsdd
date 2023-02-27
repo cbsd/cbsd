@@ -56,7 +56,7 @@ update_fw_counters()
 
 	[ "${_curhour}" = "${last_hour_fwupdate}" ] && return 0
 	last_hour_fwupdate="${_curhour}"
-	${DAEMON_CMD} ${LOCKF_CMD} -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
+	${DAEMON_CMD} -f ${LOCKF_CMD} -s -t0 ${ftmpdir}/fwcounters.lock /usr/local/bin/cbsd fwcounters jname=alljails
 }
 
 # if $1 = "force" skip for cbsd_dot check
@@ -104,42 +104,56 @@ ${FIND_CMD} ${tmpdir} -depth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/n
 
 cbsdlogger NOTICE ${CBSD_APP}: cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeout:${loop_timeout}
 
+tik=0
+
 while [ 1 ]; do
-	# internal tasks:
-	update_jaillock
-	[ ${ipfw_enable} -eq 1 ] && update_fw_counters
 
-	unset ip port keyfile _ip _port _keyfile queue
+	tik=$(( tik + 1 ))
 
-	# make sshmux control master
-	if [ ${sqlreplica} -eq 1 ]; then
-		sqldelimer=" "
-		cbsdsqlro nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
-			[ -n "${_ip}" ] && shmux
-			if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
-				cbsdlogger NOTICE ${CBSD_APP}: update remote inventory for ${_ip} via loop_per_retrinv [${loop_per_retrinv}]
-				update_inventory force
-			else
-				update_inventory
-			fi
-		done
-		unset sqldelimer
+	# ~5min
+	if [ ${tik} -gt 300 ]; then
+		update_jaillock
+		[ ${ipfw_enable} -eq 1 ] && update_fw_counters
 
-		if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
-			# reset loop
-			retrinv_loop=0
-		else
-			retrinv_loop=$(( retrinv_loop + 1 ))
+		unset ip port keyfile _ip _port _keyfile queue
+
+		# make sshmux control master
+		if [ ${sqlreplica} -eq 1 ]; then
+			sqldelimer=" "
+			cbsdsqlro nodes SELECT nodename,ip,port,keyfile FROM nodelist | while read _nodename _ip _port _keyfile; do
+				[ -n "${_ip}" ] && shmux
+				if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: update remote inventory for ${_ip} via loop_per_retrinv [${loop_per_retrinv}]
+					update_inventory force
+				else
+					update_inventory
+				fi
+			done
+			unset sqldelimer
 		fi
+		tik=0
 	fi
 
-	cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
-	_err=0
 	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
 
 	if [ -z "${queue}" -o "${queue}" = "0" ]; then
-		#echo "cbsdd: empty taskd queue, sleep for 15 sec.."
-		sleep 15
+		cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
+		tik=$(( tik + loop_timeout ))
+	fi
+
+	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+
+	if [ -z "${queue}" -o "${queue}" = "0" ]; then
+		sleep 1
+		continue
+	fi
+
+	queue_active=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="1"' 2>/dev/null )
+
+	if [ ${queue_active} -gt ${max_simul_jobs} ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: active: ${queue_active}/${max_simul_jobs}
+		# too many in progress
+		sleep 1
 		continue
 	fi
 
