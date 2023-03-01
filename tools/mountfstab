@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v13.0.0
-MYARG="jroot fstab"
-MYOPTARG="jname"
+MYARG=
+MYOPTARG="fstab jname jroot"
 MYDESC="Mount jail by fstab file"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -12,10 +12,19 @@ relative to the rootfs container.
 
 For mount single file via nullfs you need https://reviews.freebsd.org/D37478.
 
+Unlike the original fstab syntax, you can use a custom script as a 'source' for 
+custom (SMB, iSCSI, FUSEFS-based) mounts, e.g. example for NTFS mount:
+
+/usr/local/cbsd/share/examples/jails-fstab/ntfs-3g.sh
+
+Also when you use encrypted ZFS and whant to unload the KEY each time when
+crypto dataset unmounted, please set 'zfs_always_unload_key' params in ~cbsd/zfs.conf
+
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}fstab${N0_COLOR} - Path to fstab file;
- ${N2_COLOR}jroot${N0_COLOR} - rootfs of jail (directory);
+ ${N2_COLOR}fstab${N0_COLOR} - Path to fstab file ( used with rootfs= );
+ ${N2_COLOR}jname${N0_COLOR} - (re-)mount all fstab's for specified jail;
+ ${N2_COLOR}jroot${N0_COLOR} - rootfs directory of jail ( used with fstab= );
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -30,12 +39,52 @@ ${H3_COLOR}See also${N0_COLOR}:
 
  cbsd unmountfstab --help
  cbsd mountmd --help
+ cbsd jcleanup --help
+ cat /usr/local/cbsd/share/examples/jails-fstab/ntfs-3g.sh
+ cat /usr/local/cbsd/etc/defaults/zfs.conf
 
 "
 
 . ${subrdir}/nc.subr
+jname=
+ojname=
+fstab=
+jroot=
 . ${cbsdinit}
 . ${system}
+
+if [ -z "${fstab}" -a -z "${jroot}" ]; then
+	# mount by jname ?
+	[ -z "${jname}" -a -z "${1}" ] && err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}mandatory params: ${N2_COLOR}fstab= jroot= ${N1_COLOR}or ${N2_COLOR}jname=${N0_COLOR}"
+	[ -z "${jname}" ] && jname="${1}"
+
+	# TODO: multiple jailname support? by mask (jname='*') and/or: 'cbsd mountfstab jail1 jail2 jail3 ..' ?
+
+	. ${subrdir}/rcconf.subr
+
+	[ $? -eq 1 ] && err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	if [ ${baserw} -eq 0 ]; then
+		_jroot="${path}"
+	else
+		_jroot="${data}"
+	fi
+
+	ret=0
+
+	if [ -r ${mount_fstab} ]; then
+		mountfstab jroot="${_jroot}" fstab="${mount_fstab}"
+		ret=$?
+		[ ${ret} -ne 0 ] && err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}mountfstab jroot=\"${_jroot}\" fstab=\"${mount_fstab}\"${N0_COLOR}"
+	fi
+	if [ -r ${mount_fstab}.local ]; then
+		mountfstab jroot="${_jroot}" fstab="${mount_fstab}.local"
+		ret=$?
+		[ ${ret} -ne 0 ] && err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}mountfstab jroot=\"${_jroot}\" fstab=\"${mount_fstab}.local\"${N0_COLOR}"
+	fi
+
+	exit ${ret}
+fi
 
 [ ! -f "${fstab}" ] && err 1 "${fstab} does not exist"
 [ ! -d "${jroot}" ] && err 1 "${jroot} does not exist"
