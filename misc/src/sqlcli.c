@@ -114,6 +114,10 @@ main(int argc, char **argv)
 	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
 	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
 
+	// https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
+
 	for (i = 2; i < argc; i++) {
 		res += strlen(argv[i]) + 1;
 	}

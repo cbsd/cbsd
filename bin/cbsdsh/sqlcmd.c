@@ -377,6 +377,11 @@ sqlitecmdrw(int argc, char **argv)
 	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
 	sql_exec(db, "PRAGMA journal_mode = WAL;");
 	sql_exec(db, "PRAGMA synchronous = NORMAL;");
+
+	// https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
+
 	//	sql_exec(db, "PRAGMA journal_mode=DELETE;");
 	//	sql_exec(db,"PRAGMA journal_mode = OFF;");
 	//	sql_exec(db,"PRAGMA journal_mode = TRUNCATE;");
@@ -513,6 +518,10 @@ sqlitecmdro(int argc, char **argv)
 	}
 
 	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+
+	// https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
 
 	do {
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
