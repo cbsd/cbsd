@@ -922,8 +922,7 @@ main(int argc, char **argv)
 	// close(pipe_fd[1]);
 
 	if (path_my_pidfile == NULL) {
-		asprintf(&path_my_pidfile, "%sracct-bhyve-statsd.pid",
-		    _PATH_VARRUN);
+		asprintf(&path_my_pidfile, "%s/var/run/cbsd_statsd_bhyve.pid",workdir);
 		if (path_my_pidfile == NULL) {
 			printf("asprintf");
 			exit(1);
