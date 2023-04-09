@@ -140,6 +140,7 @@ done
 [ -z "${tablet}" ] && tablet=0
 [ -z "${hda}" ] && hda="none"
 [ -z "${exit_action}" ] && exit_action=0	# use on_poweroff/on_reboot/on_crash settings: disabled by default
+nic_address_cmd=
 [ ! -f "${conf}" ] && exit 0
 . ${conf}
 
@@ -318,6 +319,10 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 				live_migration_args=
 			fi
 		fi
+	fi
+
+	if [ -n "${nic_address_cmd}" ]; then
+		eval $( ${nic_address_cmd} )
 	fi
 
 	bhyve_cmd_run="env LIB9P_LOGGING=${jailsysdir}/${jname}/cbsd_lib9p.log /usr/bin/nice -n ${nice} ${bhyve_cmd} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
