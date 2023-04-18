@@ -1,0 +1,414 @@
+#!/usr/local/bin/cbsd
+# shellcheck shell=sh disable=2034,2154,1091
+#v13.0.8
+MYARG="src"
+MYOPTARG="clonos json myb show_iso vm_os_type warmed"
+MYDESC="list of available profiles for virtual machine"
+CBSDMODULE="bhyve,xen"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+CBSD has a library of virtual machine profiles that group some settings for creating 
+virtual machines and a link to the installation image (optional).
+
+Files have a strictly defined name vm-<vm_os_type>-<name-of-profile>.conf and are 
+located in directories:
+
+  - ~cbsd/etc/defaults/  (official/contrib profiles);
+  ~ cbsd/etc/            (custom user's profiles);
+
+You can create virtual machines via API or command line (e.g. 'cbsd bcreate' for bhyve).
+The 'cbsd get-profiles' script will help parse the names of existing profiles and issue 
+a sorted convenient list in plain text of JSON format.
+
+Since a large number of files are parsed in the process, it is recommended to 
+cache the output.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}clonos${N0_COLOR}     - show profiles marked as 'clonos_active=1' only;
+ ${N2_COLOR}json${N0_COLOR}       -
+ ${N2_COLOR}myb${N0_COLOR}        - show profiles who have 'myb_images=XXX' values only;
+ ${N2_COLOR}show_iso${N0_COLOR}   - show image file used by profile;
+ ${N2_COLOR}src${N0_COLOR}        - type of profile: 'iso' or 'cloud';
+ ${N2_COLOR}vm_os_type${N0_COLOR} - show profiles for vm_os_type= OS type only, e.g.:
+               'freebsd','linux','openbsd','netbsd','dflybsd','windows','other',..;
+ ${N2_COLOR}warmed${N0_COLOR}     - show only those profiles that already have an image installed 
+               on your system (warmed up);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd get-profiles src=cloud json=1
+ # cbsd get-profiles src=cloud json=0 warm=1 vm_os_type=freebsd show_iso=1
+ # cbsd get-profiles src=cloud json=0 warm=1 vm_os_type=freebsd myb=1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bcreate --help
+ cbsd xcreate --help
+ cbsd qcreate --help
+ cbsd fetch_iso --help
+
+"
+
+. "${subrdir}"/nc.subr
+. "${subrdir}"/strings.subr
+. "${subrdir}"/tools.subr
+vm_os_type=
+clonos=
+myb=
+json=0
+show_iso=0
+warmed=0
+. ${cbsdinit}
+
+if [ -n "${vm_os_type}" ]; then
+	search_vm_os_type="${vm_os_type}"
+else
+	search_vm_os_type=
+fi
+
+[ -z "${clonos}" ] && clonos=0
+[ -z "${myb}" ] && myb=0
+
+get_all_profile_list()
+{
+	if [ -z "${search_vm_os_type}" ]; then
+		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name vm\-*\.conf 2>/dev/null
+	else
+		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name vm\-${search_vm_os_type}\-*\.conf 2>/dev/null
+	fi
+}
+
+get_vm_info()
+{
+	local _val
+	local _ret=0
+
+	path="${1}"
+	filter="${2}"
+
+	[ ! -r "${path}" ] && return 0
+	[ -z "${filter}" ] && return 0
+
+	local _profile_file=$( ${BASENAME_CMD} ${path} )
+
+	vm_profile=
+	name=
+	profile=
+	type=
+	default_jname=
+	imgsize=
+	imgsize_bytes=
+	imgsize_min=
+	imgsize_min_bytes=
+	long_description=
+	vm_os_type=
+	default_jailname=
+	is_template=
+	is_cloud=
+	clonos_active=
+	myb_active=
+	is_myb=
+	iso_img=
+	register_iso_name=
+	myb_image=
+
+	#echo "${EGREP_CMD} -E \"${filter}\" ${path}"
+	eval $( ${EGREP_CMD} -E "${filter}" "${path}" 2>/dev/null )
+
+	if [ -n "${register_iso_name}" -a -n "${iso_img}" ]; then
+		iso_img="${srcdir}/iso/${register_iso_name}${iso_img}"
+		if [ ${warmed} -eq 1 ]; then
+			[ -z "${register_iso_name}" ] && _ret=1
+			is_valid="0"
+			if [ -h "${iso_img}" ]; then
+				valid_link=$( ${READLINK_CMD} ${iso_img} 2>/dev/null )
+				[ -e "${valid_link}" ] && is_valid=1
+			elif [ -r "${iso_img}" ]; then
+				[ -e "${valid_link}" ] && is_valid=1
+			fi
+			[ ${is_valid} -eq 0 ] && _ret=1
+			if [ ! -r "${iso_img}" -a ! -h "${iso_img}" ]; then
+				vm_profile=
+				name=
+				profile=
+				type=
+				_ret=1
+			fi
+		fi
+	else
+		if [ ${warmed} -eq 1 ]; then
+			vm_profile=
+			name=
+			profile=
+			type=
+			_ret=1
+		fi
+	fi
+
+	name="${long_description}"
+	profile="${vm_profile}"
+	type="${vm_os_type}"
+	[ -z "${iso_img}" ] && iso_img="-"
+	[ -z "${name}" ] && name="-"
+	[ -z "${profile}" ] && profile="unkpro"
+	[ -z "${type}" ] && type="unktype"
+	if [ -n "${myb_image}" ]; then
+		myb_active=1
+	else
+		myb_active=0
+	fi
+
+	default_jname="${default_jailname}"
+
+	imgsize="${imgize}"
+	imgsize_min="${imgsize_min}"
+
+	# normalize imgsize
+	if [ -z "${imgsize}" ]; then
+		imgsize="0"
+		imgsize_bytes="0"
+	fi
+
+	if is_number "${imgsize}"; then
+		if conv2bytes ${imgsize}; then
+			imgsize_bytes="${convval}"
+		else
+			imgsize_bytes="0"
+		fi
+	else
+		imgsize_bytes="${imgsize}"
+	fi
+
+	if conv2human "${imgsize_bytes}"; then
+		imgize="${convval}"
+	else
+		imgize="${imgisze_bytes}"
+
+	fi
+
+	# normalize imgsize_min
+	if [ -z "${imgsize_min}" ]; then
+		imgsize_min="0"
+		imgsize_min_bytes="0"
+	fi
+
+	if [ "${imgsize_min}" = "0" -a "${imgsize_bytes}" != "0" ]; then
+		# inherit imgsize_min from imgsize
+		imgsize_min="${imgsize_bytes}"
+		imgsize_min_bytes="${imgsize_bytes}"
+	fi
+
+	if is_number "${imgsize_min}"; then
+		if conv2bytes ${imgsize_min}; then
+			imgsize_min_bytes="${convval}"
+                else
+			imgsize_min_bytes="0"
+		fi
+	else
+		imgsize_min_bytes="${imgsize_min}"
+	fi
+
+	if conv2human "${imgsize_min_bytes}"; then
+		imgsize_min="${convval}"
+	else
+		imgsize_min="${imgisze_min_bytes}"
+
+	fi
+
+	[ -z "${is_template}" ] && is_template="0"
+	echo "name=\"${name}\" is_cloud=\"${is_cloud}\" profile=\"${profile}\" type=\"${type}\" default_jname=\"${default_jname}\" imgsize_bytes=\"${imgsize_bytes}\" imgsize=\"${imgsize}\" imgsize_min_bytes=\"${imgsize_min_bytes}\" imgsize_min=\"${imgsize_min}\" clonos_active=\"${clonos_active}\" image=\"${myb_image}\" myb_active=\"${myb_active}\" iso_img=\"${iso_img}\""
+
+	return ${_ret}
+}
+
+show_plain()
+{
+	local _show_title
+	local _data
+
+	_show_title="${BOLD}VM_PROFILE|VM_OS_TYPE"
+
+	[ ${show_iso} -eq 1 ] && _show_title="${_show_title}|ISO_IMG"
+	[ ${myb} -eq 1 ] && _show_title="${_show_title}|IMAGE"
+
+	_show_title="${_show_title}|NAME|${NORMAL}"
+
+	${ECHO} "${_show_title}"
+
+	for profile_path in ${all_filtered_profile_path}; do
+		clonos_active=0
+		myb_myb=0
+		iso_img=
+
+		x=$( get_vm_info "${profile_path}" "${vm_filter}" )
+		[ $? -ne 0 ] && continue
+
+		eval $( echo ${x} 2>&1 )
+
+		[ -z "${clonos_active}" ] && clonos_active=0
+		[ -z "${myb_active}" ] && myb_active=0
+		[ ${clonos} -eq 1 -a ${clonos_active} -ne 1 ] && continue
+		[ ${myb} -eq 1 -a ${myb_active} -eq 0 ] && continue
+
+		echo "${x}"
+	done | ${SORT_CMD} -k1 -n | while read _line; do
+		matched_profiles=$(( matched_profiles + 1 ))
+		eval $( echo "${_line}" )
+
+		_data="${N0_COLOR}${profile}|${type}"
+
+		[ ${show_iso} -eq 1 ] && _data="${_data}|${iso_img}"
+		[ ${myb} -eq 1 ] && _data="${_data}|${image}"
+		_data="${_data}|${name}${NORMAL}"
+
+		${ECHO} "${_data}"
+	done
+}
+
+show_json()
+{
+	local _current=0
+	local _matched_profiles=0
+	local _tmp_file=$( ${MKTEMP_CMD} )
+	local _data
+
+	trap "${RM_CMD} -f ${_tmp_file}" HUP INT ABRT BUS TERM EXIT
+
+	for profile_path in ${all_filtered_profile_path}; do
+		clonos_active=0
+		myb_active=0
+		iso_img=
+
+		x=$( get_vm_info "${profile_path}" "${vm_filter}" )
+		[ $? -ne 0 ] && continue
+
+		eval $( echo ${x} 2>&1 )
+
+		[ -z "${clonos_active}" ] && clonos_active=0
+		[ -z "${myb_active}" ] && myb_active=0
+
+		[ ${clonos} -eq 1 -a ${clonos_active} -eq 0 ] && continue
+		[ ${myb} -eq 1 -a ${myb_active} -eq 0 ] && continue
+		_matched_profiles=$(( _matched_profiles + 1 ))
+		echo "${x}" >> ${_tmp_file}
+	done
+
+	printf "["
+
+	${SORT_CMD} -k1 -n ${_tmp_file} | while read _line; do
+		eval $( echo "${_line}" )
+		_current=$(( _current + 1 ))
+
+		_data=" {\"name\": \"${name}\", \"profile\": \"${profile}\", \"type\": \"${type}\", \"default_jname\": \"${default_jname}\", \"imgsize\": \"${imgsize}\", \"imgsize_bytes\": ${imgsize_bytes}, \"imgsize_min\": \"${imgsize_min}\", \"imgsize_min_bytes\": ${imgsize_min_bytes}"
+
+		[ ${show_iso} -eq 1 ] && _data="${_data}, \"iso_img\": \"${iso_img}\""
+		[ ${myb} -eq 1 ] && _data="${_data}, \"image\": \"${image}\""
+
+		_data="${_data} }"
+
+#		if [ ${show_iso} -eq 0 ]; then
+#			printf " {\"name\": \"${name}\", \"profile\": \"${profile}\", \"type\": \"${type}\", \"default_jname\": \"${default_jname}\", \"imgsize\": \"${imgsize}\", \"imgsize_bytes\": ${imgsize_bytes}, \"imgsize_min\": \"${imgsize_min}\", \"imgsize_min_bytes\": ${imgsize_min_bytes} }"
+#		else
+#			printf " {\"name\": \"${name}\", \"iso_img\": \"${iso_img}\", \"profile\": \"${profile}\", \"type\": \"${type}\", \"default_jname\": \"${default_jname}\", \"imgsize\": \"${imgsize}\", \"imgsize_bytes\": ${imgsize_bytes}, \"imgsize_min\": \"${imgsize_min}\", \"imgsize_min_bytes\": ${imgsize_min_bytes} }"
+#		fi
+
+		#echo "${_data}"
+
+		if [ ${_current} -lt ${_matched_profiles} ] ; then
+			_data="${_data}, "
+		else
+			_data="${_data} "
+		fi
+
+		echo "${_data}"
+
+	done
+
+	echo "]"
+
+}
+
+
+## MAIN
+#src="cloud"
+#src="clonos"
+#src="iso"
+
+cloud=0
+iso=0
+
+# cloud or iso?
+vm_filter="^is_cloud="
+
+case "${src}" in
+	"cloud")
+		cloud=1
+		iso=0
+		;;
+	iso)
+		cloud=0
+		iso=1
+		;;
+	*)
+		err 1 "${N1_COLOR}${CBSD_APP}: unknown filter: ${src}, valid: ${N2_COLOR}'cloud', 'iso'${N0_COLOR}"
+esac
+
+all_filtered_profile_path=
+
+all_profile_path=$( get_all_profile_list )
+[ -z "${all_profile_path}" ] && err 0 "{}"
+
+# first pass: select for 'iso' or 'cloud'
+for profile_path in ${all_profile_path}; do
+	is_cloud=0
+
+	eval $( get_vm_info "${profile_path}" "${vm_filter}" )
+	[ $? -ne 0 ] && continue
+
+	[ -z "${is_cloud}" ] && is_cloud=0
+	[ ${cloud} -ne ${is_cloud} ] && continue
+
+	if [ -z "${all_filtered_profile_path}" ]; then
+		all_filtered_profile_path="${profile_path}"
+	else
+		all_filtered_profile_path="${all_filtered_profile_path} ${profile_path}"
+	fi
+done
+
+[ -z "${all_filtered_profile_path}" ] && err 0 "{}"
+
+#mandatory filter
+vm_filter="(^long_description=|^vm_profile=|^vm_os_type=|^clonos_active=|^is_template=|^is_cloud=|^imgsize=|^imgsize_min="
+
+if [ ${show_iso} -eq 1 ]; then
+	vm_filter="${vm_filter}|^iso_img=|^register_iso_name="
+fi
+
+if [ ${clonos} -eq 1 ]; then
+	vm_filter="${vm_filter}|^clonos_active="
+fi
+if [ ${myb} -eq 1 ]; then
+	vm_filter="${vm_filter}|^myb_image="
+fi
+
+vm_filter="${vm_filter}|^default_jailname=)"
+
+all_profiles=0
+for i in ${all_filtered_profile_path}; do
+	all_profiles=$(( all_profiles + 1 ))
+done
+
+matched_profiles=0
+
+case ${json} in
+	0)
+		show_plain | ${COLUMN_CMD} -t -s "|"
+		;;
+	1)
+		show_json
+		;;
+esac
+
+exit 0
