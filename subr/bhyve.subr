@@ -1304,9 +1304,9 @@ compile_bhyve_cpus_args()
 compile_pci_passthru_args()
 {
 	local ppt _i
-	local _pcislot_args=
+	local _pcislot_args= _class= pcislot_desc_tmp= pcislot_bus_tmp=
 
-	ppt=$( cbsdsqlro local SELECT ppt FROM bhyveppt WHERE jname=\"${jname}\" 2>/dev/null )
+	ppt=$( cbsdsqlro local "SELECT ppt FROM bhyveppt WHERE jname='${jname}'" 2>/dev/null )
 
 	[ -z "${ppt}" ] && return 0
 
@@ -1319,10 +1319,34 @@ compile_pci_passthru_args()
 
 	for _i in ${ppt}; do
 
+		_class=$( cbsdsqlro local "SELECT class FROM bhyveppt WHERE ppt='${_i}'" 2>/dev/null )
+
 		if ! next_pci_id -n passthru -d ${_i}; then
 			# no free pci bus
 			exit 0
 		fi
+
+		case "${_class}" in
+			display)
+				pcislot_desc_tmp=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pcislot_desc FROM pcibus WHERE pcislot_bus='2'" 2>/dev/null | ${AWK_CMD} '{printf $1}' )
+				if [ -n "${pcislot_desc_tmp}" ]; then
+					if [ "${pcislot_desc_tmp}" != "${_i}" ]; then
+						${ECHO} "${W1_COLOR}Warning: PPT class 'display' recommended for use on BUS2 (-s 2/0/0), but it already used by: ${N2_COLOR}${pcislot_desc_tmp}${N0_COLOR}"
+						${ECHO} "${W1_COLOR}Warning: it is recommended to reset the bus settings via: ${N2_COLOR}cbsd bpcibus jname=${jname} mode=reset${N0_COLOR}"
+					fi
+				else
+					# display ppt already exist in map?
+					pcislot_bus_tmp=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pcislot_bus FROM pcibus WHERE pcislot_desc='${_i}'" 2>/dev/null | ${AWK_CMD} '{printf $1}' )
+					if [ -n "${pcislot_bus_tmp}" ]; then
+						${ECHO} "${W1_COLOR}Warning: PPT class 'display' recommended for use on BUS2 (-s 2/0/0), but it already set to: ${N2_COLOR}${pcislot_bus_tmp}${N0_COLOR}"
+						${ECHO} "${W1_COLOR}Warning: it is recommended to reset the bus settings via: ${N2_COLOR}cbsd bpcibus jname=${jname} mode=reset${N0_COLOR}"
+					else
+						bhyve_pci_index=2
+					fi
+				fi
+				#echo "XXXXX>>>> ${bhyve_pci_index}"
+				;;
+		esac
 
 		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
 

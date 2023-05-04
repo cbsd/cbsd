@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-#v10.1.0
+#v13.2.3
 MYARG="mode"
 MYOPTARG="jname ppt rom"
 MYDESC="Manage bhyve ppt devices"
@@ -41,7 +41,9 @@ cbsd bset jname=XXX bhyve_wire_memory=1
 
 For Intel/AMD VM in GOP mode you may need an alternative UEFI/EDK2 ROM:
 
-/usr/local/cbsd/upgrade/patch/efigop.fd  ( use it as 'efi_firmware' in CBSD bhyve options ).
+/usr/local/cbsd/upgrade/patch/efigop.fd  ( use it as 'efi_firmware' in CBSD bhyve options ). To set:
+
+cbsd bset jname=XXX efi_firmware=/usr/local/cbsd/upgrade/patch/efigop.fd
 
 Additional notes for GOP/rom options:
 
@@ -58,14 +60,20 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}mode=${N0_COLOR} - action, available:
          - 'attach' - attach PPT to jname
          - 'detach' - detach PPT from jname;
+         - 'list'   - list of available PCI ID/devices and assigned/active PPT;
  ${N2_COLOR}ppt=${N0_COLOR}  - target PPT;
  ${N2_COLOR}rom=${N0_COLOR}  - path to rom, e.g: /path/to/gop.rom (see https://reviews.freebsd.org/D26209);
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd bhyve-ppt mode=list
+ # cbsd bhyve-ppt mode=list jname=windows1
  # cbsd bhyve-ppt mode=attach ppt=0/2/0 jname=vmname
  # cbsd bhyve-ppt mode=detach ppt=0/2/0 jname=vmname
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bpcibus --help
 
 "
 
@@ -74,6 +82,7 @@ oppt=
 orom=
 rom=
 ppt=
+jname=
 . ${cbsdinit}
 [ -z "${rom}" ] && rom="0"
 [ -n "${ppt}" ] && oppt="${ppt}"
@@ -82,31 +91,96 @@ ppt=
 . ${subrdir}/virtual.subr
 . ${system}
 
-device=$( ${PCICONF_CMD} -l | ${EGREP_CMD} -E "^ppt[0-9]+@" | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
+load_pci_devices()
+{
+	local _pciconf_list
 
-[ -z "${device}" ] && err 1 "${N1_COLOR}No such ppt devices${N0_COLOR}"
+	device=0
 
-for id in $( ${SEQ_CMD} 0 ${device} ); do
-	eval $( ${PCICONF_CMD} -vl | ${GREP_CMD} -A4 ^ppt${id}@pci | ${GREP_CMD} -E "^ppt${id}@|vendor|device" | while read a; do
-		prefix=$( substr --pos=0 --len=6 --str="$a" )
+	ppt_id=0
+	device_id=0
+	ppt_data=0
+
+	eval $( ${PCICONF_CMD} -vl 2>/dev/null | ${TR_CMD} "\t" " " | while read a; do
+		prefix=$( substr --pos=0 --len=3 --str="${a}" )
 		case "${prefix}" in
-			vendor)
-				value=$( echo "${a}" | ${CUT_CMD} -d = -f 2 | ${TR_CMD} -d "'" )
-				echo "vendor${id}=\"${value}\""
+			ven|dev|cla|sub)
+				ppt_data=0
+				str=$( echo "${a}" | ${TR_CMD} -d "'" )
+				len=$( strlen "${str}" )
+				strpos --str="${str}" --search="="
+				pos=$?
+				[ ${pos} -eq 0 ] && continue		# without "XXX = YYY"
+				pos=$(( pos + 3 ))
+				value=$( substr --pos=${pos} --len="${len}" --str="${str}" )
+				case "${prefix}" in
+					ven)
+						param="vendor"
+						;;
+					dev)
+						param="device"
+						;;
+					cla)
+						param="class"
+						;;
+					sub)
+						param="subclass"
+						;;
+				esac
+				if [ ${ppt_data} -eq 0 ]; then
+					echo "${param}${device_id}=\"${value}\""
+				else
+					echo "${param}${ppt_id}=\"${value}\""
+				fi
+				continue
 				;;
-			device)
-				value=$( echo "${a}" | ${CUT_CMD} -d = -f 2 | ${TR_CMD} -d "'" )
-				echo "device${id}=\"${value}\""
-				;;
-			ppt*)
-				value=$( echo  "${a}" | ${AWK_CMD} '{printf $1}' | ${TR_CMD} -d "a-z@" | ${CUT_CMD} -d : -f 2-4 | ${TR_CMD} ":" "/" )
-				echo "ppt${id}=\"${value}\""
-				;;
-			*)
+			ppt)
+				ppt_data=1
 				;;
 		esac
+
+		strpos --str="${a}" --search=" "
+		len=$?
+		# no spaces? wrong rec
+		[ ${len} -eq 0 ] && continue
+
+		id_data=$( substr --pos=0 --len="${len}" --str="${a}" )
+		#echo ">> [$id_data]"
+
+		prefix=$( substr --pos=0 --len=3 --str="${id_data}" )
+
+		case "${prefix}" in
+			ppt)
+				ppt_id=$(( ppt_id + 1 ))
+				;;
+			*)
+				device_id=$(( device_id + 1 ))
+				;;
+		esac
+
+		strpos --str="${id_data}" --search="@"
+		pos=$?
+		# no '@' wrong rec
+		[ ${len} -eq 0 ] && continue
+
+		driver=$( substr --pos=0 --len=${pos} --str="${id_data}" | ${TR_CMD} -d "[0-9]+" )
+		driver_id=$( substr --pos=0 --len=${pos} --str="${id_data}" | ${TR_CMD} -d "[a-z]+" )
+
+		echo "driver${device_id}=\"${driver}\""
+		echo "driver_id${device_id}=\"${driver_id}\""
+
+		len=$( strlen --str="${id_data}" )
+		pos=$(( pos + 2 ))
+		pci=$( substr --pos=${pos} --len="${len}" --str="${id_data}" )
+		#echo "PCI [${pci}]"
+		pci_ppt=$( echo ${pci} | ${CUT_CMD} -d : -f 2-4 | ${TR_CMD} ":" "/" )
+
+		echo "pci_ppt${device_id}=\"${pci_ppt}\""
+		echo "device_id=\"${device_id}\""
+		echo "ppt_id=\"${ppt_id}\""
+#	done
 	done )
-done
+}
 
 # export $device, $ppt, $vendor variable
 # $1 - as ppt, e.g: 5/1/0
@@ -119,22 +193,30 @@ load_ppt()
 	device=
 	ppt=
 	vendor=
+	class=
+	subclass=
 
 	local tmp_ppt
 
-	for id in $( ${SEQ_CMD} 0 ${device} ); do
+	for id in $( ${SEQ_CMD} 1 ${device_id} ); do
 		tmp_ppt=
 
-		eval tmp_ppt="\$ppt${id}"
+		eval tmp_ppt="\$pci_ppt${id}"
 		[ -z "${tmp_ppt}" ] && continue
 
 		if [ "${my_ppt}" = "${tmp_ppt}" ]; then
 			eval device="\$device${id}"
 			eval vendor="\$vendor${id}"
+			eval class="\$class${id}"
+			eval subclass="\$subclass${id}"
+			export ppt="${my_ppt}"
+
+			return 0
 		fi
 	done
 
 	export ppt="${my_ppt}"
+	return 0
 }
 
 # export tmp_jname as linked jail to $ppt
@@ -155,36 +237,159 @@ init_ppt_action()
 	load_ppt "${ppt}"
 	[ -z "${ppt}" ] && err 1 "${N1_COLOR}No such ppt: ${N2_COLOR}${ppt}${N0_COLOR}"
 
-	tmp_jname=$( cbsdsqlro local SELECT jname FROM bhyveppt WHERE ppt=\"${ppt}\" 2>/dev/null )
+	tmp_jname=$( cbsdsqlro local "SELECT jname FROM bhyveppt WHERE ppt='${ppt}'" 2>/dev/null )
+	return 0
 }
 
+
+show_pci_devices()
+{
+	local _count=1
+
+	${ECHO} "${H1_COLOR} PCI | DRIVER | DEVICE | CLASS | SUBCLASS | VENDOR ${N0_COLOR}"
+
+	for id in $( ${SEQ_CMD} 1 ${device_id} ); do
+		driver=
+		eval driver="\$driver${id}"
+
+		[ "${driver}" = "ppt" ] && continue
+
+		device=
+		vendor=
+		pci_ppt=
+		class=
+
+		eval device="\$device${id}"
+		eval vendor="\$vendor${id}"
+		eval pci_ppt="\$pci_ppt${id}"
+		eval class="\$class${id}"
+		eval subclass="\$subclass${id}"
+
+		[ -z "${device}" ] && device="-"
+		[ -z "${vendor}" ] && vendor="-"
+		[ -z "${pci_ppt}" ] && pci_ppt="-"
+		[ -z "${driver}" ] && driver="-"
+		[ -z "${class}" ] && class="-"
+		[ -z "${subclass}" ] && subclass="-"
+
+		STR_COLOR="${N2_COLOR}"
+
+		case "${class}" in
+			display)
+				STR_COLOR="${H1_COLOR}"
+				;;
+			network|multimedia|"serial bus")
+				STR_COLOR="${H2_COLOR}"
+				;;
+		esac
+
+		case "${driver}" in
+			none)
+				STR_COLOR="${W1_COLOR}"
+				;;
+		esac
+
+		${ECHO} "${STR_COLOR}${pci_ppt} | ${driver} | (${_count}) ${device} | ${class} | ${subclass} | ${vendor} ${N0_COLOR}"
+
+		_count=$(( _count + 1 ))
+		[ -z "${ppt}" ] && continue
+	done
+	return 0
+}
+
+show_ppt_devices()
+{
+	local _count=1
+	local _jail_only= _ppt_count=0
+
+	_jail_only="${1}"
+
+	if [ -z "${_jail_only}" ]; then
+		${ECHO} "${H1_COLOR} PCI | DRIVER | DEVICE | CLASS | SUBCLASS | VM | VENDOR ${N0_COLOR}"
+	else
+		_ppt_count=$( cbsdsqlro local "SELECT COUNT(ppt) FROM bhyveppt WHERE jname='${_jail_only}'" 2>/dev/null | ${AWK_CMD} '{printf $1}' )
+		[ -z "${_ppt_count}" ] && return 0
+		[ "${_ppt_count}" = "0" ] && return 0
+		${ECHO} "${H1_COLOR} PCI | DEVICE | CLASS | SUBCLASS | VENDOR ${N0_COLOR}"
+	fi
+
+	for id in $( ${SEQ_CMD} 1 ${device_id} ); do
+		driver=
+
+		eval driver="\$driver${id}"
+
+		device=
+		vendor=
+		pci_ppt=
+		class=
+
+		[ "${driver}" != "ppt" ] && continue
+
+		eval device="\$device${id}"
+		eval vendor="\$vendor${id}"
+		eval pci_ppt="\$pci_ppt${id}"
+		eval class="\$class${id}"
+		eval subclass="\$subclass${id}"
+
+		[ -z "${device}" ] && device="-"
+		[ -z "${vendor}" ] && vendor="-"
+		[ -z "${pci_ppt}" ] && pci_ppt="-"
+		[ -z "${driver}" ] && driver="-"
+		[ -z "${class}" ] && class="-"
+		[ -z "${subclass}" ] && subclass="-"
+
+		STR_COLOR="${N2_COLOR}"
+
+		case "${class}" in
+			display)
+				STR_COLOR="${H1_COLOR}"
+				;;
+			network|multimedia|"serial bus")
+				STR_COLOR="${H2_COLOR}"
+				;;
+		esac
+
+		case "${driver}" in
+			none)
+				STR_COLOR="${W1_COLOR}"
+				;;
+		esac
+
+		jname=$( cbsdsqlro local "SELECT jname FROM bhyveppt WHERE ppt='${pci_ppt}'" 2>/dev/null )
+		if [ -z "${jname}" -o "${jname}" = "0" ]; then
+			jname="-"
+		else
+			jname="${H3_COLOR}${jname}${STR_COLOR}"
+		fi
+
+		if [ -z "${_jail_only}" ]; then
+			${ECHO} "${STR_COLOR}${pci_ppt} | ${driver} | (${_count}) ${device} | ${class} | ${subclass} | ${jname} | ${vendor} ${N0_COLOR}"
+		else
+			${ECHO} "${STR_COLOR}${pci_ppt} | (${_count}) ${device} | ${class} | ${subclass} | ${vendor} ${N0_COLOR}"
+		fi
+
+		_count=$(( _count + 1 ))
+		[ -z "${ppt}" ] && continue
+	done
+	return 0
+}
+
+
+ppt_id=0
+device_id=0
+load_pci_devices
+
+### MAIN
 case "${mode}" in
-	list)
-		for id in $( ${SEQ_CMD} 0 ${device} ); do
-			ppt=
-			device=
-			vendor=
-			rom=
-			jname=0
-
-			eval ppt="\$ppt${id}"
-			[ -z "${ppt}" ] && continue
-
-			eval device="\$device${id}"
-			eval vendor="\$vendor${id}"
-			eval rom="\$rom${id}"
-
-			jname=$( cbsdsqlro local SELECT jname FROM bhyveppt WHERE ppt=\"${ppt}\" 2>/dev/null )
-			[ -z "${jname}" -o "${jname}" = "0" ] && jname="\-"
-			[ -z "${rom}" -o "${rom}" = "0" ] && rom="\-"
-			[ -n "${ppt}" ] && echo "${ppt} : ${device} : ${vendor} : ${jname}"
-		done
-		;;
 	attach)
 		init_ppt_action
 		[ -n "${tmp_jname}" -a "${tmp_jname}" != "0" ] && err 1 "${N1_COLOR}ppt already used by: ${N2_COLOR}${tmp_jname}${N1_COLOR}. Please detach first${N0_COLOR}"
 		[ -n "${orom}" ] && rom="${orom}"
-		cbsdsqlrw local "INSERT INTO bhyveppt ( ppt, device, vendor, jname, rom ) VALUES ( \"${ppt}\", \"device\", \"${vendor}\", \"${jname}\", \"${rom}\" )"
+
+		[ -z "${class}" ] && class="0"
+		[ -z "${subclass}" ] && subclass="0"
+
+		cbsdsqlrw local "INSERT INTO bhyveppt ( ppt, device, vendor, jname, rom, class, subclass ) VALUES ( '${ppt}', 'device', '${vendor}', '${jname}', '${rom}', '${class}', '${subclass}' )"
 		err 0 "${N1_COLOR}Attached${N0_COLOR}"
 		;;
 	detach)
@@ -192,8 +397,30 @@ case "${mode}" in
 
 		[ -z "${tmp_jname}" -a "${tmp_jname}" = "0" ] && err 1 "${N1_COLOR}ppt is not attached: ${N2_COLOR}${ppt}${N1_COLOR}"
 
-		cbsdsqlrw local "DELETE FROM bhyveppt WHERE ppt=\"${ppt}\""
+		cbsdsqlrw local "DELETE FROM bhyveppt WHERE ppt='${ppt}'"
 		err 0 "${N1_COLOR}Detached${N0_COLOR}"
+		;;
+	list)
+
+		if [ -z "${jname}" ]; then
+			${ECHO} "${H2_COLOR}Host PCI Bus (${device_id}):${N0_COLOR}"
+			echo
+			show_pci_devices | ${COLUMN_CMD} -t -s "|"
+		fi
+
+		if [ ${ppt_id} -ne 0 ]; then
+			if [ -z "${jname}" ]; then
+				echo
+				${ECHO} "${H2_COLOR}Configured PCI Passthru devices (${ppt_id}):${N0_COLOR}"
+			else
+				${ECHO} "${N1_COLOR}Configured PCI Passthru devices (${ppt_id}) for ${N2_COLOR}${jname}:${N0_COLOR}"
+			fi
+			echo
+			show_ppt_devices "${jname}" | ${COLUMN_CMD} -t -s "|"
+			echo
+		fi
+		;;
+	scan)
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"

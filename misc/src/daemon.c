@@ -40,10 +40,9 @@ static void restrict_process(const char * /*user*/);
 static int wait_child(pid_t pid, sigset_t *mask);
 static void usage(void);
 int touch(char * /*mypath*/);
+int daemon(int nochdir, int noclose);
 
-int
-daemon(nochdir, noclose)
-int nochdir, noclose;
+int daemon(int nochdir, int noclose)
 {
 	struct sigaction osa;
 	struct sigaction sa;
