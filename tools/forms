@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.17
 MYARG=""
-MYOPTARG="bootstrap config debug_form export formfile group header index inter jname module out table updcol"
+MYOPTARG="bootstrap config debug_form export formfile group groupname header index inter jname module out table updcol"
 MYDESC="Assistant for configuring containers/services, TUI/CLI"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -80,6 +80,7 @@ if [ "${1}" != "--help" -a "${1}" != "--args" ]; then
 	fi
 fi
 
+groupname=
 debug_form=0
 config="forms_env.conf"
 oupdcol=
@@ -96,6 +97,7 @@ done
 [ -z "${updcol}" ] && updcol="new"
 [ -n "${export}" ] && oexport="${export}"
 [ -z "${export}" ] && export="stdout"
+[ -n "${groupname}" ] && ogroupname="${groupname}"
 
 . ${subrdir}/settings-tui.subr
 . ${dialog}
@@ -338,22 +340,142 @@ reload_forms_full()
 }
 
 
+# INDEX (namespace)
+get_group_id()
+{
+	local _new _group_id _new_group_id
+
+	while getopts "a:g:" opt; do
+		case "${opt}" in
+			a) action="${OPTARG}" ;;
+			g) groupname="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ ! -r "${formfile}" ]; then
+		echo "get_group_id: formfile not readable: ${formfile}"
+		return 1
+	fi
+
+	if [ -z "${action}" ]; then
+		echo "get_group_id: formfile not readable: ${formfile}"
+		return 1
+	fi
+
+	_new_group_id=$( ${SQLITE3_CMD} ${formfile} "SELECT group_id FROM forms ORDER BY group_id DESC LIMIT 1" )
+	#echo "${SQLITE3_CMD} ${formfile} \"SELECT group_id FROM forms ORDER BY group_id DESC LIMIT 1\"" > /tmp/forms.txt
+	#echo "N: ${_new_group_id}" >> /tmp/forms.txt
+
+	if [ -z "${_new_group_id}" ]; then
+		printf "get_group_id: empty new_group_id: SELECT group_id FROM forms WHERE groupname = '${groupname}'"
+		return 1
+	fi
+
+	case "${action}" in
+		add|create)
+			_group_id=$(( _new_group_id + 1 ))
+			;;
+		del*|remove)
+			_group_id=${_new_group_id}
+			;;
+	esac
+
+	if [ -z "${_group_id}" ]; then
+		echo "get_group: empty _group_id: ${formfile}"
+		return 1
+	fi
+
+	printf "${_group_id}"
+}
+
+get_order_id()
+{
+	local _new _order_id _new_order_id
+
+	while getopts "a:g:" opt; do
+		case "${opt}" in
+			a) action="${OPTARG}" ;;
+			g) groupname="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	if [ ! -r "${formfile}" ]; then
+		echo "get_order_id: formfile not readable: ${formfile}"
+		return 1
+	fi
+
+	if [ -z "${action}" ]; then
+		echo "get_order_id: formfile not readable: ${formfile}"
+		return 1
+	fi
+
+	_new_order_id=$( ${SQLITE3_CMD} ${formfile} "SELECT order_id FROM forms WHERE groupname = '${groupname}' ORDER BY order_id DESC LIMIT 1" )
+#	echo "${SQLITE3_CMD} ${formfile} \"SELECT order_id FROM forms WHERE groupname = '${groupname}' ORDER BY order_id DESC LIMIT 1\"" >> /tmp/forms.txt
+#	echo "N: ${_new_order_id}" >> /tmp/forms.txt
+
+	if [ -z "${_new_order_id}" ]; then
+		printf "get_order_id: empty new_order_id: SELECT order_id FROM forms WHERE groupname = '${groupname}'"
+		return 1
+	fi
+
+	case "${action}" in
+		add|create)
+			_order_id=$(( _new_order_id + 1 ))
+			;;
+		del*|remove)
+			_order_id=${_new_order_id}
+			;;
+	esac
+
+	if [ -z "${_order_id}" ]; then
+		echo "get_order: empty _order_id: ${formfile}"
+		return 1
+	fi
+
+	printf "${_order_id}"
+}
+
 group_add()
 {
-	local _config _file _order_id
+	local _config= _file= _group_id= _order_id= _res= _ret=
 
-	while getopts "c:o:" opt; do
+	while getopts "c:g:o:" opt; do
 		case "${opt}" in
 			c) _config="${OPTARG}" ;;
+			g) _group_id="${OPTARG}" ;;
 			o) _order_id="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
 
-	_file="${distmoduledir}/forms.d/${module}/custom_${_config}.sh"
+	# index/sequence
+	if [ -z "${_group_id}" ]; then
+		_res=$( get_group_id -a add -g ${_config} 2>&1 )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${_res}${N0_COLOR}"
+		_group_id="${_res}"
+	fi
 
+	if [ -z "${_order_id}" ]; then
+		_res=$( get_order_id -a add -g ${_config} 2>&1 )
+		_ret=$?
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${_res}${N0_COLOR}"
+		_order_id="${_res}"
+	fi
+
+	_file="${distmoduledir}/forms.d/${module}/custom_${_config}.sh"
 	[ ! -x ${_file} ] && err 1 "${N1_COLOR}forms not support for dynamic data, no such: ${N2_COLOR}${_file}${N0_COLOR}"
-	${_file} -a add -o ${_order_id} -f ${formfile}
+	#echo "${_file} -a add -i ${_group_id} -o ${_order_id} -f ${formfile}"
+
+	_res=$( ${_file} -a add -i ${_group_id} -o ${_order_id} -f ${formfile} 2>&1 )
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		err 1 "${N1_COLOR}${CBSD_APP} error: group_add: ${_res}${N0_COLOR}"
+	fi
+
+	return 0
 }
 
 # $1 - overvrite index
@@ -398,7 +520,7 @@ get_helper_value()
 			return 0
 		fi
 		#echo "XATTR: ${_xattr} g:${_group_id} ${mtag}/${VAL}"
-		#group_add -c "${mtag}" -o "${VAL}"
+		#group_add -c "${mtag}" -g "${VAL}"
 		${SQLITE3_CMD} ${formfile} <<EOF
 BEGIN TRANSACTION;
 DELETE FROM forms WHERE group_id = '${_group_id}';
@@ -449,7 +571,8 @@ EOF
 		group_add)
 			# add button
 			# echo "${distmoduledir}/forms.d/${module}/initforms.sh"
-			group_add -c "${mtag}" -o "${VAL}"
+			#group_add -c "${mtag}" -g "${VAL}"
+			group_add -c "${mtag}"
 			reload_forms_full
 			;;
 		group_del)
@@ -718,7 +841,9 @@ done
 # before with_bootstrap exit
 case "${group}" in
 	add)
-		group_add
+		groupname="${ogroupname}"
+		[ -z "${groupname}" ] && err 1 "${N1_COLOR}empty groupname= for group=add${N0_COLOR}"
+		group_add -c "${groupname}"
 		;;
 	del)
 		group_del
