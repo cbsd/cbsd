@@ -1,7 +1,7 @@
 #!/bin/sh
 # external mounter script sample, e.g /root/ntfs-3g.sh
 # fstab line:
-# /root/ntfs-3g.sh        /usr/home/web/downloads external rw 0 0
+# /root/ntfs-3g.sh        /home/web/downloads external rw 0 0
 #
 usage()
 {
