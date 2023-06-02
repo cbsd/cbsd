@@ -2,7 +2,7 @@
 #v12.1.9
 CBSDMODULE="build"
 MYARG="dst"
-MYOPTARG="emulator qemu"
+MYOPTARG="emulator init_freebsd_pkg qemu"
 MYDESC="Misc fixes under base hier"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -14,7 +14,7 @@ ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}emulator${N0_COLOR}  - copy QEMU usermode files for chrooting,
              eg: emulator=qemu-arm;
-
+ ${N2_COLOR}init_freebsd_pkg     - init/bootstrap pkg(8) tools, 1 - yes (default;
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd preparebase dst=/usr/jails/basejail/base_amd64_amd64_14.0
@@ -24,6 +24,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
 . ${subrdir}/nc.subr
 qemu=
+init_freebsd_pkg=1
 . ${cbsdinit}
 
 [ -z "${qemu}" ] && qemu=1
@@ -67,70 +68,72 @@ esac
 hoster_ver=$( ${miscdir}/elf_tables --freebsdver /bin/sh )
 base_ver=$( ${miscdir}/elf_tables --freebsdver ${BASE_DIR}/bin/sh )
 
-if [ "${hoster_ver}" = "${base_ver}" ]; then
-	_pkg_bin="pkg"
+if [ "${init_freebsd_pkg}" = "1" ]; then
+	if [ "${hoster_ver}" = "${base_ver}" ]; then
+		_pkg_bin="pkg"
 
-	CBSDPATH="${PATH}"
+		CBSDPATH="${PATH}"
 
-	# temporary copy resolv.conf
-	_tmp_resolv=0
-	if [ ! -d ${dst}/etc/resolv.conf ]; then
-		_tmp_resolv=1
-		${CP_CMD} /etc/resolv.conf ${dst}/etc/resolv.conf
-	fi
+		# temporary copy resolv.conf
+		_tmp_resolv=0
+		if [ ! -r ${dst}/etc/resolv.conf ]; then
+			_tmp_resolv=1
+			${CP_CMD} /etc/resolv.conf ${dst}/etc/resolv.conf
+		fi
 
-	# temporary copy cert.pem ?
-	_tmp_cert=0
-	if [ ! -e ${dst}/etc/ssl/cert.pem ]; then
-		_tmp_resolv=1
-		${CP_CMD} /etc/ssl/cert.pem ${dst}/etc/ssl/cert.pem
-	fi
+		# temporary copy cert.pem ?
+		_tmp_cert=0
+		if [ ! -e ${dst}/etc/ssl/cert.pem ]; then
+			_tmp_resolv=1
+			${CP_CMD} /etc/ssl/cert.pem ${dst}/etc/ssl/cert.pem
+		fi
 
-	case "${platform}" in
-		DragonFly)
-			# Dfly use already bootstraped pkg, just copy from host system
-			if [ -x /usr/local/sbin/pkg-static ]; then
-				[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
-				${CP_CMD} -a /usr/local/sbin/pkg-static ${dst}/usr/local/sbin/
-				_pkg_bin="pkg-static"
-			fi
-			if [ -x /usr/local/sbin/pkg ]; then
-				[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
-				${CP_CMD} -a /usr/local/sbin/pkg ${dst}/usr/local/sbin/
-				_pkg_bin="pkg"
-			fi
-			# DFLY: no pkg.conf by default?
-			[ ! -d ${dst}/usr/local/etc/pkg ] && ${MKDIR_CMD} -p -m 0755 ${dst}/usr/local/etc/pkg
-			[ -d /usr/local/etc/pkg/repos ] && ${CP_CMD} -a /usr/local/etc/pkg/repos ${dst}/usr/local/etc/pkg/
-			${MOUNT_CMD} -t devfs devfs ${dst}/dev
-			${CHROOT_CMD} ${dst} /bin/sh <<EOF
+		case "${platform}" in
+			DragonFly)
+				# Dfly use already bootstraped pkg, just copy from host system
+				if [ -x /usr/local/sbin/pkg-static ]; then
+					[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
+					${CP_CMD} -a /usr/local/sbin/pkg-static ${dst}/usr/local/sbin/
+					_pkg_bin="pkg-static"
+				fi
+				if [ -x /usr/local/sbin/pkg ]; then
+					[ ! -d "${dst}/usr/local/sbin" ] && ${MKDIR_CMD} -m 0755 ${dst}/usr/local/sbin
+					${CP_CMD} -a /usr/local/sbin/pkg ${dst}/usr/local/sbin/
+					_pkg_bin="pkg"
+				fi
+				# DFLY: no pkg.conf by default?
+				[ ! -d ${dst}/usr/local/etc/pkg ] && ${MKDIR_CMD} -p -m 0755 ${dst}/usr/local/etc/pkg
+				[ -d /usr/local/etc/pkg/repos ] && ${CP_CMD} -a /usr/local/etc/pkg/repos ${dst}/usr/local/etc/pkg/
+				${MOUNT_CMD} -t devfs devfs ${dst}/dev
+				${CHROOT_CMD} ${dst} /bin/sh <<EOF
 export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} update -f || true
 EOF
-			${UMOUNT_CMD} ${dst}/dev
-			;;
-		*)
-			${MOUNT_CMD} -t devfs devfs ${dst}/dev
-			${CHROOT_CMD} ${dst} /bin/sh <<EOF
+				${UMOUNT_CMD} ${dst}/dev
+				;;
+			*)
+				${MOUNT_CMD} -t devfs devfs ${dst}/dev
+#env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} bootstrap -y -f || true
+				${CHROOT_CMD} ${dst} /bin/sh <<EOF
 export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
-env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} bootstrap -y -f || true
 env ASSUME_ALWAYS_YES=yes SIGNATURE_TYPE=none IGNORE_OSVERSION=yes timeout 30 ${_pkg_bin} update -f || true
 EOF
-			${UMOUNT_CMD} ${dst}/dev
-			;;
-	esac
+				${UMOUNT_CMD} ${dst}/dev
+				;;
+		esac
 
-	if [ ${_tmp_resolv} -eq 1 ]; then
-		${RM_CMD} -f ${dst}/etc/resolv.conf
+		if [ ${_tmp_resolv} -eq 1 ]; then
+			${RM_CMD} -f ${dst}/etc/resolv.conf
+		fi
+
+		if [ ${_tmp_cert} -eq 1 ]; then
+			${RM_CMD} -f ${dst}/etc/ssl/cert.pem
+		fi
+
+		# this is /usr/local/*, which is jail level, remove after bootstrap.
+		[ -x "${dst}/usr/local/sbin/pkg" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg"
+		[ -x "${dst}/usr/local/sbin/pkg-static" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg-static"
 	fi
-
-	if [ ${_tmp_cert} -eq 1 ]; then
-		${RM_CMD} -f ${dst}/etc/ssl/cert.pem
-	fi
-
-	# this is /usr/local/*, which is jail level, remove after bootstrap.
-	[ -x "${dst}/usr/local/sbin/pkg" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg"
-	[ -x "${dst}/usr/local/sbin/pkg-static" ] && ${RM_CMD} -f "${dst}/usr/local/sbin/pkg-static"
 fi
 
 if [ "${qemu}" = "1" ]; then
