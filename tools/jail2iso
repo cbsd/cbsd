@@ -2,9 +2,18 @@
 #v12.0.12
 # TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
-MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs"
-MYDESC="Convert jail into cd9660 ISO or memstick image"
+MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs \
+mfsbsd_hostname mfsbsd_interface mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers"
+
+MYDESC="Create bootable ISO/Memstick/MFSBSD image from CBSD jail"
+
 ADDHELP="
+Since the CBSD combines primitives for working with jail containers, virtual images and virtual machines, 
+the function of creating an image from a container suggests itself. Create and setup your own LiveCD envoronment from
+FreeBSD jail to build own distribution ( MFSBSD or cloud-init based instances );
+
+Create bootable ISO/Memstick image from CBSD jail;
+
 ${H3_COLOR}Description${N0_COLOR}:
 
  Hint: use ~cbsd/jails-system/\$jname/loader.conf file to extra loader.conf entries.
@@ -25,14 +34,31 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}media=${N0_COLOR}         - 'iso','memstick','livecd','bhyve' or 'mfs';
  ${N2_COLOR}name=${N0_COLOR}          - for alternative kernel name (GENERIC is default);
  ${N2_COLOR}nameserver=${N0_COLOR}    - set nameserver in image (freebsd only);
- ${N2_COLOR}nic=${N0_COLOR}           - specify network nic for ip4_addr;
+ ${N2_COLOR}nic=${N0_COLOR}           - specify network interface for ip4_addr, use 'auto' for 'ifconfig_DEFAULT=';
  ${N2_COLOR}prunelist=${N0_COLOR}     - path to prunelist, default is \${sharedir}/jail2iso-prunelist. 0 for disable;
  ${N2_COLOR}swapsize=${N0_COLOR}      - Allocate/configure SWAP partition to X size;
  ${N2_COLOR}timezone=${N0_COLOR}      - set timezone in image (freebsd only);
  ${N2_COLOR}vm_guestfs=${N0_COLOR}    - 'ufs' or 'zfs'. Default is: 'ufs';
 
+${H3_COLOR}Options for 'media=mfs'${N0_COLOR}:
+
+ ${N2_COLOR}mfsbsd_hostname${N0_COLOR}      - pass 'hostname' values to MFSBSD script;
+ ${N2_COLOR}mfsbsd_interface${N0_COLOR}     - pass configured interace name to MFSBSD script, possible values:
+                        - interface name, e.g.: 'vtnet0', 'xi0', 're1', 'igb2';
+                        - when 'auto', ifconfig_DEFAULT will be used;
+                        - when values sets to MAC (hwaddr), the interface will be found by MAC, e.g.: '58:9c:fc:10:45:5a';
+ ${N2_COLOR}mfsbsd_defaultrouter${N0_COLOR} - pass 'defaultrouter'/'ipv6_defaultrouter' values to MFSBSD script, e.g.:
+                        '10.0.0.1' or '2a05:3580:d811:802::1' or '10.0.0.1,2a05:3580:d811:802::1';
+ ${N2_COLOR}mfsbsd_ip_addr${N0_COLOR}       - pass IPv4 and/or IPv6 values for 'mfsbsd_interface', e.g.: '10.0.0.2' or 
+                        '2a05:3580:d811:802::2' or '10.0.0.2,2a05:3580:d811:802::2'. For DHCP use 'REALDHCP' values;
+ ${N2_COLOR}mfsbsd_nameservers${N0_COLOR}   - pass 'nameserver' to MFSBSD script, e.g.: '8.8.8.8' or 
+                        '9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9';
+
+
 ${H3_COLOR}Examples${N0_COLOR}:
 
+  # cbsd jail2iso jname=jail1 dstdir=/tmp media=mfs efi=1 mfsbsd_nameservers=8.8.8.8 mfsbsd_ip_addr=10.0.100.5 mfsbsd_defaultrouter=10.0.100.1 mfsbsd_interface=auto
+  # cbsd jail2iso jname=jail1 dstdir=/tmp media=mfs efi=1 mfsbsd_nameservers=8.8.8.8 mfsbsd_ip_addr=REALDHCP mfsbsd_interface=auto
   # cbsd jail2iso jname=micro1 dstdir=/tmp media=bhyve freesize=4m efi=1 ver=native vm_guestfs=zfs
   # cbsd jail2iso jname=livecd dstdir=/tmp media=mfs efi=1 ver=native ip4_addr=172.16.0.40 gw4=172.16.0.1 nameserver=8.8.8.8
   # cbsd jail2iso jname=livecd dstdir=/tmp media=iso freesize=4m efi=1 ver=native
@@ -64,12 +90,34 @@ name=
 oname=
 gw4=
 ip4_addr=
+
+mfsbsd_hostname=
+mfsbsd_interface=
+mfsbsd_defaultrouter=
+mfsbsd_ip_addr=
+mfsbsd_nameservers=
 . ${cbsdinit}
 
-[ -n "${ver}" ] && over="${ver}"
+if [ -z "${ver}" -o "${ver}" = "native" ]; then
+	# ver=$( ${SYSCTL_CMD} -n kern.osrelease | ${CUT_CMD} -d - -f 1 )
+	# we preffer uname as source, due to some environment have UNAME_r for overwrite version
+	tmpver=$( ${UNAME_CMD} -r )
+	ver=${tmpver%%-*}
+	unset tmpver
+	[ "${stable}" = "1" -a -z "${over}" ] && ver=${ver%%.*}
+fi
+
+over="${ver}"
 [ -n "${name}" ] && oname="${name}"
+if [ -z "${ip4_addr}" -a -n "${mfsbsd_ip_addr}" ]; then
+	ip4_addr="${mfsbsd_ip_addr}"
+fi
 [ -n "${ip4_addr}" ] && oip4_addr="${ip4_addr}"
 [ -n "${gw4}" ] && ogw4="${gw4}"
+
+if [ -n "${mfsbsd_ip_addr}" -a -z "${mfsbsd_interface}" ]; then
+	err 1 "${W1_COLOR}Warning: ${N1_COLOR}mfsbsd_ip_addr sets without ${N2_COLOR}mfsbsd_interface=${N0_COLOR}"
+fi
 
 oapplytpl="${applytpl}"
 
@@ -240,7 +288,7 @@ epilogue_img()
 {
 	local _rootfs="${1}"
 	[ -z "${_rootfs}" -a ! -d "${_rootfs}" ] && return 0
-	[ -z "${nic}" ] && nic="DEFAULT"
+	[ "${nic}" = "auto" ] && nic="DEFAULT"
 
 	${ECHO} "${N1_COLOR}Epilogue for ${N2_COLOR}${_rootfs}${N0_COLOR}"
 
@@ -249,29 +297,54 @@ epilogue_img()
 
 	${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
 
+	# MFS override?
 	[ -n "${host_hostname}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
-
 	[ -n "${oip4_addr}" ] && ip4_addr="${oip4_addr}"
 	[ -n "${ogw4}" ] && gw4="${ogw4}"
 
-	if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
-		case "${ip4_addr}" in
-			[Dd][Hh][Cc][Pp])
-				${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
-				;;
-			*)
-				${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="inet ${ip4_addr}" >/dev/null
-		esac
+	if [ "${media}" != "mfs" ]; then
+		if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
+			case "${ip4_addr}" in
+				[Dd][Hh][Cc][Pp])
+					${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
+					;;
+				*)
+					${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="inet ${ip4_addr}" >/dev/null
+					;;
+			esac
+		fi
+	else
+		${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf mfsbsd_enable="YES"
+
 	fi
 
-	[ -n "${gw4}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
+#		case "${mfsbsd_interface}" in
+#			auto)
+#				true
+#				;;
+#			*)
+#				# is_mac?
+#				if validate_hwaddr "${mfsbsd_interface}"; then
+#					mfsbsd_mac_boot="${mfsbsd_interface}"
+#					# force mfs_interface to any value, e.g.: 'auto'
+#					mfsbsd_interface="auto"
+#				fi
+#				;;
+#		esac
+#	fi
 
-	if [ -n "${nameserver}" ]; then
-		IFS=","
-		for i in ${nameserver}; do
-			echo "nameserver ${i}" >> ${_rootfs}/etc/resolv.conf
-		done
-		IFS=" "
+	if [ -z "${mfsbsd_defaultrouter}" ]; then
+		[ -n "${gw4}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
+	fi
+
+	if [ -z "${mfsbsd_nameservers}" ]; then
+		if [ -n "${nameserver}" ]; then
+			IFS=","
+			for i in ${nameserver}; do
+				echo "nameserver ${i}" >> ${_rootfs}/etc/resolv.conf
+			done
+			IFS=" "
+		fi
 	fi
 
 	if [ -n "${timezone}" ]; then
@@ -808,6 +881,7 @@ hw.usb.no_shutdown_wait="1"
 ipfw_load="YES"
 
 
+# CUSTOM
 mfs_load="YES"
 mfs_name="/mfsroot"
 mfs_type="mfs_root"
@@ -935,8 +1009,6 @@ mfs_load="YES"
 mfs_name="/mfsroot"
 mfs_type="mfs_root"
 
-#mfsbsd.autodhcp="YES"
-
 net.inet.ip.fw.default_to_accept="1"
 net.isr.maxqlimit="1000000"
 net.link.ifqmaxlen="16384"
@@ -950,8 +1022,67 @@ EOF
 		${MV_CMD} ${TMP_DIR}/mfsroot.gz ${TMP_DIR}/root
 	fi
 
-#	echo "${TMP_DIR}/root"
-#	read p
+	#
+	case "${mfsbsd_interface}" in
+		auto)
+			true
+			;;
+		*)
+			# is_mac?
+			if validate_hwaddr "${mfsbsd_interface}"; then
+				mfsbsd_mac_boot="${mfsbsd_interface}"
+				# force mfs_interface to any value, e.g.: 'auto'
+				mfsbsd_interface="auto"
+			fi
+			;;
+	esac
+
+	echo "#__MFS_START_DATA=1" >> ${TMP_DIR}/root/boot/loader.conf
+	if [ -n "${mfsbsd_hostname}" ]; then
+		echo "mfsbsd.hostname=\"${mfsbsd_hostname}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.hostname=\"\" ####################TPL#######################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+	if [ -n "${mfsbsd_interface}" ]; then
+		echo "mfsbsd.interface=\"${mfsbsd_interface}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.interface=\"\" ##################TPL#########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+	if [ -n "${mfsbsd_defaultrouter}" ]; then
+		echo "mfsbsd.defaultrouter=\"${mfsbsd_defaultrouter}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.defaultrouter=\"\" ##################TPL#########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+
+	if [ -n "${mfsbsd_mac_boot}" ]; then
+		echo "mfsbsd.mac_boot=\"${mfsbsd_mac_boot}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.mac_boot=\"\" #######################TPL########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+
+	if [ -n "${mfsbsd_ip_addr}" ]; then
+		echo "mfsbsd.ip_addr=\"${mfsbsd_ip_addr}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.ip_addr=\"\" ########################TPL########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+	if [ -n "${mfsbsd_nameservers}" ]; then
+		echo "mfsbsd.nameservers=\"${mfsbsd_nameservers}\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.nameservers=\"\" #######################TPL#########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+	if [ -n "${mfsbsd_autodhcp}" ]; then
+		echo "mfsbsd.autodhcp=\"YES\"" >> ${TMP_DIR}/root/boot/loader.conf
+	else
+		echo "mfsbsd.autodhcp=\"\" ######################TPL##########################" >> ${TMP_DIR}/root/boot/loader.conf
+	fi
+	[ -n "${mfsbsd_ifconfig_vtnet0}" ] && echo "mfsbsd.ifconfig_vtnet0=\"${mfsbsd_ifconfig_vtnet0}\"" >> ${TMP_DIR}/root/boot/loader.conf
+
+	echo "#__MFS_STOP_DATA=1" >> ${TMP_DIR}/root/boot/loader.conf
+
+	####
+	echo "LOADER>>>>"
+	cat ${TMP_DIR}/root/boot/loader.conf
+	echo "LOADER<<<<"
 
 	return 0
 }
@@ -1113,6 +1244,9 @@ case "${media}" in
 			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 		fi
 		[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
+
+		# ISO
+		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname}.iso -d ${TMP_DIR} -e ${efi}
 
 		${RM_CMD} -rf ${TMP_DIR} ${OTMP_DIR}
 		sync
