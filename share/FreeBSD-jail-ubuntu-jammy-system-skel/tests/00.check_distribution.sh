@@ -1,5 +1,5 @@
 #!/usr/local/bin/cbsd
-# Wrapper for creating Debian environvent via 2 phases:
+# Wrapper for creating Ubuntu environvent via 2 phases:
 # 1) Get distribution into skel dir from FTP
 # 2) Get distribution into data dir from skel dir
 
@@ -37,7 +37,7 @@ http://mirror.nl.datapacket.com/ubuntu/ \
 http://mirror.enzu.com/ubuntu/ \
 "
 
-rootfs_dir="${sharedir}/jail-ubuntu-focal-rootfs"
+rootfs_dir="${sharedir}/jail-ubuntu-jammy-rootfs"
 
 [ -z "${jname}" ] && err 1 "${N1_COLOR}empty jname${N0_COLOR}"
 [ ! -d ${rootfs_dir} ] && ${MKDIR_CMD} -p ${rootfs_dir}
@@ -65,27 +65,27 @@ if [ ! -f ${rootfs_dir}/bin/bash ]; then
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
 
 		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
-		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/focal/Contents-amd64.gz"
+		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/jammy/Contents-amd64.gz"
 		for i in ${FASTEST_SRC_MIRROR}; do
-			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}focal ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}jammy ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
 			/bin/sh <<EOF
-${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg focal ${rootfs_dir} ${i}
+${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg jammy ${rootfs_dir} ${i}
 EOF
 			ret=$?
 			[ ${ret} -eq 0 ] && break
 		done
 		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
 		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
-deb http://archive.ubuntu.com/ubuntu focal main restricted
-deb http://archive.ubuntu.com/ubuntu focal multiverse
-deb http://archive.ubuntu.com/ubuntu focal universe
-deb http://archive.ubuntu.com/ubuntu focal-backports main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu focal-updates main restricted
-deb http://archive.ubuntu.com/ubuntu focal-updates multiverse
-deb http://archive.ubuntu.com/ubuntu focal-updates universe
-deb http://security.ubuntu.com/ubuntu focal-security main restricted
-deb http://security.ubuntu.com/ubuntu focal-security multiverse
-deb http://security.ubuntu.com/ubuntu focal-security universe
+deb http://archive.ubuntu.com/ubuntu jammy main restricted
+deb http://archive.ubuntu.com/ubuntu jammy multiverse
+deb http://archive.ubuntu.com/ubuntu jammy universe
+deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted
+deb http://archive.ubuntu.com/ubuntu jammy-updates multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-updates universe
+deb http://security.ubuntu.com/ubuntu jammy-security main restricted
+deb http://security.ubuntu.com/ubuntu jammy-security multiverse
+deb http://security.ubuntu.com/ubuntu jammy-security universe
 EOF
 
 	else

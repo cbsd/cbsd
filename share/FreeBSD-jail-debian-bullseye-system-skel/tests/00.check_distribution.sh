@@ -63,29 +63,30 @@ if [ ! -f ${rootfs_dir}/bin/bash ]; then
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
 
+		# usr-is-merged -> usrmerge
 		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
 		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/bullseye/main/Contents-amd64.gz"
 		for i in ${FASTEST_SRC_MIRROR}; do
 			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}bullseye ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
 			/bin/sh <<EOF
-${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg bullseye ${rootfs_dir} ${i}
+${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt,init-system-helpers,iproute2,isc-dhcp-client --components main,contrib --arch=amd64 --no-check-gpg bullseye ${rootfs_dir} ${i}
 EOF
 			ret=$?
 			[ ${ret} -eq 0 ] && break
 		done
 		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
 		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
-deb http://ftp.debian.org/debian/ bullseye main
-deb-src http://ftp.debian.org/debian/ bullseye main
+deb [trusted=yes] http://ftp.debian.org/debian/ bullseye main
+deb-src [trusted=yes] http://ftp.debian.org/debian/ bullseye main
 
-deb http://security.debian.org/debian-security bullseye-security main contrib
-deb-src http://security.debian.org/debian-security bullseye-security main contrib
+deb [trusted=yes] http://security.debian.org/debian-security bullseye-security main contrib
+deb-src [trusted=yes] http://security.debian.org/debian-security bullseye-security main contrib
 
-deb http://ftp.debian.org/debian/ bullseye-updates main contrib
-deb-src http://ftp.debian.org/debian/ bullseye-updates main contrib
+deb [trusted=yes] http://ftp.debian.org/debian/ bullseye-updates main contrib
+deb-src [trusted=yes] http://ftp.debian.org/debian/ bullseye-updates main contrib
 
-#deb http://ftp.debian.org/debian/ bullseye-backports main
-#deb-src http://ftp.debian.org/debian/ bullseye-backports main
+#deb [trusted=yes] http://ftp.debian.org/debian/ bullseye-backports main
+#deb-src [trusted=yes] http://ftp.debian.org/debian/ bullseye-backports main
 
 EOF
 

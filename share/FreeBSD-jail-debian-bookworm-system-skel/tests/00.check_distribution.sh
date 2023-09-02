@@ -63,26 +63,28 @@ if [ ! -f ${rootfs_dir}/bin/bash ]; then
 
 	if getyesno "Shall i download distribution via deboostrap from ${SRC_MIRROR}?"; then
 
+# usr-is-merged -> usrmerge
+
 		${ECHO} "${N1_COLOR}Scanning for fastest mirror...${N0_COLOR}"
 		scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "dists/bookworm/main/Contents-amd64.gz"
 		for i in ${FASTEST_SRC_MIRROR}; do
-			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib ${H3_COLOR}bookworm ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${BASH_CMD} ${DEBOOTSTRAP_CMD} ${H5_COLOR}--include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt,init-system-helpers,iproute2,isc-dhcp-client --components main,contrib ${H3_COLOR}bookworm ${N1_COLOR}${rootfs_dir} ${i}${N0_COLOR}"
 			/bin/sh <<EOF
-${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt --components main,contrib --arch=amd64 --no-check-gpg bookworm ${rootfs_dir} ${i}
+${BASH_CMD} ${DEBOOTSTRAP_CMD} --include=openssh-server,locales,rsync,sharutils,psmisc,patch,less,apt,init-system-helpers,iproute2,isc-dhcp-client --components main,contrib --arch=amd64 --no-check-gpg bookworm ${rootfs_dir} ${i}
 EOF
 			ret=$?
 			[ ${ret} -eq 0 ] && break
 		done
 		printf "APT::Cache-Start 251658240;" > ${rootfs_dir}/etc/apt/apt.conf.d/00freebsd
 		${CAT_CMD} > ${rootfs_dir}/etc/apt/sources.list <<EOF
-deb http://deb.debian.org/debian bookworm main
-deb-src http://deb.debian.org/debian bookworm main
-deb http://security.debian.org/ bookworm/updates main
-deb-src http://security.debian.org/ bookworm/updates main
-deb http://deb.debian.org/debian bookworm-updates main
-deb-src http://deb.debian.org/debian bookworm-updates main
-deb http://deb.debian.org/debian bookworm-backports main
-deb-src http://deb.debian.org/debian bookworm-backports main
+deb [trusted=yes] http://deb.debian.org/debian bookworm main
+deb-src [trusted=yes] http://deb.debian.org/debian bookworm main
+deb [trusted=yes] http://security.debian.org/ bookworm/updates main
+deb-src [trusted=yes] http://security.debian.org/ bookworm/updates main
+deb [trusted=yes] http://deb.debian.org/debian bookworm-updates main
+deb-src [trusted=yes] http://deb.debian.org/debian bookworm-updates main
+deb [trusted=yes] http://deb.debian.org/debian bookworm-backports main
+deb-src [trusted=yes] http://deb.debian.org/debian bookworm-backports main
 EOF
 
 	else
@@ -104,5 +106,7 @@ if [ ! -r ${data}/bin/bash ]; then
 fi
 
 [ ! -f ${data}/bin/bash ] && err 1 "${N1_COLOR}No such ${data}/bin/bash"
+
+[ -d ${data}/etc ] && ${TRUNCATE_CMD} -s0 ${data}/etc/resolv.conf
 
 exit 0
