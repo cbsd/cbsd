@@ -1,39 +1,63 @@
 #!/usr/local/bin/cbsd
-#v10.0.3
-CBSDMODULE="build"
-MYARG=""
-MYOPTARG="ver arch target_arch maxjobs clean name stable basename stable destdir"
-MYDESC="Build kernel from sources"
-ADDHELP="10.0 for FreeBSD 10.0-R or ver=. for current.\n\
-stable=1 for RELENG_X\n\
-destdir= for alternative install path in root dir\n"
+#v11.1.16
+CBSDMODULE="sys"
+MYARG="destdir"
+MYOPTARG="arch basename name target_arch ver"
+MYDESC="Create base-in-pkg packages/distribution from buildworld/kernel"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Install FreeBSD base files to ~cbsd/basejail/ directory after 'cbsd buildworld'.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}arch=${N0_COLOR}              - <name>, use non-native architectures;
+ ${N2_COLOR}basename=${N0_COLOR}          - Prefix for directory name, can be used for jail as alternative base;
+ ${N2_COLOR}destdir=${N0_COLOR}           - <path> - pass as REPODIR variable, destination target directory;
+ ${N2_COLOR}target_arch=${N0_COLOR}       - <name>, build non-native target arch.
+ ${N2_COLOR}ver=${N0_COLOR}               - set version: '13.3', '14.1', '15';
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd packages destdir=/tmp/testbase
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd buildworld --help
+  cbsd bases --help
+  cbsd world --help
+  cbsd install-pkg-world --help
+
+"
 
 . ${subrdir}/nc.subr
+readconf buildworld.conf
+destdir=
+name=
 . ${cbsdinit}
+. ${subrdir}/universe.subr
 
 over="${ver}"
 oarch="${arch}"
 
+# By default ver=current version
 . ${subrdir}/build.subr
-readconf buildworld.conf
-. ${system}
-. ${subrdir}/universe.subr
-. ${subrdir}/emulator.subr
-
-destdir_arg="${destdir}"
-unset destdir # this variable used in init_kerneldir
 
 init_distcc
 init_notify
 init_target_arch
 init_srcdir
 init_supported_arch
-init_basedir
 
-LOCKFILE=${ftmpdir}/$( /sbin/md5 -qs ${MAKEOBJDIRPREFIX} ).lock
+if [ -n "${register_basename}" ]; then
+	init_basedir -b ${register_basename}
+else
+	init_basedir
+fi
+
+[ -z "${name}" ] && name="GENERIC"
 
 init_kerneldir
-
 kernel_conf="${platform}-kernel-${name}-${arch}-${ver}"
 
 if [ -f "${etcdir}/${kernel_conf}" ]; then
@@ -42,55 +66,53 @@ else
 	kernel_conf_path="${etcdir}/defaults/${kernel_conf}"
 fi
 
+[ ! -d "${destdir}" ] && ${MKDIR_CMD} -p ${destdir}
 [ ! -f "${kernel_conf_path}" ] && err 1 "${N1_COLOR}No such config ${kernel_conf_path} in: ${N2_COLOR}${etcdir}${N0_COLOR}"
 
-cp ${kernel_conf_path} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
-#makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD"
+${CP_CMD} ${kernel_conf_path} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
 
-## preparing chroot
-TMPDST="${basejaildir}/tempbase.$$"
-mkdir -p ${TMPDST}
+makelock ${BASE_DIR_LOCKFILE} "true"
 
-makelock $LOCKFILE "rm -f ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD && umount -f ${TMPDST}${MAKEOBJDIRPREFIX} && umount -f ${TMPDST}/dev && umount -f ${TMPDST}/${SRC_DIR} && ${CHFLAGS_CMD} -R noschg ${TMPDST} && /bin/rm -rf ${TMPDST}"
+# make base lock
+echo $$ > ${BASE_DIR_LOCKFILE}
 
-baserw=1
-populate_cdir ${BASE_DIR} ${TMPDST}
-cp ${kernel_conf_path} ${SRC_DIR}/sys/${arch}/conf/${name}.CBSD
+if [ -n "${register_basename}" ]; then
+	_basename_args="basename=\"${register_basename}\""
+else
+	_basename_args=
+fi
 
-# place for rewrite to mountbase from system.subr
-mkdir -p ${TMPDST}/${SRC_DIR}
-${MOUNT_NULL_CMD} -o ro ${SRC_DIR} ${TMPDST}/${SRC_DIR}
-mkdir -p ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
-mkdir -p ${TMPDST}${etcdir}
-[ -f "${__MAKE_CONF}" ] && cp ${__MAKE_CONF} ${TMPDST}${etcdir}
-[ -f "${SRCCONF}" ] && cp ${SRCCONF} ${TMPDST}${etcdir}
-echo "${MOUNT_NULL_CMD} ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}"
-${MOUNT_NULL_CMD} ${MAKEOBJDIRPREFIX} ${TMPDST}${MAKEOBJDIRPREFIX}
+[ ! -r ${SRC_DIR} ] && err 1 "${N1_COLOR}No such Makefile in: ${N2_COLOR}${SRC_DIR}${N0_COLOR}"
 
-#echo "${MOUNT_NULL_CMD} ${MAKEOBJDIRPREFIX}/usr/src/sys/GENERIC.CBSD ${TMPDST}${MAKEOBJDIRPREFIX}/usr/jails/src/src_12/src/sys/GENERIC.CBSD"
-#${MOUNT_NULL_CMD} ${MAKEOBJDIRPREFIX}/usr/src/sys/GENERIC.CBSD ${TMPDST}${MAKEOBJDIRPREFIX}/usr/jails/src/src_12/src/sys/GENERIC.CBSD
+# map amd64 -> x86_64 for DFLY
+if [ "${platform}" = "DragonFly" ]; then
+	case "${arch}" in
+		amd64)
+			build_arch="x86_64"
+			build_target_arch="x86_64"
+			;;
+	esac
+else
+	build_arch="${arch}"
+	build_target_arch="${target_arch}"
+fi
 
-mount -t devfs devfs ${TMPDST}/dev
-#
+cbsdlogger NOTICE ${CBSD_APP}: packages started: ${MAKE_CMD} -C ${SRC_DIR} packages DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch}
 
-#echo "/usr/sbin/chroot ${TMPDST} /usr/bin/make -C ${SRC_DIR} packages KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH=${target_arch}"
-#echo "/usr/sbin/chroot ${TMPDST} /usr/bin/make -C ${SRC_DIR} create-kernel-packages KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH=${target_arch}"
-#/usr/bin/make -C ${SRC_DIR} packages KERNCONF=${name}.CBSD
-#/usr/bin/make -C ${SRC_DIR} create-kernel-packages KERNCONF=${name}.CBSD
-#/usr/bin/make -C ${SRC_DIR} packagekernel KERNCONF=${name}.CBSD
-#echo "1"
-/usr/bin/make -C ${SRC_DIR} create-packages
+st_time=$( ${DATE_CMD} +%s )
 
-${ECHO} "New repository available via: ${N2_COLOR}${SRC_DIR}/src/repo/FreeBSD:12:amd64/latest"
+export REPODIR="${destdir}"
+echo "${MAKE_CMD} -C ${SRC_DIR} packages DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch} KERNCONF=${name}.CBSD"
+${MAKE_CMD} -C ${SRC_DIR} packages DESTDIR=${BASE_DIR} TARGET=${build_arch} TARGET_ARCH=${build_target_arch} KERNCONF=${name}.CBSD
+ret=$?
+[ $? -ne 0 ] && err 1 "${W1_COLOR}packages error: ${N2_COLOR}${ret}${N0_COLOR}"
 
-#/usr/bin/make -C ${SRC_DIR} sign-packages
-#/usr/bin/make -C ${SRC_DIR} package-pkg
+${RM_CMD} -f ${BASE_DIR_LOCKFILE}
 
-#read p
-#/usr/sbin/chroot ${TMPDST} /usr/bin/make -C /usr/src packages KERNCONF=${name}.CBSD ${NOCLEANUP} TARGET=${arch} TARGET_ARCH="${target_arch}"
+end_time=$( ${DATE_CMD} +%s )
+diff_time=$(( end_time - st_time ))
 
-#[ -n "${destdir_arg}" ] && KERNEL_DIR="${destdir_arg}"
-#[ -d "${KERNEL_DIR}/boot/kernel" ] && rm -rf ${KERNEL_DIR}/boot/kernel
-#[ ! -d "${KERNEL_DIR}/boot" ] && mkdir -p ${KERNEL_DIR}/boot
-#mv ${TMPDST}/boot/kernel ${KERNEL_DIR}/boot/kernel
-#/usr/bin/make -C ${SRC_DIR} installkernel TARGET=${arch} KERNCONF=${name}.CBSD DESTDIR=${KERNEL_DIR} TARGET_ARCH="${target_arch}"
+${ECHO} "${N1_COLOR}${CBSD_APP} to ${destdir} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+cbsdlogger NOTICE ${CBSD_APP}: packages to ${destdir} done in ${diff_time}
+
+exit 0
