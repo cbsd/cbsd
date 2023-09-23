@@ -3,7 +3,7 @@
 MYARG="action"
 # action=list,get,put
 # source=src,obj,base,kernel,img
-MYOPTARG="arch basename fetchonly fromfile inter mode name newjname quiet register_basename runasap sources stable target_arch url useconfig usehelpers ver"
+MYOPTARG="arch basename fetchonly fromfile inter mode name newjname quiet platform register_basename runasap sources stable target_arch url useconfig usehelpers ver"
 MYDESC="Working with CBSD Repository"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -24,6 +24,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}mode=${N0_COLOR}              - can be: 'check', 'upgrade';
  ${N2_COLOR}name=${N0_COLOR}              - specify name of resource (e.g. for sources=img);
  ${N2_COLOR}newjname=${N0_COLOR}          - for sources=img, for alternative jname;
+ ${N2_COLOR}platform=${N0_COLOR}          - target platform, default: 'FreeBSD';
  ${N2_COLOR}register_basename=${N0_COLOR} - register with alternative/custom basename;
  ${N2_COLOR}runasap=${N0_COLOR}           - 0,1: when 1 - run a jail immediately (atomic jcreate+jstart);
  ${N2_COLOR}sources=${N0_COLOR}           - can be: src, obj, base, bhyve, kernel, img, helpers, modules;
@@ -35,6 +36,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd repo action=list sources=img [ver=any]
  # cbsd repo action=get sources=img name=pgadmin4 usehelpers=1
+ # cbsd repo action=get sources=base arch=amd64 ver=bookworm platform=Linux
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -49,7 +51,9 @@ url=
 register_basename=
 fetchonly=
 runasap=
+platform=
 . ${cbsdinit}
+[ -n "${platform}" ] && oplatform="${platform}"
 [ -n "${runasap}" ] && orunasap="${runasap}"
 [ -n "${fetchonly}" ] && ofetchonly="${fetchonly}"
 [ -z "${fetchonly}" ] && fetchonly=0
@@ -143,6 +147,7 @@ register_fetched_base()
 		_basename_args="basename=\"${register_basename}\""
 	fi
 
+	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" source="${source}" ${_basename_args}
 }
 
@@ -162,6 +167,7 @@ register_fetched_source()
 		stable=0
 	fi
 
+	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_source ver=${ver} stable=${stable} platform="${platform}" source="${source}"
 }
 
@@ -231,6 +237,10 @@ getbase()
 				# https://hardenedbsd.org/content/mirrors
 				BSDBASE_DISTSITE="https://mirror.laylo.io/pub/hardenedbsd/${URL_HIER}/base.txz https://ci-01.nyi.hardenedbsd.org/pub/hardenedbsd/${URL_HIER}/base.txz"
 				;;
+			Linux)
+				URL_HIER="releases/Linux/${arch}/${ver}"
+				BSDBASE_DISTSITE="https://dl.bsdstore.ru/${URL_HIER}/base.txz"
+				;;
 		esac
 	fi
 
@@ -254,6 +264,8 @@ getbase()
 	init_target_arch
 
 	trap "cleanup_bases" HUP INT ABRT BUS TERM EXIT
+	[ -n "${oplatform}" ] && platform="${oplatform}"
+
 	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" ${_basename_args}
 
 	# CBSD QUEUE
@@ -289,7 +301,7 @@ getbase()
 			fi
 		done
 		if [ -r ${ARCHIVE} ]; then
-			printf "\n${N1_COLOR}Extracting base...${N0_COLOR}\n"
+			printf "\n${N1_COLOR}repo: extracting base...${N0_COLOR}\n"
 			[ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
 			cd ${BASE_DIR}
 			set -e
@@ -323,10 +335,21 @@ getbase()
 					fi
 				fi
 			fi
-			preparebase dst=${BASE_DIR} emulator=${emulator}
+
+			[ -n "${oplatform}" ] && platform="${oplatform}"
 			register_fetched_base ${MIRROR}
-			etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
-			etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+
+			case "${platform}" in
+				FreeBSD)
+					preparebase dst=${BASE_DIR} emulator=${emulator}
+					etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
+					etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+					;;
+				Linux)
+					echo "preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux"
+					preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux
+					;;
+			esac
 
 			# CBSD QUEUE
 			if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -403,8 +426,12 @@ getbase()
 		set +e
 	fi
 
-	etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
-	etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+	case "${platform}" in
+		FreeBSD)
+			etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
+			etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+			;;
+	esac
 
 	register_fetched_base ${MIRROR}
 	cleanup_bases
@@ -563,6 +590,7 @@ getsrc()
 	init_target_arch
 
 	trap "cleanup_srcs" HUP INT ABRT BUS TERM EXIT
+	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_src ver=${ver} platform="${platform}"
 
 	# CBSD QUEUE
@@ -614,7 +642,7 @@ getsrc()
 			# CBSD QUEUE
 			if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 				date=$( ${DATE_CMD} +%s )
-				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=source${ver}-${stable}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=source${ver}-${stable} platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
 				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=source${ver}-${stable} status=2
 			fi
 
@@ -763,6 +791,7 @@ getkernel()
 
 	init_target_arch
 	trap "cleanup_kernels" HUP INT ABRT BUS TERM EXIT
+	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_kernel arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
 
 	# CBSD QUEUE
@@ -811,7 +840,7 @@ getkernel()
 				baseelf=
 				baseelf=$( ${miscdir}/elf_tables --ver ${KERNEL_DIR}/bin/sh 2>/dev/null )
 				date=$( ${DATE_CMD} +%s )
-				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=kernel${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=kernel${ver}-${arch}-${stable} elf=${baseelf} platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
 				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=kernel${ver}-${arch}-${stable} status=2
 			fi
 

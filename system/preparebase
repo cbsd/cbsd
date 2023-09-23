@@ -2,7 +2,7 @@
 #v12.1.9
 CBSDMODULE="build"
 MYARG="dst"
-MYOPTARG="emulator init_freebsd_pkg qemu"
+MYOPTARG="emulator init_freebsd_pkg qemu platform"
 MYDESC="Misc fixes under base hier"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -25,42 +25,231 @@ ${H3_COLOR}Examples${N0_COLOR}:
 . ${subrdir}/nc.subr
 qemu=
 init_freebsd_pkg=1
+platform=
 . ${cbsdinit}
-
+[ -n "${platform}" ] && oplatform="${platform}"
 [ -z "${qemu}" ] && qemu=1
 
-[ ! -d "${dst}" ] && err 1 "No such dir: ${dst}"
-[ ! -d "${dst}/home" ] && ${MKDIR_CMD} -m 0755 "${dst}/home"
+prepare_debian()
+{
+	[ ! -r "${dst}/etc/apt/sources.list" ] && err 1 "${W1_COLOR}error: ${N1_COLOR}no such distribtion? file missing: ${N2_COLOR}${dst}/etc/apt/sources.list${N2_COLOR}"
 
+	. ${dst}/etc/os-release
+	if [ -z "${VERSION_CODENAME}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare_linux: unknown Debian distro, no such VERSION_CODENAME in: ${N2_COLOR}${dst}/etc/os-release${N0_COLOR}"
+		return 0
+	fi
+
+	if [ -n "${PRETTY_NAME}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare: ${N2_COLOR}${PRETTY_NAME}${N0_COLOR}"
+	else
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare: ${N2_COLOR}${VERSION_CODENAME}${N0_COLOR}"
+	fi
+
+	${GREP_CMD} -q '%%SRC_MIRROR%%' "${dst}/etc/apt/sources.list"
+	ret=$?
+
+	# already init
+	[ ${ret} -ne 0 ] && return 0
+
+SRC_MIRROR="\
+http://deb.debian.org \
+http://ftp.cn.debian.org \
+http://ftp.de.debian.org \
+http://ftp.uk.debian.org \
+http://ftp.us.debian.org \
+http://ftp.fi.debian.org \
+http://ftp.hk.debian.org \
+http://ftp.au.debian.org \
+http://ftp.fr.debian.org \
+http://ftp.ru.debian.org \
+http://ftp.uk.debian.org \
+"
+	. ${subrdir}/fetch.subr
+	scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "/debian/dists/${VERSION_CODENAME}/main/Contents-amd64.gz"
+
+	if [ -z "${FASTEST_SRC_MIRROR}" ]; then
+		FASTEST_SRC_MIRROR="http://deb.debian.org"
+	fi
+
+	for i in ${FASTEST_SRC_MIRROR}; do
+		_my_mirror="${i}"
+		break
+	done
+
+	${ECHO} "${N1_COLOR}Set mirror: ${N2_COLOR}${i}${N0_COLOR}"
+
+	${SED_CMD} -i '' \
+		-e "s#%%SRC_MIRROR%%#${_my_mirror}#g" \
+		-e "s#%%VERSION_CODENAME%%#${VERSION_CODENAME}#g" \
+		${dst}/etc/apt/sources.list
+
+	printf "APT::Cache-Start 251658240;" > ${dst}/etc/apt/apt.conf.d/00freebsd
+	${TRUNCATE_CMD} -s0 ${dst}/etc/resolv.conf
+}
+
+prepare_ubuntu()
+{
+	[ ! -r "${dst}/etc/apt/sources.list" ] && err 1 "${W1_COLOR}error: ${N1_COLOR}no such distribtion? file missing: ${N2_COLOR}${dst}/etc/apt/sources.list${N2_COLOR}"
+
+	. ${dst}/etc/os-release
+	if [ -z "${VERSION_CODENAME}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare_linux: unknown Ubuntu distro, no such VERSION_CODENAME in: ${N2_COLOR}${dst}/etc/os-release${N0_COLOR}"
+		return 0
+	fi
+
+	if [ -n "${PRETTY_NAME}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare: ${N2_COLOR}${PRETTY_NAME}${N0_COLOR}"
+	else
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare: ${N2_COLOR}${VERSION_CODENAME}${N0_COLOR}"
+	fi
+
+	${GREP_CMD} -q '%%SRC_MIRROR%%' "${dst}/etc/apt/sources.list"
+	ret=$?
+
+	# already init
+	[ ${ret} -ne 0 ] && return 0
+
+SRC_MIRROR="\
+http://archive.ubuntu.com \
+http://ru.archive.ubuntu.com \
+http://mirrors.dc.clear.net.ar \
+http://mirror.gsl.icu \
+https://ftp.belnet.be \
+http://mirror.uepg.br \
+https://mirrors.edge.kernel.org \
+https://mirrors.tuna.tsinghua.edu.cn \
+http://mirror.asergo.com \
+http://mirror.ubuntu.ikoula.com \
+http://mirror.dogado.de \
+http://ubuntu.mirror.garr.it \
+http://mirror.nl.datapacket.com \
+http://mirror.truenetwork.ru \
+http://mirror.cov.ukservers.com \
+http://mirror.enzu.com \
+http://mirror.pit.teraswitch.com \
+"
+	. ${subrdir}/fetch.subr
+	scan_fastest_mirror -s "${SRC_MIRROR}" -t 2 -u "/ubuntu/ls-lR.gz"
+
+	if [ -z "${FASTEST_SRC_MIRROR}" ]; then
+		FASTEST_SRC_MIRROR="http://archive.ubuntu.com"
+	fi
+
+	for i in ${FASTEST_SRC_MIRROR}; do
+		_my_mirror="${i}"
+		break
+	done
+
+	${ECHO} "${N1_COLOR}Set mirror: ${N2_COLOR}${i}${N0_COLOR}"
+
+	${SED_CMD} -i '' \
+		-e "s#%%SRC_MIRROR%%#${_my_mirror}#g" \
+		-e "s#%%VERSION_CODENAME%%#${VERSION_CODENAME}#g" \
+		${dst}/etc/apt/sources.list
+
+	printf "APT::Cache-Start 251658240;" > ${dst}/etc/apt/apt.conf.d/00freebsd
+	${TRUNCATE_CMD} -s0 ${dst}/etc/resolv.conf
+}
+
+prepare_rocky()
+{
+	[ ! -r "${dst}/etc/yum.repos.d/rocky.repo" ] && err 1 "${W1_COLOR}error: ${N1_COLOR}no such distribtion? file missing: ${N2_COLOR}${dst}/etc/yum.repos.d/rocky.repo${N2_COLOR}"
+
+	. ${dst}/etc/os-release
+	if [ -n "${VERSION}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare: ${N2_COLOR}${VERSION}${N0_COLOR}"
+	fi
+
+	${TRUNCATE_CMD} -s0 ${dst}/etc/resolv.conf
+}
+
+
+
+prepare_freebsd()
+{
+	[ ! -d "${dst}" ] && err 1 "No such dir: ${dst}"
+	[ ! -d "${dst}/home" ] && ${MKDIR_CMD} -m 0755 "${dst}/home"
+	[ ! -d "${dst}/usr/ports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/ports"
+	[ ! -d "${dst}/var/db/pkg" ] && ${MKDIR_CMD} -m 0755 "${dst}/var/db/pkg"
+	# https://cgit.freebsd.org/src/commit/?id=8955236a10137a1b645e642baf4eaca9c6460547
+
+	[ ! -h "${dst}/usr/bin/perl" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl"
+	[ ! -h "${dst}/usr/bin/perl5" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl5"
+	[ ! -h "${dst}/bin/zsh" ] && ${LN_CMD} -sf "/usr/local/bin/zsh" "${dst}/bin/zsh"
+	[ ! -h "${dst}/bin/bash" ] && ${LN_CMD} -sf "/usr/local/bin/bash" "${dst}/bin/bash"
+	[ -h "${dst}/compat" ] && ${RM_CMD} -f ${dst}/compat
+	[ ! -d "${dst}/compat" ] && ${MKDIR_CMD} -m 0755 "${dst}/compat"
+	[ ! -d "${dst}/usr/local" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/local"
+	# remove unecessary resources
+	[ -d "${dst}/usr/lib/debug" ] && ${RM_CMD} -rf ${dst}/usr/lib/debug
+}
+
+prepare_dragonflybsd()
+{
+	[ ! -d "${dst}/usr/dports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/dports"
+	[ ! -d "${dst}/usr/obj" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/obj"
+}
+
+prepare_linux()
+{
+	if [ ! -r ${dst}/etc/os-release ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP}: prepare_linux: unknown Linux distro, no such file: ${N2_COLOR}${dst}/etc/os-release${N0_COLOR}"
+		return 0
+	fi
+
+	. ${dst}/etc/os-release
+
+	# Debian sample
+	#PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+	#NAME="Debian GNU/Linux"
+	#VERSION_ID="12"
+	#VERSION="12 (bookworm)"
+	#VERSION_CODENAME=bookworm
+	#ID=debian
+	#HOME_URL="https://www.debian.org/"
+	#SUPPORT_URL="https://www.debian.org/support"
+	#BUG_REPORT_URL="https://bugs.debian.org/
+
+	if [ -n "${ID}" ]; then
+		case "${ID}" in
+			debian)
+				prepare_debian
+				return 0
+				;;
+			ubuntu)
+				prepare_ubuntu
+				return 0
+				;;
+			rocky)
+				prepare_rocky
+				return 0
+				;;
+			*)
+				;;
+		esac
+	fi
+
+	${ECHO} "${N1_COLOR}${CBSD_APP}: prepare_linux: unknown Linux distro, /etc/os-release does not contain: ${N2_COLOR}ID${N0_COLOR}"
+	return 0
+
+}
+
+
+[ -n "${oplatform}" ] && platform="${oplatform}"
 case "${platform}" in
 	DragonFly)
-		[ ! -d "${dst}/usr/dports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/dports"
-		[ ! -d "${dst}/usr/obj" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/obj"
+		prepare_dragonflybsd
+		;;
+	Linux)
+		init_freebsd_pkg=0
+		prepare_linux
 		;;
 	*)
-		[ ! -d "${dst}/usr/ports" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/ports"
+		prepare_freebsd
 		;;
 esac
 
-[ ! -d "${dst}/var/db/pkg" ] && ${MKDIR_CMD} -m 0755 "${dst}/var/db/pkg"
-
-# https://cgit.freebsd.org/src/commit/?id=8955236a10137a1b645e642baf4eaca9c6460547
-#if [ ! -h "${dst}/home" ]; then
-#	${LN_CMD} -sf "/home" "${dst}/usr/home"
-#fi
-
-[ ! -h "${dst}/usr/bin/perl" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl"
-[ ! -h "${dst}/usr/bin/perl5" ] && ${LN_CMD} -sf "/usr/local/bin/perl" "${dst}/usr/bin/perl5"
-[ ! -h "${dst}/bin/zsh" ] && ${LN_CMD} -sf "/usr/local/bin/zsh" "${dst}/bin/zsh"
-[ ! -h "${dst}/bin/bash" ] && ${LN_CMD} -sf "/usr/local/bin/bash" "${dst}/bin/bash"
-
-[ -h "${dst}/compat" ] && ${RM_CMD} -f ${dst}/compat
-[ ! -d "${dst}/compat" ] && ${MKDIR_CMD} -m 0755 "${dst}/compat"
-
-[ ! -d "${dst}/usr/local" ] && ${MKDIR_CMD} -m 0755 "${dst}/usr/local"
-
-# remove unecessary resources
-[ -d "${dst}/usr/lib/debug" ] && ${RM_CMD} -rf ${dst}/usr/lib/debug
 
 # Init PKG in basedir
 # offline?
@@ -151,6 +340,5 @@ if [ "${qemu}" = "1" ]; then
 	[ ! -r ${dst}/bin/${emulfile} ] && ${CP_CMD} -a ${emultest} ${dst}/bin/
 	[ ! -r ${dst}/bin/${emulfile} ] && err 1 "${N1_COLOR}${CBSD_APP}: unable to copy: ${N2_COLOR}cp ${emultest} ${dst}/bin/${N0_COLOR}"
 fi
-
 
 exit 0
