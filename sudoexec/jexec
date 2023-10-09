@@ -234,6 +234,7 @@ CBSD_EOF
 	done
 	exit ${_global_ret}
 else
+
 	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
@@ -260,25 +261,41 @@ else
 		CPUSET="${CPUSET_CMD} -c -l ${cpuset}"
 	fi
 
-	case "${ver}" in
-		"empty")
-			# is linux?
-			if [ -f "${data}/bin/bash" ]; then
-				LOGIN_STR="/bin/bash"
-			elif [ -f "${data}/bin/sh" ]; then
-				LOGIN_STR="/bin/sh"
-			else
-				err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
+	[ ${baserw} -eq 1 ] && path="${data}"
+
+	# is linux?
+	if [ -f "${path}/bin/bash" ]; then
+		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/bash )
+		LOGIN_STR="/bin/bash"
+	elif [ -f "${path}/bin/sh" ]; then
+		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/sh )
+		LOGIN_STR="/bin/sh"
+	elif [ -f ${path}/bin/busybox ]; then
+		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/busybox )
+		LOGIN_STR="/bin/sh"
+	else
+		err 1 "${N1_COLOR}Unknown environment, unable to jexec: ${path}${N0_COLOR}"
+	fi
+
+	case "${OSNAME}" in
+		freebsd)
+			[ -n "${ouser}" ] && user="${ouser}"
+			if [ "${user}" != "root" ]; then
+				# additional check for user existance
+				_res=$( ${PW_CMD} -R ${path} usershow ${user} 2>&1 ) || err 1 "${N1_COLOR}Unable to find user: ${_res}${N0_COLOR}"
 			fi
-			;;
-		*)
+
 			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
 				. ${subrdir}/emulator.subr
 				init_usermode_emul
-				LOGIN_STR="/bin/${emulator} /bin/sh"
+				# inherit emulator_flags
+				LOGIN_STR="/bin/${emulator} ${LOGIN_CMD} -f ${user}"
 			else
-				LOGIN_STR=
+				LOGIN_STR=""
 			fi
+			;;
+		*)
+			true
 			;;
 	esac
 
@@ -313,7 +330,7 @@ else
 ${cmd}
 CBSD_EOF
 			ret=$?
-		elif [ "${ver}" = "empty" ]; then
+		elif [ "${ver}" = "empty" -o "${OSNAME}" != "freebsd" ]; then
 			# non-FreeBSD env, (-U) + $user not supported ?
 			exec /usr/bin/nice -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} <<CBSD_EOF
 ${cmd}
