@@ -303,7 +303,6 @@ tolog(int level, const char *fmt, ...)
 	va_start(ap, fmt);
 	vsnprintf(msg, sizeof(msg), fmt, ap);
 	va_end(ap);
-
 	fp = fopen(log_file, "a");
 	if (!fp)
 		return 1;

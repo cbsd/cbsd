@@ -679,8 +679,7 @@ main(int argc, char **argv)
 	pthread_create(&threads[0], NULL, doWork, &numWork);
 
 	while (1) {
-		//		tolog(log_level,"main loop\n");
-
+		tolog(log_level,"main loop\n");
 		if ((OUTPUT_BEANSTALKD & output_flags) && bs_connected != 1) {
 			if (bs_socket != -1) {
 				bs_disconnect(bs_socket);
@@ -748,19 +747,26 @@ main(int argc, char **argv)
 			list_data();
 
 			if (c > 5) {
+				tolog(log_level,"PRUNE\n");
 				prune_inactive_env();
 				c = 0;
 			}
 
 			if (OUTPUT_BEANSTALKD & output_flags) {
+				tolog(log_level,"BS OUTPUT\n");
 				i = bs_stats_tube(bs_socket, "racct-system",
 				    &yaml);
 				if (yaml) {
+					tolog(log_level,"BS OUTPUT: YAML\n");
+
 					current_jobs_ready = get_bs_stats(yaml,
 					    current_jobs_ready_str);
 					current_waiting = get_bs_stats(yaml,
 					    current_waiting_str);
-					free(yaml);
+
+					// really needed?
+//					free(yaml);
+
 					if (current_jobs_ready < 0) {
 						tolog(log_level,
 						    "get_bs_stats failed for current-jobs-ready\n");
@@ -781,6 +787,8 @@ main(int argc, char **argv)
 					    jobs_max_all_items,
 					    current_waiting);
 				} else {
+					tolog(log_level,"BS OUTPUT: NO YAML\n");
+
 					current_waiting = -1;
 					current_jobs_ready = -1;
 					bs_connected = 0;
