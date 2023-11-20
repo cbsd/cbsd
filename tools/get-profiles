@@ -2,7 +2,7 @@
 # shellcheck shell=sh disable=2034,2154,1091
 #v13.0.8
 MYARG="src"
-MYOPTARG="clonos json myb show_iso vm_os_type warmed"
+MYOPTARG="clonos imgsize_max json myb show_iso vm_os_type vm_cpus_max vm_ram_max warmed"
 MYDESC="list of available profiles for virtual machine"
 CBSDMODULE="bhyve,xen"
 ADDHELP="
@@ -24,17 +24,27 @@ a sorted convenient list in plain text of JSON format.
 Since a large number of files are parsed in the process, it is recommended to 
 cache the output.
 
+Hint: you may want to override some (_max) parameters ( {imgsize,vm_ram,vm_cpus}_max= )
+ in the output, depending on your capabilities. To override globbaly per-host, you can 
+ use ~cbsd/etc/get-profiles.conf (sample: ~cbsd/etc/defaults/get-profiles.conf)
+ 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}clonos${N0_COLOR}     - show profiles marked as 'clonos_active=1' only;
- ${N2_COLOR}json${N0_COLOR}       -
- ${N2_COLOR}myb${N0_COLOR}        - show profiles who have 'myb_images=XXX' values only;
- ${N2_COLOR}show_iso${N0_COLOR}   - show image file used by profile;
- ${N2_COLOR}src${N0_COLOR}        - type of profile: 'iso' or 'cloud';
- ${N2_COLOR}vm_os_type${N0_COLOR} - show profiles for vm_os_type= OS type only, e.g.:
-               'freebsd','linux','openbsd','netbsd','dflybsd','windows','other',..;
- ${N2_COLOR}warmed${N0_COLOR}     - show only those profiles that already have an image installed 
-               on your system (warmed up);
+ ${N2_COLOR}clonos${N0_COLOR}        - show profiles marked as 'clonos_active=1' only;
+ ${N2_COLOR}imgsize_max${N0_COLOR}   - show this values in 'imgsize_max' field, e.g.: '100g'.
+                  when empty = inherit hoster datapool size;
+ ${N2_COLOR}json${N0_COLOR}          - json output when 'json=1', default: 0;
+ ${N2_COLOR}myb${N0_COLOR}           - show profiles who have 'myb_images=XXX' values only;
+ ${N2_COLOR}show_iso${N0_COLOR}      - show image file used by profile;
+ ${N2_COLOR}src${N0_COLOR}           - type of profile: 'iso' or 'cloud';
+ ${N2_COLOR}vm_os_type${N0_COLOR}    - show profiles for vm_os_type= OS type only, e.g.:
+                 'freebsd','linux','openbsd','netbsd','dflybsd','windows','other',..;
+ ${N2_COLOR}vm_cpus_max${N0_COLOR}   - show this values in 'cpus_max' field, e.g.: '16'.
+                  when empty = inherit hoster 'sysctl hw.ncpu' values;
+ ${N2_COLOR}vm_ram_max${N0_COLOR}    - show this values in 'cpus_max' field, e.g.: '16'.
+                  when empty = inherit hoster 'sysctl hw.ncpu' values;
+ ${N2_COLOR}warmed${N0_COLOR}        - show only those profiles that already have an image installed 
+                 on your system (warmed up);
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -49,6 +59,8 @@ ${H3_COLOR}See also${N0_COLOR}:
  cbsd qcreate --help
  cbsd fetch_iso --help
 
+ cat ~cbsd/etc/defaults/get-profiles.conf
+
 "
 
 . "${subrdir}"/nc.subr
@@ -60,7 +72,40 @@ myb=
 json=0
 show_iso=0
 warmed=0
+vm_ram_max=
+imgsize_max=
+vm_cpus_max=
+ovm_ram_max=
+oimgsize_max=
+ovm_cpus_max=
 . ${cbsdinit}
+
+[ -n "${vm_cpus_max}" ] && ovm_cpus_max="${vm_cpus_max}"
+[ -n "${vm_ram_max}" ] && ovm_ram_max="${vm_ram_max}"
+[ -n "${imgsize_max}" ] && oimgsize_max="${imgsize_max}"
+
+# custom overrides for _max values
+readconf get-profiles.conf
+
+[ -z "${vm_cpus_max}" ] && vm_cpus_max="${ncpu}"
+[ -z "${vm_ram_max}" ] && vm_ram_max="${physmem}"
+if [ -z "${imgsize_max}" ]; then
+	if [ -n "${cbsd_workdir}" ]; then
+		_workdir="${cbsd_workdir}"
+	else
+		_workdir="${workdir}"
+	fi
+	imgsize_max=$( ${DF_CMD} -k ${_workdir} 2>/dev/null | ${TAIL_CMD} -n1 | ${AWK_CMD} '{ print $2; }' )
+	if [ -n "${imgsize_max}" ]; then
+		imgsize_max=$(( imgsize_max * 1024 ))
+	else
+		imgsize_max=0
+	fi
+fi
+
+[ -z "${ovm_cpus_max}" ] && ovm_cpus_max="${vm_cpus_max}"
+[ -z "${ovm_ram_max}" ] && ovm_ram_max="${vm_ram_max}"
+[ -z "${oimgsize_max}" ] && oimgsize_max="${imgsize_max}"
 
 if [ -n "${vm_os_type}" ]; then
 	search_vm_os_type="${vm_os_type}"
@@ -70,6 +115,7 @@ fi
 
 [ -z "${clonos}" ] && clonos=0
 [ -z "${myb}" ] && myb=0
+
 
 get_all_profile_list()
 {
@@ -113,6 +159,14 @@ get_vm_info()
 	iso_img=
 	register_iso_name=
 	myb_image=
+	cpus=
+	cpus_min=
+
+	vm_cpus_max=
+	vm_ram_max=
+	vm_ram_max_bytes=
+	imgsize_max=
+	imgsize_max_bytes=
 
 	#echo "${EGREP_CMD} -E \"${filter}\" ${path}"
 	eval $( ${EGREP_CMD} -E "${filter}" "${path}" 2>/dev/null )
@@ -160,9 +214,13 @@ get_vm_info()
 		myb_active=0
 	fi
 
+	[ -z "${vm_cpus_max}" ] && vm_cpus_max="${ovm_cpus_max}"
+	[ -z "${vm_ram_max}" ] && vm_ram_max="${ovm_ram_max}"
+	[ -z "${imgsize_max}" ] && imgsize_max="${oimgsize_max}"
+
 	default_jname="${default_jailname}"
 
-	imgsize="${imgize}"
+	imgsize="${imgsize}"
 	imgsize_min="${imgsize_min}"
 
 	# normalize imgsize
@@ -185,7 +243,6 @@ get_vm_info()
 		imgize="${convval}"
 	else
 		imgize="${imgisze_bytes}"
-
 	fi
 
 	# normalize imgsize_min
@@ -203,7 +260,7 @@ get_vm_info()
 	if is_number "${imgsize_min}"; then
 		if conv2bytes ${imgsize_min}; then
 			imgsize_min_bytes="${convval}"
-                else
+		else
 			imgsize_min_bytes="0"
 		fi
 	else
@@ -214,11 +271,40 @@ get_vm_info()
 		imgsize_min="${convval}"
 	else
 		imgsize_min="${imgisze_min_bytes}"
-
 	fi
 
+	if is_number "${vm_ram_max}"; then
+		if conv2bytes ${vm_ram_max}; then
+			vm_ram_max_bytes="${convval}"
+		else
+			vm_ram_max_bytes="0"
+		fi
+	else
+		vm_ram_max_bytes="${vm_ram_max}"
+		if conv2human "${vm_ram_max_bytes}"; then
+			vm_ram_max="${convval}"
+		fi
+	fi
+
+#echo "X $imgsize_max" >> /tmp/o
+
+	if is_number "${imgsize_max}"; then
+		if conv2bytes ${imgsize_max}; then
+			imgsize_max_bytes="${convval}"
+		else
+			imgsize_max_bytes="0"
+		fi
+	else
+		imgsize_max_bytes="${imgsize_max}"
+		if conv2human "${imgsize_max_bytes}"; then
+			imgsize_max="${convval}"
+		fi
+	fi
+
+#echo "X $imgsize_max, $oimgsize_max" >> /tmp/x
+#exit 0
 	[ -z "${is_template}" ] && is_template="0"
-	echo "name=\"${name}\" is_cloud=\"${is_cloud}\" profile=\"${profile}\" type=\"${type}\" default_jname=\"${default_jname}\" imgsize_bytes=\"${imgsize_bytes}\" imgsize=\"${imgsize}\" imgsize_min_bytes=\"${imgsize_min_bytes}\" imgsize_min=\"${imgsize_min}\" clonos_active=\"${clonos_active}\" image=\"${myb_image}\" myb_active=\"${myb_active}\" iso_img=\"${iso_img}\""
+	echo "name=\"${name}\" is_cloud=\"${is_cloud}\" profile=\"${profile}\" type=\"${type}\" default_jname=\"${default_jname}\" imgsize_bytes=\"${imgsize_bytes}\" imgsize=\"${imgsize}\" imgsize_min_bytes=\"${imgsize_min_bytes}\" imgsize_min=\"${imgsize_min}\" clonos_active=\"${clonos_active}\" image=\"${myb_image}\" myb_active=\"${myb_active}\" iso_img=\"${iso_img}\" vm_cpus_max=\"${vm_cpus_max}\" vm_ram_max=\"${vm_ram_max}\" vm_ram_max_bytes=\"${vm_ram_max_bytes}\" imgsize_max=\"${imgsize_max}\" imgsize_max_bytes=\"${imgsize_max_bytes}\""
 
 	return ${_ret}
 }
@@ -301,7 +387,7 @@ show_json()
 		eval $( echo "${_line}" )
 		_current=$(( _current + 1 ))
 
-		_data=" {\"name\": \"${name}\", \"profile\": \"${profile}\", \"type\": \"${type}\", \"default_jname\": \"${default_jname}\", \"imgsize\": \"${imgsize}\", \"imgsize_bytes\": ${imgsize_bytes}, \"imgsize_min\": \"${imgsize_min}\", \"imgsize_min_bytes\": ${imgsize_min_bytes}"
+		_data=" {\"name\": \"${name}\", \"profile\": \"${profile}\", \"type\": \"${type}\", \"default_jname\": \"${default_jname}\", \"imgsize\": \"${imgsize}\", \"imgsize_bytes\": ${imgsize_bytes}, \"imgsize_min\": \"${imgsize_min}\", \"imgsize_min_bytes\": ${imgsize_min_bytes}, \"vm_cpus_max\": ${vm_cpus_max}, \"vm_ram_max\": \"${vm_ram_max}\", \"vm_ram_max_bytes\": ${vm_ram_max_bytes}, \"imgsize_max\": \"${imgsize_max}\", \"imgsize_max_bytes\": ${imgsize_max_bytes}"
 
 		[ ${show_iso} -eq 1 ] && _data="${_data}, \"iso_img\": \"${iso_img}\""
 		[ ${myb} -eq 1 ] && _data="${_data}, \"image\": \"${image}\""
