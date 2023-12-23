@@ -36,7 +36,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}json${N0_COLOR}          - json output when 'json=1', default: 0;
  ${N2_COLOR}myb${N0_COLOR}           - show profiles who have 'myb_images=XXX' values only;
  ${N2_COLOR}show_iso${N0_COLOR}      - show image file used by profile;
- ${N2_COLOR}src${N0_COLOR}           - type of profile: 'iso' or 'cloud';
+ ${N2_COLOR}src${N0_COLOR}           - type of profile: 'iso', 'cloud' or 'jail';
  ${N2_COLOR}vm_os_type${N0_COLOR}    - show profiles for vm_os_type= OS type only, e.g.:
                  'freebsd','linux','openbsd','netbsd','dflybsd','windows','other',..;
  ${N2_COLOR}vm_cpus_max${N0_COLOR}   - show this values in 'cpus_max' field, e.g.: '16'.
@@ -51,12 +51,14 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd get-profiles src=cloud json=1
  # cbsd get-profiles src=cloud json=0 warm=1 vm_os_type=freebsd show_iso=1
  # cbsd get-profiles src=cloud json=0 warm=1 vm_os_type=freebsd myb=1
+ # cbsd get-profiles src=jail
 
 ${H3_COLOR}See also${N0_COLOR}:
 
  cbsd bcreate --help
  cbsd xcreate --help
  cbsd qcreate --help
+ cbsd jcreate --help
  cbsd fetch_iso --help
 
  cat ~cbsd/etc/defaults/get-profiles.conf
@@ -119,11 +121,24 @@ fi
 
 get_all_profile_list()
 {
+	local _prefix=
+
+	case ${src} in
+		jail)
+			_prefix="jail-freebsd"
+			;;
+		*)
+			_prefix="vm"
+			;;
+	esac
+
+
 	if [ -z "${search_vm_os_type}" ]; then
-		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name vm\-*\.conf 2>/dev/null
+		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name ${_prefix}\-*\.conf 2>/dev/null
 	else
-		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name vm\-${search_vm_os_type}\-*\.conf 2>/dev/null
+		${FIND_CMD} ${workdir}/etc/defaults ${workdir}/etc -maxdepth 1 -depth 1 -type f -name ${_prefix}\-${search_vm_os_type}\-*\.conf 2>/dev/null
 	fi
+
 }
 
 get_vm_info()
@@ -140,6 +155,7 @@ get_vm_info()
 	local _profile_file=$( ${BASENAME_CMD} ${path} )
 
 	vm_profile=
+	jail_profile=
 	name=
 	profile=
 	type=
@@ -185,6 +201,7 @@ get_vm_info()
 			[ ${is_valid} -eq 0 ] && _ret=1
 			if [ ! -r "${iso_img}" -a ! -h "${iso_img}" ]; then
 				vm_profile=
+				jail_profile=
 				name=
 				profile=
 				type=
@@ -197,13 +214,19 @@ get_vm_info()
 			name=
 			profile=
 			type=
+			jail_profile=
 			_ret=1
 		fi
 	fi
 
 	name="${long_description}"
-	profile="${vm_profile}"
-	type="${vm_os_type}"
+	if [ "${src}" = "jail" ]; then
+		profile="${jail_profile}"
+		type="jail"
+	else
+		profile="${vm_profile}"
+		type="${vm_os_type}"
+	fi
 	[ -z "${iso_img}" ] && iso_img="-"
 	[ -z "${name}" ] && name="-"
 	[ -z "${profile}" ] && profile="unkpro"
@@ -313,6 +336,14 @@ show_plain()
 {
 	local _show_title
 	local _data
+	local _skip_list=
+	local _basename=
+
+	case "${src}" in
+		jail)
+			_skip_list="jail-freebsd-default.conf jail-freebsd-puppet.conf jail-freebsd-trusted.conf jail-freebsd-vnet.conf jail-freebsd-cbsdpuppet.conf"
+			;;
+	esac
 
 	_show_title="${BOLD}VM_PROFILE|VM_OS_TYPE"
 
@@ -327,6 +358,13 @@ show_plain()
 		clonos_active=0
 		myb_myb=0
 		iso_img=
+
+		# skip list
+		_basename=$( ${BASENAME_CMD} ${profile_path} )
+		for i in ${_skip_list}; do
+			echo "[${i}][${_basename}]" >> /tmp/x
+			[ "${i}" = "${_basename}" ] && continue 2
+		done
 
 		x=$( get_vm_info "${profile_path}" "${vm_filter}" )
 		[ $? -ne 0 ] && continue
@@ -424,6 +462,7 @@ show_json()
 
 cloud=0
 iso=0
+jail=0
 
 # cloud or iso?
 vm_filter="^is_cloud="
@@ -432,13 +471,21 @@ case "${src}" in
 	"cloud")
 		cloud=1
 		iso=0
+		jail=0
 		;;
 	iso)
 		cloud=0
 		iso=1
+		jail=0
+		;;
+	jail)
+		cloud=0
+		iso=0
+		jail=1
 		;;
 	*)
-		err 1 "${N1_COLOR}${CBSD_APP}: unknown filter: ${src}, valid: ${N2_COLOR}'cloud', 'iso'${N0_COLOR}"
+		err 1 "${N1_COLOR}${CBSD_APP}: unknown filter: ${src}, valid: ${N2_COLOR}'cloud', 'iso', 'jail'${N0_COLOR}"
+		;;
 esac
 
 all_filtered_profile_path=
@@ -466,8 +513,14 @@ done
 [ -z "${all_filtered_profile_path}" ] && err 0 "{}"
 
 #mandatory filter
-vm_filter="(^long_description=|^vm_profile=|^vm_os_type=|^clonos_active=|^is_template=|^is_cloud=|^imgsize=|^imgsize_min="
-
+case "${src}" in
+	jail)
+		vm_filter="(^long_description=|^jail_profile=|^vm_os_type=|^clonos_active=|^is_template=|^is_cloud=|^imgsize=|^imgsize_min="
+		;;
+	*)
+		vm_filter="(^long_description=|^vm_profile=|^vm_os_type=|^clonos_active=|^is_template=|^is_cloud=|^imgsize=|^imgsize_min="
+		;;
+esac
 if [ ${show_iso} -eq 1 ]; then
 	vm_filter="${vm_filter}|^iso_img=|^register_iso_name="
 fi
