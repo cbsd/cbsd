@@ -293,6 +293,21 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
+	# TPM args
+	if [ -n "${tpm}" ]; then
+		case "${tmp}" in
+			0)
+				break
+				;;
+			new)
+				echo "emulate tpm"
+				;;
+				add_bhyve_opts="${add_bhyve_opts} -l tpm2,passthru,${tmp}"
+				;;
+			*)
+		esac
+	fi
+
 	if [ -n "${soundhw_args}" ]; then
 		if [ "${soundhw_args}" = "none" -o ${freebsdhostversion} -lt 1300034 ]; then
 			soundhw_args=
