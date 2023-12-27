@@ -295,16 +295,15 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 
 	# TPM args
 	if [ -n "${tpm}" ]; then
-		case "${tmp}" in
+		case "${tpm}" in
 			0)
-				break
 				;;
 			new)
 				echo "emulate tpm"
 				;;
-				add_bhyve_opts="${add_bhyve_opts} -l tpm2,passthru,${tmp}"
-				;;
 			*)
+				add_bhyve_opts="${add_bhyve_opts} -l tpm,passthru,${tpm}"
+				;;
 		esac
 	fi
 
