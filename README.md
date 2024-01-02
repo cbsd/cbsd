@@ -1,6 +1,6 @@
 # CBSD Project
 
-Copyright (c) 2013-2023, The CBSD Development Team
+Copyright (c) 2013-2024, The CBSD Development Team
 
 Homepage: https://bsdstore.ru
 
@@ -18,7 +18,38 @@ Quick start: https://www.bsdstore.ru/en/cbsd_quickstart.html
 
 For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
-## Clustering opportunities
+
+## Limitations
+
+Tested with following OSes and distribution:
+
+- FreeBSD 14.0+
+- HardenedBSD
+- DragonFly BSD
+
+## Support
+
+* For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
+* Web link: https://t.me/cbsdofficial
+* Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
+* Other contact: https://www.bsdstore.ru/en/feedback.html
+
+## Goals
+
+* Provide FreeBSD users easy management for virtual environments
+* Show features of FreeBSD as a Cloud-hosting platform;
+* Environment deployment automation;
+* Creation of  (your own/personal) application platform with services on demand (PaaS);
+* Environment (Image) library for rapid provisioning;
+
+## Frontend
+
+- CLI/TUI interface out of the box
+- API ( sysutils/cbsd-mq-api or MyBee: https://myb.convectix.com )
+- NCURSES ( https://github.com/Peter2121/cbsd-tui )
+- QT6 (for Linux/Windows/MacOS/BSD and Mobile), WIP: https://youtu.be/N9TDelWfDbc
+
+## Clustering
 
 > Pool-bindend clustering demo:
 
@@ -29,19 +60,6 @@ For installation and usage see: https://www.bsdstore.ru/en/docs.html
 
 - https://www.bsdstore.ru/en/13.0.x/wf_vpc_ssi.html
 
-## Limitations
-
-Tested with following OSes and distribution:
-
-- FreeBSD 13.0+
-- HardenedBSD
-
-## Support
-
-* For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel: @cbsdofficial
-* Web link: https://t.me/cbsdofficial
-* Or subscribe to mailing list by sending email to: cbsd+subscribe@lists.tilda.center
-* Other contact: https://www.bsdstore.ru/en/feedback.html
 
 ## Stargazers over time
 
