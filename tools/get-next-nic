@@ -31,6 +31,12 @@ lease_time=6
 name=
 . ${cbsdinit}
 
+case "${platform}" in
+	Linux)
+		[ "${name}" = "bridge" ] && name="virtbr"
+		;;
+esac
+
 LOCKFILE="${ftmpdir}/get_next_nic.lock"
 
 # $1 - nicname (eg: bridge)
@@ -67,7 +73,7 @@ get_next_nic()
 		fi
 	done
 
-	for _num in $( ${JOT_CMD} 1000 ); do
+	for _num in $( ${SEQ_CMD} 512 ); do
 
 		_skipme=0
 
@@ -90,14 +96,22 @@ get_next_nic()
 		fi
 
 		[ ${_skipme} -eq 1 ] && continue
-
 		${IFCONFIG_CMD} ${_checkif} >/dev/null 2>&1
 
 		if [ $? -eq 1 ]; then
 			# extra check: try to create before return, fast hack/work-around for renamed interfaces
 			# https://github.com/cbsd/cbsd/issues/725 ( todo: also check if if_epair kldload ? )
-			_res=$( ${IFCONFIG_CMD} ${_newif} create 2>&1 )
-			_ret=$?
+			case "${platform}" in
+				Linux)
+					_res=$( brctl addbr virtbr${_num} )
+					_ret=$?
+					;;
+				*)
+					_res=$( ${IFCONFIG_CMD} ${_newif} create 2>&1 )
+					_ret=$?
+					;;
+			esac
+
 			if [ ${_ret} -eq 0 ]; then
 				# destroy before return (really need?)
 				if [ "${_name}" = "epair" ]; then
@@ -129,4 +143,7 @@ if [ -n "${pass}" ]; then
 	exit $?
 fi
 
-exec ${LOCKF_CMD} -s -t12 ${LOCKFILE} /usr/local/bin/cbsd get-next-nic "$*" pass=1
+cbsd_lock 12 ${LOCKFILE} /usr/local/bin/cbsd get-next-nic "$*" pass=1
+ret=$?
+# should never happen
+exit ${ret}

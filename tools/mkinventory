@@ -10,33 +10,28 @@ init "${1}"
 
 collect_info()
 {
-	local _dmidecode _meminfo _realmem
+	local _dmidecode= _meminfo= _realmem=
 
 	. ${subrdir}/initenv.subr
 
 	. ${subrdir}/xen.subr
 	update_netinfo
 
+	physmem=
+	ncpu=
+
 	if is_xen_dom0; then
 		_realmem=$( ${XL_CMD} info total_memory 2>/dev/null )	# in MB by default
-		[ -n "${_realmem}" ] && _realmem=$(( _realmem * 1024 * 1024 ))		# ->KB -> Bytes
+		if [ -n "${_realmem}" ]; then
+			physmem=$(( _realmem * 1024 * 1024 ))		# ->KB -> Bytes
+		fi
 		ncpu=$( ${XL_CMD} info nr_cpus 2>/dev/null )
 		cpufreq=$( ${SYSCTL_CMD} -n cpu_mhz 2>/dev/null )
-		[ -z "${ncpu}" ] && ncpu=$( ${SYSCTL_CMD} -n hw.ncpu 2>/dev/null )
-		[ -z "${cpufreq}" ] && cpufreq=$( ${SYSCTL_CMD} -n dev.cpu.0.freq 2>/dev/null )
 	else
 		_realmem=$( ${SYSCTL_CMD} -n hw.physmem 2>/dev/null )
 		ncpu=$( ${SYSCTL_CMD} -n hw.ncpu 2>/dev/null )
 		cpufreq=$( ${SYSCTL_CMD} -n dev.cpu.0.freq 2>/dev/null )
 	fi
-
-	if [ -z "${_realmem}" ]; then
-		physmem=0
-	else
-		physmem="${_realmem}"
-	fi
-
-	disks=$( ${SYSCTL_CMD} -n kern.disks 2>/dev/null | ${TR_CMD} " " "," )
 
 	_dmidecode=$( which dmidecode )
 
@@ -46,15 +41,49 @@ collect_info()
 		memtype=""
 	fi
 
-	hostname=$( ${SYSCTL_CMD} -n kern.hostname 2>/dev/null )
-	osrelease=$( ${SYSCTL_CMD} -n kern.osrelease 2>/dev/null )
-	cpumodel=$( ${SYSCTL_CMD} -n hw.model 2>/dev/null )
+	case "${platform}" in
+		Linux)
+			hostname=$( ${SYSCTL_CMD} -n kernel.hostname 2>/dev/null )
+			osrelease=$( lsb_release -cs 2>/dev/null )
+			cpumodel=$( ${GREP_CMD} "^model name" /proc/cpuinfo | ${HEAD_CMD} -n1 | ${AWK_CMD} '{ for (i=4; i<=NF; i++) printf("%s ",$i) }END{ print"" }' )
+			cpufreq="0"
+			# dynamic - grep "cpu MHz" /proc/cpuinfo  |awk '{printf $4"\n"}'
+			#[ -z "${cpufreq}" ] && cpufreq=$( ${GREP_CMD} "cpu MHz" | ${AWK_CMD} '{printf $3/dev/null )
+			kernhz=$( getconf CLK_TCK )
+			sched="unknown"
+			eventtimer="unknown"
+			_disks=$( lsblk -n --raw |grep -E " disk" | awk '{printf $1}' )
+			disks=
+			for i in ${_disks}; do
+				if [ -n "${disks}" ]; then
+					disks="${disks} ${i}"
+				else
+					disks="${i}"
+				fi
+			done
+			if [ -z "${physmem}" ]; then
+				_realmem=$( ${GREP_CMD} MemTotal /proc/meminfo | ${AWK_CMD} '{printf $2}' )
+				if [ -n "${_realmem}" ]; then
+					physmem=$(( _realmem * 1024 ))		# ->KB -> Bytes
+				else
+					physmem=0
+				fi
+			fi
+			[ -z "${ncpu}" ] && ncpu=$( ${GREP_CMD} -E "^vendor_id" /proc/cpuinfo | ${WC_CMD} -l )
+			;;
+		*)
+			[ -z "${ncpu}" ] && ncpu=$( ${SYSCTL_CMD} -n hw.ncpu 2>/dev/null )
+			hostname=$( ${SYSCTL_CMD} -n kern.hostname 2>/dev/null )
+			osrelease=$( ${SYSCTL_CMD} -n kern.osrelease 2>/dev/null )
+			cpumodel=$( ${SYSCTL_CMD} -n hw.model 2>/dev/null )
+			[ -z "${cpufreq}" ] && cpufreq=$( ${SYSCTL_CMD} -n dev.cpu.0.freq 2>/dev/null )
+			kernhz=$( ${SYSCTL_CMD} -n kern.hz 2>/dev/null )
+			sched=$( ${SYSCTL_CMD} -n kern.sched.name 2>/dev/null )
+			eventtimer=$( ${SYSCTL_CMD} -n kern.eventtimer.choice 2>/dev/null )
+			disks=$( ${SYSCTL_CMD} -n kern.disks 2>/dev/null )
+			;;
+	esac
 
-	cpufreq=$( ${SYSCTL_CMD} -n dev.cpu.0.freq 2>/dev/null )
-	kernhz=$( ${SYSCTL_CMD} -n kern.hz 2>/dev/null )
-	sched=$( ${SYSCTL_CMD} -n kern.sched.name 2>/dev/null )
-	eventtimer=$( ${SYSCTL_CMD} -n kern.eventtimer.choice 2>/dev/null )
-	disks=$( ${SYSCTL_CMD} -n kern.disks 2>/dev/null )
 
 	cbsdver=${myversion}
 
@@ -70,7 +99,7 @@ collect_info
 [ -f "${subrdir}/${platform}.subr" ] && . ${distdir}/${platform}.subr
 
 MYDATA="parallel nodename hostname nodeip nodedescr jnameserver nodeippool natip nat_enable fbsdrepo mdtmp repo workdir ipfw_enable fs zfsfeat jail_interface ncpu physmem memtype disks cpumodel cpufreq kernhz sched eventtimer nics node_ip4_active node_ip6_active \
-statsd_bhyve_enable statsd_jail_enable statsd_hoster_enable"
+statsd_bhyve_enable statsd_jail_enable statsd_hoster_enable osrelease"
 
 for i in ${MYDATA} platform; do
 	eval items="\$${i}"

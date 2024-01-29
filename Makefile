@@ -30,6 +30,7 @@ all:	cbsd dump_cpu_topology dump_iscsi_discovery
 clean:
 	${MAKE} -C bin/cbsdsh clean
 	${MAKE} -C misc/src/sipcalc clean
+	${MAKE} -C misc/src/cbsd_md5 clean
 	${RM} -f bin/cbsdsh/.depend* misc/src/*.o ${SIMPLEXMLOBJECT} ${DUMPCPUTOPOLOGYOBJECT} ${DUMPISCSIDISCOVERYOBJECT}
 
 distclean:
@@ -72,6 +73,7 @@ distclean:
 	${RM} -f tools/racct-hoster-statsd
 	${RM} -f tools/select_jail
 	${RM} -f misc/sipcalc
+	${RM} -f misc/cbsd_md5
 	# clean object files
 	${RM} -f misc/dump_cpu_topology
 	${RM} -f misc/dump_iscsi_discovery
@@ -100,8 +102,8 @@ cbsd: pkg-config-check
 	${CC} bin/src/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdsftp6
 	${CC} bin/src/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh
 	${CC} bin/src/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
-	${CC} bin/src/cfetch.c -o bin/cfetch -lfetch -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
 	${CC} sbin/src/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
+	${CC} bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
 	${CC} misc/src/sqlcli.c `pkg-config sqlite3 --cflags --libs` -lm -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
@@ -143,11 +145,13 @@ cbsd: pkg-config-check
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
 	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
 	${MAKE} -C misc/src/sipcalc && ${STRIP} misc/src/sipcalc/sipcalc
+	${MAKE} -C misc/src/cbsd_md5 && ${STRIP} misc/src/cbsd_md5/cbsd_md5
 	${MAKE} -C share/bsdconfig/cbsd
 
 install:
 	${INSTALL} man/cbsd.8 ${DESTDIR}${PREFIX}/man/man8/cbsd.8
 	${INSTALL} -o cbsd -g cbsd -m 555 misc/src/sipcalc/sipcalc ${PREFIX}/cbsd/misc/sipcalc
+	${INSTALL} -o cbsd -g cbsd -m 555 misc/src/cbsd_md5/cbsd_md5 ${PREFIX}/cbsd/misc/cbsd_md5
 	${ENV} BINDIR=${PREFIX}/bin ${MAKE} -C bin/cbsdsh install
 	${MAKE} -C share/bsdconfig/cbsd install
 

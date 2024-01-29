@@ -1,15 +1,15 @@
 GITHOST?=https://github.com
-LPATT="   make %-23s- %s\n"
 
 help all:
 	@echo "Makefile help:"
 	@echo
-.if exists(${.CURDIR}/.git)
-	@printf ${LPATT} "git-clean"		"remove .git dir"
-	@printf ${LPATT} "profiles-update"	"Update vm-config files from the net"
-.else
-	@printf ${LPATT} "profiles-create"         "fetch initial vm-config files from the net"
-.endif
+	@if test -d $(CURDIR)/.git; \
+	then \
+	echo "    \"git-clean\"             \"remove .git dir\""; \
+	echo "    \"profiles-update\"       \"Update vm-config files from the net\""; \
+	else \
+	echo "    \"profiles-create\"         \"fetch initial vm-config files from the net\""; \
+	fi
 	@echo
 
 git-clean:

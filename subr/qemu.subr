@@ -572,6 +572,7 @@ compile_nic_args()
 										# always up parent device
 										[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
 										cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
+
 										if ! mybridge=$( get_my_device bridge ${interface} ); then
 											err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
 										fi
@@ -813,6 +814,7 @@ qemu_remove_dsk()
 	elif [ "${hammerfeat}" = "1" ]; then
 		err 1 "Hammer not supported yet"
 	else
+		true
 		#date
 	fi
 
@@ -866,6 +868,7 @@ compile_cpu_args()
 
 	# todo: auto
 	if [ "${cpu}" = "auto" ]; then
+		true
 		# ???
 	else
 		cpu_args="-cpu ${cpu}"
@@ -896,7 +899,7 @@ compile_vga_args()
 
 compile_machine_args()
 {
-	local _ret _accel=0
+	local _ret _accel=0 _accel_auto
 
 	machine_args=
 
@@ -919,30 +922,50 @@ compile_machine_args()
 
 	machine_args="-machine type=${machine}"
 
+	_accel_auto=
+
 	if [ "${machine_accel}" = "auto" ]; then
-		# check for nvmm
-		if [ -z "${NVMMCTL_CMD}" ]; then
-			_accel=0
-			${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: ${N2_COLOR}nvmm${N1_COLOR}. It will work slowly${N0_COLOR}"
-		elif [ ! -x "${NVMMCTL_CMD}" ]; then
-			_accel=0
-			${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: not executable: ${N2_COLOR}${NVMMCTL_CMD}${N1_COLOR}. It will work slowly${N0_COLOR}"
-		elif [ -x "${NVMMCTL_CMD}" ]; then
-			${ECHO} "${N1_COLOR}machine_accel auto: ${NVMMCTL_CMD} found!"
-			${NVMMCTL_CMD} identify
-			_ret=$?
-			if [ ${_ret} -ne 0 ]; then
-				${ECHO} "${W1_COLOR}Warning${N1_COLOR}: identify failed: ${N2_COLOR}${NVMMCTL_CMD} identify${N1_COLOR}. Acceleration disabled. It will work slowly${N0_COLOR}"
-				_accel=0
-			else
-				_accel=1
-			fi
-		else
-			${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: ${N2_COLOR}nvmm${N1_COLOR}. It will work slowly${N0_COLOR}"
-		fi
+
+		case "${platform}" in
+			Linux)
+				# check for kvm
+				if [ -r /usr/bin/kvm ]; then
+					${ECHO} "${N1_COLOR}machine_accel auto: KVM found!"
+					_accel_auto="kvm"
+					_accel=1
+				else
+					${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: ${N2_COLOR}/usr/bin/kvm${N1_COLOR}. It will work slowly${N0_COLOR}"
+					_accel=0
+				fi
+				;;
+			*)
+				# check for nvmm
+				if [ -z "${NVMMCTL_CMD}" ]; then
+					_accel=0
+					${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: ${N2_COLOR}nvmm${N1_COLOR}. It will work slowly${N0_COLOR}"
+				elif [ ! -x "${NVMMCTL_CMD}" ]; then
+					_accel=0
+					${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: not executable: ${N2_COLOR}${NVMMCTL_CMD}${N1_COLOR}. It will work slowly${N0_COLOR}"
+				elif [ -x "${NVMMCTL_CMD}" ]; then
+					${ECHO} "${N1_COLOR}machine_accel auto: ${NVMMCTL_CMD} found!"
+					${NVMMCTL_CMD} identify
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						${ECHO} "${W1_COLOR}Warning${N1_COLOR}: identify failed: ${N2_COLOR}${NVMMCTL_CMD} identify${N1_COLOR}. Acceleration disabled. It will work slowly${N0_COLOR}"
+						_accel=0
+					else
+						_accel=1
+						_accel_auto="nvmm"
+				fi
+				else
+					${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: ${N2_COLOR}nvmm${N1_COLOR}. It will work slowly${N0_COLOR}"
+				fi
+		esac
+
+		[ -z "${_accel_auto}" ] && _accel_auto="${machine_accel}"
 
 		if [ ${_accel} -eq 1 ]; then
-			machine_args="${machine_args},accel=nvmm"
+			machine_args="${machine_args},accel=${_accel_auto}"
 		fi
 	else
 		if [ -n "${machine_accel}" -a "${machine_accel}" != "0" ]; then
@@ -1084,6 +1107,7 @@ compile_vnc_args()
 	else
 		#vnc_args="${vnc_args},password=on"
 		# change password via qemu-monitor
+		true
 	fi
 
 	${ECHO} "${N1_COLOR}VNC is enabled. VNC bind/port: ${N2_COLOR}${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
