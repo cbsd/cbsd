@@ -1,10 +1,13 @@
 // Part of the CBSD Project
 // Convert and out bytes to human readable form
 #include <stdio.h>
-#include <libutil.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <libutil.h>
+//#ifdef __Linux__
+#include <bsd/libutil.h>
+//#else
+//#include <libutil.h>
+//#endif
 #include <string.h>
 
 #ifdef __DragonFly__

@@ -22,7 +22,11 @@
 
 #include <sys/mman.h>
 
-#include <libutil.h>
+//#ifdef __Linux__
+#include <bsd/libutil.h>
+//#else
+//#include <libutil.h>
+//#endif
 #include <login_cap.h>
 #include <pwd.h>
 

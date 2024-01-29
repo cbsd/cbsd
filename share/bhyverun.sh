@@ -416,7 +416,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	case ${bhyve_exit} in
 		0)
 			if [ -d ${jailsysdir}/${jname}/master_reboot.d ]; then
-				/usr/bin/find "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and \( -perm +111 \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+				/usr/bin/find "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and  \( -perm -u=x -o -perm -g=x -o -perm -o=x \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
 					echo "  bhyverun: execute master reboot script:${_file}"
 					${jailsysdir}/${jname}/master_reboot.d/${_file}
 				done
