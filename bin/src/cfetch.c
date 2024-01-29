@@ -14,14 +14,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <fetch.h>
 #include <signal.h> // sigaction(), sigsuspend(), sig*()
 #include <unistd.h>
 #include <sys/time.h>
+#include <stdint.h>
+
+#include <curl/curl.h>
 
 static int fetch_files(char * /*urls*/, char * /*fout*/);
 void handle_signal(int /*signal*/);
 void handle_sigalrm(int /*signal*/);
+
+CURL *curl_handle;
 
 off_t current_bytes = 0;
 int speedtest = 0;
@@ -96,12 +100,22 @@ main(int argc, char *argv[])
 	return c;
 }
 
+static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
+{
+	size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
+	return written;
+}
+
+
 static int
 fetch_files(char *urls, char *fout)
 {
+	CURLcode res;
+
 	FILE *fetch_out;
+//	fetchIO *fetch_out;
 	FILE *file_out;
-	struct url_stat ustat;
+//	struct url_stat ustat;
 	off_t total_bytes;
 	off_t fsize = 0;
 	uint8_t block[4096];
@@ -128,8 +142,8 @@ fetch_files(char *urls, char *fout)
 	sigdelset(&mask, SIGALRM);
 
 	//	// Wait with this mask
-	//	alarm(1);
-	//	sigsuspend(&mask);
+//		alarm(1);
+//		sigsuspend(&mask);
 
 	progress = 0;
 	total_bytes = 0;
@@ -137,27 +151,93 @@ fetch_files(char *urls, char *fout)
 	gettimeofday(&now_time, NULL);
 	start_time = (time_t)now_time.tv_sec;
 
-	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0) {
-		total_bytes += ustat.size;
+
+//	if (fetchStatURL(urls, &ustat, "") == 0 && ustat.size > 0) {
+//		total_bytes += ustat.size;
+//	}
+
+
+	curl_global_init(CURL_GLOBAL_ALL);
+
+	/* init the curl session */
+	curl_handle = curl_easy_init();
+
+	/* set URL to get here */
+	curl_easy_setopt(curl_handle, CURLOPT_URL, urls);
+
+	/* Switch on full protocol/debug output while testing */
+	curl_easy_setopt(curl_handle, CURLOPT_HEADER, 0);
+	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 1);
+
+	// not fork for FTP? e.g. when
+	// ./a.out -u ftp://ftp.de.freebsd.org/pub/FreeBSD/releases/amd64/amd64/ISO-IMAGES/14.0/FreeBSD-14.0-RELEASE-amd64-disc1.iso.xz -o /tmp/x -s1
+	// Content-Length: 790216108
+	// Accept-ranges: bytes
+	// CURL_FTP_HTTPSTYLE_HEAD ifdef. - check out lib/ftp.c
+	curl_easy_setopt(curl_handle, CURLOPT_VERBOSE, 0L);
+	/* Perform the request */
+	res = curl_easy_perform(curl_handle);
+
+	if(!res) {
+		/* check the size */
+		double cl;
+		res = curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &cl);
+		// res = curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &cl);
+		if(!res) {
+			//printf("Size: %.0f\n", cl);
+			total_bytes=cl;
+		}
 	}
+
+	/* disable progress meter, set to 0L to enable it */
+	curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 1L);
+
+	/* send all data to this function  */
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_data);
+	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 0);
+
+	curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L);
+
+	/* follow HTTP 3xx redirects  */
+	curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
 	if (speedtest == 1) {
-		fetchTimeout = 5;
-	} else {
-		fetchTimeout = 20;
+		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5);		// timeout for the URL to download
+	}
+//..	 else {
+//		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 20);		// timeout for the URL to download
+//	}
+
+//	fetch_out = fetchXGetURL(urls, &ustat, "");
+//	if (fetch_out == NULL) {
+//		return 1;
+//	}
+
+//	file_out = fopen(fout, "w+");
+
+	fetch_out = fopen(fout, "wb");
+
+//	curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
+
+	if(fetch_out) {
+		if (speedtest != 1) {
+			printf("Size: %d Mb\n", ((int)total_bytes / 1024 / 1024));
+		}
+
+		curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, fetch_out);
+		/* get it! */
+		curl_easy_perform(curl_handle);
+		/* close the header file */
+		fclose(fetch_out);
 	}
 
-	fetch_out = fetchXGetURL(urls, &ustat, "");
-	if (fetch_out == NULL) {
-		return 1;
-	}
+	/* cleanup curl stuff */
+	curl_easy_cleanup(curl_handle);
+	curl_global_cleanup();
 
-	file_out = fopen(fout, "w+");
+	current_bytes = 0;
 
-	if (speedtest != 1) {
-		printf("Size: %d Mb\n", ((int)total_bytes / 1024 / 1024));
-	}
-
+/*
 	current_bytes = 0;
 	while ((chunk = fread(block, 1, sizeof(block), fetch_out)) > 0) {
 		if (fwrite(block, 1, chunk, file_out) < chunk) {
@@ -183,6 +263,7 @@ fetch_files(char *urls, char *fout)
 		if (fetchLastErrCode == 0) {
 			// small chunk
 			fclose(fetch_out);
+//			fetchIO_close(fetch_out);
 			fclose(file_out);
 			return 0;
 		}
@@ -191,8 +272,9 @@ fetch_files(char *urls, char *fout)
 	}
 
 	fclose(fetch_out);
+//	fetchIO_close(fetch_out);
 	fclose(file_out);
-
+*/
 	gettimeofday(&now_time, NULL);
 	end_time = (time_t)now_time.tv_sec;
 	diff_time = end_time - start_time;
@@ -205,7 +287,13 @@ fetch_files(char *urls, char *fout)
 	 * handlers. Look for async safe functions.
 	 */
 	if (speedtest == 1) {
-		printf("%ld\n", current_bytes / diff_time);
+		double dl;
+		 CURLcode res;
+		/* check the size */
+		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
+		if(!res) {
+			printf("%.0f\n", dl / diff_time);
+		}
 	}
 
 	return (0);
@@ -242,12 +330,14 @@ handle_signal(int signal)
 		diff_time = 1;
 	}
 
-	/*
-	 * Please note that printf et al. are NOT safe to use in signal
-	 * handlers. Look for async safe functions.
-	 */
 	if (speedtest == 1) {
-		printf("%ld\n", current_bytes / diff_time);
+		double dl;
+		 CURLcode res;
+		/* check the size */
+		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
+		if(!res) {
+			printf("%.0f\n", dl / diff_time);
+		}
 	}
 
 	exit(0);
