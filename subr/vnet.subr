@@ -59,7 +59,7 @@ gw_enable()
 #    ttt=$( get_device_uplink bridge0 em0 )
 get_device_uplink()
 {
-	local _desc1 _desc2
+	local _desc1= _desc2=
 	local _is_bridge
 	local _addm
 	local _addm_list
@@ -68,7 +68,16 @@ get_device_uplink()
 	[ -z "${1}" ] && return 1
 	[ -n "${2}" ] && _addm="${2}"
 
-	_desc1=$( ${IFCONFIG_CMD} ${1} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+	case "${platform}" in
+		Linux)
+			if [ -r "${workdir}/tmp/nic-${1}.desc" ]; then
+				_desc1=$( ${CAT_CMD} ${workdir}/tmp/nic-${1}.desc )
+			fi
+			;;
+		*)
+			_desc1=$( ${IFCONFIG_CMD} ${1} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+			;;
+	esac
 
 	# extra check for bridge for cases where bridge created not by CBSD but member of
 	# right uplink
@@ -268,26 +277,55 @@ get_my_tap()
 	fi
 
 	cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: found new free device: ${_firstfree}. Will be created
-	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
-
-	_ret=$?
+	case "${platform}" in
+		Linux)
+			${IP_CMD} tuntap add mode tap ${_firstfree} 2>/dev/null
+			_ret=$?
+			;;
+		*)
+			${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
+			_ret=$?
+			;;
+	esac
 	if [ ${_ret} -ne 0 ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: ${IFCONFIG_CMD} ${_firstfree} create: failed
 	fi
 
 	# Inherits parent MTU to stop "ifconfig: BRDGADD XXX: Invalid argument" when
 	# parent MTU less then tap
-	_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
-	_ret=$?
+	case "${platform}" in
+		Linux)
+			_parent_mtu=$( ${CAT_CMD} /sys/class/net/${mybridge}/mtu 2>/dev/null )
+			;;
+		*)
+			_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+			_ret=$?
+			;;
+	esac
 
 	if [ ${_ret} -eq 0 -a -n "${_parent_mtu}" ]; then
 		cbsdlogger NOTICE ${CBSD_APP}: get_my_tap: adjust parent_mtu for ${_firstfree}: ${_parent_mtu}
-		${IFCONFIG_CMD} ${_firstfree} mtu ${_parent_mtu}
+		case "${platform}" in
+			Linux)
+				${IP_CMD} link set dev ${_firstfree} mtu ${_parent_mtu}
+				;;
+			*)
+				${IFCONFIG_CMD} ${_firstfree} mtu ${_parent_mtu}
+				;;
+		esac
 	fi
 
 	if [ "${1}" != "disable" ]; then
-		${IFCONFIG_CMD} ${1} addm ${_firstfree}
-		${IFCONFIG_CMD} ${_firstfree} up
+		case "${platform}" in
+			Linux)
+				${BRCTL_CMD} addif ${1} ${_firstfree} >> /tmp/a.txt 2>&1
+				${IP_CMD} link set ${_firstfree} up >> /tmp/a.txt 2>&1
+				;;
+			*)
+				${IFCONFIG_CMD} ${1} addm ${_firstfree}
+				${IFCONFIG_CMD} ${_firstfree} up
+				;;
+		esac
 	fi
 
 	echo ${_firstfree}
@@ -484,6 +522,10 @@ get_vm_uplink_interface()
 					;;
 				1)
 					case "${platform}" in
+						Linux)
+							# ipv6? perl ?
+							interface=$( ${IP_CMD} -o route get ${IWM} | perl -nle 'if ( /dev\s+(\S+)/ ) {print $1}' )
+							;;
 						DragonFly)
 							# 2021-11: DFLY doesn't support '-4'/'-6' key
 							interface=$( ${ROUTE_CMD} -n get ${IWM} 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
@@ -587,11 +629,21 @@ get_nic_by_descr()
 {
 	local _iface _mytap _i _list=
 
-	_iface=$( ${IFCONFIG_CMD} -l )
+	_iface=$( /usr/local/cbsd/misc/nics-list | ${XARGS_CMD} )
 	_mytap=
 
 	for _i in ${_iface}; do
-		_desc=$( ${IFCONFIG_CMD} ${_i} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+		_desc=
+		case "${platform}" in
+			Linux)
+				if [ -r "${workdir}/tmp/nic-${1}.desc" ]; then
+					_desc=$( ${CAT_CMD} ${workdir}/tmp/nic-${1}.desc 2>/dev/null )
+				fi
+				;;
+			*)
+				_desc=$( ${IFCONFIG_CMD} ${_i} 2>/dev/null | ${AWK_CMD} '/description:/{print $2}' )
+				;;
+		esac
 		[ -z "${_desc}" ] && continue
 		if [ "${_desc}" = "${1}" ]; then
 			if [ -n "${_list}" ]; then

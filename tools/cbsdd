@@ -9,7 +9,6 @@ EXTHELP="wf_taskd"
 . ${subrdir}/nc.subr
 
 . ${cbsdinit}
-
 . ${system}
 
 [ -z "${reload}" ] && reload=0
@@ -22,9 +21,18 @@ shmux()
 	local _mylock SSH_ARGS _locallockfile _locallock _remotelockfile _remotelock
 
 	_locallockfile="${ftmpdir}/shmux_${_ip}.lock"
-	_locallock="${LOCKF_CMD} -s -t0 ${_locallockfile}"
 	_remotelockfile="ftmp/from_${nodename}.lock"
-	_remotelock="${LOCKF_CMD} -s -t0 ${_remotelockfile}"
+
+	case "${platform}" in
+		Linux)
+			_locallock="${FLOCK_CMD} -w0 -x ${_locallockfile}"
+			_remotelock="${FLOCK_CMD} -w0 -x ${_remotelockfile}"
+			;;
+		*)
+			_locallock="${LOCKF_CMD} -s -t0 ${_locallockfile}"
+			_remotelock="${LOCKF_CMD} -s -t0 ${_remotelockfile}"
+			;;
+	esac
 
 	. ${nodes}
 
@@ -46,13 +54,22 @@ update_jaillock()
 
 	for jname in $( cbsdsqlro local SELECT jname FROM jails WHERE status=1 ); do
 		jaillock="${jailsysdir}/${jname}/locked"
-		${DAEMON_CMD} -f -u ${cbsduser} ${LOCKF_CMD} -s -t0 ${ftmpdir}/update_jaillock.lock ${TOUCH_CMD} ${jaillock}
+		case "${platform}" in
+			Linux)
+				${DAEMON_CMD} -f -u ${cbsduser} --command="${FLOCK_CMD} -w0 -x ${ftmpdir}/update_jaillock.lock ${TOUCH_CMD} ${jaillock} > /dev/null 2>&1"
+				;;
+			*)
+				${DAEMON_CMD} -f -u ${cbsduser} ${LOCKF_CMD} -s -t0 ${ftmpdir}/update_jaillock.lock ${TOUCH_CMD} ${jaillock}
+				;;
+		esac
 	done
 }
 
 update_fw_counters()
 {
 	local _curhour=$( ${DATE_CMD} "+%H" )
+
+	[ "${platform}" = "Linux" ] && return 0
 
 	[ "${_curhour}" = "${last_hour_fwupdate}" ] && return 0
 	last_hour_fwupdate="${_curhour}"
@@ -93,14 +110,23 @@ retrinv_loop=0
 echo $$ > ${workdir}/var/run/cbsdd.pid
 trap "${RM_CMD} -f ${workdir}/var/run/cbsdd.pid" HUP INT QUIT ABRT KILL ALRM TERM BUS EXIT
 
-cbsdsqlrw cbsdtaskd 'UPDATE taskd SET status="0" WHERE status="1"' 2>/dev/null
+cbsdsqlrw cbsdtaskd "UPDATE taskd SET status='0' WHERE status='1'" 2>/dev/null
 
 # remove stale lock and trash files
 ${FIND_CMD} -E ${ftmpdir} -mindepth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
 ${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
 
 # retrinv
-[ ${sqlreplica} -eq 1 ] && ${DAEMON_CMD} -f ${LOCKF_CMD} -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+if [ ${sqlreplica} -eq 1 ]; then
+	case "${platform}" in
+		Linux)
+			${DAEMON_CMD} -f --command="${FLOCK_CMD} -w0 -x ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1"
+			;;
+		*)
+			${DAEMON_CMD} -f ${LOCKF_CMD} -s -t0 ${ftmpdir}/retrinv.lock /usr/local/bin/cbsd retrinv tryoffline=1
+			;;
+	esac
+fi
 
 cbsdlogger NOTICE ${CBSD_APP}: cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeout:${loop_timeout}
 

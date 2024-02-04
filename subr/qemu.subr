@@ -561,7 +561,17 @@ compile_nic_args()
 						*)
 							if [ "${nic_parent}" != "0" -o "${nic_parent}" = "auto" ]; then
 								_is_bridge=
-								[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+								if [ "${nic_parent}" != "auto" ]; then
+									case "${platform}" in
+										Linux)
+											_is_bridge=$( ${GREP_CMD} ^DEVTYPE= /sys/class/net/${nic_parent}/uevent | ${CUT_CMD} -d '=' -f 2 )
+											;;
+										*)
+											_is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+											;;
+									esac
+								fi
+
 								if [ "${_is_bridge}" != "bridge" ]; then
 									# this is not bridge, detect uplink iface
 									cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
@@ -569,12 +579,33 @@ compile_nic_args()
 									cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
 
 									if [ "${interface}" != "disable" ]; then
+
+										case "${platform}" in
+											Linux)
+												_is_bridge=$( ${GREP_CMD} ^DEVTYPE= /sys/class/net/${interface}/uevent | ${CUT_CMD} -d '=' -f 2 )
+												;;
+											*)
+												_is_bridge=$( ${IFCONFIG_CMD} ${interface} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+												;;
+										esac
+
 										# always up parent device
-										[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
+										case "${platform}" in
+											Linux)
+												[ "${interface}" != "auto" ] && ${IP_CMD} link set ${interface} up
+												;;
+											*)
+												[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
+												;;
+										esac
 										cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
 
-										if ! mybridge=$( get_my_device bridge ${interface} ); then
-											err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+										if [ "${_is_bridge}" = "bridge" ]; then
+											mybridge="${interface}"
+										else
+											if ! mybridge=$( get_my_device bridge ${interface} ); then
+												err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+											fi
 										fi
 										cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
 									else
@@ -602,12 +633,28 @@ compile_nic_args()
 					_parent_mtu=0
 					if [ ${nic_mtu} -eq 0 -a "${mybridge}" != "disable" ]; then
 						# Get parent MTU size
-						_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
-						_ret=$?
+						case "${platform}" in
+							Linux)
+								_parent_mtu=$( ${CAT_CMD} /sys/class/net/${mybridge}/mtu 2>/dev/null )
+								_ret=$?
+								;;
+							*)
+								_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+								_ret=$?
+						esac
 						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
 
 						if [ ${_ret} -eq 0 ]; then
-							[ -n "${_parent_mtu}" ] && _ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} )
+							if [ -n "${_parent_mtu}" ]; then
+								case "${platform}" in
+									Linux)
+										_ret=$( ${IP_CMD} link set dev ${mytap} mtu ${_parent_mtu} )
+										;;
+									*)
+										_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} )
+										;;
+								esac
+							fi
 						fi
 					else
 						# Get parent MTU size
@@ -618,19 +665,49 @@ compile_nic_args()
 						#	[ ${nic_mtu} -gt ${_parent_mtu} ]
 						#fi
 						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
-						_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} )
+						case "${platform}" in
+							Linux)
+								_ret=$( ${IP_CMD} link set dev ${mytap} mtu ${nic_mtu} )
+								;;
+							*)
+								_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} )
+								;;
+						esac
 						cbsdlogger NOTICE ${CBSD_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
 
-					${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
+					case "${platform}" in
+						Linux)
+							echo "${jname}-nic${_id}" > ${workdir}/tmp/nic-${mytap}.desc
+							${IP_CMD} link set ${mytap} up
+							;;
+						*)
+							${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
+							;;
+					esac
 
 					if [ "${mybridge}" != "disable" ]; then
 						if [ "${autoconn_iface}" = "NO" ]; then
-							${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
+							case "${platform}" in
+								Linux)
+									${BRCTL_CMD} addif ${mybridge} ${mytap} >/dev/null 2>&1
+									;;
+								*)
+									${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
+									;;
+							esac
 							# export in mytap_X_bridge= as bridge members
 							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
 						else
-							${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+							case "${platform}" in
+								Linux)
+									${BRCTL_CMD} addif ${mybridge} ${interface} >/dev/null 2>&1
+									${BRCTL_CMD} addif ${mybridge} ${mytap} >/dev/null 2>&1
+									;;
+								*)
+									${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+									;;
+							esac
 							# export in mytap_X_bridge= as bridge members
 							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
 						fi
@@ -676,7 +753,14 @@ compile_nic_args()
 										;;
 								esac
 								# ipv type + mask
-								${IFCONFIG_CMD} ${mytap} ${proto} ${ip} alias
+								case "${platform}" in
+									Linux)
+										${IP_CMD} addr add ${ip} dev ${mytap}
+										;;
+									*)
+										${IFCONFIG_CMD} ${mytap} ${proto} ${ip} alias
+										;;
+								esac
 							IFS=","
 						done
 						IFS="${OIFS}"
