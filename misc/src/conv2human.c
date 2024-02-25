@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-//#ifdef __Linux__
+#ifdef __Linux__
 #include <bsd/libutil.h>
-//#else
-//#include <libutil.h>
-//#endif
+#else
+#include <libutil.h>
+#endif
 #include <string.h>
 
 #ifdef __DragonFly__

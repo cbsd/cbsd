@@ -198,6 +198,45 @@ next_pci_id()
 	return 1
 }
 
+get_pcislot_args()
+{
+	local _i
+	local _pcislot_bus
+	local _pcislot_pcislot
+	local _pcislot_function
+	local _bhyve_pci_index
+	local _pcislot_args
+
+	_pcislot_pcislot=0      # optional, 0 to 255. if not specified, the bus value defaults to 0
+	_pcislot_function=0     # optional, 0 to 7. if not specified, the function value defaults to 0
+
+	while getopts "a:b:c:i:" opt; do
+		case "${opt}" in
+			a) _pcislot_bus="${OPTARG}" ;;
+			b) _pcislot_pcislot="${OPTARG}" ;;
+			c) _pcislot_function="${OPTARG}" ;;
+			i) _qemu_pci_index="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ -z "${_qemu_pci_index}" ] && err 1 "get_pcislot_args: empty _qemu_pci_index"
+	add_qemu_pci_id_busy ${_qemu_pci_index}
+
+	_pcislot_bus="${_qemu_pci_index}"      # 0 to 31
+
+	# always set pcislot
+	_pcislot_args="${_pcislot_bus}"
+
+	# skip defaults for bus and func
+	for _i in ${_pcislot_pcislot} ${_pcislot_function}; do
+		[ ${_i} -eq 0 ] && continue
+		_pcislot_args="${_pcislot_args}:${_i}"
+	done
+
+	printf "${_pcislot_args}"
+}
+
 init_qemu_usage()
 {
 	echo
@@ -515,7 +554,8 @@ compile_nic_args()
 				net_emul="e1000"
 				;;
 			*)
-				net_emul="virtio-net"
+#				net_emul="virtio-net"
+				net_emul="virtio-net-pci"
 				;;
 			esac
 
@@ -790,10 +830,15 @@ compile_nic_args()
 			exit 0
 		fi
 
+		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
+
 		#-device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap100,script=no,downscript=no \
 		myargs=""
-#		myargs="-s ${_pcislot_args},${net_emul},${mytap}"
-		myargs="-device ${net_emul},netdev=net${_id}"
+
+		# pcie root device test
+#		myargs="-device pcie-root-port,bus=pcie.0,id=pcie.2,port=6,chassis=6 -device ${net_emul},netdev=net${_id},bus=pcie.2,addr=02.0"
+
+		myargs="-device ${net_emul},netdev=net${_id},addr=0x5"
 
 		# append -device for mtu
 		# virtio-net support for MTU after r359704
@@ -1014,7 +1059,7 @@ compile_machine_args()
 			Linux)
 				# check for kvm
 				if [ -r /usr/bin/kvm ]; then
-					${ECHO} "${N1_COLOR}machine_accel auto: KVM found!"
+					${ECHO} "${N1_COLOR}machine_accel auto: ${N2_COLOR}KVM found!${N0_COLOR}"
 					_accel_auto="kvm"
 					_accel=1
 				else
@@ -1031,7 +1076,7 @@ compile_machine_args()
 					_accel=0
 					${ECHO} "${W1_COLOR}Warning${N1_COLOR}: accel module not found: not executable: ${N2_COLOR}${NVMMCTL_CMD}${N1_COLOR}. It will work slowly${N0_COLOR}"
 				elif [ -x "${NVMMCTL_CMD}" ]; then
-					${ECHO} "${N1_COLOR}machine_accel auto: ${NVMMCTL_CMD} found!"
+					${ECHO} "${N1_COLOR}machine_accel auto: ${N2_COLOR}${NVMMCTL_CMD} found!${N0_COLOR}"
 					${NVMMCTL_CMD} identify
 					_ret=$?
 					if [ ${_ret} -ne 0 ]; then

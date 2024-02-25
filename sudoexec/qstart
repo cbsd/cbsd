@@ -175,7 +175,7 @@ start_qemu()
 				else
 					_cloud_source_is_zvol=0
 					_cloud_source_zvol=
-					_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
+					_ebytes=$( get_file_bytes ${_myfile} )
 				fi
 
 				# store original disk size to restore them after replace by cloud image
@@ -184,7 +184,7 @@ start_qemu()
 					_dsk_source_zvol="${is_zvol}"
 					_cloud_truncate=0
 				else
-					_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+					_ebytes=$( get_file_bytes ${data}/dsk1.vhd )
 					_cloud_truncate=1
 					_dsk_source_zvol=
 				fi
@@ -198,9 +198,12 @@ start_qemu()
 				if [ ${_cloud_truncate} -eq 1 ]; then
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
 					# to generic clonedata (add dd method)?
-					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+					# Linux does not support postfix in bs=, e.g. bs=4m
+					/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4000000 | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
 					echo
 					# adjust original image size
+					# not work when synlink to zvol
+					echo "${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd"
 					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
 				else
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
@@ -215,9 +218,18 @@ start_qemu()
 							# destory original zvol disk for vm
 							${ZFS_CMD} destroy ${_dsk_source_zvol}
 							#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+							echo "${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}"
 							${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
-							cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
-							${GPART_CMD} commit zvol/${_dsk_source_zvol}
+							case "${platform}" in
+								Linux)
+									# ?
+									echo 'w' | fdisk zvol/${_dsk_source_zvol}
+									true
+									;;
+								*)
+									cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
+									${GPART_CMD} commit zvol/${_dsk_source_zvol}
+							esac
 							# restore original size
 							# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
 							# bug here, need for atomic ops ^^ in clone action
@@ -375,7 +387,7 @@ start_qemu()
 
 	if [ -r "${ovmf_firmware}" ]; then
 		# UEFI BOOT
-		uefi_args="-drive if=pflash,format=raw,unit=0,readonly,file=${ovmf_firmware}"
+		uefi_args="-drive if=pflash,format=raw,unit=0,readonly=on,file=${ovmf_firmware}"
 		uefi_args="${uefi_args} -drive if=pflash,format=raw,unit=1,file=${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd"
 	else
 		uefi_args=
@@ -392,11 +404,31 @@ start_qemu()
 				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
 				${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
 			else
-				GENISOIMAGE_CMD=$( which makefs )
-				${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				case "${platform}" in
+					Linux)
+						GENISOIMAGE_CMD=$( which xorriso )
+
+${GENISOIMAGE_CMD} \
+	-as mkisofs \
+	-iso-level 2 \
+	-volid CIDATA \
+	-output "${jailsysdir}/${jname}/seed.iso" \
+	-joliet \
+	-rational-rock \
+	"${jailsysdir}/${jname}/cloud-init"
+ret=$?
+
+	[ ${ret} -ne 0 ] && err 1 "xorriso error"
+
+						true
+						;;
+					*)
+						GENISOIMAGE_CMD=$( which makefs )
+						${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				esac
 				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
 				# why upper here, whereis spec?
-				${SED_CMD} -i '' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+				${SED_CMD} -i${SED_DELIMER}'' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
 			fi
 	fi
 

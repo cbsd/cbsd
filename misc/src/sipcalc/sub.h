@@ -16,6 +16,7 @@
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
 #endif
+#include <stdint.h>
 #ifdef HAVE_SYS_BITYPES_H
 #include <sys/bitypes.h>
 #endif

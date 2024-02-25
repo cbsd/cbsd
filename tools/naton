@@ -41,14 +41,31 @@ ${H3_COLOR}See also${N0_COLOR}:
 check_nat_ip()
 {
 	natoff nat=all
-	${PING_CMD} -c1 -S ${natip} ${natip} > /dev/null 2>&1 || err 1 "${N1_COLOR}Cant assign nat address: ${N2_COLOR}${natip}${N1_COLOR}. Probably wrong ip. Nat cfg skipped${N0_COLOR}"
+	case "${platform}" in
+		Linux)
+			${PING_CMD} -c1 -I ${natip} ${natip} > /dev/null 2>&1 || err 1 "${N1_COLOR}Cant assign nat address: ${N2_COLOR}${natip}${N1_COLOR}. Probably wrong ip. Nat cfg skipped${N0_COLOR}"
+			;;
+		*)
+			${PING_CMD} -c1 -S ${natip} ${natip} > /dev/null 2>&1 || err 1 "${N1_COLOR}Cant assign nat address: ${N2_COLOR}${natip}${N1_COLOR}. Probably wrong ip. Nat cfg skipped${N0_COLOR}"
+			;;
+	esac
+	return 0
 }
 
 [ "${nat_enable}" = "0" ] && exit 0
+
 # forwarding for NAT mode
 ${ECHO} "${N1_COLOR}CBSD: Enable IP forwarding for NAT service${N0_COLOR}"
-${SYSCTL_CMD} net.inet6.ip6.forwarding=1 >/dev/null
-${SYSCTL_CMD} net.inet.ip.forwarding=1 >/dev/null
+case "${platform}" in
+	Linux)
+		${SYSCTL_CMD} net.ipv4.ip_forward=1 >/dev/null
+		${SYSCTL_CMD} net.ipv6.ip_forward=1 >/dev/null
+		;;
+	*)
+		${SYSCTL_CMD} net.inet6.ip6.forwarding=1 >/dev/null
+		${SYSCTL_CMD} net.inet.ip.forwarding=1 >/dev/null
+		;;
+esac
 
 iptype ${natip} >/dev/null 2>&1
 _ret=$?
@@ -76,9 +93,13 @@ case ${_ret} in
 		;;
 esac
 
-
 case "${nat_enable}" in
-	"pf")
+	nft)
+		[ ! -f "${etcdir}/nft.conf" ] && err 1 "${N1_COLOR}No nft.conf. run ${N2_COLOR}cbsd natcfg${N1_COLOR} first${N0_COLOR}"
+		check_nat_ip
+		/bin/sh ${etcdir}/nft.conf
+		;;
+	pf)
 		# copy default pf.conf
 		if [ ! -r ${workdir}/etc/pf.conf ]; then
 			cbsdlogger NOTICE ${CBSD_APP}: first CBSD pf run: use ${workdir}/etc/defaults/pf.conf.tpl as template for: ${workdir}/etc/pf.conf
@@ -97,14 +118,14 @@ case "${nat_enable}" in
 			err 1 "${W1_COLOR}${CBSD_APP} error: ${N1_COLOR}no such cbsd_external_naton() function, please check: ${N2_COLOR}cbsd-pf.conf${N0_COLOR}"
 		fi
 	;;
-	"ipfw")
+	ipfw)
 		[ ! -f "${etcdir}/ipfw.conf" ] && err 1 "${N1_COLOR}No ipfw.conf. run ${N2_COLOR}cbsd natcfg${N1_COLOR} first${N0_COLOR}"
 		${KLDSTAT_CMD} -qm alias || ${KLDLOAD_CMD} libalias
 		${KLDSTAT_CMD} -qm ipfw_nat || ${KLDLOAD_CMD} ipfw_nat
 		check_nat_ip
 		/bin/sh ${etcdir}/ipfw.conf
 	;;
-	"ipfilter")
+	ipfilter)
 		[ ! -f "${etcdir}/ipfilter.conf" ] && err 1 "No ipfilter.conf. run cbsd natcfg first"
 		${KLDSTAT_CMD} -qm ipfilter || ${KLDLOAD_CMD} ipfilter
 		check_nat_ip

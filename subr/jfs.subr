@@ -41,7 +41,9 @@ mvdata()
 			${ZFS_CMD} create ${zfs_create_flags} -o mountpoint=${_dst} "${ZPOOL}${_dst}"
 			${ZFS_CMD} mount "${ZPOOL}${_dst}"
 			${MKDIR_CMD} ${_dst}
-			cd ${_src} && ${PAX_CMD} -p eme -rw . ${_dst} && ${CHFLAGS_CMD} -R noschg ${_src} && ${RM_CMD} -rf ${_src}
+			cd ${_src} && ${PAX_CMD} -p eme -rw . ${_dst}
+			[ "${platform}" != "Linux" ] && ${CHFLAGS_CMD} -R noschg ${_src}
+			${RM_CMD} -rf ${_src}
 		;;
 		1)
 			${ZFS_CMD} umount -f ${_src} > /dev/null 2>&1
@@ -218,7 +220,8 @@ clonedata()
 						done
 
 						${ZFS_CMD} create -V ${imgbytes} ${_zvol_opts} ${new_zvol}
-						${DD_CMD} if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1g
+						# Linux does not support postfix in bs=, e.g. bs=1g
+						${DD_CMD} if=/dev/zvol/${is_zvol} of=/dev/zvol/${new_zvol} bs=1024000000
 						;;
 				esac
 				cbsdlogger NOTICE ${CBSD_APP}: clonedata: create ${i} symlink to ZVOL: /dev/zvol/${new_zvol}
@@ -254,15 +257,15 @@ removedir()
 		# todo: check for local (zfs/nullfs) or remote mount: start_mnt/iSCSI/NFS
 		# todo: local ZFS or remove have different removal scenarios
 		# remove dir first
-		${NICE_CMD} -n 19 ${IDPRIO_CMD} 29 ${FIND_CMD} ${_data}/ -mindepth 1 -maxdepth 1 -type d -exec ${RM_CMD} -rf {} \;
+		${NICE_CMD} -n 19 ${IDLE_IONICE} ${FIND_CMD} ${_data}/ -mindepth 1 -maxdepth 1 -type d -exec ${RM_CMD} -rf {} \;
 		# then remove file
-		${NICE_CMD} -n 19 ${IDPRIO_CMD} 29 ${FIND_CMD} ${_data}/ -mindepth 1 -maxdepth 1 -exec ${RM_CMD} -f {} \;
+		${NICE_CMD} -n 19 ${IDLE_IONICE} ${FIND_CMD} ${_data}/ -mindepth 1 -maxdepth 1 -exec ${RM_CMD} -f {} \;
 		# finaly try to unmount and remove
 		${UMOUNT_CMD} -f ${_data}
 		${RM_CMD} -rf ${_data}
 	else
 		# not a mount, unset schg first
-		${NICE_CMD} -n 19 ${IDPRIO_CMD} 29 ${CHFLAGS_CMD} -R noschg ${_data}
+		[ "${platform}" != "Linux" ] && ${NICE_CMD} -n 19 ${IDLE_IONICE} ${CHFLAGS_CMD} -R noschg ${_data}
 		${RM_CMD} -rf ${_data}
 	fi
 
@@ -546,30 +549,6 @@ destroy_hammer_fs()
 
 	${UMOUNT_CMD} ${jaildatadir}/${dname}-${jaildatapref}
 	${HAMMER2_CMD} pfs-delete ${jaildatadir}/${dname}-${jaildatapref}
-}
-
-file_size()
-{
-	[ -z "${1}" ] && return 1
-	[ ! -r "${1}" ] && return 1
-
-	case "${platform}" in
-		Linux)
-			_bytes=$( ${STAT_CMD} --printf="%s" "${1}" 2>/dev/null )
-			;;
-		*)
-			_bytes=$( ${STAT_CMD} -f "%z" "${1}" 2>/dev/null )
-			;;
-	esac
-
-	if [ -n "${_bytes}" ]; then
-		# is_number?
-		echo -n "${_bytes}"
-	else
-		return 1
-	fi
-
-	return 0
 }
 
 ###

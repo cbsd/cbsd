@@ -169,8 +169,8 @@ zfs_create_zvol_from_file()
 		return 1
 	fi
 
-	_ebytes=$( ${STAT_CMD} -f "%z" ${_file} 2>/dev/null )
-	_ebytes_data=$( ${STAT_CMD} -f "%b" ${_file} 2>/dev/null )
+	_ebytes=$( get_file_bytes ${_file} 2>/dev/null )
+	_ebytes_data=$( get_file_blocks ${_file} 2>/dev/null )
 	_ebytes_data=$(( _ebytes_data * 512 ))			# real referenced size/data
 
 	if [ ${_ebytes} -lt 128 ]; then
@@ -250,6 +250,8 @@ zfs_create_zvol_from_file()
 		_zvol_opts_merged=$( zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}" 2>/dev/null )
 	fi
 
+	cbsdlogger NOTICE ${CBSD_APP}: ${ZFS_CMD} create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name}
+
 	_msg=$( ${ZFS_CMD} create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name} 2>&1 )
 	_res=$?
 
@@ -258,13 +260,30 @@ zfs_create_zvol_from_file()
 		return 1
 	fi
 
+	# waiting for udev
+	for i in $( ${SEQ_CMD} 5 ); do
+		test -e /dev/zvol/${DATA}/${_zvol_name} > /dev/null 2>&1
+		_ret=$?
+		[ ${_ret} -eq 0 ] && break
+		cbsdlogger NOTICE ${CBSD_APP}: waiting udev ${i}/5: /dev/zvol/${DATA}/${_zvol_name}
+		sleep 1
+	done
+
+	test -e /dev/zvol/${DATA}/${_zvol_name} > /dev/null 2>&1
+	_ret=$?
+
+	[ ${_ret} -ne 0 ] && err 1 "zfs_create_zvol_from_file error: no such /dev/zvol/${DATA}/${_zvol_name}, zvol created? ${DATA}/${_zvol_name}"
+
 	if [ ${_bar} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}Original size: ${_human_bytes}, real referenced size/data: ${_human_data_bytes}${N0_COLOR}"
 		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR}: ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
-		${NICE_CMD} -n 20 ${DD_CMD} if=${_file} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
+		# Linux does not support postfix in bs=, e.g. bs=4m
+		${NICE_CMD} -n 20 ${DD_CMD} if=${_file} bs=4000000 | ${miscdir}/cbsdtee -e ${_ebytes} > /dev/zvol/${DATA}/${_zvol_name}
 		echo
 	else
-		${NICE_CMD} -n 20 ${DD_CMD} if=${_file} of=/dev/zvol/${DATA}/${_zvol_name} bs=4m
+		# Linux does not support postfix in bs=, e.g. bs=4m
+		echo "${NICE_CMD} -n 20 ${DD_CMD} if=${_file} of=${_res} bs=4000000"
+		${NICE_CMD} -n 20 ${DD_CMD} if=${_file} of=${_res} bs=4000000
 		echo
 	fi
 

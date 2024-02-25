@@ -26,9 +26,9 @@ for i in $( cbsd bpcibus jname=${jname} mode=get device_name=virtio-net ); do
 	${HEAD_CMD} -1 ${NETWORK_CONFIG} | ${GREP_CMD} -q "/bin/sh" > /dev/null 2>&1
 	if [ $? -eq 0 ]; then
 		# firestarter template
-		${SED_CMD} -i '' -e "s/ eth${seq}/ ${iface_name}/g" ${NETWORK_CONFIG}
+		${SED_CMD} -i${SED_DELIMER}'' -e "s/ eth${seq}/ ${iface_name}/g" ${NETWORK_CONFIG}
 	else
-		${SED_CMD} -i '' -e "s/name: eth${seq}*\$/name: ${iface_name}/g"  -e "s/mac_address:.*\$/mac_address: ${nic_hwaddr0}/g"  ${NETWORK_CONFIG}
+		${SED_CMD} -i${SED_DELIMER}'' -e "s/name: eth${seq}*\$/name: ${iface_name}/g"  -e "s/mac_address:.*\$/mac_address: ${nic_hwaddr0}/g"  ${NETWORK_CONFIG}
 	fi
 	seq=$(( seq + 1 ))
 done

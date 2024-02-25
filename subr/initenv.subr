@@ -163,6 +163,43 @@ make_nat()
 		"exit")
 			return 0
 			;;
+		"nft")
+			readconf cbsd-nft.conf
+
+			# save other rule, except global nat
+			if [ -r "${etcdir}/nft.conf" ]; then
+				${GREP_CMD} -E -v "(^nat on )|(Setup by CBSD NAT)" ${etcdir}/nft.conf | ${SORT_CMD} -u > ${tmpdir}/nft.conf.bak
+			fi
+			${CAT_CMD} >${etcdir}/nft.conf<<EOF
+nft add table nat								# // Setup by CBSD NAT
+nft add chain nat postrouting { type nat hook postrouting priority 100 \; }	# // Setup by CBSD NAT
+EOF
+
+			for _net in ${cbsd_nat_networks}; do
+				if [ "${cbsd_nat_skip_natip_network}" = "1" ]; then
+					_nm=$( echo ${_net} | ${TR_CMD} "/" " " )
+					${distdir}/sbin/netmask ${_nm} ${natip}
+					_ret=$?
+					[ ${_ret} -eq 1 ] && continue
+				fi
+
+				${CAT_CMD} >> ${etcdir}/nft.conf <<EOF
+nft add rule nat postrouting ip saddr ${_net} oif ${_extiface} masquerade	# // Setup by CBSD NAT
+EOF
+			done
+
+			#restore other rule
+			if [ -r ${tmpdir}/nft.conf.bak ]; then
+				${CAT_CMD} ${tmpdir}/nft.conf.bak >> ${etcdir}/nft.conf
+				${RM_CMD} -f ${tmpdir}/nft.conf.bak
+			fi
+
+			answ="${ok}"
+			ok="ok"
+			${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET nat_enable=\"${answ}\"
+			sync_nat_with_forms
+			return 0
+		;;
 		"pf")
 			readconf cbsd-pf.conf
 
@@ -276,7 +313,18 @@ EOF
 # if arg then force configure
 configure_nat()
 {
+	local _fwlist=
+
 	update_netinfo
+
+	case "${platform}" in
+		Linux)
+			_fwlist="nft"
+			;;
+		*)
+			_fwlist="pf,ipfw,ipfilter"
+			;;
+	esac
 
 	if [ -n "${nat_enable}" ]; then
 		_default="${nat_enable}"
@@ -291,7 +339,7 @@ configure_nat()
 
 	while [ "${nat_selected}" != "1" ]; do
 		${ECHO} "${BOLD}Which NAT framework do you want to use: [${N2_COLOR}${_default}${N0_COLOR}${BOLD}]${N0_COLOR}"
-		${ECHO} "${N1_COLOR}(type FW name, eg pf,ipfw,ipfilter, 'disable' or '0' to CBSD NAT, \"exit\" for break)${N0_COLOR}"
+		${ECHO} "${N1_COLOR}(type FW name, eg.: ${_fwlist}, 'disable' or '0' to CBSD NAT, \"exit\" for break)${N0_COLOR}"
 
 		# skip reading answer when inter=0
 		if [ "${inter}" != "0" ]; then
@@ -309,6 +357,17 @@ configure_nat()
 				return 0
 				;;
 			pf|ipfw|ipfilter)
+				if [ "${platform}" = "Linux" ]; then
+					${ECHO} "${N1_COLOR}wrong input, not supported on ${platform}: ${N1_COLOR}${ok}${N0_COLOR}"
+					return 0
+				fi
+				nat_selected="1"
+				;;
+			nft)
+				if [ "${platform}" != "Linux" ]; then
+					${ECHO} "${N1_COLOR}wrong input, not supported on ${platform}: ${N1_COLOR}${ok}${N0_COLOR}"
+					return 0
+				fi
 				nat_selected="1"
 				;;
 			*)
@@ -419,6 +478,11 @@ rsyncd_disable()
 
 configure_rsync()
 {
+	if [ "${platform}" = "Linux" ]; then
+		${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdrsyncd_enable="NO"
+		return 0
+	fi
+
 	[ ! -f "${etcdir}/rsyncd.conf" ] && installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${distdir}/etc/defaults/rsyncd.conf ${etcdir}/rsyncd.conf
 
 	if [ $( ${GREP_CMD} ^cbsdrsyncd_enable= /etc/rc.conf ${workdir}/rc.conf | /usr/bin/wc -l ) = 0 ]; then
@@ -455,6 +519,11 @@ cbsd_statsd_enable()
 configure_racct()
 {
 	local racct_enabled
+
+	if [ "${platform}" = "Linux" ]; then
+		printf "\nkern.racct.enable=0\n" >> ${workdir}/rc.conf
+		return 0
+	fi
 
 	racct_enabled=$( ${SYSCTL_CMD} -qn kern.racct.enable )
 
