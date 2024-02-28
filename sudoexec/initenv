@@ -60,6 +60,72 @@ make_fs_id()
 	done
 }
 
+init_zfs_feat()
+{
+	local ZFS_CMD= _ret=0
+	local _root_pool= _pool= _dirname=
+
+	zfs_feat=0
+
+	ZFS_CMD=$( which zfs 2>/dev/null )
+	if [ -n "${ZFS_CMD}" ]; then
+		_tmpval=0
+		case "${platform}" in
+			Linux)
+				grep -q "^zfs " /proc/modules > /dev/null 2>&1
+				_tmpval=$?
+				;;
+			*)
+				kldstat -qm zfs >/dev/null 2>&1;
+				_tmpval=$?
+				;;
+		esac
+
+		if [ ${_tmpval} -eq 0 ]; then
+			_pool=$( ${ZFS_CMD} get -Ho value name ${workdir} 2>/dev/null )
+			_ret=$?
+			if [ -n "${_pool}" -a ${_ret} -eq 0 ]; then
+				zfsfeat=1
+				_root_pool=$( ${ZFS_CMD} get -Ho value name / 2>/dev/null )
+				_ret=$?
+				if [ -n ${_root_pool} -a ${_ret} -eq 0 ]; then
+					# first run?
+					if [ ! -d "${workdir}/var/db" ]; then
+						if [ "${_pool}" = "${_root_pool}" ]; then
+							_dirname=$( basename ${workdir} )
+							_parent_pool=$( echo "${_root_pool}" | tr "/" " " | awk '{printf $1}' )
+
+							if [ "${inter}" != "0" ]; then
+								echo
+								echo "Error: on ZFS-based systems, the CBSD requires a separate dataset different from the root one (${_root_pool})."
+								echo "Please create a separate dataset first, e.g.:"
+								echo
+								echo " ${ZFS_CMD} create -o mountpoint=${workdir} -o atime=off ${_parent_pool}/${_dirname}"
+								echo
+								echo "Then re-run: env workdir=${workdir} /usr/local/cbsd/sudoexec/initenv"
+								exit 1
+							else
+								# We will do automatically
+								${ZFS_CMD} create -o mountpoint=${workdir} -o atime=off ${_parent_pool}/${_dirname}
+								_ret=$?
+								if [ ${_ret} -eq 0 ]; then
+									echo "CBSD pool created: ${ZFS_CMD} create -o mountpoint=${workdir} -o atime=off ${_parent_pool}/${_dirname}"
+								else
+									echo "CBSD pool create failed: ${ZFS_CMD} create -o mountpoint=${workdir} -o atime=off ${_parent_pool}/${_dirname}"
+									echo "Error: on ZFS-based systems, the CBSD requires a separate dataset different from the root one (${_root_pool})."
+									exit ${_ret}
+								fi
+							fi
+						fi
+					fi
+				fi
+			fi
+		fi
+	fi
+
+	return 0
+}
+
 desc_question()
 {
 	local _DEFAULT
@@ -264,6 +330,7 @@ phase0()
 
 	workdir="${cbsd_workdir}"
 	[ -r "${inventory}" ] && . ${inventory}
+
 	# can be empty in inventory, work-around
 	if [ -z "${workdir}" ]; then
 		workdir="${cbsd_workdir}"
@@ -339,6 +406,10 @@ phase1()
 			exit 1
 		fi
 	fi
+
+	# check ZFS root dataset vs CBSD dataset
+	init_zfs_feat
+
 	printf "${myversion}" > ${workdir}/ver
 
 	$ECHO "${N1_COLOR} * Check hier and permission..."
@@ -828,36 +899,19 @@ phase5()
 	/bin/ln -sfn inv.${nodename}.sqlite local.sqlite
 
 	_myfs="ufs"
-	zfsfeat=0
 
-	ZFS_CMD=$( which zfs 2>/dev/null )
-	if [ -n "${ZFS_CMD}" ]; then
+	init_zfs_feat
 
-		_tmpval=0
-		case "${platform}" in
-			Linux)
-				grep -q "^zfs " /proc/modules > /dev/null 2>&1
-				_tmpval=$?
-				;;
-			*)
-				kldstat -qm zfs >/dev/null 2>&1;
-				_tmpval=$?
-				;;
-		esac
+	case ${zfsfeat} in
+		1)
+			_myfs="zfs"
+			;;
+		*)
+			true
+			;;
+	esac
 
-		if [ ${_tmpval} -eq 0 ]; then
-			zfs list ${jaildatadir} > /dev/null 2>&1
-			if [ $? -eq 0 ]; then
-				_myfs="zfs"
-				zfsfeat=1
-			else
-				zfsfeat=0
-				${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET zfsfeat='0'"
-			fi
-		fi
-	else
-		${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET zfsfeat='0'"
-	fi
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET zfsfeat='${zfsfeat}'"
 
 	if [ -x /sbin/hammer2 ]; then
 		/sbin/hammer2 info ${workdir} > /dev/null 2>&1
@@ -1409,3 +1463,5 @@ case "$1" in
 		start
 	;;
 esac
+
+exit 0
