@@ -1,3 +1,6 @@
+if [ ! "$_CBSD_UP_SUBR" ]; then
+_CBSD_UP_SUBR=1
+###
 # shellcheck shell=sh
 
 bhyve_ssh_wait()
@@ -124,6 +127,70 @@ jail_ssh_wait()
 
 	return 0
 }
+
+qemu_ssh_wait()
+{
+	local _orig_options
+	_orig_options=$( set +o )
+
+	# disable errexit/xtrace settings for a while..
+	set +o xtrace
+	set +o errexit
+
+	local _attempt_max=60 _i _x _y
+	readconf cbsdfile.conf
+	if [ -n "${qemu_ssh_wait_timeout}" ]; then
+		_attempt_max="${qemu_ssh_wait_timeout}"
+	fi
+
+	printf "${N1_COLOR}waiting VM ssh (${_attempt_max}s): ${N2_COLOR}${jname}${N0_COLOR}"
+	# wait for VM boot
+	# Some OSes are unstable after the first connection, we will check three times for stability
+	pass=0
+	_y=2		# test for timeout exceed
+	printf "${N1_COLOR}[" 1>&1
+	for _i in $( ${SEQ_CMD} 1 ${_attempt_max} ); do
+		#_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
+		_x=$( timeout 10 cbsd bexec jname=${jname} date > /dev/null 2>&1 )
+		if [ $? -eq 0 ]; then
+			pass=$(( pass + 1 ))
+		else
+			pass=0
+		fi
+		case ${pass} in
+			0)
+				printf "." 1>&2
+				;;
+			1)
+				printf "o" 1>&2
+				;;
+			3)
+				printf "O" 1>&2
+				;;
+		esac
+		# when three times pass, we believe that the system is stable
+		[ ${pass} -eq 3 ] && break
+		_y=$(( _y + 1 ))
+		# some ssh flop, wait for stabilize (todo: more retry support?)
+		sleep 2
+		# todo: delete only ip
+		# ipv6?
+		[ -z "${CLOUD_URL}" ] && ${ARP_CMD} -d -n ${ci_ip4_addr} > /dev/null 2>&1
+		if [ ${_y} -eq ${_attempt_max} ]; then
+			# restore old settings
+			set ${_orig_options}
+			return 1
+		fi
+	done
+	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
+
+	${ECHO} "${N1_COLOR}qemu ssh available${N0_COLOR}"
+	# restore old settings
+	set ${_orig_options}
+
+	return 0
+}
+
 
 # testing/wip
 run_jail_cloud()
@@ -319,6 +386,7 @@ run_jail()
 							${ECHO} "${N1_COLOR}${CBSD_APP} warning: pkglist outside the CBSDfile directory?: ${N2_COLOR}[${_res}][${_tmp}]${N0_COLOR}"
 						fi
 					else
+						true
 						# probably one package
 					fi
 				fi
@@ -706,3 +774,240 @@ run_bhyve()
 
 	return 0
 }
+
+
+# testing/wip
+run_qemu_cloud()
+{
+	local CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	[ -z "${ssh_wait}" ] && ssh_wait=0
+
+	${CAT_CMD} > up-${jname}.json <<EOF
+{
+  "host_hostname": "${host_hostname}",
+  "imgsize": "${imgsize}",
+  "ram": "${vm_ram}",
+  "cpus": "${vm_cpus}",
+  "image": "${image}",
+  "extras": "${extras}",
+  "recomendation": "${recomendation}",
+  "pubkey": "${CLOUD_KEY}"
+}
+EOF
+
+	${CAT_CMD} > deploy-${jname}.sh <<EOF
+${CURL_CMD} -X POST -H "Content-Type: application/json" -d @up-${jname}.json ${CLOUD_URL}/api/v1/create/${jname}
+EOF
+	${CHMOD_CMD} +x deploy-${jname}.sh
+	./deploy-${jname}.sh
+	# without debug
+	${RM_CMD} -f ./deploy-${jname}.sh ./up-${jname}.json
+
+	if [ ${ssh_wait} -eq 1 ]; then
+		qemu_ssh_wait
+		ret=$?
+	else
+		ret=0
+	fi
+	if [ ${ret} -eq 0 ]; then
+		#qemu_${jname}		# re-read variables
+
+		if fn_exists postcreate_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; qremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+
+			postcreate_${jname}
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		# per-env postup func
+		if fn_exists postup_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			postup_${jname}
+			jname="${ojname}"		# for corrupted/changed jname in func
+		fi
+	else
+		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+	return 0
+}
+
+run_qemu()
+{
+	local MYOPTARG QEMU_ARGS ojname _ret
+
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_qemu: empty jname${N0_COLOR}"
+
+	# allow all qemu settings
+	QEMU_ARGS="relative_path jname path data rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator \
+	imgsize imgtype vm_cpus vm_ram vm_os_type vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge qemu_flags virtio_type vm_os_profile \
+	swapsize vm_iso_path vm_guestfs vm_vnc_port qemu_generate_acpi qemu_wire_memory qemu_rts_keeps_utc qemu_force_msi_irq qemu_x2apic_mode \
+	qemu_mptable_gen qemu_ignore_msr_acc cd_vnc_wait qemu_vnc_resolution qemu_vnc_tcp_bind qemu_vnc_vgaconf nic_driver vnc_password media_auto_eject \
+	vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chrooted on_poweroff on_reboot on_crash is_cloud ci_jname ci_fqdn ci_template ci_interface \
+	ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey uuid \
+	ci_interface_mtu ci_interface2 ci_interface_mtu2 ci_ip4_addr2 ci_gw42 nic_flags nic_flags2 qemu_vnc_kbdlayout qemurun_wrapper qemu_cmd pid_wait flavor \
+	tpm"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		# unset all
+		ojname="${jname}"
+
+		for i in ${QEMU_ARGS}; do
+			unset ${i}
+		done
+
+		jname="${ojname}"
+		qemu_${jname}
+
+		run_qemu_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 0 ] && err 1 "${N1_COLOR}already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	ojname="${jname}"
+	# should be in sync with qcreate script (except: jname)
+	MYOPTARG="jconf inter removejconf"
+	MYOPTARG="${MYOPTARG} ${QEMU_ARGS}"
+
+	# push old cbsd workdir
+	ocbsd_workdir="${workdir}"
+
+	# unset all
+	for i in ${MYOPTARG}; do
+		unset ${i}
+	done
+
+	jname="${ojname}"
+
+	# defaults
+	readconf qemu-freebsd-default.conf
+	readconf cbsdfile.conf
+
+	if fn_exists globals 2>/dev/null; then
+		globals
+	fi
+
+	qemu_${jname}
+
+	QEMU_ARGS=
+
+	# construct non-empty args/params
+	for i in ${MYOPTARG}; do
+		eval _val="\$$i"
+		[ -z "${_val}" ] && continue
+		if [ -z "${QEMU_ARGS}" ]; then
+			QEMU_ARGS="${i}=\"${_val}\""
+		else
+			QEMU_ARGS="${QEMU_ARGS} ${i}=\"${_val}\""
+		fi
+	done
+
+	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
+
+	# per-env preup func
+	if fn_exists preup_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		preup_${jname}
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+	fi
+
+	if [ -d ${myworkdir}/jails-system ]; then
+		QEMU_ARGS="${QEMU_ARGS} jailsysskeldir=${myworkdir}/jails-system"
+	fi
+
+	# dynamic extra data?
+	for i in ${ci_user_add}; do
+		for _test in ci_user_pw_${i} ci_user_pw_${i}_crypt ci_user_gecos_${i} ci_user_home_${i} ci_user_shell_${i} ci_user_member_groups_${i} ci_user_pubkey_${i}; do
+			eval T="\$$_test"
+			[ -n "${T}" ] && QEMU_ARGS="${QEMU_ARGS} ${_test}=\"${T}\""
+		done
+	done
+
+	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" qcreate ${N1_COLOR}${QEMU_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
+
+	set -o errexit
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" qcreate ${QEMU_ARGS} ${CBSDFILE_ARGS}
+	set +o errexit
+
+	# runasap not atomic with qcreate to ignore qemu_ssh_wait_timeout when/if fetch_iso work
+	[ ${runasap} -eq 1 ] && ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" qstart jname=${jname} quiet=1
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+
+	# don't wait ssh by default
+	[ -z "${ssh_wait}" ] && ssh_wait=0
+
+	if [ ${ssh_wait} -eq 1 ]; then
+		qemu_ssh_wait
+		ret=$?
+	else
+		ret=0
+	fi
+
+	if [ ${ret} -eq 0 ]; then
+		#qemu_${jname}		# re-read variables
+
+		if fn_exists postcreate_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup qemu when postcreate action failed
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; qremove ${jname}" HUP INT ABRT BUS TERM EXIT
+
+			set -o errexit
+			set -o xtrace
+
+			# change dir if necessary for internal command
+			#export CBSD_PWD="${myworkdir}"
+			postcreate_${jname}
+
+			set +o xtrace
+			set +o errexit
+			trap "" HUP INT ABRT BUS TERM EXIT
+			unset H_CBSD_jname
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		# per-env postup func
+		if fn_exists postup_${jname} 2>/dev/null; then
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			postup_${jname}
+			jname="${ojname}"		# for corrupted/changed jname in func
+		fi
+	else
+		[ ${ssh_wait} -eq 1 ] && err 1 "${N1_COLOR}ssh failed${N0_COLOR}"
+	fi
+
+	return 0
+}
+
+###
+fi
