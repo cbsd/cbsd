@@ -190,7 +190,8 @@ fetch_files(char *urls, char *fout)
 	}
 
 	/* disable progress meter, set to 0L to enable it */
-	curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 1L);
+	//curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 1L);
+	curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 0L);
 
 	/* send all data to this function  */
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_data);
