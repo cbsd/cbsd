@@ -38,9 +38,15 @@ CBSDMODULE="bhyve"
 script=
 cbsd_api=0
 jname=
-. "${subrdir}"/cbsdinit.subr
-ojname="${jname}"
+ojname=
+. ${cbsdinit}
 
+[ -n "${jname}" ] && ojname="${jname}"
+
+if [ -z "${jname}" -a -n "${ojname}" ]; then
+	# inherit jname env
+	jname="${ojname}"
+fi
 
 #######################################
 # Process CBSDfile
@@ -53,14 +59,9 @@ if [ -r "${Makefile}" ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
 	. "${Makefile}"
 	# shellcheck disable=2086
-	all_bhyve_list=$( ${EGREP_CMD} '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
-	jname="${all_bhyve_list}"
-
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	fi
-
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+	jail_list=$( ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+	[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no bhyve found${N0_COLOR}"
+	[ -z "${jname}" ] && jname="${jail_list}"
 
 	if [ -n "${CLOUD_URL}" ] && [ -n "${CLOUD_KEY}" ]; then
 		cbsd_api=1
@@ -69,18 +70,20 @@ if [ -r "${Makefile}" ]; then
 	fi
 else
 	cbsd_api=0
+fi
 
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	fi
 
-	if [ -z "${all_jail_list}" ]; then
-		if [ ${cbsd_api} -eq 0 ]; then
-			# todo: multiple bexec via all_bhyve_list?
-			[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
-			shift  # todo: jname and cmd may have reverse order
-		fi
+if [ -z "${jail_list}" ]; then
+	if [ ${cbsd_api} -eq 0 ]; then
+		# todo: multiple bexec via all_jail_list?
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+		shift  # todo: jname and cmd may have reverse order
 	fi
+fi
+
+if [ -n "${ojname}" ]; then
+	jname="${ojname}"
+	unset jail_list
 fi
 
 
@@ -149,8 +152,8 @@ fi
 # Multiple jails case
 #######################################
 
-emulator="bhyve"	# for jname_is_multiple
-jname_is_multiple	# import jail_list if jname is mask
+emulator="bhyve"				# for jname_is_multiple
+[ -z "${jail_list}" ] && jname_is_multiple	# import jail_list if jname is mask
 
 if [ -n "${jail_list}" ]; then
 	. "${subrdir}"/multiple.subr
@@ -170,7 +173,7 @@ if [ -n "${jail_list}" ]; then
 			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} script=${script} 2>/dev/null )
 		else
 			# shellcheck disable=2086
-			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} ${cmd} 2>/dev/null )
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd bexec jname=${jname} "${cmd}" 2>/dev/null )
 		fi
 		task_id="${task_id} ${task_id_cur}"
 	done
@@ -204,7 +207,7 @@ else # we use API
 
 	_global_ret=0
 
-	for jname in ${all_bhyve_list}; do
+	for jname in ${all_jail_list}; do
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" "${CLOUD_URL}"/api/v1/status/"${jname}" 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then

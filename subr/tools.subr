@@ -93,7 +93,7 @@ iptype() {
 	# Identify type {inet,inet6}.
 	case "${IWM}" in
 		*\.*\.*\.*)
-			echo "${IWM}" | ${EGREP_CMD} -q '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$' && return 1
+			echo "${IWM}" | ${GREP_CMD} -E -q '^([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3}$' && return 1
 			# its not ip
 			return 0
 		;;
@@ -206,7 +206,7 @@ validate_hwaddr()
 
 # for select_jail_by_list
 # return 1 when node online
-# return 0 when only_local=0 and node is offnline
+# return 0 when only_local=0 and node is offline
 # or only_online=1 or only_local=1
 node_state()
 {
@@ -290,11 +290,12 @@ conv_time()
 
 
 # return $jname as selected jail by id
-# -s "is subject for list"
 # -a [0|1] show only active (status=on jail): 0, or all: 1
-# -r [0|1] select jname from remote node too (1), or only local: 0
 # -e emulator ( jls for jail and bls for bhyve ): jls
+# -l "jail1 jail3 " - limit scope by 'jail1 jaiil2' jname only
 # -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
+# -s "is subject for list"
+# -r [0|1] select jname from remote node too (1), or only local: 0
 select_jail_by_list()
 {
 	local _tmpdir _tmpfile
@@ -302,6 +303,7 @@ select_jail_by_list()
 	local sqldelimer=" "
 	local emulator="jls"
 	local _bhyve_local_sqlite
+	local _list_only=
 
 	local only_local=0	# default - local node only
 	local subject="List of online jails:"
@@ -311,13 +313,14 @@ select_jail_by_list()
 	local only_online_node=0	# only online node
 	local curr_time rtime
 
-	while getopts "a:r:s:e:o:" opt; do
+	while getopts "a:e:l:o:r:s:" opt; do
 		case "${opt}" in
 			a) active="${OPTARG}" ;;
+			e) emulator="${OPTARG}" ;;
+			l) _list_only="${OPTARG}" ;;
+			o) only_online_node="${OPTARG}" ;;
 			r) only_local="${OPTARG}" ;;
 			s) subject="${OPTARG}" ;;
-			e) emulator="${OPTARG}" ;;
-			o) only_online_node="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -352,7 +355,7 @@ select_jail_by_list()
 
 	curr_time=$( ${DATE_CMD} +%s )
 
-	${searchstr} display=nodename,jname,status header=0 order=asc | ${EGREP_CMD} ${active}$ | while read nodename jname status; do
+	${searchstr} display=nodename,jname,status header=0 order=asc jname="${_list_only}" | ${GREP_CMD} -E ${active}$ | while read nodename jname status; do
 		# continue only when any node status or when node is online (when -r 1)
 		node_state || continue
 		[ -z "${nodename}" ] && continue
@@ -492,6 +495,7 @@ prepare_offline_jail()
 	mountbase -o "" -p "" -d "" -c "" -s ""
 	[ -f "${mount_fstab}" ] && /usr/local/bin/cbsd mountfstab jroot=${path} fstab=${mount_fstab} jname="${jname}"
 	[ -f "${mount_fstab}.local" ] && /usr/local/bin/cbsd mountfstab jroot=${path} fstab=${mount_fstab}.local jname="${jname}"
+
 	${MOUNT_CMD} -t devfs devfs ${path}/dev
 	makeresolv jname=${jname}
 	trap "${TRAP} /usr/local/bin/cbsd jcleanup jname=$jname" HUP INT ABRT BUS TERM EXIT
@@ -534,7 +538,7 @@ random_password_gen()
 	_extra_len=$(( _length + 8 ))
 
 	# todo: what the best, /dev/random or "date +%s" ?
-	_pw=$( ${HEAD_CMD} -c ${_extra_len} /dev/random | ${UUENCODE_CMD} -m - | ${EGREP_CMD} -v '(^begin-base)|^====$' | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x" )
+	_pw=$( ${HEAD_CMD} -c ${_extra_len} /dev/random | ${UUENCODE_CMD} -m - | ${GREP_CMD} -E -v '(^begin-base)|^====$' | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x" )
 	_pw=$(  substr --pos=0 --len=${_length} --str=${_pw} )
 	printf "${_pw}"
 }
