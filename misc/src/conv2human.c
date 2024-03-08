@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-#ifdef __Linux__
+#ifdef WITH_BSD_H
 #include <bsd/libutil.h>
 #else
 #include <libutil.h>
