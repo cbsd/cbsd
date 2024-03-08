@@ -1,0 +1,277 @@
+#!/usr/local/bin/cbsd
+# shellcheck shell=sh disable=2034,1090,1091,2154
+#v12.1.2
+MYARG=""
+MYOPTARG="cmd jname script"
+MYDESC="Execution for command inside cloud-based vm"
+ADDHELP="\
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ Run the command in the cloud-init-based qemu VM from the master environment.
+ If you are in the CBSDfile directory, these environments will always have priority.
+ Keep in mind that by default the login is performed by an unprivileged user,
+ which is specified in the configuration file.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}cmd=${N0_COLOR}    - command to execute inside VM, e.g. \"pwd\".
+ ${N2_COLOR}jname=${N0_COLOR}  - target qemu. If qemu='*' or qemu='vm*' then execute command on all
+              qemu VM or in VM whose names begin with 'vm', e.g. 'vm1', 'vmX'...
+ ${N2_COLOR}script=${N0_COLOR} - path to script instead of command.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd qexec jname=centos1 sudo yum update -y
+ # cbsd qexec jname=debian1 <<EOF
+pwd
+hostname
+ls -la
+sudo whoami
+EOF
+
+"
+
+CBSDMODULE="qemu"
+
+. "${subrdir}"/nc.subr
+script=
+cbsd_api=0
+jname=
+ojname=
+. ${cbsdinit}
+
+[ -n "${jname}" ] && ojname="${jname}"
+
+if [ -z "${jname}" -a -n "${ojname}" ]; then
+	# inherit jname env
+	jname="${ojname}"
+fi
+
+#######################################
+# Process CBSDfile
+#######################################
+
+Makefile="${CBSD_PWD}/CBSDfile"
+
+# check for cloud function when CBSDfile exist
+if [ -r "${Makefile}" ]; then
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	. "${Makefile}"
+	# shellcheck disable=2086
+	jail_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
+	[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no qemu found${N0_COLOR}"
+	[ -z "${jname}" ] && jname="${jail_list}"
+
+	if [ -n "${CLOUD_URL}" ] && [ -n "${CLOUD_KEY}" ]; then
+		cbsd_api=1
+	else
+		cbsd_api=0
+	fi
+else
+	cbsd_api=0
+fi
+
+
+if [ -z "${jail_list}" ]; then
+	if [ ${cbsd_api} -eq 0 ]; then
+		# todo: multiple qexec via all_jail_list?
+		[ -z "${jname}" ] && err 1 "${N1_COLOR}${CBSD_APP}: give me jname${N0_COLOR}"
+		shift  # todo: jname and cmd may have reverse order
+	fi
+fi
+
+if [ -n "${ojname}" ]; then
+	jname="${ojname}"
+	unset jail_list
+fi
+
+
+#######################################
+# Try to read ${cmd} from command line
+#######################################
+
+if [ -z "${cmd}" ] && [ -z "${script}" ]; then
+	# Pass '"' as ' in cmd
+	INIT_IFS="${IFS}"
+	IFS="~"
+#	cmd="$@"
+	IFS="${INIT_IFS}"
+	cmd=$( while [ -n "${1}" ]; do
+		#IFS="~"
+		strpos --str="${1}" --search="="
+		_pos=$?
+		if [ ${_pos} -eq 0 ]; then
+			# not params=value form
+			#printf "${1} "		# -x args trouble
+			# shellcheck disable=3037
+			echo -n "${1} "
+			shift
+			continue
+		fi
+
+		_arg_len=$( strlen "${1}" )
+		_pref=$(( _arg_len - _pos ))
+		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
+		VAL=$( substr --pos=$(( _pos +2 )) --len=${_pref} --str="${1}" )
+
+		if [ "${ARG}" = "jname" ]; then
+			shift
+			continue
+		fi
+
+		#printf "${ARG}=\"${VAL}\" "
+		# shellcheck disable=3037
+		echo -n "${ARG}=\"${VAL}\" "
+		shift
+	done )
+fi
+
+
+#######################################
+# Try to read ${cmd} from STDIN
+#######################################
+
+if [ -z "${cmd}" ] && [ -z "${script}" ]; then
+	batchfile=$( ${MKTEMP_CMD} )
+	script_name=$( ${BASENAME_CMD} "${batchfile}" )
+	# todo: test/chec for stdin/blocked
+	while read -r _line; do
+		echo "${_line}" >> "${batchfile}"
+	done
+	bscp "${batchfile}" "${jname}":"${script_name}" 1>&2
+	qexec jname="${jname}" /bin/sh ./"${script_name}"
+	ret=$?
+	${RM_CMD} -f "${batchfile}"
+	#err 1 "${N1_COLOR}${CBSD_APP}: empty command${N0_COLOR}"
+	exit ${ret}
+fi
+
+
+#######################################
+# Multiple jails case
+#######################################
+
+emulator="qemu"				# for jname_is_multiple
+[ -z "${jail_list}" ] && jname_is_multiple	# import jail_list if jname is mask
+
+if [ -n "${jail_list}" ]; then
+	. "${subrdir}"/multiple.subr
+
+	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+	task_owner="qexec_multiple"
+
+	task_id=
+	task_id_cur=
+
+	# spawn command for all jail
+	for jname in ${jail_list}; do
+		. "${subrdir}"/rcconf.subr
+		[ "${myjid}" -eq 0 ] && continue
+		if [ -n "${script}" ]; then
+			# shellcheck disable=2086
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd qexec jname=${jname} script=${script} 2>/dev/null )
+		else
+			# shellcheck disable=2086
+			task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd qexec jname=${jname} "${cmd}" 2>/dev/null )
+		fi
+		task_id="${task_id} ${task_id_cur}"
+	done
+
+	multiple_task_id_all=$( echo "${task_id}" | ${TR_CMD} " " "," )
+	sleep 1
+	multiple_processing_spawn -o ${task_owner} -n "qexec"
+	echo
+	exit 0
+fi
+
+
+#######################################
+# API-related justifications
+#######################################
+
+if [ ${cbsd_api} -eq 0 ]; then # we don't use API
+	. "${subrdir}"/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "qemu" ] && err 1 "${N1_COLOR}for qemu emulator only, current emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+	[ "${jid}" -ne 0 ] || err 1 "Not running"
+	readconf qexec.conf
+
+else # we use API
+	CURL_CMD=$( which curl )
+	JQ_CMD=$( which jq )
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+
+	_global_ret=0
+
+	for jname in ${all_jail_list}; do
+		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" "${CLOUD_URL}"/api/v1/status/"${jname}" 2>&1 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
+			continue
+		fi
+
+		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
+		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+
+		if [ "${_ssh_pref}" != "ssh" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			_global_ret=$(( _global_ret + 1 ))
+			continue
+		fi
+
+		_ssh_len=$( strlen "${_ssh_string}" )
+		_ssh_post=$( substr --pos=5 --len="${_ssh_len}" --str="${_ssh_string}" )
+		#echo "${SSH_CMD} ${_ssh_post}"
+		# shellcheck disable=2016
+		_ssh_ip=$( echo "${_ssh_post}" | ${AWK_CMD} '{printf $1}' )
+		# shellcheck disable=2016
+		_ssh_port=$( echo "${_ssh_post}" | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+
+		# rewrite
+		if [ -n "${SUDO_USER}" ]; then
+			if [ -r /home/"${SUDO_USER}"/.ssh/id_ed25519 ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+			elif [ -r /home/"${SUDO_USER}"/.ssh/id_rsa ]; then
+				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+			else
+				date
+			fi
+		fi
+		qexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
+
+		echo "[debug]: ${qexec_cmd}" 1>&2
+		${qexec_cmd} <<CBSD_EOF
+${cmd}
+CBSD_EOF
+
+	done
+	exit ${_global_ret}
+fi
+
+
+#######################################
+# Do exec
+#######################################
+
+if [ -n "${cmd}" ]; then # cmd
+	exec ${qexec_cmd} "${cmd}"
+
+elif [ -n "${script}" ]; then # script
+	[ ! -r "${script}" ] && err 1 "${N1_COLOR}No such script: ${N2_COLOR}${script}${N0_COLOR}"
+	scr_name=$( ${BASENAME_CMD} "${script}" )
+	orig_path=$( ${REALPATH_CMD} "${script}" )
+	[ ! -x "${orig_path}" ] && err 1 "${N1_COLOR}not executable: ${N2_COLOR}${orig_path}${N0_COLOR}"
+	echo "bscp ${orig_path} ${jname}:${scr_name}"
+	bscp "${orig_path}" "${jname}":"${scr_name}"
+	qexec jname="${jname}" ./"${scr_name}"
+fi
+
+exit 0
