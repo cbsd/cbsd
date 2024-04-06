@@ -1,0 +1,75 @@
+#!/bin/sh
+# save/export all jails settings-only as ~cbsd/jexport/XXX.img
+#v14.0.7
+# Update global media databases from existance bhyves
+CBSD_APP="${0##*/}"
+: ${distdir="/usr/local/cbsd"}
+[ ! -r "${distdir}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${distdir}/subr/cbsdbootstrap.subr || exit 1
+test_sql_stuff
+
+#
+. ${subrdir}/nc.subr
+readconf initenv.conf
+
+[ -z "${initenv_backup_bases}" -o "${initenv_backup_bases}" = "0" ] && exit 0
+
+ALL_JAILS=$( cbsd jorder )
+ALL_BHYVE=$( cbsd border )
+ALL_QEMU=$( cbsd qorder )
+ALL_XEN=$( cbsd xorder )
+
+_total_env=0
+_cur_env=1
+for i in ${ALL_JAILS} ${ALL_BHYVE} ${ALL_QEMU} ${ALL_XEN}; do
+	_total_env=$(( _total_env + 1 ))
+done
+
+[ ${_total_env} -eq 0 ] && exit 0
+
+echo "${CBSD_APP} in progress ( can be disabled via ~cbsd/etc/initenv.conf ): initenv_backup_bases=${initenv_backup_bases}"
+DT=$( date "+%Y%m%d%H%M%S" )
+
+for i in ${ALL_JAILS} ${ALL_BHYVE} ${ALL_QEMU} ${ALL_XEN}; do
+	printf "  * ${CBSD_APP}: [${_cur_env}/${_total_env}] exprort/backup settings for: ${i}"
+	[ -r ${workdir}/jails-system/${i}/local.sqlite ] && ${CP_CMD} -a ${workdir}/jails-system/${i}/local.sqlite ${workdir}/jails-system/${i}/local.sqlite-${DT}.bkp
+	#/usr/local/bin/cbsd jexport jname=${i} jexport_exclude="/" dstdir=${workdir}/jails-system/${i}/ >/dev/null 2>&1
+
+	# rotate
+	DB_FILES=$( ${FIND_CMD} ${workdir}/jails-system/${i}/ -type f -depth 1 -maxdepth 1 -name "local.sqlite-*.bkp" | ${SORT_CMD} -n -r )
+	[ -z "${DB_FILES}" ] && echo && continue
+	NUM=0
+	pruned=0
+	_prune_list=
+	for j in ${DB_FILES}; do
+		NUM=$(( NUM + 1 ));
+		if [ ${NUM} -gt ${initenv_backup_bases} ]; then
+			_prune_basename=$( ${BASENAME_CMD} ${j} )
+			_prune_list="${_prune_list} ${_prune_basename}"
+			${RM_CMD} -rf ${j}
+			pruned=1
+		fi
+	done
+	if [ ${pruned} -eq 1 ]; then
+		echo " (prune:${_prune_list})"
+	else
+		echo
+	fi
+	_cur_env=$(( _cur_env + 1 ))
+done
+
+${CP_CMD} -a ~cbsd/var/db ~cbsd/var/db-${DT}
+
+# rotate
+DB_DIRS=$( ${FIND_CMD} ~cbsd/var/ -type d -depth 1 -maxdepth 1 -name "db-*" | ${SORT_CMD} -n -r )
+
+NUM=0
+for i in ${DB_DIRS}; do
+	NUM=$(( NUM + 1 ));
+	if [ ${NUM} -gt ${initenv_backup_bases} ]; then
+		echo "  * ${CBSD_APP}: prune old backup dirs: ${i}"
+		${RM_CMD} -rf ${i}
+	fi
+done
+
+exit 0
