@@ -21,13 +21,70 @@ CLOUD_KEY=
 
 [ -z "${cur_env}" ] && cur_env=1
 
+local_cluster()
+{
+	local _jails=$( jorder )
+	local _bhyve_$( border )
+	local _qemu=$( qorder )
+	local _xen=$( xorder )
+	local _total_env=0
+	local _cur_env=0
+	local _json_files=
+
+	[ -z "${JQ_CMD}" ] && JQ_CMD=$( which jq )
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}${CBSD_APP} error: jq in requred{N0_COLOR}"
+
+	for i in ${_jails} ${_bhyve} ${_qemu} ${_xen}; do
+		_total_env=$(( _total_env + 1 ))
+	done
+#${CAT_CMD} <<EOF
+#{
+#  "servers":
+#EOF
+	_json_files=
+
+	for i in ${_jails} ${_bhyve} ${_qemu} ${_xen}; do
+		[ ! -r "${jailsysdir}/${i}/stats.json" ] && save-jail-info jname=${i}
+		if [ -r "${jailsysdir}/${i}/stats.json" ]; then
+			_json_files="${_json_files} ${jailsysdir}/${i}/stats.json"
+		fi
+	done
+
+	${CAT_CMD} ${_json_files} | ${JQ_CMD} -s 'flatten' > /tmp/servers.json.$$
+
+${CAT_CMD} > /tmp/clusters.json.$$ <<EOF
+  {
+    "total_environment": ${_total_env},
+    "total_cpus": 6,
+    "total_ram_bytes": 3221225472,
+    "total_ram": "3 Gb",
+    "total_imgsize_bytes": 32212254720,
+    "total_imgsize": "30 Gb"
+  }
+EOF
+	${CAT_CMD} /tmp/servers.json.$$ | jq '{ servers: . }' > /tmp/servers1.json.$$
+	${CAT_CMD} /tmp/clusters.json.$$ | jq '{ clusters: . }' > /tmp/clusters1.json.$$
+
+	${JQ_CMD} -s '.[0] * .[1]' /tmp/servers1.json.$$ /tmp/clusters1.json.$$
+	${RM_CMD} -f /tmp/servers.json.$$ /tmp/clusters.json.$$ /tmp/servers1.json.$$ /tmp/clusters1.json.$$
+}
+
 # init CBSDfile data
 if [ -n "${cwd}" ]; then
-	[ ! -r ${cwd}/CBSDfile ] && err 1 "${N1_COLOR}${CBSD_APP}: no such CBSDfile: ${N2_COLOR}${cwd}/CBSDfile${N0_COLOR}"
+	if [ ! -r ${cwd}/CBSDfile ]; then
+		local_cluster
+		exit 0
+	fi
 	cbsdfile="${cwd}/CBSDfile"
 	cd ${cwd}
 fi
+
+if [ -z "${cbsdfile}" -a ! -r "${CBSD_PWD}/CBSDfile" ]; then
+	local_cluster
+	exit 0
+fi
 . ${subrdir}/cbsdfile.subr
+
 . ${subrdir}/time.subr
 
 cluster_status()
