@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.5
 MYARG=""
-MYOPTARG="cfg_only debug debug_engine delay jname lm"
+MYOPTARG="cfg_only debug debug_engine delay inter jname lm quiet"
 MYDESC="Start QEMU domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -28,6 +28,7 @@ ${H3_COLOR}Options${N0_COLOR}:
                      data exchange. Can be '0' for auto port, by default.
  ${N2_COLOR}lm_rnodename=${N0_COLOR}     - (optional) for live migration, remote/source
                      CBSD nodename.
+ ${N2_COLOR}quiet=${N0_COLOR}             - 0,1: be quiet, dont output verbose message.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -68,6 +69,9 @@ odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 
 delay=0
+quiet=0
+oquiet=0
+
 . ${cbsdinit}
 ojname="${jname}"
 
@@ -83,7 +87,7 @@ fi
 . ${subrdir}/vnet.subr 		# get_vm_uplink_interface
 
 if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	[ -z "${CBSDFILE_RECURSIVE}" -o ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
 	. ${Makefile}
 	all_qemu_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
 	jname="${all_qemu_list}"
@@ -130,7 +134,7 @@ done
 start_qemu()
 {
 	local QEMUCFG
-	local xvm_ram _qemu_bin
+	local xvm_ram _qemu_bin _log
 
 	# profile
 	readconf vm-${vm_os_type}-${vm_os_profile}.conf
@@ -162,7 +166,7 @@ start_qemu()
 					err 1 "${N1_COLOR}No such cloud source: ${N2_COLOR}${vm_iso_path}/${iso_img}${N0_COLOR}"
 				fi
 				vm_boot="hdd"
-				${ECHO} "${N1_COLOR}cloud init image initialization..${N0_COLOR}"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}cloud init image initialization..${N0_COLOR}"
 				local _myfile="${iso_img}"
 				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: qstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
 
@@ -196,7 +200,7 @@ start_qemu()
 				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
 
 				if [ ${_cloud_truncate} -eq 1 ]; then
-					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
+					[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
 					# to generic clonedata (add dd method)?
 					# Linux does not support postfix in bs=, e.g. bs=4m
 					case "${platform}" in
@@ -210,10 +214,10 @@ start_qemu()
 					echo
 					# adjust original image size
 					# not work when synlink to zvol
-					echo "${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd"
+					[ ${quiet} -ne 1 ] && echo "${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd"
 					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
 				else
-					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
+					[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
 						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
 						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
@@ -246,8 +250,8 @@ start_qemu()
 							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
 						fi
 				fi
-				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
-				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
+				[ ${quiet} -ne 1 ] && echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} quiet=${quiet}
 			else
 				manage_boot_by_empty_hdd
 			fi
@@ -261,7 +265,7 @@ start_qemu()
 		if [ $? -eq 1 ]; then
 			printf "${N1_COLOR}Continue without ${iso_img}. Hope this is ok, sleep for 5 seconds ${N0_COLOR}"
 				for i in $( ${JOT_CMD} 5 ); do
-					printf "."
+					[ ${quiet} -ne 1 ] && printf "."
 					sleep 1
 				done
 				echo
@@ -423,6 +427,8 @@ start_qemu()
 					Linux)
 						GENISOIMAGE_CMD=$( which xorriso )
 
+	_log=$( ${MKTEMP_CMD} )
+
 ${GENISOIMAGE_CMD} \
 	-as mkisofs \
 	-iso-level 2 \
@@ -430,11 +436,14 @@ ${GENISOIMAGE_CMD} \
 	-output "${jailsysdir}/${jname}/seed.iso" \
 	-joliet \
 	-rational-rock \
-	"${jailsysdir}/${jname}/cloud-init"
+	"${jailsysdir}/${jname}/cloud-init" > ${_log} 2>&1
 ret=$?
 
-	[ ${ret} -ne 0 ] && err 1 "xorriso error"
-
+	if [ ${ret} -ne 0 ]; then
+		${CAT_CMD} ${_log}
+		err 1 "xorriso error"
+	fi
+	${RM_CMD} -f ${_log}
 						true
 						;;
 					*)
@@ -478,7 +487,7 @@ display_args="-display none"
 		CHECKPOINT_DIR="${jailsysdir}/${jname}/checkpoints"
 		CHECKPOINT="${CHECKPOINT_DIR}/${checkpoint}.ckp"
 		if [ -r ${CHECKPOINT} ]; then
-			${ECHO} "${N1_COLOR}Checkpoint found, starting from: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Checkpoint found, starting from: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
 			qemu_cmd="${XL_CMD} -vvv restore ${CHECKPOINT}"
 		else
 			err 1 "${N1_COLOR}Checkpoint not found: ${N2_COLOR}${CHECKPOINT}${N0_COLOR}"
@@ -503,12 +512,14 @@ ${display_curses} \
 ${vga_args} \
 -name ${jname} \
 -pidfile ${jailsysdir}/${jname}/qemu.pid \
--monitor unix:${jailsysdir}/${jname}/qemu-monitor.sock,server,nowait
-"
+-monitor unix:${jailsysdir}/${jname}/qemu-monitor.sock,server,nowait"
 	fi
 
-	echo "[debug]: $qemu_cmd"
+	[ ${quiet} -ne 1 ] && echo "[debug]: $qemu_cmd"
 	[ -n "${cfg_only}" ] && exit 0
+
+	# API compat: ~cbsd/jails-system/info*.*
+	qemu_cmd="${qemu_cmd}; ${DAEMON_CMD} -f /usr/local/bin/cbsd save-jail-info jname=${jname}"
 
 	case "${debug_engine}" in
 		gdb)
@@ -540,12 +551,13 @@ ${vga_args} \
 		*)
 			tmuxcmd=$( which tmux )
 			[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}bstart: no such tmux cmd${N0_COLOR}"
+			#${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "/bin/sh ${jailsysdir}/${jname}/run.sh"
 			${tmuxcmd} -2 -u new -d -s "cbsd-${jname}" "${qemu_cmd}"
 			;;
 	esac
 
-	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
-	printf "${N1_COLOR}Waiting for PID"
+	[ -n "${dsk_bootable}" -o ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && printf "${N1_COLOR}Waiting for PID"
 	vm_pid=0
 	for i in $( ${SEQ_CMD} 10 ); do
 		if [ -r ${jailsysdir}/${jname}/qemu.pid ]; then
@@ -560,12 +572,12 @@ ${vga_args} \
 			fi
 		fi
 		sleep 1
-		printf "."
+		[ ${quiet} -ne 1 ] && printf "."
 	done
 
 	[ -z "${vm_pid}" ] && vm_pid="0"
 
-	echo
+	[ ${quiet} -ne 1 ] && echo
 
 	external_exec_master_script "master_poststart.d"
 
@@ -574,7 +586,7 @@ ${vga_args} \
 		[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}"
 	fi
 
-	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
 	cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
 
 	# update state_time
@@ -583,7 +595,7 @@ ${vga_args} \
 	# update state_time, local SQLite for back compatible
 	cbsdsqlrw local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname='${jname}'
 
-	exit 0
+	return 0
 }
 
 
@@ -651,7 +663,7 @@ if [ -d ${jailsysdir}/${jname}/cloud-init ]; then
 	# gen seed only if files exist
 	if [ -n "${CLOUD_FILES}" ]; then
 		cloud_init=1
-		${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${H5_COLOR}cloud-init: ${H3_COLOR}enabled${N0_COLOR}"
 		${TOUCH_CMD} ${jailsysdir}/${jname}/seed.iso
 	else
 		cloud_init=0
@@ -683,8 +695,11 @@ qcleanup jname="${jname}"
 [ -z "${iso_auto_fetch}" ] && iso_auto_fetch=0
 [ -z "${debug}" ] && debug=0
 
+[ -n "${ointer}" ] && inter="${ointer}"
+[ -n "${inter}" ] && export NOINTER=1
+
 if [ ${vm_cpus} -gt ${ncpu} -a ${vm_cpus} -lt ${vm_cpus_max} ]; then
-	${ECHO} "${N1_COLOR}Warning! Current node cpu: ${N2_COLOR}${ncpu}${N1_COLOR}, guest cpu: ${N2_COLOR}${vm_cpus}. ${N1_COLOR}Overcommitting vCPUs can hurt perfomance.${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Warning! Current node cpu: ${N2_COLOR}${ncpu}${N1_COLOR}, guest cpu: ${N2_COLOR}${vm_cpus}. ${N1_COLOR}Overcommitting vCPUs can hurt perfomance.${N0_COLOR}"
 elif [ ${vm_cpus} -lt 1 -o ${vm_cpus} -gt ${vm_cpus_max} ]; then
 	err 1 "${N1_COLOR}Valid number of guest CPUs within 1 - ${vm_cpus_max} range. Current vm_cpus: ${N2_COLOR}${vm_cpus}${N0_COLOR}"
 fi
@@ -695,10 +710,10 @@ main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
 MDFILE=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM qemudsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
 
 if [ -z "${MDFILE}" ]; then
-	${ECHO} "${N1_COLOR}Warning: no any storage device found for this VM${N0_COLOR}"
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Warning: no any storage device found for this VM${N0_COLOR}"
 else
 	if [ ! -f "${data}/${MDFILE}" -a ! -h "${data}/${MDFILE}" ]; then
-		${ECHO} "${N1_COLOR}No such ${data}/${MDFILE} but mdsize flags is not null.${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}No such ${data}/${MDFILE} but mdsize flags is not null.${N0_COLOR}"
 
 		# if zfsfeat=1, try scan for zvol
 		[ "${zfsfeat}" != "1" ] && break
@@ -712,7 +727,7 @@ else
 		for lunname in $( ${SEQ_CMD} 0 10 ); do
 			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
 				${LN_CMD} -sf /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ${data}/dsk${lunname}.vhd
-				${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
 		done
 	fi
@@ -734,12 +749,15 @@ if [ ${status} -eq 3 ]; then
 	if [ "${comment}" = "Stopping_VM" ]; then
 		jswmode jname=${jname} mode=master comment='0'
 	else
-		${ECHO} "${N1_COLOR}Xen in maintenance: ${N2_COLOR}${comment}${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Xen in maintenance: ${N2_COLOR}${comment}${N0_COLOR}"
 		err 1 "${N1_COLOR}Please finish maintenance and switch mode via: ${N2_COLOR}jswmode jname=${jname} mode=master comment='0'${N0_COLOR}"
 	fi
 fi
 
 start_qemu
+
+# API compat: ~cbsd/jails-system/info*.*
+${DAEMON_CMD} -f save-jail-info jname=${jname}
 
 end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))

@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v11.2.1
 MYARG="mode"
-MYOPTARG="display jname name path type"
+MYOPTARG="display jname name path type quiet"
 MYDESC="Operate with virtual storage media such as ISO"
 CBSDMODULE="sys"
 EXTHELP="wf_bhyve"
@@ -36,6 +36,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}type=${N0_COLOR}       - type of image: 'iso' for CD/DVD or 'hdd' for dsk,
                if the type is not specified, CBSD will try to  determine it on its own;
  ${N2_COLOR}sectorsize=${N0_COLOR} - custom sectorsize for register mode;
+ ${N2_COLOR}quiet=${N0_COLOR}             - 0,1: be quiet, dont output verbose message.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -59,6 +60,9 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 . ${subrdir}/nc.subr
+
+quiet=0
+oquiet=0
 
 . ${cbsdinit}
 
@@ -143,7 +147,6 @@ unregister_or_remove()
 	if [ "${rec_num}" = "0" ]; then
 		# this is last one, clean ISO register and drop to unassigned stage
 		cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname='${jname}' AND type='${type}' AND name='${name}' AND path='${path}'"
-
 	else
 		# delete iso registered when we have greater then 1 records with path= name=
 		cbsdsqlrw storage_media "DELETE FROM media WHERE jname='${jname}' AND name='${name}' AND path='${path}' AND type='${type}'"
@@ -408,7 +411,7 @@ storage_attach()
 			fi
 			_res=$( cbsdsqlro ${mydb} "SELECT dsk_path FROM bhyvedsk WHERE jname='${jname}' AND dsk_path='${_tmp_dsk_path}' LIMIT 1" 2>/dev/null )
 			if [ -n "${_res}" ]; then
-				${ECHO} "${N1_COLOR}dsk_path already exist for ${jname}: ${N2_COLOR}${_tmp_dsk_path}${N0_COLOR}"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}dsk_path already exist for ${jname}: ${N2_COLOR}${_tmp_dsk_path}${N0_COLOR}"
 				return 1
 			fi
 			cbsdsqlrw ${mydb} "INSERT INTO ${emulator}dsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( '${jname}','${virtio_type}','${_tmp_dsk_path}','0' )"
@@ -427,7 +430,7 @@ storage_attach()
 		sql="UPDATE media SET jname='${jname}' WHERE name='${dsk_name}' AND path='${dsk_path}'"
 	fi
 
-	echo "${sql}"
+	[ ${quiet} -ne 1 ] && echo "${sql}"
 	cbsdsqlrw ${dbdir}/storage_media.sqlite "${sql}"
 
 	# CBSD QUEUE
@@ -487,7 +490,7 @@ storage_detach()
 		sql="UPDATE media SET jname='-' WHERE jname='${jname}' AND name='${dsk_name}' AND path='${dsk_path}'"
 	fi
 
-	echo "${sql}"
+	[ ${quiet} -ne 1 ] && echo "${sql}"
 	cbsdsqlrw ${dbdir}/storage_media.sqlite "${sql}"
 
 	# CBSD QUEUE
@@ -501,7 +504,7 @@ storage_detach()
 			cbsdsqlrw ${mydb} "DELETE FROM ${emulator}dsk WHERE dsk_path='${dsk_path}'"
 			;;
 		iso)
-			bset mode=quiet jname=${jname} vm_iso_path=''
+			bset quiet=${quiet} jname=${jname} vm_iso_path=''
 			;;
 	esac
 
@@ -570,16 +573,19 @@ fi
 case "${mode}" in
 	attach)
 		storage_attach
-		err 0 "${N1_COLOR}Attached to: ${N2_COLOR}${jname}${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Attached to: ${N2_COLOR}${jname}${N0_COLOR}"
+		exit 0
 		;;
 	detach)
 		storage_detach
-		err 0 "${N1_COLOR}Detach to: ${N2_COLOR}${jname}${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Detach to: ${N2_COLOR}${jname}${N0_COLOR}"
+		exit 0
 		;;
 	eject)
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify ${N2_COLOR}jname=${N0_COLOR}"
 		eject
-		err 0 "${N1_COLOR}All CD/ISO ejected: ${N2_COLOR}${jname}${N0_COLOR}"
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}All CD/ISO ejected: ${N2_COLOR}${jname}${N0_COLOR}"
+		exit 0
 		;;
 	list)
 		show_local | ${COLUMN_CMD} -t
@@ -594,12 +600,22 @@ case "${mode}" in
 	register)
 		[ -z "${name}" ] && err 1 "${N1_COLOR}media: ${N2_COLOR}name=${N1_COLOR} is mandatory${N0_COLOR}"
 		[ -z "${path}" ] && err 1 "${N1_COLOR}media: ${N2_COLOR}path=${N1_COLOR} is mandatory${N0_COLOR}"
-		select_by_path && err 1 "${N1_COLOR}Path already exist for: ${N2_COLOR}${vm_res}${N0_COLOR}"
-		select_by_name && err 1 "${N1_COLOR}Name already exist for: ${N2_COLOR}${vm_res}${N0_COLOR}"
+		select_by_path
+		_ret=$?
+		if [ ${_ret} -eq 0 ]; then
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Path already exist for: ${N2_COLOR}${vm_res}${N0_COLOR}"
+			exit 1
+		fi
+		select_by_name
+		_ret=$?
+		if [ ${_ret} -eq 0 ]; then
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Name already exist for: ${N2_COLOR}${vm_res}${N0_COLOR}"
+			exit 1
+		fi
 
 		if [ -z "${type}" ]; then
 			type=$( imgtype path=${path} 2>&1 )
-			${ECHO} "${N1_COLOR}media: auto-detected image type for ${path}: ${N2_COLOR}${type}${N0_COLOR}"
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}media: auto-detected image type for ${path}: ${N2_COLOR}${type}${N0_COLOR}"
 		fi
 
 		[ -z "${jname}" ] && jname="-"
