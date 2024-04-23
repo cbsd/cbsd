@@ -135,6 +135,12 @@ start_qemu()
 {
 	local QEMUCFG
 	local xvm_ram _qemu_bin _log
+	local _ebytes _dsk_ebytes _cloud_truncate
+	local _cloud_source_is_zvol
+	local _cloud_source_zvol _dsk_source_zvol _dsk_id
+	local _label=
+	local _zvol_pref=
+	local _is_zvol=
 
 	# profile
 	readconf vm-${vm_os_type}-${vm_os_profile}.conf
@@ -252,6 +258,90 @@ start_qemu()
 				fi
 				[ ${quiet} -ne 1 ] && echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
 				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} quiet=${quiet}
+			elif [ "${iso2img}" = "1" ]; then
+				# Copy ISO as disk ?
+				# Some profiles may use this, for example: Linux Tails
+				local _orig_vm_iso_path="${vm_iso_path}"
+				vm_boot="cd"
+				init_iso
+				if [ $? -eq 1 ]; then
+					err 1 "${N1_COLOR}No such ISO source: ${N2_COLOR}${vm_iso_path}/${iso_img}${N0_COLOR}"
+				fi
+				vm_boot="hdd"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}ISO image initialization..${N0_COLOR}"
+				local _myfile="${iso_img}"
+				[ ! -r "${_myfile}" ] && err 1 "${N1_COLOR}Error: qstart: not readable: ${N2_COLOR}${_myfile}${N0_COLOR}"
+
+				. ${subrdir}/zfs.subr
+
+				if is_getzvol ${_myfile}; then
+					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_cloud_source_is_zvol=1
+					_cloud_source_zvol="${is_zvol}"
+				else
+					_cloud_source_is_zvol=0
+					_cloud_source_zvol=
+					_ebytes=$( get_file_bytes ${_myfile} )
+				fi
+
+				# store original disk size to restore them after replace by cloud image
+				if is_getzvol ${data}/dsk1.vhd; then
+					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					_dsk_source_zvol="${is_zvol}"
+					_cloud_truncate=0
+				else
+					_dsk_ebytes=$( get_file_bytes ${data}/dsk1.vhd )
+					_cloud_truncate=1
+					_dsk_source_zvol=
+				fi
+
+				# print some warning about not optimal when zfsfeat=1 but for some
+				# reason cloning not available?
+
+				# if source image is not ZVOl, use dd method for cloning
+				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
+
+				if [ ${_cloud_truncate} -eq 1 ]; then
+					[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}ISO into first/system vm disk (${W1_COLOR}dd${N1_COLOR} method)${N0_COLOR}"
+					# to generic clonedata (add dd method)?
+					# Linux does not support postfix in bs=, e.g. bs=4m
+					case "${platform}" in
+						Linux)
+							/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4000000 | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+							;;
+						*)
+							/usr/bin/nice -n 20 ${DD_CMD} if=${_myfile} bs=4m | ${miscdir}/cbsdtee -e ${_ebytes} > ${data}/dsk1.vhd
+							;;
+					esac
+					echo
+					# adjust original image size
+					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
+				else
+					# to generic clonedata ?
+					_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
+					echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}" 2>&1
+					${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
+					_ret=$?
+					if [ ${_ret} -eq 1 ]; then
+						# create cloud snapshot for $jname
+						${ZFS_CMD} snapshot ${_cloud_source_zvol}@boot-${jname}
+						# destory original zvol disk for vm
+						${ZFS_CMD} destroy ${_dsk_source_zvol}
+						#${ZFS_CMD} clone ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+						${ZFS_CMD} clone -o volsize=${_dsk_ebytes} ${_cloud_source_zvol}@boot-${jname} ${_dsk_source_zvol}
+						cbsdlogger NOTICE ${CBSD_APP}: zfs clone method cloud image: gpart commit zvol/${_dsk_source_zvol}
+						${GPART_CMD} commit zvol/${_dsk_source_zvol}
+						# restore original size
+						# ${ZFS_CMD} set volsize=${_dsk_ebytes} ${_dsk_source_zvol}
+						# bug here, need for atomic ops ^^ in clone action
+						${ZFS_CMD} set cbsdsnap:jname=${jname} ${_cloud_source_zvol}@boot-${jname}
+						${ZFS_CMD} set cbsdsnap:snapname=cloud ${_cloud_source_zvol}@boot-${jname}
+					else
+						err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
+					fi
+				fi
+#                                echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}" 2>&1
+#                                media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} quiet=${quiet} 2>&1
 			else
 				manage_boot_by_empty_hdd
 			fi
@@ -417,43 +507,99 @@ start_qemu()
 	# this section should be AFTER master_prestart
 	# cloud_init and CLOUD_FILES was initialized earlier
 	if [ ${cloud_init} -eq 1 ]; then
-			${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
-			if [ "${vm_os_type}" = "windows" ]; then
-				GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
-				[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
-				${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
-			else
-				case "${platform}" in
-					Linux)
-						GENISOIMAGE_CMD=$( which xorriso )
+		case "${ci_template}" in
+			fire*)
+				${CAT_CMD} ${jailsysdir}/${jname}/cloud-init/* > ${data}/dsk2.vhd
+				${TRUNCATE_CMD} -s1m ${data}/dsk2.vhd
+				;;
+			homeass)
+				. ${subrdir}/zfs.subr
+				if is_getzvol ${data}/dsk1.vhd; then
+					zvol_dsk0_dev=$( ${READLINK_CMD} ${data}/dsk1.vhd )
+					zvol_dsk0=$( echo ${zvol_dsk0_dev} | ${SED_CMD} s#/dev/zvol/## )
+					${ZFS_CMD} set volmode=full ${zvol_dsk0}
+					${GPART_CMD} recover ${zvol_dsk0_dev}
+				else
+					zvol_dsk0_dev=$( ${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd )
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd${N0_COLOR}"
+					fi
+					${GPART_CMD} recover ${zvol_dsk0_dev}
+					zvol_dsk0_dev="/dev/${zvol_dsk0_dev}"
+				fi
 
-	_log=$( ${MKTEMP_CMD} )
+				mount_dir=$( ${MKTEMP_CMD} -d )
+				${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}${N0_COLOR}"
+				fi
+				${MKDIR_CMD} -p ${mount_dir}/CONFIG/network
+				${CP_CMD} -a ${jailsysdir}/${jname}/cloud-init/* ${mount_dir}/CONFIG/network/
+				${LS_CMD} -l ${mount_dir}/CONFIG/network/
+				${CAT_CMD} -n ${mount_dir}/CONFIG/network/*
+				${CP_CMD} ${workdir}/.ssh/authorized_keys ${mount_dir}/CONFIG/
 
-${GENISOIMAGE_CMD} \
-	-as mkisofs \
-	-iso-level 2 \
-	-volid CIDATA \
-	-output "${jailsysdir}/${jname}/seed.iso" \
-	-joliet \
-	-rational-rock \
-	"${jailsysdir}/${jname}/cloud-init" > ${_log} 2>&1
-ret=$?
-
-	if [ ${ret} -ne 0 ]; then
-		${CAT_CMD} ${_log}
-		err 1 "xorriso error"
-	fi
-	${RM_CMD} -f ${_log}
-						true
+				${UMOUNT_CMD} ${mount_dir}
+				${RMDIR_CMD} ${mount_dir}
+				case "${zvol_dsk0_dev}" in
+					md*)
+						${MDCONFIG_CMD} -d -u ${zvol_dsk0_dev}
 						;;
-					*)
-						GENISOIMAGE_CMD=$( which makefs )
-						${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
 				esac
-				# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
-				# why upper here, whereis spec?
-				${SED_CMD} -i${SED_DELIMER}'' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
-			fi
+				;;
+			*)
+				${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
+				if [ "${vm_os_type}" = "windows" ]; then
+					GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
+					[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
+					${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+				else
+					case "${platform}" in
+						Linux)
+							GENISOIMAGE_CMD=$( which xorriso )
+							_log=$( ${MKTEMP_CMD} )
+
+							case "${ci_template}" in
+								*)
+									_label="CIDATA"
+									;;
+							esac
+
+							${GENISOIMAGE_CMD} \
+								-as mkisofs \
+								-iso-level 2 \
+								-volid ${_label} \
+								-output "${jailsysdir}/${jname}/seed.iso" \
+								-joliet \
+								-rational-rock \
+								"${jailsysdir}/${jname}/cloud-init" > ${_log} 2>&1
+							ret=$?
+
+							if [ ${ret} -ne 0 ]; then
+								${CAT_CMD} ${_log}
+								err 1 "xorriso error"
+							fi
+							${RM_CMD} -f ${_log}
+							true
+							;;
+						*)
+							GENISOIMAGE_CMD=$( which makefs )
+							case "${ci_template}" in
+								*)
+									_label="cidata"
+									;;
+							esac
+							${GENISOIMAGE_CMD} -t cd9660 -o label="${_label}" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+							# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
+							# why upper here, whereis spec?
+							${SED_CMD} -i${SED_DELIMER}'' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
+							;;
+					esac
+				fi
+			;;
+		esac
 	fi
 
 	case "${arch}" in
