@@ -216,6 +216,9 @@ start_bhyve()
 	local _ebytes _dsk_ebytes _cloud_truncate
 	local _cloud_source_is_zvol
 	local _cloud_source_zvol _dsk_source_zvol _dsk_id
+	local _label=
+	local _zvol_pref=
+	local _is_zvol=
 
 	local is_ppt=$( cbsdsqlro ${main_sqlite_local} "SELECT ppt FROM bhyveppt WHERE jname='${jname}'" 2>/dev/null | ${AWK_CMD} '{printf $1}' )
 	[ -n "${is_ppt}" ] && passt_args="-S"
@@ -886,11 +889,49 @@ EOF
 	# cloud-init enabled?
 	# this section should be AFTER master_prestart
 	# cloud_init and CLOUD_FILES was initialized earlier
+
 	if [ ${cloud_init} -eq 1 ]; then
 		case "${ci_template}" in
 			fire*)
 				${CAT_CMD} ${jailsysdir}/${jname}/cloud-init/* > ${data}/dsk2.vhd
 				${TRUNCATE_CMD} -s1m ${data}/dsk2.vhd
+				;;
+			homeass)
+				. ${subrdir}/zfs.subr
+				if is_getzvol ${data}/dsk1.vhd; then
+					zvol_dsk0_dev=$( ${READLINK_CMD} ${data}/dsk1.vhd )
+					zvol_dsk0=$( echo ${zvol_dsk0_dev} | ${SED_CMD} s#/dev/zvol/## )
+					${ZFS_CMD} set volmode=full ${zvol_dsk0}
+					${GPART_CMD} recover ${zvol_dsk0_dev}
+				else
+					zvol_dsk0_dev=$( ${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd )
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd${N0_COLOR}"
+					fi
+					${GPART_CMD} recover ${zvol_dsk0_dev}
+					zvol_dsk0_dev="/dev/${zvol_dsk0_dev}"
+				fi
+
+				mount_dir=$( ${MKTEMP_CMD} -d )
+				${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}${N0_COLOR}"
+				fi
+				${MKDIR_CMD} -p ${mount_dir}/CONFIG/network
+				${CP_CMD} -a ${jailsysdir}/${jname}/cloud-init/* ${mount_dir}/CONFIG/network/
+				${LS_CMD} -l ${mount_dir}/CONFIG/network/
+				${CAT_CMD} -n ${mount_dir}/CONFIG/network/*
+				${CP_CMD} ${workdir}/.ssh/authorized_keys ${mount_dir}/CONFIG/
+
+				${UMOUNT_CMD} ${mount_dir}
+				${RMDIR_CMD} ${mount_dir}
+				case "${zvol_dsk0_dev}" in
+					md*)
+						${MDCONFIG_CMD} -d -u ${zvol_dsk0_dev}
+						;;
+				esac
 				;;
 			*)
 				${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
@@ -905,7 +946,14 @@ EOF
 						GENISOIMAGE_CMD=$( which makefs )
 					fi
 					[ ! -x "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such makefs${N0_COLOR}"
-					${GENISOIMAGE_CMD} -t cd9660 -o label="cidata" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
+
+					case "${ci_template}" in
+						*)
+							_label="cidata"
+							;;
+					esac
+
+					${GENISOIMAGE_CMD} -t cd9660 -o label="${_label}" -o isolevel=2 -o rockridge -o publisher="CBSD" ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
 					# see /usr/src/usr.sbin/makefs/cd9660/cd9660_strings.c + /usr/src/usr.sbin/makefs/cd9660.c (cd9660_valid_a_char)
 					# why upper here, whereis spec?
 					${SED_CMD} -i${SED_DELIMER}'' s:CIDATA:cidata: ${jailsysdir}/${jname}/seed.iso
@@ -1363,10 +1411,10 @@ fi
 
 [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 
-if [ -n "${bstart_post_message}" -a ${quiet} -ne 1 ]; then
+if [ -n "${start_post_message}" -a ${quiet} -ne 1 ]; then
 	${ECHO} "${N1_COLOR}post-start message for ${N2_COLOR}${jname}${N2_COLOR}"
 	echo
-	${ECHO} "${N1_COLOR}${bstart_post_message}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}${start_post_message}${N0_COLOR}"
 	echo
 fi
 
