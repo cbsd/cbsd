@@ -141,6 +141,8 @@ start_qemu()
 	local _label=
 	local _zvol_pref=
 	local _is_zvol=
+	local _part=
+	local _msdosfs=
 
 	# profile
 	readconf vm-${vm_os_type}-${vm_os_profile}.conf
@@ -299,6 +301,7 @@ start_qemu()
 				# reason cloning not available?
 
 				# if source image is not ZVOl, use dd method for cloning
+				# todo: really needed?
 				[ ${_cloud_source_is_zvol} -eq 0 ] && _cloud_truncate=1
 
 				if [ ${_cloud_truncate} -eq 1 ]; then
@@ -314,7 +317,7 @@ start_qemu()
 							;;
 					esac
 					echo
-					# adjust original image size
+					# adjust original image size.
 					${TRUNCATE_CMD} -s${_dsk_ebytes} ${data}/dsk1.vhd
 				else
 					# to generic clonedata ?
@@ -518,19 +521,56 @@ start_qemu()
 					zvol_dsk0_dev=$( ${READLINK_CMD} ${data}/dsk1.vhd )
 					zvol_dsk0=$( echo ${zvol_dsk0_dev} | ${SED_CMD} s#/dev/zvol/## )
 					${ZFS_CMD} set volmode=full ${zvol_dsk0}
-					${GPART_CMD} recover ${zvol_dsk0_dev}
+					case "${platform}" in
+						Linux)
+							# needed?
+							#echo 'w' | fdisk /dev/zvol/${zvol_dsk0}
+							true
+							;;
+						*)
+							${GPART_CMD} recover ${zvol_dsk0_dev}
+							;;
+					esac
 				else
-					zvol_dsk0_dev=$( ${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd )
-					_ret=$?
-					if [ ${_ret} -ne 0 ]; then
-						err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd${N0_COLOR}"
-					fi
-					${GPART_CMD} recover ${zvol_dsk0_dev}
-					zvol_dsk0_dev="/dev/${zvol_dsk0_dev}"
+					case "${platform}" in
+						Linux)
+							zvol_dsk0_dev=$( ${LOSETUP_CMD} --find --show ${data}/dsk1.vhd )
+							_ret=$?
+							if [ ${_ret} -ne 0 ]; then
+								err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${LOSETUP_CMD} --find --show ${data}/dsk1.vhd${N0_COLOR}"
+							fi
+							partprobe ${zvol_dsk0_dev}
+							;;
+						*)
+							zvol_dsk0_dev=$( ${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd )
+							_ret=$?
+							if [ ${_ret} -ne 0 ]; then
+								err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MDCONFIG_CMD} -a -t vnode -f ${data}/dsk1.vhd${N0_COLOR}"
+							fi
+							${GPART_CMD} recover ${zvol_dsk0_dev}
+							zvol_dsk0_dev="/dev/${zvol_dsk0_dev}"
+					esac
 				fi
 
 				mount_dir=$( ${MKTEMP_CMD} -d )
-				${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}
+				case "${platform}" in
+					Linux)
+						case ${zvol_dsk0_dev} in
+							/dev/loop*)
+								_part="p1"
+								;;
+							*)
+								_part="-part1"
+								;;
+						esac
+						_msdosfs="vfat"
+						;;
+					*)
+						_part="p1"
+						_msdosfs="msdosfs"
+						;;
+				esac
+				${MOUNT_CMD} -t ${_msdosfs} -o rw ${zvol_dsk0_dev}${_part} ${mount_dir}
 				_ret=$?
 				if [ ${_ret} -ne 0 ]; then
 					err 1 "${N1_COLOR}${CBSD_APP}: homeass cloud-init: error: ${N2_COLOR}${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}${N0_COLOR}"
@@ -543,9 +583,17 @@ start_qemu()
 
 				${UMOUNT_CMD} ${mount_dir}
 				${RMDIR_CMD} ${mount_dir}
+
 				case "${zvol_dsk0_dev}" in
-					md*)
-						${MDCONFIG_CMD} -d -u ${zvol_dsk0_dev}
+					md*|/dev/loop*)
+						case "${platform}" in
+							Linux)
+								${LOSETUP_CMD} --detach ${zvol_dsk0_dev}
+								;;
+							*)
+								${MDCONFIG_CMD} -d -u ${zvol_dsk0_dev}
+								;;
+						esac
 						;;
 				esac
 				;;
