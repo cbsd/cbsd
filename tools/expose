@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
-#v13.0.11
+#v13.0.12
 MYARG=""
-MYOPTARG="in inaddr jname mode out outaddr proto"
+MYOPTARG="in inaddr jname mode out outaddr proto fromips"
 MYDESC="Exposing a port (port forwarding) to env via IPFW or PF"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -36,12 +36,18 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}outaddr${N0_COLOR} - use IP as destination address, do not
            use jail/bhyve IPs.
  ${N2_COLOR}proto${N0_COLOR}   - udp, tcp. default: tcp.
+ ${N2_COLOR}fromips${N0_COLOR} - allowed IP address list of the port forward. default: any.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
 1) Forward all incoming traffic to \$nodeip:2233 to foo:22 jail:
 
  # cbsd expose mode=add in=2233 out=22 jname=foo
+ 
+  Or the same with specifying source IPs which can access the very port forward. Not specifying IPs adds 'any' to the pf rules:
+
+ # cbsd expose mode=add in=2233 out=22 fromips=8.8.8.8 jname=foo
+ # cbsd expose mode=add in=2233 out=22 fromips=8.8.8.8,1.1.1.1 jname=foo
 
   Or via CBSDfile (the 'jname=' args can be ommited):
 --
@@ -51,7 +57,7 @@ jail_foo()
 
 postcreate_foo()
 {
-    expose mode=add in=2233 out=22
+    expose mode=add in=2233 out=22 fromips=8.8.8.8,1.1.1.1
 }
 
 2) map (forward) all 1:1 traffic (tcp/udp) from EXT_IP4 <-> VM IP address
@@ -248,6 +254,12 @@ fw_expose_add()
 		return 1
 	fi
 
+	if [ -z "${fromips}" ]; then
+		${ECHO} "\$fromips var is empty: $fromips"
+		${fromips:='any'}
+		${ECHO} "\$fromips var now modifed: $fromips"
+	fi
+
 	[ -f ${ftmpdir}/${jname}-expose_fwnum ] && fwnum=$( ${CAT_CMD} ${ftmpdir}/${jname}-expose_fwnum )
 
 	case "${in}" in
@@ -256,8 +268,8 @@ fw_expose_add()
 			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: ALL ${_inaddr}:${jip}
 			;;
 		*)
-			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR}"
-			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: proto: ${proto}: ${in}:${out}
+			${ECHO} "${N1_COLOR}CBSD Expose for ${jname}: ${N2_COLOR}${in} -> ${out} (${proto})${N0_COLOR} from IPs (${fromips})${N0_COLOR}"
+			cbsdlogger NOTICE ${CBSD_APP}: ${jname}: proto: ${proto}: ${in}:${out} from IPs: ${fromips}
 			;;
 	esac
 
@@ -314,12 +326,12 @@ fw_expose_add()
 #nat pass on ${_pass_iface} from ${jip}/32 to !${rfcnet} -> ${_inaddr} # ${COMMENT}
 #EOF
 
-					cbsdlogger NOTICE "${CBSD_APP}: rdr pass proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32"
+					cbsdlogger NOTICE "${CBSD_APP}: rdr pass proto {tcp, udp} from ${fromips} to ${_inaddr}/32 -> ${jip}/32"
 					cbsdlogger NOTICE "${CBSD_APP}: nat pass from ${jip}/32 to !${rfcnet} -> ${_inaddr}"
 
 					# RDR
 					${CAT_CMD} >> ${etcdir}/pfrdr.conf <<EOF
-rdr pass proto {tcp, udp} from any to ${_inaddr}/32 -> ${jip}/32 # ${COMMENT}
+rdr pass proto {tcp, udp} from {${fromips}} to ${_inaddr}/32 -> ${jip}/32 # ${COMMENT}
 EOF
 					# NAT
 					${CAT_CMD} >> ${etcdir}/pfnat.conf <<EOF
@@ -329,7 +341,7 @@ EOF
 				*)
 					# RDR
 					${CAT_CMD} >> ${etcdir}/pfrdr.conf << EOF
-rdr pass proto ${proto} from any to ${_inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
+rdr pass proto ${proto} from {${fromips}} to ${_inaddr} port ${in} -> ${jip} port ${out} # ${COMMENT}
 EOF
 					;;
 			esac
@@ -351,8 +363,8 @@ EOF
 
 fw_expose_apply()
 {
-	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr; do
-		COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
+	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr,fromips FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr fromips; do
+		COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname} from IPs ${fromips}"
 		fw_expose_add
 	done
 }
@@ -366,7 +378,7 @@ fw_expose_list()
 
 	[ ! -r ${exposefile} ] && return 1
 
-	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr; do
+	cbsdsqlro ${exposefile} SELECT pin,pout,proto,inaddr,fromips FROM expose | ${TR_CMD} "|" " " | while read in out proto inaddr fromips; do
 
 		case "${inaddr}" in
 			nodeip|0)
@@ -382,7 +394,7 @@ fw_expose_list()
 				echo "map all via ${_inaddr}"
 				;;
 			*)
-				echo "${in} -> ${out} (${_inaddr} ${proto})"
+				echo "${in} -> ${out} from ${fromips} (${_inaddr} ${proto})"
 				;;
 		esac
 	done
@@ -422,11 +434,17 @@ fw_expose_clear()
 
 fw_expose_delete()
 {
+	if [ -z "${fromips}" ]; then
+		${ECHO} "\$fromips var is empty: $fromips"
+		${fromips:='any'}
+		${ECHO} "\$fromips var now modifed: $fromips"
+	fi
+
 	if [ "${inaddr}" = "nodeip" -o "${inaddr}" = "0" ]; then
 		inaddr="${nodeip}"
-		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND ( inaddr=\"${inaddr}\" OR inaddr=\"0\" ) AND outaddr=\"${outaddr}\""
+		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND ( inaddr=\"${inaddr}\" OR inaddr=\"0\" ) AND outaddr=\"${outaddr}\" AND fromips=\"${fromips}\""
 	else
-		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
+		cbsdsqlrw ${exposefile} "DELETE FROM expose WHERE pin=${in} AND pout=${out} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\" AND fromips=\"${fromips}\""
 	fi
 	cbsdlogger NOTICE ${CBSD_APP}: fw_expose_delete: delete config for: ${jname}
 
@@ -535,7 +553,7 @@ else
 	[ -z "${out}" ] && err 1 "${N1_COLOR}Empty ${N2_COLOR}out${N0_COLOR}"
 fi
 
-COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname}"
+COMMENT="// Setup by CBSD expose: ${proto}-${out}-${jname} from IPs ${fromips}"
 
 case "${mode}" in
 	add)
@@ -543,9 +561,9 @@ case "${mode}" in
 		ret=$?
 		if [ ${ret} -eq 0 ]; then
 			# check for dup
-			_res=$( cbsdsqlro ${exposefile} "SELECT pin FROM expose WHERE pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\"" | ${HEAD_CMD} -n 1 )
-			[ -n "${_res}" ] && err 1 "${N1_COLOR}${CBSD_APP}: already exist in DB: pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\""
-			cbsdsqlrw ${exposefile} "INSERT INTO expose ( pin, pout, proto, inaddr, outaddr ) VALUES ( ${in}, ${out}, \"${proto}\", \"${inaddr}\", \"${outaddr}\" )"
+			_res=$( cbsdsqlro ${exposefile} "SELECT pin FROM expose WHERE pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\" AND fromips=\"${fromips}\"" | ${HEAD_CMD} -n 1 )
+			[ -n "${_res}" ] && err 1 "${N1_COLOR}${CBSD_APP}: already exist in DB: pin=${pin} AND pout=${pout} AND proto=\"${proto}\" AND inaddr=\"${inaddr}\" AND outaddr=\"${outaddr}\" AND fromips=\"${fromips}\""
+			cbsdsqlrw ${exposefile} "INSERT INTO expose ( pin, pout, proto, inaddr, outaddr, fromips ) VALUES ( ${in}, ${out}, \"${proto}\", \"${inaddr}\", \"${outaddr}\", \"${fromips}\" )"
 		else
 			err 1 "${N1_COLOR}${CBSD_APP}: fw_expose_add error: ${ret}${N0_COLOR}"
 		fi
