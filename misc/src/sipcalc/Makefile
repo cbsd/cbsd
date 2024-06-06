@@ -10,4 +10,4 @@ sipcalc: sub-func.c interface.c sipcalc.c sub-output.c
 clean:
 	@$(RM) -f .depend* sipcalc sipcalc.debug sipcalc.full *.o
 install:
-	${INSTAL:} -s -o root -g wheel -m 0555 sipcalc /usr/local/cbsd/misc/sipcalc
+	${INSTALL:} -s -o root -g wheel -m 0555 sipcalc /usr/local/cbsd/misc/sipcalc
