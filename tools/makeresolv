@@ -1,23 +1,27 @@
 #!/usr/local/bin/cbsd
 MYARG="jname"
-MYOPTARG="file nameserver"
+MYOPTARG="file nameserver purge"
 MYDESC="Manage jail /etc/resolv.conf file"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-The script creates the configuration in /etc/resolv.conf file within jail.
+The script manage the configuration in /etc/resolv.conf file within jail.
 Script works automatically upon 'jstart' command if the container has 'floatresolv=1'.
 
 By default we set the addresses specified as 'jnameserver' in 'initenv-tui'
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}file=${N0_COLOR}           - use/copy file as /etc/resolv.conf;
- ${N2_COLOR}nameserver=${N0_COLOR}     - overwrite 'jnameserver' IPs, commas as delimer when multiple;
+ ${N2_COLOR}file=${N0_COLOR}          - use/copy file as /etc/resolv.conf;
+ ${N2_COLOR}nameserver=${N0_COLOR}    - overwrite global 'jnameserver' IPs, commas as delimer when multiple;
+                    when 'nameserver' sets to '0' - just reset /etc/resolv.conf by global 'jnameserver' settings;
+ ${N2_COLOR}purge=${N0_COLOR}         - purge/remove all 'nameserver XXXX' settings, even 'other' records,
+                    without 'CBSD makeresolv function' markers ('0' by default - do not purge);
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd makeresolv jname=test1 nameserver=8.8.8.8,8.8.4.4,2001:4860:4860::8888,2001:4860:4860::8844
+ # cbsd makeresolv jname='*' nameserver=8.8.4.4 purge=1
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -28,8 +32,15 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 . ${subrdir}/nc.subr
 file=
+# use nameserver params for 'makeresolv' to avoid confict with global 'jnameserver'
 nameserver=
+jnameserver=
+ojnameserver=
+opurge=
+purge=
 . ${cbsdinit}
+
+[ -n "${purge}" ] && opurge="${purge}"
 
 set_resolvconf()
 {
@@ -67,13 +78,18 @@ set_resolvconf()
 
 unset_resolvconf()
 {
-	local _tpl="CBSD makeresolv function"
+	local _tpl=
+	if [ "${purge}" = "1" ]; then
+		_tpl="^nameserver "
+	else
+		_tpl="CBSD makeresolv function"
+	fi
 
-	if [ -n "${nameserver}" -o -z "${file}" ]; then
+	if [ -n "${jnameserver}" -o -z "${file}" ]; then
 		# nameserver if preferr to file
 		if ${GREP_CMD} "${_tpl}" ${data}/etc/resolv.conf >/dev/null 2>&1; then
 			${CP_CMD} -a ${data}/etc/resolv.conf ${data}/etc/resolv.conf.bak
-			${GREP_CMD} -v "${_tpl}" ${data}/etc/resolv.conf.bak |${GREP_CMD} "." > ${data}/etc/resolv.conf
+			${GREP_CMD} -v "${_tpl}" ${data}/etc/resolv.conf.bak | ${GREP_CMD} "." > ${data}/etc/resolv.conf
 		fi
 	else
 		# just copy file
@@ -81,11 +97,52 @@ unset_resolvconf()
 	fi
 }
 
+### MAIN
+emulator="jail"         # for jname_is_multiple
+jname_is_multiple
+
+if [ -n "${jail_list}" ]; then
+	new_arg=
+
+	for i in $*; do
+		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+		[ "${_is_jname}" = "jname" ] && continue
+		new_arg="${new_arg} ${i}"
+	done
+
+	for jname in ${jail_list}; do
+		makeresolv jname=${jname} ${new_arg}
+	done
+	exit 0
+fi
+
+# push global jnameserver
+[ -n "${jnameserver}" ] && ojnameserver="${jnameserver}"
 . ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 [ ${floatresolv} -eq 0 ] && exit 0
-[ -z "${nameserver}" ] && nameserver="${jnameserver}"
-[ -z "${nameserver}" -o "${nameserver}" = "0" ] && exit 0
+# pop global jnameserver
+[ -n "${ojnameserver}" ] && jnameserver="${ojnameserver}"
+
+# no nameserver via args?
+if [ -z "${nameserver}" ]; then
+	# get jnameserver from SQL per jail
+	onameserver=$( cbsdsqlro local "SELECT jnameserver FROM jails WHERE jname='${jname}'" 2>/dev/null )
+	if [ "${onameserver}" = "0" ]; then
+		# inherit global jnameserver, no override
+		true
+	else
+		jnameserver="${onameserver}"
+	fi
+else
+	if [ "${nameserver}" = "0" ]; then
+		# inherit global jnameserver, no override
+	else
+		jnameserver="${nameserver}"
+	fi
+fi
+
+[ "${jnameserver}" = "0" ] && exit 0		# no data, nothing to do
 
 # v4/v6 flag?
 jail_has_v4=0

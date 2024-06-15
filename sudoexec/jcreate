@@ -56,6 +56,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}customskel=${N0_COLOR}     - <path>: additional skel directory applyed above jail structrure.
  ${N2_COLOR}fstablocal=${N0_COLOR}     - <path>: additional fstab file stored as fstab.local.
  ${N2_COLOR}jprofile=${N0_COLOR}       - <name>:  specify jail profile for creating jail.
+ ${N2_COLOR}jnameserver=${N0_COLOR}    - <IP>: override default 'jnameserver' settings for jail.
  ${N2_COLOR}zfs_snapsrc=${N0_COLOR}    - <name>: use ZFS snapshot as data source.
  ${N2_COLOR}pkg_bootstrap=${N0_COLOR}  - 0,1: overwrite pkg_bootstrap from conf file.
  ${N2_COLOR}removejconf=${N0_COLOR}    - 0,1: remove jconf after jcreate? 0 - don't remove.
@@ -86,7 +87,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jcreate jname=xx ver=13.2 vnet=1 sysrc=\"ifconfig_eth0+='mtu 1450' inetd_enable=YES\"
  # cbsd jcreate jname=vmagent from=https://dl.bsdstore.ru/img/amd64/amd64/13.2/vmagent/vmagent.img pkg_bootstrap=0 runasap=1
  # cbsd jcreate jname=myapp from=fbbb4e8707f6794008cc6e8ed0d86082 runasap=1
- # cbsd jcreate jname=small flavor=small1 runasap=1
+ # cbsd jcreate jname=small flavor=small1 runasap=1 jnameserver="8.8.8.8,8.8.4.4"
 
 Nice example HOW TO create micro-jail (~8MB, 'busybox' like) with SSH root access:
 
@@ -125,13 +126,34 @@ flavor=
 oflavor=
 ver=
 over=
+
+# hack to avoid conflict with global jnameserver
+ojnameserver="${jnameserver}"
 . ${cbsdinit}
+
+# hack to avoid conflict with global jnameserver
+if [ "${ojnameserver}" = "${jnameserver}" ]; then
+	# no jnameserver args: inherits jnameserver by default
+	jnameserver="0"
+	ojnameserver="0"
+else
+	ojnameserver="${jnameserver}"
+fi
 
 # if some of params specified via args, store them as temporary vars
 for i in ${MYOPTARG}; do
-	unset o${i}
-	eval "o${i}=\$$i"
+	case "${i}" in
+		jnameserver)
+			# hack to avoid conflict with global jnameserver
+			# do not init ojnameserver
+			[ "${jnameserver}" = "0" ] && continue
+			;;
+		*)
+			unset o${i}
+			eval "o${i}=\$$i"
+	esac
 done
+
 
 # jcreate global conf
 readconf jcreate.conf
@@ -147,6 +169,8 @@ if [ -z "${jconf}" ]; then
 	. ${cbsdinit}
 	unset CBSD_INIT_SAVE2FILE
 fi
+
+[ -n "${ojnameserver}" ] && jnameserver="${ojnameserver}"
 
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}please set for jcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -z "${autorestart}" ] && autorestart=0
@@ -420,6 +444,7 @@ fi
 . ${temprcconf}
 
 [ -n "${over}" ] && ver="${over}"
+[ -n "${ojnameserver}" -a "${ojnameserver}" != "0" ] && jnameserver="${ojnameserver}"
 
 # map 'native' to ver/arch
 . ${subrdir}/build.subr
@@ -628,15 +653,15 @@ case "${ip4_addr}" in
 		;;
 esac
 
-${SYSRC_CMD} -qf ${temprcconf} arch="${arch}" > /dev/null
-${SYSRC_CMD} -qf ${temprcconf} ver="${ver}" > /dev/null
-${SYSRC_CMD} -qf ${temprcconf} stable="${stable}" > /dev/null
-
-# update with normalize path
-${SYSRC_CMD} -qf ${temprcconf} path="${path}" > /dev/null
-${SYSRC_CMD} -qf ${temprcconf} mount_fstab="${mount_fstab}" > /dev/null
-${SYSRC_CMD} -qf ${temprcconf} rcconf="${rcconf}" > /dev/null
-${SYSRC_CMD} -qf ${temprcconf} data="${data}" > /dev/null
+${SYSRC_CMD} -qf ${temprcconf} \
+	arch="${arch}" \
+	ver="${ver}" \
+	stable="${stable}" \
+	path="${path}" \
+	mount_fstab="${mount_fstab}" \
+	rcconf="${rcconf}" \
+	data="${data}" \
+	jnameserver="${jnameserver}" >/dev/null
 
 ${CP_CMD} ${temprcconf} ${rcconf}
 
