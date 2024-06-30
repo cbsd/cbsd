@@ -8,13 +8,8 @@ ADDHELP="
 ${H3_COLOR}Description:${N0_COLOR}
 
 Alternative virtual environmental migration, based on the ZFS file system and its
-capabilities. In addition to the 'cbsd node mode=add', you must provide root user
-access through the authorization keys. For example, you must go from the source
-node to a remote node through 'ssh root@REMOTE_NODE_IP'. By default 'root' access
-disabled in SSH, you can allow it by:
-
-  sysrc sshd_flags=\"-oUseDNS=no -oPermitRootLogin=without-password\"
-  service sshd restart
+capabilities. To transfer the virtual container, you must first add the destination node 
+via 'cbsd node mode=add` command.
 
 ${H3_COLOR}Options:${N0_COLOR}
 
@@ -31,7 +26,10 @@ ${H3_COLOR}Options:${N0_COLOR}
 
 ${H3_COLOR}Examples:${N0_COLOR}
 
- # /usr/local/bin/cbsd zfs-migrator jname=xxx node=fbsd2.my.domain
+ # cbsd zfs-migrator jname=xxx node=fbsd2.my.domain
+
+ # For soft migration ( 1 full + stop env + incement ):
+ # cbsd zfs-migrator jname=xxx node=zfsmigrat2.my.domain aincr=1
 
 ${H3_COLOR}See also:${N0_COLOR}
 
@@ -191,12 +189,12 @@ ZMver="1"
 checkonly=0
 
 . ${cbsdinit}
-
 . ${system}
 
 [ "${version}" = "1" ] && err 0 "${ZMver}"
 
 if [ "${checkonly}" = "1" ]; then
+	export NOCOLOR=1
 	[ ${zfsfeat} -ne 1 ] && err 1 "${N1_COLOR}zfsfeat disabled, zfs-migrator non-working here${N0_COLOR}"
 	LOCAL_ZROOT=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null | ${HEAD_CMD} -n 1 )
 	[ -z "${LOCAL_ZROOT}" ] && err 1 "${N1_COLOR}${CBSD_APP}: error: unable to determine ZROOT for datadir, zfs-migrator non-working here: ${N2_COLOR}${ZFS_CMD} get -Ho value name ${jaildatadir}${N0_COLOR}"
@@ -205,7 +203,11 @@ fi
 
 if [ ${inter} -eq 1 ]; then
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}Empty jname=${N0_COLOR}"
-	[ -z "${node}" ] && err 1 "${N1_COLOR}Empty node=${N0_COLOR}"
+	if [ -z "${node}" ]; then
+		${ECHO} "${N1_COLOR}Empty node=\nAvailable nodes:${N0_COLOR}"
+		node mode=list display=nodename header=0
+		exit 1
+	fi
 fi
 
 # ZFS_CMD only
@@ -391,11 +393,26 @@ if [ ${incr} -gt 0 ]; then
 fi
 
 ${ECHO} "${N1_COLOR}* ${N2_COLOR}Gathering instance and nodes data....${N0_COLOR}"
-${ECHO} "${N2_COLOR}    + retrieving instance date...${N0_COLOR}"
+printf "${N2_COLOR}    + retrieving instance date... ${N0_COLOR}"
+
+_res=$( rexe node=${node} tryoffline=1 date )
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	err 1 "${N1_COLOR}connection to remote host failed: ${_res}${N0_COLOR}"
+fi
+${ECHO} "${H2_COLOR}${_res}${N0_COLOR}"
+
+# check that remote node is ZFS_CMD
+d_migrator_ready=$( rexe tryoffline=1 node=${node} '/usr/local/bin/cbsd zfs-migrator checkonly=1' | ${AWK_CMD} '{printf $1}' | ${TR_CMD} -d '\r\n' )
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	err 1 "${N1_COLOR}Remote node is not ready ( /usr/local/bin/cbsd zfs-migrator checkonly=1 ): ${d_migrator_ready}${N0_COLOR}"
+fi
+[ "${d_migrator_ready}" != "Ready" ] && err 1 "${N1_COLOR}Remote node is not ready ( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator checkonly=1 ): [${d_migrator_ready}]${N0_COLOR}"
 
 . ${subrdir}/rcconf.subr
 
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+myjid=$( cbsdsqlro local "SELECT jid FROM jails WHERE jname='${jname}'" 2>/dev/null )
 
 case ${myjid} in
 	0)
@@ -416,7 +433,8 @@ else
 	err 1 "${N1_COLOR}${CBSD_APP}: no nodename?: ${N2_COLOR}~cbsd/nodename${N0_COLOR}"
 fi
 [ -z "${my_nodename}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no nodename?: ${N2_COLOR}~cbsd/nodename | ${AWK_CMD} '{printf $1}'${N0_COLOR}"
-remote_node_ip=$( /usr/local/bin/cbsd getinfo mode=quiet nodeip )
+
+remote_node_ip=$( getinfo mode=quiet nodeip )
 remote_node_name="${node}"
 remote_node_rip=$( ${SQLITE3_CMD} ~cbsd/var/db/nodes.sqlite "SELECT ip FROM nodelist WHERE nodename='${node}'" 2>/dev/null )
 
@@ -424,30 +442,46 @@ remote_node_rip=$( ${SQLITE3_CMD} ~cbsd/var/db/nodes.sqlite "SELECT ip FROM node
 source_vm_name="${jname}"
 dest_vm_name="${jname}"
 
-# todo: alternative jname on dst?
 
-${ECHO} "${N2_COLOR}    + checking for datasets...${N0_COLOR}"
+# todo: alternative jname on dst?
+printf "${N2_COLOR}    + checking for datasets...${N0_COLOR}"
 
 if [ -r ${tmpdir}/.vmmigrator.$$ ]; then
-	${RM} -f ${tmpdir}/.vmmigrator.$$
+	${RM_CMD} -f ${tmpdir}/.vmmigrator.$$
 fi
 
 LOCAL_ZROOT=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 [ -z "${LOCAL_ZROOT}" ] && err 1 "${N1_COLOR}Unable to determine local zroot${N0_COLOR}"
 
-# how to obtain remote jaildatadir?
-REMOTE_ZROOT=$( ${SSH_CMD} -q ${remote_node_rip} ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null | ${AWK_CMD} '{printf $1 }' )
+# TODO: multi-environment support via ARGS
+REMOTE_ZROOT=$( rexe tryoffline=1 node=${node} '. /etc/rc.conf && . ${cbsd_workdir}/cmd.subr && ${ZFS_CMD} get -Ho name name ${cbsd_workdir}/jails-data' | ${TR_CMD} -d '\r\n' )
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	err 1 "${N1_COLOR}Unable to determine remote zroot, check SSH_CMD or ZFS_CMD feature on remote host [${ZFS_CMD} get -Ho name name ${cbsd_workdir}/jails-data]: ${REMOTE_ZROOT}${N0_COLOR}"
+fi
 [ -z "${REMOTE_ZROOT}" ] && err 1 "${N1_COLOR}Unable to determine remote zroot, check SSH_CMD or ZFS_CMD feature on remote host${N0_COLOR}"
+
+${ECHO} "${H2_COLOR}${REMOTE_ZROOT}${N0_COLOR}"
+
+REMOTE_WORKDIR=$( rexe tryoffline=1 node=${node} '. /etc/rc.conf && echo ${cbsd_workdir}' | ${TR_CMD} -d '\r\n' )
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	err 1 "${N1_COLOR}Unable to determine remote workdir}${N0_COLOR}"
+fi
+[ -z "${REMOTE_ZROOT}" ] && err 1 "${N1_COLOR}Unable to determine remote workdir}${N0_COLOR}"
 
 case "${emulator}" in
 	jail)
 		${ZFS_CMD} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP_CMD} ${LOCAL_ZROOT}/${jname} 2>/dev/null >> ${tmpdir}/.vmmigrator.$$
 		;;
 	bhyve)
+		${ZFS_CMD} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP_CMD} "${LOCAL_ZROOT}/${jname}" 2>/dev/null | ${GREP_CMD} -v "dsk[0-9].vhd" >> ${tmpdir}/.vmmigrator.$$
 		${ZFS_CMD} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP_CMD} "${LOCAL_ZROOT}/${jname}/dsk[0-9].vhd" 2>/dev/null >> ${tmpdir}/.vmmigrator.$$
-		#${ZFS_CMD} list -Hpro name,usedbydataset -t filesystem,volume ${LOCAL_ZROOT} | ${GREP_CMD} ${LOCAL_ZROOT}/${jname} 2>/dev/null >> ${tmpdir}/.vmmigrator.$$
 		;;
 esac
+
+echo "TMP:"
+cat  ${tmpdir}/.vmmigrator.$$
 
 if [ -s ${tmpdir}/.vmmigrator.$$ ]; then
 	MDSSZ=`${AWK} 'BEGIN {tot=0}; {tot+=$2}; END {printf tot}' ${tmpdir}/.vmmigrator.$$`
@@ -505,29 +539,28 @@ if [ ${KEYCHK} -ne 0 ]; then
 fi
 
 # todo: make retrinv and obtain information from SQLite directory ?
-d_cbsd_ver=$( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd -c version 2>/dev/null |awk '{printf $1 }' )
+d_cbsd_ver=$( rexe tryoffline=1 node=${node} '. /etc/rc.conf && . ${cbsd_workdir}/cmd.subr && /usr/local/bin/cbsd -c version 2>/dev/null | ${AWK_CMD} "{printf $1}"' | ${TR_CMD} -d '\r\n' )
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	err 1 "${N1_COLOR}Unable to determine remote CBSD version: ${d_cbsd_ver}${N0_COLOR}"
+fi
+[ -z "${d_cbsd_ver}" ] && err 1 "${N1_COLOR}Unable to determine remote CBSD version${N0_COLOR}"
 s_cbsd_ver=$( version )
 
-# check that remote note is ZFS_CMD
-d_migrator_ready=$( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator checkonly=1 2>/dev/null )
-res=$?
+if [ "${s_cbsd_ver}" != "${d_cbsd_ver}" ]; then
+	err 1 "${N1_COLOR}CBSD version not equal! migration is supported only on identical versions: local[${s_cbsd_ver}], remote[${d_cbsd_ver}]}${N0_COLOR}"
+fi
 
-[ ${res} -ne 0 ] && err 1 "${N1_COLOR}Remote node is not ready ( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator checkonly=1 ): ${d_migrator_ready}${N0_COLOR}"
-
-s_migrator_ver=${ZMver}
-d_migrator_ver=$( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd zfs-migrator version=1 2>/dev/null |awk '{printf $1 }' )
-
-# todo: matrix for migrator compatible
-
-d_instance_exist=$( ${SSH_CMD} -q ${remote_node_rip} /usr/local/bin/cbsd jstatus jname=${jname} )
-ret=$?
-[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}Node ${node} already has instance named: ${N2_COLOR}${jname}${N0_COLOR}"
+if [ ${incr} -ne 1 ]; then
+	d_instance_exist=$( rexe tryoffline=1 node=${node} "/usr/local/bin/cbsd jstatus jname=${jname}" )
+	ret=$?
+	[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}Node ${node} already has instance named?: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
 
 ${ECHO} "${N2_COLOR}  - Data gathering complete!${N0_COLOR}"
 srcpad=" "
 destpad=" "
-
-cat <<XxX1387784305xXx
+${CAT_CMD} <<EOF
 
 We will be migrating:
      INSTANCE:
@@ -544,25 +577,25 @@ We will be migrating:
         migration id:  $$
  est. migration time:  ${mav} ${miti} (@ ~20 MB / second (~1.17 GB / minute); +2 minutes extra)
       migration type:  ${migrType}
-XxX1387784305xXx
+EOF
 if [ ${incr} -gt 0 ]; then
-	cat <<XxX1394397626xXx
+	cat <<EOF
   migration log file:  ${DC_NAME}:${LOGFILE}
 migration state file:  ${DC_NAME}:${STFILE}
-XxX1394397626xXx
+EOF
 fi
 
-cat <<XxX1394397713xXx
+cat <<EOF
 
                     Source                                        Destination
 ----------------------------------------------  ----------------------------------------------
-XxX1394397713xXx
+EOF
 printf "Host:     %-36s  Host:     %-36s\n" ${my_nodename} ${remote_node_name}
 printf "JNAME:    %-36s  JNAME:    %-36s\n" ${source_vm_name} ${dest_vm_name}
 printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
 printf "IP Addr:  %-36s  IP Addr:  %-36s\n" ${remote_node_ip} ${remote_node_rip}
 printf "ZFS:      %-36s  ZFS:      %-36s\n" ${LOCAL_ZROOT} ${REMOTE_ZROOT}
-printf "API ver:  %-36s  API ver:  %-36s\n" ${s_migrator_ver} ${d_migrator_ver}
+printf "API ver:  %-36s  API ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
 
 echo
 
@@ -580,9 +613,9 @@ STTIME=`${DATE_CMD} +%s`
 ${ECHO} "${N1_COLOR}* ${N2_COLOR}Checking for origin instance dataset...${N0_COLOR}"
 
 if [ "${emulator}" = "bhyve" ]; then
-	DSORIG=`${ZFS_CMD} get -Ho value origin ${REMOTE_ZROOT}/${jname}/dsk1.vhd`
+	DSORIG=`${ZFS_CMD} get -Ho value origin ${LOCAL_ZROOT}/${jname}/dsk1.vhd`
 else
-	DSORIG=`${ZFS_CMD} get -Ho value origin ${REMOTE_ZROOT}/${jname}`
+	DSORIG=`${ZFS_CMD} get -Ho value origin ${LOCAL_ZROOT}/${jname}`
 fi
 
 # check if origin dataset exists and is ${REMOTE_ZROOT}/...@final, ignore otherwise
@@ -603,7 +636,8 @@ fi
 
 # in generic node install, $DSORIG = "-"
 if [ ${IMGCHK} -ne 0 ]; then
-	${SSH_CMD} -q ${remote_node_rip} ${ZFS_CMD} list -Ho name ${REMOTE_ZROOT}/${DSORIG} >/dev/null 2>&1
+#	${SSH_CMD} -q ${remote_node_rip} ${ZFS_CMD} list -Ho name ${REMOTE_ZROOT}/${DSORIG} >/dev/null 2>&1
+	rexe tryoffline=1 node=${node} ". /etc/rc.conf && . \${cbsd_workdir}/cmd.subr && \${ZFS_CMD} list -Ho name ${REMOTE_ZROOT}/${DSORIG} >/dev/null 2>&1"
 	if [ $? -ne 0 ]; then
 		# bhyve?
 		${SSH_CMD} -q ${remote_node_rip} ${ZFS_CMD} list -Ho name ${REMOTE_ZROOT}/${jname} >/dev/null 2>&1
@@ -628,8 +662,7 @@ else
 	${ECHO} "${N2_COLOR}        dest. origin will be lost in the course of migrating the instance.${N0_COLOR}"
 fi
 
-
-if ${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} list ${REMOTE_ZROOT}/${jname}@vmsnap-${CBSD_MIGRNAME}" > /dev/null 2>&1; then
+if rexe tryoffline=1 node=${node} ". /etc/rc.conf && . \${cbsd_workdir}/cmd.subr && \${ZFS_CMD} list ${REMOTE_ZROOT}/${jname}@vmsnap-${CBSD_MIGRNAME}" > /dev/null 2>&1; then
 	${ECHO} "${N1_COLOR}ERROR: Snapshot already exists on the ${remote_node_name}!  This is not${N0_COLOR}"
 	${ECHO} "${N1_COLOR}       your first time here.  Clean it up first please.${N0_COLOR}"
 	${ECHO} "${N1_COLOR}  To delete the snapshots on ${remote_node_name}:${N0_COLOR}"
@@ -643,14 +676,14 @@ if ${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} list ${REMOTE_ZROOT}/${jname}@vm
 	exit 1
 fi
 
-fsNotExist ${REMOTE_ZROOT}/${jname} && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}${N0_COLOR}"
-
-case "${emulator}" in
-	bhyve)
-		fsNotExist ${REMOTE_ZROOT}/${jname}/dsk0.vhd && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}/dsk0.vhd${N0_COLOR}"
-		fsNotExist ${REMOTE_ZROOT}/${jname}/dsk1.vhd && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}/dsk1.vhd${N0_COLOR}"
-	;;
-esac
+#fsNotExist ${REMOTE_ZROOT}/${jname} && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}${N0_COLOR}"
+#
+#case "${emulator}" in
+#	bhyve)
+#		fsNotExist ${REMOTE_ZROOT}/${jname}/dsk0.vhd && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}/dsk0.vhd${N0_COLOR}"
+#		fsNotExist ${REMOTE_ZROOT}/${jname}/dsk1.vhd && err 1 "${N1_COLOR}Error: ${node}, Dataset already exist: ${N2_COLOR}${REMOTE_ZROOT}/${jname}/dsk1.vhd${N0_COLOR}"
+#	;;
+#esac
 
 if [ ${full} -eq 1 ]; then
 	printf "${N1_COLOR}*${N0_COLOR} "
@@ -666,18 +699,20 @@ if [ ${full} -eq 1 ]; then
 		bhyve)
 			# export media data
 			media mode=dump jname=${jname} > ${jailsysdir}/${jname}/media.sql
-			j2prepare node=${node} jname=${jname} mkdatadir=1 tryoffline=1
+#			j2prepare node=${node} jname=${jname} mkdatadir=1 tryoffline=1
+
+			# sharedfs = sync rcconf only
+			j2prepare node=${node} jname=${jname} mkdatadir=0 tryoffline=1 sharedfs=1
 			ret=$?
 			[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: error: ${N2_COLOR}cbsd j2prepare node=${node} jname=${jname} mkdatadir=1 tryoffline=1${N0_COLOR}"
-			j2slave node=${node} jname=${jname} tryoffline=1
-			ret=$?
-			[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: error, no cbsdrsyncd service enabled on remote host?: ${N2_COLOR}j2slave node=${node} jname=${jname} tryoffline=1${N0_COLOR}"
+#			j2slave node=${node} jname=${jname} tryoffline=1
+#			ret=$?
+#			[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}: error, no cbsdrsyncd service enabled on remote host?: ${N2_COLOR}j2slave node=${node} jname=${jname} tryoffline=1${N0_COLOR}"
 			;;
 	esac
 
 	echo
 fi
-
 
 # Snapshotting and transfer
 if [ ${incr} -eq 0 ]; then
@@ -686,10 +721,9 @@ if [ ${incr} -eq 0 ]; then
 	inst_stop
 	# todo: remote modification
 	${ECHO} "${N1_COLOR}* ${N2_COLOR}Creating dataset snapshots on ${my_nodename}${N0_COLOR}"
-	for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$`; do
+	for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 		${ECHO} "${N2_COLOR}    + Creating ${dset} snapshot...${N0_COLOR}"
 		${ZFS_CMD} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME} > /dev/null
-		echo "${dset}" | ${GREP_CMD} disk >/dev/null 2>&1
 	done
 
 	echo
@@ -697,15 +731,22 @@ if [ ${incr} -eq 0 ]; then
 	${ECHO} "${N1_COLOR}* ${N2_COLOR}Transferring dataset snapshots to ${remote_node_name}${N0_COLOR}"
 	if [ ${IMGSND} -eq 3 ]; then
 		# origin DS ! exists on DEST, send over the instance breaking any parent DS relation
-		for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+		for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 			${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME} ...${N0_COLOR}"
 			echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
 			_ret=$?
+
+			DS_MNTPT=$( ${ZFS_CMD} get -Ho value mountpoint ${dset} )
+			RDS_MNTPT=$( echo "${DS_MNTPT}" | ${SED_CMD} -e "s:${workdir}:${REMOTE_WORKDIR}:g" )
+
+			echo "X [$dset], ${_ret}, MNTPT: [${RDS_MNTPT}]"
+
 			if [ ${_ret} -eq 0 ]; then
-				${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT}/${jname} 2>/dev/null
+				DNUM=$( ${BASENAME_CMD} "${dset}" )
+				${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname}/${DNUM} mountpoint="${RDS_MNTPT}"
 				_ret=$?
 			else
-				${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT} 2>/dev/null
+				${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}"
 				_ret=$?
 			fi
 			if [ ${_ret} -ne 0 ]; then
@@ -717,7 +758,7 @@ if [ ${incr} -eq 0 ]; then
 	elif [ ${IMGSND} -eq 0 ]; then
 		# origin DS exists on DEST, perform an incremental replication stream of instance dataset
 		#   between the origin DS and the instance migration snapshot and send that to DEST
-		for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+		for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 			${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME} ...${N0_COLOR}"
 			if [ "${emulator}" = "bhyve" ]; then
 				echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
@@ -753,7 +794,7 @@ else
 	BACKOFF=30
 	while [ -f ${STFILE} ]; do
 		${ECHO} "${N1_COLOR}* ${N2_COLOR}Creating dataset snapshots on ${my_nodename}${N0_COLOR}"
-		for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$`; do
+		for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 			${ECHO} "${N2_COLOR}    + Creating ${dset} snapshot ${cntIncr}...${N0_COLOR}"
 			${ZFS_CMD} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} > /dev/null
 			echo "${dset}" | ${GREP_CMD} disk >/dev/null 2>&1
@@ -761,20 +802,24 @@ else
 
 		echo
 
-		echo "* Transferring incremental dataset snapshot ${cntIncr} to ${remote_node_name}"
+		echo "* Transferring incremental dataset snapshot ${cntIncr} to ${remote_node_name} [IMGSND: ${IMGSND}]"
 		if [ ${IMGSND} -eq 3 ]; then
 			# origin DS ! exists on DEST, send over the instance breaking any parent DS relation
 			if [ ${cntIncr} -eq 0 ]; then
-				for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+				for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 					printf "    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ..."
+					DS_MNTPT=$( ${ZFS_CMD} get -Ho value mountpoint ${dset} )
+					RDS_MNTPT=$( echo "${DS_MNTPT}" | ${SED_CMD} -e "s:${workdir}:${REMOTE_WORKDIR}:g" )
 					echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
-					if [ $? -eq 0 ]; then
-						${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT}/${jname} 2>/dev/null
+					if [ ${_ret} -eq 0 ]; then
+						echo "${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint=\"${RDS_MNTPT}\" force=1"
+						${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
 						_ret=$?
 					else
-						${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT} 2>/dev/null
+						${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
 						_ret=$?
 					fi
+
 					if [ ${_ret} -ne 0 ]; then
 						${ECHO} "${N1_COLOR}      > 4transfer failed!${N0_COLOR}"
 						clear_stfile
@@ -782,10 +827,21 @@ else
 					fi
 				done
 			else
-				for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+				for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 					${ECHO} "    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${N0_COLOR}"
-					${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
-					if [ $? -ne 0 ]; then
+					echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
+					if [ ${_ret} -eq 0 ]; then
+						${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
+						_ret=$?
+					else
+						${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
+						_ret=$?
+					fi
+
+					# old
+					#${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
+
+					if [ ${_ret} -ne 0 ]; then
 						${ECHO} "${N1_COLOR}      > 5transfer failed!${N0_COLOR}"
 						clear_stfile
 						exit 1
@@ -796,7 +852,7 @@ else
 			# origin DS exists on DEST, perform an incremental replication stream of instance dataset
 			#   between the origin DS and the instance migration snapshot and send that to DEST
 			if [ ${cntIncr} -eq 0 ]; then
-				for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+				for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 					${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${N0_COLOR}"
 					if [ "${emulator}" = "bhyve" ]; then
 						echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
@@ -804,14 +860,16 @@ else
 							# for KVMs, send the incremental replication stream only for dsk0
 							#   since dsk0 is tied to the origin dataset, otherwise just send
 							#   over the datasets
-							${ZFS_CMD} send -RI ${LOCAL_ZROOT}/${DSORIG} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT}/${jname} 2>/dev/null
+							#${ZFS_CMD} send -RI ${LOCAL_ZROOT}/${DSORIG} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT}/${jname} 2>/dev/null
+							${ZFS_CMD} send -RI ${LOCAL_ZROOT}/${DSORIG} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
 							if [ $? -ne 0 ]; then
 								${ECHO} "${N1_COLOR}      > 6transfer failed!${N0_COLOR}"
 								clear_stfile
 								exit 1
 							fi
 						else
-							${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT} 2>/dev/null
+							#${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -e ${REMOTE_ZROOT} 2>/dev/null
+							${ZFS_CMD} send -p ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
 							if [ $? -ne 0 ]; then
 								${ECHO} "${N1_COLOR}      > 7transfer failed!${N0_COLOR}"
 								clear_stfile
@@ -824,10 +882,18 @@ else
 					fi
 				done
 			else
-				for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+				for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 					${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${N0_COLOR}"
-					${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
-					if [ $? -ne 0 ]; then
+					#${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
+					echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
+					if [ $? -eq 0 ]; then
+						${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
+						_ret=$?
+					else
+						${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
+						_ret=$?
+					fi
+					if [ ${_ret} -ne 0 ]; then
 						${ECHO} "${N1_COLOR}      > 8transfer failed!${N0_COLOR}"
 						clear_stfile
 						exit 1
@@ -835,12 +901,13 @@ else
 				done
 			fi
 		fi
+
 		cntPrev=${cntIncr}
 		cntIncr=$(( cntIncr + 1 ))
 		echo
 		if [ ${aincr} -eq 0 ]; then
 			${ECHO} "${N2_COLOR}    + Sleeping for ${BACKOFF} seconds before next snapshot (run 'kill -USR1 $$' to force a snapshot).${N0_COLOR}"
-			for i in $( /usr/bin/seq 1 ${BACKOFF} ); do
+			for i in $( ${SEQ_CMD} 1 ${BACKOFF} ); do
 				[ -f $STFILE ] || break
 				if [ "$USR1" = 1 ]; then
 					USR1=0
@@ -849,41 +916,99 @@ else
 				sleep 1
 			done
 			[ $BACKOFF -lt 480 ] && BACKOFF=$(( 2 * BACKOFF ))
-	else
-		clear_stfile
-	fi
+		else
+			clear_stfile
+		fi
 	done
 	DTIME=`${DATE_CMD} +%s`
 	inst_stop
 	echo
 	${ECHO} "${N1_COLOR}* ${N2_COLOR}Creating final incrmental dataset snapshot on ${my_nodename}${N0_COLOR}"
-	for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$`; do
+	for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 		${ECHO} "${N2_COLOR}    + Creating ${dset} snapshot ${cntIncr}...${N0_COLOR}"
 		${ZFS_CMD} snapshot ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} > /dev/null
-		echo "${dset}" | ${GREP_CMD} disk >/dev/null 2>&1
 	done
 
-	for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+	for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
 		${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${N0_COLOR}"
-		${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
-		if [ $? -ne 0 ]; then
+		#${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
+
+		DS_MNTPT=$( ${ZFS_CMD} get -Ho value mountpoint ${dset} )
+		RDS_MNTPT=$( echo "${DS_MNTPT}" | ${SED_CMD} -e "s:${workdir}:${REMOTE_WORKDIR}:g" )
+		echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
+		_ret=$?
+		echo "RET: ${_ret} ( dset: ${dset} )"
+		if [ ${_ret} -eq 1 ]; then
+			echo "${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint=\"${RDS_MNTPT}\" force=1"
+			${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
+			_ret=$?
+		else
+			echo "${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint=\"${RDS_MNTPT}\" force=1"
+			${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
+			_ret=$?
+		fi
+		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}      > 9transfer failed!${N0_COLOR}"
 			clear_stfile
 			exit 1
 		fi
 	done
+
+
+###XOO
+#	for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$` ; do
+#		${ECHO} "${N2_COLOR}    + Tranferring ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} ...${N0_COLOR}"
+#		#${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | ${SSH_CMD} ${OPTSSH_CMD} ${remote_node_rip} ${ZFS_CMD} recv -F ${dset} 2>/dev/null
+#		echo "${dset}" | ${GREP_CMD} disk >/dev/null 2>&1
+#		_ret=$?
+#		if [ ${_ret} -eq 0 ]; then
+#			echo "${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint=\"${RDS_MNTPT}\" force=1"
+#			${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT}/${jname} mountpoint="${RDS_MNTPT}" force=1
+#			_ret=$?
+#		else
+#			${ZFS_CMD} send -i ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntPrev} ${dset}@vmsnap-${CBSD_MIGRNAME}-${cntIncr} | cbsd rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata=${REMOTE_ZROOT} mountpoint="${RDS_MNTPT}" force=1
+#			_ret=$?
+#		fi
+#		if [ ${_ret} -ne 0 ]; then
+#			${ECHO} "${N1_COLOR}      > 9transfer failed!${N0_COLOR}"
+#			clear_stfile
+#			exit 1
+#		fi
+#	done
 fi
 
 ${ECHO} "${N1_COLOR}* ${N2_COLOR}Deleting migration snapshots on ${remote_node_name}...${N0_COLOR}"
 # Also necessary remove on local, because at the end of script, user can anser 'no' on 'remove vm?' question
-for dset in `${AWK} '{printf $1}' ${tmpdir}/.vmmigrator.$$`; do
+for dset in $( ${AWK_CMD} '{printf $1"\n"}' ${tmpdir}/.vmmigrator.$$ ); do
+	echo "${dset}" | ${GREP_CMD} -E "dsk[0-9]+.vhd" >/dev/null 2>&1
+	_ret=$?
+	echo "RET: ${_ret} ( DESTROY dset: ${dset} )"
+
+
 	if [ ${incr} -eq 0 ]; then
-		${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}" 2>/dev/null
+		if [ ${_ret} -eq 0 ]; then
+			target=$( ${BASENAME_CMD} "${dset}" )
+			DESTROY_SNAP="${REMOTE_ZROOT}/${jname}/${target}@vmsnap-${CBSD_MIGRNAME}"
+		else
+			DESTROY_SNAP="${REMOTE_ZROOT}/${jname}@vmsnap-${CBSD_MIGRNAME}"
+		fi
+		echo "destroy snapshot on remote host...: [${ZFS_CMD} destroy ${DESTROY_SNAP}]"
+		rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata="${DESTROY_SNAP}" mountpoint="destroy"
+		#rexe node=zfsmigrat2.my.domain tryoffline=1 /usr/local/bin/cbsd zfs-recv tank/jails2 ${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}" 2>/dev/null
 		${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME} 2>/dev/null
 	else
 		prevCnt=${cntIncr}
 		while [ ${prevCnt} -ge 0 ]; do
-			${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}-${prevCnt}" 2>/dev/null
+			#${SSH_CMD} -q ${remote_node_rip} "${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}-${prevCnt}" 2>/dev/null
+
+			if [ ${_ret} -eq 0 ]; then
+				target=$( ${BASENAME_CMD} "${dset}" )
+				DESTROY_SNAP="${REMOTE_ZROOT}/${jname}/${target}@vmsnap-${CBSD_MIGRNAME}-${prevCnt}"
+			else
+				DESTROY_SNAP="${REMOTE_ZROOT}/${jname}@vmsnap-${CBSD_MIGRNAME}-${prevCnt}"
+			fi
+
+			rexe node=${node} tryoffline=1 /usr/local/bin/cbsd zfs-recv jname=${jname} zdata="${DESTROY_SNAP}" mountpoint="destroy"
 			${ZFS_CMD} destroy ${dset}@vmsnap-${CBSD_MIGRNAME}-${prevCnt} 2>/dev/null
 			#let prevCnt=prevCnt-1
 			prevCnt=$(( prevCnt - 1 ))
@@ -923,7 +1048,6 @@ if [ ${full} -eq 1 ]; then
 		esac
 	fi
 fi
-
 
 ETIME=`${DATE_CMD} +%s`
 ENDTIME=`${DATE_CMD}`

@@ -1,0 +1,99 @@
+#!/usr/local/bin/cbsd
+#v9.2.2
+MYARG="jname zdata mountpoint"
+MYOPTARG="force"
+MYDESC="zfs-recv wrapper"
+
+. ${subrdir}/nc.subr
+. ${cbsdinit}
+. ${subrdir}/rcconf.subr
+
+
+[ -z "${force}" ] && force=0
+echo "jname: $jname, zdata: ${zdata}, mountpoint: ${mountpoint}, force=${force}" >> /tmp/ok.txt
+
+### extra checks for valid data
+# 1. check for valid datapool
+. ${subrdir}/zfs.subr
+
+
+zfsmnt ${workdir}
+_ret=$?
+if [ ${_ret} -eq 0 ]; then
+	log_err 1 "${CBSD_APP}: workdir is not ZFS-based pool: ${workdir}"
+fi
+
+l_zpool_len=$( strlen "${ZPOOL}" )
+r_zpool=$( substr --pos=0 --len=${l_zpool_len} --str="${zdata}" )
+if [ "${r_zpool}" != "${ZPOOL}" ]; then
+	log_err 1 "${CBSD_APP}: wrong zpool name, zdata doesn't match with working pool: my[${ZPOOL}], in request[${r_zpool}]"
+fi
+
+if [ "${mountpoint}" != "-" ]; then
+	# 2. check for mountpoint + workdir
+	if [ "${mountpoint}" = "destroy" ]; then
+		# for snapshot only
+		# tank/jails2/xxx@vmsnap-1504213200_cbsd_migration_1504213200
+		_checkstr="${ZPOOL}/${jname}"
+		_checkstr_len=$( strlen "${_checkstr}" )
+		r_zdata=$( substr --pos=0 --len=${_checkstr_len} --str="${zdata}" )
+		if [ "${r_zdata}" != "${_checkstr}" ]; then
+			log_err 1 "${CBSD_APP}: wrong destroy data request: zdata doesn't match with working pool for environment: my[${_checkstr}], remote[${r_zdata}, full request[${zdata}]"
+		fi
+		cbsdlogger NOTICE ${CBSD_APP}: destroy snapshot by request: ${zdata}
+		${ZFS_CMD} destroy "${zdata}"
+		exit $?
+	fi
+
+	l_wrkdir_len=$( strlen "${workdir}" )
+	r_wrkdir=$( substr --pos=0 --len=${l_wrkdir_len} --str="${mountpoint}" )
+	if [ "${r_wrkdir}" != "${workdir}" ]; then
+		log_err 1 "${CBSD_APP}: wrong workdir, mountpoint doesn't match with working: my[${workdir}], in request[${r_wrkdir}]"
+	fi
+fi
+
+if [ ${force} -eq 1 ]; then
+	force_args="-F"
+eise
+	force_args="-e"
+fi
+
+# for VM
+case "${emulator}" in
+	jail)
+		true
+		;;
+	*)
+		[ ! -d ${workdir}/vm ] && ${MKDIR_CMD} -p ${workdir}/vm
+		if [ -d  ${workdir}/vm/${jname} ]; then
+			[ ! -h "${workdir}/jails-system/${jname}" ] && ${LN_CMD} -sf ${workdir}/vm/${jname} ${workdir}/jails-system/${jname}
+		fi
+		;;
+esac
+
+if [ "${mountpoint}" != "-" ]; then
+	${ZFS_CMD} recv ${force_args} -o mountpoint="${mountpoint}" ${zdata}
+	_ret=$?
+else
+	${ZFS_CMD} recv ${force_args} ${zdata}
+	_ret=$?
+fi
+
+# restore dsk symlink
+if [ "${mountpoint}" = "-" -a "${emulator}" != "jail" ]; then
+	target=$( ${BASENAME_CMD} "${zdata}" )
+	case "${target}" in
+		dsk*)
+			echo "CHECK FOR /dev/zvol/${target}" >> /tmp/ok.txt
+			if [ -e "/dev/zvol/${zdata}" ]; then
+				echo "${LN_CMD} -sf /dev/zvol/${zdata} ${workdir}/vm/${jname}/${target}" >> /tmp/ok.txt
+				${LN_CMD} -sf /dev/zvol/${zdata} ${workdir}/vm/${jname}/${target}
+			fi
+			;;
+		*)
+			true
+			;;
+	esac
+fi
+
+exit ${_ret}
