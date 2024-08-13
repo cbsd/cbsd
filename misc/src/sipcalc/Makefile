@@ -1,6 +1,6 @@
 CC?= cc
 OSTYPE?= uname -s
-CFLAGS = -Wall -Wextra -O3
+CFLAGS = -O2 -pipe  -fstack-protector-strong -fno-strict-aliasing
 RM?= rm
 INSTALL?= install
 
