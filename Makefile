@@ -44,6 +44,7 @@ distclean:
 	${RM} -f bin/cbsdssh
 	${RM} -f bin/cbsdssh6
 	${RM} -f bin/cbsd
+	${RM} -f misc/efivar
 	${RM} -f sbin/netmask
 	${RM} -f misc/sqlcli
 	${RM} -f misc/pwcrypt
@@ -104,6 +105,7 @@ cbsd: pkg-config-check
 	${CC} bin/src/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
 	${CC} sbin/src/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
+	${CC} misc/src/efivar.c -o misc/efivar && ${STRIP} misc/efivar
 	${CC} misc/src/sqlcli.c `pkg-config sqlite3 --cflags --libs` -lm -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
