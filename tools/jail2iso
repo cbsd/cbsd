@@ -3,7 +3,7 @@
 # TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
 MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs \
-mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site"
+mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only"
 
 MYDESC="Create bootable ISO/Memstick/MFSBSD image from CBSD jail"
 
@@ -100,6 +100,7 @@ mfsbsd_defaultrouter=
 mfsbsd_ip_addr=
 mfsbsd_nameservers=
 mfsbsd_origin_site=
+mfs_struct_only=0
 . ${cbsdinit}
 
 if [ -z "${ver}" -o "${ver}" = "native" ]; then
@@ -190,6 +191,7 @@ TRAP=
 
 clear_tmp_dir()
 {
+	[ "${mfs_struct_only}" = "1" ] && return 0
 	if [ -d "${TMP_DIR}" -o -f "${TMP_DIR}" ]; then
 		[ "${platform}" != "Linux" ] && nice -n 19 ${IDPRIO_CMD} 29 ${CHFLAGS_CMD} -R noschg ${TMP_DIR}
 		${RM_CMD} -rf ${TMP_DIR}
@@ -887,7 +889,10 @@ EOF
 		${MV_CMD} ${TMP_DIR}/root.txz ${TMP_DIR}/mfsroot1/root.txz
 
 		# merge custom loader.conf
-		${CAT_CMD} > ${TMP_DIR}/mfsroot1/boot/loader.conf <<EOF
+		if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
+			${CAT_CMD} "${jailsysdir}/${jname}/loader.conf" > ${TMP_DIR}/mfsroot1/boot/loader.conf
+		else
+			${CAT_CMD} > ${TMP_DIR}/mfsroot1/boot/loader.conf <<EOF
 aesni_load="YES"
 ahci_load="YES"
 autoboot_delay="-1"
@@ -910,37 +915,37 @@ if_re_load="YES"
 if_bnxt_load="YES"
 if_qlnxe_load="YES"
 
+net.inet.ip.fw.default_to_accept="1"
+net.isr.maxqlimit="1000000"
+net.link.ifqmaxlen="16384"
+
 opensolaris_load="YES"
 zfs_load="YES"
 geom_concat_load="YES"
 geom_eli_load="YES"
 geom_gate_load="YES"
 geom_journal_load="YES"
-geom_label_load="YES"
-geom_md_load="YES"
 geom_mirror_load="YES"
-geom_part_gpt_load="YES"
 geom_part_bsd64_load="YES"
 geom_part_bsd_load="YES"
 geom_part_mbr_load="YES"
-geom_uzip_load="YES"
+vm.pmap.pti="0"
 
-
-# CUSTOM
+vfs.mountroot.timeout=3
+EOF
+		fi
+${CAT_CMD} >> ${TMP_DIR}/mfsroot1/boot/loader.conf <<EOF
+# CUSTOM MFS
 mfs_load="YES"
 mfs_name="/mfsroot"
 mfs_type="mfs_root"
-
 #mfsbsd.autodhcp="YES"
-
-net.inet.ip.fw.default_to_accept="1"
-net.isr.maxqlimit="1000000"
-net.link.ifqmaxlen="16384"
-opensolaris_load="YES"
-vfs.mountroot.timeout=3
 vfs.root.mountfrom="ufs:/dev/md0"
 vfs.root_mount_always_wait=1
-vm.pmap.pti="0"
+geom_label_load="YES"
+geom_md_load="YES"
+geom_part_gpt_load="YES"
+geom_uzip_load="YES"
 EOF
 		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/tmpfs.ko ${TMP_DIR}/mfsroot1/boot/modules/
 
@@ -1024,6 +1029,25 @@ geom_uzip.ko
 kernel \
 linker.hints \
 "
+		# FIRMWARE
+MFS_KERNEL_FILES="${MFS_KERNEL_FILES} \
+accf_data.ko \
+accf_dns.ko \
+accf_http.ko \
+cc_htcp.ko \
+coretemp.ko \
+cpu_microcode.ko \
+cpuctl.ko \
+cryptodev.ko \
+ipfw.ko \
+ipfw_nat.ko \
+libalias.ko \
+pf.ko \
+sem.ko \
+vmm.ko \
+"
+
+
 
 		for i in ${MFS_KERNEL_FILES}; do
 			${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/${i} ${TMP_DIR}/root/boot/kernel/${i}
@@ -1049,7 +1073,11 @@ pmbr \
 		done
 
 		# merge custom loader.conf
-		${CAT_CMD} > ${TMP_DIR}/root/boot/loader.conf <<EOF
+		if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
+			echo "# CDBOOT" > ${TMP_DIR}/root/boot/loader.conf
+			${CAT_CMD} "${jailsysdir}/${jname}/loader.conf" >> ${TMP_DIR}/root/boot/loader.conf
+		else
+			${CAT_CMD} > ${TMP_DIR}/root/boot/loader.conf <<EOF
 # CDBOOT
 aesni_load="YES"
 ahci_load="YES"
@@ -1088,20 +1116,20 @@ geom_part_bsd64_load="YES"
 geom_part_bsd_load="YES"
 geom_part_mbr_load="YES"
 geom_uzip_load="YES"
-
-
-mfs_load="YES"
-mfs_name="/mfsroot"
-mfs_type="mfs_root"
-
 net.inet.ip.fw.default_to_accept="1"
 net.isr.maxqlimit="1000000"
 net.link.ifqmaxlen="16384"
-opensolaris_load="YES"
 vfs.mountroot.timeout=3
+vm.pmap.pti="0"
+EOF
+		fi
+		${CAT_CMD} >> ${TMP_DIR}/root/boot/loader.conf <<EOF
+# MFS
+mfs_load="YES"
+mfs_name="/mfsroot"
+mfs_type="mfs_root"
 vfs.root.mountfrom="ufs:/dev/md0"
 vfs.root_mount_always_wait=1
-vm.pmap.pti="0"
 EOF
 
 		${MV_CMD} ${TMP_DIR}/mfsroot.gz ${TMP_DIR}/root
@@ -1304,6 +1332,10 @@ case "${media}" in
 		echo "${TMP_DIR} done"
 		OTMP_DIR="${TMP_DIR}"
 		TMP_DIR="${TMP_DIR}/root"
+		if [ "${mfs_struct_only}" = "1" ]; then
+			${ECHO} "${N1_COLOR}${CBSD_APP} mfs_struct_only struct: ${N2_COLOR}${TMP_DIR}${N0_COLOR}"
+			exit 0
+		fi
 		${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}makefs failed${N0_COLOR}"
 
