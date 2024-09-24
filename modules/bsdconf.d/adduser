@@ -1,19 +1,55 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
 MYARG="mode"
-MYOPTARG="fromfile jname login fullname group uid secgroup shell pw epw"
-MYDESC="Add user to jail"
-ADDHELP="mode can be: remove, add, show\n\
-pw - plain password, or\n\
-epw - encrypted password\n"
+MYOPTARG="chroot epw fromfile fullname group jname login pw secgroup shell uid"
+MYDESC="Manage user and password in jail/chroot environment"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+The script creates or modifies a user account in the specified environment.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+  ${N2_COLOR}chroot=${N0_COLOR}   - use chroot instead of jail's jname=;
+  ${N2_COLOR}epw=${N0_COLOR}      - \"hash\", encrypted password (instead of pw=);
+  ${N2_COLOR}fromfile=${N0_COLOR} - read data from file;
+  ${N2_COLOR}fullname=${N0_COLOR} - gecos;
+  ${N2_COLOR}group=${N0_COLOR}    - primary group;
+  ${N2_COLOR}jname=${N0_COLOR}    - target jail;
+  ${N2_COLOR}login=${N0_COLOR}    - login name;
+  ${N2_COLOR}mode=${N0_COLOR}     - mode, can be: 'remove', 'add', or 'show';
+  ${N2_COLOR}pw=${N0_COLOR}       - \"string\", plaintext password (instead of epw=);
+  ${N2_COLOR}secgroup=${N0_COLOR} - secondary group;
+  ${N2_COLOR}shell=${N0_COLOR}    - system/default shell, e.g.: /bin/sh;
+  ${N2_COLOR}uid=${N0_COLOR}      - set UID, e.g. uid=1001;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd adduser jname=jail1 login=test
+ # cbsd adduser chroot=/usr/jails/jails-data/jail1-data login=root mode=add pw='test'
+
+ # cbsd adduser chroot=/usr/jails/jails/xxx login=test mode=add fromfile=/tmp/pw
+ , where content of '/tmp/pw' file:
+--
+user_add="test"
+user_pw_test_crypt='$6$i1X1S3mJfQ/Qdaml$mgLe/nLMUxWk55oQkxIJhMwhUd1rRAQDMHlpw4z.c4zRk1lOL5MIzs1kxZvKeXC3OcFcGP2IkgQAxvcaiHD.B0'
+user_gecos_test="FullName"
+user_shell_test="/bin/sh"
+--
+
+${H3_COLOR}See also${N0_COLOR}:
+
+"
 
 . ${subrdir}/nc.subr
 
+jname=
+chroot=
 . ${cbsdinit}
 
 . ${system}
 
-_MYDIR=$( /usr/bin/dirname `${REALPATH_CMD} $0` )
+_MYDIR=$( ${DIRNAME_CMD} `${REALPATH_CMD} $0` )
 SERVICE="adduser"
 
 f_getvar()
@@ -28,13 +64,14 @@ f_getvar()
 }
 
 
-check_jaildir()
+check_datadir()
 {
-	local check_file="${path}/etc/master.passwd ${path}/etc/passwd ${path}/etc/group ${path}/usr/sbin/pw"
+	local _check_file="${path}/etc/master.passwd ${path}/etc/passwd ${path}/etc/group"
+
 	local _i
 	local ret=0
 
-	for _i in ${check_file}; do
+	for _i in ${_check_file}; do
 		[ ! -f "${_i}" ] && echo ${_i} && ret=1
 	done
 
@@ -51,7 +88,7 @@ getpw()
 	while [ ${_try} -ne 3 ]; do
 		printf "${BOLD}Enter password:${N0_COLOR}"
 		while [ -z "${npw}" ]; do
-			#/bin/stty -echo
+			/bin/stty -echo
 			read npw
 			/bin/stty ${_oldmodes}
 		done
@@ -79,17 +116,41 @@ getpw()
 # opt: uid, fullname, group, secgroup, shell
 c_adduser()
 {
-	local _res _ret
+	local _res= _ret=
 
 	[ -z "${login}" ] && ${ECHO} "${N2_COLOR}login= ${N1_COLOR} is mandatory${N0_COLOR}" && return 1
 
-	_res=$( ${exec_cmd} user show ${login} 2>&1)
-	case $? in
+	_res=$( ${PW_CMD} -V ${data}/etc user show ${login} 2>&1)
+	_ret=$?
+	case ${_ret} in
 		0)
-			${ECHO} "${N1_COLOR}Already exist: ${N0_COLOR}${_res}"
+			${ECHO} "${N1_COLOR}User already exist: ${N0_COLOR}${_res}"
+			# modify
+			if [ -n "${shell}" ]; then
+				${PW_CMD} -V ${data}/etc usermod ${login} -s /bin/sh
+			fi
+			if [ -n "${pw}" ]; then
+				echo "${pw}" | ${PW_CMD} -V ${data}/etc usermod -n ${login} -h 0
+			fi
+			if [ -z "${pw}" -a -z "${fromfile}" ]; then
+				[ -z "${epw}" ] && getpw
+			fi
+			[ -z "${pw}" -a -z "${epw}" ] && err 1 "${N2_COLOR}pw= ${N1_COLOR}or ${N2_COLOR}epw= ${N1_COLOR} is mandatory${N0_COLOR}"
+
+			if [ -n "${pw}" ]; then
+				/bin/sh <<EOF
+echo "${pw}" | ${PW_CMD} -V ${data}/etc usermod -n ${login} -h 0
+EOF
+			elif [ -n "${epw}" ]; then
+				/bin/sh <<EOF
+echo '${epw}' | ${PW_CMD} -V ${data}/etc usermod -n ${login} -H 0
+EOF
+			fi
+
 			return 1
 			;;
 		67)
+			true
 			;;
 		*)
 			${ECHO} "${N1_COLOR}Error: ${N0_COLOR}${_res}"
@@ -100,6 +161,7 @@ c_adduser()
 	if [ -z "${pw}" -a -z "${fromfile}" ]; then
 		[ -z "${epw}" ] && getpw
 	fi
+
 	[ -z "${pw}" -a -z "${epw}" ] && err 1 "${N2_COLOR}pw= ${N1_COLOR}or ${N2_COLOR}epw= ${N1_COLOR} is mandatory${N0_COLOR}"
 	ADDON=""
 	[ -n "$uid" ] && ADDON="${ADDON} -u ${uid}"
@@ -107,34 +169,24 @@ c_adduser()
 	[ -n "$group" ] && ADDON="${ADDON} -g ${group}"
 	[ -n "$secgroup" ] && ADDON="${ADDON} -G ${secgroup}"
 
-	if [ -n "$shell" ]; then
+	if [ -n "${shell}" ]; then
 		ADDON="${ADDON} -s ${shell}"
 	else
 		ADDON="${ADDON} -s /bin/sh"
 	fi
 
-	if [ "${emulator}" != "jail" -a -n "${emulator}" -a "${emulator}" != "bhyve" ]; then
-		. ${subrdir}/emulator.subr
-		init_usermode_emul
-		CHROOT_EXEC="/usr/sbin/chroot ${path} /bin/${emulator}"
-	else
-		CHROOT_EXEC="/usr/sbin/chroot ${path}"
-	fi
-
-	#echo "$CHROOT_EXEC /bin/sh  : pw useradd $login $ADDON"
-
-	${CHROOT_EXEC} /bin/sh <<EOF
-${PW_CMD} useradd ${login} ${ADDON} -m
+	/bin/sh <<EOF
+${PW_CMD} -V ${data}/etc useradd ${login} ${ADDON} -m
 EOF
 	_ret=$?
 
 	if [ -n "${pw}" ]; then
-		${CHROOT_EXEC} /bin/sh <<EOF
-echo "${pw}" | ${PW_CMD} mod user ${login} -h 0 -
+		/bin/sh <<EOF
+echo "${pw}" | ${PW_CMD} -V ${data}/etc usermod -n ${login} -h 0
 EOF
 	elif [ -n "${epw}" ]; then
-		${CHROOT_EXEC} /bin/sh <<EOF
-/usr/bin/chpass -p '${epw}' ${login}
+		/bin/sh <<EOF
+echo '${epw}' | ${PW_CMD} -V ${data}/etc usermod -n ${login} -H 0
 EOF
 	fi
 
@@ -146,10 +198,11 @@ EOF
 remove()
 {
 	local _ret _res
-	_res=$( ${exec_cmd} user del ${login} )
+
+	_res=$( ${PW_CMD} -V ${data}/etc user del ${login} )
 	_ret=$?
 	if [ ${_ret} -eq 0 ]; then
-		${ECHO} "${N2_COLOR}user delete successfull${N0_COLOR}"
+		${ECHO} "${N1_COLOR}user removed: ${N2_COLOR}${login}${N0_COLOR}"
 	else
 		echo "${_res}"
 	fi
@@ -240,48 +293,25 @@ if [ -n "${jail_list}" ]; then
 	err 0 "${N1_COLOR}Multiple adduser: ${N2_COLOR}done${N0_COLOR}"
 fi
 
-[ -n "${jname}" ] && shift # skip for jname
-
-
 if [ -z "${jname}" ]; then
-	data=""
-	exec_cmd="/usr/sbin/pw"
+	if [ -n "${chroot}" ]; then
+		data="${chroot}"
+	else
+		data="/"
+	fi
+	if ! check_datadir; then
+		err 1 "${N1_COLOR}Bad data dir: ${N2_COLOR}${data}${N0_COLOR}"
+	fi
 else
 	# push original jname to temporary variable for extract after fromfile action
 	origjname="${jname}"
 	. ${subrdir}/rcconf.subr
 
 	[ $? -eq 1 ] &&  err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	path="${data}"
 
-	[ $baserw -eq 1 ] && path=$data
-
-	if [ ${jid} -eq 0 ]; then
-		set -e
-		. ${_MYDIR}/bsdconf.subr
-		set +e
-		. ${subrdir}/universe.subr
-		readconf buildworld.conf
-		init_target_arch
-		init_srcdir
-		init_basedir
-		init_kerneldir
-		prepare_jail
-	fi
-
-	if [ "${emulator}" != "jail" -a -n "${emulator}" -a "${emulator}" != "bhyve" ]; then
-		. ${subrdir}/emulator.subr
-		init_usermode_emul
-		CHROOT_EXEC="/usr/sbin/chroot ${path} /bin/${emulator}"
-	else
-		CHROOT_EXEC="/usr/sbin/chroot ${path}"
-	fi
-
-	exec_cmd="${CHROOT_EXEC} /usr/sbin/pw"
-	check_jaildir
-
-	if [ $? -eq 1 ]; then
-		echo "bad data dir"
-		exit 1
+	if ! check_datadir; then
+		err 1 "${N1_COLOR}Bad data dir: ${N2_COLOR}${data}${N0_COLOR}"
 	fi
 fi
 
@@ -292,11 +322,17 @@ if [ -r "${fromfile}" ]; then
 	if [ -n "${origjname}" ]; then
 		# extract after fromfile original jname if exist
 		jname="${origjname}"
-		. ${subrdir}/rcconf.subr
 	fi
 
-	[ $baserw -eq 1 ] && path=$data
-	[ -z "${user_add}" ] && exit 0
+	if [ -n "${jname}" ]; then
+		. ${subrdir}/rcconf.subr
+		path="${data}"
+	else
+		[ -z "${chroot}" ] && err 1 "${N1_COLOR}${CBSD_APP} fromfile: no such 'jname' or 'chroot'${N0_COLOR}"
+		path="${chroot}"
+	fi
+
+	[ -z "${user_add}" ] && err 1 "${N1_COLOR}${CBSD_APP} fromfile: no such vars: ${N2_COLOR}user_add=${N0_COLOR}"
 
 	for i in ${user_add}; do
 		unset login epw pw fullname secgroup group shell res err
@@ -312,15 +348,15 @@ if [ -r "${fromfile}" ]; then
 		f_getvar user_member_groups_${i} secgroup
 
 		case "${mode}" in
-			"add")
-				res=$( c_adduser )
+			add)
+				c_adduser
 				ret=$?
 				;;
-			"remove")
+			remove)
 				res=$( remove )
 				ret=$?
 				;;
-			"show")
+			show)
 				res=$( show )
 				ret=$?
 				;;
@@ -332,7 +368,7 @@ fi
 
 case "${mode}" in
 	remove)
-		res=$( ${exec_cmd} user show ${login} 2>&1)
+		res=$( ${PW_CMD} -V ${data}/etc user show ${login} 2>&1 )
 		err=$?
 		case ${err} in
 			0)
@@ -345,12 +381,12 @@ case "${mode}" in
 		err=$?
 		;;
 	add)
-		res=$( c_adduser )
+		c_adduser
 		err=$?
 		;;
 	show)
 		[ -z "${login}" ] && err 1 "${N2_COLOR}login= ${N1_COLOR}is mandatory${N0_COLOR}"
-		res=$( ${exec_cmd} user show ${login} )
+		res=$( ${PW_CMD} -V ${data}/etc user show ${login} )
 		err=$?
 		;;
 esac
