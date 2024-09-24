@@ -3,7 +3,7 @@
 # TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
 MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs \
-mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only"
+mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only extra_part extra_part_label"
 
 MYDESC="Create bootable ISO/Memstick/MFSBSD image from CBSD jail"
 
@@ -101,6 +101,9 @@ mfsbsd_ip_addr=
 mfsbsd_nameservers=
 mfsbsd_origin_site=
 mfs_struct_only=0
+
+extra_part=
+extra_part_label=
 . ${cbsdinit}
 
 if [ -z "${ver}" -o "${ver}" = "native" ]; then
@@ -111,6 +114,8 @@ if [ -z "${ver}" -o "${ver}" = "native" ]; then
 	unset tmpver
 	[ "${stable}" = "1" -a -z "${over}" ] && ver=${ver%%.*}
 fi
+
+[ -n "${extra_part}" -a ! -d "${extra_part}" ] && err 1 "${W1_COLOR}Warning: ${N1_COLOR}extra_part sets but direcory not exist: ${N2_COLOR}${extra_part}${N0_COLOR}"
 
 over="${ver}"
 [ -n "${name}" ] && oname="${name}"
@@ -220,7 +225,7 @@ prepare_dir()
 	${CAT_CMD} > ${DST_DIR}${rcscript} <<EOF
 #!/bin/sh
 #
-# Copyright (c) 2015-2020 CBSD Team
+# Copyright (c) 2015-2024 CBSD Team
 
 # PROVIDE: preparedir
 # KEYWORD: nojail
@@ -1316,6 +1321,7 @@ case "${media}" in
 			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 		fi
 		[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
+		[ -r ${dstdir}/${dstname}-extra.part ] && ${RM_CMD} -f ${dstdir}/${dstname}-extra.part
 		sync
 		${DU_CMD} -sh "${dstdir}/${dstname}"
 		${ECHO} "${N1_COLOR}Now you can burn image to USB memstick via\n ${N2_COLOR}dd if=${dstdir}/${dstname} of=/dev/da${W2_COLOR}X${N2_COLOR} bs=1m conv=\"sync\"${N0_COLOR}"
@@ -1338,6 +1344,11 @@ case "${media}" in
 		fi
 		${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${LABEL} ${dstdir}/${dstname}.part ${TMP_DIR}
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}makefs failed${N0_COLOR}"
+
+		if [ -n "${extra_part}" ]; then
+			[ -z "${extra_part_label}" ] && extra_part_label="cbsdextra"
+			${MAKEFS_CMD} -B little -o version=2 -o softupdates=1 -o label=${extra_part_label} ${dstdir}/${dstname}-extra.part ${extra_part}
+		fi
 
 		if [ ${efi} -eq 1 ]; then
 			# efifat was deprecated in 12.2-RELEASE
@@ -1362,16 +1373,33 @@ case "${media}" in
 					echo "${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}"
 					read p
 				else
-					${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+					# swap?
+					# ${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+					if [ -r "${dstdir}/${dstname}-extra.part" ]; then
+						_mk_cmd="${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-ufs:=${dstdir}/${dstname}-extra.part  -p freebsd-swap::1M -o ${dstdir}/${dstname}"
+					else
+						_mk_cmd="${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}"
+					fi
+					${_mk_cmd}
+					_ret=$?
 				fi
 				${RM_CMD} -f ${_efi_part}
 			else
 				err 1 "${N1_COLOR}${CBSD_APP}: no such boot1.efi or loader.efi: ${N2_COLOR}${TMP_DIR}/boot/${N0_COLOR}"
 			fi
 		else
-			${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			# swap?
+			# ${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
+			if [ -r "${dstdir}/${dstname}-extra.part" ]; then
+				_mk_cmd="${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-ufs:=${dstdir}/${dstname}-extra.part -p freebsd-swap::1M -o ${dstdir}/${dstname}"
+			else
+				_mk_cmd="${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}"
+			fi
+			${_mk_cmd}
+			_ret=$?
 		fi
 		[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
+		[ -r ${dstdir}/${dstname}-extra.part ] && ${RM_CMD} -f ${dstdir}/${dstname}-extra.part
 
 		# ISO
 		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname}.iso -d ${TMP_DIR} -e ${efi}
@@ -1450,6 +1478,7 @@ case "${media}" in
 					${MDCONFIG_CMD} -d -u ${unit}
 				fi
 				[ -r ${dstdir}/${dstname}.part ] && ${RM_CMD} -f ${dstdir}/${dstname}.part
+				[ -r ${dstdir}/${dstname}-extra.part ] && ${RM_CMD} -f ${dstdir}/${dstname}-extra.part
 				;;
 			zfs)
 				# deprecated, rewrite:
