@@ -13,9 +13,11 @@ SIMPLEXMLOBJECT = lib/simplexml/simplexml.o
 SIMPLEXMLHEADER = lib/simplexml/simplexml.h
 DUMPCPUTOPOLOGYOBJECT = misc/src/dump_cpu_topology.o
 DUMPISCSIDISCOVERYOBJECT = misc/src/dump_iscsi_discovery.o
+
 .if !defined(ARCH)
 ARCH!=  uname -p
 .endif
+
 VERSION != grep myversion cbsd.conf | sed s/.*=//
 BUMPVERSION = ${VERSION:S/a//}
 #GIT != which git
