@@ -138,12 +138,6 @@ oapplytpl="${applytpl}"
 . ${subrdir}/bhyve.subr
 . ${subrdir}/build.subr
 
-# todo: get rid of bsdlabel deps
-# bsdlabel not available on != i386/amd64 arch, see:
-# /usr/src/sbin/bsdlabel/Makefile
-# https://forums.freebsd.org/threads/no-bsdlabel-command-in-aarch64.77721/
-[ -z "${BSDLABEL_CMD}" -o ! -x "${BSDLABEL_CMD}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such bsdlabel command${N0_COLOR}"
-
 . ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
@@ -180,7 +174,6 @@ else
 fi
 
 [ -n "${oname}" ] && name="${oname}"
-
 
 init_kerneldir
 ${ECHO} "${N1_COLOR}${CBSD_APP}: KERNEL_DIR: ${N2_COLOR}${KERNEL_DIR}${N0_COLOR}"
@@ -299,6 +292,8 @@ prunelist()
 epilogue_img()
 {
 	local _rootfs="${1}"
+	local _ret=
+
 	[ -z "${_rootfs}" -a ! -d "${_rootfs}" ] && return 0
 	[ "${nic}" = "auto" ] && nic="DEFAULT"
 
@@ -307,26 +302,31 @@ epilogue_img()
 	# for ISO too?
 	[ "${media}" = "memstick" ] && return 0
 
-	${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
+	/usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf fsck_y_enable="YES" >/dev/null
 
 	# MFS override?
-	[ -n "${host_hostname}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
+	[ -n "${host_hostname}" ] && /usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf hostname="${host_hostname}" >/dev/null
 	[ -n "${oip4_addr}" ] && ip4_addr="${oip4_addr}"
 	[ -n "${ogw4}" ] && gw4="${ogw4}"
+	[ -z "${nic}" ] && nic="DEFAULT"
 
 	if [ "${media}" != "mfs" ]; then
-		if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
-			case "${ip4_addr}" in
-				[Dd][Hh][Cc][Pp])
-					${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
-					;;
-				*)
-					${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="inet ${ip4_addr}" >/dev/null
-					;;
-			esac
+		${GREP_CMD} -q ^ifconfig_${nic}= ${_rootfs}/etc/rc.conf
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			if [ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ]; then
+				case "${ip4_addr}" in
+					[Dd][Hh][Cc][Pp])
+						/usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="DHCP" >/dev/null
+						;;
+					*)
+						/usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf ifconfig_${nic}="inet ${ip4_addr}" >/dev/null
+						;;
+				esac
+			fi
 		fi
 	else
-		${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf mfsbsd_enable="YES"
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf mfsbsd_enable="YES"
 
 	fi
 
@@ -346,7 +346,7 @@ epilogue_img()
 #	fi
 
 	if [ -z "${mfsbsd_defaultrouter}" ]; then
-		[ -n "${gw4}" ] && ${SYSRC_CMD} -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
+		[ -n "${gw4}" ] && /usr/local/cbsd/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf defaultrouter="${gw4}" >/dev/null
 	fi
 
 	if [ -z "${mfsbsd_nameservers}" ]; then
@@ -399,7 +399,7 @@ EOF
 
 		[ ! -d ${TMP_DIR} ] && ${MKDIR_CMD} -p ${TMP_DIR}
 		${MAKEFS_CMD} -t ffs ${TMP_DIR}/mfsroot ${_tmpdir}
-		gzip -9 ${TMP_DIR}/mfsroot
+		${GZIP_CMD} -9 ${TMP_DIR}/mfsroot
 		return 0
 	fi
 
@@ -413,6 +413,15 @@ EOF
 
 	${ECHO} "${N1_COLOR}mfsroot index: ${N2_COLOR}${_filelist}${N0_COLOR}"
 
+	if [ -z "${BASE_DIR}" ]; then
+		# get BASE_DIR
+		# todo: nobase=1 and baserw=1 ???
+		init_basedir
+	fi
+
+	[ -z "${BASE_DIR}" ] && err 1 "${N1_COLOR}${CBSD_APP} empty BASE_DIR${N0_COLOR}"
+
+	#echo "copy-binlib filelist=${_filelist} dstdir=${_tmpdir} basedir=${BASE_DIR} chaselibs=1 mtree=1"
 	copy-binlib filelist=${_filelist} dstdir=${_tmpdir} basedir=${BASE_DIR} chaselibs=1 mtree=1
 
 	preparebase dst=${_tmpdir}
@@ -483,7 +492,7 @@ EOF
     ${ECHO} " % ifconfig bridge0 addm ${mynic} addm tap0    ${N2_COLOR}<< -- where ${mynic} is uplink${N0_COLOR}"
     ${CAT_CMD} << EOF
  % ifconfig bridge0 up
- % sh /usr/share/examples/bhyve/vmrun.sh -d ${dstdir}/${dstname} ${jname}
+ % sh /usr/share/examples/bhyve/vmrun.sh -d ${dstdir}/${dstname} -m1g ${jname}
 EOF
 }
 
@@ -732,16 +741,19 @@ make_ufs()
 
 		if [ "${media}" != "bhyve" ]; then
 			${RM_CMD} -f ${TMP_DIR}/boot/kernel/*.symbols
-			cd ${TMP_DIR}/boot/kernel && ${GZIP_CMD} -9 ./kernel
+			if [ -r "${TMP_DIR}/boot/kernel/kernel" ]; then
+				cd ${TMP_DIR}/boot/kernel && ${GZIP_CMD} -9 ./kernel
+			fi
 		fi
 
 		if [ -r "${jailsysdir}/${jname}/loader.conf" ]; then
-			${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf found${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf found: ${N2_COLOR}${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
 			${CP_CMD} ${jailsysdir}/${jname}/loader.conf ${TMP_DIR}/boot/loader.conf
 		else
 			${ECHO} "${N1_COLOR}${CBSD_APP}: custom loader.conf absent in ${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
 		fi
 	fi
+
 
 	case "${media}" in
 		bhyve)
@@ -1032,6 +1044,7 @@ geom_part_bsd.ko \
 geom_part_mbr.ko \
 geom_uzip.ko
 kernel \
+kernel.gz \
 linker.hints \
 "
 		# FIRMWARE
@@ -1053,13 +1066,14 @@ vmm.ko \
 "
 
 
-
 		for i in ${MFS_KERNEL_FILES}; do
 			${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/${i} ${TMP_DIR}/root/boot/kernel/${i}
 		done
 
-		cd ${TMP_DIR}/root/boot/kernel/
-		${GZIP_CMD} -9 kernel
+#		if [ -r "${TMP_DIR}/root/boot/kernel/kernel" ]; then
+#			cd ${TMP_DIR}/root/boot/kernel/
+#			${GZIP_CMD} -9 kernel
+#		fi
 		cd ${TMP_DIR}/
 
 MFS_BOOT_FILES="\
@@ -1141,6 +1155,8 @@ EOF
 	fi
 
 	#
+	[ ! -d ${TMP_DIR}/root/boot ] && ${MKDIR_CMD} ${TMP_DIR}/root/boot
+
 	case "${mfsbsd_interface}" in
 		auto)
 			true
@@ -1210,7 +1226,7 @@ EOF
 
 	####
 	echo "LOADER>>>>"
-	cat ${TMP_DIR}/root/boot/loader.conf
+	${CAT_CMD} ${TMP_DIR}/root/boot/loader.conf
 	echo "LOADER<<<<"
 
 	return 0
@@ -1236,9 +1252,9 @@ post_module_action()
 
 	if [ -r "${fromfile}" ]; then
 		${CP_CMD} -a ${fromfile} ${TMPFILE}
-		${SYSRC_CMD} -qf ${TMPFILE} -x jname
-		${SYSRC_CMD} -qf ${TMPFILE} path="${rootpath}"
-		${SYSRC_CMD} -qf ${TMPFILE} data="${rootpath}"
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${TMPFILE} -x jname
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${TMPFILE} path="${rootpath}"
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${TMPFILE} data="${rootpath}"
 	else
 
 		# additional area
@@ -1285,8 +1301,13 @@ case "${media}" in
 		make_ufs
 		echo "make_ufs done"
 		[ -z "${dstname}" ] && dstname="${jname}-${ver}_${arch}.iso"
-		echo "/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}"
-		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}
+		cmd="/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname} -d ${TMP_DIR} -e ${efi}"
+		${cmd}
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			err 1 "${N1_COLOR}${CBSD_APP} error: ${N2_COLOR}${cmd}${N0_COLOR}"
+		fi
+		echo "mkisoimages done"
 		;;
 	memstick)
 		make_ufs
@@ -1371,7 +1392,7 @@ case "${media}" in
 				if [ "${arch}" = "arm64" ]; then
 					echo "arm64 debug: bsdlabel"
 					echo "${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}"
-					read p
+					${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
 				else
 					# swap?
 					# ${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${_efi_part} -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
@@ -1402,6 +1423,7 @@ case "${media}" in
 		[ -r ${dstdir}/${dstname}-extra.part ] && ${RM_CMD} -f ${dstdir}/${dstname}-extra.part
 
 		# ISO
+		echo "/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname}.iso -d ${TMP_DIR} -e ${efi}"
 		/usr/local/cbsd/release/mkisoimages.sh -l ${LABEL} -n ${dstdir}/${dstname}.iso -d ${TMP_DIR} -e ${efi}
 
 		${RM_CMD} -rf ${TMP_DIR} ${OTMP_DIR}

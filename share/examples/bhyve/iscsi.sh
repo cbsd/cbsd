@@ -78,14 +78,14 @@ target iqn.172.16.0.3:target0 {		# CBSD_iscsi_${jname}
 EOF
 
 ${CHMOD_CMD} 0400 /etc/ctl.conf
-${SYSRC_CMD} ctld_enable="YES"
+/usr/local/cbsd/misc/cbsdsysrc ctld_enable="YES"
 ${SERVICE_CMD} ctld restart
 
 
 cat <<EOF
 ======== CLIENT SETUP INFO ==========
 
-sysrc iscsid_enable="YES" 
+/usr/local/cbsd/misc/cbsdsysrc iscsid_enable="YES" 
 service iscsid restart
 
 iscsictl -A -p 172.16.0.1 -t iqn.172.16.0.3:target0

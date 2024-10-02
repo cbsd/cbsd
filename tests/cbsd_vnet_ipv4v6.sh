@@ -67,7 +67,7 @@ test_rcconf(){
 }
 
 test_append_mtu(){
-	sysrc -qf ~cbsd/jails-data/${jname}-data/etc/rc.conf ifconfig_eth0+="mtu 9000"
+	/usr/local/cbsd/misc/cbsdsysrc -qf ~cbsd/jails-data/${jname}-data/etc/rc.conf ifconfig_eth0+="mtu 9000"
 	cat ~cbsd/jails-data/${jname}-data/etc/rc.conf
 }
 

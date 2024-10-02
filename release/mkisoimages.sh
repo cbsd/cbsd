@@ -72,17 +72,11 @@ make_efi()
 	local _md _tmpmnt
 
 	echo " * efi"
-
-#	bootable="-o bootimage=i386;${DPATH}/boot/cdboot -o no-emul-boot"
-	# Make EFI system partition.
 	espfilename=$(mktemp /tmp/efiboot.XXXXXX)
 	# ESP file size in KB.
 	espsize="2048"
-	echo "+"
 	make_esp_file ${espfilename} ${espsize} ${BASEBITSDIR}/boot/loader.efi
-	echo "+"
-#	bootable="$bootable -o bootimage=i386;${espfilename} -o no-emul-boot -o platformid=efi"
-
+	echo "+ EPS file done"
 	echo " * efi done"
 
 # legacy/old
@@ -133,10 +127,13 @@ else
 	bootable="-o bootimage=i386;${CHROOT}/boot/cdboot -o no-emul-boot"
 fi
 
-#/usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label="$LABEL" -o publisher="$publisher" "$NAME" "$@"
 echo "/usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label=${LABEL} -o publisher=\"${PUBLISHER}\" ${NAME} ${DPATH}"
 /usr/sbin/makefs -t cd9660 ${bootable} -o rockridge -o label=${LABEL} -o publisher="${PUBLISHER}" ${NAME} ${DPATH}
-
+_ret=$?
+if [ ${_ret} -ne 0 ]; then
+	echo "mkisoimages.sh failed: ${cmd}"
+	exit ${_ret}
+fi
 
 if [ ${EFI} -eq 1 ]; then
 	/bin/rm -f /tmp/efiboot.$$.img
@@ -157,15 +154,33 @@ if [ "$bootable" != "" ]; then
 	done
 
 	# Create a GPT image containing the partitions we need for hybrid boot.
-	imgsize=`stat -f %z "$NAME"`
+	if [ "$(uname -s)" = "Linux" ]; then
+		imgsize=`stat -c %s "$NAME"`
+	else
+		imgsize=`stat -f %z "$NAME"`
+	fi
+
+	if [ ! -r "${DPATH}/boot/pmbr" ]; then
+		echo "mkisoimages.sh: no such ${DPATH}/boot/pmbr, try to use /boot/pmr"
+		${CP_CMD} -a /boot/pmbr ${DPATH}/boot/pmbr
+	fi
+
 	/usr/bin/mkimg -s gpt \
 		--capacity $imgsize \
-		-b "${DPATH}/boot/pmbr" \
-		-p freebsd-boot:="${DPATH}/boot/isoboot" \
+		-b "$BASEBITSDIR/boot/pmbr" \
+		-p freebsd-boot:="/boot/isoboot" \
 		$espparam \
 		-o hybrid.img
+	_ret=$?
 
-		# Drop the PMBR, GPT, and boot code into the System Area of the ISO.
-		dd if=hybrid.img of="$NAME" bs=32k count=1 conv=notrunc
-		rm -f hybrid.img
+	if [ ${_ret} -ne 0 ]; then
+		echo "mkisoimages.sh failed: hybrid failed"
+		exit ${_ret}
+	fi
+
+	# Drop the PMBR, GPT, and boot code into the System Area of the ISO.
+	dd if=hybrid.img of="$NAME" bs=32k count=1 conv=notrunc
+	rm -f hybrid.img
 fi
+
+exit 0

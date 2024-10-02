@@ -40,6 +40,7 @@ distclean:
 	${RM} -f bin/cbsdsh/.depend*
 	${RM} -f misc/chk_arp_byip
 	${RM} -f misc/cbsdtee
+	${RM} -f misc/daemonize
 	${RM} -f bin/cbsdsftp
 	${RM} -f bin/cbsdsftp6
 	${RM} -f bin/cfetch
@@ -117,6 +118,7 @@ cbsd: pkg-config-check
 	${CC} misc/src/fmagic.c -lmagic -o misc/fmagic && ${STRIP} misc/fmagic
 	${CC} misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && ${STRIP} misc/conv2human
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && ${STRIP} misc/cbsd_fwatch
+	${CC} misc/src/daemonize/daemonize.c misc/src/daemonize/getopt.c -Imisc/src/daemonize -O2 -o misc/daemonize && ${STRIP} misc/daemonize
 # x86_64 for DFLY
 .if ${ARCH} == amd64 || ${ARCH} == i386 || ${ARCH} == x86_64
 	${CC} misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && ${STRIP} misc/popcnttest > /dev/null 2>&1 || /usr/bin/true

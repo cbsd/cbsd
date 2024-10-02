@@ -66,7 +66,7 @@ postcreate_${jname}()
 {
 	set +o xtrace
 
-	sysrc \
+	/usr/local/cbsd/misc/cbsdsysrc \
 		syslogd_flags="-ss" \
 		syslogd_enable="YES" \
 		cron_enable="NO" \

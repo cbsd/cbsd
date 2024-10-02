@@ -44,6 +44,13 @@ if [ -n "${1}" -a -f "${1}" ]; then
 	. ${INITCFG}
 fi
 
+err() {
+	exitval=$1
+	shift
+	echo "$*" 1>&2
+	exit ${exitval}
+}
+
 # create and store directory ID for relevant to sharedfs dirs
 make_fs_id()
 {
@@ -53,7 +60,7 @@ make_fs_id()
 		_dir=
 		eval _dir="\$${i}"
 		if [ ! -r ${_dir}/dir.id ]; then
-			[ -z "${_id}" ] && _id=$( /usr/bin/head -c 30 /dev/random | /usr/bin/uuencode -m - | /usr/bin/tail -n 2 | /usr/bin/head -n1 )
+			[ -z "${_id}" ] && _id=$( ${HEAD_CMD} -c 30 /dev/random | ${UUENCODE_CMD} -m - | ${TAIL_CMD} -n 2 | ${HEAD_CMD} -n1 | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x" )
 			${ECHO} "${N1_COLOR} * write directory id: ${i}${N0_COLOR}"
 			echo "${_id}" > ${_dir}/dir.id
 		fi
@@ -67,16 +74,16 @@ init_zfs_feat()
 
 	zfsfeat=0
 
-	ZFS_CMD=$( which zfs 2>/dev/null )
+	ZFS_CMD=$( ${WHICH_CMD} zfs 2>/dev/null )
 	if [ -n "${ZFS_CMD}" ]; then
 		_tmpval=0
 		case "${platform}" in
 			Linux)
-				grep -q "^zfs " /proc/modules > /dev/null 2>&1
+				${GREP_CMD} -q "^zfs " /proc/modules > /dev/null 2>&1
 				_tmpval=$?
 				;;
 			*)
-				kldstat -qm zfs >/dev/null 2>&1;
+				${KLDSTAT_CMD} -qm zfs >/dev/null 2>&1;
 				_tmpval=$?
 				;;
 		esac
@@ -92,8 +99,8 @@ init_zfs_feat()
 					# first run?
 					if [ ! -d "${workdir}/var/db" ]; then
 						if [ "${_pool}" = "${_root_pool}" ]; then
-							_dirname=$( basename ${workdir} )
-							_parent_pool=$( echo "${_root_pool}" | tr "/" " " | awk '{printf $1}' )
+							_dirname=$( ${BASENAME_CMD} ${workdir} )
+							_parent_pool=$( echo "${_root_pool}" | ${TR_CMD} "/" " " | ${AWK_CMD} '{printf $1}' )
 							if [ "${inter}" != "0" ]; then
 								echo
 								echo "Error: on ZFS-based systems, the CBSD requires a separate dataset different from the root one (${_root_pool})."
@@ -132,6 +139,15 @@ desc_question()
 
 	if [ "${inter}" = "0" ]; then
 		eval answ=\$$1
+		case "${1}" in
+			nodeip)
+				## INET6/INET4-only?
+				[ "${answ}" = "auto" ] && answ="${CBSD_IP4}"
+				;;
+			stable)
+				[ "${answ}" = "auto" ] && answ=0
+				;;
+		esac
 		return 0
 	fi
 
@@ -192,7 +208,8 @@ desc_question()
 		"nodeip")
 			${ECHO} "${BOLD}${1}: ${_DESC} (used for node interconnection), e.g: ${N2_COLOR}${_DEFAULT}${N0_COLOR}"
 			read answ
-			[ "${answ}" = "default" ] && answ="${CBSD_IP4}"
+			## INET6/INET4-only?
+			[ "${answ}" = "default" -o "${answ}" = "auto" ] && answ="${CBSD_IP4}"
 			[ -z "$answ" ] && answ="${_DEFAULT}"
 			return 0
 			;;
@@ -314,7 +331,7 @@ phase0()
 	newver="${myversion}"
 
 	# touch must be in paths until phase1 generates <cmd>_CMD macros
-	[ ! -f /etc/rc.conf ] && touch /etc/rc.conf
+	[ ! -f /etc/rc.conf ] && ${TOUCH_CMD} /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && return 0
 
@@ -333,12 +350,12 @@ phase0()
 	# can be empty in inventory, work-around
 	if [ -z "${workdir}" ]; then
 		workdir="${cbsd_workdir}"
-		sysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
 	fi
 
 	[ -z "${cbsdver}" ] && cbsdver="unknown"
 	if [ -r "${workdir}"/ver ]; then
-		oldver=$( cat "${workdir}"/ver | awk '{printf $1}' )
+		oldver=$( ${CAT_CMD} "${workdir}"/ver | ${AWK_CMD} '{printf $1}' )
 	fi
 	[ -z "${oldver}" ] && oldver="unknown"
 }
@@ -359,8 +376,8 @@ phase0X()
 	if [ -n "${initenv_backup_bases}" -a "${initenv_backup_bases}" != "0" ]; then
 		[ -r "${distdir}/upgrade/backup_db/pre-initenv-backup" ] && ${distdir}/upgrade/backup_db/pre-initenv-backup
 	fi
-	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${workdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name pre-initenv-\* -exec {} \;
-	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${distdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name pre-patch-\* -exec {} \;
+	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" ${FIND_CMD} ${workdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name pre-initenv-\* -exec {} \;
+	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" ${FIND_CMD} ${distdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name pre-patch-\* -exec {} \;
 }
 
 # execute post scripts from upgrade directory
@@ -368,8 +385,8 @@ phaseX()
 {
 	local myversion cbsdd_enable cbsd_workdir workdir
 	${ECHO} "${N1_COLOR}[Stage X:${N2_COLOR} upgrading${N1_COLOR}]${N0_COLOR}"
-	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${distdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name post-patch-\* -exec {} \;
-	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" /usr/bin/find ${workdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name post-initenv-\* -exec {} \;
+	[ -d "${distdir}/upgrade" ] && env workdir="${workdir}" ${FIND_CMD} ${distdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name post-patch-\* -exec {} \;
+	[ -d "${workdir}/upgrade" ] && env workdir="${workdir}" ${FIND_CMD} ${workdir}/upgrade/ -mindepth 1 -maxdepth 1 -type f -name post-initenv-\* -exec {} \;
 }
 
 phase1()
@@ -388,7 +405,7 @@ phase1()
 	case "${platform}" in
 		Linux)
 			cbsd_home=$( echo ~${cbsd} > /dev/null 2>&1 )
-			[ "${cbsd_home}" != "${workdir}" ] && usermod -d ${workdir} cbsd
+			[ "${cbsd_home}" != "${workdir}" ] && ${USERMOD_CMD} -d ${workdir} cbsd
 			;;
 		*)
 			if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
@@ -397,15 +414,15 @@ phase1()
 					echo "no such /etc/master.passwd file"
 					exit 1
 				fi
-				cbsd_home=$( grep ^cbsd /etc/master.passwd | cut -d : -f 9 )
-				[ "${cbsd_home}" != "${workdir}" ] && pw usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
+				cbsd_home=$( ${GREP_CMD} ^cbsd /etc/master.passwd | ${CUT_CMD} -d : -f 9 )
+				[ "${cbsd_home}" != "${workdir}" ] && ${PW_CMD} usermod ${cbsduser} -d ${workdir} >/dev/null 2>&1
 			else
 				initenv_modify_cbsd_homedir=0
 			fi
 	esac
 
 	if [ ! -d "${workdir}" ]; then
-		/bin/mkdir -m 755 ${workdir}
+		${MKDIR_CMD} -m 755 ${workdir}
 		if [ $? -ne 0 ]; then
 			echo "mkdir error: ${workdir}"
 			exit 1
@@ -418,7 +435,7 @@ phase1()
 		echo "normalize workdir path: ${workdir} -> ${real_workdir}"
 		workdir="${real_workdir}"
 		cbsd_workdir="${real_workdir}"
-		sysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
 	fi
 
 	# check ZFS root dataset vs CBSD dataset
@@ -466,7 +483,7 @@ phase1()
 
 compile_cc()
 {
-	CC_CMD=$( which cc 2>/dev/null )
+	CC_CMD=$( ${WHICH_CMD} cc 2>/dev/null )
 	if [ -z "${CC_CMD}" ]; then
 		echo "error: non-binary distribution. You need the 'cc' compiler to finish preparing the cbsd"
 		echo "please install 'clang' or 'gcc'"
@@ -498,7 +515,7 @@ phase2()
 	[ ! -f "${distdir}/bin/cfetch" ] && compile_cc ${distdir}/bin/src/cfetch.c -o ${distdir}/bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include
 
 	if [ ! -f "${distdir}/misc/sqlcli" ]; then
-		_pkgconf=$( /usr/bin/which pkg-config )
+		_pkgconf=$( ${WHICH_CMD} pkg-config )
 		if [ $? -ne 0 -o -z "${_pkgconf}" ]; then
 			echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf";
 			exit 1
@@ -534,6 +551,7 @@ phase2()
 	[ ! -f "${distdir}/misc/cbsdtee" ] && compile_cc ${distdir}/misc/src/cbsdtee.c -o ${distdir}/misc/cbsdtee
 	[ ! -f "${distdir}/tools/imghelper" ] && compile_cc ${distdir}/tools/src/imghelper.c -o ${distdir}/tools/imghelper
 	[ ! -f "${distdir}/misc/cbsdlogtail" ] && compile_cc ${distdir}/misc/src/cbsdlogtail.c -o ${distdir}/misc/cbsdlogtail
+	[ ! -f "${distdir}/misc/daemonize" ] && compile_cc ${distdir}/misc/src/daemonize/daemonize.c ${distdir}/misc/src/daemonize/getopt.c -I${distdir}/misc/src/daemonize -O2 -o ${distdir}/misc/daemonize
 
 	case "${platform}" in
 		DragonFly|Linux)
@@ -558,14 +576,14 @@ phase2()
 		compile_cc -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/misc/src/dump_cpu_topology.c -o ${distdir}/misc/src/dump_cpu_topology.o
 		compile_cc -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/lib/simplexml/simplexml.c -o ${distdir}/lib/simplexml/simplexml.o
 		compile_cc -g -o ${distdir}/misc/dump_cpu_topology ${distdir}/misc/src/dump_cpu_topology.o ${distdir}/lib/simplexml/simplexml.o
-		/bin/rm -f ${distdir}/misc/src/dump_cpu_topology.o ${distdir}/lib/simplexml/simplexml.o
+		${RM_CMD} -f ${distdir}/misc/src/dump_cpu_topology.o ${distdir}/lib/simplexml/simplexml.o
 	fi
 
 	if [ ! -f ${distdir}/misc/dump_iscsi_discovery ]; then
 		compile_cc -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/misc/src/dump_iscsi_discovery.c -o ${distdir}/misc/src/dump_iscsi_discovery.o
 		compile_cc -g -c -Wall -I${distdir}/lib/simplexml ${distdir}/lib/simplexml/simplexml.c -o ${distdir}/lib/simplexml/simplexml.o
 		compile_cc -g -o ${distdir}/misc/dump_iscsi_discovery ${distdir}/misc/src/dump_iscsi_discovery.o ${distdir}/lib/simplexml/simplexml.o
-		/bin/rm -f ${distdir}/misc/src/dump_iscsi_discovery.o ${distdir}/lib/simplexml/simplexml.o
+		${RM_CMD} -f ${distdir}/misc/src/dump_iscsi_discovery.o ${distdir}/lib/simplexml/simplexml.o
 	fi
 	# todo: embed version to build and ask/check version before build
 
@@ -606,10 +624,10 @@ phase2()
 		make -C ${distdir}/bin/cbsdsh clean && make ${_build_options} -DCBSDVERSION="${ncver}" -C ${distdir}/bin/cbsdsh
 		# force rebuild sqlscli too to avoid possible SQLite3 link error
 		compile_cc ${distdir}/misc/src/sqlcli.c -lsqlite3 -L/usr/local/lib -I/usr/local/include -o ${distdir}/misc/sqlcli
-		[ -f "${distdir}/bin/cbsdsh/cbsd" ] && /usr/bin/install -m 0550 -s -o ${cbsduser} -g ${cbsduser} -m 550 ${distdir}/bin/cbsdsh/cbsd /usr/local/bin/cbsd
+		[ -f "${distdir}/bin/cbsdsh/cbsd" ] && ${INSTALL_CMD} -m 0550 -s -o ${cbsduser} -g ${cbsduser} -m 550 ${distdir}/bin/cbsdsh/cbsd /usr/local/bin/cbsd
 	fi
-	chown ${cbsduser}:${cbsduser} /usr/local/bin/cbsd
-	chmod 0550 /usr/local/bin/cbsd
+	${CHOWN_CMD} ${cbsduser}:${cbsduser} /usr/local/bin/cbsd
+	${CHMOD_CMD} 0550 /usr/local/bin/cbsd
 
 	#### /bin/cp SCRIPTS with override and readonly
 	_dirhier="etc/defaults"
@@ -617,7 +635,7 @@ phase2()
 	for _d in ${_dirhier}; do
 		_ldir="${workdir}/${_d}"
 		_rdir="${distdir}/${_d}"
-		for _file in $( find ${_rdir} -mindepth 1 -maxdepth 1 -type f -exec basename {} \; ); do
+		for _file in $( ${FIND_CMD} ${_rdir} -mindepth 1 -maxdepth 1 -type f -exec ${BASENAME_CMD} {} \; ); do
 			installne "-o ${cbsduser} -g ${cbsduser} -m 444" ${_rdir}/${_file} ${_ldir}/${_file}
 		done
 	done
@@ -630,7 +648,7 @@ share/autocompletion \
 share/emulators \
 etc"
 
-	cat > ${etcdir}/cbsd_sudoers <<EOF
+	${CAT_CMD} > ${etcdir}/cbsd_sudoers <<EOF
 Defaults     env_keep += "workdir DIALOG NOCOLOR CBSD_RNODE"
 Cmnd_Alias   CBSD_CMD = ${sudoexecdir}/*
 ${cbsduser}   ALL=(ALL) NOPASSWD:SETENV: CBSD_CMD
@@ -639,10 +657,10 @@ EOF
 	for _d in ${_dirhier}; do
 		_ldir="${workdir}/${_d}"
 		_rdir="${distdir}/${_d}"
-		for _file in $( /usr/bin/find ${_rdir} -mindepth 1 -maxdepth 1 -type f -exec /usr/bin/basename {} \; ); do
+		for _file in $( ${FIND_CMD} ${_rdir} -mindepth 1 -maxdepth 1 -type f -exec ${BASENAME_CMD} {} \; ); do
 			if [ ! -f "${_ldir}/${_file}" ]; then
-				[ ! -d ${_ldir} ] && mkdir -p ${_ldir}
-				/usr/bin/install -o ${cbsduser} -g ${cbsduser} -m 444 ${_rdir}/${_file} ${_ldir}/${_file}
+				[ ! -d ${_ldir} ] && ${MKDIR_CMD} -p ${_ldir}
+				${INSTALL_CMD} -o ${cbsduser} -g ${cbsduser} -m 444 ${_rdir}/${_file} ${_ldir}/${_file}
 			fi
 		done
 	done
@@ -666,45 +684,45 @@ EOF
 	if [ ! -f "${_sudoers_dir}/cbsd_sudoers" -a ! -f "${_sudoers_dir}/10_cbsd_sudoers" ]; then
 		if getyesno "Shall I add the cbsd user into ${_sudoers_dir} sudo file to obtain root privileges for most of the cbsd commands?" ${initenv_modify_sudoers}; then
 			initenv_modify_sudoers=1
-			[ ! -d /usr/local/etc/sudoers.d ] && /bin/mkdir -p /usr/local/etc/sudoers.d
+			[ ! -d /usr/local/etc/sudoers.d ] && ${MKDIR_CMD} -p /usr/local/etc/sudoers.d
 			installne "-o root -g 0 -m 440" ${etcdir}/cbsd_sudoers ${_sudoers_dir}
 		fi
 		initenv_modify_sudoers=0
 	fi
 
-	#    [ -d ${sshdir} ] || /bin/mkdir -m 0700 ${sshdir}
-	#    [ -d "${sshdir}/sockets" ] || /bin/mkdir -m 0700 "${sshdir}/sockets"
+	#    [ -d ${sshdir} ] || ${MKDIR_CMD} -m 0700 ${sshdir}
+	#    [ -d "${sshdir}/sockets" ] || ${MKDIR_CMD} -m 0700 "${sshdir}/sockets"
 	[ -f "${sshdir}/config" ] || installne "-o ${cbsduser} -g ${cbsduser} -m 640" ${distdir}/.ssh/config ${sshdir}/config
 
 	# workaround for move jail-skel hier in cbsd 10.0.0
-	[ ! -d "${sharedir}/${platform}-jail-skel/etc" -a -d "${distdir}/share/${platform}-jail-skel" ] && /bin/mkdir -p ${sharedir}/${platform}-jail-skel && /bin/cp -a ${distdir}/share/${platform}-jail-skel/* ${sharedir}/${platform}-jail-skel/
+	[ ! -d "${sharedir}/${platform}-jail-skel/etc" -a -d "${distdir}/share/${platform}-jail-skel" ] && ${MKDIR_CMD} -p ${sharedir}/${platform}-jail-skel && /bin/cp -a ${distdir}/share/${platform}-jail-skel/* ${sharedir}/${platform}-jail-skel/
 	[ -f "${sharedir}/${platform}-jail-skel/etc/master.passwd" ] && chmod 0600 ${sharedir}/${platform}-jail-skel/etc/master.passwd ${sharedir}/${platform}-jail-skel/etc/spwd.db
 
 	# workaround for move jail-skel hier in cbsd 10.0.0
-	[ ! -d "${sharedir}/${platform}-jail-vnet-skel/etc" -a -d "${distdir}/share/${platform}-jail-vnet-skel" ] && /bin/mkdir -p ${sharedir}/${platform}-jail-vnet-skel && /bin/cp -a ${distdir}/share/${platform}-jail-vnet-skel/* ${sharedir}/${platform}-jail-vnet-skel/
+	[ ! -d "${sharedir}/${platform}-jail-vnet-skel/etc" -a -d "${distdir}/share/${platform}-jail-vnet-skel" ] && ${MKDIR_CMD} -p ${sharedir}/${platform}-jail-vnet-skel && /bin/cp -a ${distdir}/share/${platform}-jail-vnet-skel/* ${sharedir}/${platform}-jail-vnet-skel/
 	[ -f "${sharedir}/${platform}-jail-vnet-skel/etc/master.passwd" ] && chmod 0600 ${sharedir}/${platform}-jail-vnet-skel/etc/master.passwd ${sharedir}/${platform}-jail-vnet-skel/etc/spwd.db
 
-	[ ! -d "${sharedir}/${platform}-jail-puppet-skel/etc" -a -d "${distdir}/share/${platform}-jail-puppet-skel" ] && /bin/mkdir -p ${sharedir}/${platform}-jail-puppet-skel && /bin/cp -a ${distdir}/share/${platform}-jail-puppet-skel/* ${sharedir}/${platform}-jail-puppet-skel/
+	[ ! -d "${sharedir}/${platform}-jail-puppet-skel/etc" -a -d "${distdir}/share/${platform}-jail-puppet-skel" ] && ${MKDIR_CMD} -p ${sharedir}/${platform}-jail-puppet-skel && /bin/cp -a ${distdir}/share/${platform}-jail-puppet-skel/* ${sharedir}/${platform}-jail-puppet-skel/
 	[ -f "${sharedir}/${platform}-jail-puppet-skel/etc/master.passwd" ] && chmod 0600 ${sharedir}/${platform}-jail-puppet-skel/etc/master.passwd ${sharedir}/${platform}-jail-puppet-skel/etc/spwd.db
 
 #	if [ ! -f "${sharedir}/${platform}-jail-kfreebsd-wheezy-system-skel/tests/00.check_distribution.sh" -a -d "${distdir}/share/${platform}-jail-kfreebsd-wheezy-system-skel" ]; then
-#		/bin/mkdir -p ${sharedir}/${platform}-jail-kfreebsd-wheezy-system-skel > /dev/null 2>&1
+#		${MKDIR_CMD} -p ${sharedir}/${platform}-jail-kfreebsd-wheezy-system-skel > /dev/null 2>&1
 #		/bin/cp -a ${distdir}/share/${platform}-jail-kfreebsd-wheezy-system-skel/* ${sharedir}/${platform}-jail-kfreebsd-wheezy-system-skel/
 #	fi
 #	if [ ! -f "${sharedir}/${platform}-jail-ubuntu-focal-system-skel/tests/00.check_distribution.sh" -a -d "${distdir}/share/${platform}-jail-ubuntu-focal-system-skel" ]; then
-#		/bin/mkdir -p ${sharedir}/${platform}-jail-ubuntu-focal-system-skel > /dev/null 2>&1
+#		${MKDIR_CMD} -p ${sharedir}/${platform}-jail-ubuntu-focal-system-skel > /dev/null 2>&1
 #		/bin/cp -a ${distdir}/share/${platform}-jail-ubuntu-focal-system-skel/* ${sharedir}/${platform}-jail-ubuntu-focal-system-skel/
 #	fi
 #	if [ ! -f "${sharedir}/${platform}-jail-debian-buster-system-skel/tests/00.check_distribution.sh" -a -d "${distdir}/share/${platform}-jail-debian-buster-system-skel" ]; then
-#		/bin/mkdir -p ${sharedir}/${platform}-jail-debian-buster-system-skel > /dev/null 2>&1
+#		${MKDIR_CMD} -p ${sharedir}/${platform}-jail-debian-buster-system-skel > /dev/null 2>&1
 #		/bin/cp -a ${distdir}/share/${platform}-jail-debian-buster-system-skel/* ${sharedir}/${platform}-jail-debian-buster-system-skel/
 #	fi
 #	if [ ! -f "${sharedir}/${platform}-jail-debian-bullseye-system-skel/tests/00.check_distribution.sh" -a -d "${distdir}/share/${platform}-jail-debian-bullseye-system-skel" ]; then
-#		/bin/mkdir -p ${sharedir}/${platform}-jail-debian-bullseye-system-skel > /dev/null 2>&1
+#		${MKDIR_CMD} -p ${sharedir}/${platform}-jail-debian-bullseye-system-skel > /dev/null 2>&1
 #		/bin/cp -a ${distdir}/share/${platform}-jail-debian-bullseye-system-skel/* ${sharedir}/${platform}-jail-debian-bullseye-system-skel/
 #	fi
 #	if [ ! -f "${sharedir}/${platform}-jail-centos-7-system-skel/tests/00.check_distribution.sh" -a -d "${distdir}/share/${platform}-jail-centos-7-system-skel" ]; then
-#		/bin/mkdir -p ${sharedir}/${platform}-jail-centos-7-system-skel > /dev/null 2>&1
+#		${MKDIR_CMD} -p ${sharedir}/${platform}-jail-centos-7-system-skel > /dev/null 2>&1
 #		/bin/cp -a ${distdir}/share/${platform}-jail-centos-7-system-skel/* ${sharedir}/${platform}-jail-centos-7-system-skel/
 #	fi
 #
@@ -719,7 +737,7 @@ EOF
 	[ ! -d "${sharedir}/qemu-system-default" -a -d "${distdir}/share/qemu-system-default" ] && /bin/cp -a ${distdir}/share/qemu-system-default ${sharedir}/
 	[ ! -d "${sharedir}/xen-system-default" -a -d "${distdir}/share/xen-system-default" ] && /bin/cp -a ${distdir}/share/xen-system-default ${sharedir}/
 
-	[ ! -d "${sharedir}/emulators" -a -d "${distdir}/share/emulators" ] && /bin/mkdir -p ${sharedir}/emulators
+	[ ! -d "${sharedir}/emulators" -a -d "${distdir}/share/emulators" ] && ${MKDIR_CMD} -p ${sharedir}/emulators
 	/bin/cp -a ${distdir}/share/emulators/* ${sharedir}/emulators/
 }
 
@@ -732,7 +750,7 @@ phase3()
 	_namenotset=1
 
 	while [ ${_namenotset} ]; do
-		_hname=$( hostname )
+		_hname=$( ${HOSTNAME_CMD} )
 
 		if [ -n "${_hname}" ]; then
 			_namenotset=0
@@ -746,10 +764,10 @@ phase3()
 			read p
 		fi
 		[ -z "${p}" ] && continue
-		hostname ${p}
+		${HOSTNAME_CMD} ${p}
 		if getyesno "Shall i modify the /etc/rc.conf to set new hostname value?: ${p}" ${initenv_modify_rcconf_hostname}; then
 			initenv_modify_rcconf_hostname=1
-			${SYSRC_CMD} -vf /etc/rc.conf hostname="${p}"
+			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf hostname="${p}"
 		else
 			initenv_modify_rcconf_hostname=0
 			break
@@ -761,14 +779,14 @@ phase4()
 {
 	${ECHO} "${N1_COLOR}[Stage 4: ${N2_COLOR}update default skel resolv.conf${N1_COLOR}]${N0_COLOR}"
 
-	for i in $(${ECHO} ${jnameserver} | /usr/bin/tr "," " "); do
+	for i in $(${ECHO} ${jnameserver} | ${TR_CMD} "," " "); do
 		if [ -f "${sharedir}/${platform}-jail-skel/etc/resolv.conf" ]; then
 			if [ $( ${GREP_CMD} -c ${i} ${sharedir}/${platform}-jail-skel/etc/resolv.conf ) = 0 ]; then
 				TMPR="${ftmpdir}/resolv.$$"
 				# system nserver must be always last
 				${ECHO} "nameserver ${i}" > ${TMPR}
-				/bin/cat ${sharedir}/${platform}-jail-skel/etc/resolv.conf >> ${TMPR}
-				/bin/mv ${TMPR} ${sharedir}/${platform}-jail-skel/etc/resolv.conf
+				${CAT_CMD} ${sharedir}/${platform}-jail-skel/etc/resolv.conf >> ${TMPR}
+				${MV_CMD} ${TMPR} ${sharedir}/${platform}-jail-skel/etc/resolv.conf
 			fi
 		fi
 	done
@@ -800,6 +818,7 @@ phase5()
 		nodename=${answ}
 	fi
 
+	[ "${nodename}" = "auto" ] && nodename=$( ${HOSTNAME_CMD} )
 	[ -z "${nodename}" ] && err 1 "nodename must be not empty"
 
 	if [ "${nodeip}" = "auto" ]; then
@@ -865,7 +884,7 @@ phase5()
 		exit 1
 	fi
 
-	/bin/chmod 0660 ${dbdir}/inv.${nodename}.sqlite && chown ${cbsduser}:${cbsduser} ${dbdir}/inv.${nodename}.sqlite
+	${CHMOD_CMD} 0660 ${dbdir}/inv.${nodename}.sqlite && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${dbdir}/inv.${nodename}.sqlite
 
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-local.schema local
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-carp.schema carp
@@ -911,8 +930,8 @@ phase5()
 	[ -f "${dbdir}/nodes.sqlite" ] && env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/nodes.sqlite ${distdir}/share/node-nodelist.schema nodelist
 
 	cd ${dbdir}
-	#/bin/ln -sfh inv.${nodename}.sqlite local.sqlite
-	/bin/ln -sfn inv.${nodename}.sqlite local.sqlite
+	#${LN_CMD} -sfh inv.${nodename}.sqlite local.sqlite
+	${LN_CMD} -sfn inv.${nodename}.sqlite local.sqlite
 
 	_myfs="ufs"
 
@@ -938,8 +957,10 @@ phase5()
 	[ $? -ne 0 ] && err 1 "Error for unconfigured query"
 
 	if [ -n "${INITCFG}" ]; then
+		onodename="${nodename}"
 		. ${INITCFG}
-		_uncfg=$( ${GREP_CMD} -v '^#' ${INITCFG} | /usr/bin/cut -d '=' -f1 | /usr/bin/xargs )
+		_uncfg=$( ${GREP_CMD} -v '^#' ${INITCFG} | ${CUT_CMD} -d '=' -f1 | ${XARGS_CMD} )
+		nodename="${onodename}"
 	fi
 
 	for _checkme in ${_uncfg}; do
@@ -986,7 +1007,7 @@ phase5()
 				fi
 
 				if [ -n "${INITCFG_PRESEED}" ]; then
-					${SYSRC_CMD} -qf ${INITCFG_PRESEED} ${_checkme}="${answ}" > /dev/null
+					/usr/local/cbsd/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${_checkme}="${answ}" > /dev/null
 				fi
 			fi
 		done
@@ -999,7 +1020,7 @@ phase5()
 
 	oipfw_enable="${ipfw_enable}"
 
-	_ret=$( sysctl -n net.inet.ip.fw.enable 2>/dev/null )
+	_ret=$( ${SYSCTL_CMD} -n net.inet.ip.fw.enable 2>/dev/null )
 	if [ "${_ret}" = "1" ]; then
 		_ret=1
 	else
@@ -1027,13 +1048,13 @@ phase5()
 		for i in ipfw_enable nodename racct nodeip natip; do
 			T=
 			eval T="\$$i"
-			${SYSRC_CMD} -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
 		done
 	fi
 
 	local FILES="descr role domain notes location"
 	for i in $FILES; do
-		[ ! -f "${workdir}/${i}" ] && /usr/bin/touch ${workdir}/node.${i} && chown cbsd:cbsd ${workdir}/node.${i}
+		[ ! -f "${workdir}/${i}" ] && ${TOUCH_CMD} ${workdir}/node.${i} && ${CHOWN_CMD} cbsd:cbsd ${workdir}/node.${i}
 	done
 
 	env workdir=${workdir} /usr/local/bin/cbsd netinv
@@ -1068,8 +1089,8 @@ phase7()
 	# create hook.d dir for nodes
 	for _i in ${nodedir} ${nodedir}/add.d ${nodedir}/remove.d ${nodedir}/offline.d ${nodedir}/online.d; do
 		if [ ! -d "${_i}" ]; then
-			mkdir -p -m 0775 ${_i}
-			chown root:cbsd ${nodedir}
+			${MKDIR_CMD} -p -m 0775 ${_i}
+			${CHOWN_CMD} root:cbsd ${nodedir}
 		fi
 	done
 
@@ -1082,43 +1103,43 @@ phase8()
 	${ECHO} "${N1_COLOR}[Stage 8: ${N2_COLOR}modules${N1_COLOR}]${N0_COLOR}"
 
 	if [ ! -d "${moduledir}" ]; then
-		mkdir -p -m 0775 ${moduledir}
-		chown root:cbsd ${moduledir}
+		${MKDIR_CMD} -p -m 0775 ${moduledir}
+		${CHOWN_CMD} root:cbsd ${moduledir}
 	fi
 
 	[ ! -f "${etcdir}/modules.conf" ] && return 0
 	# Deinstall module first
-	for _lnk in $( /usr/bin/find ${moduledir} -mindepth 1 -maxdepth 1 -type l ); do
-		_dst=$( /usr/bin/readlink ${_lnk} )
-		_dst=$( /usr/bin/dirname ${_dst} )
+	for _lnk in $( ${FIND_CMD} ${moduledir} -mindepth 1 -maxdepth 1 -type l ); do
+		_dst=$( ${READLINK_CMD} ${_lnk} )
+		_dst=$( ${DIRNAME_CMD} ${_dst} )
 		#append slash for next excluding in _modulename
 		_moduledir="${distmoduledir}/"
 		_modulename="${_dst#$_moduledir}"
-		_my_module=$( echo ${_modulename} | sed 's:\.d$::g' )	# strip .d$
+		_my_module=$( echo ${_modulename} | ${SED_CMD} 's:\.d$::g' )	# strip .d$
 
 		${GREP_CMD} "^${_modulename}" ${etcdir}/modules.conf >/dev/null 2>&1
 		if [ $? -eq 1 ]; then
 			${ECHO} "${N1_COLOR}Removing module ${_modulename} cmd: ${N2_COLOR}${_dst}${N0_COLOR}"
-			/bin/rm -f ${_lnk}
-			${SYSRC_CMD} -qf ${inventory} mod_${_my_module}_enabled="NO" > /dev/null 2>&1
+			${RM_CMD} -f ${_lnk}
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${inventory} mod_${_my_module}_enabled="NO" > /dev/null 2>&1
 		fi
 	done
 
 	# Install module
-	for _i in $( /bin/cat ${etcdir}/modules.conf ); do
+	for _i in $( ${CAT_CMD} ${etcdir}/modules.conf ); do
 		[ ! -f "${distmoduledir}/${_i}/securecmd" ] && continue
 		. ${distmoduledir}/${_i}/securecmd
-		_my_module=$( echo ${_i} | sed 's:\.d$::g' )	# strip .d$
+		_my_module=$( echo ${_i} | ${SED_CMD} 's:\.d$::g' )	# strip .d$
 		for _cmd in ${SECCMD}; do
 			if [ ! -h "${moduledir}/${_cmd}" ]; then
-				#/bin/ln -sfh ${distmoduledir}/${_i}/${_cmd} ${moduledir}/${_cmd}
-				/bin/ln -sfn ${distmoduledir}/${_i}/${_cmd} ${moduledir}/${_cmd}
+				#${LN_CMD} -sfh ${distmoduledir}/${_i}/${_cmd} ${moduledir}/${_cmd}
+				${LN_CMD} -sfn ${distmoduledir}/${_i}/${_cmd} ${moduledir}/${_cmd}
 				${ECHO} "${N1_COLOR}Installing module ${_i} cmd: ${N2_COLOR}${_cmd}${N0_COLOR}"
 			fi
 		done
 
-		_my_module=$( echo ${_my_module} | tr "-" "_" )	# cast '-' to '_'
-		${SYSRC_CMD} -qf ${inventory} mod_${_my_module}_enabled="YES" > /dev/null 2>&1
+		_my_module=$( echo ${_my_module} | ${TR_CMD} "-" "_" )	# cast '-' to '_'
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${inventory} mod_${_my_module}_enabled="YES" > /dev/null 2>&1
 	done
 }
 
@@ -1129,7 +1150,7 @@ phase9()
 
 	# append for modules Obsolete cmd part
 	if [ -f "${etcdir}/modules.conf" ]; then
-		for i in $( /bin/cat ${etcdir}/modules.conf ); do
+		for i in $( ${CAT_CMD} ${etcdir}/modules.conf ); do
 			[ ! -f "${moduledir}/${i}/ObsoleteFiles" ] && continue
 			. ${moduledir}/${i}/ObsoleteFiles
 		done
@@ -1139,11 +1160,11 @@ phase9()
 	$ECHO "${N1_COLOR} * Remove obsolete files..."
 
 	for i in $OLD_FILES; do
-		[ -f "${workdir}/${i}" -o -h "${workdir}/${i}" ] && ${ECHO} "    ${N1_COLOR}Removing obsolete file: ${N2_COLOR}${workdir}/${i}${N0_COLOR}" && /bin/rm -f ${workdir}/${i}
+		[ -f "${workdir}/${i}" -o -h "${workdir}/${i}" ] && ${ECHO} "    ${N1_COLOR}Removing obsolete file: ${N2_COLOR}${workdir}/${i}${N0_COLOR}" && ${RM_CMD} -f ${workdir}/${i}
 	done
 
 	for i in $OLD_DIRS; do
-		[ -d "${workdir}/${i}" -o -h "${workdir}/${i}" ] && ${ECHO} "    ${N1_COLOR}Removing obsolete dir: ${N2_COLOR}${workdir}/${i}${N0_COLOR}" && /bin/rmdir ${workdir}/${i}
+		[ -d "${workdir}/${i}" -o -h "${workdir}/${i}" ] && ${ECHO} "    ${N1_COLOR}Removing obsolete dir: ${N2_COLOR}${workdir}/${i}${N0_COLOR}" && ${RMDIR_CMD} ${workdir}/${i}
 	done
 	printf "${N0_COLOR}"
 }
@@ -1155,7 +1176,7 @@ post_message()
 	. ${subrdir}/ansiicolor.subr
 	case "${platform}" in
 		Linux)
-			ECHO=$( which echo )
+			ECHO=$( ${WHICH_CMD} echo )
 			ECHO="${ECHO} -e"
 			;;
 		*)
@@ -1237,7 +1258,7 @@ start()
 	fi
 
 
-	/bin/cat << EOF_HEADER
+	${CAT_CMD} << EOF_HEADER
 -------[${product} v.${myversion}]-------
  This is install/upgrade scripts for ${product}.
  Don't forget to backup.
@@ -1259,13 +1280,13 @@ EOF_HEADER
 	[ ! -r ${workdir}/rc.conf ] && ${TOUCH_CMD} ${workdir}/rc.conf
 
 	if [ "${cbsd_workdir}" != "${workdir}" ]; then
-		if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | wc -l ) = 0 ]; then
+		if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 			if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
 				initenv_modify_rcconf_cbsd_workdir=1
-				${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
+				/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf cbsd_workdir="${workdir}"
 			else
 				initenv_modify_rcconf_cbsd_workdir=0
-				${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+				/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
 			fi
 		fi
 	fi
@@ -1274,21 +1295,21 @@ EOF_HEADER
 	#exit 0
 
 
-	if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | wc -l ) = 0 ]; then
+	if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
 			initenv_modify_rcconf_cbsd_workdir=1
-			${SYSRC_CMD} -vf /etc/rc.conf cbsd_workdir="${workdir}"
+			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf cbsd_workdir="${workdir}"
 		else
 			initenv_modify_rcconf_cbsd_workdir=0
-			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
 		fi
 	fi
 
 	if [ ${first_init} -eq 1 ]; then
-		if [ $( ${GREP_CMD} ^preseedinit= ${workdir}/rc.conf | wc -l ) = 0 ]; then
+		if [ $( ${GREP_CMD} ^preseedinit= ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 			if [ ${inter} -eq 1 ]; then
 				INITCFG_PRESEED=$( mktemp )
-				cat > ${INITCFG_PRESEED} <<EOF
+				${CAT_CMD} > ${INITCFG_PRESEED} <<EOF
 # cbsd initenv preseed file for $( hostname ) host
 # refer to the /usr/local/cbsd/share/initenv.conf
 # for description.
@@ -1312,46 +1333,46 @@ EOF
 	phase8
 	phase9
 
-	[ ! -f "${workdir}/rc.conf" ] && /usr/bin/touch ${workdir}/rc.conf
+	[ ! -f "${workdir}/rc.conf" ] && ${TOUCH_CMD} ${workdir}/rc.conf
 	configure_rsync
 	configure_racct
 
-	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf | wc -l ) = 0 ]; then
+	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets cbsdd_enable=YES ?" ${initenv_modify_rcconf_cbsd_enable}; then
 			initenv_modify_rcconf_cbsd_enable=1
-			${SYSRC_CMD} -vf /etc/rc.conf cbsdd_enable=YES
+			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf cbsdd_enable=YES
 		else
 			initenv_modify_rcconf_cbsd_enable=0
-			${SYSRC_CMD} -qf ${workdir}/rc.conf cbsdd_enable="NO"
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsdd_enable="NO"
 		fi
 	fi
 
 	[ -z "${rcshutdown_timeout}" ] && rcshutdown_timeout="0"
 
-	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | wc -l ) = 0 ]; then
+	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?" ${initenv_modify_rcconf_rcshutdown_timeout}; then
 			initenv_modify_rcconf_rcshutdown_timeout=1
-			${SYSRC_CMD} -vf /etc/rc.conf rcshutdown_timeout="900"
+			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf rcshutdown_timeout="900"
 			rcshutdown_timeout="900"
 		else
 			initenv_modify_rcconf_rcshutdown_timeout=0
-			${SYSRC_CMD} -qf ${workdir}/rc.conf rcshutdown_timeout="900"
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf rcshutdown_timeout="900"
 		fi
 	fi
 
-	kern_init_shutdown_timeout=$( /sbin/sysctl -qn kern.init_shutdown_timeout 2>/dev/null )
+	kern_init_shutdown_timeout=$( ${SYSCTL_CMD} -qn kern.init_shutdown_timeout 2>/dev/null )
 	[ -z "${kern_init_shutdown_timeout}" ] && kern_init_shutdown_timeout="${rcshutdown_timeout}"	# unknown sysctl ? skip
 
 	if [ ${kern_init_shutdown_timeout} -lt ${rcshutdown_timeout} ]; then
-		if [ $( ${GREP_CMD} -E "^kern.init_shutdown_timeout=|^kern_init_shutdown_timeout=" /etc/sysctl.conf ${workdir}/rc.conf | wc -l ) = 0 ]; then
+		if [ $( ${GREP_CMD} -E "^kern.init_shutdown_timeout=|^kern_init_shutdown_timeout=" /etc/sysctl.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 			if getyesno "Shall i modify the /etc/sysctl.conf to sets kern.init_shutdown_timeout=\"900\"?" ${initenv_modify_syctl_rcshutdown_timeout}; then
 				initenv_modify_syctl_rcshutdown_timeout=1
 				printf "\nkern.init_shutdown_timeout=\"900\"\n" >> /etc/sysctl.conf
 				kern_init_shutdown_timeout="900"
-				/sbin/sysctl -qw kern.init_shutdown_timeout="900"
+				${SYSCTL_CMD} -qw kern.init_shutdown_timeout="900"
 			else
 				initenv_modify_syctl_rcshutdown_timeout=0
-				${SYSRC_CMD} -qf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
+				/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
 			fi
 		fi
 	fi
@@ -1382,7 +1403,7 @@ EOF
 			workdir; do
 			T=
 			eval T="\$$i"
-			${SYSRC_CMD} -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
 		done
 
 		preseedinit_desc="Would you like a config for \"cbsd init\" preseed to be printed?"
@@ -1394,14 +1415,14 @@ EOF
 
 			echo
 			echo "---cut here ---"
-			cat  ${INITCFG_PRESEED}
+			${CAT_CMD}  ${INITCFG_PRESEED}
 			echo "---end of cut---"
 			echo
 
 		fi
 		rm -f ${INITCFG_PRESEED}
 
-		${SYSRC_CMD} -qf ${workdir}/rc.conf preseedinit="${answ}" > /dev/null 2>&1
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf preseedinit="${answ}" > /dev/null 2>&1
 	fi
 
 	exit 0
@@ -1413,12 +1434,12 @@ init_lock()
 	local _lock_cmd
 	LOCK_CMD=
 
-	_lock_cmd=$( which lockf 2>/dev/null )
+	_lock_cmd=$( ${WHICH_CMD} lockf 2>/dev/null )
 
 	if [ -n "${_lock_cmd}" -a -x "${_lock_cmd}" ]; then
 		LOCK_CMD="${_lock_cmd} -t0 -s "
 	else
-		_lock_cmd=$( which flock 2>/dev/null )
+		_lock_cmd=$( ${WHICH_CMD} flock 2>/dev/null )
 		if [ -n "${_lock_cmd}" -a -x ${_lock_cmd} ]; then
 			LOCK_CMD="${_lock_cmd} -w0 -x "
 		fi
@@ -1431,15 +1452,26 @@ init_lock()
 }
 
 ### MAIN ###
+WHICH_CMD=$( which which 2>/dev/null )
+[ -z "${WHICH_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: which"
+
+TR_CMD=$( ${WHICH_CMD} tr 2>/dev/null )
+[ -z "${TR_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: tr"
+
+UNAME_CMD=$( ${WHICH_CMD} uname 2>/dev/null )
+[ -z "${UNAME_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: uname"
+
+# 'uname' before macros here
+OS=$( ${UNAME_CMD} -s )
+platform="${OS}"
+arch=$( ${UNAME_CMD} -p )
+
 init_lock
 
 if [ -z "${workdir}" ]; then
 	if [ -z "${cbsd_workdir}" ]; then
 		if [ -r /etc/rc.conf ]; then
 			. /etc/rc.conf
-		else
-			echo "/etc/rc.conf created"
-			touch /etc/rc.conf
 		fi
 	fi
 	if [ -n "${cbsd_workdir}" ]; then
@@ -1466,21 +1498,72 @@ set -e
 . ${distdir}/cbsd.conf
 set +e
 
-platform=$( uname -s )
-arch=$( uname -p )
-
 # Overwrite $platform to HardenedBSD if we have /usr/sbin/hbsd-update:
 [ -e "/usr/sbin/hbsd-update" ] && platform="HardenedBSD"
 
 [ -f "${subrdir}/cmd.subr" ] && . ${subrdir}/cmd.subr
 
-if [ -z "${REALPATH_CMD}" ]; then
-	REALPATH_CMD=$( which realpath )
-	if [ ! -x "${REALPATH_CMD}" ]; then
-		echo "no such realpath command"
-		exit 1
-	fi
-fi
+MAIN_EXTRA_CMD=
+
+# generic mandatory tools/script
+MAIN_CMD="
+awk
+date
+basename
+cat
+chown
+cmp
+cp
+cut
+chmod
+dd
+df
+dirname
+find
+grep
+head
+hostname
+install
+ln
+ls
+mkdir
+mktemp
+mount
+realpath
+readlink
+rm
+rmdir
+sed
+seq
+sort
+sysctl
+tar
+tail
+touch
+truncate
+umount
+xargs
+wc
+"
+
+case "${platform}" in
+	Linux)
+		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} usermod"
+		true
+		;;
+	FreeBSD)
+		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} kldstat pw"
+		;;
+esac
+
+for i in ${MAIN_CMD} ${MAIN_EXTRA_CMD}; do
+	mycmd=
+	mycmd=$( ${WHICH_CMD} ${i} || true )            # true for 'set -e' case
+	[ ! -x "${mycmd}" ] && err 1 "${pgm} error: no such executable dependency/requirement: ${i}"
+	MY_CMD=$( echo ${i} | ${TR_CMD} '\-[:lower:]' '_[:upper:]' )
+	MY_CMD="${MY_CMD}_CMD"
+	eval "${MY_CMD}=\"${mycmd}\""
+done
 
 [ -f "${subrdir}/${platform}.subr" ] && . ${subrdir}/${platform}.subr
 

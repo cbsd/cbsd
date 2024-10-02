@@ -460,19 +460,19 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		vm_boot="hdd"
 
 		# replace hdd boot in conf
-		/usr/sbin/sysrc -qf ${conf} cd_boot_once=0
-		/usr/sbin/sysrc -qf ${conf} vm_boot=hdd
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_boot_once=0
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} vm_boot=hdd
 		# remove CD string for EFI
 		if [ "${vm_efi}" != "none" ]; then
 			if [ -n "${cd_args2}" ]; then
-				/usr/sbin/sysrc -qf ${conf} cd_args="${cd_args2}"
+				/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_args="${cd_args2}"
 				cd_args="${cd_args2}"
 			else
-				/usr/sbin/sysrc -qf ${conf} cd_args=""
+				/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_args=""
 				unset cd_args
 			fi
 		else
-			/usr/sbin/sysrc -qf ${conf} cd_args=""
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_args=""
 			unset cd_args
 		fi
 	fi
