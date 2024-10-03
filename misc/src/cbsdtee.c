@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 typedef struct list {
 	struct list *next;
