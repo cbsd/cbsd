@@ -181,8 +181,7 @@ fetch_files(char *urls, char *fout)
 	if(!res) {
 		/* check the size */
 		double cl;
-		res = curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &cl);
-		// res = curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD, &cl);
+		res = curl_easy_getinfo(curl_handle, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl);
 		if(!res) {
 			//printf("Size: %.0f\n", cl);
 			total_bytes=cl;
@@ -291,7 +290,7 @@ fetch_files(char *urls, char *fout)
 		double dl;
 		 CURLcode res;
 		/* check the size */
-		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
+		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD_T, &dl);
 		if(!res) {
 			printf("%.0f\n", dl / diff_time);
 		}
@@ -335,7 +334,7 @@ handle_signal(int signal)
 		double dl;
 		 CURLcode res;
 		/* check the size */
-		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD, &dl);
+		res = curl_easy_getinfo(curl_handle, CURLINFO_SIZE_DOWNLOAD_T, &dl);
 		if(!res) {
 			printf("%.0f\n", dl / diff_time);
 		}
