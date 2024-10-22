@@ -313,6 +313,15 @@ desc_question()
 			fi
 			return 0
 			;;
+		"default_vs")
+			if ! getyesno "${1}: ${_DESC}?"; then
+				answ=0
+				return 0
+			fi
+			[ -z "$answ" ] && answ="${_DEFAULT}"
+			answ=1
+			return 0
+			;;
 		*)
 			return 1
 			;;
@@ -527,6 +536,7 @@ phase2()
 		Linux)
 			true
 			[ ! -f "${distdir}/misc/conv2human" ] && compile_cc -DWITH_BSD_H -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${distdir}/misc/src/conv2human.c -lelf -lutil -lbsd -o ${distdir}/misc/conv2human
+			[ ! -f "${distdir}/misc/cbsd_fwatch" ] && compile_cc ${distdir}/misc/src/cbsd_lwatch.c -o ${distdir}/misc/cbsd_fwatch
 			# not supported yet
 			;;
 		*)
@@ -684,8 +694,8 @@ EOF
 	if [ ! -f "${_sudoers_dir}/cbsd_sudoers" -a ! -f "${_sudoers_dir}/10_cbsd_sudoers" ]; then
 		if getyesno "Shall I add the cbsd user into ${_sudoers_dir} sudo file to obtain root privileges for most of the cbsd commands?" ${initenv_modify_sudoers}; then
 			initenv_modify_sudoers=1
-			[ ! -d /usr/local/etc/sudoers.d ] && ${MKDIR_CMD} -p /usr/local/etc/sudoers.d
-			installne "-o root -g 0 -m 440" ${etcdir}/cbsd_sudoers ${_sudoers_dir}
+			[ ! -d ${_sudoers_dir} ] && ${MKDIR_CMD} -p ${_sudoers_dir}
+			installne "-o root -g 0 -m 440" ${etcdir}/cbsd_sudoers ${_sudoers_dir}/10_cbsd_sudoers
 		fi
 		initenv_modify_sudoers=0
 	fi
@@ -765,9 +775,26 @@ phase3()
 		fi
 		[ -z "${p}" ] && continue
 		${HOSTNAME_CMD} ${p}
-		if getyesno "Shall i modify the /etc/rc.conf to set new hostname value?: ${p}" ${initenv_modify_rcconf_hostname}; then
+
+		case "${platform}" in
+			Linux)
+				q="Shall i modify the /etc/hostname to set new hostname value?: ${p}"
+				;;
+			*)
+				q="Shall i modify the /etc/rc.conf to set new hostname value?: ${p}"
+				;;
+		esac
+
+		if getyesno "${q}" ${initenv_modify_rcconf_hostname}; then
 			initenv_modify_rcconf_hostname=1
-			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf hostname="${p}"
+			case "${platforn}" in
+				Linux)
+					echo "${p}" > /etc/hostname
+					;;
+				*)
+					/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf hostname="${p}"
+					;;
+			esac
 		else
 			initenv_modify_rcconf_hostname=0
 			break
@@ -805,9 +832,11 @@ phase5()
 	[ -z "${nodeip6}" ] && nodeip6="auto"
 	[ -z "${natip}" ] && natip="auto"
 	[ -z "${natip6}" ] && natip6="auto"
+	[ -z "${nodeippool}" ] && nodeippool="auto"
 
 	#system information
 	. ${toolsdir}/sysinv
+
 	update_netinfo
 
 	init_items_desc
@@ -961,6 +990,20 @@ phase5()
 		. ${INITCFG}
 		_uncfg=$( ${GREP_CMD} -v '^#' ${INITCFG} | ${CUT_CMD} -d '=' -f1 | ${XARGS_CMD} )
 		nodename="${onodename}"
+	fi
+
+	if [ "${nodeippool}" = "auto" ]; then
+		_tmpval=$( /usr/local/bin/cbsd find_free_cidr4 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			nodeippool="10.0.0.1/24"
+		else
+			nodeippool="${_tmpval}"
+		fi
+
+		export nodeippool="${nodeippool}"
+		export nodeippool_default="${nodeippool}"
+		#${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET nodeippool='${nodeippool}'"
 	fi
 
 	for _checkme in ${_uncfg}; do
@@ -1276,7 +1319,9 @@ EOF_HEADER
 	phase2
 	phase3
 
-	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
+	[ -z "${cbsd_workdir}" -a -r /etc/rc.conf ] && . /etc/rc.conf
+	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${workdir}"
+	[ -z "${cbsd_workdir}" ] && err 1 "no such cbsd_workdir vars"
 	[ ! -r ${workdir}/rc.conf ] && ${TOUCH_CMD} ${workdir}/rc.conf
 
 	if [ "${cbsd_workdir}" != "${workdir}" ]; then
@@ -1290,10 +1335,6 @@ EOF_HEADER
 			fi
 		fi
 	fi
-
-	#echo "if getyesno shall: ${initenv_modify_rcconf_cbsd_workdir}"
-	#exit 0
-
 
 	if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
@@ -1337,13 +1378,73 @@ EOF
 	configure_rsync
 	configure_racct
 
-	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
-		if getyesno "Shall i modify the /etc/rc.conf to sets cbsdd_enable=YES ?" ${initenv_modify_rcconf_cbsd_enable}; then
+	SYSTEMCTL_CMD=$( ${WHICH_CMD} systemctl )
+
+	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
+		case "${platform}" in
+			Linux)
+				q="Do you want to activate cbsdd service at system startup?"
+				;;
+			*)
+				q="Shall i modify the /etc/rc.conf to sets cbsdd_enable=YES ?"
+				;;
+		esac
+		if getyesno "${q}" ${initenv_modify_rcconf_cbsd_enable}; then
 			initenv_modify_rcconf_cbsd_enable=1
-			/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf cbsdd_enable=YES
 		else
 			initenv_modify_rcconf_cbsd_enable=0
-			/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsdd_enable="NO"
+		fi
+
+		case ${initenv_modify_rcconf_cbsd_enable} in
+			1)
+				case "${platform}" in
+					Linux)
+						if [ -z "${SYSTEMCTL_CMD}" ]; then
+							echo "no systemctl, skip"
+							break
+						fi
+						if [ ! -d "/lib/systemd/system" ]; then
+							echo "no /lib/systemd/system, skip"
+							break
+						fi
+						[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g ${distdir}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
+						${SYSTEMCTL_CMD} enable cbsdd.service
+						;;
+					*)
+						true
+						;;
+				esac
+				/usr/local/cbsd/misc/cbsdsysrc -vf /etc/rc.conf ${workdir}/rc.conf cbsdd_enable=YES
+				;;
+			*)
+				/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf ${workdir}/rc.conf cbsdd_enable="NO"
+				;;
+		esac
+	else
+		if [ "${platform}" = "Linux" ]; then
+			if [ -z "${SYSTEMCTL_CMD}" ]; then
+					echo "no systemctl, skip"
+					break
+			else
+				[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g ${distdir}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
+				if [ -n "${cbsdd_enable}" ]; then
+					if [ "${cbsdd_enable}" = "YES" ]; then
+						_cbsd_enable=1
+					else
+						_cbsd_enable=1
+					fi
+				else
+					_cbsd_enable="${initenv_modify_rcconf_cbsd_enable}"
+				fi
+				case ${_cbsd_enable} in
+					1)
+						${SYSTEMCTL_CMD} enable cbsdd.service
+						;;
+					*)
+						${SYSTEMCTL_CMD} disable cbsdd.service
+						;;
+				esac
+			fi
 		fi
 	fi
 

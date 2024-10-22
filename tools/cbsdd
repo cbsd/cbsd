@@ -89,11 +89,106 @@ update_inventory()
 	/usr/local/cbsd/misc/daemonize /usr/local/cbsd/tools/nexttask
 }
 
+configure_default_vs_bridge()
+{
+	local _cbsd_vs=0 _ret=0
+
+	[ -z "${configure_default_cbsd_vs_name}" ] && configure_default_cbsd_vs_name="cbsdbr0"
+
+	case "${platform}" in
+		Linux)
+			${IP_CMD} link show ${configure_default_cbsd_vs_name} >/dev/null 2>&1
+			_ret=$?
+			;;
+		*)
+			${IFCONFIG_CMD} ${configure_default_cbsd_vs_name} >/dev/null 2>&1
+			_ret=$?
+			;;
+	esac
+
+	[ ${_ret} -eq 0 ] && return 0
+
+	_cbsd_vs=$( /usr/local/cbsd/tools/get-next-nic name=bridge )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${CBSD_APP} configure_default_vs, ret: ${_ret}: ${_cbsd_vs}"
+	[ -z "${_cbsd_vs}" ] && err 1 "${CBSD_APP} configure_default_vs, ret: ${_ret}: empty _cbsd_vs"
+
+	eval $( ${miscdir}/sipcalc ${configure_default_cbsd_vs_cidr4} )
+	if [ -z "${_usable_range_start}" ]; then
+		cbsdlogger NOTICE ${CBSD_APP}: configure_default_vs warning: unable to find _usable_range_start via sipcalc for: ${configure_default_cbsd_vs_cidr4}
+		return 1
+	fi
+
+	case "${platform}" in
+		Linux)
+			${BRCTL_CMD} addbr ${configure_default_cbsd_vs_name}
+			${IP_CMD} link set ${configure_default_cbsd_vs_name} up
+			${IP_CMD} addr add ${_usable_range_start}/24 dev ${configure_default_cbsd_vs_name}
+			${IP_CMD} link show ${configure_default_cbsd_vs_name} >/dev/null 2>&1
+			_ret=$?
+			;;
+		*)
+			${IFCONFIG_CMD} ${_cbsd_vs} create
+			${IFCONFIG_CMD} ${_cbsd_vs} name ${configure_default_cbsd_vs_name}
+			${IFCONFIG_CMD} ${configure_default_cbsd_vs_name} ${_usable_range_start}/24
+			${IFCONFIG_CMD} ${configure_default_cbsd_vs_name} up
+			${IFCONFIG_CMD} ${configure_default_cbsd_vs_name} >/dev/null 2>&1
+			_ret=$?
+			;;
+	esac
+
+	if [ ${_ret} -ne 0 ]; then
+		echo "${CBSD_APP} error: unable to create default bridge: ${configure_default_cbsd_vs_name}"
+		return 1
+	fi
+
+	return 0
+}
+
+configure_default_vs()
+{
+	local _ret=
+
+	if [ "${configure_default_cbsd_vs_cidr4}" = "auto" ]; then
+		configure_default_cbsd_vs_cidr4=$( find_free_cidr4 )
+		_ret=$?
+		if [ ${_ret} -ne 0 ]; then
+			cbsdlogger NOTICE ${CBSD_APP}: configure_default_vs warning: unable to find available free cidr4, please set 'configure_default_cbsd_vs_cidr4' manually via global.conf
+			echo "warning: ${CBSD_APP}: configure_default_vs warning: unable to find available free cidr4, please set 'configure_default_cbsd_vs_cidr4' manually via global.conf"
+			return ${_ret}
+		fi
+
+		cbsdlogger NOTICE ${CBSD_APP}: configure_default_vs: configure_default_cbsd_vs_cidr4 auto: use ${configure_default_cbsd_vs_cidr4}, ${workdir}/etc/global.conf updated
+		echo "${CBSD_APP}: configure_default_vs: configure_default_cbsd_vs_cidr4 auto: use ${configure_default_cbsd_vs_cidr4} ( ${workdir}/etc/global.conf updated )"
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/etc/global.conf configure_default_cbsd_vs_cidr4="${configure_default_cbsd_vs_cidr4}" > /dev/null 2>&1
+		export configure_default_cbsd_vs_cidr4="${configure_default_cbsd_vs_cidr4}"
+	fi
+
+	case "${configure_default_cbsd_vs_engine}" in
+		bridge)
+			configure_default_vs_${configure_default_cbsd_vs_engine}
+			;;
+		*)
+			cbsdlogger NOTICE ${CBSD_APP}: configure_default_vs warning: unsupported configure_default_cbsd_vs_engine engine: ${configure_default_cbsd_vs_engine}
+			echo "warning: ${CBSD_APP}: configure_default_vs: unsupported configure_default_cbsd_vs_engine engine: ${configure_default_cbsd_vs_engine}"
+			;;
+	esac
+}
+
 if [ -z "${workdir}" ]; then
 	echo "cbsdd: empty workdir"
 	exit 1
 fi
 
+readconf global.conf
+
+[ -z "${configure_default_cbsd_vs}" ] && configure_default_cbsd_vs="0"
+
+# default virtual switch
+if [ "${configure_default_cbsd_vs}" != "0" ]; then
+	configure_default_vs
+fi
+exit 0
 readconf task.conf
 
 [ ! -f "${dbdir}/cbsdtaskd.sqlite" ] && err 1 "No such ${dbdir}/cbsdtaskd.sqlite"
@@ -115,6 +210,7 @@ cbsdsqlrw cbsdtaskd "UPDATE taskd SET status='0' WHERE status='1'" 2>/dev/null
 # remove stale lock and trash files
 ${FIND_CMD} -E ${ftmpdir} -mindepth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
 ${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
+${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name \*.desc -delete > /dev/null 2>&1
 
 # retrinv
 if [ ${sqlreplica} -eq 1 ]; then
@@ -201,3 +297,5 @@ while [ 1 ]; do
 		sleep 1
 	done
 done
+
+exit 0

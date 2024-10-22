@@ -29,6 +29,7 @@ init_items_desc()
 	statsd_bhyve_enable_desc="Configure CBSD statsd services for collect RACCT bhyve statistics?"
 	statsd_jail_enable_desc="Configure CBSD statsd services for collect RACCT jail statistics?"
 	statsd_hoster_enable_desc="Configure CBSD statsd services for collect RACCT hoster statistics?"
+	default_vs_desc="Configure default virtual switch?"
 }
 
 init_items_default()
@@ -44,7 +45,7 @@ init_items_default()
 			nodeip6_default="${CBSD_IP6}"
 			jnameserver_default="9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9"
 			# todo: ipv6 calc/net
-			nodeippool_default="10.0.0.0/16"
+			nodeippool_default="auto"
 			nodeip6pool_default="fde4:8dba:82e1::/64"
 			natip_default="${CBSD_IP6}"
 			;;
@@ -53,7 +54,7 @@ init_items_default()
 			nodeip6_default=
 			#jnameserver_default="9.9.9.9,149.112.112.112"
 			jnameserver_default="9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9"
-			nodeippool_default="10.0.0.0/16"
+			nodeippool_default="auto"
 			natip_default="${CBSD_IP4}"
 			;;
 		*)
@@ -77,6 +78,7 @@ init_items_default()
 	statsd_jail_enable_default="0"
 	statsd_bhyve_enable_default="0"
 	statsd_hoster_enable_default="0"
+	default_vs="0"
 }
 
 # install file from $2 to $3 if not equal
@@ -519,20 +521,20 @@ configure_racct()
 {
 	local racct_enabled
 
-	if [ "${platform}" = "Linux" ]; then
-		printf "\nkern.racct.enable=0\n" >> ${workdir}/rc.conf
-		return 0
-	fi
-
-	racct_enabled=$( ${SYSCTL_CMD} -qn kern.racct.enable > /dev/null 2>&1 )
-
-	[ $? -ne 0 ] && return 0
-
-	if [ "${racct_enabled}" = "1" ]; then
-		return 0
-	fi
-
 	if [ $( ${GREP_CMD} ^kern.racct.enable /boot/loader.conf /boot/loader.conf.local ${workdir}/rc.conf 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
+
+		if [ "${platform}" = "Linux" ]; then
+			printf "\nkern.racct.enable=0\n" >> ${workdir}/rc.conf
+			return 0
+		fi
+
+		racct_enabled=$( ${SYSCTL_CMD} -qn kern.racct.enable > /dev/null 2>&1 )
+		[ $? -ne 0 ] && return 0
+
+		if [ "${racct_enabled}" = "1" ]; then
+			return 0
+		fi
+
 		if getyesno "Do you want to enable RACCT feature for resource accounting?"; then
 			printf "\nkern.racct.enable=1\n" >> /boot/loader.conf
 		else
@@ -902,6 +904,23 @@ get_initenv_fbsdrepo()
 	esac
 }
 
+# form for $default_vs
+get_initenv_default_vs()
+{
+	local _retval
+
+	msg_yes="no"
+	msg_no="yes"
+	f_dialog_noyes "${default_vs_desc}"
+	_retval=$?
+
+	case ${_retval} in
+		0|1)
+			default_vs=${_retval}
+			;;
+	esac
+}
+
 # form for $repo
 get_initenv_repo()
 {
@@ -1060,7 +1079,7 @@ install_sshkey()
 
 	_md5name=$( ${miscdir}/cbsd_md5 "${nodename}" )
 	_keyfile="${sshdir}/${_md5name}.id_rsa"
-	_pubfile="${sshdir}/authorized_keys"
+	_pubfile="${_keyfile}.pub"
 
 	# store old key for remove
 	if [ -h ${sshdir}/id_rsa -a ${_renew} -eq 1 ]; then
@@ -1080,7 +1099,6 @@ install_sshkey()
 	if [ -z "${_install_key}" -a -z "${_install_pub}" -o ${_renew} -eq 1 ]; then
 		if [ ! -f ${_keyfile} ]; then
 			${SSH_KEYGEN_CMD} -t ed25519 -f ${_keyfile} -N ''
-			${MV_CMD} ${_keyfile}.pub ${_pubfile}
 		fi
 	else
 		[ -n "${_install_key}" ] && ${CP_CMD} -a ${_install_key} ${_keyfile} && ${ECHO} "${N1_COLOR}Private key updated${N0_COLOR}"
@@ -1091,6 +1109,7 @@ install_sshkey()
 	${CHMOD_CMD} 0440 ${_keyfile}
 	${CHOWN_CMD} ${cbsduser}:${cbsduser} ${_keyfile} ${_pubfile}
 	${LN_CMD} -sf ${_keyfile} ${sshdir}/id_rsa
+	${LN_CMD} -sf ${_pubfile} ${sshdir}/id_rsa.pub
 }
 
 # run install_sshkey for change ssh key
@@ -1124,8 +1143,8 @@ collect_netinfo()
 
 	case "${platform}" in
 		Linux)
-			_uplink_iface4=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $5}' )
-			_uplink_iface6=$( ${IP_CMD} -6 route ls | ${AWK_CMD} '/^default/{print $5}' )
+			_uplink_iface4=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $5}' | ${HEAD_CMD} -n1 )
+			_uplink_iface6=$( ${IP_CMD} -6 route ls | ${AWK_CMD} '/^default/{print $5}' | ${HEAD_CMD} -n1 )
 			;;
 		DragonFly)
 			# Dfly not support -4/-6 args
@@ -1235,6 +1254,7 @@ sqlreplica \
 statsd_bhyve_enable \
 statsd_jail_enable \
 statsd_hoster_enable \
+default_vs \
 "
 
 #system settings
