@@ -22,7 +22,7 @@ cat <<- EOF > ${mount_dir}/CONFIG/network/cbsd-network
 EOF
 ls -l ${mount_dir}/CONFIG/network/
 cat -n ${mount_dir}/CONFIG/network/cbsd-network
-cp ~cbsd/.ssh/authorized_keys ${mount_dir}/CONFIG/
+cp ~cbsd/.ssh/id_rsa.pub ${mount_dir}/CONFIG/
 umount ${mount_dir}
 
 exit 0
