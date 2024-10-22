@@ -21,15 +21,15 @@ tearDown() {
 }
 
 testFreeBSDVersion() {
-	cbsd jcreate jname="${jname}" ver=13.2
+	cbsd jcreate jname="${jname}" ver=14.1
 	cbsd jstart jname="${jname}"
-	jail_version=$(cbsd jexec jname="${jname}" freebsd-version | cut -d "-" -f 1-2 )		# trim -pXX (e.g.: 13.2-RELEASE-p11 -> 13.2-RELEASE )
-	assertEquals "Jail FreeBSD version" "${jail_version}" "13.2-RELEASE"
+	jail_version=$(cbsd jexec jname="${jname}" freebsd-version | cut -d "-" -f 1-2 )		# trim -pXX (e.g.: 14.2-RELEASE-p11 -> 14.2-RELEASE )
+	assertEquals "Jail FreeBSD version" "${jail_version}" "14.1-RELEASE"
 }
 
 # Test authorized_keys
 testAuthorizedKeys() {
-	cp ~cbsd/.ssh/authorized_keys "${dir}"/ || exit 1
+	cp ~cbsd/.ssh/id_rsa.pub "${dir}"/authorized_keys || exit 1
 	cbsd jcreate jname="${jname}" vnet=1 ip4_addr="212.212.212.214/30" ci_gw4="212.212.212.213" ci_user_pubkey="authorized_keys" runasap=1 interface=em0
 	K1=$(head -n1 "${dir}"/authorized_keys)
 	K2=$(head -n1 ~cbsd/jails-data/"${jname}"-data/root/.ssh/authorized_keys)
