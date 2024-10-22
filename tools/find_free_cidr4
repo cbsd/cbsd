@@ -1,0 +1,110 @@
+#!/usr/local/bin/cbsd
+#v11.0.6
+MYARG=""
+MYOPTARG="reload"
+MYDESC="find_available_free_cidr4"
+CBSDMODULE="sys"
+
+. ${subrdir}/nc.subr
+. ${cbsdinit}
+. ${system}
+
+find_available_free_cidr4()
+{
+	local _uplink_iface4=
+
+	case "${platform}" in
+		Linux)
+			_uplink_iface4=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $5}' | ${HEAD_CMD} -n1 )
+			;;
+		*)
+			_uplink_iface4=$( ${ROUTE_CMD} -4 -n get 0.0.0.0 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+			;;
+	esac
+
+	if [ -z "${_uplink_iface4}" ]; then
+		_uplink_iface4=$( ${miscdir}/nics-list -s lo | ${HEAD_CMD} -n1 )
+	fi
+
+	[ -z "${_uplink_iface4}" ] && return 1
+
+	local _scan_net="10.0.0 10.0.50 10.0.200 10.1.0 10.50.0 10.100.0 10.200.0 172.16.0 172.20.0 172.30.0 192.168.0 192.168.128 192.168.254"
+
+	for i in ${_scan_net}; do
+
+		case "${platform}" in
+			Linux)
+				_dev=$( ${IP_CMD} route get ${i}.1 | ${AWK_CMD} '{for(i=1; i<=NF; i++) if($i=="dev") print $(i+1); exit 0}' )
+				_ret=$?
+				;;
+			*)
+				_dev=$( ${ROUTE_CMD} -4 -n get ${i}.1 2>/dev/null | ${AWK_CMD} '/interface/{print $2}' )
+				_ret=$?
+				;;
+		esac
+
+		[ ${_ret} -ne 0 ] && return ${_ret}
+
+		# no defroute ?
+		[ -z "${_dev}" ] && _dev="${_uplink_iface}"
+
+		if [ "${_dev}" = "${_uplink_iface4}" ]; then
+			printf "${i}.0/24"
+			return 0
+		fi
+		#echo "[${_dev}][${i}][${x}] (uplink: [${_uplink_iface4}])" >> /debug
+	done
+
+	return 1
+}
+
+# bridge already exist?
+readconf global.conf
+
+find_via_cbsd_bridge()
+{
+	local _ret=
+
+	if [ -n "${configure_default_cbsd_vs_name}" ]; then
+		case "${platform}" in
+			Linux)
+				_res=$( ${IP_CMD} link show ${configure_default_cbsd_vs_name} >/dev/null 2>&1 )
+				_ret=$?
+				[ ${_ret} -ne 0 ] && return 1
+				_main4=$( ${IP_CMD} -4 address show dev ${configure_default_cbsd_vs_name} | ${AWK_CMD} '/inet *.*+/{print $2}' | ${HEAD_CMD} -n1 )
+				[ -z "${_main4}" ] && return 1
+				;;
+			*)
+				_res=$( ${IFCONFIG_CMD} ${configure_default_cbsd_vs_name} >/dev/null 2>&1 )
+				_ret=$?
+				[ ${_ret} -ne 0 ] && return 1
+				_main4=$( ${IFCONFIG_CMD} -f cidr ${configure_default_cbsd_vs_name} | ${AWK_CMD} '/inet [0-9]+/ { print $2}' | ${HEAD_CMD} -n 1 )
+				[ -z "${_main4}" ] && return 1
+				;;
+		esac
+	fi
+
+	local _network_address=
+	eval $( ${miscdir}/sipcalc ${_main4} )
+	[ -z "${_network_address}" ] && return 1
+
+	printf "${_network_address}/${_network_mask_bits}"
+
+	return 0
+}
+
+_res=$( find_via_cbsd_bridge )
+_ret=$?
+if [ ${_ret} -eq 0 ]; then
+	printf "${_res}"
+	exit 0
+fi
+
+_res=$( find_available_free_cidr4 )
+_ret=$?
+if [ ${_ret} -eq 0 ]; then
+	printf "${_res}"
+	exit 0
+fi
+
+err 1 "${_res}"
