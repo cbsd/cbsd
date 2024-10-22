@@ -20,13 +20,23 @@ update_sql()
 	local _NICSTABLE="mac type media ip4 ip6 mask4 mask6 status usr1 usr2 usr3 hwaddr"
 
 	_nic="${1}"
-	_mac=$( ${IFCONFIG_CMD} ${_nic} | ${AWK_CMD} '/ether / {print $2}' )
-	_hwaddr=$( ${IFCONFIG_CMD} ${_nic} | ${AWK_CMD} '/hwaddr / {print $2}' )
+	case "${platform}" in
+		Linux)
+			_mac=$( ${CAT_CMD} /sys/class/net/${1}/address )
+			_hwaddr="${_mac}"
+			_main4=$( ${IP_CMD} -4 address show dev ${1} | ${AWK_CMD} '/inet *.*+/{print $2}' | ${HEAD_CMD} -n1 )
+			_main5=$( ${IP_CMD} -6 address show dev ${1} | ${AWK_CMD} '/inet *:*+/{print $2}' | ${HEAD_CMD} -n1 )
+			;;
+		*)
+			_mac=$( ${IFCONFIG_CMD} ${_nic} | ${AWK_CMD} '/ether / {print $2}' )
+			_hwaddr=$( ${IFCONFIG_CMD} ${_nic} | ${AWK_CMD} '/hwaddr / {print $2}' )
+			_main4=$( ${IFCONFIG_CMD} ${1} | ${AWK_CMD} '/inet [0-9]+/ { print $2, $4}' | ${HEAD_CMD} -n 1 )
+			_main5=$( ${IFCONFIG_CMD} ${1} | ${AWK_CMD} '/inet6 *:*+/ { print $2, $4}' | ${HEAD_CMD} -n 1 )
+			;;
+	esac
 
+	[ -z "${_mac}" ] && _mac="unknown"
 	[ -z "${_hwaddr}" ] && _hwaddr="${_mac}"
-
-	_main4=$( ${IFCONFIG_CMD} $1 | ${AWK_CMD} '/inet [0-9]+/ { print $2, $4}' | /usr/bin/head -n 1 )
-	_main5=$( ${IFCONFIG_CMD} $1 | ${AWK_CMD} '/inet6 *:*+/ { print $2, $4}' | /usr/bin/head -n 1 )
 
 	if [ -n "${_main4}" ]; then
 		_ip4=${_main4%% *}
@@ -56,7 +66,6 @@ update_sql()
 }
 
 #MAIN
-
 NICS=$( ${miscdir}/nics-list -s "lo tap bridge" )
 
 #first of all: populate all available interfaces
@@ -70,9 +79,18 @@ for i in ${NICS}; do
 	update_sql $i
 done
 
-GW4=$( ${ROUTE_CMD} -n get 0.0.0.0 2>/dev/null| ${AWK_CMD} '/gateway:/{print $2}' )
-GW6=$( ${ROUTE_CMD} -n get -inet6 :: 2>/dev/null | ${AWK_CMD} '/gateway:/{print $2}' )
-FIBS=$( ${SYSCTL_CMD} -n net.fibs 2>/dev/null )
+case "${platform}" in
+	Linux)
+		GW4=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $3}' | ${HEAD_CMD} -n1 )
+		GW6=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $3}' | ${HEAD_CMD} -n1 )
+		FIBS=0
+		;;
+	*)
+		GW4=$( ${ROUTE_CMD} -n get 0.0.0.0 2>/dev/null| ${AWK_CMD} '/gateway:/{print $2}' )
+		GW6=$( ${ROUTE_CMD} -n get -inet6 :: 2>/dev/null | ${AWK_CMD} '/gateway:/{print $2}' )
+		FIBS=$( ${SYSCTL_CMD} -n net.fibs 2>/dev/null )
+		;;
+esac
 
 [ -z "${FIBS}" ] && FIBS=0
 
@@ -96,3 +114,5 @@ fi
 update_netinfo
 ${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip4_active=\"${node_ip4_active}\"
 ${miscdir}/sqlcli ${dbdir}/local.sqlite UPDATE local SET node_ip6_active=\"${node_ip6_active}\"
+
+exit 0

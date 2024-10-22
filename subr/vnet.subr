@@ -121,7 +121,7 @@ get_device_uplink()
 get_my_device()
 {
 	local _i _uplink _firstfree _ret _test _dev _desc
-	local _vpc=0 _dbpath
+	local _vpc=0 _dbpath _niclist= _res=
 	local _is_vtnet=0 _prefix5	# (see #254343 work-around)
 
 	[ -z "${1}" ] && echo "set device" && return 1
@@ -138,10 +138,33 @@ get_my_device()
 	_prefix5=$( substr --pos=0 --len=5 --str="${_desc}" )
 	[ "${_prefix5}" = "vtnet" ] && _is_vtnet=1
 
-	for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
-		_uplink=$( get_device_uplink ${_i} ${_desc} )
-		[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
-	done
+	case "${platform}" in
+		Linux)
+			for _i in $( ${IP_CMD} -brief link show type ${_dev} | ${AWK_CMD} '{printf $1" "}' ); do
+				if [ -z "${_niclist}" ]; then
+					_niclist="${_i}"
+				else
+					_niclist="${_niclist} ${_i}"
+				fi
+			done
+			;;
+		*)
+			for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
+				if [ -z "${_niclist}" ]; then
+					_niclist="${_i}"
+				else
+					_niclist="${_niclist} ${_i}"
+				fi
+			done
+			;;
+	esac
+
+	if [ -n "${_niclist}" ]; then
+		for _i in ${_niclist}; do
+			_uplink=$( get_device_uplink ${_i} ${_desc} )
+			[ "${_uplink}" = "${_desc}" ] && echo "${_i}" && return 0
+		done
+	fi
 
 	# we need for new bridge with ${_dev} uplink
 	_firstfree=$( get-next-nic name=${_dev} )
@@ -166,28 +189,74 @@ get_my_device()
 
 		# my parent already bridge?
 		if [ ${_vpc} -ne 1 ]; then
-			_is_bridge=$( ${IFCONFIG_CMD} ${_desc} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
-			[ "${_is_bridge}" = "bridge" ] && echo "${_desc}" && return 0
+			case "${platform}" in
+				Linux)
+					_res=$( ${IP_CMD} link show type bridge dev ${_desc} 2>/dev/null )
+					[ -n "${_res}" ] && echo "${_desc}" && return 0
+					;;
+				*)
+					_is_bridge=$( ${IFCONFIG_CMD} ${_desc} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+					[ "${_is_bridge}" = "bridge" ] && echo "${_desc}" && return 0
+					;;
+			esac
 		fi
 
 		# set desciption first
-		_test=$( ${IFCONFIG_CMD} ${_firstfree} create description ${_desc} 2>&1 )
-		_ret=$?
-		if [ ${_ret} -ne 0 ]; then
-			cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, unable to create: ${_ret}: ${_test}
-			echo "${_test}"
-			return 1
-		fi
+		case ${platform} in
+			Linux)
+				case "${_dev}" in
+					bridge)
+						_test=$( ${BRCTL_CMD} addbr ${_firstfree} )
+						_ret=$?
+						;;
+					tap)
+						_test=$( ${IP_CMD} tuntap add mode tap ${_newif} )
+						_ret=$?
+						;;
+				esac
+
+				if [ ${_ret} -ne 0 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, unable to create: ${_ret}: ${_test}
+					echo "${_test}"
+					return 1
+				fi
+				${IP_CMD} link set ${_firstfree} up
+				echo "${_desc}" > ${workdir}/tmp/nic-${_firstfree}.desc 2>&1
+				;;
+			*)
+				_test=$( ${IFCONFIG_CMD} ${_firstfree} create description ${_desc} 2>&1 )
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, unable to create: ${_ret}: ${_test}
+					echo "${_test}"
+					return 1
+				fi
+				;;
+		esac
+
 		case "${_vpc}" in
 			0)
-				cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
-				_test=$( ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up 2>&1 )
-				_ret=$?
+				case "${platform}" in
+					Linux)
+						cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: brctl addif ${_firstfree} ${_desc}
+#						_test=$( ${BRCTL_CMD} addif ${_firstfree} ${_desc} 2>&1 )
+						_ret=$?
+						;;
+					*)
+						cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up
+						_test=$( ${IFCONFIG_CMD} ${_firstfree} addm ${_desc} up 2>&1 )
+						_ret=$?
+						;;
+				esac
 				if [ ${_ret} -ne 0 ]; then
 					cbsdlogger NOTICE ${CBSD_APP}: get_my_device $*: error, ret: ${_ret}: ${_test}
 					echo "${_test}"
 					return 1
 				fi
+
+#				ip link set ${_firstfree} up > /dev/null 2>&1
+#				ip link set ${_desc} up > /dev/null 2>&1
+#				ip link set ${_desc} master ${_firstfree}  > /dev/null 2>&1
 				;;
 			1)
 				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
@@ -523,8 +592,8 @@ get_vm_uplink_interface()
 				1)
 					case "${platform}" in
 						Linux)
-							# ipv6? perl ?
-							interface=$( ${IP_CMD} -o route get ${IWM} | perl -nle 'if ( /dev\s+(\S+)/ ) {print $1}' )
+							# ipv6?
+							interface=$( ${IP_CMD} -o route get ${IWM} | ${AWK_CMD} '{for(i=1; i<=NF; i++) if($i=="dev") print $(i+1); exit 0}' )
 							;;
 						DragonFly)
 							# 2021-11: DFLY doesn't support '-4'/'-6' key
