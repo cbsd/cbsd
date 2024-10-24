@@ -13,6 +13,58 @@ find_available_free_cidr4()
 {
 	local _uplink_iface4=
 
+
+	local _scan_net="10.0.0 10.0.50 10.0.200 10.1.0 10.50.0 10.100.0 10.200.0 172.16.0 172.20.0 172.30.0 192.168.0 192.168.128 192.168.254"
+
+	local _local_ips=
+
+	case "${platform}" in
+		Linux)
+			_res=$( ${IP_CMD} a  2>/dev/null | ${AWK_CMD} '/inet [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\//{print $2}' )
+			;;
+		*)
+			_res=$( ${IFCONFIG_CMD} -f cidr 2>/dev/null | ${AWK_CMD} '/inet [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\//{print $2}' )
+			;;
+	esac
+
+	for i in ${_res}; do
+		case "${i}" in
+			127.0.0.*)
+				continue
+				;;
+		esac
+		if [ -z "${_local_ips}" ]; then
+			_local_ips="${i}"
+		else
+			_local_ips="${_local_ips} ${i}"
+		fi
+	done
+
+	# first: search by local network
+	for i in ${_scan_net}; do
+		_network_address=
+		_tmp_network_address=
+		eval $( ${miscdir}/sipcalc ${i}.0/24 )
+		_tmp_network_address="${_network_address}"
+		_used=1
+
+		for j in ${_local_ips}; do
+			_network_address=
+			_used_network_address=
+			eval $( ${miscdir}/sipcalc ${j} )
+			_used_network_address="${_network_address}"
+			[ "${_tmp_network_address}" = "${_used_network_address}" ] && continue
+			_used=0
+			break
+		done
+
+		if [ ${_used} -eq 0 ]; then
+			printf "${i}.0/24"
+			return 0
+		fi
+	done
+
+	# second: search by route
 	case "${platform}" in
 		Linux)
 			_uplink_iface4=$( ${IP_CMD} -4 route ls | ${AWK_CMD} '/^default/{print $5}' | ${HEAD_CMD} -n1 )
@@ -27,8 +79,6 @@ find_available_free_cidr4()
 	fi
 
 	[ -z "${_uplink_iface4}" ] && return 1
-
-	local _scan_net="10.0.0 10.0.50 10.0.200 10.1.0 10.50.0 10.100.0 10.200.0 172.16.0 172.20.0 172.30.0 192.168.0 192.168.128 192.168.254"
 
 	for i in ${_scan_net}; do
 
@@ -52,7 +102,6 @@ find_available_free_cidr4()
 			printf "${i}.0/24"
 			return 0
 		fi
-		#echo "[${_dev}][${i}][${x}] (uplink: [${_uplink_iface4}])" >> /debug
 	done
 
 	return 1
