@@ -598,17 +598,21 @@ phase2()
 	# todo: embed version to build and ask/check version before build
 
 	if [ ! -r ${distdir}/misc/sipcalc ]; then
-		if [ -f ${distdir}/misc/src/sipcalc/Makefile ]; then
-			make -C ${distdir}/misc/src/sipcalc
-			installne "-o ${cbsduser} -g ${cbsduser} -m 555 -s" ${distdir}/misc/src/sipcalc/sipcalc ${distdir}/misc/sipcalc
-			make -C ${distdir}/misc/src/sipcalc clean
+		if [ ! -x ${distdir}/misc/sipcalc5 ]; then
+			if [ -f ${distdir}/misc/src/sipcalc/Makefile ]; then
+				make -C ${distdir}/misc/src/sipcalc
+				installne "-o ${cbsduser} -g ${cbsduser} -m 555 -s" ${distdir}/misc/src/sipcalc/sipcalc ${distdir}/misc/sipcalc
+				make -C ${distdir}/misc/src/sipcalc clean
+			fi
 		fi
 	fi
 
 	if [ -f ${distdir}/misc/src/cbsd_md5/Makefile ]; then
-		make -C ${distdir}/misc/src/cbsd_md5
-		installne "-o ${cbsduser} -g ${cbsduser} -m 555 -s" ${distdir}/misc/src/cbsd_md5/cbsd_md5 ${distdir}/misc/cbsd_md5
-		make -C ${distdir}/misc/src/cbsd_md5 clean
+		if [ ! -x ${distdir}/misc/cbsd_md5 ]; then
+			make -C ${distdir}/misc/src/cbsd_md5
+			installne "-o ${cbsduser} -g ${cbsduser} -m 555 -s" ${distdir}/misc/src/cbsd_md5/cbsd_md5 ${distdir}/misc/cbsd_md5
+			make -C ${distdir}/misc/src/cbsd_md5 clean
+		fi
 	fi
 
 	if [ ! -f ${distdir}/misc/ipv6range ]; then
@@ -913,7 +917,7 @@ phase5()
 		exit 1
 	fi
 
-	${CHMOD_CMD} 0660 ${dbdir}/inv.${nodename}.sqlite && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${dbdir}/inv.${nodename}.sqlite
+	${CHMOD_CMD} 0660 ${dbdir}/inv.${nodename}.sqlite ${workdir}/nc.inventory && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${dbdir}/inv.${nodename}.sqlite ${workdir}/nc.inventory
 
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-local.schema local
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-carp.schema carp
@@ -1514,7 +1518,7 @@ EOF
 
 		desc_question "preseedinit"
 		if [ $? -eq 0 -a "${answ}" = "1" ]; then
-			cp ${INITCFG_PRESEED} /tmp/prs.txt
+			${CP_CMD} ${INITCFG_PRESEED} /tmp/prs.txt
 
 			echo
 			echo "---cut here ---"
@@ -1523,9 +1527,38 @@ EOF
 			echo
 
 		fi
-		rm -f ${INITCFG_PRESEED}
+		${RM_CMD} -f ${INITCFG_PRESEED}
 
 		/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/rc.conf preseedinit="${answ}" > /dev/null 2>&1
+	fi
+
+	if [ ${first_init} -eq 1 ]; then
+		[ -r /etc/rc.conf ] && . /etc/rc.conf
+		if [ "${cbsdd_enable}" = "YES" ]; then
+			printf "Starting service: cbsdd ... "
+			case "${platform}" in
+				Linux)
+					[ -z "${SYSTEMCTL_CMD}" ] && echo "no systemctl cmd" && break
+					${SYSTEMCTL_CMD} stop cbsdd.service > /dev/null 2>&1 || true
+					${SYSTEMCTL_CMD} start cbsdd.service > /dev/null 2>&1
+					_ret=$?
+					;;
+				*)
+					[ -z "${SERVICE_CMD}" ] && echo "no service cmd" && break
+					${SERVICE_CMD} cbsdd stop > /dev/null 2>&1 || true
+					${SERVICE_CMD} cbsdd start > /dev/null 2>&1
+					_ret=$?
+					;;
+			esac
+			case "${_ret}" in
+				0)
+					${ECHO} "${N2_COLOR}done${N0_COLOR}"
+					;;
+				1)
+					${ECHO} "${W1_COLOR}failed${N0_COLOR}"
+					;;
+			esac
+		fi
 	fi
 
 	exit 0
@@ -1655,7 +1688,7 @@ case "${platform}" in
 		true
 		;;
 	FreeBSD)
-		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} kldstat pw"
+		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} kldstat pw service"
 		;;
 esac
 
