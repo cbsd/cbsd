@@ -244,6 +244,9 @@ dialog_menu_main()
 	menu_list="${menu_list} '${item_num} vm_cpu_topology'	'$(curval vm_cpu_topology)'	'Select VM CPU topology'"
 	inc_menu_index item_num
 
+	menu_list="${menu_list} '${item_num} LPC'			'LPC devices >>'	'cbsd blpc'"
+	inc_menu_index item_num
+
 	# FreeBSD-13+ only
 	if [ ${freebsdhostversion} -gt 1300033 ]; then
 		inc_menu_index item_num
@@ -416,6 +419,8 @@ else
 	apply_vm_package
 fi
 
+lpc_temp_sql=
+
 while [ 1 ]; do
 	pkgnum=0
 	[ -n "${pkglist}" -a "${pkglist}" != "NO" ] && pkgnum=$( ${WC_CMD} -w ${pkglist} | ${AWK_CMD} '{printf $1}' )
@@ -468,6 +473,36 @@ while [ 1 ]; do
 			fi
 			invert_checkbox ${mychoice}
 			continue
+			;;
+		LPC)
+			if [ -z "${lpc_temp_sql}" ]; then
+				lpc_temp_sql=$( ${MKTEMP_CMD} )
+				# keep in sync with bcreate
+				/usr/local/bin/cbsd ${miscdir}/updatesql ${lpc_temp_sql} ${distdir}/share/local-bhyve-lpc.schema lpc
+
+				[ -n "${otpm}" ] && tpm="${tpm}"
+				[ -n "${obootrom}" ] && bootrom="${obootrom}"
+				[ -n "${ocom1}" ] && com1="${ocom1}"
+				[ -n "${ocom2}" ] && com2="${ocom2}"
+				[ -n "${ocom3}" ] && com3="${ocom3}"
+				[ -n "${ocom4}" ] && com4="${ocom4}"
+
+				[ -z "${tpm}" ] && tpm="0"
+				[ -z "${bootrom}" ] && bootrom="${distdir}/upgrade/patch/efi.fd"
+				[ -z "${com1}" ] && com1="stdio"
+				[ -z "${com2}" ] && com2="0"
+				[ -z "${com3}" ] && com3="0"
+				[ -z "${com4}" ] && com4="0"
+
+				${miscdir}/sqlcli ${lpc_temp_sql} "INSERT INTO 'lpc' ( 'lpcslot_name', 'lpcslot_desc', 'lpcslot_value' ) VALUES ( 'bootrom', 'bootrom device', '${bootrom}' ), ( 'com1', 'com1 device', '${com1}' ), ( 'com2', 'com2 device', '${com2}' ), ( 'com3', 'com3 device', '${com3}' ), ( 'com4', 'com4 device', '${com4}' ), ( 'tpm', 'TPM device', '${tpm}' );"
+				trap "${RM_CMD} -f ${lpc_temp_sql} ${lpc_temp_sql}-shm ${lpc_temp_sql}-wal" HUP INT ABRT BUS TERM EXIT
+			fi
+			if [ -z "${jname}" ]; then
+				f_dialog_msgbox "please set jname first" "Error"
+				continue
+			fi
+			blpc-tui jname="${jname}" out="${lpc_temp_sql}"
+			trap "${RM_CMD} -f ${lpc_temp_sql}-shm ${lpc_temp_sql}-wal" HUP INT ABRT BUS TERM EXIT
 			;;
 		*)
 			get_construct_${mychoice}
