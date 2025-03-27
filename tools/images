@@ -163,11 +163,12 @@ images_register()
 				fi
 				[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
 				echo "Image name: ${_imgname}"
+				_imgshort=$( substr --pos=0 --len=12 --str="${_imgname}" )
 				if [ -n "${NOCOLOR}" ]; then
-					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images | ${GREP_CMD} "${path}"
+					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images ${_imgname} | ${GREP_CMD} "${_imgshort}"
 					_ret=$?
 				else
-					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images | ${ENV_CMD} GREP_COLORS='mt=37;45' GREP_COLOR='37;45' ${GREP_CMD} --colour=always "${path}"
+					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images ${_imgname} | ${ENV_CMD} GREP_COLORS='mt=37;45' GREP_COLOR='37;45' ${GREP_CMD} --colour=always "${_imgshort}"
 					_ret=$?
 				fi
 
@@ -215,7 +216,20 @@ images_register()
 
 				##ZFS
 				if [ ${zfsfeat} -eq 1 ]; then
-					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
+					_buildah_container_volume=$(${MOUNT_CMD} | ${AWK_CMD} '($2 == "on" && $3 == "'"${_imgpath}"'") { print $1; }')
+					if [ -z "$_buildah_container_volume" ]; then
+						${ECHO} "${N1_COLOR}${CBSD_APP}: unable find zfs volume for ${_imgpath} ${N0_COLOR}"
+						exit 1
+					fi
+
+					_buildah_image_snapshot=$(${ZFS_CMD} get origin "${_buildah_container_volume}" | ${AWK_CMD} '($2 == "origin") {print $3;}')
+					if [ -z "${_buildah_image_snapshot}" ]; then
+						${ECHO} "${N1_COLOR}${CBSD_APP}: unable find ZFS image orign for ${_buildah_container_volume} ${N0_COLOR}"
+						exit 1
+					fi
+
+					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain zfs_snapsrc="${_buildah_image_snapshot}"\
+						ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
 					_ret=$?
 					[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}unable to create jail: ${N2_COLOR}jcreate jname="${_md5}" host_hostname=${_md5}.my.domain${N0_COLOR}"
 					_rootfs="${workdir}/jails-data/${_md5}-data"
@@ -227,7 +241,7 @@ images_register()
 					# create_from_srcsnap loop
 					. ${subrdir}/zfs.subr
 					DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
-					${RSYNC_CMD} -z -a --hard-links --links --acls --xattrs --numeric-ids --recursive --partial ${_imgpath}/ ${_rootfs}/
+
 					_zfssrc="${DATA}/${_md5}"
 					_zfssrc_snap=$( get_zfs_image_snap ${_zfssrc} )
 					# with ZFS we dont need image file anymore
@@ -256,7 +270,6 @@ images_register()
 
 				${BUILDAH_CMD} --root ${workdir}/basejail/buildah unmount ${_md5}
 				${BUILDAH_CMD} --root ${workdir}/basejail/buildah rm ${_md5}
-				${BUILDAH_CMD} --root ${workdir}/basejail/buildah rmi ${_imgname}
 
 				[ -z "${emulator}" ] && emulator="jail"
 				[ -z "${name}" ] && name="${path}"
