@@ -3,7 +3,7 @@
 # TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
 MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs \
-mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only extra_part extra_part_label"
+mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only extra_part extra_part_label mfsbsd_leave_kernel_dir"
 
 MYDESC="Create bootable ISO/Memstick/MFSBSD image from CBSD jail"
 
@@ -42,20 +42,22 @@ ${H3_COLOR}Options${N0_COLOR}:
 
 ${H3_COLOR}Options for 'media=mfs'${N0_COLOR}:
 
- ${N2_COLOR}mfsbsd_hostname${N0_COLOR}      - pass 'hostname' values to MFSBSD script;
- ${N2_COLOR}mfsbsd_interface${N0_COLOR}     - pass configured interace name to MFSBSD script, possible values:
-                        - interface name, e.g.: 'vtnet0', 'xi0', 're1', 'igb2';
-                        - when 'auto', ifconfig_DEFAULT will be used;
-                        - when values sets to MAC (hwaddr), the interface will be found by MAC, e.g.: '58:9c:fc:10:45:5a';
- ${N2_COLOR}mfsbsd_vlan{N0_COLOR}           - VLAN ID or '0' for accessport/untagged;
- ${N2_COLOR}mfsbsd_defaultrouter${N0_COLOR} - pass 'defaultrouter'/'ipv6_defaultrouter' values to MFSBSD script, e.g.:
-                        '10.0.0.1' or '2a05:3580:d811:802::1' or '10.0.0.1,2a05:3580:d811:802::1';
- ${N2_COLOR}mfsbsd_ip_addr${N0_COLOR}       - pass IPv4 and/or IPv6 values for 'mfsbsd_interface', e.g.: '10.0.0.2' or 
-                        '2a05:3580:d811:802::2' or '10.0.0.2,2a05:3580:d811:802::2'. For DHCP use 'REALDHCP' values;
- ${N2_COLOR}mfsbsd_nameservers${N0_COLOR}   - pass 'nameserver' to MFSBSD script, e.g.: '8.8.8.8' or 
-                        '9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9';
- ${N2_COLOR}mfsbsd_origin_site${N0_COLOR}   - pass origin site for 'netkldload' script to MFSBSD script, e.g.: 'netboot.example.com';
-
+ ${N2_COLOR}mfsbsd_hostname${N0_COLOR}         - pass 'hostname' values to MFSBSD script;
+ ${N2_COLOR}mfsbsd_interface${N0_COLOR}        - pass configured interace name to MFSBSD script, possible values:
+                           - interface name, e.g.: 'vtnet0', 'xi0', 're1', 'igb2';
+                           - when 'auto', ifconfig_DEFAULT will be used;
+                           - when values sets to MAC (hwaddr), the interface will be found by MAC, e.g.: '58:9c:fc:10:45:5a';
+ ${N2_COLOR}mfsbsd_vlan${N0_COLOR}             - VLAN ID or '0' for accessport/untagged;
+ ${N2_COLOR}mfsbsd_defaultrouter${N0_COLOR}    - pass 'defaultrouter'/'ipv6_defaultrouter' values to MFSBSD script, e.g.:
+                           '10.0.0.1' or '2a05:3580:d811:802::1' or '10.0.0.1,2a05:3580:d811:802::1';
+ ${N2_COLOR}mfsbsd_ip_addr${N0_COLOR}          - pass IPv4 and/or IPv6 values for 'mfsbsd_interface', e.g.: '10.0.0.2' or 
+                           '2a05:3580:d811:802::2' or '10.0.0.2,2a05:3580:d811:802::2'. For DHCP use 'REALDHCP' values;
+ ${N2_COLOR}mfsbsd_nameservers${N0_COLOR}      - pass 'nameserver' to MFSBSD script, e.g.: '8.8.8.8' or 
+                           '9.9.9.9,149.112.112.112,2620:fe::fe,2620:fe::9';
+ ${N2_COLOR}mfsbsd_origin_site${N0_COLOR}      - pass origin site for 'netkldload' script to MFSBSD script, e.g.: 'netboot.example.com';
+ ${N2_COLOR}mfsbsd_leave_kernel_dir${N0_COLOR} - when empty or '0', script purge /boot/kernel/* content inside MFS, 
+                           when 1 - leave the directory content as-is;
+                           when \"file1 file2 file3\" - leave file1 file2 file3 only (can be mask, e.g.: \*.ko);
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -104,6 +106,7 @@ mfs_struct_only=0
 
 extra_part=
 extra_part_label=
+mfsbsd_leave_kernel_dir=
 . ${cbsdinit}
 
 if [ -z "${ver}" -o "${ver}" = "native" ]; then
@@ -661,13 +664,29 @@ check_for_external_mount()
 # for MFS: ${TMP_DIR}/root - directory for LiveCD
 make_ufs()
 {
-	local _init_bin
+	local _init_bin=
 	local _ncpu=
+	local _kernel_path=
 
-	${ECHO} "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
-	# move to kernel init?
-	get_kernel
-	[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
+	if [ "${ver}" = "empty" ]; then
+		# checks kernel inside hier
+		if [ -r "${path}/boot/kernel" ]; then
+			_kernel_path="${path}/boot/kernel"
+		elif [ -r "${path}/boot/kernel.gz" ]; then
+			_kernel_path="${path}/boot/kernel.gz"
+		fi
+		if [ -n "${_kernel_path}" ]; then
+			${ECHO} "${N1_COLOR}kernel found inside hier, will be used: ${N2_COLOR}${_kernel_path}${N0_COLOR}" 1>&2
+			KERNEL_DIR="${path}"
+		else
+			err "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
+		fi
+	else
+		${ECHO} "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
+		# move to kernel init?
+		get_kernel
+		[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
+	fi
 
 	case "${media}" in
 		iso|memstick|bhyve|livecd|mfs)
@@ -720,7 +739,26 @@ make_ufs()
 		# not for MFS
 		[ -d "${TMP_DIR}/boot" ] && ${RM_CMD} -rf ${TMP_DIR}/boot
 		${CP_CMD} -a ${path}/boot ${TMP_DIR}/
-		${RM_CMD} -rf ${TMP_DIR}/boot/kernel
+		case "${mfsbsd_leave_kernel_dir}" in
+			0|'')
+				${RM_CMD} -rf ${TMP_DIR}/boot/kernel
+				;;
+			1)
+				true
+				;;
+			*)
+				## build list first
+				TDIR=$( ${MKTEMP_CMD} -d )
+				
+				for i in ${mfsbsd_leave_kernel_dir}; do
+					${FIND_CMD} ${TMP_DIR}/boot/kernel/ -type f -name ${i} | while read _f; do
+						${MV_CMD} ${_f} ${TDIR}/
+					done
+				done
+				${RM_CMD} -rf ${TMP_DIR}/boot/kernel
+				${MV_CMD} ${TDIR} ${TMP_DIR}/boot/kernel
+				;;
+		esac
 	fi
 
 	[ "${media}" != "bhyve" ] && ${RM_CMD} -rf ${TMP_DIR}/rescue
