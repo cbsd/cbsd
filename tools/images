@@ -155,9 +155,9 @@ images_register()
 
 				# --platform linux
 				[ -n "${oplatform}" ] && platform="${oplatform}"
+				_buildah_platform=$( echo ${platform} | ${TR_CMD} '[:upper:]' '[:lower:]' )
 				echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path}"
 
-				_buildah_platform=$( echo ${platform} | ${TR_CMD} '[:upper:]' '[:lower:]' )
 				_imgname=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path} 2>/tmp/images.$$ )
 				_ret=$?
 				if [ ${_ret} -ne 0 -o -z "${_imgname}" ]; then
@@ -183,31 +183,13 @@ images_register()
 					err 1 "${N1_COLOR}${CBSD_APP}: buildah image not found: ${N2_COLOR}${path}${N0_COLOR}"
 				fi
 
-				echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname}"
-				_res=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname} 2>/tmp/images.$$ )
+				_image_sha256=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect "${_imgname}" | ${JQ_CMD} -r '.OCIv1.rootfs.diff_ids[-1]' )
 				_ret=$?
-				if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
-					${ECHO} "${N1_COLOR}${CBSD_APP}: unable to create buildah container from ${_imgname}${N0_COLOR}"
-					if [ -r /tmp/images.$$ ]; then
-						${CAT_CMD} /tmp/images.$$
-						${RM_CMD} -f /tmp/images.$$
-					fi
+				if [ ${_ret} -ne 0 -o -z "${_image_sha256}" ]; then
+					${ECHO} "${N1_COLOR}${CBSD_APP}: unable to create find tom layer in image ${_imgname}${N0_COLOR}"
 					exit 1
 				fi
-				[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
-				echo "image: ${_res}"
-				_imgpath=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah mount ${_res} 2>/tmp/images.$$ )
-				_ret=$?
-				if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
-					${ECHO} "${N1_COLOR}${CBSD_APP}: unable to mount buildah container from ${_res}${N0_COLOR}"
-					if [ -r /tmp/images.$$ ]; then
-						${CAT_CMD} /tmp/images.$$
-						${RM_CMD} -f /tmp/images.$$
-					fi
-					exit 1
-				fi
-				[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
-				echo "imgpath: ${_imgpath}"
+                echo "image sha256: ${_image_sha256}"
 
 				case "${_buildah_platform}" in
 					freebsd)
@@ -223,19 +205,28 @@ images_register()
 
 				##ZFS
 				if [ ${zfsfeat} -eq 1 ]; then
-					_buildah_container_volume=$(${MOUNT_CMD} | ${AWK_CMD} '($2 == "on" && $3 == "'"${_imgpath}"'") { print $1; }')
-					if [ -z "$_buildah_container_volume" ]; then
-						${ECHO} "${N1_COLOR}${CBSD_APP}: unable find zfs volume for ${_imgpath} ${N0_COLOR}"
-						exit 1
+                    _image_volume_id=$(jq -r '.[]|select(."diff-digest" == "'"${_image_sha256}"'")|(.parent // .id)' ${workdir}/basejail/buildah/zfs-layers/layers.json )
+                    _zvol=$(${ZFS_CMD} get -Ho value name ${workdir}/basejail/buildah)
+                    _ret=$?
+                    if [ -z "${_zvol}" -o ${_ret} -ne 0 ]; then
+                        ${ECHO} "${N1_COLOR}${CBSD_APP}: cannot find zfs volume for ${workdir}/basejail/buildah${N0_COLOR}"
+                        exit 1
+                    fi
+                    _image_volume="${_zvol}/${_image_volume_id}"
+
+					_image_snapshot=$(${ZFS_CMD} list -H -o name -t snapshot "${_image_volume}" | ${GREP_CMD} "@${_md5}")
+                    _ret=$?
+					if [ -z "${_image_snapshot}" -o ${_ret} -ne 0 ]; then
+                        ${ZFS_CMD} snapshot ${_image_volume}@${_md5}
+                        _ret=$?
+                        if [ ${_ret} -ne 0 ]; then
+                            ${ECHO} "${N1_COLOR}${CBSD_APP}: unable to create ZFS snapshot for image volume ${_image_volume} ${N0_COLOR}"
+                            exit 1
+                        fi
+                        _image_snapshot="${_image_volume}@${_md5}"
 					fi
 
-					_buildah_image_snapshot=$(${ZFS_CMD} get origin "${_buildah_container_volume}" | ${AWK_CMD} '($2 == "origin") {print $3;}')
-					if [ -z "${_buildah_image_snapshot}" ]; then
-						${ECHO} "${N1_COLOR}${CBSD_APP}: unable find ZFS image orign for ${_buildah_container_volume} ${N0_COLOR}"
-						exit 1
-					fi
-
-					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain zfs_snapsrc="${_buildah_image_snapshot}"\
+					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain zfs_snapsrc="${_image_snapshot}"\
 						ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
 					_ret=$?
 					[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP}unable to create jail: ${N2_COLOR}jcreate jname="${_md5}" host_hostname=${_md5}.my.domain${N0_COLOR}"
@@ -257,6 +248,33 @@ images_register()
 					source="${path}"
 				else
 					# non-ZFS
+
+                    echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname}"
+                    _res=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname} 2>/tmp/images.$$ )
+                    _ret=$?
+                    if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
+                        ${ECHO} "${N1_COLOR}${CBSD_APP}: unable to create buildah container from ${_imgname}${N0_COLOR}"
+                        if [ -r /tmp/images.$$ ]; then
+                            ${CAT_CMD} /tmp/images.$$
+                            ${RM_CMD} -f /tmp/images.$$
+                        fi
+                        exit 1
+                    fi
+                    [ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
+                    echo "image: ${_res}"
+                    _imgpath=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah mount ${_res} 2>/tmp/images.$$ )
+                    _ret=$?
+                    if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
+                        ${ECHO} "${N1_COLOR}${CBSD_APP}: unable to mount buildah container from ${_res}${N0_COLOR}"
+                        if [ -r /tmp/images.$$ ]; then
+                            ${CAT_CMD} /tmp/images.$$
+                            ${RM_CMD} -f /tmp/images.$$
+                        fi
+                        exit 1
+                    fi
+                    [ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
+                    echo "imgpath: ${_imgpath}"
+
 					_rootfs="${workdir}/basejail/${_md5}"
 					[ ! -d "${_rootfs}" ] && ${MKDIR_CMD} -p ${_rootfs}
 					${RSYNC_CMD} -z -a --hard-links --links --acls --xattrs --numeric-ids --recursive --partial ${_imgpath}/ ${_rootfs}/
@@ -273,10 +291,10 @@ images_register()
 					else
 						_size="0"
 					fi
-				fi
 
-				${BUILDAH_CMD} --root ${workdir}/basejail/buildah unmount ${_md5}
-				${BUILDAH_CMD} --root ${workdir}/basejail/buildah rm ${_md5}
+                    ${BUILDAH_CMD} --root ${workdir}/basejail/buildah unmount ${_md5}
+                    ${BUILDAH_CMD} --root ${workdir}/basejail/buildah rm ${_md5}
+				fi
 
 				[ -z "${emulator}" ] && emulator="jail"
 				[ -z "${name}" ] && name="${path}"
