@@ -408,16 +408,14 @@ get_bs_stats(char *yaml, const char *str)
 	int str_len = 0;
 	int str_with_val_len = 0;
 	int yaml_len = 0;
-	char *tmp;
+	char *tmp = NULL;
 	int values = -1;
 	int i = 0;
 	int x;
 	char *token = NULL;
-	char *tofree;
 
 	str_len = strlens(str);
-	str_with_val_len = str_len +
-	    10; // assume value not greated than: XXXXXXXXXX
+	str_with_val_len = str_len + 10; // assume value not greater than: XXXXXXXXXX
 
 	if (str_len == 0)
 		return -1;
@@ -434,32 +432,31 @@ get_bs_stats(char *yaml, const char *str)
 
 	if (pch) {
 		tmp = malloc(str_with_val_len);
+		if (!tmp) {
+			tolog(log_level, "Failed to allocate memory in get_bs_stats\n");
+			return -1;
+		}
+		memset(tmp, 0, str_with_val_len);
 		i = 0;
-		while (pch[i] != '\n') {
+		while (pch[i] != '\n' && i < str_with_val_len - 1) {
 			tmp[i] = pch[i];
 			i++;
-			if (i >= str_with_val_len)
-				break;
 		}
 		tmp[i] = '\0';
-		// tolog(log_level,"get_bs_stats: found: [%s]\n",tmp);
-		x = 0;
-		tofree = tmp;
 
+		x = 0;
 		while ((token = strsep(&tmp, ":")) != NULL) {
 			switch (x) {
 			case 0:
-				// tolog(log_level,"TOKEN: [%s]\n",token);
 				break;
 			case 1:
-				// tolog(log_level,"TOKEN2: [%s]\n",token);
 				sscanf(token, "%d", &values);
 				break;
 			}
 			x++;
 		}
-		free(tofree);
 		free(tmp);
+		tmp = NULL;
 	} else {
 		tolog(log_level, "get_bs_stats: no [%s] here\n", str);
 	}
