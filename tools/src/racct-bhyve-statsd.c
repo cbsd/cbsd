@@ -225,6 +225,13 @@ sum_data_bhyve()
 	gettimeofday(&now_time, NULL);
 	cur_time = (time_t)now_time.tv_sec;
 
+	// First, free existing sum_item_list
+	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
+		next_sumch = sumch->next;
+		free(sumch);
+	}
+	sum_item_list = NULL;
+
 	for (ch = item_list; ch; ch = ch->next) {
 		if (ch->modified == 0) {
 			continue;
@@ -253,6 +260,10 @@ sum_data_bhyve()
 			}
 		} else {
 			CREATE(newd, struct sum_item_data, 1);
+			if (!newd) {
+				tolog(log_level, "Failed to allocate memory for newd\n");
+				continue;
+			}
 			newd->modified = ch->modified;
 			newd->pcpu = ch->pcpu;
 			newd->memoryuse = ch->memoryuse;
@@ -290,7 +301,7 @@ sum_data_bhyve()
 
 		if (OUTPUT_BEANSTALKD & output_flags) {
 			memset(json_buf, 0, sizeof(json_buf));
-			sprintf(json_buf,
+			snprintf(json_buf, sizeof(json_buf),
 			    "{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",
 			    sumch->name, cur_time, sumch->pcpu / round_total,
 			    sumch->pmem / round_total,
@@ -300,8 +311,13 @@ sum_data_bhyve()
 			    sumch->writeiops / round_total);
 
 			if (strlen(json_str) > 2) {
-				strcat(json_str, ",");
-				strcat(json_str, json_buf);
+				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
+					strcat(json_str, ",");
+					strcat(json_str, json_buf);
+				} else {
+					tolog(log_level, "Buffer overflow in json_str\n");
+					break;
+				}
 			} else {
 				strcpy(json_str,
 				    "{ \"tube\":\"racct-bhyve\", \"data\":[");
@@ -311,7 +327,8 @@ sum_data_bhyve()
 
 #ifdef WITH_INFLUX
 		if (OUTPUT_INFLUX & output_flags) {
-			sprintf(influx->buffer + strlen(influx->buffer),
+			snprintf(influx->buffer + strlen(influx->buffer),
+			    sizeof(influx->buffer) - strlen(influx->buffer),
 			    "%s,node=%s,host=%s%s%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
 			    influx->tables.bhyve, hostname, sumch->name,
 			    (influx->tags.bhyve == NULL ? "" : ","),
@@ -334,24 +351,21 @@ sum_data_bhyve()
 		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql, 0, sizeof(sql));
 			memset(stats_file, 0, sizeof(stats_file));
-			sprintf(stats_file, "%s/jails-system/%s/racct.sqlite",
+			snprintf(stats_file, sizeof(stats_file), "%s/jails-system/%s/racct.sqlite",
 			    workdir, sumch->name);
 			fp = fopen(stats_file, "r");
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				sprintf(sql,
+				snprintf(sql, sizeof(sql),
 				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
 				    stats_file);
 				system(sql);
-				// write into base in next loop (protection if
-				// jail was removed in directory not exist
-				// anymore
 				continue;
 			}
 			fclose(fp);
 
-			sprintf(sql,
+			snprintf(sql, sizeof(sql),
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
 			    cur_time, sumch->memoryuse / round_total,
 			    sumch->maxproc / round_total,
@@ -381,7 +395,12 @@ sum_data_bhyve()
 	}
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
-		strcat(json_str, "]}");
+		if (strlen(json_str) + 2 < sizeof(json_str)) {
+			strcat(json_str, "]}");
+		} else {
+			tolog(log_level, "Buffer overflow in json_str\n");
+			skip_beanstalk = 1;
+		}
 	} else {
 		skip_beanstalk = 1;
 	}

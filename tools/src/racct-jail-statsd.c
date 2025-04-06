@@ -93,13 +93,11 @@ sum_data()
 	struct item_data *next_ch;
 	char sql[512];
 	char stats_file[1024];
-	const char *hostname = getenv(
-	    "HOST"); // Still banging the env every second or so, only do this
-		     // at load?
+	const char *hostname = getenv("HOST");
 	int ret = 0;
 	FILE *fp;
-	char json_str[20000]; // todo: dynamic from number of bhyve/jails
-	char json_buf[1024];  // todo: dynamic from number of bhyve/jails
+	char json_str[20000];
+	char json_buf[1024];
 	int i;
 	struct timeval now_time;
 	int cur_time = 0;
@@ -115,6 +113,13 @@ sum_data()
 	gettimeofday(&now_time, NULL);
 	cur_time = (time_t)now_time.tv_sec;
 
+	// First, free existing sum_item_list
+	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
+		next_sumch = sumch->next;
+		free(sumch);
+	}
+	sum_item_list = NULL;
+
 	for (ch = item_list; ch; ch = ch->next) {
 		if (strlen(ch->orig_name) < 1) {
 			continue;
@@ -125,8 +130,7 @@ sum_data()
 		i = sum_jname_exist(ch->orig_name);
 
 		if (i) {
-			for (sumch = sum_item_list; sumch;
-			     sumch = sumch->next) {
+			for (sumch = sum_item_list; sumch; sumch = sumch->next) {
 				if (!strcmp(ch->orig_name, sumch->name)) {
 					sumch->modified += ch->modified;
 					sumch->pcpu += ch->pcpu;
@@ -143,6 +147,10 @@ sum_data()
 			}
 		} else {
 			CREATE(newd, struct sum_item_data, 1);
+			if (!newd) {
+				tolog(log_level, "Failed to allocate memory for new sum_item_data\n");
+				return -1;
+			}
 			newd->modified = ch->modified;
 			newd->pcpu = ch->pcpu;
 			newd->memoryuse = ch->memoryuse;
@@ -155,10 +163,8 @@ sum_data()
 			newd->pmem = ch->pmem;
 			newd->next = sum_item_list;
 			sum_item_list = newd;
-			strcpy(newd->name, ch->orig_name);
-			tolog(log_level,
-			    "[AVGSUM] !! %s struct has been added\n",
-			    newd->name);
+			strncpy(newd->name, ch->orig_name, sizeof(newd->name) - 1);
+			tolog(log_level, "[AVGSUM] !! %s struct has been added\n", newd->name);
 		}
 	}
 
@@ -180,7 +186,7 @@ sum_data()
 
 		if (OUTPUT_BEANSTALKD & output_flags) {
 			memset(json_buf, 0, sizeof(json_buf));
-			sprintf(json_buf,
+			snprintf(json_buf, sizeof(json_buf),
 			    "{\"name\": \"%s\", \"time\": %d, \"pcpu\": %d, \"pmem\": %d,\"maxproc\": %d,\"openfiles\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",
 			    sumch->name, cur_time, sumch->pcpu / round_total,
 			    sumch->pmem / round_total,
@@ -192,60 +198,38 @@ sum_data()
 			    sumch->writeiops / round_total);
 
 			if (strlen(json_str) > 2) {
-				strcat(json_str, ",");
-				strcat(json_str, json_buf);
+				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
+					strcat(json_str, ",");
+					strcat(json_str, json_buf);
+				} else {
+					tolog(log_level, "Buffer overflow in json_str\n");
+					break;
+				}
 			} else {
 				strcpy(json_str,
 				    "{ \"tube\":\"racct-jail\", \"data\":[");
 				strcat(json_str, json_buf);
 			}
 		}
-#ifdef WITH_INFLUX
-		if (OUTPUT_INFLUX & output_flags) {
-			//
-			sprintf(influx->buffer + strlen(influx->buffer),
-			    "%s,node=%s,host=%s%s%s memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,pmem=%d %lu\n",
-			    influx->tables.jails, hostname, sumch->name,
-			    (influx->tags.jails == NULL ? "" : ","),
-			    (influx->tags.jails == NULL ? "" :
-								influx->tags.jails),
-			    sumch->memoryuse / round_total,
-			    sumch->maxproc / round_total,
-			    sumch->openfiles / round_total,
-			    sumch->pcpu / round_total,
-			    sumch->readbps / round_total,
-			    sumch->writebps / round_total,
-			    sumch->readiops / round_total,
-			    sumch->writeiops / round_total,
-			    sumch->pmem / round_total, nanoseconds());
-
-			influx->items++;
-			//			tolog(log_level,"%d RACCT items
-			// queued for storage\n", influx->items);
-		}
-#endif
 
 		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql, 0, sizeof(sql));
 			memset(stats_file, 0, sizeof(stats_file));
-			sprintf(stats_file, "%s/jails-system/%s/racct.sqlite",
+			snprintf(stats_file, sizeof(stats_file), "%s/jails-system/%s/racct.sqlite",
 			    workdir, sumch->name);
 			fp = fopen(stats_file, "r");
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				sprintf(sql,
+				snprintf(sql, sizeof(sql),
 				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
 				    stats_file);
 				system(sql);
-				// write into base in next loop (protection if
-				// jail was removed in directory not exist
-				// anymore
 				continue;
 			}
 			fclose(fp);
 
-			sprintf(sql,
+			snprintf(sql, sizeof(sql),
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
 			    cur_time, sumch->memoryuse / round_total,
 			    sumch->maxproc / round_total,
@@ -275,7 +259,12 @@ sum_data()
 	}
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
-		strcat(json_str, "]}");
+		if (strlen(json_str) + 2 < sizeof(json_str)) {
+			strcat(json_str, "]}");
+		} else {
+			tolog(log_level, "Buffer overflow in json_str\n");
+			skip_beanstalk = 1;
+		}
 		bs_tick = 0;
 	} else {
 		skip_beanstalk = 1;
@@ -322,17 +311,15 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 	char filter[MAXJNAME + 7];
 	char unexpanded_rule[MAXJNAME + 7]; // 7 - extra "jail::\0"
 
-	sprintf(filter, "jail:%s:", orig_jname);
-	sprintf(unexpanded_rule, "jail:%s", orig_jname);
+	snprintf(filter, sizeof(filter), "jail:%s:", orig_jname);
+	snprintf(unexpanded_rule, sizeof(unexpanded_rule), "jail:%s", orig_jname);
 
 	gettimeofday(&now_time, NULL);
 	cur_time = (time_t)now_time.tv_sec;
 
 	for (ch = item_list; ch; ch = ch->next) {
 		if (strcmp(jname, ch->name) == 0) {
-			tolog(log_level, "update metrics for jail: [%s]\n",
-			    jname);
-			// ch->modified = (time_t) now_time.tv_sec;
+			tolog(log_level, "update metrics for jail: [%s]\n", jname);
 			ch->modified = nanoseconds();
 			ch->pid = cur_jid;
 
@@ -340,10 +327,10 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 				outbuflen *= 4;
 				outbuf = realloc(outbuf, outbuflen);
 				if (outbuf == NULL) {
-					err(1, "realloc");
+					tolog(log_level, "Failed to allocate memory for outbuf\n");
+					return -1;
 				}
-				error = rctl_get_racct(filter,
-				    strlen(filter) + 1, outbuf, outbuflen);
+				error = rctl_get_racct(filter, strlen(filter) + 1, outbuf, outbuflen);
 				if (error == 0) {
 					break;
 				}
@@ -354,101 +341,67 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 					enosys();
 				}
 
-				warn(
-				    "failed to show resource consumption for '%s'",
-				    unexpanded_rule);
+				warn("failed to show resource consumption for '%s'", unexpanded_rule);
 				free(outbuf);
-				return (error);
+				return error;
 			}
 			copy = outbuf;
 			int i = 0;
 			while ((tmp = strsep(&copy, ",")) != NULL) {
 				if (tmp[0] == '\0') {
-					break; /* XXX */
+					break;
 				}
 
 				while ((var = strsep(&tmp, "=")) != NULL) {
 					i++;
 					if (var[0] == '\0') {
-						break; /* XXX */
+						break;
 					}
 					if (i == 1) {
-						memset(param_name, 0,
-						    sizeof(param_name));
+						memset(param_name, 0, sizeof(param_name));
 						strcpy(param_name, var);
 					}
 					if (i == 2) {
-						// printf("val* %s\n",var);
-						if (!strcmp(param_name,
-							"cputime")) {
+						if (!strcmp(param_name, "cputime")) {
 							ch->cputime = atoi(var);
-						} else if (!strcmp(param_name,
-							       "datasize")) {
-							ch->datasize = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "stacksize")) {
-							ch->stacksize = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "memoryuse")) {
-							ch->memoryuse = atol(
-							    var);
-						} else if (
-						    !strcmp(param_name,
-							"memorylocked")) {
-							ch->memorylocked = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "maxproc")) {
+						} else if (!strcmp(param_name, "datasize")) {
+							ch->datasize = atoi(var);
+						} else if (!strcmp(param_name, "stacksize")) {
+							ch->stacksize = atoi(var);
+						} else if (!strcmp(param_name, "memoryuse")) {
+							ch->memoryuse = atol(var);
+						} else if (!strcmp(param_name, "memorylocked")) {
+							ch->memorylocked = atoi(var);
+						} else if (!strcmp(param_name, "maxproc")) {
 							ch->maxproc = atoi(var);
-						} else if (!strcmp(param_name,
-							       "openfiles")) {
-							ch->openfiles = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "vmemoryuse")) {
-							ch->vmemoryuse = atol(
-							    var);
-						} else if (!strcmp(param_name,
-							       "swapuse")) {
+						} else if (!strcmp(param_name, "openfiles")) {
+							ch->openfiles = atoi(var);
+						} else if (!strcmp(param_name, "vmemoryuse")) {
+							ch->vmemoryuse = atol(var);
+						} else if (!strcmp(param_name, "swapuse")) {
 							ch->swapuse = atoi(var);
-						} else if (!strcmp(param_name,
-							       "nthr")) {
+						} else if (!strcmp(param_name, "nthr")) {
 							ch->nthr = atoi(var);
-						} else if (!strcmp(param_name,
-							       "readbps")) {
+						} else if (!strcmp(param_name, "readbps")) {
 							ch->readbps = atoi(var);
-						} else if (!strcmp(param_name,
-							       "writebps")) {
-							ch->writebps = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "readiops")) {
-							ch->readiops = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "writeiops")) {
-							ch->writeiops = atoi(
-							    var);
-						} else if (!strcmp(param_name,
-							       "pcpu")) {
+						} else if (!strcmp(param_name, "writebps")) {
+							ch->writebps = atoi(var);
+						} else if (!strcmp(param_name, "readiops")) {
+							ch->readiops = atoi(var);
+						} else if (!strcmp(param_name, "writeiops")) {
+							ch->writeiops = atoi(var);
+						} else if (!strcmp(param_name, "pcpu")) {
 							if (ncpu > 1) {
-								ch->pcpu =
-								    (atoi(var) /
-									ncpu);
+								ch->pcpu = (atoi(var) / ncpu);
 							} else {
-								ch->pcpu = atoi(
-								    var);
+								ch->pcpu = atoi(var);
 							}
 							if (ch->pcpu > 100) {
 								ch->pcpu = 100;
 							}
 						} else {
 							// calculate pmem
-							ch->pmem = 100.0 *
-							    ch->memoryuse /
-							    maxmem;
+							ch->pmem = 100.0 * ch->memoryuse / maxmem;
 							if (ch->pmem > 100) {
 								ch->pmem = 100;
 							}
@@ -458,6 +411,7 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 				}
 			}
 			free(outbuf);
+			outbuf = NULL;
 		}
 	}
 	return 0;
@@ -466,132 +420,53 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 
 // prom
 /* Handle all communication with the client */
-void *handle_client(void *arg){
+void *handle_client(void *arg) {
 	client_t *cli = (client_t *)arg;
+	char s[2048];
+	char json_str[20000];
+	const char *content_encoding = "";
 
-/*
-    char buff_out[BUFFER_SZ];
-    char name[32];
-    int leave_flag = 0;
+	/* Print HTTP header and metrics. */
+	memset(s, 0, sizeof(s));
+	snprintf(s, sizeof(s),
+		"HTTP/1.1 200 OK\r\n"
+		"Connection: close\r\n"
+		"%s"
+		"Content-Type: text/plain; version=0.0.4\r\n"
+		"\r\n",
+		content_encoding);
 
-    cli_count++;
-    client_t *cli = (client_t *)arg;
-
-    // Name
-    if(recv(cli->sockfd, name, 32, 0) <= 0 || strlen(name) <  2 || strlen(name) >= 32-1){
-	printf("Didn't enter the name.\n");
-	leave_flag = 1;
-    } else{
-	strcpy(cli->name, name);
-	sprintf(buff_out, "%s has joined\n", cli->name);
-	printf("%s", buff_out);
-	send_message(buff_out, cli->uid);
-    }
-
-    bzero(buff_out, BUFFER_SZ);
-
-    while(1){
-	if (leave_flag) {
-	    break;
+	if (write(cli->sockfd, s, strlen(s)) < 0) {
+		perror("ERROR: write to descriptor failed");
+		close(cli->sockfd);
+		free(cli);
+		pthread_exit(NULL);
 	}
 
-	int receive = recv(cli->sockfd, buff_out, BUFFER_SZ, 0);
-	if (receive > 0){
-	    if(strlen(buff_out) > 0){
-		send_message(buff_out, cli->uid);
-
-		str_trim_lf(buff_out, strlen(buff_out));
-		printf("%s -> %s\n", buff_out, cli->name);
-	    }
-	} else if (receive == 0 || strcmp(buff_out, "exit") == 0){
-	    sprintf(buff_out, "%s has left\n", cli->name);
-	    printf("%s", buff_out);
-	    send_message(buff_out, cli->uid);
-	    leave_flag = 1;
-	} else {
-	    printf("ERROR: -1\n");
-	    leave_flag = 1;
-	}
-
-	bzero(buff_out, BUFFER_SZ);
-    }
-*/
-
-  char s[2048];
-  memset(s,0,strlen(s));
-
-
-const char *content_encoding = "";
-
-//            /* Gzip compress the output. */
-//                if (gzip_mode) {
-//                        char *buf;
-//                        size_t buflen;
-//        
-//                        buflen = http_buflen;
-//                        buf = malloc(buflen);
-//                        if (buf == NULL)
-//                                err(1, "Cannot allocate compression buffer");
-//                        if (buf_gzip(http_buf, http_buflen, buf, &buflen)) {
-//                                content_encoding = "Content-Encoding: gzip\r\n";
-//                                free(http_buf);
-//                                http_buf = buf;
-//                                http_buflen = buflen;
-//                        } else {
-//                                free(buf);
-//                        }
-//                }
-
-                /* Print HTTP header and metrics. */
-sprintf(s,"\
-HTTP/1.1 200 OK\r\n\
-Connection: close\r\n\
-%s\
-Content-Type: text/plain; version=0.0.4\r\n\
-\r\n",
-    content_encoding);
-
- if(write(cli->sockfd, s, strlen(s)) < 0){
-	perror("ERROR: write to descriptor failed");
-//	break;
-  }
-
-////////////////
 	struct item_data *target = NULL;
 	struct item_data *ch;
 	struct item_data *next_ch;
 	char sql[512];
 	char stats_file[1024];
-	const char *hostname = getenv(
-	    "HOST"); // Still banging the env every second or so, only do this
-		     // at load?
+	const char *hostname = getenv("HOST");
+	int ret = 0;
 	FILE *fp;
-	char json_str[20000]; // todo: dynamic from number of bhyve/jails
-	char json_buf[1024];  // todo: dynamic from number of bhyve/jails
 	int i;
 	struct timeval now_time;
 	int cur_time = 0;
 	int round_total = save_loop_count + 1;
-	int jails_up=0;
-	int jails_down=0;
-
-	char dbfile[512];
-	char query[100];
-
-	sqlite3 *db;
-	int ret = 0;
-	sqlite3_stmt *stmt;
-	int res = 0;
 
 	struct sum_item_data *newd;
 	struct sum_item_data *temp;
 	struct sum_item_data *sumch;
 	struct sum_item_data *next_sumch;
 
-	tolog(log_level, "\n ***---calc jail avgdata---*** \n");
-
-	gettimeofday(&now_time, NULL);
-	cur_time = (time_t)now_time.tv_sec;
+	// First, free existing sum_item_list
+	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
+		next_sumch = sumch->next;
+		free(sumch);
+	}
+	sum_item_list = NULL;
 
 	for (ch = item_list; ch; ch = ch->next) {
 		if (strlen(ch->orig_name) < 1) {
@@ -603,8 +478,7 @@ Content-Type: text/plain; version=0.0.4\r\n\
 		i = sum_jname_exist(ch->orig_name);
 
 		if (i) {
-			for (sumch = sum_item_list; sumch;
-			     sumch = sumch->next) {
+			for (sumch = sum_item_list; sumch; sumch = sumch->next) {
 				if (!strcmp(ch->orig_name, sumch->name)) {
 					sumch->modified += ch->modified;
 					sumch->pcpu += ch->pcpu;
@@ -621,6 +495,12 @@ Content-Type: text/plain; version=0.0.4\r\n\
 			}
 		} else {
 			CREATE(newd, struct sum_item_data, 1);
+			if (!newd) {
+				tolog(log_level, "Failed to allocate memory for new sum_item_data\n");
+				close(cli->sockfd);
+				free(cli);
+				pthread_exit(NULL);
+			}
 			newd->modified = ch->modified;
 			newd->pcpu = ch->pcpu;
 			newd->memoryuse = ch->memoryuse;
@@ -633,197 +513,102 @@ Content-Type: text/plain; version=0.0.4\r\n\
 			newd->pmem = ch->pmem;
 			newd->next = sum_item_list;
 			sum_item_list = newd;
-			strcpy(newd->name, ch->orig_name);
-			tolog(log_level,
-			    "[AVGSUM] !! %s struct has been added\n",
-			    newd->name);
+			strncpy(newd->name, ch->orig_name, sizeof(newd->name) - 1);
+			tolog(log_level, "[AVGSUM] !! %s struct has been added\n", newd->name);
 		}
 	}
 
 	memset(json_str, 0, sizeof(json_str));
 
-	sprintf(json_str,"\
-jails_up: %d\n\
-", jails_up);
+	// Output jails_up metric
+	snprintf(json_str, sizeof(json_str), "jails_up: %d\n", running_jails);
 
-	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
-		if (strlen(sumch->name) < 1) {
+	// Output individual jail metrics
+	for (ch = item_list; ch; ch = ch->next) {
+		if (ch->modified == 0) {
 			continue;
 		}
 
-		sprintf(json_str,"\
-jail_openfiles{name=\"%s\"} %d\n\
-jail_memoryuse{name=\"%s\"} %lu\n\
-jail_maxproc{name=\"%s\"} %d\n\
-jail_readbps{name=\"%s\"} %d\n\
-jail_writebps{name=\"%s\"} %d\n\
-jail_readiops{name=\"%s\"} %d\n\
-jail_writeiops{name=\"%s\"} %d\n\
-jail_pcpu{name=\"%s\"} %d\n\
-", sumch->name,sumch->openfiles / round_total,
-sumch->name,sumch->memoryuse / round_total,
-sumch->name,sumch->maxproc / round_total,
-sumch->name,sumch->readbps / round_total,
-sumch->name,sumch->writebps / round_total,
-sumch->name,sumch->readiops / round_total,
-sumch->name,sumch->writeiops / round_total,
-sumch->name,sumch->pcpu / round_total );
+		// Format each metric in Prometheus format
+		snprintf(json_str + strlen(json_str), sizeof(json_str) - strlen(json_str),
+			"jail_openfiles{name=\"%s\"} %d\n"
+			"jail_memoryuse{name=\"%s\"} %lu\n"
+			"jail_maxproc{name=\"%s\"} %d\n"
+			"jail_readbps{name=\"%s\"} %d\n"
+			"jail_writebps{name=\"%s\"} %d\n"
+			"jail_readiops{name=\"%s\"} %d\n"
+			"jail_writeiops{name=\"%s\"} %d\n"
+			"jail_pcpu{name=\"%s\"} %d\n",
+			ch->orig_name, ch->openfiles,
+			ch->orig_name, ch->memoryuse,
+			ch->orig_name, ch->maxproc,
+			ch->orig_name, ch->readbps,
+			ch->orig_name, ch->writebps,
+			ch->orig_name, ch->readiops,
+			ch->orig_name, ch->writeiops,
+			ch->orig_name, ch->pcpu);
+	}
 
-  if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
-	perror("ERROR: write to descriptor failed");
-//	break;
-    }
-
-
-//			sprintf(json_str,
-//			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
-//			    cur_time, sumch->memoryuse / round_total,
-//			    sumch->maxproc / round_total,
-//			    sumch->openfiles / round_total,
-//			    sumch->pcpu / round_total,
-//			    sumch->readbps / round_total,
-//			    sumch->writebps / round_total,
-//			    sumch->readiops / round_total,
-//			    sumch->writeiops / round_total,
-//			    sumch->pmem / round_total);
-		jails_up=jails_up+1;
-		}
-
-	memset(json_str, 0, sizeof(json_str));
-
-	sprintf(json_str,"\
-jails_up: %d\n\
-", jails_up);
-
-  if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
-	perror("ERROR: write to descriptor failed");
-//	break;
-    }
-
-
-	//offline
-	memset(dbfile, 0, sizeof(dbfile));
-	sprintf(dbfile, "%s/var/db/local.sqlite", workdir);
-
-	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
-		tolog(log_level, "%s: Can't open database file: %s\n", nm(), dbfile);
-	} else {
-		res = 1024;
-
-		sprintf(query, "SELECT COUNT(jname) FROM jails WHERE emulator=\"jail\" AND status='0'");
-		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-
-		if (ret == SQLITE_OK) {
-			ret = sqlite3_step(stmt);
-
-			while (ret == SQLITE_ROW) {
-				jails_down = sql_get_int(stmt);
-				ret = sqlite3_step(stmt);
-			}
-		}
-
-		sqlite3_finalize(stmt);
-		sqlite3_close(db);
-
-		sprintf(json_str,"\
-jails_down: %d\n\
-", jails_down);
-
-
-		if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
-			perror("ERROR: write to descriptor failed");
-		}
-
-	memset(json_str, 0, sizeof(json_str));
-	sprintf(json_str,"cbsd_pool_info{nodename=\"%s\"} 1\n", pool_name);
-
-	if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
+	if (write(cli->sockfd, json_str, strlen(json_str)) < 0) {
 		perror("ERROR: write to descriptor failed");
+		close(cli->sockfd);
+		free(cli);
+		pthread_exit(NULL);
 	}
 
-
+	// Free sum_item_list before exiting
+	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
+		next_sumch = sumch->next;
+		free(sumch);
 	}
+	sum_item_list = NULL;
 
-////////////////
-
-
-// if(write(cli->sockfd, json_str, strlen(json_str)) < 0){
-//	perror("ERROR: write to descriptor failed");
-//	break;
-//    }
-
-
-
-  /* Delete client from queue and yield thread */
-    close(cli->sockfd);
-//  queue_remove(cli->uid);
-  free(cli);
-//  cli_count--;
-//  pthread_detach(pthread_self());
-
-    pthread_exit(NULL);
-
-    return 0;
+	close(cli->sockfd);
+	free(cli);
+	pthread_exit(NULL);
 }
 //
 
 
 // prom
 /* Handle all communication with the client */
-void *handle_accept() {
-	int connfd=0;
-	int tid;
-	int total = 1;
-	int curThread;
-	pthread_t threads[total];
-
-	tolog(log_level,"thread #%ld, handle accept\n",tid);
-
-//// prom
+void *handle_accept(void *arg) {
+	int connfd = 0;
 	socklen_t clilen = sizeof(cli_addr);
-	connfd = accept(listenfd, (struct sockaddr*)&cli_addr, &clilen);
+	client_t *cli;
+	pthread_t tid;
 
-	/* Check if max clients is reached */
-/*
-	if((cli_count + 1) == MAX_CLIENTS){
-	    printf("Max clients reached. Rejected: ");
-	    print_client_addr(cli_addr);
-	    printf(":%d\n", cli_addr.sin_port);
-	    close(connfd);
-	    continue;
-	}
-*/
+	while (1) {
+		connfd = accept(listenfd, (struct sockaddr *)&cli_addr, &clilen);
+		if (connfd < 0) {
+			perror("ERROR: accept failed");
+			continue;
+		}
 
-	/* Client settings */
-	client_t *cli = (client_t *)malloc(sizeof(client_t));
-	cli->address = cli_addr;
-	cli->sockfd = connfd;
-//	cli->uid = uid++;
+		cli = (client_t *)malloc(sizeof(client_t));
+		if (!cli) {
+			perror("ERROR: malloc failed");
+			close(connfd);
+			continue;
+		}
 
-	/* Add client to the queue and fork thread */
-//	queue_add(cli);
-	for (curThread = 0; curThread < total; curThread++){
-		tid=curThread;
-		tolog(log_level,"* run handle_client thread #%d\n",curThread);
-		if (pthread_create(&threads[curThread], NULL, handle_client, (void*)cli)) {
-			tolog(log_level,"Error creating thread %i of %i\n", curThread, total);
-			exit(1);
+		cli->address = cli_addr;
+		cli->sockfd = connfd;
+
+		if (pthread_create(&tid, NULL, handle_client, (void *)cli) != 0) {
+			perror("ERROR: pthread_create failed");
+			close(connfd);
+			free(cli);
+			continue;
+		}
+
+		if (pthread_detach(tid) != 0) {
+			perror("ERROR: pthread_detach failed");
+			close(connfd);
+			free(cli);
+			continue;
 		}
 	}
-
-	for (curThread = 0; curThread < total; curThread++){
-		tolog(log_level,"* waiting #%d\n",curThread);
-		if (pthread_join(threads[curThread], NULL)) {
-			tolog(log_level,"Error waiting for thread %i of %i\n", curThread, total);
-			exit(2);
-		}
-	}
-// prom
-
-	accept_busy=0;
-	tolog(log_level,"reset accept_busy\n");
-//	pthread_detach(pthread_self());
-	pthread_exit(NULL);
 }
 //
 

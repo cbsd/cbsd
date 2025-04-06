@@ -168,6 +168,7 @@ sum_data_hoster()
 	struct item_data *target = NULL;
 	struct item_data *ch;
 	struct item_data *next_ch;
+	const char *hostname = getenv("HOST");
 	char sql[512];
 	char stats_file[1024];
 	int ret = 0;
@@ -189,6 +190,13 @@ sum_data_hoster()
 	gettimeofday(&now_time, NULL);
 	cur_time = (time_t)now_time.tv_sec;
 
+	// First, free existing sum_item_list
+	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
+		next_sumch = sumch->next;
+		free(sumch);
+	}
+	sum_item_list = NULL;
+
 	for (ch = item_list; ch; ch = ch->next) {
 		if (ch->modified == 0) {
 			continue;
@@ -207,10 +215,6 @@ sum_data_hoster()
 					sumch->memoryuse += ch->memoryuse;
 					sumch->maxproc += ch->maxproc;
 					sumch->openfiles += ch->openfiles;
-					//					sumch->readbps+=ch->readbps;
-					//					sumch->writebps+=ch->writebps;
-					//					sumch->readiops+=ch->readiops;
-					//					sumch->writeiops+=ch->writeiops;
 					sumch->temperature += ch->temperature;
 					sumch->pmem += ch->pmem;
 					break;
@@ -218,15 +222,15 @@ sum_data_hoster()
 			}
 		} else {
 			CREATE(newd, struct sum_item_data, 1);
+			if (!newd) {
+				tolog(log_level, "Failed to allocate memory for newd\n");
+				continue;
+			}
 			newd->modified = ch->modified;
 			newd->pcpu = ch->pcpu;
 			newd->memoryuse = ch->memoryuse;
 			newd->maxproc = ch->maxproc;
 			newd->openfiles = ch->openfiles;
-			//			newd->readbps=ch->readbps;
-			//			newd->writebps=ch->writebps;
-			//			newd->readiops=ch->readiops;
-			//			newd->writeiops=ch->writeiops;
 			newd->temperature = ch->temperature;
 			newd->pmem = ch->pmem;
 			newd->next = sum_item_list;
@@ -249,14 +253,19 @@ sum_data_hoster()
 		    sumch->modified / round_total);
 		if (OUTPUT_BEANSTALKD & output_flags) {
 			memset(json_buf, 0, sizeof(json_buf));
-			sprintf(json_buf,
+			snprintf(json_buf, sizeof(json_buf),
 			    "{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d }",
 			    sumch->name, cur_time, sumch->pcpu / round_total,
 			    sumch->pmem / round_total);
 
 			if (strlen(json_str) > 2) {
-				strcat(json_str, ",");
-				strcat(json_str, json_buf);
+				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
+					strcat(json_str, ",");
+					strcat(json_str, json_buf);
+				} else {
+					tolog(log_level, "Buffer overflow in json_str\n");
+					break;
+				}
 			} else {
 				strcpy(json_str,
 				    "{ \"tube\":\"racct-system\", \"node\":\"clonos.convectix.com\", \"data\":[");
@@ -266,8 +275,8 @@ sum_data_hoster()
 
 #ifdef WITH_INFLUX
 		if (OUTPUT_INFLUX & output_flags) {
-
-			sprintf(influx->buffer + strlen(influx->buffer),
+			snprintf(influx->buffer + strlen(influx->buffer),
+			    sizeof(influx->buffer) - strlen(influx->buffer),
 			    "%s,node=%s,host=%s%s%s memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,pmem=%d,temperature=%2.2f %lu\n",
 			    influx->tables.nodes, nodename, sumch->name,
 			    (influx->tags.nodes == NULL ? "" : ","),
@@ -280,22 +289,7 @@ sum_data_hoster()
 			    sumch->pmem / round_total,
 			    sumch->temperature / round_total, nanoseconds());
 
-			/*
-						printf("%s,node=%s,host=%s%s%s
-			   memoryuse=%lu,maxproc=%d,openfiles=%d,pcpu=%d,pmem=%d,temperature=%2.2f
-			   %lu\n", influx->tables.nodes, nodename, sumch->name,
-			   (influx->tags.nodes==NULL?"":","),
-			   (influx->tags.nodes==NULL?"":influx->tags.nodes),
-								sumch->memoryuse/round_total,
-			   sumch->maxproc/round_total,
-			   sumch->openfiles/round_total,
-			   sumch->pcpu/round_total,
-								sumch->pmem/round_total,sumch->temperature/round_total,
-			   nanoseconds());
-			*/
 			influx->items++;
-			//			tolog(log_level,"%d RACCT items
-			// queued for storage\n", influx->items);
 		}
 #endif
 #ifdef WITH_REDIS
@@ -305,24 +299,21 @@ sum_data_hoster()
 		if (OUTPUT_SQLITE3 & output_flags) {
 			memset(sql, 0, sizeof(sql));
 			memset(stats_file, 0, sizeof(stats_file));
-			sprintf(stats_file, "%s/jails-system/%s/racct.sqlite",
+			snprintf(stats_file, sizeof(stats_file), "%s/jails-system/%s/racct.sqlite",
 			    workdir, sumch->name);
 			fp = fopen(stats_file, "r");
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				sprintf(sql,
+				snprintf(sql, sizeof(sql),
 				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
 				    stats_file);
 				system(sql);
-				// write into base in next loop (protection if
-				// jail was removed in directory not exist
-				// anymore
 				continue;
 			}
 			fclose(fp);
 
-			sprintf(sql,
+			snprintf(sql, sizeof(sql),
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d' );\n",
 			    cur_time, sumch->memoryuse / round_total,
 			    sumch->maxproc / round_total,
@@ -338,10 +329,6 @@ sum_data_hoster()
 		sumch->memoryuse = 0;
 		sumch->maxproc = 0;
 		sumch->openfiles = 0;
-		//		sumch->readbps=0;
-		//		sumch->writebps=0;
-		//		sumch->readiops=0;
-		//		sumch->writeiops=0;
 		sumch->temperature = 0;
 		sumch->pmem = 0;
 
@@ -349,7 +336,12 @@ sum_data_hoster()
 	}
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
-		strcat(json_str, "]}");
+		if (strlen(json_str) + 2 < sizeof(json_str)) {
+			strcat(json_str, "]}");
+		} else {
+			tolog(log_level, "Buffer overflow in json_str\n");
+			skip_beanstalk = 1;
+		}
 		bs_tick = 0;
 	}
 
