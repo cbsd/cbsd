@@ -2,7 +2,7 @@
 # shellcheck shell=sh disable=2034,2154,1090,2166,3037,2086,1091
 #v12.1.7
 MYARG=""
-MYOPTARG="cmd dir jname user"
+MYOPTARG="cmd dir environment jname user"
 MYDESC="Execution for command inside jail"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -12,11 +12,13 @@ ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}dir${N0_COLOR}   - change current directory in jail before execute.
- ${N2_COLOR}cmd${N0_COLOR}   - command to execute. Use quotes if there are spaces or several commands.
- ${N2_COLOR}jname${N0_COLOR} - target jail. If jail='*' or jail='pri*' then execute command on all
-   jails or in jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
- ${N2_COLOR}user${N0_COLOR}  - execute a command as another user. Default is 'root'.
+ ${N2_COLOR}cmd${N0_COLOR}         - command to execute. Use quotes if there are spaces or several commands;
+ ${N2_COLOR}dir${N0_COLOR}         - change current directory in jail before execute;
+ ${N2_COLOR}environment${N0_COLOR} - pass environment, e.g.: 'environment=\"FOO=bar\" environment=\"VAR1=boo\"'
+               or path to 'env' file;
+ ${N2_COLOR}jname${N0_COLOR}       - target jail. If jail='*' or jail='pri*' then execute command on all
+               jails or in jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...;
+ ${N2_COLOR}user${N0_COLOR}        - execute a command as another user. Default is 'root';
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -30,7 +32,7 @@ EOF
 
   # env ASSUME_ALWAYS_YES=yes cbsd jexec jname=test pkg bootstrap -f
   # cbsd jexec jname=test cmd=\"pwd; hostname; env ASSUME_ALWAYS_YES=yes pkg bootstrap -f\"
-  # cbsd jexec jname='*' \"hostname; ls -la\"
+  # cbsd jexec environment=\"VAR1=var1\" environment=\"VAR2=var2\" jname='*' \"hostname; ls -la\"
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -44,6 +46,8 @@ EXTHELP="wf_jexec"
 cloud_api=0
 dir=
 ojname=
+oenvironment=
+environment=
 . ${cbsdinit}
 
 [ -n "${jname}" ] && ojname="${jname}"
@@ -89,40 +93,57 @@ else
 	user="root"
 fi
 
+xenvironment=
 if [ -z "${cmd}" ]; then
 	if [ -n "${dir}" ]; then
 		cmd0="cd ${dir}"
 	fi
 
+	cmd=
 	OIFS="${IFS}"
 	IFS="~"
-	cmd=$( while [ -n "${1}" ]; do
-		IFS="~"
-		strpos --str="${1}" --search="="
+	for i in ${*}; do
+		strpos --str="${i}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
 			# not params=value form
-			echo -n "${1} "
+			if [ -z "${cmd}" ]; then
+				cmd="${i}"
+			else
+				cmd="${cmd} ${i}"
+			fi
 			shift
 			continue
 		fi
 
-		_arg_len=$( strlen ${1} )
+		_arg_len=$( strlen ${i} )
 		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${1}" )
+		ARG=$( substr --pos=0 --len=${_pos} --str="${i}" )
+
 		case "${ARG}" in
+			environment)
+				VAL=$( substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${i}" | ${TR_CMD} -d '"' )
+				if [ -z "${xenvironment}" ]; then
+					xenvironment="${VAL}"
+				else
+					xenvironment="${xenvironment} ${VAL}"
+				fi
+				shift
+				continue
+				;;
 			dir|jname)
 				shift
 				continue
 				;;
 		esac
-		printf "%s='%s' " "${ARG}" "${VAL}"
-		shift
-	done )
 
-	# strip extra space
-	cmd=$( echo ${cmd} | ${SED_CMD} 's/.$//' )
+		if [ -z "${cmd}" ]; then
+			cmd="${i}"
+		else
+			cmd="${cmd} ${i}"
+		fi
+
+	done
 	IFS="${OIFS}"
 fi
 
@@ -237,12 +258,12 @@ CBSD_EOF
 	done
 	exit ${_global_ret}
 else
+
 	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ "${emulator}" = "bhyve" ] && err 1 "${N1_COLOR}Not for bhyve mode${N0_COLOR}"
 
 	[ ${jid} -ne 0 ] || err 1 "Not running"
-
 	#rctl/limits area
 	. ${subrdir}/rctl.subr
 	[ -z "${nice}" ] && nice="0"
@@ -311,6 +332,42 @@ else
 		export_jail_data_for_external_hook
 		echo "[debug] external command: ${first_cmd}" 1>&2
 		exec ${jailsysdir}/${jname}/cmd/${cmd}
+	fi
+
+	_vars=$( ${ENV_CMD} | ${TEE_CMD} /tmp/old_env | ${CUT_CMD} -d '=' -f 1 | ${XARGS_CMD} )
+	for i in ${_vars}; do
+		case "${i}" in
+			PATH|SHELL|jid|FOO|jname)
+				continue
+				;;
+			TERM|BLOCKSIZE|MAIL|MM_CHARSET|LANG|SHLVL|LOGNAME|EDITOR|PAGER)
+				continue
+				;;
+		esac
+		unset ${i}
+	done
+
+	if [ -r ${jailsysdir}/${jname}/environment ]; then
+		for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
+			#echo "> $i"
+			export $i
+		done
+	fi
+	if [ -r ${jailsysdir}/${jname}/environment.local ]; then
+		for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
+			export $i
+		done
+	fi
+	if [ -n "${xenvironment}" ]; then
+		if [ -r "${xenvironment}" ]; then
+			for i in $( ${CAT_CMD} "${xenvironment}" ); do
+				export $i
+			done
+		else
+			for i in $xenvironment; do
+				export ${i}
+			done
+		fi
 	fi
 
 	if [ -z "${LOGIN_STR}" ]; then
