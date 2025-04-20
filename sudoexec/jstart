@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.8
 MYARG=""
-MYOPTARG="delay jname inter quiet"
+MYOPTARG="delay environment jname inter quiet"
 MYDESC="Start jail"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -11,17 +11,20 @@ the jstart command only processes the environments described in the CBSDfile.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}delay=${N0_COLOR} - <sec>, delay N secbefore start, mainly to smooth the astart,
-          default is: '0', no delay.
- ${N2_COLOR}inter=${N0_COLOR} - set 1 to prevent any questions and to accept answers by default.
- ${N2_COLOR}jname=${N0_COLOR} - target jail. If jail='*' or jail='pri*' then start all jails or
-          jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
- ${N2_COLOR}quiet=${N0_COLOR} - 0,1: be quiet, dont output verbose message.
+ ${N2_COLOR}delay=${N0_COLOR}      - <sec>, delay N secbefore start, mainly to smooth the astart,
+               default is: '0', no delay.
+ ${N2_COLOR}environment${N0_COLOR} - pass environment, e.g.: 'environment=\"FOO=bar\" environment=\"VAR1=boo\"'
+               or path to 'env' file;
+ ${N2_COLOR}inter=${N0_COLOR}      - set 1 to prevent any questions and to accept answers by default.
+ ${N2_COLOR}jname=${N0_COLOR}      - target jail. If jail='*' or jail='pri*' then start all jails or
+               jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...
+ ${N2_COLOR}quiet=${N0_COLOR}      - 0,1: be quiet, dont output verbose message.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd jstart
  # cbsd jstart jname='memcach*'
+ # cbsd jstart jname=\"test\" environment=\"VAR1=var1\" environment=\"VAR2=var2\"
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -56,6 +59,8 @@ fi
 
 delay=0
 odelay=
+oenvironment=
+environment=
 . ${cbsdinit}
 ojname="${jname}"
 [ -n "${delay}" ] && odelay="${delay}"
@@ -67,6 +72,7 @@ ojname="${jname}"
 
 [ -z "${quiet}" ] && quiet=0
 
+xenvironment=
 # adjust jail_list by CBSDfile
 if [ -r "${Makefile}" ]; then
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
@@ -129,20 +135,37 @@ else
 	cbsd_api=0
 	# trim args from "$*"
 
-	if [ -n "${ojname}" ]; then
-		jail_list="${ojname}"
-	else
-		for i in $*; do
-			strpos --str="${i}" --search="="
-			[ $? -ne 0 ] && continue
+	for i in ${*}; do
+		strpos --str="${i}" --search="="
+		_pos=$?
 
-			if [ -z "${jail_list}" ]; then
-				jail_list="${i}"
-			else
-				jail_list="${jail_list} ${i}"
-			fi
-		done
-	fi
+		if [ ${_pos} -ne 0 ]; then
+			_arg_len=$( strlen ${i} )
+			_pref=$(( _arg_len - _pos ))
+			ARG=$( substr --pos=0 --len=${_pos} --str="${i}" )
+
+			case "${ARG}" in
+				environment)
+					VAL=$( substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${i}" | ${TR_CMD} -d '"' )
+					if [ -z "${xenvironment}" ]; then
+						xenvironment="${VAL}"
+					else
+						xenvironment="${xenvironment} ${VAL}"
+					fi
+					;;
+			esac
+			shift
+			continue
+		fi
+
+		if [ -z "${jail_list}" ]; then
+			jail_list="${i}"
+		else
+			jail_list="${jail_list} ${i}"
+		fi
+	done
+
+	[ -n "${ojname}" ] && jail_list="${ojname}"
 
 	# multiple?
 	strpos --str="${jail_list}" --search=" "
@@ -885,17 +908,59 @@ case "${platform}" in
 	*)
 		cbsdlogger NOTICE ${CBSD_APP}: ${CPUSET} /usr/local/cbsd/misc/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
 		#echo "${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}"
+
+		_vars=$( ${ENV_CMD} | ${CUT_CMD} -d '=' -f 1 | ${XARGS_CMD} )
+
 		case "${quiet}" in
 			0)
-				${CPUSET} /usr/local/cbsd/misc/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
-				ret=$?
+				_cmd="${CPUSET} /usr/local/cbsd/misc/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}"
 				;;
 			1)
-				${CPUSET} /usr/local/cbsd/misc/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname} > /dev/null
-				ret=$?
+				_cmd="${CPUSET} /usr/local/cbsd/misc/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname} > /dev/null"
 				;;
 		esac
-esac
+
+		# we have to run the container in the subshell to restore 
+		# the variables for the script to continue running
+		/bin/sh <<EOF
+			for i in ${_vars}; do
+				# PATH
+				case "\${i}" in
+					TERM|BLOCKSIZE|MAIL|MM_CHARSET|LANG|SHLVL|LOGNAME|EDITOR|PAGER)
+						continue
+					;;
+					jailsysdir|jname|CAT_CMD|xenvironment|ENV_CMD)
+						continue
+					;;
+				esac
+				unset \${i}
+			done
+
+			if [ -r ${jailsysdir}/${jname}/environment ]; then
+				for i in \$( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
+					export \$i
+				done
+			fi
+			if [ -r ${jailsysdir}/${jname}/environment.local ]; then
+				for i in \$( ${CAT_CMD} ${jailsysdir}/${jname}/environment.local ); do
+					export \$i
+				done
+			fi
+
+			if [ -n "${xenvironment}" ]; then
+				for i in ${xenvironment}; do
+					export \${i}
+				done
+			fi
+
+			# save env
+			${ENV_CMD} > ${jailsysdir}/${jname}/environment
+			unset jailsysdir jname CAT_CMD xenvironment ENV_CMD
+			${_cmd}
+EOF
+			ret=$?
+		;;
+	esac
 
 if [ ${ret} -ne 0 ]; then
 	if [ -r ${ftmpdir}/jstart.${jname}.err ]; then
