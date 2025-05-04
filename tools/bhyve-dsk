@@ -212,12 +212,20 @@ dsk_detach()
 		eval _val="\$$i"
 		case "${i}" in
 			dsk_path)
-				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				if [ -z "${_val}" ]; then
+					${ECHO} "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+					bhyve-dsk mode=list jname=${jname} display=dsk_controller,dsk_path
+					exit 1
+				fi
 				# trim .vhd if necessary
 				dsk_path=$( echo ${_val} | ${SED_CMD} 's:\.vhd::g' )
 				;;
 			dsk_controller)
-				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				if [ -z "${_val}" ]; then
+					${ECHO} "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+					bhyve-dsk mode=list jname=${jname} display=dsk_controller,dsk_path
+					exit 1
+				fi
 				# check for valid controller
 				case "${_val}" in
 					virtio-blk|ahci-hd)
@@ -232,39 +240,39 @@ dsk_detach()
 		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
 	done
 
-	_res=$( substr --pos=0 --len=5 --str=${dsk_path} )
+	_res=$( substr --pos=0 --len=5 --str="${dsk_path}" )
 	if [ "${_res}" = "/dev/" ]; then
 		# raw device
 		local lunname=$( ${BASENAME_CMD} ${dsk_path} )
-		_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${lunname}\" LIMIT 1 2>/dev/null )
-		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${lunname}\"${N0_COLOR}"
+		_devpath=$( cbsdsqlro storage_media "SELECT path FROM media WHERE jname='${jname}' AND type='hdd' AND ( name='hdd-${lunname}' OR name='hdd-${lunname}.vhd' ) LIMIT 1;" 2>/dev/null )
+		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname='${jname}' AND type='hdd' AND ( name='hdd-${lunname}' OR name='hdd-${lunname}.vhd' );${N0_COLOR}"
 	else
 		# check in media table
-		_devpath=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\" LIMIT 1 2>/dev/null )
-		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"hdd\" AND name=\"hdd-${dsk_path}.vhd\"${N0_COLOR}"
+		_devpath=$( cbsdsqlro storage_media "SELECT path FROM media WHERE jname='${jname}' AND type='hdd' AND ( name='hdd-${dsk_path}.vhd' OR name='hdd-${dsk_path}' ) LIMIT 1;" 2>/dev/null )
+		[ -z "${_devpath}" ] && err 1 "${N1_COLOR}Unable to find in media DB: SELECT path FROM media WHERE jname='${jname}' AND type='hdd' AND ( name='hdd-${dsk_path}.vhd' OR name='hdd-${dsk_path}' );${N0_COLOR}"
 	fi
 
 	if [ "${_res}" = "/dev/" ]; then
 		# raw device
-		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\" 2>/dev/null )
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\"${N0_COLOR}"
+		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND ( dsk_path='${dsk_path}' OR dsk_path='${dsk_path}.vhd' ) AND dsk_type='vhd' LIMIT 1;" 2>/dev/null )
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND ( dsk_path='${dsk_path}' OR dsk_path='${dsk_path}.vhd' ) AND dsk_type='vhd'${N0_COLOR}"
 		media mode=detach name=hdd-${lunname} path=${_devpath} type=hdd jname=${jname}
 	else
-		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\" 2>/dev/null )
-		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"${N0_COLOR}"
+		_val=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND ( name='hdd-${dsk_path}.vhd' OR name='hdd-${dsk_path}' ) AND dsk_type='vhd' LIMIT 1;" 2>/dev/null )
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}Unable to find in bhyvedsk: SELECT dsk_path FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND ( name='hdd-${dsk_path}.vhd' OR name='hdd-${dsk_path}' ) AND dsk_type='vhd'${N0_COLOR}"
 		media mode=detach name=hdd-${dsk_path}.vhd path=${_devpath} type=hdd jname=${jname}
 	fi
 
 	if [ "${_res}" = "/dev/" ]; then
 		# raw device
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}\" AND dsk_type=\"vhd\"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND dsk_path='${dsk_path}' AND dsk_type='vhd'"
 		# scan for symlink to raw devices
 		${FIND_CMD} ${jaildatadir}/${jname}-${jaildatapref}/ -mindepth 1 -maxdepth 1 -name dsk\*.vhd -type l | while read _link; do
 			_realpath=$( ${READLINK_CMD} ${_link} )
 			[ "${_realpath}" = "${dsk_path}" ] && ${RM_CMD} ${_link}
 		done
 	else
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller=\"${dsk_controller}\" AND dsk_path=\"${dsk_path}.vhd\" AND dsk_type=\"vhd\"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM bhyvedsk WHERE dsk_controller='${dsk_controller}' AND dsk_path='${dsk_path}.vhd' AND dsk_type='vhd'
 	fi
 
 	${ECHO} "${N2_COLOR}${dsk_path}${N1_COLOR} dettached (but not removed!)${N0_COLOR}"
@@ -280,12 +288,20 @@ dsk_delete()
 		eval _val="\$$i"
 		case "${i}" in
 			dsk_path)
-				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				if [ -z "${_val}" ]; then
+					${ECHO} "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+					bhyve-dsk mode=list jname=${jname} display=dsk_controller,dsk_path
+					exit 1
+				fi
 				# trim .vhd if necessary
 				dsk_path=$( echo ${_val} | ${SED_CMD} 's:\.vhd::g' )
 				;;
 			dsk_controller)
-				[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+				if [ -z "${_val}" ]; then
+					${ECHO} "${N1_COLOR}bhyve-dsk error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+					bhyve-dsk mode=list jname=${jname} display=dsk_controller,dsk_path
+					exit 1
+				fi
 				# check for valid controller
 				case "${_val}" in
 					virtio-blk|ahci-hd)
