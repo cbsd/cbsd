@@ -676,7 +676,7 @@ main(int argc, char **argv)
 			if (bs_socket != -1) {
 				bs_disconnect(bs_socket);
 			}
-			bs_socket = init_bs("racct-jail");
+			bs_socket = init_bs("racct-system");
 		} else if (!(OUTPUT_BEANSTALKD & output_flags)) {
 			bs_connected = 0;
 		}
