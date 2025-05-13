@@ -4,7 +4,7 @@
 
 If you work in a smaller environment where full configuration management tools might be overkill, but you frequently create jails with non-default options, you can use the jail profiles included with **CBSD**. You can either use the existing profiles or create your own in **$workdir/etc/**.
 
-First, examine the contents of **$workdir/etc/defaults/jail-freebsd-default.conf**. This file contains the default profile settings used by the **jconstruct-tui** command.
+First, examine the contents of [$workdir/etc/defaults/jail-freebsd-default.conf](../../../etc/defaults/jail-freebsd-default.conf). This file contains the default profile settings used by the **jconstruct-tui** command.
 
 ## Creating a Custom Default Profile
 
