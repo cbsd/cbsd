@@ -85,7 +85,7 @@ When you need to create multiple similar jails with specific software and config
 1. **Create or Export a jconf File**
 
 You can create a template in two ways:
-- Run **cbsd jconstruct-tui** and select **<no>** when asked to create the jail immediately
+- Run **cbsd jconstruct-tui** and select **NO** when asked to create the jail immediately. (This will cause the template file to be written to **\$wordir/ftmp**).
 - Manually create a new **jconf** file
 
 Here's an example **jconf** file:
