@@ -54,7 +54,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 - [jail create via dialog menu](jail/wf_jcreate_ssi.md) :: jcreate, jconstruct-tui
 - [other methods of creating jail](jail/wf_jcreate_secondary_ssi.md) :: jcreate, jconstruct
-- [Profiles for jail creation](jail/wf_profiles_ssi.md) :: jcreate, jconstruct-tui
+- [Profiles for jail creation](jail/wf_jprofiles_ssi.md) :: jcreate, jconstruct-tui
 - [jail config](jail/wf_jconfig_ssi.md) :: jconfig
 - [starting and stoping jail](jail/wf_jstop_jstart_ssi.md) :: jstart, jstop, jrestart
 - [jail starting order](jail/wf_jorder_ssi.md) :: jorder
