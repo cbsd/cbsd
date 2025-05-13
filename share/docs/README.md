@@ -1,7 +1,6 @@
 # CBSD Documentation
 
-The CBSD book doesn't exist yet, but thanks to *Michael Reim*, it could be a good start: [
-Exploring the CBSD virtual environment management framework](https://eerielinux.wordpress.com/2022/12/10/exploring-the-cbsd-virtual-environment-management-framework-part-1-introduction-and-installation/)
+The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of articles could be a good start: [Exploring the CBSD virtual environment management framework](https://eerielinux.wordpress.com/2022/12/10/exploring-the-cbsd-virtual-environment-management-framework-part-1-introduction-and-installation/)
 
 ## General information
 
@@ -55,7 +54,7 @@ Exploring the CBSD virtual environment management framework](https://eerielinux.
 
 - [jail create via dialog menu](jail/wf_jcreate_ssi.md) :: jcreate, jconstruct-tui
 - [other methods of creating jail](jail/wf_jcreate_secondary_ssi.md) :: jcreate, jconstruct
-- [Profiles for jail creation](jail/wf_profiles_ssi.md) :: jcreate, jconstruct-tui
+- [Profiles for jail creation](jail/wf_jprofiles_ssi.md) :: jcreate, jconstruct-tui
 - [jail config](jail/wf_jconfig_ssi.md) :: jconfig
 - [starting and stoping jail](jail/wf_jstop_jstart_ssi.md) :: jstart, jstop, jrestart
 - [jail starting order](jail/wf_jorder_ssi.md) :: jorder
