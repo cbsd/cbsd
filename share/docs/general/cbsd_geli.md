@@ -1,24 +1,3 @@
-[View source on GitHub](https://github.com/cbsd/cbsd)
-
-FreeBSD virtual environment management and repository
-
-- [About](http://www.convectix.com/en/about.html)
-- [News](http://www.convectix.com/en/news.html)
-- [Screenshots](http://www.convectix.com/en/screenshots.html)
-- [Tutorial](http://www.convectix.com/en/tutorial.html)
-- [Documentation »](http://www.convectix.com/en/docs.html)  - [Articles by author's](http://www.convectix.com/en/articles.html)
-  - [Articles and press](http://www.convectix.com/en/press.html)
-- [Marketplace(Templates)](https://marketplace.convectix.com)
-- [Support the project](http://www.convectix.com/en/donate.html)
-- [bhyve.cloud](http://www.convectix.com/en/bhyve-cloud.html)
-- Lang »  - [Русский](http://www.convectix.com/ru/cbsd_geli.html)
-  - [English](http://www.convectix.com/en/cbsd_geli.html)
-  - [Deutsch](http://www.convectix.com/de/cbsd_geli.html)
-
-2020-10 upd: we reached the first fundraising goal and rented a server in Hetzner for development! Thank you for [donating](https://www.patreon.com/clonos) !
-
-Attention! I apologize for the automatic translation of this text. You can improve it by sending me a more correct version of the text or fix html pages via [GITHUB repository](https://github.com/cbsd/cbsd-wwwdoc).
-
 # Encrypting images with  cbsd geli
 
 There are situations where the information posted on the server's hard drive should preferably be stored in encrypted form. For example, you are setting up a server with important information in any foreign datacenter . There are real cases (author familiar with the case not by hearsay ) when disgruntled employees datacenter can take a few minutes to turn off your server , under any pretext ( breaks technical work — not uncommon) , make an image of the hard drive and turn back , that you will look like rebooting the server , while all the information is from third parties became individuals. Either you rent VDS / VPS, where a stranger to you, not only the data center , but also the server and media.
