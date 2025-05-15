@@ -20,17 +20,15 @@ We assume that **CBSD** nodes are already configured and between them is organiz
 Install PHPIPAM using any suitable way to choose from: PHPIPAM can be installed from ports:
 
 
-```
+```sh
 make -C /usr/ports/net-mgmt/phpipam install
-
 ```
 
 or via pkg:
 
 
-```
+```sh
 pkg install -y phpipam
-
 ```
 
 , or from [official repositories](https://github.com/phpipam/phpipam) on GitHub.
@@ -42,9 +40,8 @@ an image that is the result of the "cbsd jexport" command to the container forme
 In our presence there are three servers with names: SRV-01, SRV-02 and SRV-03. We choose any of them as a hoster for phpipam and get a container:
 
 
-```
+```sh
 cbsd repo action=get sources=img name=phpipam
-
 ```
 
 ![](http://www.convectix.com/img/phpipam/phpipam1.png)
@@ -52,9 +49,8 @@ cbsd repo action=get sources=img name=phpipam
 Run container:
 
 
-```
+```sh
 cbsd jstart phpipam
-
 ```
 
 ![](http://www.convectix.com/img/phpipam/phpipam2.png)
@@ -62,12 +58,11 @@ cbsd jstart phpipam
 Alternative via CBSDFile:
 
 
-```
+```sh
 cd /tmp
 git clone https://github.com/cbsd/cbsdfile-recipes.git
 cd cbsdfile-recipes/jail/phpipam
 cbsd up
-
 ```
 
 (If necessary, to build for alternative version of FreeBSD, through the **ver** argument: cbsd up **ver=12.2**)
@@ -94,7 +89,7 @@ Change the password (in our case, we set the password to 'qwerty123') and activa
 Set the Site URL if necessary: to the correct value. This is especially important if the service works through external balancer. If you use the NGINX-based balancer, make sure that the configuration pass the corresponding headers:
 
 
-```
+
 	location / {
 		proxy_pass http://:80;
 		proxy_set_header Host $host;
@@ -103,8 +98,6 @@ Set the Site URL if necessary: to the correct value. This is especially importan
 		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 		proxy_set_header X-Forwarded-Proto $scheme;
 	}
-
-```
 
 Activate API features, do not forget to save the changes via **save** button then go to the **API** settings through the left menu:
 
@@ -142,36 +135,33 @@ This PHPIPAM configuration is completed.
 Obtain and activate the IPAM module for **CBSD** (ATTENTION, the **CBSD** version must be no less than 13.0.4).
 
 
-```
+```sh
 cbsd module mode=install ipam
 echo 'ipam.d' >> ~cbsd/etc/modules.conf
 cbsd initenv
-
 ```
 
 Copy the standard configuration file and adjust the credentil:
 
 
-```
+```sh
 cp -a /usr/local/cbsd/modules/ipam.d/etc/ipam.conf ~cbsd/etc
 vi ~cbsd/etc/ipam.conf
-
 ```
 
 In our case, PHPIPAM works at http://10.0.1.7, so the configuration file _~cbsd/etc/ipam.conf_ will look like this:
 
 
-```
-PHPIPAMURL="http://10.0.1.7"
-PHPIPAMURLAPI="${PHPIPAMURL}/api"
-USER="admin"
-PASS="qwerty123"
-APPID="Admin"
-DEBUG=0
-# PHPIPAM APP Security ( only 'token' is supported at the moment )
-APP_SECURITY="token"
 
-```
+	PHPIPAMURL="http://10.0.1.7"
+	PHPIPAMURLAPI="${PHPIPAMURL}/api"
+	USER="admin"
+	PASS="qwerty123"
+	APPID="Admin"
+	DEBUG=0
+	# PHPIPAM APP Security ( only 'token' is supported at the moment )
+	APP_SECURITY="token"
+
 
 You can get acquainted with the operations that IPAM module provides for the **CBSD** through the 'cbsd ipam --help' command. As we see, the possibilities cover such operations as:
 
@@ -184,9 +174,8 @@ These three actions will be used as a 'cbsd dhcpd' script that offers a free IP 
 As a check, that PHPIPAM + phpipam module are configured correctly, you can try to create and delete any test record via CLI, for example:
 
 
-```
+```sh
 cbsd ipam mode=create subnet=10.0.1.0/24 ip4_addr=10.0.1.50 description="jail" note="srv-01.my.domain" hostname="jail1.my.domain" debug=1
-
 ```
 
 If the record was created in PHPIPAM, then you are left very little - politely ask the **CBSD** to do it for you, further ;-)
@@ -197,9 +186,8 @@ If the record was created in PHPIPAM, then you are left very little - politely a
 To remove our test record:
 
 
-```
+```sh
 cbsd ipam destroy
-
 ```
 
 ## CBSD setup
@@ -215,19 +203,16 @@ To do this, copy the default configuration file dhcpd.conf and change the 'inter
 that will work with the PHPIPAM. For example, copy this file as _/root/bin/phpiapm.sh_:
 
 
-```
+```sh
 cp ~cbsd/etc/defaults/dhcpd.conf ~cbsd/etc/
 vi ~cbsd/etc/dhcpd.conf
-
 ```
 
 Example:
 
 
-```
-dhcpd_helper="/root/bin/dhcpd-ipam"
+	dhcpd_helper="/root/bin/dhcpd-ipam"
 
-```
 
 Create a /root/bin directory and put a script in it that calls the first\_free method, to obtain the first free IP from PHPIPAM.
 
@@ -235,10 +220,9 @@ Create a /root/bin directory and put a script in it that calls the first\_free m
 The call example is here: _/usr/local/cbsd/modules/ipam.d/share/dhcpd/dhcpd-ipam_:
 
 
-```
+```sh
 mkdir /root/bin
 cp -a /usr/local/cbsd/modules/ipam.d/share/dhcpd/dhcpd-ipam /root/bin/
-
 ```
 
 Edit the subnet= argument in /root/bin/dhcpd-ipam to the network that you use for virtual environments (and configured in PHPIPAM).
@@ -247,21 +231,18 @@ Edit the subnet= argument in /root/bin/dhcpd-ipam to the network that you use fo
 In our case, this is **10.0.1.0/24**, respectively, the script will be the following:
 
 
-```
-#!/bin/sh
 
-cbsd ipam mode=firstfreelock subnet=10.0.1.0/24
+	#!/bin/sh
 
-```
+	cbsd ipam mode=firstfreelock subnet=10.0.1.0/24
 
 **b)** copy the scripts that will be launched as create/destroy/start/stop hooks of environments.
 Examples of these scripts are here: _/usr/local/cbsd/modules/ipam.d/share_.
 
 
-```
+```sh
 mkdir -p /root/share/cbsd-ipam
 cp -a /usr/local/cbsd/modules/ipam.d/share/*.d /root/share/cbsd-ipam/
-
 ```
 
 In /root/share/cbsd-ipam now we have three directories on the name of the directories that work out in **CBSD** at certain events:
@@ -291,20 +272,18 @@ Now, if you do not use [your own profiles](http://www.convectix.com/en/13.0.x/wf
 
 For jail:
 
-```
+```sh
 ln -sf /root/share/cbsd-ipam/master_create.d/ipam.sh ~cbsd/share/jail-system-default/master_create.d/ipam.sh
 ln -sf /root/share/cbsd-ipam/master_poststart.d/ipam.sh ~cbsd/share/jail-system-default/master_poststart.d/ipam.sh
 ln -sf /root/share/cbsd-ipam/remove.d/ipam.sh ~cbsd/share/jail-system-default/remove.d/ipam.sh
-
 ```
 
 For bhyve:
 
-```
+```sh
 ln -sf /root/share/cbsd-ipam/master_create.d/ipam.sh ~cbsd/share/bhyve-system-default/master_create.d/ipam.sh
 ln -sf /root/share/cbsd-ipam/master_poststart.d/ipam.sh ~cbsd/share/bhyve-system-default/master_poststart.d/ipam.sh
 ln -sf /root/share/cbsd-ipam/remove.d/ipam.sh ~cbsd/share/bhyve-system-default/remove.d/ipam.sh
-
 ```
 
 That's all! Now, working with a CBSDfile or API, or CLI, by creating and deleting jail or bhyve virtual environments on any of the three servers, you solve the problems of:
@@ -317,8 +296,4 @@ has taken one or another IP and on which node it is started (the **description**
 
 [![](http://www.convectix.com/img/phpipam/phpipam12.png)](http://www.convectix.com/img/phpipam/phpipam12.png)
 
-Demo of results (rus comment)
-
-
 **Good luck, we wish the passing wind and light clouds!**
-

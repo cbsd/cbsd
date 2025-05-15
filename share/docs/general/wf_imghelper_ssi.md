@@ -1,37 +1,12 @@
-[View source on GitHub](https://github.com/cbsd/cbsd)
-
-FreeBSD virtual environment management and repository
-
-- [About](http://www.convectix.com/en/about.html)
-- [News](http://www.convectix.com/en/news.html)
-- [Screenshots](http://www.convectix.com/en/screenshots.html)
-- [Tutorial](http://www.convectix.com/en/tutorial.html)
-- [Documentation »](http://www.convectix.com/en/docs.html)  - [Articles by author's](http://www.convectix.com/en/articles.html)
-  - [Articles and press](http://www.convectix.com/en/press.html)
-- [Marketplace(Templates)](https://marketplace.convectix.com)
-- [Support the project](http://www.convectix.com/en/donate.html)
-- [bhyve.cloud](http://www.convectix.com/en/bhyve-cloud.html)
-- Lang »  - [Русский](http://www.convectix.com/ru/13.0.x/wf_imghelper_ssi.html)
-  - [English](http://www.convectix.com/en/13.0.x/wf_imghelper_ssi.html)
-  - [Deutsch](http://www.convectix.com/de/13.0.x/wf_imghelper_ssi.html)
-
-2020-10 upd: we reached the first fundraising goal and rented a server in Hetzner for development! Thank you for [donating](https://www.patreon.com/clonos) !
-
-Attention! Current pages describe **CBSD** version **13.0.x**. If you are using an older version, please update first.
-
-Attention! I apologize for the automatic translation of this text. You can improve it by sending me a more correct version of the text or fix html pages via [GITHUB repository](https://github.com/cbsd/cbsd-wwwdoc).
-
 # How does a helper for **CBSD** image
 
 ## command: imghelper
 
-```
-			% cbsd imghelper
-
+```sh
+cbsd imghelper
 ```
 
 **Description**:
-
 
 Prebuilt images for **CBSD** represent a archive of environment and a sequence scenario, which will be formed by one or another configuration derived from the image of the environment
 
@@ -43,11 +18,10 @@ In this paper we consider the construction of the classical dialog-based menu
 
 SQL schema file format, the following (described format is used for testing **CBSD** updatesql:
 
-```
+```sql
 CREATE TABLE forms (  idx INTEGER PRIMARY KEY AUTOINCREMENT, param TEXT DEFAULT NULL UNIQUE, \
 desc TEXT DEFAULT NULL, defaults TEXT DEFAULT NULL, mandatory INTEGER DEFAULT 0, \
 attr TEXT DEFAULT NULL, xattr TEXT DEFAULT NULL  );
-
 ```
 
 Where:
@@ -77,32 +51,30 @@ A practical example
 
 Create a file with a form to enter the 4 parameters: _username, password, dns1, dns2_. To do this, create an empty table in the file /tmp/forms.sqlite:
 
-```
+```sh
 % sqlite3 /tmp/forms.sqlite
 sqlite> CREATE TABLE forms (  idx INTEGER PRIMARY KEY AUTOINCREMENT, \
 param TEXT DEFAULT NULL UNIQUE, desc TEXT DEFAULT NULL, defaults TEXT DEFAULT NULL, \
 mandatory INTEGER DEFAULT 0, attr TEXT DEFAULT NULL, xattr TEXT DEFAULT NULL  );
-sqlite> ^D
-
+sqlite>.quit
 ```
 
 Fill in the table we need parameters
 
-```
+```sh
 % sqlite3 /tmp/forms.sqlite << EOF
 INSERT INTO forms ( param,desc,defaults,mandatory,attr ) VALUES ( "username","Please enter user name","oleg",1, "maxlen=10" );
 INSERT INTO forms ( param,desc,defaults,mandatory,attr ) VALUES ( "password","Please enter password","",1, "maxlen=15" );
 INSERT INTO forms ( param,desc,defaults,mandatory,attr ) VALUES ( "dns1","Please enter DNS1","8.8.8.8",1, "maxlen=15" );
 INSERT INTO forms ( param,desc,defaults,mandatory,attr ) VALUES ( "dsn2","Please enter DNS2","",1, "maxlen=15" );
 EOF
-
 ```
 
 As you can see, all the fields are mandatory. Thus, the value of the parameters _username_ and _dns1_ The default is predetermined and offers equal _oleg_ and _8.8.8.8_ respectively
 
 Run imghelper and see our field:
 
-```
+```sh
 % cbsd imghelper /tmp/forms.sqlite
 
 ```
@@ -111,27 +83,25 @@ Run imghelper and see our field:
 
 Also, we can determine in advance the parameters via the command line (after having received the names of the variables in terms of --help):
 
-```
-% cbsd imghelper /tmp/forms.sqlite --help
-[sys] Ncurses-based jail image boostrap helper
-require: formfile
-opt:  username password dns1 dsn2
-External help: /usr/local/share/doc/cbsd/wf_imghelper.html
-		% cbsd imghelper /tmp/forms.sqlite username=gelo dns1="1.2.3.4"
 
-```
+        cbsd imghelper /tmp/forms.sqlite --help
+        [sys] Ncurses-based jail image boostrap helper
+        require: formfile
+        opt:  username password dns1 dsn2
+        External help: /usr/local/share/doc/cbsd/wf_imghelper.html
+        cbsd imghelper /tmp/forms.sqlite username=gelo dns1="1.2.3.4"
+
 
 ![](http://www.convectix.com/img/imghelper2.png)
 
 Finally, we can simply use the environment variables:
 
-```
-% setenv H_username root
-% setenv H_password strong_plain_text_password
-% setenv H_dns1 192.168.1.1
-% setenv H_dsn2 10.0.0.1
-% cbsd imghelper /tmp/forms.sqlite
-
+```sh
+setenv H_username root
+setenv H_password strong_plain_text_password
+setenv H_dns1 192.168.1.1
+setenv H_dsn2 10.0.0.1
+cbsd imghelper /tmp/forms.sqlite
 ```
 
 ![](http://www.convectix.com/img/imghelper3.png)
