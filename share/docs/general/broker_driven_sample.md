@@ -25,13 +25,13 @@ Then, initialize two independent environments (in a real cluster, these can be d
 env workdir=/pool1 /usr/local/cbsd/sudoexec/initenv
 ```
 
-Anser no to the question of changing the rc.conf file, this initialization should not modify your main configuration files.
+- Answer no to the question of changing the rc.conf file, this initialization should not modify your host configuration files.
 
-Answer no to the question of enabling NAT (nat\_enable: Enable NAT for RFC1918 networks?) - it should already be configured correctly on the main system.
+- Answer no to the question of enabling NAT (nat\_enable: Enable NAT for RFC1918 networks?). NAT should already be configured correctly on the host system.
 
 Repeat the same for the second environment:
 
-```
+```sh
 env workdir=/pool2 /usr/local/cbsd/sudoexec/initenv
 ```
 
@@ -49,15 +49,15 @@ cd /root
 git clone https://github.com/cbsd/bs_router.git /root/bs_router
 ```
 
-This example is written in GO, so to build the project we need for golang:
+This example is written in GO, so to build the project we need to install golang:
 
-```
+```sh
 pkg install -y lang/go
 ```
 
 Build:
 
-```
+```sh
 cd bs_router
 setenv GOPATH /root/bs_router
 go get
@@ -72,14 +72,14 @@ cp -a config.json /usr/local/etc/pool1.json
 cp -a config.json /usr/local/etc/pool2.json
 ```
 
-In both files, please change the following variables:
+In both configuration files change the following variables:
 
 - **uri** \- instead of 127.0.0.1:1130, set IP address of bs1 jail, e.g: **172.16.0.3**:1130 (if bs1 has IP 172.16.0.3)
 - **cbsdenv** \- for pool1.json config it will be pointed to /pool1, for pool2.json - /pool2
 - **tube** \- which pipe to subscribe to, for pool1.json config let it be "cbsd\_pool1", and for pool2.json - cbsd\_pool2
 - **reply\_tube\_prefix** which pipe do we use for reply. For pool1.json let it be: cbsd\_pool1\_result\_id, and for pool2.json - cbsd\_pool2\_result\_id
 
-Now start both agents with the configuration file via the command line:
+Now start both agents with the specifying the absolute path to the configuration file:
 
 ```sh
 /usr/local/sbin/bs_router -config /usr/local/etc/pool1.json
@@ -99,7 +99,7 @@ go get
 go build
 ```
 
-The result is the **bs\_router-client** binary file, which can now be used to send and receive tasks to different **CBSD** environments. Take a look at the bin.jail and bin.bhyve directories for examples of use.
+This will build the **bs\_router-client** binary file, which can now be used to send and receive tasks to different **CBSD** environments. Take a look at the bin.jail and bin.bhyve directories for examples of use.
 
 When working with cloud images, it makes sense to first 'warm up' (download) all the cloud images to speed creation of the first virtual machine. For example, for pool1 this can be done like this:
 
