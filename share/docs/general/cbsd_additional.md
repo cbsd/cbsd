@@ -1,4 +1,4 @@
------------------------------
+# What You Need to Know about CBSD
 
 ## Contents
 - [Introduction](#introduction)
@@ -14,15 +14,14 @@
 
 The additional functionality **CBSD** provides relys on the following:
 
--   vnet (VIMAGE)
--   zfs
--   racct/rctl
--   ipfw
--   pf/ipfw/ipfilter
--   carp
--   hastd
--   vale
--   vxlan
+-   [vnet (VIMAGE)](https://klarasystems.com/articles/virtualize-your-network-on-freebsd-with-vnet/)
+-   [zfs](https://docs.freebsd.org/en/books/handbook/zfs/)
+-   [racct/rctl](https://klarasystems.com/articles/controlling-resource-limits-with-rctl-in-freebsd/)
+-   [pf/ipfw/ipfilter](https://docs.freebsd.org/en/books/handbook/firewalls/)
+-   [carp](https://docs.freebsd.org/en/books/handbook/advanced-networking/)
+-   [hastd](https://wiki.freebsd.org/HighlyAvailableStorage)
+-   [vale](https://man.freebsd.org/cgi/man.cgi?query=vale&sektion=4&manpath=FreeBSD+12.0-RELEASE+and+Ports)
+-   [vxlan](https://wiki.freebsd.org/vxlan)
 
 While many of these subsystems are not directly related to **jails** or **vm hypervisor**, **CBSD** uses these components to provide system administrators a more advanced, integrated system in which to implement solutions for issues faced in today's IT envirnonment. This page will provide information to help system administrators familiarize themselves with CBSD. While this page is not intended to be a comprehensive, all encompassing how-to, it will provide details about where files are stored, and how to use **CBSD** to manage and interact with the virtual environment.
 
@@ -140,20 +139,22 @@ Finally, be sure to read about the modifications that **CBSD** makes to the syst
 
 ## Modules
 
-The functionality of **CBSD** can be extended by activating additional
-modules that anyone can write.
+The functionality of **CBSD** can be extended by activating additional modules that can be written by anyone.
 
-Each module is a directory located in the **/usr/local/cbsd/modules** path. To activate a module, you must add its name into the **\~workdir/modules.conf** configuration file and re-initialize **CBSD** with: cbsd initenv
-
-A good example of using additional modules is the [ClonOS project](https://clonos.convectix.com/), which, using modules and a web based gui, adds the VNC terminal to jail, adds notifications via web socket transport and add helpers for deploying services in containers, etc (similar to proxmox but not quite as mature).
+Each module is a directory located in the **/usr/local/cbsd/modules** path. To activate a module, you must add its name into the **\~workdir/modules.conf** configuration file and re-initialize **CBSD** with:
+ 
+```sh
+ cbsd initenv
+```
+A good example of using an added module is the [ClonOS project](https://clonos.convectix.com/), which adds a web based gui, adds a VNC terminal to jails and vms, adds notifications via web socket transport and add helpers for deploying services in containers, etc (similar to the Linux based Proxmox).
 
 ## Configuration
 
 **CBSD** is a highly configurable and customizable framework, which makes it an extremely flexible and versatile solution which can be used in a wide range of tasks.
 
-Take a look at the contents of the **$workdir/etc/defaults/** directory. It contains default global settings (for example: color scheme, logging setup) and/or configuration files for single commands (for example: blogin, bstart, jclone, etc).
+Take a look at the contents of the **$workdir/etc/defaults/** directory. It contains default global settings (color scheme, logging setup) and/or configuration files for single commands (blogin, bstart, jclone, etc).
 
-You can reassign these settings in the FreeBSD-way, by writing changes to the file of the same name, but placing it a higher level in the directory **$workdir/etc/** directory. Similar to FreeBSD system configuration files in **/etc** and **/etc/defaults/**.
+Settings can be reassigned in the FreeBSD-way, by writing changes to the file of the same name, but placing it one directory level in the **$workdir/etc/** directory. Similar to FreeBSD system configuration files in **/etc** and **/etc/defaults/**. [FreeBSD Configuration](https://docs.freebsd.org/en/books/handbook/config/#_the_etc_directory)
 
 #### ANSII Color
 
