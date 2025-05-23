@@ -80,9 +80,9 @@ cd ~cbsd
 	├── etc       		# CBSD configuration files
 	├── export    		# image files create by jexport command 
 	├── formfile
-	├── ftmp	  		# tmp directory for CBSD command ouput
-	├── import			# data for the import command
-	├── jails	  		# mount points for jails with non-writable base
+	├── ftmp	  	# tmp directory for CBSD command ouput
+	├── import		# data for the import command
+	├── jails	  	# mount points for jails with non-writable base
 	├── jails-data		# jail data
 	├── jails-fstab		# contains fstab.local: additional jail filesystem info
 	├── jails-rcconf	# jail rc.conf files
