@@ -37,8 +37,8 @@ If you are working with bhyve or XEN, be sure to first try to read the official 
 
 Before getting started, you should be familiar following terminology:
 
--   **Node (host): **A physical server that hosts the virtual environment.
--   **Jail (guest): **An isolated environment, complete with its own set of    software and services. A jail is able to run any software that is    available to the OS installed in the jail (cli or graphical).
+-   **Node (host):** A physical server that hosts the virtual environment.
+-   **Jail (guest):** An isolated environment, complete with its own set of    software and services. A jail is able to run any software that is    available to the OS installed in the jail (cli or graphical).
 -   **Cloud:** A farm/cluster of interconnected nodes, or a full-fledged  peer network 
 -   **Base:** In the context of **CBSD**, a copy of the files in the  FreeBSD base system.
 -   **CBSD:** A system for configuring and controlling node(s), jails, vms and certain subsystems of FreeBSD. CBSD provides a unified way to interact with and perform actions on the specified nodes or jails via the provided API. **CBSD** also provides the ability to implement and use [ACLs](https://www.freebsd.org/doc/handbook/fs-acl.html), and change permissions on specified resources.
