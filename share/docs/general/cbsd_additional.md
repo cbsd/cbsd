@@ -245,7 +245,7 @@ head -c 30 /dev/random | uuencode -m - | tail -n 2 | head -n1
 
 ### Encountering Problems
 
-While the **CBSD** project strives to be bug free, like any software, bugs happen. If a component or tool that is part of **CBSD** crashes, or returns unexpected data or behaviour, [CBSD command debuging] (https://github.com/cbsd/cbsd/blob/develop/share/docs/general/cmdsyntax_cbsd.md) can be enabled. 
+While the **CBSD** project strives to be bug free, like any software, bugs happen. If a component or tool that is part of **CBSD** crashes, or returns unexpected data or behaviour, [CBSD command debuging](https://github.com/cbsd/cbsd/blob/develop/share/docs/general/cmdsyntax_cbsd.md) can be enabled. 
 
 ```sh
 env CBSD_DEBUG=1 cbsd node mode=add node=192.168.1.222 pw=very_strong_plain_password port=22 
