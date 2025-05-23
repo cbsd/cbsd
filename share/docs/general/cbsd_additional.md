@@ -87,7 +87,7 @@ cd ~cbsd
 	├── jails-fstab		# contains fstab.local: additional jail filesystem info
 	├── jails-rcconf	# jail rc.conf files
 	├── jails-system	# helper scripts for jail creation
-	├── modules			# extionsions to base CBSD functionality
+	├── modules		# extionsions to base CBSD functionality
 	├── nodes
 	├── share		# jail skeleton directories
 	├── src			# OS source and images
