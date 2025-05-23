@@ -255,4 +255,4 @@ env CBSD_DEBUG=1 cbsd node mode=add node=192.168.1.222 pw=very_strong_plain_pass
 env CBSD_DEBUG=1 cbsd jls
 ```
 
-If the bug is reproducible, and an actual bug is discovered, please report the issue via e-mail: **CBSD** *at* **bsdstore.ru**, or better yet submit a pull request that identifies the issue found, and contains the code to resolve the issue.
+If the bug is reproducible, and an actual bug is discovered, please report the issue via e-mail: **CBSD** *at* **bsdstore.ru**, or better yet submit a pull request that describes the issue and contains the code to resolve the issue.
