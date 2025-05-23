@@ -74,25 +74,25 @@ The largest directory used by **CBSD** is where all of the data **CBSD** uses is
 cd ~cbsd 
 
 ├──($workdir)->
-	├── .rssh     # the private keys of remote nodes
-	├── .ssh      # the private and public keys of the nodes
-	├── basejail  # FreeBSD bases and kernels for baserw jails
-	├── etc       # CBSD configuration files
-	├── export    # image files create by jexport command 
+	├── .rssh     		# the private keys of remote nodes
+	├── .ssh      		# the private and public keys of the nodes
+	├── basejail  		# FreeBSD bases and kernels for baserw jails
+	├── etc       		# CBSD configuration files
+	├── export    		# image files create by jexport command 
 	├── formfile
-	├── ftmp
-	├── import
-	├── jails
-	├── jails-data
-	├── jails-fstab
-	├── jails-rcconf
-	├── jails-system
-	├── modules
+	├── ftmp	  		# tmp directory for CBSD command ouput
+	├── import			# data for the import command
+	├── jails	  		# mount points for jails with non-writable base
+	├── jails-data		# jail data
+	├── jails-fstab		# contains fstab.local: additional jail filesystem info
+	├── jails-rcconf	# jail rc.conf files
+	├── jails-system	# helper scripts for jail creation
+	├── modules			# extionsions to base CBSD functionality
 	├── nodes
-	├── share
-	├── src
+	├── share			# jail skeleton directories
+	├── src				# OS source and images
 	├── tmp
-	├── var
+	├── var				# CBSD system information
 	└── vm
 ```
 
