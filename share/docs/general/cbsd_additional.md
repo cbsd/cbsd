@@ -89,10 +89,10 @@ cd ~cbsd
 	├── jails-system	# helper scripts for jail creation
 	├── modules			# extionsions to base CBSD functionality
 	├── nodes
-	├── share			# jail skeleton directories
-	├── src				# OS source and images
+	├── share		# jail skeleton directories
+	├── src			# OS source and images
 	├── tmp
-	├── var				# CBSD system information
+	├── var			# CBSD system information
 	└── vm
 ```
 
