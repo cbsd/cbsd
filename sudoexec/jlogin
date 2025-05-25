@@ -3,7 +3,7 @@
 # v13.0.1
 
 MYARG=""
-MYOPTARG="jname remote src_session user"
+MYOPTARG="jname dir remote shell src_session user"
 MYDESC="Exec login into jail"
 CBSDMODULE="jail"
 ADDHELP="
@@ -16,13 +16,18 @@ ${H3_COLOR}Description${N0_COLOR}:
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}jname${N0_COLOR}   - target jail;
+ ${N2_COLOR}dir${N0_COLOR}     - the working directory inside the jail.  The
+                 default is the ~user directory.
  ${N2_COLOR}remote=${N0_COLOR} - '1' prevent to searching in remote node base. 
                  For the avoid the looping.
- ${N2_COLOR}user${N0_COLOR}  - login via another user. Default is 'root'.
+ ${N2_COLOR}shell${N0_COLOR}   - shell by default. Default is '/bin/sh';
+ ${N2_COLOR}user${N0_COLOR}    - login via another user. Default is 'root'.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd jlogin
+ # cbsd jlogin jname=jname1 user=nobody dir=/tmp shell=/bin/bash
+ # cbsd jlogin jname=jname1 shell=zsh
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -35,8 +40,16 @@ EXTHELP="wf_jlogin"
 
 . ${subrdir}/nc.subr
 cbsd_api=0
+user=
+ouser=
+dir=
+odir=
+shell=
+oshell=
 . ${cbsdinit}
 [ -n "${user}" ] && ouser="${user}"
+[ -n "${dir}" ] && odir="${dir}"
+[ -n "${shell}" ] && oshell="${shell}"
 readconf jlogin.conf
 
 try_remote()
@@ -93,7 +106,7 @@ login_internal()
 	if [ ${exec_fib} -eq 0 ]; then
 		SETFIB=""
 	else
-		SETFIB="${SETFIB_CMD} ${exec_fib}"
+		SETFIB="${SETFIB_CMD}  ${exec_fib}"
 	fi
 
 	if [ "${cpuset}" = "0" ]; then
@@ -122,21 +135,15 @@ login_internal()
 
 	case "${OSNAME}" in
 		freebsd)
-			[ -n "${ouser}" ] && user="${ouser}"
-			if [ "${user}" != "root" ]; then
-				# additional check for user existance
-				_res=$( ${PW_CMD} -R ${path} usershow ${user} 2>&1 ) \
-				|| err 1 "${N1_COLOR}Unable to find user: ${_res}${N0_COLOR}"
-			fi
-
 			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
 				. ${subrdir}/emulator.subr
 				init_usermode_emul
 				# inherit emulator_flags
-				LOGIN_STR="/bin/${emulator} ${LOGIN_CMD} -f ${user} -p"
+				#LOGIN_STR="/bin/${emulator} ${LOGIN_CMD} -f ${user}"
+				LOGIN_STR="/bin/${emulator} /bin/sh"
 			else
-				LOGIN_STR="/bin/csh"
-				#LOGIN_STR="${LOGIN_CMD} -f ${user} -p"
+				#LOGIN_STR="${LOGIN_CMD} -f ${user}"
+				LOGIN_STR="/bin/sh"
 			fi
 			;;
 		*)
@@ -144,11 +151,22 @@ login_internal()
 			;;
 	esac
 
+	[ -n "${ouser}" ] && user="${ouser}"
+	[ -z "${user}" ] && user="root"
+	[ -n "${odir}" ] && dir="${odir}"
+	[ -z "${dir}" ] && dir="~${user}"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -z "${shell}" ] && shell="/bin/sh"
+
 	if [ "${platform}" = "DragonFly" ]; then
 		# shellcheck disable=2153
 		jexec="${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} ${LOGIN_STR}"
 	else
-		jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}"
+		# old behavior
+		# jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}"
+
+		# with 
+		jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/exec_jail ${jname} ${user} ${dir} ${shell}"
 	fi
 	init_tmux
 
@@ -164,22 +182,7 @@ login_internal()
 			ret=$?
 		fi
 	else
-		_vars=$( ${ENV_CMD} | ${TEE_CMD} /tmp/old_env | ${CUT_CMD} -d '=' -f 1 | ${XARGS_CMD} )
-		unset ${_vars}
-
-		if [ -r ${jailsysdir}/${jname}/environment ]; then
-			for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
-				export $i
-			done
-		fi
-		if [ -r ${jailsysdir}/${jname}/environment.local ]; then
-		for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
-			export $i
-		done
-		fi
-
-		set -a
-		${jexec}
+		eval ${jexec}
 		ret=$?
 		if [ ${ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CBSD_APP} jexec errcode: ${ret}: ${jexec}${N0_COLOR}" 1>&2
@@ -285,7 +288,9 @@ fi
 
 if [ ${cbsd_api} -eq 1 ]; then
 	CURL_CMD=$( which curl )
+	JQ_CMD=$( which jq )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
 

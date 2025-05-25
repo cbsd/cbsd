@@ -2,7 +2,7 @@
 # shellcheck shell=sh disable=2034,2154,1090,2166,3037,2086,1091
 #v12.1.7
 MYARG=""
-MYOPTARG="cmd dir environment jname user"
+MYOPTARG="cmd dir environment jname shell user"
 MYDESC="Execute command inside jail"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -13,16 +13,18 @@ ${H3_COLOR}Description${N0_COLOR}:
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}cmd${N0_COLOR}         - command to execute. Use quotes if there are spaces or several commands;
- ${N2_COLOR}dir${N0_COLOR}         - change current directory in jail before execute;
+ ${N2_COLOR}dir${N0_COLOR}         - change current directory in jail before execute ( default: '/' );
  ${N2_COLOR}environment${N0_COLOR} - pass environment, e.g.: 'environment=\"FOO=bar\" environment=\"VAR1=boo\"'
                or path to 'env' file;
  ${N2_COLOR}jname${N0_COLOR}       - target jail. If jail='*' or jail='pri*' then execute command on all
                jails or in jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...;
+ ${N2_COLOR}shell${N0_COLOR}       - shell by default. Default is '/bin/sh';
  ${N2_COLOR}user${N0_COLOR}        - execute a command as another user. Default is 'root';
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd jexec jname=test dir=/tmp pwd
+ # cbsd jexec jname=test user=nobody whoami
  # cbsd jexec jname=test <<EOF
 pwd
 hostname
@@ -45,12 +47,21 @@ EXTHELP="wf_jexec"
 . ${subrdir}/nc.subr
 cloud_api=0
 dir=
+odir=
+shell=
+oshell=
+jname=
 ojname=
-oenvironment=
 environment=
+oenvironment=
+user=
+ouser=
 . ${cbsdinit}
 
 [ -n "${jname}" ] && ojname="${jname}"
+[ -n "${dir}" ] && odir="${dir}"
+[ -n "${shell}" ] && oshell="${shell}"
+[ -n "${user}" ] && ouser="${ouser}"
 
 if [ -z "${jname}" -a -n "${ojname}" ]; then
 	# inherit jname env
@@ -87,14 +98,9 @@ if [ -n "${ojname}" ]; then
 	unset jail_list
 fi
 
-if [ -n "${user}" ]; then
-	shift
-else
-	user="root"
-fi
-
 xenvironment=
 if [ -z "${cmd}" ]; then
+	[ -n "${odir}" ] && dir="${odir}"
 	if [ -n "${dir}" ]; then
 		cmd0="cd ${dir}"
 	fi
@@ -131,7 +137,7 @@ if [ -z "${cmd}" ]; then
 				shift
 				continue
 				;;
-			dir|jname)
+			dir|jname|shell|user)
 				shift
 				continue
 				;;
@@ -152,6 +158,7 @@ emulator="jail"		# for jname_is_multiple
 
 _global_ret=0
 
+[ -n "${odir}" ] && dir="${odir}"
 if [ -z "${cmd}" ]; then
 	batchfile=$( ${MKTEMP_CMD} )
 	# todo: test/chec for stdin/blocked
@@ -161,15 +168,23 @@ if [ -z "${cmd}" ]; then
 		echo "${_line}" >> ${batchfile}
 	done
 
+	# set permission for all users due to 'user=' args
+	${CHMOD_CMD} 0555 ${batchfile}
+
+	[ -n "${ouser}" ] && user="${ouser}"
+	[ -z "${user}" ] && user="root"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -z "${shell}" ] && shell="/bin/sh"
+
 	if [ -n "${jail_list}" ]; then
 		for jname in ${jail_list}; do
 			jscp ${batchfile} ${jname}:${batchfile}
-			jexec jname=${jname} /bin/sh ${batchfile}
+			jexec jname=${jname} user=${user} shell=${shell} ${batchfile}
 			_global_ret=$?
 		done
 	else
 		jscp ${batchfile} ${jname}:${batchfile}
-		jexec jname=${jname} /bin/sh ${batchfile}
+		jexec jname=${jname} user=${user} shell=${shell} ${batchfile}
 		_global_ret=$?
 	fi
 	${RM_CMD} -f ${batchfile}
@@ -190,6 +205,11 @@ if [ -n "${jail_list}" ]; then
 	task_id=
 	task_id_cur=
 
+	[ -n "${ouser}" ] && user="${ouser}"
+	[ -z "${user}" ] && user="root"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -z "${shell}" ] && shell="/bin/sh"
+
 	# spawn command for all jail
 	for jname in ${jail_list}; do
 		. ${subrdir}/rcconf.subr
@@ -198,7 +218,7 @@ if [ -n "${jail_list}" ]; then
 #		echo "C:[${cmd}]"
 #		continue
 
-		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec dir="${dir}" jname=${jname} cmd="${cmd}" 2>/dev/null )
+		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec dir="${dir}" user=${user} shell=${shell} jname=${jname} cmd="${cmd}" 2>/dev/null )
 		task_id="${task_id} ${task_id_cur}"
 	done
 
@@ -269,7 +289,7 @@ else
 	[ -z "${nice}" ] && nice="0"
 
 	 _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
-	[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
+	[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param='nice'" )
 	[ -z "${nice}" ] && nice="0"
 
 	if [ ${exec_fib} -eq 0 ]; then
@@ -303,11 +323,7 @@ else
 	case "${OSNAME}" in
 		freebsd)
 			[ -n "${ouser}" ] && user="${ouser}"
-			if [ "${user}" != "root" ]; then
-				# additional check for user existance
-				_res=$( ${PW_CMD} -R ${path} usershow ${user} 2>&1 ) || err 1 "${N1_COLOR}Unable to find user: ${_res}${N0_COLOR}"
-			fi
-
+			[ -z "${user}" ] && user="root"
 			if [ "${emulator}" != "jail" -a -n "${emulator}" ]; then
 				. ${subrdir}/emulator.subr
 				init_usermode_emul
@@ -334,41 +350,12 @@ else
 		exec ${jailsysdir}/${jname}/cmd/${cmd}
 	fi
 
-	_vars=$( ${ENV_CMD} | ${TEE_CMD} /tmp/old_env | ${CUT_CMD} -d '=' -f 1 | ${XARGS_CMD} )
-	for i in ${_vars}; do
-		case "${i}" in
-			PATH|SHELL|jid|FOO|jname)
-				continue
-				;;
-			TERM|BLOCKSIZE|MAIL|MM_CHARSET|LANG|SHLVL|LOGNAME|EDITOR|PAGER)
-				continue
-				;;
-		esac
-		unset ${i}
-	done
-
-	if [ -r ${jailsysdir}/${jname}/environment ]; then
-		for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
-			#echo "> $i"
-			export $i
-		done
-	fi
-	if [ -r ${jailsysdir}/${jname}/environment.local ]; then
-		for i in $( ${CAT_CMD} ${jailsysdir}/${jname}/environment ); do
-			export $i
-		done
-	fi
-	if [ -n "${xenvironment}" ]; then
-		if [ -r "${xenvironment}" ]; then
-			for i in $( ${CAT_CMD} "${xenvironment}" ); do
-				export $i
-			done
-		else
-			for i in $xenvironment; do
-				export ${i}
-			done
-		fi
-	fi
+	[ -n "${ouser}" ] && user="${ouser}"
+	[ -n "${odir}" ] && dir="${odir}"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -z "${user}" ] && user="root"
+	[ -z "${dir}" ] && dir="/"
+	[ -z "${shell}" ] && shell="/bin/sh"
 
 	if [ -z "${LOGIN_STR}" ]; then
 		if [ "${platform}" = "DragonFly" ]; then
@@ -380,7 +367,11 @@ else
 			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} /bin/sh -c "${cmd}"
 			ret=$?
 		else
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} /bin/sh -c "${cmd}"
+			# old behavior
+			#exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} /bin/sh -c "${cmd}"
+			# with exec
+			echo "New behavior"
+			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} /usr/local/cbsd/misc/exec_jail ${jname} ${user} ${dir} ${shell} "${cmd}"
 			ret=$?
 		fi
 	else
