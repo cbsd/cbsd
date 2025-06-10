@@ -4,13 +4,14 @@
 #include <ctype.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <stdbool.h>
 
 #include "sqlite3.h"
 
 #include "sqlcli.h"
 
-//#define SQLITE_BUSY_TIMEOUT 5000
+#define MAX_RETRY 40
+#define BUSY_SLEEP_US 5000
 
 char *
 nm(void)
@@ -28,138 +29,107 @@ usage()
 int
 sqlCB(sqlite3_stmt *stmt)
 {
-	int icol;
-	int irow;
-	const char *colname;
-	int allcol;
-	char *delim;
-	char *cp;
-	int printheader = 0;
-	char *sqlcolnames = NULL;
-	int ret = 0;
-
 	if (stmt == NULL) {
 		return 1;
 	}
-
-	if ((cp = getenv("sqldelimer")) == NULL) {
-		delim = DEFSQLDELIMER;
-	} else {
-		delim = cp;
-	}
-
-	sqlcolnames = getenv("sqlcolnames");
-	allcol = sqlite3_column_count(stmt);
-
-	if ((printheader) && (sqlcolnames == NULL)) {
-		for (icol = 0; icol < allcol; icol++) {
-			colname = sqlite3_column_name(stmt, icol);
-			if (icol != (allcol - 1)) {
-				printf("%s%s", colname, delim);
-			} else {
-				printf("%s\n", colname);
-			}
+	const char *delim = getenv("sqldelimer");
+	if (!delim) delim = DEFSQLDELIMER;
+	const char *sqlcolnames = getenv("sqlcolnames");
+	int allcol = sqlite3_column_count(stmt);
+	// Optionally print header if requested
+	if (getenv("sqlprintheader") && !sqlcolnames) {
+		for (int icol = 0; icol < allcol; icol++) {
+			printf("%s%s", sqlite3_column_name(stmt, icol),
+				   (icol != allcol - 1) ? delim : "\n");
 		}
 	}
-	for (icol = 0; icol < allcol; icol++) {
+	for (int icol = 0; icol < allcol; icol++) {
+		const char *colval = (const char *)sqlite3_column_text(stmt, icol);
 		if (sqlcolnames) {
-			printf("%s=\"%s\"\n", sqlite3_column_name(stmt, icol),
-			    sqlite3_column_text(stmt, icol));
+			printf("%s=\"%s\"\n", sqlite3_column_name(stmt, icol), colval ? colval : "NULL");
 		} else {
-			if (icol == (allcol - 1)) {
-				printf("%s\n", sqlite3_column_text(stmt, icol));
-			} else {
-				printf("%s%s", sqlite3_column_text(stmt, icol),
-				    delim);
-			}
+			printf("%s%s", colval ? colval : "NULL", (icol == allcol - 1) ? "\n" : delim);
 		}
 	}
-
 	return 0;
 }
 
 int
 main(int argc, char **argv)
 {
-	sqlite3 *db;
-	int res;
-	int i;
-	char *query;
-	char *tmp;
-	char *err = NULL;
-	int maxretry = 40;
-	int retry = 0;
-	sqlite3_stmt *stmt;
-	int ret;
-
 	if (argc < 3) {
 		usage();
-		return 0;
+		return EXIT_FAILURE;
 	}
-	res = 0;
-	for (i = 2; i < argc; i++) {
-		res += strlen(argv[i]) + 1;
+	// Calculate query length
+	size_t query_len = 0;
+	for (int i = 2; i < argc; i++) {
+		query_len += strlen(argv[i]) + 1;
 	}
-
-	if (!res) {
-		return 1;
+	if (query_len == 0) {
+		fprintf(stderr, "%s: Empty query string.\n", nm());
+		return EXIT_FAILURE;
 	}
-
-	if (SQLITE_OK != (res = sqlite3_open(argv[1], &db))) {
-		printf("%s: Can't open database file: %s\n", nm(), argv[1]);
-		return 1;
+	// Open database
+	sqlite3 *db = NULL;
+	int res = sqlite3_open(argv[1], &db);
+	if (res != SQLITE_OK) {
+		fprintf(stderr, "%s: Can't open database file: %s\nError: %s\n", nm(), argv[1], sqlite3_errmsg(db));
+		if (db) sqlite3_close(db);
+		return EXIT_FAILURE;
 	}
-	res = 0;
-
+	// Set PRAGMAs
 	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
 	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
-
-	// https://www.sqlite.org/quirks.html#double_quoted_string_literals_are_accepted
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
-
-	for (i = 2; i < argc; i++) {
-		res += strlen(argv[i]) + 1;
+	// Build query string
+	char *query = (char *)sqlite3_malloc(query_len);
+	if (!query) {
+		fprintf(stderr, "%s: Memory allocation failed.\n", nm());
+		sqlite3_close(db);
+		return EXIT_FAILURE;
 	}
-	if (res) {
-		query = (char *)sqlite3_malloc(res);
-		tmp = query;
-		for (i = 2; i < argc; i++) {
-			strcpy(tmp, argv[i]);
-			tmp += strlen(tmp);
-			*tmp = ' ';
-			tmp++;
-		}
-		tmp[-1] = 0;
+	char *tmp = query;
+	for (int i = 2; i < argc; i++) {
+		size_t len = strlen(argv[i]);
+		memcpy(tmp, argv[i], len);
+		tmp += len;
+		*tmp = ' ';
+		tmp++;
 	}
-
+	tmp[-1] = '\0';
+	// Prepare statement with retry on SQLITE_BUSY
+	sqlite3_stmt *stmt = NULL;
+	int retry = 0;
+	int ret;
 	do {
 		sqlite3_exec(db, "BEGIN", 0, 0, 0);
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 		sqlite3_exec(db, "COMMIT", 0, 0, 0);
-		if (ret == SQLITE_OK) {
-			break;
-		}
+		if (ret == SQLITE_OK) break;
 		if (ret == SQLITE_BUSY) {
-			usleep(5000);
+			usleep(BUSY_SLEEP_US);
 		}
 		retry++;
-		if (retry > maxretry) {
-			break;
-		}
-	} while (ret != SQLITE_OK);
-
-	if (ret == SQLITE_OK) {
+	} while (ret == SQLITE_BUSY && retry <= MAX_RETRY);
+	if (ret != SQLITE_OK) {
+		fprintf(stderr, "%s: Failed to prepare statement. SQLite error: %s [%s]\n", nm(), sqlite3_errmsg(db), query);
+		sqlite3_free(query);
+		sqlite3_close(db);
+		return EXIT_FAILURE;
+	}
+	// Execute and print results
+	ret = sqlite3_step(stmt);
+	while (ret == SQLITE_ROW) {
+		sqlCB(stmt);
 		ret = sqlite3_step(stmt);
-
-		while (ret == SQLITE_ROW) {
-			sqlCB(stmt);
-			ret = sqlite3_step(stmt);
-		}
+	}
+	if (ret != SQLITE_DONE) {
+		fprintf(stderr, "%s: SQLite error during execution: %s\n", nm(), sqlite3_errmsg(db));
 	}
 	sqlite3_finalize(stmt);
 	sqlite3_free(query);
 	sqlite3_close(db);
-
-	return 0;
+	return EXIT_SUCCESS;
 }
