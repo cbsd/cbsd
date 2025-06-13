@@ -541,7 +541,9 @@ phase2()
 	[ ! -f "${distdir}/bin/cbsdssh6" ] && compile_cc ${distdir}/bin/src/cbsdssh6.c -o ${distdir}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include
 	[ ! -f "${distdir}/sbin/netmask" ] && compile_cc ${distdir}/sbin/src/netmask.c -o ${distdir}/sbin/netmask
 	[ ! -f "${distdir}/bin/cfetch" ] && compile_cc ${distdir}/bin/src/cfetch.c -o ${distdir}/bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distdir}/misc/exec_jail" ] && compile_cc ${distdir}/misc/src/exec_jail.c -o ${distdir}/misc/exec_jail
+	[ ! -f "${distdir}/misc/jexec_env" ] && compile_cc ${distdir}/misc/src/jexec_env.c -o ${distdir}/misc/jexec_env
+	[ ! -f "${distdir}/misc/jail_env" ] && compile_cc ${distdir}/misc/src/jail_env.c -o ${distdir}/misc/jail_env
+	[ ! -f "${distdir}/misc/getshell" ] && compile_cc ${distdir}/misc/src/getshell.c -o ${distdir}/misc/getshell
 
 	if [ ! -f "${distdir}/misc/sqlcli" ]; then
 		_pkgconf=$( ${WHICH_CMD} pkg-config )
@@ -766,7 +768,10 @@ EOF
 #	[ ! -d "${sharedir}/${platform}-jail-debian-bullseye-skel" -a ! -d "${platform}/share/${platform}-jail-debian-bullseye-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-debian-bullseye-skel ${sharedir}/
 #	[ ! -d "${sharedir}/${platform}-jail-centos-7-skel" -a ! -d "${platform}/share/${platform}-jail-centos-7-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-centos-7-skel ${sharedir}/
 	[ ! -d "${sharedir}/bhyve-system-default" -a -d "${distdir}/share/bhyve-system-default" ] && /bin/cp -a ${distdir}/share/bhyve-system-default ${sharedir}/
+	# legacy
 	[ ! -d "${sharedir}/jail-system-default" -a -d "${distdir}/share/jail-system-default" ] && /bin/cp -a ${distdir}/share/jail-system-default ${sharedir}/
+
+	[ ! -d "${sharedir}/FreeBSD-jail-default-system-skel" -a -d "${distdir}/share/FreeBSD-jail-default-system-skel" ] && /bin/cp -a ${distdir}/share/FreeBSD-jail-default-system-skel ${sharedir}/
 	[ ! -d "${sharedir}/${platform}-jail-puppet-system-skel" -a -d "${distdir}/share/${platform}-jail-puppet-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-puppet-system-skel ${sharedir}/
 	[ ! -d "${sharedir}/qemu-system-default" -a -d "${distdir}/share/qemu-system-default" ] && /bin/cp -a ${distdir}/share/qemu-system-default ${sharedir}/
 	[ ! -d "${sharedir}/xen-system-default" -a -d "${distdir}/share/xen-system-default" ] && /bin/cp -a ${distdir}/share/xen-system-default ${sharedir}/
@@ -860,7 +865,6 @@ phase5()
 	#system information
 	. ${toolsdir}/sysinv
 	update_netinfo
-
 	init_items_desc
 	init_items_default
 
@@ -960,7 +964,9 @@ phase5()
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-qemu.schema qemu
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vnetnic.schema vnetnic
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vmpackages.schema vmpackages
-	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT name FROM vmpackages WHERE name=\"small1\" LIMIT 1" )
+
+	# insert sample/defaults
+	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT name FROM vmpackages WHERE name='small1' LIMIT 1" )
 	if [ -z "${_tmpval}" ]; then
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'small1',  '1', '2g',  '20g',  'admin' )"
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'medium1', '4', '8g',  '60g',  'admin' )"
@@ -973,6 +979,7 @@ phase5()
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/storage_media.sqlite ${distdir}/share/local-storage_media_map.schema media
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-storage_pools.schema storage_pools
+
 	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT id FROM storage_pools LIMIT 1" )
 	if [ -z "${_tmpval}" ]; then
 		${miscdir}/sqlcli ${dbdir}/inv.${nodename}.sqlite "INSERT INTO storage_pools (id,name,driver,description,poolpath,state) VALUES(1,'default','dir','','jails-data',1); )"
@@ -1078,6 +1085,7 @@ phase5()
 			fi
 		done
 	done
+
 	# flush unconfigured marker
 	${miscdir}/sqlcli ${dbdir}/local.sqlite "DELETE FROM unconfigured"
 	# constants and static param. FIX ME
@@ -1104,9 +1112,10 @@ phase5()
 
 	fs="${_myfs}"
 
-	for i in ipfw_enable fs jail_interface nodedescr nodename hostname vnet racct platform node_ip4_active node_ip6_active nodeip natip; do
+	for i in ipfw_enable fs jail_interface nodedescr nodename hostname racct platform node_ip4_active node_ip6_active nodeip natip; do
 		T=
 		eval T="\$$i"
+		[ -z "${T}" ] && T="0"
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET ${i}='${T}'"
 	done
 

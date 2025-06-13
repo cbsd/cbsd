@@ -418,6 +418,7 @@ readline(FILE *infp)
 
 	if (fgets(line, 1024, infp) == NULL)
 		return 0;
+
 	for (p = line; *p != '#' && *p != '\n' && *p != '\0'; p++)
 		;
 	while (p > line && (p[-1] == ' ' || p[-1] == '\t'))

@@ -20,7 +20,8 @@ ${H3_COLOR}Options${N0_COLOR}:
                  default is the ~user directory.
  ${N2_COLOR}remote=${N0_COLOR} - '1' prevent to searching in remote node base. 
                  For the avoid the looping.
- ${N2_COLOR}shell${N0_COLOR}   - shell by default. Default is '/bin/sh';
+ ${N2_COLOR}shell${N0_COLOR}   - shell by default. Default is 'auto' ( try to determine it ourselves ),
+                 or specify it in a fixed way, for example: '/bin/sh'
  ${N2_COLOR}user${N0_COLOR}    - login via another user. Default is 'root'.
 
 ${H3_COLOR}Examples${N0_COLOR}:
@@ -50,6 +51,7 @@ oshell=
 [ -n "${user}" ] && ouser="${user}"
 [ -n "${dir}" ] && odir="${dir}"
 [ -n "${shell}" ] && oshell="${shell}"
+[ -z "${shell}" ] && shell="auto"
 readconf jlogin.conf
 
 try_remote()
@@ -119,18 +121,40 @@ login_internal()
 		err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
 	fi
 
-	# is linux?
-	if [ -f "${path}/bin/bash" ]; then
-		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/bash )
-		LOGIN_STR="/bin/bash"
-	elif [ -f "${path}/bin/sh" ]; then
-		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/sh )
-		LOGIN_STR="/bin/sh"
-	elif [ -f ${path}/bin/busybox ]; then
-		OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/busybox )
-		LOGIN_STR="/bin/sh"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -n "${ouser}" ] && user="${ouser}"
+	[ -z "${user}" ] && user="root"
+	[ -n "${oshell}" ] && shell="${oshell}"
+	[ -z "${shell}" ] && shell="/bin/sh"
+
+	if [ "${shell}" = "auto" ]; then
+		if [ -r "${path}/etc/passwd" ]; then
+			shell=$( ${miscdir}/getshell ${path}/etc/passwd ${user} )
+			ret=$?
+			if [ ${ret} -eq 0 ]; then
+				true
+				#${ECHO} "${N1_COLOR}getshell: shell='auto' -> ${N2_COLOR}shell=${shell}${N0_COLOR}"
+			else
+				${ECHO} "${N1_COLOR}getshell fallback: ${N2_COLOR}shell=${shell}${N0_COLOR}" 1>&2
+			fi
+			LOGIN_STR="${shell}"
+		else
+			# is linux?
+			if [ -f "${path}/bin/bash" ]; then
+				OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/bash )
+				LOGIN_STR="/bin/bash"
+			elif [ -f "${path}/bin/sh" ]; then
+				OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/sh )
+				LOGIN_STR="/bin/sh"
+			elif [ -f ${path}/bin/busybox ]; then
+				OSNAME=$( /usr/local/cbsd/misc/elf_tables --osname ${path}/bin/busybox )
+				LOGIN_STR="/bin/sh"
+			else
+				err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
+			fi
+		fi
 	else
-		err 1 "${N1_COLOR}Unknown environment, unable to login${N0_COLOR}"
+		LOGIN_STR="${shell}"
 	fi
 
 	case "${OSNAME}" in
@@ -141,9 +165,6 @@ login_internal()
 				# inherit emulator_flags
 				#LOGIN_STR="/bin/${emulator} ${LOGIN_CMD} -f ${user}"
 				LOGIN_STR="/bin/${emulator} /bin/sh"
-			else
-				#LOGIN_STR="${LOGIN_CMD} -f ${user}"
-				LOGIN_STR="/bin/sh"
 			fi
 			;;
 		*)
@@ -151,12 +172,8 @@ login_internal()
 			;;
 	esac
 
-	[ -n "${ouser}" ] && user="${ouser}"
-	[ -z "${user}" ] && user="root"
 	[ -n "${odir}" ] && dir="${odir}"
 	[ -z "${dir}" ] && dir="~${user}"
-	[ -n "${oshell}" ] && shell="${oshell}"
-	[ -z "${shell}" ] && shell="/bin/sh"
 
 	if [ "${platform}" = "DragonFly" ]; then
 		# shellcheck disable=2153
@@ -166,7 +183,7 @@ login_internal()
 		# jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}"
 
 		# with 
-		jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/exec_jail ${jname} ${user} ${dir} ${shell}"
+		jexec="${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env ${jname} ${user} ${dir} ${LOGIN_STR}"
 	fi
 	init_tmux
 

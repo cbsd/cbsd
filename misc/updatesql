@@ -2,7 +2,7 @@
 #v12.1.13
 # Script for create or upgrade SQLite tables by known scheme from sh file
 # Usage: ./updatesql <dbfile> <schema_file> <tablename>
-
+NOCOLOR=0
 # get CBSD path
 . /usr/local/cbsd/cbsd.conf
 . ${subrdir}/nc.subr
@@ -29,48 +29,43 @@ create_table()
 
 update_table()
 {
-	local _i _val
+	local _i= _val= _res=
 
 	for _i in ${MYCOL}; do
 		eval _val=\$$_i
-		A=`${miscdir}/sqlcli ${MYFILE} "SELECT exists(SELECT ${_i} FROM ${MYTABLE} LIMIT 1)"`
-		[ "${A}" != "1" ] && ${miscdir}/sqlcli $MYFILE ALTER TABLE ${MYTABLE} ADD COLUMN ${_i} ${_val}
+		_res=$( ${miscdir}/sqlcli ${MYFILE} "SELECT COUNT(*) FROM pragma_table_info('${MYTABLE}') WHERE name = '${_i}';" )
+		[ "${_res}" != "1" ] && ${miscdir}/sqlcli ${MYFILE} ALTER TABLE ${MYTABLE} ADD COLUMN ${_i} ${_val}
 	done
 
 	[ -n "${INITDB}" ] && ${miscdir}/sqlcli ${MYFILE} ${INITDB}
 }
 
 ## MAIN ##
-if [ $# -ne 3 ]; then
-	echo "Usage $0 <dbfile> <path_to_schema> <tablename>"
-	exit 0
-fi
+[ $# -ne 3 ] && err 1 "Usage $0 <dbfile> <path_to_schema> <tablename>"
 
-MYFILE=${1}
-SCHEMA=${2}
-MYTABLE=${3}
+MYFILE="${1}"
+SCHEMA="${2}"
+MYTABLE="${3}"
+
+DIRNAME_CMD=$( which dirname )
+[ -z "${DIRNAME_CMD}" ] && err 1 "updatesql: no such dirname"
+CHMOD_CMD=$( which chmod )
+[ -z "${CHMOD_CMD}" ] && err 1 "updatesql: no such chmod"
+CHOWN_CMD=$( which chown )
+[ -z "${CHOWN_CMD}" ] && err 1 "updatesql: no such chown"
 
 # cbsd macros ?
-DIRNAME=$( dirname ${MYFILE} )
-if [ ! -d ${DIRNAME} ]; then
-	echo "updatesql: no such dir: ${DIRNAME}"
-	exit 1
-fi
+DIRNAME=$( ${DIRNAME_CMD} ${MYFILE} )
+[ ! -d ${DIRNAME} ] && err 1 "updatesql: no such dir: ${DIRNAME}"
 
 [ ! -f ${MYFILE} ] && touch ${MYFILE}
-chmod 0660 ${MYFILE} && chown ${cbsduser}:${cbsduser} ${MYFILE}
+${CHMOD_CMD} 0660 ${MYFILE} && ${CHOWN_CMD} ${cbsduser}:${cbsduser} ${MYFILE}
 
-if [ ! -f ${SCHEMA} ]; then
-	echo "File ${SCHEMA} not found"
-	exit 1
-fi
+[ ! -f ${SCHEMA} ] && err 1 echo "File ${SCHEMA} not found"
 
 . ${SCHEMA}
 
-if [ -z "${MYTABLE}" ]; then
-	echo "No MYTABLE variable"
-	exit 1
-fi
+[ -z "${MYTABLE}" ] && err 1 "No MYTABLE variable"
 
 create_table
 update_table

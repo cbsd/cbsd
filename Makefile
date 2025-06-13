@@ -49,12 +49,14 @@ distclean:
 	${RM} -f bin/cbsd
 	${RM} -f misc/efivar
 	${RM} -f sbin/netmask
-	${RM} -f misc/exec_jail
+	${RM} -f misc/jexec_env
+	${RM} -f misc/jail_env
 	${RM} -f misc/sqlcli
 	${RM} -f misc/pwcrypt
 	${RM} -f misc/cbsdlogtail
 	${RM} -f misc/elf_tables
 	${RM} -f misc/fmagic
+	${RM} -f misc/getshell
 	${RM} -f misc/conv2human
 	${RM} -f misc/cbsd_fwatch
 # x86_64 for DFLY
@@ -110,7 +112,8 @@ cbsd: pkg-config-check
 	${CC} sbin/src/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
 	${CC} misc/src/efivar.c -o misc/efivar && ${STRIP} misc/efivar
-	${CC} misc/src/exec_jail.c misc/exec_jail && ${STRIP} misc/exec_jail
+	${CC} misc/src/jexec_env.c misc/jexec_env && ${STRIP} misc/jexec_env
+	${CC} misc/src/jail_env.c misc/jail_env && ${STRIP} misc/jail_env
 	${CC} misc/src/sqlcli.c `pkg-config sqlite3 --cflags --libs` -lm -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
@@ -118,6 +121,7 @@ cbsd: pkg-config-check
 	${CC} misc/src/cbsdtee.c -o misc/cbsdtee && ${STRIP} misc/cbsdtee
 	${CC} misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/elf_tables && ${STRIP} misc/elf_tables
 	${CC} misc/src/fmagic.c -lmagic -o misc/fmagic && ${STRIP} misc/fmagic
+	${CC} misc/src/getshell.c -o misc/getshell && ${STRIP} misc/getshell
 	${CC} misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && ${STRIP} misc/conv2human
 	${CC} misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && ${STRIP} misc/cbsd_fwatch
 	${CC} misc/src/daemonize/daemonize.c misc/src/daemonize/getopt.c -Imisc/src/daemonize -O2 -o misc/daemonize && ${STRIP} misc/daemonize
