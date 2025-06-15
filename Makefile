@@ -112,8 +112,8 @@ cbsd: pkg-config-check
 	${CC} sbin/src/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
 	${CC} misc/src/efivar.c -o misc/efivar && ${STRIP} misc/efivar
-	${CC} misc/src/jexec_env.c misc/jexec_env && ${STRIP} misc/jexec_env
-	${CC} misc/src/jail_env.c misc/jail_env && ${STRIP} misc/jail_env
+	${CC} misc/src/jexec_env.c -o misc/jexec_env && ${STRIP} misc/jexec_env
+	${CC} misc/src/jail_env.c -o misc/jail_env && ${STRIP} misc/jail_env
 	${CC} misc/src/sqlcli.c `pkg-config sqlite3 --cflags --libs` -lm -o misc/sqlcli && ${STRIP} misc/sqlcli
 	${CC} misc/src/cbsdlogtail.c -o misc/cbsdlogtail && ${STRIP} misc/cbsdlogtail
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
