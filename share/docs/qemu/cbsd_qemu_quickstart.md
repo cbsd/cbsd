@@ -66,8 +66,8 @@ Choose target 'arch', 'vm_os_type', 'vm_os_profile' , 'jname' then 'GO'.
 
 2b) via command line:
 ```
-cbsd qcreate jname=vm1 vm_os_type=freebsd vm_os_profile=FreeBSD-riscv64-14.2 vm_ram=2g vm_cpus=1 runasap=1 imgsize=10g          # to create RISCV VM
-cbsd qcreate jname=vm2 vm_os_type=freebsd vm_os_profile=FreeBSD-aarch64-14.2 vm_ram=2g vm_cpus=1 runasap=1 imgsize=10g          # to create aarch64 VM
+cbsd qcreate jname=vm1 vm_os_type=freebsd vm_os_profile=FreeBSD-riscv64-14.3 vm_ram=2g vm_cpus=1 runasap=1 imgsize=10g          # to create RISCV VM
+cbsd qcreate jname=vm2 vm_os_type=freebsd vm_os_profile=FreeBSD-aarch64-14.3 vm_ram=2g vm_cpus=1 runasap=1 imgsize=10g          # to create aarch64 VM
 ```
 
 2c) via CBSDfile:
