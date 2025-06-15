@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 #include <curl/curl.h>
 
@@ -116,7 +117,7 @@ fetch_files(char *urls, char *fout)
 //	fetchIO *fetch_out;
 	FILE *file_out;
 //	struct url_stat ustat;
-	off_t total_bytes;
+	curl_off_t total_bytes = 0;
 	off_t fsize = 0;
 	uint8_t block[4096];
 	size_t chunk;
@@ -221,7 +222,7 @@ fetch_files(char *urls, char *fout)
 
 	if(fetch_out) {
 		if (speedtest != 1) {
-			printf("Size: %d Mb\n", ((int)total_bytes / 1024 / 1024));
+			printf("Size: %" PRId64 " Mb\n", (int64_t)(total_bytes / 1024 / 1024));
 		}
 
 		curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, fetch_out);
