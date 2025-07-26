@@ -47,4 +47,5 @@ extern char
     *cbsd_history_file; /* full path to history for "cbsd history" command */
 extern int cbsd_enable_history; /* true if we must register command in history
 				   journal */
+extern int cbsd_function_time;
 #endif

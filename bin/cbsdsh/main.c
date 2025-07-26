@@ -94,6 +94,7 @@ int localeisutf8, initial_localeisutf8;
 char *cbsd_history_file = NULL;
 int cbsd_enable_history = 0;
 const char cbsd_distdir[] = "/usr/local/cbsd";
+//int cbsd_function_time = 0;
 _REDIS(cbsdredis_t *redis;)
 _INFLUX(cbsdinflux_t *influx;)
 _DBI(cbsddbi_t *databases;)
@@ -134,6 +135,7 @@ main(int argc, char *argv[])
 	load_config();
 #endif
 
+	char *cbsd_function_time_env = NULL;
 	char *cbsdpath = NULL;
 	char *workdir = NULL;
 	char *cbsd_disable_history = NULL; // getenv
@@ -221,6 +223,12 @@ main(int argc, char *argv[])
 		setvarsafe("inter", "1", 1);
 		putenv("inter=0");
 	}
+
+	cbsd_function_time_env=lookupvar("CBSD_FUNCTION_TIME");
+	if (cbsd_function_time_env != NULL)
+		cbsd_function_time=atoi(cbsd_function_time_env);
+	else
+		cbsd_function_time=0;
 
 	if (cbsd_enable_history == 1) {
 		cbsd_history_file = calloc(MAXPATHLEN, sizeof(char *));
