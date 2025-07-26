@@ -41,6 +41,7 @@ distclean:
 	${RM} -f misc/chk_arp_byip
 	${RM} -f misc/cbsdtee
 	${RM} -f misc/daemonize
+	${RM} -f misc/pexec
 	${RM} -f bin/cbsdsftp
 	${RM} -f bin/cbsdsftp6
 	${RM} -f bin/cfetch
@@ -119,6 +120,7 @@ cbsd: pkg-config-check
 	${CC} misc/src/pwcrypt.c -lcrypt -o misc/pwcrypt && ${STRIP} misc/pwcrypt
 	${CC} misc/src/chk_arp_byip.c -o misc/chk_arp_byip && ${STRIP} misc/chk_arp_byip
 	${CC} misc/src/cbsdtee.c -o misc/cbsdtee && ${STRIP} misc/cbsdtee
+	${CC} misc/src/pexec.c -o misc/pexec && ${STRIP} misc/pexec
 	${CC} misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/elf_tables && ${STRIP} misc/elf_tables
 	${CC} misc/src/fmagic.c -lmagic -o misc/fmagic && ${STRIP} misc/fmagic
 	${CC} misc/src/getshell.c -o misc/getshell && ${STRIP} misc/getshell
