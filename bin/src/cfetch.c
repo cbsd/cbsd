@@ -167,8 +167,8 @@ fetch_files(char *urls, char *fout)
 	curl_easy_setopt(curl_handle, CURLOPT_URL, urls);
 
 	/* Switch on full protocol/debug output while testing */
-	curl_easy_setopt(curl_handle, CURLOPT_HEADER, 0);
-	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 1);
+	curl_easy_setopt(curl_handle, CURLOPT_HEADER, 0L);
+	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 1L);
 
 	// not fork for FTP? e.g. when
 	// ./a.out -u ftp://ftp.de.freebsd.org/pub/FreeBSD/releases/amd64/amd64/ISO-IMAGES/14.0/FreeBSD-14.0-RELEASE-amd64-disc1.iso.xz -o /tmp/x -s1
@@ -195,7 +195,7 @@ fetch_files(char *urls, char *fout)
 
 	/* send all data to this function  */
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_data);
-	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 0);
+	curl_easy_setopt(curl_handle, CURLOPT_NOBODY, 0L);
 
 	curl_easy_setopt(curl_handle, CURLOPT_NOSIGNAL, 1L);
 
@@ -203,7 +203,7 @@ fetch_files(char *urls, char *fout)
 	curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
 
 	if (speedtest == 1) {
-		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5);		// timeout for the URL to download
+		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5L);		// timeout for the URL to download
 	}
 //..	 else {
 //		curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 20);		// timeout for the URL to download
