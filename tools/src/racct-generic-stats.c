@@ -1,6 +1,4 @@
-// CBSD Project 2017-2018
-// CBSD Team <cbsd+subscribe@lists.tilda.center>
-// 0.2
+// CBSD Project 2012-2025
 #include <sys/param.h>
 #include <sys/jail.h>
 

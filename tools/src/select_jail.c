@@ -1,6 +1,4 @@
-// CBSD Project 2017-2018
-// Oleg Ginzburg <olevole@olevole.ru>
-// 0.1
+// CBSD Project 2012-2025
 // Todo: fast-written and confusing code with magic numbers, need to refactoring
 // return 0 when jail selected
 // return 1 when 'cancel' or 'esc' is pressed

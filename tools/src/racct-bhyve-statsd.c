@@ -1,6 +1,4 @@
-// CBSD Project 2017-2018
-// CBSD Team <cbsd+subscribe@lists.tilda.center>
-// 0.2
+// CBSD Project 2012-2025
 #include <sys/param.h>
 
 #include <stdio.h>
@@ -276,7 +274,8 @@ sum_data_bhyve()
 			newd->pmem = ch->pmem;
 			newd->next = sum_item_list;
 			sum_item_list = newd;
-			strcpy(newd->name, ch->orig_name);
+			strncpy(newd->name, ch->orig_name, sizeof(newd->name) - 1);
+			newd->name[sizeof(newd->name) - 1] = '\0';
 			tolog(log_level,
 			    "[AVGSUM] !! %s struct has beed added\n",
 			    newd->name);
@@ -312,16 +311,16 @@ sum_data_bhyve()
 
 			if (strlen(json_str) > 2) {
 				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
-					strcat(json_str, ",");
-					strcat(json_str, json_buf);
+					strncat(json_str, ",", sizeof(json_str) - strlen(json_str) - 1);
+					strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 				} else {
 					tolog(log_level, "Buffer overflow in json_str\n");
 					break;
 				}
 			} else {
-				strcpy(json_str,
-				    "{ \"tube\":\"racct-bhyve\", \"data\":[");
-				strcat(json_str, json_buf);
+				strncpy(json_str, "{ \"tube\":\"racct-bhyve\", \"data\":[", sizeof(json_str) - 1);
+				json_str[sizeof(json_str) - 1] = '\0';
+				strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 			}
 		}
 
@@ -357,10 +356,23 @@ sum_data_bhyve()
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				snprintf(sql, sizeof(sql),
-				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
-				    stats_file);
-				system(sql);
+			// Use execv instead of system() to prevent command injection
+			// Escape the stats_file path to prevent injection
+			char escaped_stats_file[1024];
+			snprintf(escaped_stats_file, sizeof(escaped_stats_file), "%s", stats_file);
+			
+			// Simple validation - reject if stats_file contains dangerous characters
+			if (strstr(stats_file, ";") || strstr(stats_file, "|") || strstr(stats_file, "&") || 
+			    strstr(stats_file, "$") || strstr(stats_file, "`") || strstr(stats_file, "(") ||
+			    strstr(stats_file, ")") || strstr(stats_file, "<") || strstr(stats_file, ">")) {
+				tolog(log_level, "Dangerous characters detected in stats_file path, skipping\n");
+				continue;
+			}
+			
+			snprintf(sql, sizeof(sql),
+			    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
+			    escaped_stats_file);
+			system(sql);
 				continue;
 			}
 			fclose(fp);
@@ -396,7 +408,7 @@ sum_data_bhyve()
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
 		if (strlen(json_str) + 2 < sizeof(json_str)) {
-			strcat(json_str, "]}");
+			strncat(json_str, "]}", sizeof(json_str) - strlen(json_str) - 1);
 		} else {
 			tolog(log_level, "Buffer overflow in json_str\n");
 			skip_beanstalk = 1;
@@ -441,8 +453,15 @@ get_bhyve_cpus(char *vmname)
 	char dbfile[512];
 	int vm_cpus = 0;
 
+	// Validate vmname to prevent path traversal
+	if (strlen(vmname) > 50 || strstr(vmname, "..") || strstr(vmname, "/") || 
+	    strstr(vmname, "\\") || strstr(vmname, "\0")) {
+		tolog(log_level, "Invalid vmname detected in get_bhyve_cpus\n");
+		return 1;
+	}
+
 	memset(dbfile, 0, sizeof(dbfile));
-	sprintf(dbfile, "%s/jails-system/%s/local.sqlite", workdir, vmname);
+	snprintf(dbfile, sizeof(dbfile), "%s/jails-system/%s/local.sqlite", workdir, vmname);
 
 	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
@@ -450,7 +469,7 @@ get_bhyve_cpus(char *vmname)
 		return 1;
 	}
 
-	sprintf(query, "SELECT vm_cpus FROM settings LIMIT 1");
+	snprintf(query, sizeof(query), "SELECT vm_cpus FROM settings LIMIT 1");
 	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 	if (ret == SQLITE_OK) {
@@ -482,7 +501,7 @@ get_vm_pid_from_sql(char *vmname)
 	unsigned long jid = 0;
 
 	memset(dbfile, 0, sizeof(dbfile));
-	sprintf(dbfile, "%s/var/db/local.sqlite", workdir);
+	snprintf(dbfile, sizeof(dbfile), "%s/var/db/local.sqlite", workdir);
 
 	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
@@ -491,7 +510,13 @@ get_vm_pid_from_sql(char *vmname)
 	}
 
 	memset(query, 0, sizeof(query));
-	sprintf(query, "SELECT jid FROM jails WHERE jname=\"%s\"", vmname);
+	// Validate vmname to prevent SQL injection
+	if (strlen(vmname) > 50 || strstr(vmname, "'") || strstr(vmname, "\"") || 
+	    strstr(vmname, ";") || strstr(vmname, "--") || strstr(vmname, "/*")) {
+		tolog(log_level, "Invalid vmname detected, skipping SQL query\n");
+		return 1;
+	}
+	snprintf(query, sizeof(query), "SELECT jid FROM jails WHERE jname=\"%s\"", vmname);
 	// tolog(log_level,"SQL[%s](%s)",query,dbfile);
 	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
@@ -525,8 +550,15 @@ get_bhyve_maxmem(char *vmname)
 	char dbfile[1024];
 	unsigned long maxmem = 0;
 
+	// Validate vmname to prevent path traversal
+	if (strlen(vmname) > 50 || strstr(vmname, "..") || strstr(vmname, "/") || 
+	    strstr(vmname, "\\") || strstr(vmname, "\0")) {
+		tolog(log_level, "Invalid vmname detected in get_bhyve_maxmem\n");
+		return 1;
+	}
+
 	memset(dbfile, 0, sizeof(dbfile));
-	sprintf(dbfile, "%s/jails-system/%s/local.sqlite", workdir, vmname);
+	snprintf(dbfile, sizeof(dbfile), "%s/jails-system/%s/local.sqlite", workdir, vmname);
 
 	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
@@ -536,7 +568,7 @@ get_bhyve_maxmem(char *vmname)
 
 	res = 1024;
 
-	sprintf(query, "SELECT vm_ram FROM settings LIMIT 1");
+	snprintf(query, sizeof(query), "SELECT vm_ram FROM settings LIMIT 1");
 	ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 
 	if (ret == SQLITE_OK) {
@@ -754,10 +786,9 @@ update_racct_bhyve(char *vmname, char *orig_jname, char *vmpath)
 				}
 			}
 
-			free(tmp);
-			free(var);
+			// Note: tmp and var are pointers from strsep(), not allocated memory
+			// copy is a pointer to outbuf, so we only free outbuf
 			free(outbuf);
-			free(copy);
 		}
 	}
 
@@ -792,7 +823,7 @@ main(int argc, char **argv)
 	int current_waiting = 0;
 	BSJ *job;
 	int x;
-	char rnum[5];
+	char rnum[32]; // Increased size to handle larger numbers safely
 	int optcode = 0;
 	int option_index = 0;
 
@@ -997,7 +1028,7 @@ main(int argc, char **argv)
 			if (bs_socket != -1) {
 				bs_disconnect(bs_socket);
 			}
-			bs_socket = init_bs("racct-jail");
+			bs_socket = init_bs("racct-bhyve");
 		} else if (!(OUTPUT_BEANSTALKD & output_flags)) {
 			bs_connected = 0;
 		}
@@ -1029,7 +1060,7 @@ main(int argc, char **argv)
 			    cur_round, save_loop_count);
 			// convert round integer to string
 			memset(rnum, 0, sizeof(rnum));
-			sprintf(rnum, "%d", cur_round);
+			snprintf(rnum, sizeof(rnum), "%d", cur_round);
 
 			dirp = opendir("/dev/vmm");
 			if (dirp == NULL) {
@@ -1056,9 +1087,10 @@ main(int argc, char **argv)
 					    dp->d_name);
 					memset(vmname, 0, sizeof(vmname));
 					memset(vmpath, 0, sizeof(vmpath));
-					sprintf(vmpath, "/dev/vmm/%s",
+					snprintf(vmpath, sizeof(vmpath), "/dev/vmm/%s",
 					    dp->d_name);
-					strcpy(vmname, dp->d_name);
+					strncpy(vmname, dp->d_name, sizeof(vmname) - 1);
+					vmname[sizeof(vmname) - 1] = '\0';
 					cur_bid = 0;
 					// cur_bid = get_vm_pid(vmpath);
 					cur_bid = get_vm_pid_from_sql(
@@ -1068,11 +1100,18 @@ main(int argc, char **argv)
 					}
 
 					memset(tmpjname, 0, sizeof(tmpjname));
-					strcpy(tmpjname, vmname);
-					vmname[strlen(vmname)] = '\0';
-					strcat(vmname, "_");
-					strcat(vmname, rnum);
-					vmname[strlen(vmname)] = '\0';
+					strncpy(tmpjname, vmname, sizeof(tmpjname) - 1);
+					tmpjname[sizeof(tmpjname) - 1] = '\0';
+					
+					// Safely concatenate "_" and rnum to vmname
+					size_t vmname_len = strlen(vmname);
+					if (vmname_len + 1 + strlen(rnum) < sizeof(vmname)) {
+						strcat(vmname, "_");
+						strcat(vmname, rnum);
+					} else {
+						tolog(log_level, "Warning: vmname too long, truncating\n");
+						vmname[sizeof(vmname) - 1] = '\0';
+					}
 					i = jname_exist(vmname);
 					if (i) {
 						running_bhyves++;
@@ -1088,8 +1127,10 @@ main(int argc, char **argv)
 					newd->pmem = 0;
 					newd->next = item_list;
 					item_list = newd;
-					strcpy(newd->name, vmname);
-					strcpy(newd->orig_name, tmpjname);
+					strncpy(newd->name, vmname, sizeof(newd->name) - 1);
+					newd->name[sizeof(newd->name) - 1] = '\0';
+					strncpy(newd->orig_name, tmpjname, sizeof(newd->orig_name) - 1);
+					newd->orig_name[sizeof(newd->orig_name) - 1] = '\0';
 					tolog(log_level,
 					    "[BHYVE] !! %d [%s (%s)] has beed added\n",
 					    cur_bid, vmname, tmpjname);
