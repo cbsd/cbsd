@@ -1,27 +1,119 @@
 #!/usr/local/bin/cbsd
 #v11.1.12
 MYARG="mode"
-MYOPTARG="backupfile device file key"
+MYOPTARG="backupfile device file key master_size"
 MYDESC="cbsd geli helper"
-ADDHELP="\
- backupfile= alternative path to backup for init for storing backup\n\
- device= path to device\n\
- file= path to image\n\
- key= path to master key file\n\
- mode= initmaster, init, attach, detach, info\n\
+ADDHELP="
+${H3_COLOR}Description:${N0_COLOR}
+
+Script for manage GELI-based crypto-FS.
+
+${H3_COLOR}# Options:${N0_COLOR}
+
+ ${N2_COLOR}backupfile=${N0_COLOR}  - alternative path to backup for init for storing backup;
+ ${N2_COLOR}device=${N0_COLOR}      - path to device;
+ ${N2_COLOR}file=${N0_COLOR}        - path to image;
+ ${N2_COLOR}key=${N0_COLOR}         - path to master key file;
+ ${N2_COLOR}mode=${N0_COLOR}        - available action:
+                * initmaster
+                * init
+                * attach
+                * detach
+                * info
+
+${H3_COLOR}# Working with GELI assumed the following scenario:${N0_COLOR}
+
+  Encryption be only selected data. Since the encryption operation is dependent primarily on your CPU resource consumption will always be higher,
+  and I/O — lower than when working with data on the encrypted partition. Instead of encrypting the entire jail, you can choose to encrypt only important path inside the jail,
+  for example: /root, /home/user, /var/db/mysql, /usr/local/etc etc, while the logs, database, or all of the third party software that you installed via pkg/ports — can be left unencrypted.
+  Also, besides the encryption of these jails, you may want to encrypt the directory \$workdir/.rssh, which keeps cbsd ID_RSA keys remote machines and \$workdir/.ssh which is your own key to the user cbsd.
+  Each encrypted device is assigned their own password/passphrase to decrypt. However, they will all be stored on the system image of CBSD, which in turn will be encrypted master- key.
+  In other words, as you trust your own server, if necessary, to include one or another encrypted partition, CBSD itself will apply the correct key when using of encrypted image.
+  At the same keys for their decryption is stored in a file, which in turn is encrypted with your password and activated manually.
+
+${H3_COLOR}# For common understanding, we denote the following conventions:${N0_COLOR}
+
+  \${dbdir} - directory \$workdir/var/db, where workdir — is path to initialized of CBSD. For example: /usr/jails/var/db
+  MASTER_GELI - your password encrypted image, which CBSD will look for clues to the rest geli attach operations. Located on the file system as a file \${dbdir}/master_geli.img
+
+${W1_COLOR}!Attention!${N0_COLOR} Removing or defacing this file would make it impossible to connect all remaining crypted images automatically and mount these images will
+only be possible if you remember what the image which password you assigned to the  cbsd geli mode=init file= stage. In this regard, make regular backups of the file.
+
+  key directory -  mounted image of MASTER_GELI file into \${dbdir}/geli directory. To avoid possible damage due to incorrect unmount (server failure, loss of power, improper shutdown),
+   the resource is connected in Read-only mode and re-mount in rw only for modifications.
+
+${H3_COLOR}# CBSD GELI initialization${N0_COLOR}
+
+To start working with an encrypted partition on the node, you must create MASTER_GELI file and come up with a password for it. Use a strong password, because it gives access to all other keys. To use the command of initialization: cbsd geli mode=initmaster.
+
+% cbsd geli mode=initmaster
+
+Secondary running this command will give the question to enter the password, or the command will work without any output, if the file already initialized and mounted automatically at \$dbdir/geli. Successful initialization file contents of the file mounted to the directory \$dbdir/geli, let the rest of the scripts access to keys for other images.
+
+Note:
+
+By default, the image is created for storage of keys equal to 5Mb (master_size= params) with AES-XTS algorithm. This setting is in the file \${workdir}/etc/defaults/geli.conf and can be changed via the corresponding entries in \$workdir/etc/geli.conf
+
+${H3_COLOR}# Initialization geli-images for CBSD use${N0_COLOR}
+
+GELI Initialization of image should be before you start it up and mounting the write data. To initialize, use the command:
+
+% cbsd geli mode=init file=/path/to/file
+
+When you first start geli init file /path/to/file will perform the following steps:
+
+ 1) if path begins with \$workdir (eg, CBSD installed in /usr/jails, and cbsd init executed with settings mode=init file=/usr/jails/jails-system/jail1/root.img), then logic of script path \$workdir removed out of the way and this location is used to generate key file name via md5. Such an operation is needed for those cases, if you migrate from one jail to another node and various \$workdir — if not cut workdir, then md5 key names will be different. If the path is a file that is not in \$workdir, the path remains unchanged.
+ 2) cbsd geli script prompts you to password for the file in the file = variable and stores it in a file \$dbdir/geli/md5_from_result_of_step_1
+ 3) Executing of geli attach with this key, and displays the name of the resulting device, such as:
+
+    /dev/md1.eli
+
+    you can already format and fill the data that will be encrypted.
+
+As is the case with initmaster, if you start a second init file — the system without question it presents, if the key already exists.
+
+Using jails fstab to list of crypted images and   mount points
+
+For example, that jail jail1 on startup mount crypted image in directory /home/web inside the environment, on the local fstab file of jails stored the name of the image file and the file system type sets to geli, for example:
+
+webhome.img /home/web geli rw 0 0
+
+In this case, the file webhome.img must me store in the directory /usr/jails/jails-system/jail1/ (when workdir = /usr/jails).
+
+If you store the crypto image is not in /usr/jails/jails-system/\$jname/ directory, it is necessary to prescribe the full path starting with /. for example:
+
+/data/images/webhome.img /home/web geli rw 0 0
+
+However, storage for .img files of jails /usr/jails/jails-system/\$jname/ is recommended, because the directory jails-system/\$jname participates in the operations of migration, jimport and jexport. Otherwise, you will have to carry their own image file.
+
+Keep in mind, when after booting server you have no init the CBSD geli (cbsd geli mode=initmaster), which after the password has access to the keys to decrypt the images and jails is starting, CBSD can not find a key to decrypt the image and the crypto directory is not be mounted. Therefore, as a rule, crypto jails should have a flag autostart is off(astart=0).
+
+${H3_COLOR}# Examples${N0_COLOR}
+
+cbsd geli mode=initmaster
+
 "
+
 EXTHELP="wf_geli"
 
 . ${subrdir}/nc.subr
-
+oname=
+name=
+omaster_size=
+master_size=
 . ${cbsdinit}
+
+[ -n "${name}" ] && oname="${name}"
 
 . ${system}
 . ${mdtools}
 
 readconf geli.conf
 
-MASTER_FILE="${dbdir}/master_geli.img"
+[ -n "${oname}" ] && name="${oname}"
+[ -z "${name}" ] && name="master"
+
+MASTER_FILE="${dbdir}/${name}_geli.img"
 TRAP=""
 
 change_passphrase()
@@ -311,6 +403,7 @@ initmaster_file()
 	[ -f "${MASTER_FILE}" ] && return 0
 	TRAP="${RM_CMD} -f ${MASTER_FILE};"
 	trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+	[ -n "${omaster_size}" ] && master_size="${omaster_size}"
 	${TRUNCATE_CMD} -s ${master_size} ${MASTER_FILE}
 	${CHMOD_CMD} 0600 ${MASTER_FILE}
 	_md=$( ${MDCONFIG_CMD} -a -t vnode -f ${MASTER_FILE} )
