@@ -47,68 +47,33 @@ check_iso_sha256sum()
 }
 
 
-# generic/shared func for custom virtuals
-# $sha256sum - optional - check for sha256sum
-init_iso()
+# -i variable index, for secondary++ ISO, e.g.: -i 2
+# -v override conv2vol=
+init_iso_loop()
 {
-	local sha256sum_new=
-	local sha256sum_passed=
-	local _sorted_mirror_list= _sorted_mirror_list2=
-	local _sorted_mirror_list_rate=
-	local _fetch_attempt=0
-	local _iso_img_type=
-	local _ret _is_link= _full_list_iso_site=
-
-	[ -z "${quiet}" ] && quiet="0"
-
-	readconf fetch.conf
-
-	if [ -z "${iso_img}" ]; then
-		${ECHO} "no cd: iso_img and register_iso_as is empty"
-		return 1
-	fi
-
-	# test for media database
-	local media_db
-
-	if [ "${CBSD_ISO_SKIP_CHECKSUM}" = "yes" -o "${sha256sum}" = "0" ]; then
-		sha256sum_passed=1
-		sha256sum=0
-	else
-		sha256sum_passed=0
-	fi
-
-	case "${iso_img_type}" in
-		cloud)
-			_iso_img_type="cloud"
-			;;
-		*)
-			_iso_img_type="iso"
-			;;
-	esac
-
-	if [ -n "${vm_iso_path}" ]; then
-		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}vm_iso_path: ${N2_COLOR}${vm_iso_path}${N0_COLOR}"
-
-		media_db=$( cbsdsqlro storage_media SELECT path FROM media WHERE name=\"${vm_iso_path}\" AND type=\"${_iso_img_type}\" LIMIT 1 )
-
-		if [ -n "${media_db}" -a -r "${media_db}" ]; then
-			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}media found: ${N2_COLOR}${vm_iso_path}${N1_COLOR} --> ${N2_COLOR}${media_db}${N0_COLOR}"
-			iso_img="${media_db}"
-			return 0
-		fi
-	fi
-
 	local _mydir="${srcdir}/iso"
 	local _myfile="${_mydir}/${iso_img}"
-	local i
+	local i=
 
-	[ ! -d "${_mydir}" -o ! -h "${_mydir}" ] && ${MKDIR_CMD} -p ${_mydir}
+	local _conv2vol="${conv2vol}"
 
+	export ISO_INDEX=""
+
+	while getopts "i:v:" opt; do
+		case "${opt}" in
+			i) export ISO_INDEX="${OPTARG}" ;;
+			v) _conv2vol="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	[ ! -d "${_mydir}" -o ! -h "${_mydir}" ] && ${MKDIR_CMD} -p "${_mydir}"
 	[ -z "${iso_img_dist}" ] && iso_img_dist="${iso_img}"
 
 	# Unessesary when we boot not from cd
-	[ "${vm_boot}" != "cd" ] && iso_img="${_myfile}" && return 0
+	if [ -z "${ISO_INDEX}" ]; then
+		[ "${vm_boot}" != "cd" ] && iso_img="${_myfile}" && return 0
+	fi
 
 	if [ -z "${register_iso_name}" ]; then
 		_myfile="${_mydir}/${iso_img}"
@@ -346,9 +311,118 @@ init_iso()
 	return 0
 }
 
+
+# generic/shared func for custom virtuals
+# $sha256sum - optional - check for sha256sum
+init_iso()
+{
+	local sha256sum_new=
+	local sha256sum_passed=
+	local _sorted_mirror_list= _sorted_mirror_list2=
+	local _sorted_mirror_list_rate=
+	local _fetch_attempt=0
+	local _iso_img_type=
+	local _ret _is_link= _full_list_iso_site=
+	local _vm_iso_path_ok=0 _vm_iso_path_ok2=0
+
+	[ -z "${quiet}" ] && quiet="0"
+
+	readconf fetch.conf
+
+	if [ -z "${iso_img}" ]; then
+		${ECHO} "no cd: iso_img and register_iso_as is empty"
+		return 1
+	fi
+
+	# test for media database
+	local _media_db=
+
+	if [ "${CBSD_ISO_SKIP_CHECKSUM}" = "yes" -o "${sha256sum}" = "0" ]; then
+		sha256sum_passed=1
+		sha256sum=0
+	else
+		sha256sum_passed=0
+	fi
+
+	case "${iso_img_type}" in
+		cloud)
+			_iso_img_type="cloud"
+			;;
+		*)
+			_iso_img_type="iso"
+			;;
+	esac
+
+	if [ -n "${vm_iso_path}" -a "${vm_iso_path}" != "0" ]; then
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}vm_iso_path: ${N2_COLOR}${vm_iso_path}${N0_COLOR}"
+
+		_media_db=$( cbsdsqlro storage_media "SELECT path FROM media WHERE name='${vm_iso_path}' AND type='${_iso_img_type}' LIMIT 1" )
+
+		if [ -n "${_media_db}" -a -r "${_media_db}" ]; then
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}media found: ${N2_COLOR}${vm_iso_path}${N1_COLOR} --> ${N2_COLOR}${_media_db}${N0_COLOR}"
+			iso_img="${_media_db}"
+			_vm_iso_path_ok=1
+		fi
+	fi
+
+	if [ -n "${vm_iso_path2}" -a "${vm_iso_path2}" != "0" ]; then
+		case "${iso_img_type2}" in
+			cloud)
+				_iso_img_type="cloud"
+				;;
+			*)
+				_iso_img_type="iso"
+				;;
+		esac
+		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}vm_iso_path2: ${N2_COLOR}${vm_iso_path2}${N0_COLOR}"
+		_media_db=$( cbsdsqlro storage_media "SELECT path FROM media WHERE name='${vm_iso_path2}' AND type='${_iso_img_type}' LIMIT 1" )
+
+		if [ -n "${_media_db}" -a -r "${_media_db}" ]; then
+			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}media found: ${N2_COLOR}${vm_iso_path}${N1_COLOR} --> ${N2_COLOR}${_media_db}${N0_COLOR}"
+			iso_img2="${_media_db}"
+			_vm_iso_path_ok2=1
+		fi
+	fi
+
+	# LOOP
+	[ ${_vm_iso_path_ok} -ne 1 ] && init_iso_loop
+
+	if [ -n "${iso_img2}" -a ${_vm_iso_path_ok2} -ne 1 ]; then
+		# push main ISO data
+		xo_iso_img="${iso_img}"
+		xo_iso_img_dist="${iso_img_dist}"
+		xo_iso_site="${iso_site}"
+		xo_iso_extract="${iso_extract}"
+		xo_register_iso_name="${register_iso_name}"
+		xo_sha256sum="${sha256sum}"
+
+		iso_img="${iso_img2}"
+		iso_img_dist="${iso_img_dist2}"
+		iso_site="${iso_site2}"
+		iso_extract="${iso_extract2}"
+		register_iso_name="${register_iso_name2}"
+		sha256sum="${sha256sum2}"
+		osha256sum="0"
+
+		[ "${quiet}" != "1" ] && ${ECHO} "${N1_COLOR}${CBSD_APP} fetch secondary ISO: ${N2_COLOR}${iso_img}${N0_COLOR}"
+		init_iso_loop -i 2 -v 0
+
+		# restore main ISO data
+		iso_img="${xo_iso_img}"
+		iso_img_dist="${xo_iso_img_dist}"
+		iso_site="${xo_iso_site}"
+		iso_extract="${xo_iso_extract}"
+		register_iso_name="${xo_register_iso_name}"
+		sha256sum="${xo_sha256sum}"
+	fi
+
+	return 0
+}
+
+
 manage_boot_by_empty_hdd()
 {
-	local _err
+	local _err=
 	local dsk_size=0
 	local tmp_zvol=
 

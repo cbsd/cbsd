@@ -115,6 +115,7 @@ readconf fetch_iso.conf
 . ${system}
 . ${subrdir}/virtual.subr
 . ${subrdir}/fetch.subr
+. ${subrdir}/time.subr
 
 [ -n "${odstdir}" ] && dstdir="${odstdir}"
 [ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
@@ -132,7 +133,7 @@ fi
 # $2 - path to ISO
 gen_sha256_sum()
 {
-	local _sha256sum
+	local _sha256sum=
 	local _profile="${1}"
 	local _file="${2}"
 	local _mdfile="${2}.sha256"
@@ -152,9 +153,9 @@ gen_sha256_sum()
 			;;
 	esac
 
-	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} sha256sum="${_sha256sum}"
-	# update size
+	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} sha256sum${ISO_INDEX}="${_sha256sum}"
 
+	# update size
 	case "${platform}" in
 		Linux)
 			_iso_img_dist_size=$( ${STAT_CMD} --printf="%s" ${_file} 2>/dev/null )
@@ -164,7 +165,7 @@ gen_sha256_sum()
 			;;
 	esac
 
-	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} iso_img_dist_size="${_iso_img_dist_size}"
+	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} iso_img_dist_size${ISO_INDEX}="${_iso_img_dist_size}"
 	${ECHO} "${N2_COLOR}${_sha256sum}${N1_COLOR}. Updated${N0_COLOR}"
 }
 
@@ -229,7 +230,6 @@ obtain_iso()
 			fi
 			echo
 		fi
-
 
 		if [ ${cloud} -eq 1 -a ${calc_raw_data} -eq 1 ]; then
 			# stamp imgsize_min
@@ -332,45 +332,23 @@ show_size_stats()
 	fi
 }
 
-fetch_iso_by_path()
+# -i variable index, for secondary++ ISO, e.g.: -i 2
+# -v override conv2vol=
+fetch_iso_by_path_loop()
 {
-	local _file=
 	local iso_bsize=0
 	local _source_raw=
-	# raw data size in bytes
-	_ebytes_raw_data=0
+	local _conv2vol="${conv2vol}"
 
-	[ -n "${1}" ] && path="${1}"
+	export ISO_INDEX=""
 
-	if [ -z "${path}" ]; then
-		${ECHO} "${N1_COLOR}fetch_iso_by_path: empty path${N0_COLOR}"
-		return 1
-	fi
-
-	# protect from long loop (2 - SIGINT in BSD)
-	trap 'exit 0' 2
-
-	iso_img=
-	iso_img_dist=
-	iso_site=
-	fetch=0
-	vm_profile=
-	register_iso_name=
-	sha256sum=0
-	iso_extract=
-	vars_img=
-
-	if [ ! -r ${path} ]; then
-		${ECHO} "${N1_COLOR}Unreadable profile: ${N2_COLOR}${path}${N0_COLOR}"
-		return 1
-	fi
-
-	. ${path}
-
-	if [ ${fetch} -eq 0 ]; then
-		${ECHO} "${N1_COLOR}${path} fetch=0, skipp${N0_COLOR}"
-		return 1
-	fi
+	while getopts "i:v:" opt; do
+		case "${opt}" in
+			i) export ISO_INDEX="${OPTARG}" ;;
+			v) _conv2vol="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	if [ -z "${iso_site}"  ]; then
 		${ECHO} "${N1_COLOR}${path} no iso_site, skipp${N0_COLOR}"
@@ -382,14 +360,7 @@ fetch_iso_by_path()
 	else
 		rfile="${iso_img}"
 	fi
-
 	fout="${rfile}"
-
-#	if [ ${keepname} -eq 1 ]; then
-		fout="${rfile}"
-#	else
-#		fout="${register_iso_name}"
-#	fi
 
 	${ECHO} " ${H1_COLOR}* ${H5_COLOR}[${profile_cur}/${profile_num}] ${N2_COLOR}== ${N1_COLOR}Processing ${N2_COLOR}${vm_profile}${N1_COLOR} from ${N2_COLOR}${path}${N0_COLOR} =="
 
@@ -398,8 +369,8 @@ fetch_iso_by_path()
 		return 1
 	fi
 
-	profile_name=$( ${BASENAME_CMD} ${path} )
-
+	# basename
+	profile_name="${path##*/}"
 	obtain_iso
 	ret=$?
 
@@ -438,9 +409,9 @@ fetch_iso_by_path()
 	fi
 
 	if [ -r "${dstdir}/${register_iso_name}" ]; then
-		_source_raw=${dstdir}/${register_iso_name}
+		_source_raw="${dstdir}/${register_iso_name}"
 	elif [ -r "${dstdir}/${iso_img}" ]; then
-		_source_raw=${dstdir}/${iso_img}
+		_source_raw="${dstdir}/${iso_img}"
 	fi
 
 	if [ ${cloud} -eq 1 -a ${conv2zvol} -eq 1 ]; then
@@ -456,6 +427,100 @@ fetch_iso_by_path()
 			convert_source_image_to_zvol -s "${_source_raw}"
 		fi
 	fi
+
+	return 0
+}
+
+
+fetch_iso_by_path()
+{
+	local _ret=
+
+	[ -n "${1}" ] && path="${1}"
+
+	if [ -z "${path}" ]; then
+		${ECHO} "${N1_COLOR}fetch_iso_by_path: empty path${N0_COLOR}"
+		return 1
+	fi
+
+	# protect from long loop (2 - SIGINT in BSD)
+	trap 'exit 0' 2
+
+	# iso1
+	iso_img=
+	iso_img_dist=
+	iso_site=
+	iso_extract=
+	register_iso_name=
+	sha256sum=0
+
+	# iso2
+	iso_img2=
+	iso_img_dist2=
+	iso_site2=
+	iso_extract2=
+	register_iso_name2=
+	sha256sum2=0
+
+	fetch=0
+	vm_profile=
+	vars_img=
+
+	if [ ! -r ${path} ]; then
+		${ECHO} "${N1_COLOR}Unreadable profile: ${N2_COLOR}${path}${N0_COLOR}"
+		return 1
+	fi
+
+	/bin/sh -n ${path}
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} invalid profile, please sheck: ${N2_COLOR}/bin/sh -n ${path}${N0_COLOR}"
+	. ${path}
+
+	if [ ${fetch} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}${path} fetch=0, skipp${N0_COLOR}"
+		return 1
+	fi
+
+	if [ -z "${iso_site}"  ]; then
+		${ECHO} "${N1_COLOR}${path} no iso_site, skipp${N0_COLOR}"
+		return 1
+	fi
+
+	# ISO loop
+	[ -n "${iso_img2}" -a "${quiet}" != "1" ] && ${ECHO} "${N1_COLOR}${CBSD_APP} fetch secondary ISO: ${N2_COLOR}${iso_img}${N0_COLOR}"
+
+	fetch_iso_by_path_loop
+
+	if [ -n "${iso_img2}" ]; then
+		# push main ISO data
+		xo_iso_img="${iso_img}"
+		xo_iso_img_dist="${iso_img_dist}"
+		xo_iso_site="${iso_site}"
+		xo_iso_extract="${iso_extract}"
+		xo_register_iso_name="${register_iso_name}"
+		xo_sha256sum="${sha256sum}"
+
+		iso_img="${iso_img2}"
+		iso_img_dist="${iso_img_dist2}"
+		iso_site="${iso_site2}"
+		iso_extract="${iso_extract2}"
+		register_iso_name="${register_iso_name2}"
+		sha256sum="${sha256sum2}"
+		osha256sum="0"
+
+		[ "${quiet}" != "1" ] && ${ECHO} "${N1_COLOR}${CBSD_APP} fetch secondary ISO: ${N2_COLOR}${iso_img}${N0_COLOR}"
+		fetch_iso_by_path_loop -i 2 -v 0
+
+		# restore main ISO data
+		iso_img="${xo_iso_img}"
+		iso_img_dist="${xo_iso_img_dist}"
+		iso_site="${xo_iso_site}"
+		iso_extract="${xo_iso_extract}"
+		register_iso_name="${xo_register_iso_name}"
+		sha256sum="${xo_sha256sum}"
+	fi
+
+	return 0
 }
 
 # create array: (separated by spaces)
@@ -463,6 +528,8 @@ fetch_iso_by_path()
 # in $profile_map variable
 get_profile_name_path_map()
 {
+	local i=
+
 	# global
 	profile_map=
 	profile_num=0
@@ -470,7 +537,7 @@ get_profile_name_path_map()
 
 	profile_num=$( get_active_profiles_num )
 
-	${ECHO} "${N1_COLOR}Active bhyve profiles here: ${N2_COLOR}${profile_num}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}Active profiles here: ${N2_COLOR}${profile_num}${N0_COLOR}"
 
 	# protect from long loop (2 - SIGINT)
 	trap 'exit 0' 2
@@ -632,29 +699,6 @@ purge_iso_all()
 	[ ${purged_iso_count} -gt 0 ] && ${ECHO} "${N1_COLOR}Purged ISO list: ${W1_COLOR}${purged_iso_list}${N0_COLOR}"
 }
 
-[ -n "${name}" -a -n "${path}" ] && err 1 "${N1_COLOR}Please use ${N2_COLOR}name= ${N1_COLOR}OR ${N2_COLOR}path=${N0_COLOR}"
-
-if [ ${purgeonly} -eq 1 ]; then
-	purge_iso_all
-	exit 0
-fi
-
-if [ -z "${name}" -a -z "${path}" ]; then
-	fetch_iso_all
-	[ ${purge} -eq 1 ] && purge_iso_all
-	show_size_stats
-	exit 0
-fi
-
-if [ -n "${path}" ]; then
-	# global, used by fetch_iso_by_path func
-	profile_num=1
-	profile_cur=1
-
-	fetch_iso_by_path ${path}
-	show_size_stats
-	exit 0
-fi
 
 get_profile_path_by_name()
 {
@@ -677,6 +721,37 @@ get_profile_path_by_name()
 	done
 }
 
+### MAIN
+[ -n "${name}" -a -n "${path}" ] && err 1 "${N1_COLOR}Please use ${N2_COLOR}name= ${N1_COLOR}OR ${N2_COLOR}path=${N0_COLOR}"
+
+if [ ${purgeonly} -eq 1 ]; then
+	purge_iso_all
+	exit 0
+fi
+
+if [ -z "${name}" -a -z "${path}" ]; then
+	fetch_iso_all
+	[ ${purge} -eq 1 ] && purge_iso_all
+	show_size_stats
+	exit 0
+fi
+
+if [ -n "${path}" ]; then
+	[ -z "${FULL_ST_TIME}" ] && FULL_ST_TIME=$( ${DATE_CMD} +%s )
+	st_time=$( ${DATE_CMD} +%s )
+
+	# global, used by fetch_iso_by_path func
+	profile_num=1
+	profile_cur=1
+
+	fetch_iso_by_path ${path}
+	show_size_stats
+
+	time_stats "${N1_COLOR}fetch_iso ${DSK_ID}"
+
+	exit 0
+fi
+
 if [ -n "${name}" ]; then
 	get_profile_name_path_map
 	profile_path=$( get_profile_path_by_name ${name} )
@@ -692,3 +767,5 @@ if [ -n "${name}" ]; then
 	show_size_stats
 	exit 0
 fi
+
+exit 0
