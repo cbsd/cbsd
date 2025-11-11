@@ -184,16 +184,16 @@ main(int argc, char **argv)
 	}
 	memset(ext, 0, sizeof(ext));
 
-	if (argv[3] != NULL) {
-		strcpy(ext, argv[3]);
+	if (argc > 3 && argv[3] != NULL) {
+		snprintf(ext, sizeof(ext), "%s", argv[3]);
 	} else {
-		strcpy(ext, "img");
+		snprintf(ext, sizeof(ext), "%s", "img");
 	}
 
-	if (argv[4] != NULL) {
-		strcpy(def_item, argv[4]);
+	if (argc > 4 && argv[4] != NULL) {
+		snprintf(def_item, sizeof(def_item), "%s", argv[4]);
 	} else {
-		strcpy(def_item, "CANCEL");
+		snprintf(def_item, sizeof(def_item), "%s", "CANCEL");
 	}
 
 	dirp = opendir(argv[1]);
@@ -223,7 +223,7 @@ main(int argc, char **argv)
 		strncpy(mylist[listmax++], dp->d_name, MAXFNAME);
 	}
 	(void)closedir(dirp);
-	free(dp);
+	/* dp is managed by readdir/closedir; do not free it */
 	if (listmax < 1) {
 		exit(0);
 	}
@@ -232,7 +232,7 @@ main(int argc, char **argv)
 
 	for (n = 0; n < listmax; n++) {
 		memset(buf, 0, sizeof(buf));
-		strcpy(buf, mylist[n]);
+		strncpy(buf, mylist[n], sizeof(buf) - 1);
 		CREATE(m_item, struct item_data, 1);
 		tofree = string = strdup(buf);
 		assert(string != NULL);
@@ -241,10 +241,12 @@ main(int argc, char **argv)
 		while ((token = strsep(&string, ".")) != NULL) {
 			switch (x) {
 			case 0:
-				strcpy(m_item->name, token);
+				strncpy(m_item->name, token, sizeof(m_item->name) - 1);
+				m_item->name[sizeof(m_item->name) - 1] = '\0';
 				break;
 			case 1:
-				strcpy(m_item->ext, token);
+				strncpy(m_item->ext, token, sizeof(m_item->ext) - 1);
+				m_item->ext[sizeof(m_item->ext) - 1] = '\0';
 				break;
 			}
 			x++;
@@ -286,13 +288,13 @@ main(int argc, char **argv)
 			m_item->id = id;
 			m_item->next = item_list;
 			memset(m_item->fullpath, 0, sizeof(m_item->fullpath));
-			sprintf(m_item->fullpath, "%s/%s", argv[1], buf);
+			snprintf(m_item->fullpath, sizeof(m_item->fullpath), "%s/%s", argv[1], buf);
 
 			m_item->id = 1;
 
 			fprintf(stderr, "Pattern file found: %s\n", buf);
 			memset(fullpath, 0, sizeof(fullpath));
-			sprintf(fullpath, "%s/%s", argv[1], buf);
+			snprintf(fullpath, sizeof(fullpath), "%s/%s", argv[1], buf);
 			fo = fopen(fullpath, "r");
 
 			if (!fo) {
@@ -302,7 +304,18 @@ main(int argc, char **argv)
 			}
 
 			memset(buf2, 0, sizeof(buf2));
-			fscanf(fo, "%s", buf2);
+			if (fgets(buf2, sizeof(buf2), fo) == NULL) {
+				fclose(fo);
+				free(tofree);
+				continue;
+			}
+			/* trim newline */
+			for (i = 0; buf2[i] != '\0'; i++) {
+				if (buf2[i] == '\n') {
+					buf2[i] = '\0';
+					break;
+				}
+			}
 			// if (feof(fo)) break;
 			tofree = string = strdup(buf2);
 			assert(string != NULL);
@@ -314,13 +327,14 @@ main(int argc, char **argv)
 					m_item->active = atoi(token);
 					break;
 				case 1:
-					strcpy(m_item->name, token);
+					strncpy(m_item->name, token, sizeof(m_item->name) - 1);
+					m_item->name[sizeof(m_item->name) - 1] = '\0';
 					break;
 				case 2:
 					memset(m_item->node, 0,
 					    sizeof(m_item->node));
 					if (strlen(token) > 1) {
-						sprintf(m_item->node, "on %s",
+						snprintf(m_item->node, sizeof(m_item->node), "on %s",
 						    token);
 					}
 					break;
@@ -338,7 +352,7 @@ main(int argc, char **argv)
 			}
 
 			memset(descrfile, 0, MAXFULLPATH);
-			sprintf(descrfile, "%s/%s.descr", argv[1],
+			snprintf(descrfile, sizeof(descrfile), "%s/%s.descr", argv[1],
 			    m_item->name);
 			fp = fopen(descrfile, "r");
 			if (fp) {
@@ -416,7 +430,7 @@ main(int argc, char **argv)
 				if (item == cur_choice) {
 					printf("%s", SELECT);
 					if (strlen(m_item->descr)) {
-						sprintf(descr, "%s%s%s%s", BOLD,
+						snprintf(descr, sizeof(descr), "%s%s%s%s", BOLD,
 						    LYELLOW, m_item->descr,
 						    NORMAL);
 					} else {
@@ -454,7 +468,7 @@ main(int argc, char **argv)
 				if (item == cur_choice) {
 					printf("%s", SELECT);
 					if (strlen(m_item->descr)) {
-						sprintf(descr, "%s%s%s%s", BOLD,
+						snprintf(descr, sizeof(descr), "%s%s%s%s", BOLD,
 						    LYELLOW, m_item->descr,
 						    NORMAL);
 					} else {
@@ -503,7 +517,7 @@ main(int argc, char **argv)
 			if (is_number(buf)) {
 				// assume got jname here
 				fprintf(stderr, "%s\n", buf);
-				fp = fopen(argv[1], "w");
+				fp = fopen(argv[2], "w");
 				fputs(buf, fp);
 				fclose(fp);
 				exit(0);
@@ -516,7 +530,7 @@ main(int argc, char **argv)
 					if (id == tmp_id) {
 						fprintf(stderr, "%s\n",
 						    m_item->name);
-						fp = fopen(argv[1], "w");
+						fp = fopen(argv[2], "w");
 						fputs(m_item->name, fp);
 						fclose(fp);
 						exit(0);
