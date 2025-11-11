@@ -1,0 +1,176 @@
+#!/usr/local/bin/cbsd
+#v15.0.0
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+CBSDMODULE="bhyve"
+MYDESC="Dialog-based text user interface for manage bhyve UEFI boot order"
+MYARG="jname"
+MYOPTARG=""
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Text user interface for manage bhyve UEFI boot order configuration.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}     - work with <VM>;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-efivar-tui jname=vm1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bconfig --help
+  cbsd bget --help
+  cbsd bset --help
+
+"
+
+. ${cbsdinit}
+. ${subrdir}/settings-tui.subr
+. ${strings}
+. ${dialog}
+
+dialog_menu_main()
+{
+	local title=" ${product} v${myversion} "
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt="Use menu to select boot item and change order\n Second index - is order (when empty - disabled)"
+	local defaultitem=
+	local hline=
+	local i=
+
+	local menu_list=
+
+	for i in ${name_list}; do
+		eval _order=\$order_${i}
+		eval _name=\$item_${i}
+		if [ ${_order} -eq 1 ]; then
+			_order="[*]"
+		else
+			_order="[ ]"
+		fi
+		menu_list="${menu_list}	'${i}'	'${_order} ${_name}'"
+	done
+
+	menu_list="${menu_list}	'-'	''	'SAVE'	''"
+
+	[ -z "${mtag}" ] && mtag="EXIT"
+	defaultitem="${mtag}"
+
+	local height width rows
+	eval f_dialog_menu_size height width rows \
+		\"\$DIALOG_TITLE\"     \
+		\"\$DIALOG_BACKTITLE\" \
+		\"\$prompt\"           \
+		\"\$hline\"            \
+		$menu_list
+
+	height=$(( height + 1 ))
+
+	local menu_choice
+	menu_choice=$( eval $DIALOG \
+		--title \"\$DIALOG_TITLE\"         \
+		--backtitle \"\$DIALOG_BACKTITLE\" \
+		--hline \"\$hline\"                \
+		--ok-label \"\$msg_ok\"            \
+		--cancel-label \"\$msg_cancel\"    \
+		--default-item \"\$defaultitem\"   \
+		--menu \" \$prompt \"              \
+		$height $width $rows               \
+		$menu_list                         \
+		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
+	)
+
+	local retval=$?
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+
+	# Only update default-item on success
+	if [ ${retval} -eq ${DIALOG_OK} ]; then
+		selected=${menu_choice##* }
+	fi
+
+	return ${retval}
+}
+
+
+### MAIN
+. ${subrdir}/rcconf.subr
+[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Only for bhyve type VMs${N0_COLOR}"
+shift #skip for jname
+
+VM_VARS="${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd"
+
+[ ! -r "${VM_VARS}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such UEFI VARS file: ${N2_COLOR}${VM_VARS}${N0_COLOR}"
+
+name_list=
+name_cnt=0
+OIFS="${IFS}"
+IFS="|"
+
+eval $( env NOCOLOR=1 bhyve-efivar jname=${jname} header=0 human=0 | while read _a _b _c; do
+	IFS="${OIFS}"
+	if [ -z "${name_list}" ]; then
+		name_list="${_b}"
+	else
+		name_list="${name_list} ${_b}"
+	fi
+
+	if [ "${_a}" = "*" ]; then
+		_a="1"
+	else
+		_a="0"
+	fi
+
+	name_cnt=$(( name_cnt + 1 ))
+
+	echo "name_list=\"${name_list}\""
+	echo "order_${_b}=\"${_a}\""
+	echo "item_${_b}=\"${_c}\""
+
+	IFS="|"
+done )
+IFS="${OIFS}"
+
+[ -z "${name_list}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such VARS data: ${N2_COLOR}${VM_VARS}${N0_COLOR}"
+
+while [ 1 ]; do
+	dialog_menu_main || f_die
+	retval=$?
+
+	f_dialog_menutag_fetch mtag
+
+	case "${mtag}" in
+		SAVE)
+			new_boot=$( for i in ${name_list}; do
+				eval _order=\$order_${i}
+				if [ "${_order}" = "1" ]; then
+					echo "${i}" | ${TR_CMD} -d [:alpha:]
+					exit 0
+				fi
+			done )
+
+			if [ -n "${new_boot}" ]; then
+				echo "${new_boot}"
+				${miscdir}/efivar ${VM_VARS} -b 0000 > /dev/null 2>&1
+				${miscdir}/efivar ${VM_VARS} -b ${new_boot}
+			fi
+			exit 0
+			;;
+		"-")
+			continue
+			;;
+		*)
+			eval $( for i in ${name_list}; do
+				echo "order_${i}=\"0\""
+			done )
+			export order_${mtag}="1"
+			;;
+	esac
+done
+
+exit 0

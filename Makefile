@@ -113,7 +113,7 @@ cbsd: pkg-config-check
 	${CC} bin/src/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cbsdssh6
 	${CC} sbin/src/netmask.c -o sbin/netmask && ${STRIP} sbin/netmask
 	${CC} bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && ${STRIP} bin/cfetch
-	${CC} misc/src/efivar.c -o misc/efivar && ${STRIP} misc/efivar
+	${CC} misc/src/efivar2.c -o misc/efivar && ${STRIP} misc/efivar
 	${CC} misc/src/getch.c -o misc/getch && ${STRIP} misc/getch
 	${CC} misc/src/jexec_env.c -o misc/jexec_env && ${STRIP} misc/jexec_env
 	${CC} misc/src/jail_env.c -o misc/jail_env && ${STRIP} misc/jail_env
