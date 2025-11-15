@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v10.1.2
-MYARG=""
-MYOPTARG="controlmaster jname selected"
+MYARG="jname"
+MYOPTARG="controlmaster selected"
 MYDESC="Choose and return boot device"
 ADDHELP="selected= specify selected item"
 
@@ -20,7 +20,15 @@ init_item_list()
 {
 	local _cmd _res
 
-	item_list="cd hdd net"
+	item_list=
+
+	[ -n "${vm_iso_path}" ] && item_list="cd"
+
+	if [ -n "${item_list}" ]; then
+		item_list="${item_list} hdd net"
+	else
+		item_list="hdd net"
+	fi
 
 	cd_desc="Boot from CD"
 	hdd_desc="Boot from HDD"
@@ -38,11 +46,13 @@ browse_boot_list()
 	local btitle="${DIALOG_BACKTITLE}"
 	local prompt=
 	local _vars_num=
+	local _res=
 
 	local prompt=""
 	local defaultitem=
 	local hline="Hit ENTER for SELECT"
 	local mark= prefix= name=
+	local _vars_file="${jailsysdir}/${jname}/${vm_vars_file}"
 
 	if [ -n "${jname}" ]; then
 		prompt=" Manage bhyve boot device order: ${jname} "
@@ -50,22 +60,33 @@ browse_boot_list()
 		prompt=" Manage bhyve boot device order "
 	fi
 
-	f_dialog_default_fetch defaultitem
+	[ -z "${vm_iso_path}" ] && prompt="${prompt}\n'cd' disabled due to vm_iso_path= is not set"
 
-	_vars_num="(3)"
+	if [ "${vm_vars_enable}" = "1" ]; then
+		vm_vars_enable_mark="[x]"
+	else
+		vm_vars_enable_mark="[ ]"
+	fi
+
+	if [ ! -r "${_vars_file}" ]; then
+		_vars_num="(0)"
+	else
+		_res=$( bhyve-efivar jname=freebsd1 header=0 quiet=1 | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
+		_vars_num="(${_res})"
+	fi
 
 	local menu_list=" \
-		'EXIT'		'<<'			'Exit this menu'							\
-		'-'		'-'			''									\
-		'[ ]'		'Enable UEFI VARS'	'Use NVRAM UEFI VARS file'						\
-		'VARS'		'VARS Menu${_vars_num} >>'	'Selecting order by UEFI VARS. They are always a priority.'	\
-		'-'		'-'			''									\
+		'EXIT'				'<<'				'Exit this menu'						\
+		'-'				'-'				''								\
+		'${vm_vars_enable_mark}'	'Enable UEFI VARS'		'Use NVRAM UEFI VARS file'					\
+		'VARS'				'VARS Menu${_vars_num} >>'	'Selecting order by UEFI VARS. They are always a priority.'	\
+		'-'				'-'				''								\
 	" # END-QUOTE
 
 	local prefix=X
 	local cur_prefix=Y
 
-	[ -n "${selected}" ] && defaultitem=${selected}
+	[ -n "${selected}" ] && export defaultitem="${selected}"
 
 	msg_ok="Select"
 	msg_cancel="HELP"
@@ -99,11 +120,25 @@ unset_selected_item()
 }
 
 ### MAIN ###
+. ${subrdir}/rcconf.subr
+[ ${?} -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+case "${emulator}" in
+	bhyve|xen|qemu)
+		true
+		;;
+	*)
+		err 1 "${N1_COLOR}${CBSD_APP}: unsupported emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
+		;;
+esac
+
+selected="${vm_boot}"
 init_item_list
 
 while [ true ]; do
 	browse_boot_list
 	_ret=$?
+
+	selected="${mtag}"
 
 	case "${_ret}" in
 		${DIALOG_CANCEL})
@@ -132,26 +167,53 @@ while [ true ]; do
 			continue
 			;;
 		VARS)
-			echo "VARS"
-			read p
+			_vars_file="${jailsysdir}/${jname}/${vm_vars_file}"
+			if [ ! -r "${_vars_file}" ]; then
+				_vars_num="0"
+			else
+				_vars_num=$( bhyve-efivar jname=freebsd1 header=0 quiet=1 | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
+			fi
+
+			if [ "${_vars_num}" = "0" ]; then
+				DIALOG_TITLE="no VARS"
+				msg_ok="It's a pity"
+
+				title="Select boot device"
+				btitle="${DIALOG_BACKTITLE}"
+				f_dialog_msgbox "UEFI VARS not found" "Error"
+				msg_ok="Ok"
+				continue
+			fi
+
+			bhyve-efivar-tui jname="${jname}"
 			;;
 		[*)
-			echo "checkbox"
-			read p
+			if [ "${vm_vars_enable}" = "1" ]; then
+				vm_vars_enable="0"
+				selected="[ ]"
+			elif [ "${vm_vars_enable}" = "0" ]; then
+				vm_vars_enable="1"
+				selected="[x]"
+			else
+				f_dialog_msgbox "wrong value for vm_vars_enable: [${vm_vars_enable}]" "Error"
+				continue
+			fi
+			bset jname=freebsd1 vm_vars_enable=${vm_vars_enable} quiet=1
 			;;
-		*)
+		cd|hdd|net)
 			index=${mtag%% *}
 			name=${mtag##* }
 
-			[ "${name}" = "pxe" ] && bootmgmt-pxe
+#			[ "${name}" = "pxe" ] && bootmgmt-pxe
 
 			if [ -n "${name}" ]; then
-				if [ -n "${controlmaster}" ]; then
-					${TRUNCATE_CMD} -s0 ${controlmaster}
-					/usr/local/cbsd/misc/cbsdsysrc -qf ${controlmaster} vm_boot="${name}" >/dev/null
-				else
-					echo ${name}
-				fi
+#				if [ -n "${controlmaster}" ]; then
+#					${TRUNCATE_CMD} -s0 ${controlmaster}
+#					/usr/local/cbsd/misc/cbsdsysrc -qf ${controlmaster} vm_boot="${name}" >/dev/null
+#				else
+#					echo ${name}
+#				fi
+				bset jname=freebsd1 vm_boot=${name} quiet=1
 				exit ${SUCCESS}
 			else
 				f_die
