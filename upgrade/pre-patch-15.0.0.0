@@ -1,0 +1,34 @@
+#!/bin/sh
+#v15.0.0
+# Update tables for: vm_vars_enable vm_vars_file vm_vars_boot
+: ${distdir="/usr/local/cbsd"}
+[ ! -r "${distdir}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${distdir}/subr/cbsdbootstrap.subr || exit 1
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit
+
+_test=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT COUNT(vm_vars_enable) FROM bhyve LIMIT 1" 2>/dev/null )
+if [ -z "${_test}" ]; then
+	${ECHO} "  * ${N1_COLOR}Update bhyve tables: vm_vars_\*${N0_COLOR}"
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "ALTER TABLE bhyve ADD COLUMN vm_vars_enable INTEGER DEFAULT 1"
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "ALTER TABLE bhyve ADD COLUMN vm_vars_file TEXT DEFAULT 'BHYVE_UEFI_VARS.fd'"
+	${miscdir}/sqlcli ${dbdir}/local.sqlite "ALTER TABLE bhyve ADD COLUMN vm_vars_boot TEXT DEFAULT '0'"
+fi
+
+vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = 'bhyve'" )
+
+for i in ${vms}; do
+	mydb="${jailsysdir}/${i}/local.sqlite"
+	[ ! -r "${mydb}" ] && continue
+	# alter vm_vars_\* if not exist
+	unset _test
+	_test=$( ${miscdir}/sqlcli ${mydb} "SELECT COUNT(vm_vars_enable) FROM settings LIMIT 1" 2>/dev/null )
+	[ -n "${_test}" ] && continue
+	${ECHO} "  * ${N1_COLOR}Update settings tables: vm_vars_{enable,file,boot} for ${N2_COLOR}${i}${N0_COLOR}"
+	${miscdir}/sqlcli ${mydb} "ALTER TABLE settings ADD COLUMN vm_vars_enable INTEGER DEFAULT 1"
+	${miscdir}/sqlcli ${mydb} "ALTER TABLE settings ADD COLUMN vm_vars_file TEXT DEFAULT 'BHYVE_UEFI_VARS.fd'"
+	${miscdir}/sqlcli ${mydb} "ALTER TABLE settings ADD COLUMN vm_vars_boot TEXT DEFAULT '0'"
+done
+
+exit 0
