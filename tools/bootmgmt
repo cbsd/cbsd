@@ -1,17 +1,19 @@
 #!/usr/local/bin/cbsd
 #v10.1.2
 MYARG=""
-MYOPTARG="selected controlmaster"
+MYOPTARG="controlmaster jname selected"
 MYDESC="Choose and return boot device"
 ADDHELP="selected= specify selected item"
 
 . ${subrdir}/nc.subr
+ojname=
+jname=
 . ${cbsdinit}
-
+[ -n "${jname}" ] && ojname="${jname}"
 . ${dialog}
 
-f_dialog_title "$msg_system_console_configuration"
-f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+f_dialog_title "${msg_system_console_configuration}"
+f_dialog_backtitle "${ipgm:+bsdconfig }${pgm}"
 f_mustberoot_init
 
 init_item_list()
@@ -33,18 +35,31 @@ init_item_list()
 browse_boot_list()
 {
 	local title="Select boot device"
+	local btitle="${DIALOG_BACKTITLE}"
+	local prompt=
+	local _vars_num=
+
 	local prompt=""
 	local defaultitem=
 	local hline="Hit ENTER for SELECT"
-	local mark prefix name
+	local mark= prefix= name=
 
-	local f_dialog_title=" Service list "
+	if [ -n "${jname}" ]; then
+		prompt=" Manage bhyve boot device order: ${jname} "
+	else
+		prompt=" Manage bhyve boot device order "
+	fi
 
 	f_dialog_default_fetch defaultitem
 
+	_vars_num="(3)"
+
 	local menu_list=" \
-		'EXIT'		'<<'			'Exit this menu' \
-		'-'	'-'	'' \
+		'EXIT'		'<<'			'Exit this menu'							\
+		'-'		'-'			''									\
+		'[ ]'		'Enable UEFI VARS'	'Use NVRAM UEFI VARS file'						\
+		'VARS'		'VARS Menu${_vars_num} >>'	'Selecting order by UEFI VARS. They are always a priority.'	\
+		'-'		'-'			''									\
 	" # END-QUOTE
 
 	local prefix=X
@@ -52,24 +67,25 @@ browse_boot_list()
 
 	[ -n "${selected}" ] && defaultitem=${selected}
 
+	msg_ok="Select"
+	msg_cancel="HELP"
+	extra_label="Cancel"
+
 	for name in ${item_list}; do
-
 		prefix=$( substr --pos=0 --len=1 --str=${name} )
-
 		eval desc=\$${name}_desc
 		eval long_desc=\$${name}_long_desc
-
 		menu_list="${menu_list} '${name}'	'${desc}'	'${long_desc}'"
 	done
 
-	cbsd_menubox
+	cbsd_menubox_with_extra_button
 	retval=$?
 
 	f_dialog_data_sanitize menu_choice
-	f_dialog_menutag_store "$menu_choice"
-	f_dialog_default_store "$menu_choice"
+	f_dialog_menutag_store "${menu_choice}"
+	f_dialog_default_store "${menu_choice}"
 
-	return $retval
+	return ${retval}
 }
 
 unset_selected_item()
@@ -77,42 +93,71 @@ unset_selected_item()
 	local name
 
 	for name in ${item_list}; do
-		eval "selected_item_${name}=\"0\""
+		eval "selected_item_${name}='0'"
 	done
 
 }
 
 ### MAIN ###
 init_item_list
-browse_boot_list
 
-[ -z "${mtag}" ] && f_die
+while [ true ]; do
+	browse_boot_list
+	_ret=$?
 
-case "$mtag" in
-	"EXIT")
-		f_die
-		;;
-	"-")
-		f_die
-		;;
-	*)
-		index=${mtag%% *}
-		name=${mtag##* }
-
-		[ "${name}" = "pxe" ] && bootmgmt-pxe
-
-		if [ -n "${name}" ]; then
-			if [ -n "${controlmaster}" ]; then
-				${TRUNCATE_CMD} -s0 ${controlmaster}
-				/usr/local/cbsd/misc/cbsdsysrc -qf ${controlmaster} vm_boot="${name}" >/dev/null
-			else
-				echo $name
-			fi
-			exit $SUCCESS
-		else
+	case "${_ret}" in
+		${DIALOG_CANCEL})
+			echo "HELP"
+			read p
 			f_die
-		fi
-	;;
-esac
+			;;
+		${DIALOG_EXTRA})
+			f_die
+			;;
+		${DIALOG_OK})
+			true
+			;;
+		*)
+			f_die
+			;;
+	esac
 
-f_die
+	[ -z "${mtag}" ] && f_die
+
+	case "${mtag}" in
+		"EXIT")
+			f_die
+			;;
+		"-")
+			continue
+			;;
+		VARS)
+			echo "VARS"
+			read p
+			;;
+		[*)
+			echo "checkbox"
+			read p
+			;;
+		*)
+			index=${mtag%% *}
+			name=${mtag##* }
+
+			[ "${name}" = "pxe" ] && bootmgmt-pxe
+
+			if [ -n "${name}" ]; then
+				if [ -n "${controlmaster}" ]; then
+					${TRUNCATE_CMD} -s0 ${controlmaster}
+					/usr/local/cbsd/misc/cbsdsysrc -qf ${controlmaster} vm_boot="${name}" >/dev/null
+				else
+					echo ${name}
+				fi
+				exit ${SUCCESS}
+			else
+				f_die
+			fi
+		;;
+	esac
+done
+
+exit 0
