@@ -1,23 +1,40 @@
 #!/usr/local/bin/cbsd
-#v14.2.
+#v15.0.0
 CBSDMODULE="bhyve"
-MYARG="jname mode"
-MYOPTARG="display header select lpcslot_name"
-MYDESC="Operate with bhyve PCI bus map"
+MYARG="jname"
+MYOPTARG="bootrom com1 com2 com3 com4 display header lpcslot_name mode select tpm"
+MYDESC="Manage bhyve VM LPC devices: COM/TPM2/bootrom and so on"
 ADDHELP="
-  mode=[list|reset]
-  mode=get - get PCI bus for specified device (device_name= required, select= - optional)
-  mode=list - show current PCI bus map
-  mode=reset - reset to default
-select - change SQL query for get, e.g: select=\"lpcslot_name,lpcslot_value\"
-lpcslot_name - lpcslot_name of device for select in mode=get, e.g: tpm
-header=0 don't print header
-display= list by comma for column. Default: lpcslot_name,lpcslot_value
+${H3_COLOR}Description${N0_COLOR}:
+
+Manage bhyve VM LPC devices: COM/TPM2/bootrom and so on.
+
+If the TPM path begins with the '/dev/' prefix, it means PASSTHRU mode. 
+If the 'swtpm' package is installed, you can set 'tpm=' as 'new' value for emulation.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}  - target VM.
+ ${N2_COLOR}mode=${N0_COLOR}   - mode (list by default when no other arguments):
+           * reset -   reset to default;
+           * get   -   get values;
+           * list  -   list of devices;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd blpc jname=vm1
+  # cbsd blpc jname=vm1 tpm=new				# emulate via swtpm
+  # cbsd blpc jname=vm1 tpm=/dev/tpm0			# passthru /dev/tpm*
+  # cbsd blpc jname=vm1 mode=get lpcslot_name=com1
+  # cbsd blpc jname=vm1 com1="tcp=127.0.0.1:9000"
+  # cbsd blpc jname=vm1 com2="serial"
+  # cbsd blpc jname=vm1 mode=reset
 
 ${H3_COLOR}See also${N0_COLOR}:
 
+ cbsd blpc-tui --help
  cbsd bconfig --help
- cbsd bget --help
+ cbsd bset --help
  cbsd bhyve-ppt --help
 
 "
@@ -29,7 +46,26 @@ ${H3_COLOR}See also${N0_COLOR}:
 select="lpcslot_value"		# by default, select PCI bus
 device_name=
 
+bootrom=
+com1=
+com2=
+com3=
+com4=
+tpm=
+obootrom=
+ocom1=
+ocom2=
+ocom3=
+ocom4=
+otpm=
 . ${cbsdinit}
+
+[ -n "${bootrom}" ] && obootrom="${bootrom}"
+[ -n "${com1}" ] && ocom1="${com1}"
+[ -n "${com2}" ] && ocom2="${com2}"
+[ -n "${com3}" ] && ocom3="${com3}"
+[ -n "${com4}" ] && ocom4="${com4}"
+[ -n "${tpm}" ] && otpm="${tpm}"
 
 . ${subrdir}/rcconf.subr
 case "${emulator}" in
@@ -37,7 +73,7 @@ case "${emulator}" in
 		true
 		;;
 	*)
-		log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+		log_err 1 "${N1_COLOR}Not supported emulator: ${N2_COLOR}${jname}${N0_COLOR}"
 		;;
 esac
 
@@ -137,6 +173,15 @@ show_lpc()
 
 #### MAIN
 [ -z "${header}" ] && header=1
+_args=0
+
+# any oXXX params is set? When no mode set and no args = force to mode=list
+for i in bootrom com1 com2 com3 com4 tpm; do
+	eval _val=\$o$i
+	[ -n "${_val}" ] && _args=$(( _args + 1 ))
+done
+
+[ ${_args} -eq 0 -a -z "${mode}" ] && mode=list
 
 case "${mode}" in
 	get)
@@ -144,18 +189,36 @@ case "${mode}" in
 		_sql="SELECT ${select} FROM lpc WHERE lpcslot_name='${lpcslot_name}'"
 		sqllistdelimer=" "
 		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_sql}
+		exit 0
 		;;
 	list)
 		sqllistdelimer=" "
 		show_lpc | ${COLUMN_CMD} -t
+		exit 0
 		;;
 	reset)
 		# truncate pcibus_run table
 		#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus
 		${ECHO} "${N1_COLOR}Reset lpc table for: ${N2_COLOR}${jname}${N0_COLOR}"
+		exit 0
 		;;
-	*)
-		err 1 "${N1_COLOR}Unknown mode ${mode}, valid: ${N2_COLOR}list,reset${N0_COLOR}"
 esac
+
+# SET MODE
+for i in bootrom com1 com2 com3 com4 tpm; do
+	eval _val=\$o$i
+	if [ -n "${_val}" ]; then
+		${ECHO} "${N0_COLOR}${CBSD_APP}: set ${i}: ${N2_COLOR}${_val}${N0_COLOR}"
+		cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "UPDATE lpc SET lpcslot_value='${_val}' WHERE lpcslot_name='${i}'"
+		case "${_val}" in
+			tpm)
+				# dup to global
+				cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "UPDATE lpc SET lpcslot_value='${_val}' WHERE lpcslot_name='${i}'"
+				;;
+		esac
+	fi
+done
+
+
 
 exit 0
