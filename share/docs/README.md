@@ -100,31 +100,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 ## VM: Operation with virtual machine via bhyve
 
-[Single file](/workflow_bhyvecbsd.md)
-
-- [VM create](bhyve/wf_bcreate_ssi.md) :: bcreate, bconstruct-tui
-- [bhyve cloud-init with CBSD](/wf_bhyve_cloudinit_ssi.md) :: bconstruct-tui, cloudinit
-- [bhyve create via CBSDfile](/cbsdfile.md) :: up, destroy
-- [VM config](/wf_bconfig_ssi.md) :: bconfig
-- [Custom behavior settings by exit codes](/wf_bexit_behavior_ssi.md) :: bconfig, bset, bconstruct-tui
-- [bhyve virtual disk](/wf_bstorage_ssi.md) :: bconfig, bset, bhyve-dsk
-- [Bhyve CPU Topology](/wf_bcpu_topology_ssi.md) :: cpu-topology, vm-cpu-topology, vm-cpu-topology-tui
-- [starting and stoping VM](/wf_bstop_bstart_ssi.md) :: bstart, bstop
-- [bhyve network options](/wf_bhyvenetwork_ssi.md) :: bcreate, bconfig
-- [bhyve PCI Passthrough and SR-IOV](/wf_bhyveppt_ssi.md) :: bhyve-ppt
-- [Shared folders for bhyve vm](/wf_bhyve_p9_ssi.md) :: bhyve-p9shares
-- [VM starting order](/wf_jorder_ssi.md) :: border
-- [VM removal](/wf_bremove_ssi.md) :: bremove
-- [VM renaming](/wf_brename_ssi.md) :: brename
-- [VMs list](/wf_bls_ssi.md) :: bls
-- [Using VNC with bhyve](/wf_bvnc_ssi.md) :: bconfig
-- [Attach to console](/wf_blogin_ssi.md) :: blogin
-- [VM cloning](/wf_bclone_ssi.md) :: b\[r\]clone
-- [VM export](/wf_bexport_ssi.md) :: bexport
-- [VM import](/wf_bimport_ssi.md) :: bimport
-- [VM bhyve checkpoints, suspend and pauses](/wf_bcheckpoint_ssi.md) :: bsuspend, bcheckpoint, bpause
-- [VM bhyve live migration](/wf_bmigration_ssi.md) :: bmigrate
-- [Running bhyve via debugger](/wf_bhyve_gdb_ssi.md) :: debug engine
+- [CBSD + bhyve](bhyve/handbook.md)
 
 <!---
 ## Operation with nodes

@@ -409,7 +409,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	case ${bhyve_exit} in
 		0)
 			if [ -d ${jailsysdir}/${jname}/master_reboot.d ]; then
-				/usr/bin/find "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and  \( -perm -u=x -o -perm -g=x -o -perm -o=x \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
+				${FIND_CMD} "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and  \( -perm -u=x -o -perm -g=x -o -perm -o=x \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
 					echo "  bhyverun: execute master reboot script:${_file}"
 					${jailsysdir}/${jname}/master_reboot.d/${_file}
 				done
@@ -422,7 +422,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 
 	if [ ${ret} -eq 0 ]; then
 		# exit from loop
-		touch ${tmpdir}/bhyvestop.${jname}.lock
+		${TOUCH_CMD} ${tmpdir}/bhyvestop.${jname}.lock
 		echo "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must stoppped"
 		logger -t bhyverun.sh "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must stopped"
 		case ${bhyve_exit} in
@@ -432,12 +432,12 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 				# bhyve error or crash
 				echo "See ${vm_logfile} for details"
 				echo
-				/usr/bin/tail -n50 ${vm_logfile}
+				${TAIL_CMD} -n50 ${vm_logfile}
 				echo "Sleep 1 seconds..."
 				sleep 1
 		esac
 	else
-		/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1
+		${BHYVECTL_CMD} --vm=${jname} --destroy > /dev/null 2>&1
 		# for some reason, not always a virtual machine can start instantly
 		sleep 1
 		echo "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must continue"
@@ -453,8 +453,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		vm_boot="hdd"
 
 		# replace hdd boot in conf
-		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_boot_once=0
-		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} vm_boot=hdd
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_boot_once=0 vm_boot=hdd
 		# remove CD string for EFI
 		if [ "${vm_efi}" != "none" ]; then
 			if [ -n "${cd_args2}" ]; then
@@ -471,6 +470,20 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	fi
 	reset
 	clear
+
+
+	## create UEFI VARS first boot backup. todo: custom vars filename?
+	if [ -r "${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd" ]; then
+		_bkp_exist=$( ${FIND_CMD} ${jailsysdir}/${jname}/  -mindepth 1 -maxdepth 1 -type f -name BHYVE_UEFI_VARS.fd-\*.bak )
+		if [ -z "${_bkp_exist}" ]; then
+			_dt=$( ${DATE_CMD} "+%Y-%m-%d" )
+			_bkp="BHYVE_UEFI_VARS.fd-${_dt}.bak"
+			_vars=$( ${miscdir}/efivar ${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd | ${GREP_CMD} -E -v '(^BootCurrent:)|(^BootOrder:)' | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
+			if [ ${_vars} -gt 2 ]; then
+				${CP_CMD} -a ${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd ${jailsysdir}/${jname}/${_bkp}
+			fi
+		fi
+	fi
 done
 
 

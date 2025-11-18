@@ -53,7 +53,7 @@ cbsd version
 
 - [first jail container](../jail/cbsd_jail_quickstart.md) (platform: FreeBSD, DragonFlyBSD, HardenedBSD, XigmaNAS);
 
-- [first bhyve VM](../bhyve/cbsd_bhyve_quickstart.md) (platform: FreeBSD);
+- [first bhyve VM](../bhyve/handbook.md) (platform: FreeBSD);
 
 - [first XEN VM](../xen/cbsd_xen_quickstart.md) (platform: FreeBSD, Linux);
 

@@ -8,7 +8,7 @@ the port to GNU/Linux happened almost automatically as part of the work on suppo
 Tested/supported with following OSes and hypervisor/container engines:
 
 
-| Platform[*1]                                     | [bhyve](/share/docs/bhyve/cbsd_bhyve_quickstart.md) | [FreeBSD jail](/share/docs/jail/cbsd_jail_quickstart.md) | [QEMU](/share/docs/qemu/cbsd_qemu_quickstart.md) | [KVM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [NVMM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [Xen](http://www.xenproject.org/) |
+| Platform[*1]                                     | [bhyve](/share/docs/bhyve/handbook.md) | [FreeBSD jail](/share/docs/jail/cbsd_jail_quickstart.md) | [QEMU](/share/docs/qemu/cbsd_qemu_quickstart.md) | [KVM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [NVMM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [Xen](http://www.xenproject.org/) |
 |------------------------------------------------- | ----- | ---- | ------- | --- | ---- | --- |
 | [DragonFlyBSD](https://www.dragonflybsd.org/)    |   -   |  y   |  y      |  -  |  y   |  -  |
 | [FreeBSD](https://www.freebsd.org/)              |   y   |  y   |  y [*2] |  -  |  -   |  y  |
