@@ -102,7 +102,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 [Single file](/workflow_bhyvecbsd.md)
 
-- [VM create](/wf_bcreate_ssi.md) :: bcreate, bconstruct-tui
+- [VM create](bhyve/wf_bcreate_ssi.md) :: bcreate, bconstruct-tui
 - [bhyve cloud-init with CBSD](/wf_bhyve_cloudinit_ssi.md) :: bconstruct-tui, cloudinit
 - [bhyve create via CBSDfile](/cbsdfile.md) :: up, destroy
 - [VM config](/wf_bconfig_ssi.md) :: bconfig
