@@ -3,7 +3,7 @@
 # 1) Get distribution into skel dir from repo
 # 2) Get distribution into data dir from skel dir
 
-VERSION_CODENAME="daedalus"
+VERSION_CODENAME="trixie"
 
 . ${subrdir}/nc.subr
 . ${cbsdinit}
@@ -31,7 +31,9 @@ fi
 rootfs_dir="${basejaildir}/base_${arch}_${arch}_${VERSION_CODENAME}"
 
 if [ ! -d ${rootfs_dir}/etc ]; then
+	set -o xtrace
 	repo action=get sources=base arch=${arch} ver=${VERSION_CODENAME} platform=Linux
+	set +o xtrace
 fi
 
 [ ! -r ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}no such basejail in ${rootfs_dir}, failed: ${N2_COLOR}repo action=get sources=base arch=${arch} ver=${VERSION_CODENAME} platform=Linux${N0_COLOR}"

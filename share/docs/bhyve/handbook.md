@@ -211,6 +211,15 @@ interface="bridge1"
 
 Also if you use 'DHCP' in ip4_addr ( ci_ip4_addr ), make sure the `nodeippool` in `cbsd initenv-tui` is the pool you expect.
 
+## Bhyve PCI passthru
+
+CBSD allows you to configure bhyve PCI passthru more easily. To do this, carefully study the built-in documentation:
+```
+cbsd bnyve-ppt --help
+```
+
+<img src="http://www.convectix.com/img/bhyve-ppt1.png" width="1024" title="bhyve-ppt list" alt="bhyve-ppt list"/>
+
 ## other common commands and operations
 
 stop VM: `cbsd bstop --help`
@@ -219,7 +228,6 @@ reconfigure VM: `cbsd bconfig --help`
 destroy VM: `cbsd bdestroy --help`  (or `cbsd destroy` for CBSDFile)
 register new ISO image: `cbsd media --help`
 manage virtual disks: `cbsd bhyve-dsk --help`
-configure PCI Passtru devices: `cbsd bhyve-ppt --help`
 configure P9FS (9P) shares: `bhyve-p9shares --help`
 manage bhyve checkpoints: `cbsd bcheckpoint --help`
 
