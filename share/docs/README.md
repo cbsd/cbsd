@@ -21,3 +21,25 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 - [CBSD + jail handbook](jail/handbook.md) (platform: FreeBSD, DragonflyBSD)
 - [CBSD + QEMU handbook ](qemu/handbook.md) (platform: FreeBSD, Linux)
 - [CBSD + XEN handbook ](xen/handbook.md) (platform: FreeBSD)
+
+## Help
+
+Most of the documentation is embedded directly into the scripts. You can access it using the help argument:
+
+```
+cbsd <cmd> --help
+```
+
+To get a list of all commands or for a specific module:
+
+```
+cbsd help
+cbsd help module=bhyve
+```
+
+There is also a community chat on Telegram:
+
+* English: [@cbsdofficial](https://t.me/cbsdofficial)
+
+* Russian: [cbsdofficial_ru](@https://t.me/cbsdofficial_ru)
+
