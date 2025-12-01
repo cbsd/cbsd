@@ -83,10 +83,6 @@ CBSD Project also support online services:
 
 - [CBSD Mirrors](https://github.com/cbsd/mirrors);
 
-## Support
-
-* For CBSD-related support, discussion and talks, please join to Telegram CBSD usergroup channel ( @cbsdofficial ): https://t.me/cbsdofficial
-
 ### Financial Contributors
 
 Become a financial contributor and help us sustain our community. All funds are returned to the project (hosting, equipment, support) and invested in the development of a number of areas.

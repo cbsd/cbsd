@@ -6,9 +6,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
 - [CBSD GUI interface](general/cbsd_gui.md)
-- [CBSD Built-in help](general/cbsd_help.md) ( help )
 - [Working with CBSDfile](general/cbsdfile.md) ( up, destroy, login, exec )
-- [Broker driven CBSD cluster (example)](general/)
 - [CBSD integration with PHPIPAM (IP management)](general/wf_ipam.md)
 - [Tags and custom facts](general/tag_n_facts.md) ( jget/bget/xget/jls/bls/bget.. )
 - [API module: private cloud via API](general/cbsd_api.md)

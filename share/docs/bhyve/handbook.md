@@ -243,7 +243,7 @@ reconfigure VM: `cbsd bconfig --help`
 
 destroy VM: `cbsd bdestroy --help`  (or `cbsd destroy` for CBSDfile)
 
-register new ISO image: `cbsd media --help`
+manage (attach/detach/remove new ISO image): `cbsd media --help`
 
 manage virtual disks: `cbsd bhyve-dsk --help`
 
