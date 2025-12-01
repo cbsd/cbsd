@@ -22,7 +22,7 @@ All the jail parameters that you saw in TUI, you can use as arguments for `jcrea
 cbsd jcreate jname=myjail runasap=1
 ```
 
-hint: see other examples: `cbsd jcreate --help`
+_hint: see other examples: `cbsd jcreate --help`_
 
 ## Method 3: CBSDfile
 
@@ -42,3 +42,5 @@ Then use `cbsd up` in the directory where CBSDfile is located:
 cd /tmp
 cbsd up
 ```
+
+See also: [CBSD + jail handbook](jail/handbook.md)

@@ -3,7 +3,7 @@
 # 1) Get distribution into skel dir from repo
 # 2) Get distribution into data dir from skel dir
 
-VERSION_CODENAME="excalibur"
+VERSION_CODENAME="daedalus"
 
 . ${subrdir}/nc.subr
 . ${cbsdinit}

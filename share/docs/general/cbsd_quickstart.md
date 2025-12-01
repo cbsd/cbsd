@@ -1,13 +1,21 @@
 # **CBSD** quick start
 
-## Installation on FreeBSD
+## Installation
+
+CBSD works on multiple platforms. Follow the relevant instructions:
+
+<details>
+  <summary>Installation on FreeBSD</summary>
 
 1) Install 'cbsd' package:
 ```
 pkg install -y cbsd
 ```
 
-## Installation on Linux
+</details>
+
+<details>
+  <summary>Installation on Linux</summary>
 
 1) Install dependencies:
 
@@ -34,6 +42,22 @@ wget https://convectix.com/DL/cbsd.tgz
 tar xfz cbsd.tgz
 mv /usr/local/cbsd/bin/cbsd /usr/local/bin/
 ```
+</details>
+
+<details>
+  <summary>Installation on DragonflyBSD</summary>
+
+1) Install 'cbsd' package:
+```
+pkg install -y cbsd
+```
+
+or via dports:
+```
+make -C /usr dports-create
+env BATCH=no make -C /usr/ports/sysutils/cbsd install
+```
+</details>
 
 ## Initialization
 
@@ -44,18 +68,36 @@ Initialize the default working directory (/usr/jails) with bridge-based virtual 
 
 _Hint: for interactive initialization (advanced users), please read [CBSD init](initenv.md)_
 
+_Hint: `default_vs=1` Forces cbsd to create a bridge on your system at startup. If you want to manage the interfaces themselves, do not use this parameter._
+
 If initialization was successful, the following command should return the version:
 ```
 cbsd version
 ```
 
-3) Depending on your capabilities (type on CLI: `cbsd summary`), follow the instruction:
+If you want to change the `initenv` parameter after initialization, use `cbsd initenv-tui` command.
+
+Depending on your capabilities (type on CLI: `cbsd summary`), follow the instruction:
 
 - [first jail container](../jail/cbsd_jail_quickstart.md) (platform: FreeBSD, DragonFlyBSD, HardenedBSD, XigmaNAS);
 
-- [first bhyve VM](../bhyve/handbook.md) (platform: FreeBSD);
+- [first bhyve VM](../bhyve/handbook.md) (platform: FreeBSD, XigmaNAS);
 
 - [first XEN VM](../xen/cbsd_xen_quickstart.md) (platform: FreeBSD, Linux);
 
 - [first QEMU VM (+NVMM, +KVM)](../qemu/cbsd_qemu_quickstart.md) (platform: FreeBSD, DragonFlyBSD, HardenedBSD, XigmaNAS, Linux);
 
+## Help
+
+Most of the documentation is embedded directly into the scripts. You can access it using the help argument:
+
+```
+cbsd <cmd> --help
+```
+
+To get a list of all commands or for a specific module:
+
+```
+cbsd help
+cbsd help module=bhyve
+```
