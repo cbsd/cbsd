@@ -41,5 +41,5 @@ There is also a community chat on Telegram:
 
 * English: [@cbsdofficial](https://t.me/cbsdofficial)
 
-* Russian: [cbsdofficial_ru](@https://t.me/cbsdofficial_ru)
+* Russian: [@cbsdofficial_ru](https://t.me/cbsdofficial_ru)
 
