@@ -43,4 +43,4 @@ cd /tmp
 cbsd up
 ```
 
-See also: [CBSD + jail handbook](jail/handbook.md)
+See also: [CBSD + jail handbook](handbook.md)

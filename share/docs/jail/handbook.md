@@ -78,6 +78,18 @@ To execute command without login, please use the command: `cbsd jexec`. Multiple
 ![cbsd-jexec-login](https://convectix.com/img/cbsd_jexec_login1.png?raw=true)
 
 
+## The current situation with Linux containers
+
+Linux profiles have been added to CBSD for demo purposes, but Linux-based jails are not recommended for production use. 
+
+If you need to run a Linux program, please use the [bhyve](/share/docs/bhyve/handbook.md) hypervisor — CBSD makes this extremely easy.
+
+If you still want to use Linux containers, the recommended profile is [Devuan](https://www.devuan.org/)-based, as it allows you to manage services 
+( thanks to "sysvinit" ) within the container ( "systemd" does not work in jail containers ).
+
+Also, please read the information about [OCI](../general/cbsd_oci.md) and pay attention to the Errata.
+
+
 ## other common commands and operations
 
 stop jail: `cbsd jstop --help`

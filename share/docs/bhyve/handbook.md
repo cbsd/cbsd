@@ -31,6 +31,7 @@ Example 2, CLI or config:
 ```
 
 Example 3, CBSDfile:
+
 ```
 bhyve_vm1()
 {
@@ -46,6 +47,7 @@ bhyve_vm1()
 	ssh_wait=0
 }
 ```
+
 ```
 cbsd up
 ```
@@ -57,6 +59,7 @@ They can contain guest flavor or URL to the image source.
 
 By default, the CBSD comes with a number of pre-built (contrib) profiles for an easy start.
 Please refer to the built-in documentation for a list of profiles:
+
 ```
 cbsd get-profiles --help
 ```
@@ -68,10 +71,36 @@ because all changes will be deleted after `cbsd initenv`: _~workdir/etc/_
 If you notice that some version of the profile is out of date and in the repository [https://github.com/cbsd/cbsd-vmprofiles](https://github.com/cbsd/cbsd-vmprofiles) no one sent a correction, 
 you can contribute **CBSD** by sending changes (in the old profile or creating a new one) independently through Pull Request, having an account on github.com
 
+
+## CBSD bhyve CLOUD IMAGES
+
+In addition to classic images using original ISO images, CBSD supplies profiles for cloud images and acts as `NoCloud` cloud-init Datasource!
+By using these features, you can save significant time and get a working system in just a few seconds, bypassing the long and routine installation phase (see: [cbsd blogin](handbook.md#bhyve-login-vnc-console)
+
+In this case, CBSD download only a small minimal image of an already working system, and all subsequent virtual environments of this profile will use it as a golden image 
+(in the case of a ZFS file system, you will receive a CoW for guests).
+
+
+## CBSD bhyve CLOUD IMAGES: VDI
+
+In addition to classic CLOUD images, the working system of which you can start using within seconds of launch, CBSD supplies several CLOUD images that 
+allow login via a graphical protocol (RDP) immediately after launch. These profiles are marked with the letter 'V' letter:
+
+
+![bconstruct-vdi1](https://convectix.com/img/bconstruct-vdi1.png?raw=true)
+
+These profiles can be easily integrated with [Apache Guacamole@](https://guacamole.apache.org/) via CBSD create.d/start.d hooks.
+
+You will see access credentials for logging into a remote desk via a profile post message:
+
+<img src="https://convectix.com/img/bconstruct-vdi2.png" width="1024" title="bhyve-ppt list" alt="CBSD VDI cloud images"/>
+
+
 ## Creating your own virtual machine profiles with helper
 
 You can use any existing profiles as examples and create your profile in any text editor.
 There is also a helper script that will make creating your profile easier:
+
 ```
 % cbsd vm-profile-wizard
 ```
@@ -110,53 +139,12 @@ on the second virtual CD-ROM:
 
 - If the driver is correct, you will see the disk. If the disk is not visible, try `ahci-hd` disk type or `NVMe`:
 
-## bhyve TPM
 
-Some guest systems (for example Windows 11) require the presence of TPM2.0 devices. 
-You can PASSTHRU the host TPM ( /dev/tpm ) `kldload tpm`-required. Or emulate TPM via `swtpm` package. Please install it first and re-run CBSD init:
-```
-pkg install -y swtpm
-cbsd initenv
-```
-
-Please use the built-in help and examples via the appropriate script:
-```
-cbsd blpc --help
-```
-
-Or navigate via TUI: `cbsd bconfig` -> `LPC` -> `tpm` -> set the parameter to `new` value:
-
-![bconstruct-tpm2.png](https://convectix.com/img/bconstruct-tpm2.png?raw=true)
-
-## bhyve boot order device
-
-The CBSD supports two options for managing boot devices for bhyve: by installing a boot device on the first PCI BUS or using UEFI VARS boot order.
-Please note that UEFI VARS take precedence over the first method. Please use the built-in help and examples via the appropriate script:
-```
-cbsd bhyve-efivar --help
-```
-
-Or navigate via TUI: `cbsd bconfig` -> `vm_boot`.
-
-![cbsd_border1.png](https://convectix.com/img/cbsd_border1.png?raw=true)
-
-![cbsd_border2.png](https://convectix.com/img/cbsd_border2.png?raw=true)
-
-:bangbang: | :warning: Please note! VARS are dynamic. If you add a new device (for example, a CD-ROM drive), you must start the virtual machine once for the CBSD to see the entries.
-:---: | :---
-
-
-## CBSD bhyve CLOUD IMAGES
-
-In addition to classic images using original ISO images, CBSD supplies profiles for cloud images and acts as `NoCloud` cloud-init Datasource!
-By using these features, you can save significant time and get a working system in just a few seconds, bypassing the long and routine installation phase.
-
-In this case, CBSD download only a small minimal image of an already working system, and all subsequent virtual environments of this profile will use it as a golden image 
-(in the case of a ZFS file system, you will receive a CoW for guests).
 
 ## CBSDfile method
 
 You can create CBSDfile directories of your virtual appliance (and distribute them between hosts, for example, via Git). Example of CBSDfile for a Ubuntu 24 server cloud image:
+
 ```
 bhyve_ub1()
 {
@@ -197,17 +185,20 @@ EOF
 ```
 
 Just run:
+
 ```
 cbsd up
 ```
 
 and in a few seconds you can log into a working virtual machine with Ubuntu 24:
+
 ```
 cbsd blogin
 ```
 
 Notes: Cloud images are contextualized when created, so unlike ISO images, you must specify the correct network settings in advance.
 You can omit some parameters from the CBSDfile and move them to the global configuration file, for example: ~cbsd/etc/bhyve-default-default.conf
+
 ```
 ci_gw4="10.0.0.1"
 interface="bridge1"
@@ -227,11 +218,52 @@ If you're using CLOUD images, you'll get a working environment immediately and c
 ## Bhyve PCI passthru
 
 CBSD allows you to configure bhyve PCI passthru more easily. To do this, carefully study the built-in documentation:
+
 ```
 cbsd bnyve-ppt --help
 ```
 
 <img src="https://convectix.com/img/bhyve-ppt1.png" width="1024" title="bhyve-ppt list" alt="bhyve-ppt list"/>
+
+## bhyve TPM
+
+Some guest systems (for example Windows 11) require the presence of TPM2.0 devices. 
+You can PASSTHRU the host TPM ( /dev/tpm ) `kldload tpm`-required. Or emulate TPM via `swtpm` package. Please install it first and re-run CBSD init:
+
+```
+pkg install -y swtpm
+cbsd initenv
+```
+
+Please use the built-in help and examples via the appropriate script:
+
+```
+cbsd blpc --help
+```
+
+Or navigate via TUI: `cbsd bconfig` -> `LPC` -> `tpm` -> set the parameter to `new` value:
+
+![bconstruct-tpm2.png](https://convectix.com/img/bconstruct-tpm2.png?raw=true)
+
+## bhyve boot order device
+
+The CBSD supports two options for managing boot devices for bhyve: by installing a boot device on the first PCI BUS or using UEFI VARS boot order.
+Please note that UEFI VARS take precedence over the first method. Please use the built-in help and examples via the appropriate script:
+
+```
+cbsd bhyve-efivar --help
+```
+
+Or navigate via TUI: `cbsd bconfig` -> `vm_boot`.
+
+![cbsd_border1.png](https://convectix.com/img/cbsd_border1.png?raw=true)
+
+![cbsd_border2.png](https://convectix.com/img/cbsd_border2.png?raw=true)
+
+:bangbang: | :warning: Please note! VARS are dynamic. If you add a new device (for example, a CD-ROM drive), you must start the virtual machine once for the CBSD to see the entries.
+:---: | :---
+
+
 
 ## other common commands and operations
 

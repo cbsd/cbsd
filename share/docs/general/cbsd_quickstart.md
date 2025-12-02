@@ -55,7 +55,7 @@ pkg install -y cbsd
 or via dports:
 ```
 make -C /usr dports-create
-env BATCH=no make -C /usr/ports/sysutils/cbsd install
+env BATCH=no make -C /usr/dports/sysutils/cbsd install
 ```
 </details>
 
