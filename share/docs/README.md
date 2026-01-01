@@ -5,6 +5,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 ## General information
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
+- [About CBSD shell and SQLite3](general/cbsdsh.md) 
 - [CBSD GUI interface](general/cbsd_gui.md)
 - [CBSD Built-in help](general/cbsd_help.md) ( help )
 - [CBSD Upgrading](general/cbsd_upgrading.md) ( initenv )
@@ -21,7 +22,6 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 <!---
 - [What you need to know about CBSD](general/cbsd_additional.md)
-- [About CBSD shell and SQLite3](general/cbsdsh.md)
 - [CBSD init](general/initenv.md) :: initenv
 - [Building and upgrading bases](base_cbsd.md) :: buildworld, installworld, world, bases, removebase, upgrade
 - [cbsd syntax](cmdsyntax_cbsd.md)
