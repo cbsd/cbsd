@@ -24,9 +24,9 @@ Tested/supported with following OSes and hypervisor/container engines:
 :---: | :---
 
 
-![jail demo](https://convectix.com/gif/jdemo.gif)
-![bhyve demo](https://convectix.com/gif/bdemo.gif)
-![cbsdfile jail demo](https://convectix.com/gif/cbsdfile-jail0.gif)
+![jail demo](share/docs/img/jdemo.gif)
+![bhyve demo](share/docs/img/bdemo.gif)
+![cbsdfile jail demo](share/docs/img/cbsdfile-jail0.gif)
 
 ## Usage
 
