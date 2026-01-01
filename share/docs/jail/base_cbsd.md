@@ -1,179 +1,134 @@
-# Building and upgrading bases
+# Building and Upgrading Bases
 
-Commands:
+In **CBSD**, a "base" refers to a directory containing a full copy/hierarchy of FreeBSD (or other supported OS) files used as the template for jails.
 
+Bases are typically stored in `${workdir}/basejail/` and follow the naming convention: `base_${arch}_${target_arch}_${ver}`.
+
+## Base Acquisition Methods
+
+When creating a container or if base files are missing, **CBSD** offers four primary methods for obtaining a base.
+
+| Method | Speed | Requirement | Use Case |
+| :--- | :--- | :--- | :--- |
+| **`repo`** | Fast | Internet/Network | Standard user. Downloads pre-compiled `.txz` archives. |
+| **`populate`** | Very Fast | Local Match | Host matches target version. Clones files from the host environment. |
+| **`extract`** | Fast | Local Archive | Offline install. Unpacks an existing `.txz` file from a provided path. |
+| **`build`** | Slow | Sources & CPU | Advanced user. Downloads sources via Git and compiles from scratch. |
+
+### Viewing Registered Bases
+
+To list all bases currently registered in your **CBSD** environment:
+
+```bash
+cbsd bases
 ```
-	% cbsd srcup
-	% cbsd buildworld
-	% cbsd installworld
-	% cbsd world
-	% cbsd bases
-	% cbsd removebase
-```
 
-## General information
+---
 
-_remark_: "base" refers to a directories containing a full copy/hierarchy of FreeBSD OS files.
+## Configuration of Base Acquisition
 
-The directory for the base directory is located in the ~cbsd/basejail/ directory and has the form base\_'arch '\_' target\_arch '\_' ver ', for example: _/usr/jails/basejail/base\_amd64\_amd64\_14.1_
+Starting with **CBSD** 12.0.4, you can adjust the default base acquisition method and customize sources via configuration files.
 
-You can view the bases registered in CBSD and their versions via command:
+The primary configuration file is `~cbsd/etc/defaults/FreeBSD-bases.conf` (or `HardenedBSD-bases.conf`). To customize settings, copy this file to `~cbsd/etc/FreeBSD-bases.conf` and modify it.
 
-```
-	% cbsd bases
+Available variables include:
+- `auto_baseupdate`: Automatically update the base to the latest patch level (e.g., via `freebsd-update`).
+- `default_obtain_base_method`: List of methods to try (e.g., `"extract repo"`).
+- `default_obtain_base_extract_source`: Local path to search for archives.
+- `default_obtain_base_repo_sources`: List of remote URLs for archives.
 
-```
-
-For the creation of new jails (or starting jails which require a RO mounted base), a copy of base is necessary.
-
-If you created a container and the base files are missing, when you start CBSD automatically offers several options for obtaining the base of your choice, this is:
-
-- Download the base archive over the network. Depending on the fbsdrepo=0,1 setting in initenv-tui, ONLY official FreeBSD repo will be used, or
-first the CBSD project repository will be used and if there is no archive on it - the official FreeBSD repository after.
-
-- If you create a container of the same architecture and version as your hoster system, CBSD can get base without downloading on the network and without compilation,
-by constructing a copy of the base from your files
-- Get the base by unpacking the .txz archive. In this case, you specify the path where the archive is located
-- Compile the database yourself, running the command sequence: cbsd srcup and cbsd world. This is a very long process.
-
-Thus, you control where and how files will be received, depending on your level of trust and security requirements
-
-![](http://www.convectix.com/img/bases1.png)
-
-Described below are the steps needed to get the initial FreeBSD sources from the project's SVN repository ( [http://svn.freebsd.org](http://svn.freebsd.org/)), its compilation and installation in a separate directory which will act as base. These actions are necessary, if you don't want to use pre compiled versions available on [ftp://ftp.freebsd.org](ftp://ftp.freebsd.org) or [http://convectix.com](http://www.convectix.com), which can be retrieved with the **cbsd repo** command. Also, by manually building becomes possible to not only get releases, but also individual branches.
-
-## Sources and configuration of receiving base
-
-Starting with the **CBSD** 12.0.4, You can adjust the default base acquisition method and customize sources. The configuration file is responsible for this behavior: _~cbsd/etc/defaults/FreeBSD-bases.conf_ (or ~cbsd/etc/default/HardenedBSD-bases.conf)
-
-To make changes, copy this file to the directory _~cbsd/etc/_
-
-The configuration file supports $var and $arch variables; thus, you can more flexibly customize sources, for example:
-
-```
-auto_baseupdate=0
+Example customization:
+```bash
+auto_baseupdate=1
 default_obtain_base_method="extract repo"
 default_obtain_base_extract_source="/nfs/bases/${platform}/base-${arch}-${ver}.txz"
-default_obtain_base_repo_sources="https://my.repo.local/bases/${platform}/${ver}/base-${arch}.txz https://mirror-service.local/base-${platform}-${ver}-${arch}.txz"
-
 ```
 
-Set CBSD to choose the default method for retrieving the database from the local file system (extract). At the same time, the way in which it will perform the search and provided that CBSD is running on the FreeBSD platform and you are creating a container with the version of the base 12.1 and the architecture amd64, should look like this: **/nfs/bases/FreeBSD/base-amd64-12.1.txz**
+---
 
-In the absence of this file, **CBSD** will attempt to get the archive from: https://my.repo.local/bases/FreeBSD/12.1/base-amd64.txz and https://mirror-service.local/base-FreeBSD-12.1-amd64.txz
+## 1. Network Acquisition (`repo`)
 
-This feature, together with the **inter=0** key (non-interactive execution of CBSD commands) allows you to automate the process of deploy of containers using its own infrastructure
+This is the default and most common method. **CBSD** fetches pre-compiled archives from official repositories or **CBSD** mirrors.
 
-The auto\_baseupdate params adjusts the automatic update of the received base to the latest patch level ( FreeBSD 12.0-p1, FreeBSD 12.0-p2 ..) via freebsd-update (or hbsd-update for HardenedBSD platform) tools.
+- Set `fbsdrepo=1` in `initenv-tui` to use **ONLY** official FreeBSD repositories.
+- Use `inter=0` for non-interactive execution, ideal for automation.
 
-Please use auto\_baseupdate=1, if you want to automatically accept patches when getting a base
+---
 
-As an example of use case, you can look at the integration of **CBSD** with the [Cirrus CI](https://cirrus-ci.org/) service in [Issue #367](https://github.com/cbsd/cbsd/issues/367)
+## 2. Local Population (`populate`)
 
-## Base obtaining
+If you are creating a jail of the same architecture and version as your host system, **CBSD** can "populate" the base by copying existing files from your host. This avoids network traffic and compilation.
 
-building or updating consists of the following three steps:
+---
 
-- Receiving or updating of the initial FreeBSD source code through **cbsd srcup**:
-Receiving or updating of an source code for that FreeBSD version at which in the moment works the current node:
+## 3. Manual Extraction (`extract`)
 
+If you have a local `base.txz` archive, you can point **CBSD** to it during initialization or when prompted.
 
-```
-cbsd srcup
-```
+---
 
+## 4. Building from Source (`build`)
 
-Receiving or updating of an source code for the concrete FreeBSD version, for example, for 14.1:
+For maximum control or to track specific branches, you can compile the base yourself.
 
+### Step A: Fetch Sources (`srcup`)
 
-```
-cbsd srcup ver=14.1
-```
+Fetch the FreeBSD source tree into `${workdir}/src/src_${ver}`. **CBSD** uses Git by default (previously SVN).
 
-
-Receiving or updating of source code for STABLE (for example, for RELENG\_11):
-
-
-```
-cbsd srcup ver=14
+```bash
+cbsd srcup [ver=XX] [rev=XX] [stable=0|1]
 ```
 
+**Common Parameters:**
+- `ver`: Specify version (e.g., `14.1`, `head` for CURRENT).
+- `stable=1`: Fetch RELENG branch (e.g., `ver=14 stable=1` for RELENG_14).
+- `rev`: Specify a particular Git/SVN revision.
 
-These commands, at existence of source code in SVN, will fill catalogs _$workdir/src/src\_$ver_
-- Compilation of source code via **cbsd buildworld**:
-The result received from a step 1, can be used for base compilation. World compilation, at existence _$workdir/src/src\_$ver_ dir for current node version:
+### Step B: Compile (`buildworld`)
 
+Compile the source code into objective files.
 
-```
-cbsd buildworld
-```
-
-
-Thus, objective files, at existence from the last build, won't be cleaned (make clean). If in the repeated builds there was a unsuccess, it is meaningful to force to clean old system **.o**-files with clean params:
-
-
-```
-cbsd buildworld clean=1
+```bash
+cbsd buildworld [ver=XX] [arch=XX] [clean=1] [maxjobs=XX]
 ```
 
+**Common Parameters:**
+- `clean=1`: Clean old object files before building (`make clean`).
+- `maxjobs`: Number of parallel jobs. Defaults to CPU core count.
+- `basename`: Build into a custom directory name (results in `base_${basename}_${arch}_${ver}`).
 
-By default, multiline assembly, where number of **job** s equally to number of cores (sysctl -n hw.ncpu). The num ofr parallel jobs is regulated through the **maxjobs** parameter, for example, for build in one job:
+### Step C: Install (`installworld`)
 
+Install the compiled world into the `${workdir}/basejail` directory.
 
-```
-cbsd buildworld maxjobs=1
-```
-
-
-At compilation, the personal [src.conf(5)](http://www.freebsd.org/cgi/man.cgi?query=src.conf&sektion=5) can be used , in which it is possible to specify standard KNOBS-y. The src.conf file should placed in the catalog $workdir/etc/ and have name **src-** _basename_ **.conf**, where basename — any name of configuration. For example, in default **CBSD** installation there are file **/usr/jails/etc/src-lite.conf**. For base build with certain src.conf, it is necessary to specify _basename_ parameter:
-
-
-```
-cbsd buildworld basename=lite
+```bash
+cbsd installworld [ver=XX] [arch=XX] [basename=XX]
 ```
 
+> [!TIP]
+> Use **`cbsd world`** to run both `buildworld` and `installworld` sequentially.
 
-The next operation over building result (installworld), also should contain _basename=_ parameter, as the result of building will be placed in _$workdir/basejail/base\_$basename\_$arch\_$ver_ directory, where $basename — is name of configuartion.
-Other params of buildworld:
+---
 
-  - _ver_ — to specify the concrete version of source code
-  - _arch_ — build for concrete architecture
-  - _stable_ — build for RELENG\_X branch
-- Base installation via **cbsd installworld**:
-The result received from a step 2, it is possible to use for installation of the new base in _${workdir}/basejail/base\_\*_ directory, from where it will be already mounted in the RO mode, or to be formed a new jails.
-For install of files for the current version of system:
+## Advanced Customization
 
-
-```
-cbsd installworld
+### Alternative Basenames
+You can maintain multiple base variants using the `basename` parameter.
+```bash
+cbsd world ver=14.1 basename=lite
 ```
 
+### Custom `src.conf`
+Place a custom [src.conf(5)](https://man.freebsd.org/src.conf/5) in `${workdir}/etc/` named `src-${basename}.conf` to apply specific build knobs.
 
-Installation of files for version 14.1 builded with src.conf named as _lite_:
+---
 
+## Deleting a Base
 
+Use **`cbsd removebase`** to delete a registered base and its files.
+
+```bash
+cbsd removebase [ver=XX] [arch=XX] [stable=0|1] [target_arch=XX]
 ```
-cbsd installworld basename=lite ver=14.1
-```
 
-
-other params for installworld:
-
-  - _arch_ — install for concrete architecture
-  - _stable_ — install for RELENG\_X branch
-
-**cbsd world** command is sequence for **cbsd buildworld && cbsd installworld**
-
-When you have the base in _${workdir}/basejail_,you can go to the [jail creation](http://www.convectix.com/en/13.0.x/wf_jcreate_ssi.html).
-
-## Deleting the base
-
-The base can be removed via cbsd removebase command.
-By default, the version and architecture of your hoster is inherited.
-If the versions and/or architecture do not match, use the previously described arguments ver, arch, target\_arch and stable. For example:
-
-```
-cbsd removebase
-cbsd removebase ver=11 stable=1
-cbsd removebase ver=14.1 stable=0 arch=i386 target_arch=i386
-```
+If no arguments are provided, it defaults to the host's version and architecture.
