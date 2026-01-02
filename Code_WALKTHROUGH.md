@@ -25,9 +25,9 @@ I have mapped the relationships between the CLI commands, their implementation s
 - **Module Documentation**: Verified that while some modules have documentation fragments, others may be less documented.
 
 ## Documents Produced
-- [Codebase Analysis Report](file:///home/dsewell/.gemini/antigravity/brain/446d801a-5f84-488c-9df4-ddc18d926c28/codebase_analysis.md): A detailed breakdown of the project architecture and documentation system.
-- [TODO_dsewell.MD](file:///home/dsewell/Projects/cbsd/TODO_dsewell.MD): A checklist of identified documentation improvements.
-- [Revised base_cbsd.md](file:///home/dsewell/Projects/cbsd/share/docs/jail/base_cbsd.md): A modernized guide to CBSD bases.
+- [Codebase Analysis Report](CODEBASE_ANALYSIS.md): A detailed breakdown of the project architecture and documentation system.
+- [TODO_dsewell.MD](TODO_dsewell.MD): A checklist of identified documentation improvements.
+
 
 ## Conclusion
 The CBSD project is a mature and complex system with a unique architecture centered around a custom shell. The documentation is currently spread across READMEs, manual pages, and markdown fragments. The analysis highlights specific areas where the documentation can be expanded or centralized.
