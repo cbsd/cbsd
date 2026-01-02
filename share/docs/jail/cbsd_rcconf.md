@@ -1,399 +1,142 @@
-# Jail settings
+# Jail Settings (rc.conf)
 
-Each jail managed by  cbsd has its own settings which are used when starting and stopping the jail. Some of them are specified during the creation of the jail, can be set with the command
+Each jail managed by CBSD has its own configuration settings used during the start and stop procedures. These settings are primarily defined during jail creation but can be modified later using the configuration tool:
 
+```sh
+cbsd jconfig jname=myjail
 ```
-			% cbsd jconfig jname=jname
 
-```
-
-Currently only few options be changed on-the-fly.
-
-This page contains a summary of the default settings and description.
-
-* * *
-
-```
-			jname="jail1";
-
-```
-
-First, the unique name of the jail. This is needs to be identical with the name shown by **cbsd jls** or in the inventory list. This field can not be changed manually. If you want to change the name of the jail please use **cbsd jrename**, because the name of the jail is used in many other configs and directory names
-
-* * *
-
-```
-			path="/usr/jails/jails/jail1";
-
-```
-
-Indicates the path that will be used as  root at  when the jail is run. The above configuration is characteristic of jails who are setting baserw to 0 (no write access in base), ie, the base of which is mounted in read-only. In this case, the algorithm will work jstart follows:
-
-- 1) mount a base via nullfs specific version (see below) to /usr/jails/jails/$jname directory
-- 2) on the mounted base at $workdir/jails/jails/$jname mount directories related directly to the jail data (in the directory $workdir/jails-data/$jname), usually in write access
-- 3) start jail with the root $workdir/jails/jails/$jname
-
-If baserw=1, then nullfs not use and the jail immediately starts with the directory $workdir/jails-data/$jname as root. In these cases, the path is usually seen as a _path="/usr/jails/jails-data/jail1-data";_
-
-* * *
-
-```
-			host_hostname="jail1.my.domain";
-
-```
-
-FQDN, the full name of the jail. This field can not be changed manually. If you want to change the name of the jail please use **cbsd jrename** command
-
-* * *
-
-```
-			ip4_addr="10.0.0.5/24";
-
-```
-
-IP address of the jail. If you plan to use multiple IP addresses, they are separated by commas:
-
-ip4\_addr="10.0.0.5/24,192.168.0.2/30,54:04:a6:b2:11:c4/64«;
-
-* * *
-
-```
-			mount_devfs="1";
-
-```
-
-Mount a devfs file system into the jail (directory /dev). Most services without this simply can not work.
-
-* * *
-
-```
-			allow_mount="1";
-
-```
-
-Allow users or services mount other file system inside the jail
-
-* * *
-
-```
-			allow_devfs="0";
-
-```
-
-Allow users or services mount devfs file system inside the jail
-
-* * *
-
-```
-			allow_nullfs="0";
-
-```
-
-Allow users or services mount nullfs file system inside the jail
-
-* * *
-
-```
-			mount_fstab="/usr/jails/jails-fstab/fstab.jail1";
-
-```
-
-The path to a file containing a list of directories or file systems to be mounted with the jail when it is run
-
-* * *
-
-```
-			arch="amd64";
-
-```
-
-Jail architecture (and respectively base from the _$workdir/basejail_)
-
-* * *
-
-```
-			mkhostsfile="1";
-
-```
-
-Whether correct in jail /etc/hosts entry
-
-$ip4\_add $jname $jname.my.domain
-
-in accordance with the IP address and the name (FQDN) of jail
-
-* * *
-
-```
-			devfs_ruleset="4";
-
-```
-
-a set of rules devfs, which will be applied to the devfs file system in the /dev of jail (list of rules in the file /etc/devfs.rules of master node)
-
-* * *
-
-```
-			interface="auto";
-
-```
-
-This recording controls the behavior of the automatic creation and deletion of IP addresses on the interface or use the previously established.
-
-The value **auto** means that cbsd will select the interface on which to create an IP address jail.
-
-For example : there is a node with two interfaces .
-
-At the interface igb0 set IP subnet 10.0.0.2/24 and while the default gateway for the server is 10.0.0.1, in consequence of which igb0 a network card, through which the traffic by default. at the interface igb1 registered IP/subnet 192.168.0.1/24.
-
-If the jail in rc.conf ip4\_addr takes value 192.168.0.{1-255}, then **CBSD** automatically selects igb1 interface for IP jail.
-
-If none of the interface is not the subnet that contains the IP jail will be selected by default interface.
-
-Also, the value can be set to the name of the interface, if you do not want to search for a suitable interface. For example record
-
-interface = «igb0»
-
-sets the IP address of the jail at the interface igb0.
-
-As well as during start-up, when **CBSD** will sets the necessary IP for jail on interface, when you stop them **CBSD** unset IPs from the interface automatically. Therefore, be extremely careful — If you set by mistake IP address of the node for jail , then, during the cbsd jstop sequence, **CBSD** execute
-
-ifconfig <iface> <ip> -alias
-
-and a node will be lost in the network.
-
-To the stop of management IP address, the interface= param can be commented out or removed, or the value is left blank:
-
-interface=""
-
-In this case, **CBSD** will immediately start the jail with the appropriate IP, meaning that he has already been initialized . Such a situation may be necessary when server has only one IP address, and you plan to run jail ( or a few jails ) in one existing IP, but with the services within that do not conflict the ports.
-
-For example, having one IP address , you can start jail with WEB server on port 80 , another jail with the mail server on port 25 and so on.
-
-* * *
-
-```
-			ver="10.0";
-
-```
-
-Version of the base for jail. Is directly related to the version of FreeBSD. Thus, if the jail are have in rc.conf options
-
-```
-			arch="amd64"
-			ver="10.0"
-			baserw=0
-
-```
-
-then at the start of the jail ${workdir}/basejail/base\_amd64\_10.0 will be selected. When
-
-```
-			arch="i386"
-			ver="9.1"
-			baserw=0
-
-```
-
-it will accordingly be used ${workdir}/basejail/base\_i386\_9.1.
-
-This way you can switch the version of base from one version to another
-
-When baserw=1 means that the entire base has been initialized and is filled from ${workdir}/jails-data/$jname-data, so that these parameters do not matter
-
-* * *
-
-```
-			basename="";
-
-```
-
-The base name. You can create a customized base, for example to build a minimal environment and place it to _$workdir/base\_lite\_amd64\_9.2_
-
-To specify **CBSD** that you need to mount this directory, basename must have «lite» prefix:
-
-basename="lite";
-
-* * *
-
-```
-			baserw="0";
-
-```
-
-When 1, it is understood that a jail has its own base file system and has an entry. Typically, this parameter is set during the creation of the jail. If you originally created the jail with baserw=0 (readonly), but want to switch it into a baserw=1 mode, you first need to copy all the files from the base directory to $workdir/jails-data/$jname-data. For example:
-
-cd /usr/jails/basejail/base\_amd64\_10/
-
-pax -p eme -X -rw . /usr/jails/jails-data/jail1-data
-
-or, if you have in the master node object files:
-
-make -C /usr/src installworld DESTDIR="/usr/jails/jails-data/jail1-data"
-
-In the same way, at this stage, it is supposed to update the jail that operate in baserw=1, since each cell has a personal copy of the base.
-
-In contrast, when using baserw=0, you can only use one copy of the base, which is mounted through nullfs in read-only to all jails.
-
-You can have one base (eg the minimum amount called lite) for a few tens of jails which is placed on md-ramfs to accelerate the operation of the basic tools in the jails.
-
-In addition, with baserw=0 you have the opportunity to update the version of the base less.
-
-In addition, the base is mounted in read-only mode gives you extra security if your jail hacked and somebody try to modify the file system — this is simply will not work.
-
-* * *
-
-```
-			mount_src="0";
-
-```
-
-Does the mount /usr/src directory of jail FreeBSD source code in read-only, if they have
-
-* * *
-
-```
-			mount_obj="";
-
-```
-
-Does the mount /usr/obj directory of jail FreeBSD source code in read-only, if they have
-
-* * *
-
-```
-			mount_kernel="0";
-
-```
-
-Does the mount /boot/kernel kernel FreeBSD. This can be useful, for example, for CTF-information required to operate DTRACE.
-
-* * *
-
-```
-			mount_ports="1";
-
-```
-
-Does the mount /usr/ports of the master node in readonly to /usr/ports in jail. You can have one copy of ports tree on the master node that is deployed in /usr/ports, and which mount to all jails. In order to simultaneously compilation of the same port are not conflicted in two or more jails, in the /etc/make.conf option WRKDIRPREFIX must be sets to for alternate location, such as /tmp (if the jail has applytpl=1 settings, this is done automatically)
-
-* * *
-
-```
-			astart="1";
-
-```
-
-Whether to start jail automatically when nodes is started. If astart=0, the jail does not run itself on booted node.
-
-* * *
-
-```
-			vnet="0";
-
-```
-
-* * *
-
-```
-			applytpl="1";
-
-```
-
-Whether to apply some modification in the jail configuration: sets pkg.conf, make entries in the /etc/hosts, and so on.
-
-* * *
+> [!NOTE]
+> Most changes require the jail to be restarted to take effect. This guide uses `/usr/jails` as the default working directory (`$workdir`).
 
-```
-			mdsize="0";
-
-```
-
-* * *
-
-```
-			rcconf="/usr/jails/jails-rcconf/rc.conf_jail1";
+---
 
-```
-
-* * *
-
-```
-			floatresolv="1";
+## 1. Guest Identifiers
 
-```
+These settings define the core identity and network presence of the jail.
 
-Automatically correct the /etc/resolv.conf, automatically assigning as the primary nameserver caching named in the master node, the other nameserver — from inventory of nodes.
+### `jname`
+The unique internal name of the jail.
+- **Example**: `jname="jail1"`
+- **Note**: This cannot be changed manually. Use `cbsd jrename` to rename a jail properly, as this name is linked to multiple directories and metadata tables.
 
-* * *
+### `host_hostname`
+The Fully Qualified Domain Name (FQDN) of the jail.
+- **Example**: `host_hostname="jail1.my.domain"`
+- **Note**: Use `cbsd jrename` to change this.
 
-```
-			exec_start="/bin/sh /etc/rc";
-			exec_stop="/bin/sh /etc/rc.shutdown";
+### `path`
+The directory used as the root (`/`) when the jail is running.
+- **Example**: `path="/usr/jails/jails/jail1"`
+- **Baserw=0**: CBSD mounts a read-only base template into this path and then overlays the jail's unique data.
+- **Baserw=1**: The jail starts directly from its data directory (usually `/usr/jails/jails-data/jail1-data`).
 
-```
+### `ip4_addr`
+The IP address assigned to the jail.
+- **Single IP**: `ip4_addr="10.0.0.5/24"`
+- **Multiple IPs**: `ip4_addr="10.0.0.5/24,192.168.0.2/30"`
 
-System commands for starts and stops jail. If you want to write additional scripts executed by starting and stopping jails see: [Jail config](http://www.convectix.com/en/13.0.x/wf_jconfig_ssi.html#execscript)
+---
 
-* * *
+## 2. Storage & Base Management
 
-```
-			cpuset="0";
+These settings control how the jail interacts with the FreeBSD base system and host directories.
 
-```
+### `baserw`
+Determines if the jail has a private, writable base system.
+- **`0` (Read-Only)**: Secure and efficient. Multiple jails share one read-only base template via `nullfs`.
+- **`1` (Read-Write)**: Each jail has its own full copy of the FreeBSD base in its data directory.
 
-Assign jail and its processes to specific cores CPU. A value of 0 (default) means that there is no binding to CPUs and processes will take up all the available cores. Nonzero value identifies the kernel or a list of the CPUs allowed to work jail. Entry must match an entry form for _-l cpu-list_ from [**cpuset(1)**](http://www.freebsd.org/cgi/man.cgi?query=cpuset&sektion=1) command, for example:
+### `ver` and `arch`
+Specifies the version and architecture of the FreeBSD base used by the jail.
+- **Example**: `ver="14.1"`, `arch="amd64"`
+- **Note**: If `baserw=0`, CBSD looks for the template in `/usr/jails/basejail/base_amd64_14.1`.
 
-```
-			cpuset="1";
+### `basename`
+Allows the use of a customized base template (e.g., a "lite" or "hardened" build).
+- **Example**: `basename="lite"` (CBSD will look for `base_lite_amd64_...`)
 
-```
+### Extra Mounts
+Automatically mount host source trees or ports into the jail in read-only mode:
+- **`mount_src="1"`**: Mounts `/usr/src`.
+- **`mount_obj="1"`**: Mounts `/usr/obj`.
+- **`mount_kernel="1"`**: Mounts `/boot/kernel` (useful for DTrace).
+- **`mount_ports="1"`**: Mounts the host's `/usr/ports` tree.
 
-means that the processes will only run on first core
+---
 
-```
-			cpuset="0-3"
+## 3. Network Configuration
 
-```
+### `interface`
+Controls which host interface the jail's IP is bound to.
+- **`auto`**: CBSD automatically selects the interface based on the jail's subnet.
+- **`igb0`**: Force binding to a specific interface.
+- **`""` (Empty)**: CBSD will not manage the IP. Useful if the IP is already manually configured on the host.
 
-means that the processes will only run on 0,1,2,3 CPUs
+### `vnet`
+Enables the Virtual Network Stack (VIMAGE), providing the jail with its own independent network stack.
+- **`1`**: Enabled.
+- **`0`**: Disabled (shares the host network stack).
 
-```
-			cpuset="0,3"
+### `setfib`
+Assigns the jail to a specific routing table (FIB).
+- **Example**: `setfib="1"`
+- **Note**: Requires `net.fibs` to be configured in `/boot/loader.conf`.
 
-```
+### `floatresolv`
+- **`1`**: CBSD automatically manages `/etc/resolv.conf`, pointing the jail to the host or cluster name servers.
 
-means that the process will only run on 0 and 3 CPUs
+---
 
-This functionality is useful, for example, for profiling software, or if you want to restrict jails by CPUs.
+## 4. Mounts & Permissions
 
-* * *
+### `mount_devfs`
+- **`1`**: Mounts the device file system into `/dev`. Required by most services.
 
-```
-			setfib="0";
+### `mount_fstab`
+Path to the jail-specific fstab file for custom mounts.
+- **Default**: `/usr/jails/jails-fstab/fstab.jail1`
 
-```
+### Security Flags
+- **`allow_mount="1"`**: Allows the jail to mount file systems.
+- **`allow_devfs="1"`**: Allows mounting devfs inside the jail.
+- **`allow_nullfs="1"`**: Allows mounting nullfs inside the jail.
 
-Assign jail and its processes to separate routing table. A value of 0 (default) means that there is no binding and will be use default routing table. To use **setfib**, in the file /boot/loader.conf you need to set limits number of tables by parameter **net.fibs**. For example, if you want use five separate routing tables, in /boot/loader.conf you must have the following entry:
+---
 
-```
-			net.fibs="5"
+## 5. Resource Control
 
-```
+### `cpuset`
+Binds the jail to specific CPU cores.
+- **`0`**: No binding (uses all cores).
+- **`1`**: Bind to the first core only.
+- **`0-3`**: Bind to cores 0 through 3.
 
-* * *
+### `devfs_ruleset`
+The ID of the devfs ruleset to apply to the jail's `/dev`.
+- **Default**: `4` (standard jail ruleset in `/etc/devfs.rules`).
 
-```
-			exec.consolelog="0";
+---
 
-```
+## 6. Boot & Scripting
 
-Regulates logging output of jail(8) at the start and stop of the jail. By default, the value is **0**.
+### `astart`
+- **`1`**: Automatically start the jail when the host system boots.
+- **`0`**: Manual start only.
 
-Possible values are:
+### `exec_start` / `exec_stop`
+Custom commands to execute when starting or stopping the jail.
+- **Start**: `exec_start="/bin/sh /etc/rc"`
+- **Stop**: `exec_stop="/bin/sh /etc/rc.shutdown"`
 
-- **0** — disable exec.consolelog. In this case, on jstart/jstop will show all output for jail start and jail stop procedures.
-- **1** — Enable logging to file _${workdir}/var/log/${jname}.log_, where $jname — an appropriate name if jail. Thus, the terminal these messages will not.
+### `applytpl`
+- **`1`**: Automatically apply CBSD configuration templates (e.g., `pkg.conf`, `hosts`) to the jail's internals.
 
-**_/path/to/file_** — Path to alternate file. For example, with **/dev/null**, the jail will not show anything and it will not record.
+### `exec.consolelog`
+Directs the output of the jail's start/stop scripts to a file.
+- **`0`**: Display output directly to the terminal.
+- **`1`**: Log to `/usr/jails/var/log/$jname.log`.
+- **`/dev/null`**: Discard all output.
 
+---
+Copyright © 2013—2025 CBSD Team.
