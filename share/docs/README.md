@@ -5,9 +5,11 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 ## General information
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
+- [What you need to know about CBSD](general/cbsd_additional.md)
 - [About CBSD shell and SQLite3](general/cbsdsh.md) 
 - [CBSD GUI interface](general/cbsd_gui.md)
 - [Working with CBSDfile](general/cbsdfile.md) ( up, destroy, login, exec )
+- [Building and upgrading bases](general/base_cbsd.md)
 - [CBSD integration with PHPIPAM (IP management)](general/wf_ipam.md)
 - [Tags and custom facts](general/tag_n_facts.md) ( jget/bget/xget/jls/bls/bget.. )
 - [API module: private cloud via API](general/cbsd_api.md)
@@ -16,10 +18,8 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 ## Virtual environments
 
-<!---
-- [What you need to know about CBSD](general/cbsd_additional.md)
+<!--
 - [CBSD init](general/initenv.md) :: initenv
-- [Building and upgrading bases](base_cbsd.md) :: buildworld, installworld, world, bases, removebase, upgrade
 - [cbsd syntax](cmdsyntax_cbsd.md)
 - [jail settings](cbsd_rcconf.md)
 - [cbsd jail and VIMAGE (vnet)](cbsd_vnet.md)
