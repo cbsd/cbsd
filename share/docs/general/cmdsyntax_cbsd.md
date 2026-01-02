@@ -1,107 +1,91 @@
-## CBSD syntax
+# CBSD Command Syntax
 
-All commands begin with _cbsd_ prefix (if you not in [CBSD CLI](http://www.convectix.com/en/cbsdsh.html#cbsdsh)) and must be run as the **root** user:
+All CBSD commands follow a consistent prefix and argument structure. Unless you are using the [CBSD CLI](https://www.bsdstore.ru/en/cbsdsh.html), every command must begin with the `cbsd` prefix and be executed with **root** privileges.
 
-```
-		% cbsd jls
-		% cbsd jstop jname
-		% cbsd jstart jname
-		% cbsd node mode=list
-		...
-
-```
-
-Commands of **CBSD** can accept arguments that are written in the form "param=value". **CBSD** commands can have as required arguments, and the arguments are optional. Order of the arguments does not matter.
-
-## Command arguments and description
-
-In order to get brief information about a particular script, and get a list of required and optional arguments use the --help argument for the corresponding command
-
-```
-		% cbsd <cmd> --help
-
+### Basic Examples
+```sh
+cbsd jls              # List jails
+cbsd jstop myjail     # Stop a jail by name
+cbsd jstart myjail    # Start a jail by name
+cbsd node mode=list   # List cluster nodes
 ```
 
-For example, to get help on jls:
+## Command Arguments
 
-```
-		% cbsd jls --help
+CBSD commands use a `param=value` format.
+- Arguments can be **required** or **optional**.
+- The **order** of arguments does not matter.
+- Complex values containing spaces should be quoted.
 
-```
+---
 
-Result:
+## Getting Help
 
-```
-	[jail] List jail and status
-	require:
-	opt: alljails shownode display node header
-	alljails=1 - get jaillist from remote node
-	shownode=1 - show nodename for jails
-	node= only for current node
-	header=0 don't print header
-	display= list by comma for column. Default: jid,jname,ip4_addr,host_hostname,path,status
-	External help: http://www.convectix.com/10.0.2/html/wf_jls_en.html
+To discover the available arguments and requirements for any command, use the `--help` flag:
 
+```sh
+cbsd <command> --help
 ```
 
-The first line in square brackets the name of the module to which the command (jail in this case), as well as a summary of the functions.
+### Understanding Help Output
+When you run `cbsd jls --help`, you will see output similar to this:
 
-In line with **require:** lists the required arguments, without specifying which command work impossible.
-
-In line with **opt:** lists the optional arguments (though, depending on the mode of the utility, in various cases, they may be required)
-
-In the following lines is a brief description of the arguments, if it exist
-
-Also, it may be a reference to the documentation (External help). It can point to a site and a local file, if installed documentation.
-
-![](http://www.convectix.com/img/cbsd_syntax1.png)
-
-Some of the commands waiting in as a parameter the name of the jails, can be interactive, with a list of jails (including from remote nodes) to choose from. To do this, just run the command with no argument. Examples of these commands:
-
-**cbsd jlogin, cbsd blogin, cbsd jconfig, cbsd bconfig, cbsd jstop, cbsd bstop, cbsd jstart, cbsd bstart**, etc...
-
-![](http://www.convectix.com/img/cbsd_syntax2.png)
-
-In addition, **CBSD** installed as a module for base tools **bsdconfig** (adds itself to the end of the list), which grouped some -tui utility, so some controls CBSD you can perform through the interactive interface, running **bsdconfig cbsd**.
-
-
-![](http://www.convectix.com/img/cbsd_syntax3.png)
-
-## Interactivity, the color in the output result
-
-By default, the console output is produced in color. If the color is prevents to you (for example, you use some of his script to work with **CBSD** command), you can use the environment variable parameter NOCOLOR=1
-
-```
-		% cbsd jls
-		% env NOCOLOR=1 cbsd jls
-
+```text
+[jail] List jail and status
+require:
+opt: alljails shownode display node header
+alljails=1 - get jaillist from remote node
+shownode=1 - show nodename for jails
+node= only for current node
+header=0 don't print header
+display= list by comma for column. Default: jid,jname,ip4_addr,host_hostname,path,status
+External help: https://www.bsdstore.ru/en/wf_jls_en.html
 ```
 
-Some commands may be interactive - during a predetermined correction question. For example, if you run the jail, demanding base FreeBSD 10.1 and this base you do not, **CBSD** will ask to download database
+- **Module Name**: Shown in square brackets (e.g., `[jail]`).
+- **require**: Lists arguments that must be provided for the command to function.
+- **opt**: Lists optional parameters that modify the command's behavior.
+- **External Help**: Provides a link to the full online documentation for that specific subcommand.
 
-This behavior may not be suitable if you write your scripts around **CBSD**. In this case, you can append the parameter **inter=0** in each command. this causes **CBSD** decide by default when there is an interrogative situation
+---
 
-```
-		% cbsd jstart inter=0 jname=XXX
-		% cbsd jcreate inter=0 jconf=/path/to/jconf
+## Global Parameters & Environment Overrides
 
-```
+### Scripting & Automation (`inter=0`)
+By default, some CBSD commands are interactive (e.g., asking to download a base image if it's missing). To use CBSD in non-interactive scripts, append `inter=0` to ensure the command uses default decisions instead of prompting the user:
 
-## CBSD command debuging
-
-For enable debugging via **sh xtrace** and trace all operation, use **CBSD\_DEBUG** environment variable:
-
-```
-		% env CBSD_DEBUG=1 cbsd node mode=add node=192.168.1.222 pw=very_strong_plain_password port=22
-		% env CBSD_DEBUG=1 cbsd jls
-
+```sh
+cbsd jstart inter=0 jname=myjail
+cbsd jcreate inter=0 jconf=/path/to/jail.conf
 ```
 
-## Output in XML, JSON, HTML and human-readable format
+### Visual Feedback (`NOCOLOR=1`)
+CBSD produces colorized console output by default. To disable color for easier parsing in your own scripts or logs, use the `NOCOLOR` environment variable:
 
-Since 10.1.5, **CBSD** can display information not only to understand the human form, but also in HTML, XML and JSON for easy machine parsing and simply for the cyborgs joy
+```sh
+env NOCOLOR=1 cbsd jls
+```
 
-![](http://www.convectix.com/img/cbsd_syntax4.png)
+### Troubleshooting (`CBSD_DEBUG=1`)
+If a command isn't behaving as expected, you can enable full execution tracing (via `sh xtrace`) to see every operation performed by the script:
 
-Copyright © 2013—2024 CBSD Team.
+```sh
+env CBSD_DEBUG=1 cbsd jls
+```
 
+---
+
+## Machine-Readable Output
+
+For advanced automation and integration with other tools, most CBSD listing commands can output data in machine-parsable formats. Use the `display` parameter to choose your preferred format:
+
+```sh
+cbsd jls display=json
+cbsd jls display=xml
+cbsd jls display=html
+```
+
+*Note: Use these formats when building GUIs or custom dashboards that need to scrape CBSD state.*
+
+---
+Copyright © 2013—2025 CBSD Team.

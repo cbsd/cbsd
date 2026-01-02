@@ -6,6 +6,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
 - [What you need to know about CBSD](general/cbsd_additional.md)
+- [cbsd syntax](general/cmdsyntax_cbsd.md)
 - [About CBSD shell and SQLite3](general/cbsdsh.md) 
 - [CBSD GUI interface](general/cbsd_gui.md)
 - [Working with CBSDfile](general/cbsdfile.md) ( up, destroy, login, exec )
@@ -20,7 +21,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 <!--
 - [CBSD init](general/initenv.md) :: initenv
-- [cbsd syntax](cmdsyntax_cbsd.md)
+
 - [jail settings](cbsd_rcconf.md)
 - [cbsd jail and VIMAGE (vnet)](cbsd_vnet.md)
 - [cbsd and Qemu user-mode](cbsd_qemu_usermode.md)
