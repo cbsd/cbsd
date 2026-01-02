@@ -1,84 +1,95 @@
-## initenv
+# CBSD Initialization
 
-### Initial setup
+To use **CBSD**, you must first initialize its working directory. This process sets up the necessary directory hierarchy, configuration files, and system integration (such as `sudo` permissions and `rc.conf` entries).
 
-To initialize the main working copy of **CBSD** we need to run **initenv**, while setting the environment variable **workdir** to the location of the working directory. 
-In some cases, you can initialize several independent working directories (for example, different datapools) and work with them via an environment variable.
+## Quick Start (Interactive Mode)
 
-We then answer a series of questions to complete the configuration. 
-The file system for **CBSD** (or rather, the directory **jails-data** in it) needs to be large enough to accommodate the containers/VM data. 
-If you only use one working directory, please ensure it is set as the home directory for **cbsd** user (in this case the working directory in /usr/jails):
+The most common way to initialize **CBSD** is via the interactive dialogue. By default, **CBSD** uses `/usr/jails` as its working directory.
 
-Initialization with the working catalogue into _/usr/jails_ (default):
+To start the initialization, run:
 
-```
-env workdir="/usr/jails" /usr/local/cbsd/sudoexec/initenv
+```bash
+env workdir="/usr/jails" cbsd initenv
 ```
 
-Attention! If you are using a ZFS-based platform, before initialization it is highly recommended to create a separate dataset for the CBSD working directory in order to avoid possible conflicts and influences when operating various
-automatic snapshot systems (and also to facilitate the migration of the CBSD working directory to other servers), for example:
+> [!NOTE]
+> Setting the `workdir` environment variable is only required during the **first** initialization. Once initialized, the path is stored in `/etc/rc.conf` and **CBSD** will use it automatically for subsequent runs.
 
-```
-# zfs create zroot/jails
-# zfs set mountpoint=/usr/jails zroot/jails
+### ZFS Recommendation
 
-```
+If you are using a ZFS-based platform, it is highly recommended to create a separate dataset for the **CBSD** working directory *before* running `initenv`. This avoids conflicts with host-level snapshot systems and simplifies migration.
 
-The start dialogue will appear with questions on how to configure **CBSD**. 
-Pressing Enter with no entered values will set system defaults. 
-Once done updating **CBSD** it is necessary to run initenv again. 
-After the first run of initenv it can be started through **CBSD** without specifying the **env** variable again and the working dir variable will be stored in _/etc/rc.conf_.
-
-On first initialization the following questions will be asked:
-
-- **Please fill nodename** — Node name. If you plan on working with several nodes, this name should be unique. It is recommended to use a name, or full hostname (including domain). This name is used when working with remote hosts. Example: node1.my.domain.
-- **Please fill nodeip** — Working and static IP address of a node. It shouldn't be an alias and it is desirable to register this IP on a separate interface (free from any other except a management-traffic). For example: 192.168.1.2
-- **Please fill jnameserver** — List of IP DNS servers to be inserted in the newly created jail's _/etc/resolv.conf_. If several addresses are added, they must be separated by commas. It is recommended to setup the master-node server for caching DNS queries.
-- **Please fill nodeippool** — The list of subnets in which jails may be started. If adding more than one network use space as delimer. For example: 10.0.0.0/24 192.168.1.128/29
-- **Please fill natip** — This specivies the IP address which will represent itself as NAT for private addresses. Usually it is IP of your node. For example: 192.168.1.2
-- **Please fill fbsdrepo** — Whether or not to use an official FreeBSD repository for base/templates. Expected answers are 1 or 2 . If on official FreeBSD servers base it is not revealed — **CBSD** repository is used. For example: 1.
-- **Please fill zfsfeat** — Whether to use features of ZFS (clones, snapshots). The answer 1 or 2 is expected. The question won't be asked, if the host system is started not on ZFS.
-- **Configure NAT for RFC1918 Network?** — Whether to use network address translation (NAT) for private addresses. When jails are created in RFC1918 networks, it is necessary to enable this for internet access. For example: 1.
-- **Which one NAT framework should be use: \[pf, ipfw, nft, ipfilter\]**\- What tool for NAT to prefer. Recommended — 'pf' for FreeBSD, 'nft' for Linux. For example: pf
-
-### initenv preseed (auto)
-
-You can use non-interactive initialization of **CBSD** by using usual ASCII file with pre-prepared answers to questions.
-
-![initenv1.png](https://convectix.com/img/initenv1.png?raw=true)
-
-This can be useful if you have to do this often, in large quantities, or you embed **CBSD** into your existing infrastructure to automatically
-deploy and configure environments.
-
-As an example, you can see (and/or use) the _/usr/local/cbsd/share/initenv.conf_ file. For initialization, it is enough to specify the path to the file with answers:
-
-```
-/usr/local/cbsd/sudoexec/initenv /usr/local/cbsd/share/initenv.conf
+```bash
+# Example: Creating a dedicated dataset
+zfs create -o mountpoint=/usr/jails zroot/jails
 ```
 
-Moreover, you can use a configuration file and override some parameters via args:
+### Configuration Parameters
+
+During the interactive setup, you will be asked a series of questions. Pressing **Enter** without a value will accept the system default. Key settings include:
+
+- **nodename**: A unique name for this node (e.g., `node1.my.domain`).
+- **nodeip**: The static IP address used for node interconnection.
+- **jnameserver**: DNS servers for new jails (e.g., `8.8.8.8, 1.1.1.1`).
+- **nodeippool**: List of subnets for jail IP allocation (e.g., `10.0.0.0/24`).
+- **nat_enable**: Enable NAT for private (RFC1918) networks.
+- **zfsfeat**: Whether to use ZFS features like clones and snapshots.
+
+---
+
+## Automated Setup (Preseed Mode)
+
+For automated deployments or repeated setups, you can provide an answer file (preseed) to `initenv`. This allows for non-interactive initialization.
+
+### Using a Configuration File
+
+You can use the sample configuration at `/usr/local/cbsd/share/initenv.conf` as a template. To run initialization with a preseed file:
+
+```bash
+cbsd initenv /path/to/your/initenv.conf
 ```
-/usr/local/cbsd/sudoexec/initenv /usr/local/cbsd/share/initenv.conf default_vs=1
+
+### Overriding Parameters
+
+You can also override specific parameters via command-line arguments:
+
+```bash
+cbsd initenv /usr/local/cbsd/share/initenv.conf default_vs=1 inter=0
 ```
 
-**Info:** These settings can be changed at a later time via the command **cbsd initenv-tui** or in a file _${workdir}/var/db/local.sqlite_, which is a SQLite3 database.
+> [!TIP]
+> Use `inter=0` to ensure the process is completely silent and does not prompt for any user input.
 
-![initenv-tui1.png](https://convectix.com/img/initenv-tui1.png?raw=true)
+---
 
-### initenv hooks
+## Post-Initialization & Updates
 
-When the initenv command is executed (it must be executed each time when CBSD is updated), various modifications and migrations are performed.
+Once initialized, you can modify settings at any time using the TUI:
 
-You can embed in this process your own scripts and scenatio that will be executed **before** any modifications, or **after**.
-
-This can be useful, for example, for backup scenarios (or evacuating environments to a neighboring node) as a preliminary hook and notification for
-monitoring or another communication channel about a successful update as post-hook.
-
-To do this, create in the workdir a directory named **upgrade**:
-
+```bash
+cbsd initenv-tui
 ```
+
+### Updating CBSD
+
+**IMPORTANT:** You must run `cbsd initenv` after every **CBSD** update (e.g., via `pkg upgrade`). This ensures that your working directory is migrated to the latest version and all internal scripts are updated.
+
+```bash
+cbsd initenv
+```
+
+---
+
+## Initialization Hooks
+
+You can extend the initialization process by placing custom scripts in the `${workdir}/upgrade` directory. These scripts are executed during every `initenv` run.
+
+- **Pre-hooks**: Scripts starting with `pre-initenv-` (runs before modifications).
+- **Post-hooks**: Scripts starting with `post-initenv-` (runs after successful update).
+
+These hooks are useful for automated backups, external notifications, or custom system tuning. Ensure your scripts have the executable flag set:
+
+```bash
 mkdir -p ~cbsd/upgrade
+# Add your scripts here
 ```
-
-Any scripts that start with _pre-initenv-_ or _post-initenv-_ and have an executable flag will be executed
-before modifying initenv or after, respectively.

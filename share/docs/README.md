@@ -6,6 +6,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
 - [What You Need to Know About CBSD](general/cbsd_additional.md)
+- [CBSD Initialization](general/initenv.md)
 - [CBSD Syntax](general/cmdsyntax_cbsd.md)
 - [Jail Settings](jail/cbsd_rcconf.md)
 - [About CBSD Shell and SQLite3](general/cbsdsh.md) 
@@ -21,7 +22,7 @@ The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of ar
 ## Virtual Environments
 
 <!--
-- [CBSD init](general/initenv.md) :: initenv
+
 
 
 - [CBSD Jail and VIMAGE (vnet)](cbsd_vnet.md)
