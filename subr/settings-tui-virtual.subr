@@ -27,9 +27,35 @@ GET_VM_CPU_TOPOLOGY_MSG="Select CPU topology profile name"
 GET_VM_ISOPATH_MSG="Select available/registered ISO"
 GET_VM_PACKAGE_MSG="Choose package name"
 GET_VM_VNC_PORT_MSG="VNC port. 0 - for auto, 1 - disable"
-GET_VMPROFILE_MSG="- Use 'Update/GIT' button to keep profiles up to date via official\n  CBSD public repo: https://github.com/cbsd/cbsd-vmprofiles"
-GET_VMPROFILE_MSG_GIT="${GET_VMPROFILE_MSG}\n- Use 'Clean/GIT' button to revert GIT updates and reset to contrib settings"
+GET_VMPROFILE_MSG="(V) flags means that the image supports VDI(RDP,VNC)\n - Use 'Update/GIT' button to keep profiles up to date via official\n   CBSD public repo: https://github.com/cbsd/cbsd-vmprofiles"
+GET_VMPROFILE_MSG_GIT="${GET_VMPROFILE_MSG}\n - Use 'Clean/GIT' button to revert GIT updates and reset to contrib settings"
+GET_VM_OS_TYPE_MSG="Profiles are grouped by OS types"
 GET_SOUNDHW_MSG="Choose sound harware"
+
+DESC_MSG_jname="Jname of env"
+DESC_MSG_astart="Autostart with system?"
+DESC_MSG_bhyve_flags="Customize additional bhyve_flags. Current: ${bhyve_flags}"
+DESC_MSG_cd_boot_firmware="Change CD boot firmware. Current: ${cd_boot_firmware}"
+DESC_MSG_cpuset="CPUSET"
+DESC_MSG_debug_engine="debug engine"
+DESC_MSG_hidden="Hidden flags"
+DESC_MSG_ip4_addr="IPv4 and/or IPv6 address"
+DESC_MSG_protected="Protected flags"
+DESC_MSG_vm_boot="Manage device boot order + UEFI NVRAM VARS"
+DESC_MSG_vm_cpu_topology="Select VM CPU topology"
+DESC_MSG_vm_cpus="CPUs number"
+DESC_MSG_vm_efi="UEFI Boot mode"
+DESC_MSG_vm_iso_path="ISO Path for CD-ROM"
+DESC_MSG_vm_ram="RAM"
+DESC_MSG_vm_vnc_port="VNC port"
+DESC_MSG_xhci="eXtensible Host Controller Interface (xHCI) USB controller"
+DESC_MSG_tablet="A USB tablet device (via xHCI)"
+DESC_MSG_fbuf="Emulate fbuf device (VNC)"
+DESC_MSG_uuid="UUID"
+DESC_MSG_hdd_boot_firmware="Change HDD boot firmware. Current: ${hdd_boot_firmware}"
+DESC_MSG_jailed="Jailed"
+DESC_MSG_soundhw="Audio opt: ${soundhw}"
+
 
 # virtual form for $vnc_password
 get_construct_vnc_password()
@@ -814,17 +840,18 @@ get_construct_vm_guestfs()
 # virtual form for $vm_boot
 get_construct_vm_boot()
 {
-	local _res
-
+	local _res= _ret=
 	local vm_boot_data="${ftmpdir}/vm_boot.$$"
 
-	bootmgmt selected=${vm_boot} controlmaster=${vm_boot_data}
+	#bootmgmt selected=${vm_boot} controlmaster=${vm_boot_data}
+	bootmgmt jname=${jname}
+	_ret=$?
 
-	retval=$?
-
-	case $retval in
+	case ${_ret} in
 		${DIALOG_OK})
 			. ${vm_boot_data}
+			echo "${vm_boot_data}"
+			${CAT_CMD} ${vm_boot_data}
 			;;
 		*)
 			;;
@@ -832,7 +859,7 @@ get_construct_vm_boot()
 
 	${RM_CMD} -f ${vm_boot_data}
 
-	return ${retval}
+	return ${_ret}
 }
 
 # virtual form for vm_package
@@ -845,9 +872,10 @@ apply_vm_package()
 	[ -z "${vm_package}" ] && return 0
 	[ "${1}" = "force" ] && unset vm_cpus vm_ram imgsize
 
-	[ -z "${vm_cpus}" ] && vm_cpus=$( cbsdsqlro local SELECT pkg_vm_cpus FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
-	[ -z "${vm_ram}" ] && vm_ram=$( cbsdsqlro local SELECT pkg_vm_ram FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
-	[ -z "${imgsize}" ] && imgsize=$( cbsdsqlro local SELECT pkg_vm_disk FROM vmpackages WHERE name=\"${vm_package}\" LIMIT 1 )
+	[ -z "${vm_cpus}" ] && vm_cpus=$( cbsdsqlro local "SELECT pkg_vm_cpus FROM vmpackages WHERE name='${vm_package}' LIMIT 1" )
+	[ -z "${vm_ram}" ] && vm_ram=$( cbsdsqlro local "SELECT pkg_vm_ram FROM vmpackages WHERE name='${vm_package}' LIMIT 1" )
+	[ -z "${imgsize}" ] && imgsize=$( cbsdsqlro local "SELECT pkg_vm_disk FROM vmpackages WHERE name='${vm_package}' LIMIT 1" )
+
 	return 0
 }
 
@@ -974,11 +1002,13 @@ get_construct_imgtype()
 # if $1 = "value" apply value without dialog
 get_construct_vm_os_type()
 {
-	local _input
+	local _input=
 	local defaultitem="${vm_os_type}"
 	local _vm_os_type_old="${vm_os_type}"
 
-	title=" vm_os_type "
+	local title=" vm_os_type "
+	local btitle=" choose vm_os_type "
+	local prompt="${GET_VM_OS_TYPE_MSG}"
 
 	if [ -n "${1}" ]; then
 		vm_os_type="${1}"
@@ -1021,14 +1051,26 @@ get_construct_vm_os_type()
 get_construct_vm_iso_path()
 {
 	local menu_list=
-	local vm_res
-	local i
+	local vm_res=
+	local i= _res= _prev=
+	local _iso_path= _iso_path_old=
 
-	local title=" Select ISO "
+	local ISO_INDEX=
+
+	while getopts "i:" opt; do
+		case "${opt}" in
+			i) ISO_INDEX="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
+
+	local title=" Select ISO${ISO_INDEX} "
+
+	eval _prev=\$vm_iso_path${ISO_INDEX}
+
 	local prompt="${GET_VM_ISOPATH_MSG}"
-	local iso_path
 
-	vm_res=$( cbsdsqlro storage_media SELECT name FROM media WHERE type=\"iso\" )
+	vm_res=$( cbsdsqlro storage_media "SELECT name FROM media WHERE type='iso' AND name LIKE 'iso-%'" )
 
 	[ -z "${vm_res}" ] && return 0
 
@@ -1038,30 +1080,51 @@ get_construct_vm_iso_path()
 
 	menu_list="${menu_list} 'Detach' 'Detach' 'Detach any CD ISO'"
 
-	defaultitem="${vm_iso_path}"
+	eval _res=\$vm_iso_path${ISO_INDEX}
+	defaultitem="${_res}"
 
 	mtag=
 	cbsd_menubox
 
-	case $retval in
+	case ${retval} in
 		${DIALOG_OK})
 			if [ -n "${mtag}" ]; then
 				case "${mtag}" in
 					Detach)
-						cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
-						register_iso_as=
-						vm_iso_path=
-						alt_iso=
+						#cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname='${jname}' AND type='iso' AND name='${_res}'"
+						_iso_path=$( cbsdsqlro storage_media "SELECT path FROM media WHERE type='iso' AND name='${_res}'" )
+#						echo "media mode=detach type=iso name=\"${_res}\" jname=\"${jname}\" path=\"${_iso_path}\" quiet=1   : "
+						media mode=detach type=iso name="${_res}" jname="${jname}" path="${_iso_path}" quiet=1
+#						read p
+						# shift for iso1:
+						if [ -z "${ISO_INDEX}" ]; then
+							if [ -n "${vm_iso_path2}" ]; then
+								# shift by index?
+								vm_iso_path="${vm_iso_path2}"
+								export vm_iso_path2=
+							else
+								export register_iso_as${ISO_INDEX}=
+								export vm_iso_path${ISO_INDEX}=
+								export alt_iso${ISO_INDEX}=
+							fi
+						else
+							export register_iso_as${ISO_INDEX}=
+							export vm_iso_path${ISO_INDEX}=
+							export alt_iso${ISO_INDEX}=
+						fi
 						;;
 					*)
-						register_iso_as="${mtag}"
-						vm_iso_path="${mtag}"
-						alt_iso="${mtag}"
-						iso_path=$( cbsdsqlro storage_media SELECT path FROM media WHERE type=\"iso\" AND name=\"${mtag}\" )
+						export register_iso_as${ISO_INDEX}="${mtag}"
+						export vm_iso_path${ISO_INDEX}="${mtag}"
+						export alt_iso${ISO_INDEX}="${mtag}"
+
+						_iso_path=$( cbsdsqlro storage_media "SELECT path FROM media WHERE type='iso' AND name='${mtag}'" )
 						# remove old disk if exist
-						cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname=\"${jname}\" AND type=\"iso\""
-						echo "media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}"
-						media mode=attach type=iso name=${mtag} path=${iso_path} jname=${jname}
+						_iso_path_old=$( cbsdsqlro storage_media "SELECT path FROM media WHERE type='iso' AND name='${_res}'" )
+						cbsdsqlrw storage_media "UPDATE media SET jname='-' WHERE jname='${jname}' AND type='iso' AND path='${_iso_path_old}'"
+
+						#echo "media mode=attach type=iso name=${mtag} path=${_iso_path} jname=${jname}"
+						media mode=attach type=iso name=${mtag} path=${_iso_path} jname=${jname} quiet=1
 						;;
 				esac
 			fi
@@ -1073,26 +1136,39 @@ get_construct_vm_iso_path()
 	return ${retval}
 }
 
+# virtual form for vm_iso_path2
+get_construct_vm_iso_path2()
+{
+	get_construct_vm_iso_path -i 2
+}
+
+
 # virtual form for cpu topology
 get_construct_vm_cpu_topology()
 {
 	local menu_list=
-	local vm_res
-	local i
-	local _query _sockets _cores _threads _vm_cores
+	local vm_res=
+	local i=
+	local _query= _sockets= _cores= _threads= _vm_cores= msg_ok= extra_label= msg_cancel=
 
 	local title=" Select CPU topology "
 	local prompt="${GET_VM_CPU_TOPOLOGY_MSG}"
-	local iso_path
 
-	vm_res=$( cbsdsqlro local SELECT name FROM vm_cpu_topology | ${XARGS_CMD} )
+	vm_res=$( cbsdsqlro local "SELECT name FROM vm_cpu_topology" | ${XARGS_CMD} )
+	if [ -z "${vm_res}" ]; then
+		if ! getyesno "You haven't created any topologies.\nDo you want to start the vm-cpu-topology-tui wizard?"; then
+			return 0
+		fi
+		vm-cpu-topology-tui
+		vm_res=$( cbsdsqlro local "SELECT name FROM vm_cpu_topology" | ${XARGS_CMD} )
+		[ -z "${vm_res}" ] && return 0
+	fi
 
-	[ -z "${vm_res}" ] && return 0
 	. ${strings}
 	. ${subrdir}/virtual.subr
 
 	for i in ${vm_res}; do
-		_query=$( cbsdsqlro local SELECT sockets,cores,threads FROM vm_cpu_topology WHERE name=\"${i}\" )
+		_query=$( cbsdsqlro local "SELECT sockets,cores,threads FROM vm_cpu_topology WHERE name='${i}'" )
 		[ -z "${_query}" ] && return 0
 		OIFS="${IFS}"
 		IFS="|"
@@ -1107,7 +1183,13 @@ get_construct_vm_cpu_topology()
 	defaultitem="${vm_cpu_topology}"
 
 	mtag=
-	cbsd_menubox
+
+	msg_ok="Select"
+	extra_label="Cancel"
+	msg_cancel="EDITOR>>"
+
+	cbsd_menubox_with_extra_button
+	retval=$?
 
 	case ${retval} in
 		${DIALOG_OK})
@@ -1115,6 +1197,9 @@ get_construct_vm_cpu_topology()
 				vm_cpu_topology="${mtag}"
 				eval vm_cpus="\$topology_${mtag}_cpus"
 			fi
+			;;
+		${DIALOG_CANCEL})
+			vm-cpu-topology-tui
 			;;
 		*)
 			;;
@@ -1155,14 +1240,18 @@ get_profiles_update()
 # if $1 not empty just load profile without dialogizing
 get_construct_vm_os_profile()
 {
-	local _input _search_profile="vm-${vm_os_type}" _search_cloud_profile="vm-${vm_os_type}-cloud" _res vm_profile _myprofiles="" _myfile _all _num _myfile
-	local menu_list cloud_menu_list _menu_list_cache
-	local _cnt=0 _classic_cnt _cloud_cnt
-	local _menu_list_cache= _classic_list _cloud_list
+	local _input= _search_profile="vm-${vm_os_type}" _search_cloud_profile="vm-${vm_os_type}-cloud" _res vm_profile _myprofiles="" _myfile= _all= _num= _myfile=
+	local menu_list= cloud_menu_list= _menu_list_cache=
+	local _cnt=0 _classic_cnt= _cloud_cnt= cbsd_vdi_image=
+	local _menu_list_cache= _classic_list= _cloud_list=
 
 	local title=" profiles "
+	local btitle=" choose your profile "
 	local git_init=0
-	local prompt
+	local prompt=
+
+	f_dialog_title "${title}"
+	f_dialog_info "scan and build menu entry..."
 
 	# don't use cache without dialog
 	if [ -n "${1}" ]; then
@@ -1171,7 +1260,6 @@ get_construct_vm_os_profile()
 			#_menu_list_cache=$( ${CAT_CMD} ${tmpdir}/get_construct_vm_os_profile.menu )
 			. ${tmpdir}/get_construct_vm_os_profile.menu
 		else
-			f_dialog_info "scan and build menu entry..."
 			_menu_list_cache=
 		fi
 	fi
@@ -1204,9 +1292,8 @@ get_construct_vm_os_profile()
 			menu_list="${menu_list} '>' ' -- Classic images [${_classic_cnt}] -- ' ''"
 
 			eval $( ${CAT_CMD} ${_classic_list} | while read path vm_profile contrib imginit; do
-				unset long_description iso_img_dist_size
-				eval $( ${GREP_CMD} ^long_description= ${path} )
-				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				unset long_description iso_img_dist_size cbsd_vdi_image cbsd_vdi_proto
+				eval $( ${GREP_CMD} -E "(^long_description=)|(^iso_img_dist_size=)|(^cbsd_vdi)" ${path} )
 				[ -z "${long_description}" ] && long_description="${vm_profile}"
 				if [ -z "${iso_img_dist_size}" ]; then
 					iso_img_dist_size="Unknown"
@@ -1232,10 +1319,9 @@ get_construct_vm_os_profile()
 			done )
 
 			eval $( ${CAT_CMD} ${_cloud_list} | while read path vm_profile contrib imginit; do
-				unset long_description iso_img_dist_size
+				unset long_description iso_img_dist_size cbsd_vdi_image cbsd_vdi_proto
 				# when -n $1 we apply profile, so skip unnecessary vars
-				eval $( ${GREP_CMD} ^long_description= ${path} )
-				eval $( ${GREP_CMD} ^iso_img_dist_size= ${path} )
+				eval $( ${GREP_CMD} -E "(^long_description=)|(^iso_img_dist_size=)|(^cbsd_vdi)" ${path} )
 				[ -z "${long_description}" ] && long_description="${vm_profile}"
 				if [ -z "${iso_img_dist_size}" ]; then
 					iso_img_dist_size="Unknown"
@@ -1247,6 +1333,13 @@ get_construct_vm_os_profile()
 				[ "${contrib}" = "1" ] && long_description="[contrib] ${long_description}"
 				_mypath=$( echo ${path} | ${SED_CMD} s:^${workdir}/::g )
 				# ↯ - downloaded ( echo $'\U21AF' )
+				if [ "${cbsd_vdi_image}" = "1" ]; then
+					_mypath="(V)${_mypath}"
+					long_description="${long_description}, VDI(${cbsd_vdi_proto})"
+				else
+					_mypath="( )${_mypath}"
+				fi
+
 				if [ "${imginit}" = "1" ]; then
 					cloud_menu_list="${cloud_menu_list} '${vm_profile}' '${_mypath} (↯)' '${long_description}, size: ${iso_img_dist_size}, (↯) - image already downloaded/cached'"
 				else
@@ -1344,6 +1437,7 @@ get_construct_vm_os_profile()
 	done
 
 	vm_iso_path="${register_iso_as}"
+	[ -n "${register_iso_as2}" ] && vm_iso_path2="${register_iso_as2}"
 	return ${retval}
 }
 

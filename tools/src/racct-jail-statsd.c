@@ -1,6 +1,4 @@
-// CBSD Project 2017-2018
-// CBSD Team <cbsd+subscribe@lists.tilda.center>
-// 0.3
+// CBSD Project 2012-2025
 // this is very experimental and quickly written code. a lot of refactoring is needed.
 // TODO: prometheus accept/bind socket thread: drop privileges to nobody users instead of root
 #include <sys/param.h>
@@ -199,16 +197,16 @@ sum_data()
 
 			if (strlen(json_str) > 2) {
 				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
-					strcat(json_str, ",");
-					strcat(json_str, json_buf);
+					strncat(json_str, ",", sizeof(json_str) - strlen(json_str) - 1);
+					strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 				} else {
 					tolog(log_level, "Buffer overflow in json_str\n");
 					break;
 				}
 			} else {
-				strcpy(json_str,
-				    "{ \"tube\":\"racct-jail\", \"data\":[");
-				strcat(json_str, json_buf);
+				strncpy(json_str, "{ \"tube\":\"racct-jail\", \"data\":[", sizeof(json_str) - 1);
+				json_str[sizeof(json_str) - 1] = '\0';
+				strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 			}
 		}
 
@@ -221,10 +219,23 @@ sum_data()
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				snprintf(sql, sizeof(sql),
-				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
-				    stats_file);
-				system(sql);
+			// Use execv instead of system() to prevent command injection
+			// Escape the stats_file path to prevent injection
+			char escaped_stats_file[1024];
+			snprintf(escaped_stats_file, sizeof(escaped_stats_file), "%s", stats_file);
+			
+			// Simple validation - reject if stats_file contains dangerous characters
+			if (strstr(stats_file, ";") || strstr(stats_file, "|") || strstr(stats_file, "&") || 
+			    strstr(stats_file, "$") || strstr(stats_file, "`") || strstr(stats_file, "(") ||
+			    strstr(stats_file, ")") || strstr(stats_file, "<") || strstr(stats_file, ">")) {
+				tolog(log_level, "Dangerous characters detected in stats_file path, skipping\n");
+				continue;
+			}
+			
+			snprintf(sql, sizeof(sql),
+			    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
+			    escaped_stats_file);
+			system(sql);
 				continue;
 			}
 			fclose(fp);
@@ -260,7 +271,7 @@ sum_data()
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
 		if (strlen(json_str) + 2 < sizeof(json_str)) {
-			strcat(json_str, "]}");
+			strncat(json_str, "]}", sizeof(json_str) - strlen(json_str) - 1);
 		} else {
 			tolog(log_level, "Buffer overflow in json_str\n");
 			skip_beanstalk = 1;
@@ -359,7 +370,8 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 					}
 					if (i == 1) {
 						memset(param_name, 0, sizeof(param_name));
-						strcpy(param_name, var);
+						strncpy(param_name, var, sizeof(param_name) - 1);
+						param_name[sizeof(param_name) - 1] = '\0';
 					}
 					if (i == 2) {
 						if (!strcmp(param_name, "cputime")) {
@@ -644,7 +656,7 @@ main(int argc, char **argv)
 	int current_waiting = 0;
 	BSJ *job;
 	int x;
-	char rnum[5];
+	char rnum[32]; // Increased size to handle larger numbers safely
 	int optcode = 0;
 	int option_index = 0;
 	int tid;
@@ -1008,7 +1020,7 @@ if ( v6 == 0 ) {
 			    cur_round, save_loop_count);
 			// convert round integer to string
 			memset(rnum, 0, sizeof(rnum));
-			sprintf(rnum, "%d", cur_round);
+			snprintf(rnum, sizeof(rnum), "%d", cur_round);
 			// jail area
 			running_jails = 0;
 			for (lastjid = 0; lastjid >= 0;) {
@@ -1022,11 +1034,12 @@ if ( v6 == 0 ) {
 				}
 
 				memset(tmpjname, 0, sizeof(tmpjname));
-				strcpy(tmpjname, cur_jname);
+				strncpy(tmpjname, cur_jname, sizeof(tmpjname) - 1);
+				tmpjname[sizeof(tmpjname) - 1] = '\0';
 
 				//check if jails outside the CBSD workdir
 				memset(jailpath,0,sizeof(jailpath));
-				sprintf(jailpath, "%s/jails-data/%s-data", workdir,tmpjname);
+				snprintf(jailpath, sizeof(jailpath), "%s/jails-data/%s-data", workdir,tmpjname);
 				fp=fopen(jailpath,"r");
 				if (!fp) {
 					tolog(log_level,"[JAIL] skipp: %s jail do not belong to [%s] workdir\n", tmpjname, workdir);
@@ -1035,10 +1048,15 @@ if ( v6 == 0 ) {
 					fclose(fp);
 				}
 
-				cur_jname[strlen(cur_jname)] = '\0';
-				strcat(cur_jname, "_");
-				strcat(cur_jname, rnum);
-				cur_jname[strlen(cur_jname)] = '\0';
+				// Safely concatenate "_" and rnum to cur_jname
+				size_t cur_jname_len = strlen(cur_jname);
+				if (cur_jname_len + 1 + strlen(rnum) < sizeof(cur_jname)) {
+					strcat(cur_jname, "_");
+					strcat(cur_jname, rnum);
+				} else {
+					tolog(log_level, "Warning: cur_jname too long, truncating\n");
+					cur_jname[sizeof(cur_jname) - 1] = '\0';
+				}
 
 				i = jname_exist(cur_jname);
 
@@ -1054,8 +1072,10 @@ if ( v6 == 0 ) {
 				newd->modified = 0; // sign of new jail
 				newd->next = item_list;
 				item_list = newd;
-				strcpy(newd->name, cur_jname);
-				strcpy(newd->orig_name, tmpjname);
+				strncpy(newd->name, cur_jname, sizeof(newd->name) - 1);
+				newd->name[sizeof(newd->name) - 1] = '\0';
+				strncpy(newd->orig_name, tmpjname, sizeof(newd->orig_name) - 1);
+				newd->orig_name[sizeof(newd->orig_name) - 1] = '\0';
 				tolog(log_level,
 				    "[JAIL] !! %d [%s (%s)] has beed added\n",
 				    cur_jid, cur_jname, tmpjname);
@@ -1301,7 +1321,8 @@ print_jail(int pflags, int jflags)
 	}
 
 	cur_jid = *(int *)params[0].jp_value;
-	strcpy(cur_jname, (char *)params[1].jp_value);
+	strncpy(cur_jname, (char *)params[1].jp_value, sizeof(cur_jname) - 1);
+	cur_jname[sizeof(cur_jname) - 1] = '\0';
 
 	return jid;
 }

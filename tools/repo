@@ -173,9 +173,10 @@ register_fetched_source()
 
 getbase()
 {
-	local _srcmd5_found _src_found _majorver _release _rel_postfix
-	local win_mirror win_rate t_size _basename_args
+	local _srcmd5_found= _src_found= _majorver= _release= _rel_postfix=
+	local win_mirror= win_rate= t_size= _basename_args=
 	local _mirror_num=0 _mirror_cur=0
+	local _img_bsize=0 _ret=
 
 	if [ -z "${basename}" ]; then
 		BDIR="${basejailpref}_${arch}_${ver}"
@@ -206,11 +207,11 @@ getbase()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					15*)
+					16*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/15.0"
+						URL_HIER="${arch}/${target_arch}/16.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/base.txz"
@@ -263,7 +264,7 @@ getbase()
 
 	init_target_arch
 
-	trap "cleanup_bases" HUP INT ABRT BUS TERM EXIT
+	trap "cleanup_bases; ${RM_CMD} -f ${TF} ${BASE_DIR_LOCKFILE}; ${RM_CMD} -rf ${MYDIR}" HUP INT ABRT BUS TERM EXIT
 	[ -n "${oplatform}" ] && platform="${oplatform}"
 
 	register_base arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}" ${_basename_args}
@@ -300,70 +301,77 @@ getbase()
 				[ -r ${ARCHIVE} ] && ${RM_CMD} -f ${ARCHIVE}
 			fi
 		done
-		if [ -r ${ARCHIVE} ]; then
-			[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}repo: extracting base...${N0_COLOR}\n"
-			[ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
-			cd ${BASE_DIR}
-			set -e
-			${TAR_CMD} xfz ${ARCHIVE}
-			set +e
-			${RM_CMD} -f ${ARCHIVE}
-			# fetch lib32 only for amd64
-			if [ "${arch}" = "amd64" -a -z "${url}" ]; then
-				if [ "${platform}" = "FreeBSD" ]; then
-					BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz"
+		if [ -r "${ARCHIVE}" ]; then
+			_img_bsize=$( get_file_bytes "${ARCHIVE}" 2>/dev/null )
+			if [ ${_img_bsize} -lt 1000000 ]; then
+				# too small? < 1mb
+				[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}repo: size: too small (< 1mb), skip: ${N2_COLOR}${_img_bsize}${N0_COLOR}\n"
+				${RM_CMD} -f ${ARCHIVE}
+			else
+				[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}repo: extracting base...${N0_COLOR}\n"
+				[ ! -d "${BASE_DIR}" ] && ${MKDIR_CMD} -p ${BASE_DIR}
+				cd ${BASE_DIR}
+				set -e
+				${TAR_CMD} xfz ${ARCHIVE}
+				set +e
+				${RM_CMD} -f ${ARCHIVE}
+				# fetch lib32 only for amd64
+				if [ "${arch}" = "amd64" -a -z "${url}" ]; then
+					if [ "${platform}" = "FreeBSD" ]; then
+						BSDBASE_DISTSITE="https://download.freebsd.org/ftp/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz http://ftp.freebsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz https://pub.allbsd.org/pub/FreeBSD/${_release}/${URL_HIER}-${_rel_postfix}/lib32.txz"
 
-					#BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${URL_HIER}-RELEASE/lib32.txz"
-					ARCHIVE="${MYDIR}/lib32.txz"
-					for i in ${BSDBASE_DISTSITE}; do
-						fetchme -u ${i} -o ${ARCHIVE}
-						if [ $? -eq 0 ]; then
-							break
+						#BSDBASE_DISTSITE="$MIRROR/pub/FreeBSD/releases/${URL_HIER}-RELEASE/lib32.txz"
+						ARCHIVE="${MYDIR}/lib32.txz"
+						for i in ${BSDBASE_DISTSITE}; do
+							fetchme -u ${i} -o ${ARCHIVE}
+							if [ $? -eq 0 ]; then
+								break
+							else
+								[ -r ${ARCHIVE} ] && ${RM_CMD} -f ${ARCHIVE}
+							fi
+						done
+						if [ -r ${ARCHIVE} ]; then
+							[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}Extracting lib32...${N0_COLOR}\n"
+							cd ${BASE_DIR}
+							set -e
+							${TAR_CMD} xfz ${ARCHIVE}
+							set +e
+							${RM_CMD} -f ${ARCHIVE}
 						else
-							[ -r ${ARCHIVE} ] && ${RM_CMD} -f ${ARCHIVE}
+							printf "${N2_COLOR} Lib32 not found${N0_COLOR}\n"
 						fi
-					done
-					if [ -r ${ARCHIVE} ]; then
-						[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}Extracting lib32...${N0_COLOR}\n"
-						cd ${BASE_DIR}
-						set -e
-						${TAR_CMD} xfz ${ARCHIVE}
-						set +e
-						${RM_CMD} -f ${ARCHIVE}
-					else
-						printf "${N2_COLOR} Lib32 not found${N0_COLOR}\n"
 					fi
 				fi
+
+				[ -n "${oplatform}" ] && platform="${oplatform}"
+				register_fetched_base ${MIRROR}
+
+				case "${platform}" in
+					FreeBSD)
+						preparebase dst=${BASE_DIR} emulator=${emulator}
+						etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
+						etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
+						;;
+					Linux)
+						echo "preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux"
+						preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux
+						;;
+				esac
+
+				# CBSD QUEUE
+				if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+					baseelf=
+					baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
+					date=$( ${DATE_CMD} +%s )
+					[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=base${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
+					[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=base${ver}-${arch}-${stable} status=2
+				fi
+
+				${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
+				return 0
 			fi
-
-			[ -n "${oplatform}" ] && platform="${oplatform}"
-			register_fetched_base ${MIRROR}
-
-			case "${platform}" in
-				FreeBSD)
-					preparebase dst=${BASE_DIR} emulator=${emulator}
-					etcupdate mode=extract default_obtain_etcupdate_method=index ver=${ver} force=1
-					etcupdate mode=build default_obtain_etcupdate_method=index ver=${ver} force=1
-					;;
-				Linux)
-					echo "preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux"
-					preparebase dst=${BASE_DIR} emulator=${emulator} platform=Linux
-					;;
-			esac
-
-			# CBSD QUEUE
-			if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-				baseelf=
-				baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
-				date=$( ${DATE_CMD} +%s )
-				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=update id=base${ver}-${arch}-${stable} elf=${baseelf}  platform=${platform} ver=${ver} rev="${SCM_REV}" date="${date}" stable="${stable}" status=1
-				[ -n "${cbsd_repo_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_repo_queue_name} cmd=repo id=base${ver}-${arch}-${stable} status=2
-			fi
-
-			${ECHO} "${N1_COLOR}Done...${N0_COLOR}"
-			return 0
 		fi
-		printf "${N2_COLOR} Not found${N0_COLOR}\n"
+		${ECHO} "${N2_COLOR}${CBSD_APP}: base not found${N0_COLOR}"
 		### Official fbsd repo end ###
 	fi
 
@@ -376,31 +384,50 @@ getbase()
 		${ECHO} "${N1_COLOR}REPO: ${N2_COLOR}${MYREPO}${N0_COLOR}"
 		MIRROR="${MYREPO}/releases/${URL_HIER}/mirror.html";
 		fetchme -q1 -u ${MIRROR} -o ${TF}
-
-		if [ $? -eq 0 ]; then
+		_ret=$?
+		if [ ${_ret} -eq 0 -a -r "${TF}" ]; then
 			MYREPO=$( ${CAT_CMD} ${TF} )
 			${ECHO} "${N1_COLOR}found new mirror for ${ver}: ${N2_COLOR}${MYREPO}${N0_COLOR}"
+		else
+			${ECHO} "${N1_COLOR}base not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/base.txz${N0_COLOR}"
+			[ -r "${TF}" ] && ${RM_CMD} -f ${TF}
+			continue
 		fi
 
 		if [ -z "${basename}" ]; then
 			${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/base.txz${N0_COLOR}"
 			fetchme -o ${MYDIR}/base_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/base.txz
+			_ret=$?
 
-			if [ $? -ne 0 ]; then
+			if [ ${_ret} -ne 0 -a -r "${MYDIR}/base_${arch}_${target_arch}_${ver}.txz" ]; then
 				${ECHO} "${N1_COLOR}base not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/base.txz${N0_COLOR}"
 				continue
 			else
+				_img_bsize=$( get_file_bytes "${MYDIR}/base_${arch}_${target_arch}_${ver}.txz" 2>/dev/null )
+				if [ ${_img_bsize} -lt 1000000 ]; then
+					# too small? < 1mb
+					[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}repo: size: too small, < 1mb, skip: ${N2_COLOR}${_img_bsize}${N0_COLOR}\n"
+					${RM_CMD} -f "${MYDIR}/base_${arch}_${target_arch}_${ver}.txz"
+					continue
+				fi
 				_src_found=1
 			fi
 			_srcmd5_found=1
 		else
 			${ECHO} "${N1_COLOR}Looking for: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/base_${basename}.txz${N0_COLOR}"
 			fetchme -o ${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz -u ${MYREPO}/releases/${URL_HIER}/base_${basename}.txz
-
-			if [ $? -ne 0 ]; then
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
 				${ECHO} "${N1_COLOR}Base not found: ${N2_COLOR}${MYREPO}/releases/${URL_HIER}/base_${basename}.txz${N0_COLOR}"
 				continue
 			else
+				_img_bsize=$( get_file_bytes "${MYDIR}/base_${basename}_${arch}_${target_arch}_${ver}.txz" 2>/dev/null )
+				if [ ${_img_bsize} -lt 1000000 ]; then
+					# too small? < 1mb
+					[ ${quiet} -ne 1 ] && printf "\n${N1_COLOR}repo: size: too small, < 1mb, skip: ${N2_COLOR}${_img_bsize}${N0_COLOR}\n"
+					${RM_CMD} -f "${${MYDIR}/base_${arch}_${target_arch}_${ver}.txz"
+					continue
+				fi
 				_src_found=1
 			fi
 
@@ -544,11 +571,11 @@ getsrc()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					15*)
+					16*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/15.0"
+						URL_HIER="${arch}/${target_arch}/16.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/src.txz"
@@ -589,7 +616,7 @@ getsrc()
 
 	init_target_arch
 
-	trap "cleanup_srcs" HUP INT ABRT BUS TERM EXIT
+	trap "cleanup_srcs; ${RM_CMD} -f ${TF}; ${RM_CMD} -rf ${MYDIR}" HUP INT ABRT BUS TERM EXIT
 	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_src ver=${ver} platform="${platform}"
 
@@ -741,11 +768,11 @@ getkernel()
 				;;
 			FreeBSD)
 				case "${ver}" in
-					15*)
+					16*)
 						# HEAD placed at /pub/FreeBSD/snapshots/amd64/XX.0-CURRENT/
 						_release="snapshots"
 						_rel_postfix="CURRENT"
-						URL_HIER="${arch}/${target_arch}/15.0"
+						URL_HIER="${arch}/${target_arch}/16.0"
 						;;
 					*)
 						# RELEASES placed at /pub/FreeBSD/releases/${URL_HIER}-RELEASE/kernel.txz"
@@ -790,7 +817,7 @@ getkernel()
 	fi
 
 	init_target_arch
-	trap "cleanup_kernels" HUP INT ABRT BUS TERM EXIT
+	trap "cleanup_kernels; ${RM_CMD} -f ${TF}; ${RM_CMD} -rf ${MYDIR}" HUP INT ABRT BUS TERM EXIT
 	[ -n "${oplatform}" ] && platform="${oplatform}"
 	register_kernel arch=${arch} ver=${ver} target_arch=${TARGET_ARCH} stable=${stable} platform="${platform}"
 
@@ -1177,7 +1204,7 @@ case "${action}" in
 	"get")
 		[ -z "${sources}" ] && err 1 "Give me sources"
 		case "${sources}" in
-			"src")
+			src)
 				init_basedir
 				init_kerneldir
 				DIR="src_${ver}"
@@ -1187,7 +1214,7 @@ case "${action}" in
 				${MKDIR_CMD} -p ${MYDIR}
 				getsrc
 				;;
-			"base")
+			base)
 				# LOCKFILE=${SRC}.lock
 				# makelock $LOCKFILE "${RM_CMD} -f ${TF}; ${RM_CMD} -rf ${MYDIR}" safe
 				if [ -n "${register_basename}" ]; then
@@ -1202,7 +1229,7 @@ case "${action}" in
 				${MKDIR_CMD} -p ${MYDIR}
 				getbase
 				;;
-			"obj")
+			obj)
 				if [ -z "${basename}" ]; then
 					DIR="obj_${arch}_${ver}";
 				else
@@ -1216,7 +1243,7 @@ case "${action}" in
 				${MKDIR_CMD} -p ${MYDIR}
 				getobj
 				;;
-			"kernel")
+			kernel)
 				# [ -z "${name}" ] && name="GENERIC"
 				# LOCKFILE=${SRC}.lock
 				# makelock $LOCKFILE "${RM_CMD} -f ${TF}; ${RM_CMD} -rf ${MYDIR}" safe

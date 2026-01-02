@@ -1,0 +1,155 @@
+#!/usr/local/bin/cbsd
+#v14.3.2
+MYARG="mode"
+MYOPTARG="jname ppt rom"
+MYDESC="Manage bhyve USB device passthrough"
+CBSDMODULE="bhyve"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+CBSD allows you to configure bhyve arguments to throw USB into the guest, 
+if your hardware supports it. 'bhyve-usb' can manage USB passthrough devices list.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode=${N0_COLOR} - action, available:
+         - 'attach' - attach PPT to jname
+         - 'detach' - detach PPT from jname;
+         - 'list'   - list of available PCI ID/devices and assigned/active PPT;
+ ${N2_COLOR}ppt=${N0_COLOR}  - target PPT;
+ ${N2_COLOR}rom=${N0_COLOR}  - path to rom, e.g: /path/to/gop.rom (see https://reviews.freebsd.org/D26209);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-usb mode=list
+ # cbsd bhyve-usb mode=list jname=windows1
+ # cbsd bhyve-usb mode=attach ppt=0/2/0 jname=vmname
+ # cbsd bhyve-usb mode=detach ppt=0/2/0 jname=vmname
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bhyve-ppt --help
+
+"
+
+. ${subrdir}/nc.subr
+oppt=
+orom=
+rom=
+ppt=
+jname=
+. ${cbsdinit}
+[ -z "${rom}" ] && rom="0"
+[ -n "${ppt}" ] && oppt="${ppt}"
+[ -n "${rom}" ] && orom="${rom}"
+
+. ${subrdir}/virtual.subr
+. ${system}
+
+load_usb_devices()
+{
+	device_id=0
+
+	[ -z "${USBCONFIG_CMD}" ] && USBCONFIG_CMD="/usr/sbin/usbconfig"
+
+	eval $( ${USBCONFIG_CMD} | while read line; do
+		ugen=$( echo "${line}" | ${CUT_CMD} -d':' -f1 )
+		device=$( echo "${line}" | ${AWK_CMD} -F'[<>]' '{print $2}' )
+		[ -z "${ugen}" -o -z "${device}" ] && continue
+		echo "ugen${device_id}=\"${ugen}\""
+		echo "device${device_id}=\"${device}\""
+		device_id=$(( device_id + 1 ))
+		echo "device_id=\"${device_id}\""
+	done )
+}
+
+
+show_usb_devices()
+{
+	local _count=1
+
+	${ECHO} "${H1_COLOR} PORT | DEVICE | ${N0_COLOR}"
+
+	for id in $( ${SEQ_CMD} 1 ${device_id} ); do
+		ugen=
+		eval ugen="\$ugen${id}"
+		[ -z "${ugen}" ] && continue
+
+		device=
+		eval device="\$device${id}"
+		[ -z "${device}" ] && device="-"
+
+		STR_COLOR="${N2_COLOR}"
+
+		case "${device}" in
+			*[Hh][Uu][Bb]*)
+				STR_COLOR="${W1_COLOR}"
+				;;
+			*[Uu][Dd][Ii][Ss][Kk]*)
+				STR_COLOR="${H3_COLOR}"
+				;;
+			*)
+				STR_COLOR="${N2_COLOR}"
+				;;
+		esac
+
+		${ECHO} "${STR_COLOR}${ugen} | ${device} ${N0_COLOR}"
+
+		_count=$(( _count + 1 ))
+		[ -z "${ppt}" ] && continue
+	done
+	return 0
+}
+
+
+ppt_id=0
+device_id=0
+load_usb_devices
+
+### MAIN
+case "${mode}" in
+	attach)
+		init_ppt_action
+		[ -n "${tmp_jname}" -a "${tmp_jname}" != "0" ] && err 1 "${N1_COLOR}ppt already used by: ${N2_COLOR}${tmp_jname}${N1_COLOR}. Please detach first${N0_COLOR}"
+		[ -n "${orom}" ] && rom="${orom}"
+
+		[ -z "${class}" ] && class="0"
+		[ -z "${subclass}" ] && subclass="0"
+
+		cbsdsqlrw local "INSERT INTO bhyveppt ( ppt, device, vendor, jname, rom, class, subclass ) VALUES ( '${ppt}', 'device', '${vendor}', '${jname}', '${rom}', '${class}', '${subclass}' )"
+		err 0 "${N1_COLOR}Attached${N0_COLOR}"
+		;;
+	detach)
+		init_ppt_action
+
+		[ -z "${tmp_jname}" -a "${tmp_jname}" = "0" ] && err 1 "${N1_COLOR}ppt is not attached: ${N2_COLOR}${ppt}${N1_COLOR}"
+
+		cbsdsqlrw local "DELETE FROM bhyveppt WHERE ppt='${ppt}'"
+		err 0 "${N1_COLOR}Detached${N0_COLOR}"
+		;;
+	list)
+		if [ -z "${jname}" ]; then
+			${ECHO} "${H2_COLOR}USB devices (${device_id}):${N0_COLOR}"
+			echo
+			show_usb_devices | ${COLUMN_CMD} -t -s "|"
+		fi
+
+		if [ ${ppt_id} -ne 0 ]; then
+			if [ -z "${jname}" ]; then
+				echo
+				${ECHO} "${H2_COLOR}Configured PCI Passthru devices (${ppt_id}):${N0_COLOR}"
+			else
+				${ECHO} "${N1_COLOR}Configured PCI Passthru devices (${ppt_id}) for ${N2_COLOR}${jname}:${N0_COLOR}"
+			fi
+			echo
+			show_usb_devices "${jname}" | ${COLUMN_CMD} -t -s "|"
+			echo
+		fi
+		;;
+	scan)
+		;;
+	*)
+		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+esac
+
+exit 0

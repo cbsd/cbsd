@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -40,15 +41,12 @@ int
 main(int argc, char *argv[])
 {
 	int kq;
-	struct kevent *e;
-	int verbose = 0;
-	int opt, n, i, duplicate, status;
-	long pid = 0;
-	char *s, *end;
-	int win = FALSE;
+	struct kevent change, event;
+	int n;
+	pid_t pid = -1;
+	char *end = NULL;
 	int optcode = 0;
-	int option_index = 0, ret = 0;
-	int action = 0;
+	int option_index = 0;
 	struct timespec tv;
 
 	static struct option long_options[] = { { "pid", required_argument, 0,
@@ -57,9 +55,6 @@ main(int argc, char *argv[])
 		/* End of options marker */
 		{ 0, 0, 0, 0 } };
 
-	if (argc != 3)
-		usage();
-
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
 		    &option_index);
@@ -67,46 +62,55 @@ main(int argc, char *argv[])
 			break;
 		switch (optcode) {
 		case C_PID:
-			pid = strtol(optarg, &end, 10);
+		{
+			errno = 0;
+			long lp = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0') {
+				errx(EX_USAGE, "invalid --pid: %s", optarg);
+			}
+			if (lp <= 0 || lp > INT_MAX) {
+				errx(EX_USAGE, "pid out of range: %s", optarg);
+			}
+			pid = (pid_t)lp;
 			break;
+		}
 		case C_TIMEOUT:
-			timeout = atoi(optarg);
+		{
+			errno = 0;
+			long lt = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0' ||
+			    lt < 0 || lt > INT_MAX) {
+				errx(EX_USAGE, "invalid --timeout: %s",
+				    optarg);
+			}
+			timeout = (int)lt;
 			break;
+		}
 		}
 	} // while
 
 	if (pid <= 0)
-		exit(0);
+		return 0;
 
 	kq = kqueue();
 	if (kq == -1)
 		err(1, "kqueue");
 
-	e = malloc(argc * sizeof(struct kevent));
-	if (e == NULL)
-		err(1, "malloc");
-
-	i = 0;
-
-	EV_SET(e + i, pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
-	if (kevent(kq, e + i, 1, NULL, 0, NULL) == -1)
-		warn("%ld", pid);
-	else
-		i++;
+	EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+		err(1, "kevent register pid %d", (int)pid);
 
 	tv.tv_sec = timeout;
 	tv.tv_nsec = 0;
 	// tv.tv_usec = 0;
 
-	while (i > 0) {
-		if (timeout == 0)
-			n = kevent(kq, NULL, 0, e, i, NULL);
-		else
-			n = kevent(kq, NULL, 0, e, i, &tv);
-		if (n == -1)
-			err(1, "kevent");
-		i--;
-	}
+	if (timeout == 0)
+		n = kevent(kq, NULL, 0, &event, 1, NULL);
+	else
+		n = kevent(kq, NULL, 0, &event, 1, &tv);
+	if (n == -1)
+		err(1, "kevent wait");
 
+	(void)close(kq);
 	exit(EX_OK);
 }

@@ -36,17 +36,17 @@ ${H3_COLOR}Options${N0_COLOR}:
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
- 1) Warm up ISO image for FreeBSD 13.0-RELEASE:
+ 1) Warm up ISO image for FreeBSD 15.0-RELEASE:
 
    a) by name:
-   # cbsd fetch_iso name=FreeBSD-x64-13.0 dstdir=default fastscan=1
+   # cbsd fetch_iso name=FreeBSD-x64-15.0 dstdir=default fastscan=1
 
    b) by path:
-   # cbsd fetch_iso path=/usr/jails/etc/defaults/vm-freebsd-FreeBSD-x64-13.0.conf dstdir=default fastscan=1
+   # cbsd fetch_iso path=/usr/jails/etc/defaults/vm-freebsd-FreeBSD-x64-15.0.conf dstdir=default fastscan=1
 
- 2) Warm up FreeBSD 13.0-ZFS CLOUD image and convert to ZVOL as gold-image:
+ 2) Warm up FreeBSD 15.0-ZFS CLOUD image and convert to ZVOL as gold-image:
 
-   # cbsd fetch_iso path="/usr/jails/etc/defaults/vm-freebsd-cloud-FreeBSD-zfs-x64-13.0.conf" conv2zvol=1 keepname=0 dstdir=default fastscan=1 cloud=1
+   # cbsd fetch_iso path="/usr/jails/etc/defaults/vm-freebsd-cloud-FreeBSD-zfs-x64-15.0.conf" conv2zvol=1 keepname=0 dstdir=default fastscan=1 cloud=1
 
  3) Warm up ALL images:
 
@@ -71,7 +71,8 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 "
 
-check_sha256=1
+check_sha256=
+ocheck_sha256=
 fastscan=0
 calc_raw_data=0
 cloud=0
@@ -84,9 +85,12 @@ keepname=0
 gen_sha256=0
 name=
 path=
+opath=
 purgeonly=0
 purge=0
 dstdir=
+odstdir=
+quiet=0
 
 # summary size of processed ISO
 processed_iso_size=0
@@ -99,13 +103,21 @@ processed_iso_bad_list=
 purged_iso_count=0
 purged_iso_list=
 
+. ${cbsdinit}
+[ -n "${gen_sha256}" ] && ogen_sha256="${gen_sha256}"
+[ -n "${path}" ] && opath="${path}"
+[ -n "${dstdir}" ] && odstdir="${dstdir}"
+
 readconf fetch_iso.conf
 
-. ${cbsdinit}
+[ -z "${check_sha256}" ] && check_sha256=1
+
 . ${system}
 . ${subrdir}/virtual.subr
 . ${subrdir}/fetch.subr
+. ${subrdir}/time.subr
 
+[ -n "${odstdir}" ] && dstdir="${odstdir}"
 [ "${dstdir}" = "default" ] && dstdir="${workdir}/src/iso"
 [ ! -d ${dstdir} ] && ${MKDIR_CMD} -p ${dstdir}
 if [ -n "${convonly}" ]; then
@@ -121,7 +133,7 @@ fi
 # $2 - path to ISO
 gen_sha256_sum()
 {
-	local _sha256sum
+	local _sha256sum=
 	local _profile="${1}"
 	local _file="${2}"
 	local _mdfile="${2}.sha256"
@@ -130,7 +142,7 @@ gen_sha256_sum()
 	[ ! -r ${_profile} ] && return 0
 	[ ! -r ${_file} ] && return 0
 
-	printf "${N1_COLOR} calculating gen_sha256sum: ${N0_COLOR}"
+	printf "${N1_COLOR} calculating gen_sha256sum: ${N2_COLOR}${_file}: ${N0_COLOR}"
 
 	case "${platform}" in
 		Linux)
@@ -141,9 +153,9 @@ gen_sha256_sum()
 			;;
 	esac
 
-	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} sha256sum="${_sha256sum}"
-	# update size
+	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} sha256sum${ISO_INDEX}="${_sha256sum}"
 
+	# update size
 	case "${platform}" in
 		Linux)
 			_iso_img_dist_size=$( ${STAT_CMD} --printf="%s" ${_file} 2>/dev/null )
@@ -153,7 +165,7 @@ gen_sha256_sum()
 			;;
 	esac
 
-	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} iso_img_dist_size="${_iso_img_dist_size}"
+	/usr/local/cbsd/misc/cbsdsysrc -qf ${_profile} iso_img_dist_size${ISO_INDEX}="${_iso_img_dist_size}"
 	${ECHO} "${N2_COLOR}${_sha256sum}${N1_COLOR}. Updated${N0_COLOR}"
 }
 
@@ -184,26 +196,43 @@ obtain_iso()
 		fi
 
 		fetchme -o ${dstdir}/${fout} -u ${site}${rfile}
+		_ret=$?
 
-		if [ $? -ne 0 ]; then
+		if [ ${_ret} -ne 0 ]; then
 			${RM_CMD} -f ${dstdir}/${fout}	# remove broken ISO
 			continue
 		fi
 
-		if [ ${check_sha256} -eq 1 ]; then
-			check_iso_sha256sum -f ${dstdir}/${fout} -m ${sha256sum}
-			sha256sum_passed=$?
-			if [ ${sha256sum_passed} -ne 1 ]; then
-				${ECHO} "${N1_COLOR}SHA256 sum wrong. Please update profiles or use ${N2_COLOR}CBSD_ISO_SKIP_CHECKSUM=yes${N1_COLOR} variable" 1>&2
-				${ECHO} "via env(1) or ${emulator}-default-default.conf config file to disable sha256sum validating${N0_COLOR}" 1>&2
-				${RM_CMD} -f ${dstdir}/${fout}	# remove broken ISO
-				continue
+		[ -n "${ogen_sha256}" ] && gen_sha256="${ogen_sha256}"
+		if [ "${gen_sha256}" != "1" ]; then
+			if [ ${check_sha256} -eq 1 ]; then
+				check_iso_sha256sum -f ${dstdir}/${fout} -m ${sha256sum}
+				sha256sum_passed=$?
+				if [ ${sha256sum_passed} -ne 1 ]; then
+					${ECHO} "${N1_COLOR}SHA256 sum wrong. Please update profiles or use ${N2_COLOR}CBSD_ISO_SKIP_CHECKSUM=yes${N1_COLOR} variable" 1>&2
+					${ECHO} "via env(1) or ${emulator}-default-default.conf config file to disable sha256sum validating${N0_COLOR}" 1>&2
+					${RM_CMD} -f ${dstdir}/${fout}	# remove broken ISO
+					continue
+				fi
 			fi
+		else
+			if [ "${sha256sum}" != "0" ]; then
+				if [ -n "${opath}" ]; then
+					_path="${opath}"
+				else
+					_path="/usr/local/cbsd/etc/defaults/${profile_name}"
+				fi
+				gen_sha256_sum ${_path} ${dstdir}/${fout}
+				gen_sha256=0
+				ogen_sha256=0
+			else
+				${ECHO} "${N1_COLOR}${path} sha256sum=0, skipp${N0_COLOR}"
+			fi
+			echo
 		fi
 
 		if [ ${cloud} -eq 1 -a ${calc_raw_data} -eq 1 ]; then
 			# stamp imgsize_min
-
 			if [ -n "${iso_extract}" -a -f "${dstdir}/${fout}" ]; then
 				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Extracting ${dstdir}/${fout} -> ${dstdir}/${iso_img} ...${N0_COLOR}"
 				set -o xtrace
@@ -256,6 +285,7 @@ obtain_iso()
 				${MV_CMD} ${dstdir}/${fout} ${dstdir}/${register_iso_name}
 			fi
 		fi
+
 		return 0
 	done
 
@@ -302,44 +332,23 @@ show_size_stats()
 	fi
 }
 
-fetch_iso_by_path()
+# -i variable index, for secondary++ ISO, e.g.: -i 2
+# -v override conv2vol=
+fetch_iso_by_path_loop()
 {
 	local iso_bsize=0
 	local _source_raw=
-	# raw data size in bytes
-	_ebytes_raw_data=0
+	local _conv2vol="${conv2vol}"
 
-	[ -n "${1}" ] && path="${1}"
+	export ISO_INDEX=""
 
-	if [ -z "${path}" ]; then
-		${ECHO} "${N1_COLOR}fetch_iso_by_path: empty path${N0_COLOR}"
-		return 1
-	fi
-
-	# protect from long loop (2 - SIGINT in BSD)
-	trap 'exit 0' 2
-
-	iso_img=
-	iso_img_dist=
-	iso_site=
-	fetch=0
-	vm_profile=
-	register_iso_name=
-	sha256sum=0
-	iso_extract=
-	vars_img=
-
-	if [ ! -r ${path} ]; then
-		${ECHO} "${N1_COLOR}Unreadable profile: ${N2_COLOR}${path}${N0_COLOR}"
-		return 1
-	fi
-
-	. ${path}
-
-	if [ ${fetch} -eq 0 ]; then
-		${ECHO} "${N1_COLOR}${path} fetch=0, skipp${N0_COLOR}"
-		return 1
-	fi
+	while getopts "i:v:" opt; do
+		case "${opt}" in
+			i) export ISO_INDEX="${OPTARG}" ;;
+			v) _conv2vol="${OPTARG}" ;;
+		esac
+		shift $(($OPTIND - 1))
+	done
 
 	if [ -z "${iso_site}"  ]; then
 		${ECHO} "${N1_COLOR}${path} no iso_site, skipp${N0_COLOR}"
@@ -351,14 +360,7 @@ fetch_iso_by_path()
 	else
 		rfile="${iso_img}"
 	fi
-
 	fout="${rfile}"
-
-#	if [ ${keepname} -eq 1 ]; then
-		fout="${rfile}"
-#	else
-#		fout="${register_iso_name}"
-#	fi
 
 	${ECHO} " ${H1_COLOR}* ${H5_COLOR}[${profile_cur}/${profile_num}] ${N2_COLOR}== ${N1_COLOR}Processing ${N2_COLOR}${vm_profile}${N1_COLOR} from ${N2_COLOR}${path}${N0_COLOR} =="
 
@@ -367,8 +369,8 @@ fetch_iso_by_path()
 		return 1
 	fi
 
-	profile_name=$( ${BASENAME_CMD} ${path} )
-
+	# basename
+	profile_name="${path##*/}"
 	obtain_iso
 	ret=$?
 
@@ -391,17 +393,25 @@ fetch_iso_by_path()
 	processed_iso_size=$(( processed_iso_size + iso_bsize ))
 
 	# gen_sha256?
-	if [ "${sha256sum}" != "0" ]; then
-		gen_sha256_sum /usr/local/cbsd/etc/defaults/${profile_name} ${dstdir}/${fout}
-	else
-		${ECHO} "${N1_COLOR}${path} sha256sum=0, skipp${N0_COLOR}"
+	[ -n "${ogen_sha256}" ] && gen_sha256="${ogen_sha256}"
+	if [ ${gen_sha256} -eq 1 ]; then
+		if [ "${sha256sum}" != "0" ]; then
+			if [ -n "${opath}" ]; then
+				_path="${opath}"
+			else
+				_path="/usr/local/cbsd/etc/defaults/${profile_name}"
+			fi
+			gen_sha256_sum ${_path} ${dstdir}/${fout}
+		else
+			${ECHO} "${N1_COLOR}${path} sha256sum=0, skipp${N0_COLOR}"
+		fi
+		echo
 	fi
-	echo
 
 	if [ -r "${dstdir}/${register_iso_name}" ]; then
-		_source_raw=${dstdir}/${register_iso_name}
+		_source_raw="${dstdir}/${register_iso_name}"
 	elif [ -r "${dstdir}/${iso_img}" ]; then
-		_source_raw=${dstdir}/${iso_img}
+		_source_raw="${dstdir}/${iso_img}"
 	fi
 
 	if [ ${cloud} -eq 1 -a ${conv2zvol} -eq 1 ]; then
@@ -417,6 +427,100 @@ fetch_iso_by_path()
 			convert_source_image_to_zvol -s "${_source_raw}"
 		fi
 	fi
+
+	return 0
+}
+
+
+fetch_iso_by_path()
+{
+	local _ret=
+
+	[ -n "${1}" ] && path="${1}"
+
+	if [ -z "${path}" ]; then
+		${ECHO} "${N1_COLOR}fetch_iso_by_path: empty path${N0_COLOR}"
+		return 1
+	fi
+
+	# protect from long loop (2 - SIGINT in BSD)
+	trap 'exit 0' 2
+
+	# iso1
+	iso_img=
+	iso_img_dist=
+	iso_site=
+	iso_extract=
+	register_iso_name=
+	sha256sum=0
+
+	# iso2
+	iso_img2=
+	iso_img_dist2=
+	iso_site2=
+	iso_extract2=
+	register_iso_name2=
+	sha256sum2=0
+
+	fetch=0
+	vm_profile=
+	vars_img=
+
+	if [ ! -r ${path} ]; then
+		${ECHO} "${N1_COLOR}Unreadable profile: ${N2_COLOR}${path}${N0_COLOR}"
+		return 1
+	fi
+
+	/bin/sh -n ${path}
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CBSD_APP} invalid profile, please sheck: ${N2_COLOR}/bin/sh -n ${path}${N0_COLOR}"
+	. ${path}
+
+	if [ ${fetch} -eq 0 ]; then
+		${ECHO} "${N1_COLOR}${path} fetch=0, skipp${N0_COLOR}"
+		return 1
+	fi
+
+	if [ -z "${iso_site}"  ]; then
+		${ECHO} "${N1_COLOR}${path} no iso_site, skipp${N0_COLOR}"
+		return 1
+	fi
+
+	# ISO loop
+	[ -n "${iso_img2}" -a "${quiet}" != "1" ] && ${ECHO} "${N1_COLOR}${CBSD_APP} fetch secondary ISO: ${N2_COLOR}${iso_img}${N0_COLOR}"
+
+	fetch_iso_by_path_loop
+
+	if [ -n "${iso_img2}" ]; then
+		# push main ISO data
+		xo_iso_img="${iso_img}"
+		xo_iso_img_dist="${iso_img_dist}"
+		xo_iso_site="${iso_site}"
+		xo_iso_extract="${iso_extract}"
+		xo_register_iso_name="${register_iso_name}"
+		xo_sha256sum="${sha256sum}"
+
+		iso_img="${iso_img2}"
+		iso_img_dist="${iso_img_dist2}"
+		iso_site="${iso_site2}"
+		iso_extract="${iso_extract2}"
+		register_iso_name="${register_iso_name2}"
+		sha256sum="${sha256sum2}"
+		osha256sum="0"
+
+		[ "${quiet}" != "1" ] && ${ECHO} "${N1_COLOR}${CBSD_APP} fetch secondary ISO: ${N2_COLOR}${iso_img}${N0_COLOR}"
+		fetch_iso_by_path_loop -i 2 -v 0
+
+		# restore main ISO data
+		iso_img="${xo_iso_img}"
+		iso_img_dist="${xo_iso_img_dist}"
+		iso_site="${xo_iso_site}"
+		iso_extract="${xo_iso_extract}"
+		register_iso_name="${xo_register_iso_name}"
+		sha256sum="${xo_sha256sum}"
+	fi
+
+	return 0
 }
 
 # create array: (separated by spaces)
@@ -424,6 +528,8 @@ fetch_iso_by_path()
 # in $profile_map variable
 get_profile_name_path_map()
 {
+	local i=
+
 	# global
 	profile_map=
 	profile_num=0
@@ -431,7 +537,7 @@ get_profile_name_path_map()
 
 	profile_num=$( get_active_profiles_num )
 
-	${ECHO} "${N1_COLOR}Active bhyve profiles here: ${N2_COLOR}${profile_num}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}Active profiles here: ${N2_COLOR}${profile_num}${N0_COLOR}"
 
 	# protect from long loop (2 - SIGINT)
 	trap 'exit 0' 2
@@ -593,29 +699,6 @@ purge_iso_all()
 	[ ${purged_iso_count} -gt 0 ] && ${ECHO} "${N1_COLOR}Purged ISO list: ${W1_COLOR}${purged_iso_list}${N0_COLOR}"
 }
 
-[ -n "${name}" -a -n "${path}" ] && err 1 "${N1_COLOR}Please use ${N2_COLOR}name= ${N1_COLOR}OR ${N2_COLOR}path=${N0_COLOR}"
-
-if [ ${purgeonly} -eq 1 ]; then
-	purge_iso_all
-	exit 0
-fi
-
-if [ -z "${name}" -a -z "${path}" ]; then
-	fetch_iso_all
-	[ ${purge} -eq 1 ] && purge_iso_all
-	show_size_stats
-	exit 0
-fi
-
-if [ -n "${path}" ]; then
-	# global, used by fetch_iso_by_path func
-	profile_num=1
-	profile_cur=1
-
-	fetch_iso_by_path ${path}
-	show_size_stats
-	exit 0
-fi
 
 get_profile_path_by_name()
 {
@@ -638,6 +721,37 @@ get_profile_path_by_name()
 	done
 }
 
+### MAIN
+[ -n "${name}" -a -n "${path}" ] && err 1 "${N1_COLOR}Please use ${N2_COLOR}name= ${N1_COLOR}OR ${N2_COLOR}path=${N0_COLOR}"
+
+if [ ${purgeonly} -eq 1 ]; then
+	purge_iso_all
+	exit 0
+fi
+
+if [ -z "${name}" -a -z "${path}" ]; then
+	fetch_iso_all
+	[ ${purge} -eq 1 ] && purge_iso_all
+	show_size_stats
+	exit 0
+fi
+
+if [ -n "${path}" ]; then
+	[ -z "${FULL_ST_TIME}" ] && FULL_ST_TIME=$( ${DATE_CMD} +%s )
+	st_time=$( ${DATE_CMD} +%s )
+
+	# global, used by fetch_iso_by_path func
+	profile_num=1
+	profile_cur=1
+
+	fetch_iso_by_path ${path}
+	show_size_stats
+
+	time_stats "${N1_COLOR}fetch_iso ${DSK_ID}"
+
+	exit 0
+fi
+
 if [ -n "${name}" ]; then
 	get_profile_name_path_map
 	profile_path=$( get_profile_path_by_name ${name} )
@@ -653,3 +767,5 @@ if [ -n "${name}" ]; then
 	show_size_stats
 	exit 0
 fi
+
+exit 0

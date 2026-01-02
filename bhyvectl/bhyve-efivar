@@ -1,0 +1,123 @@
+#!/usr/local/bin/cbsd
+#v15.0.0
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+CBSDMODULE="bhyve"
+MYDESC="Dialog-based text user interface for manage bhyve UEFI boot order"
+MYARG="jname"
+MYOPTARG="display header human quiet"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Text user interface for manage bhyve UEFI boot order configuration.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}display=${N0_COLOR}   - comma separated list of columns to display,
+              default value:
+                boot,name,item
+ ${N2_COLOR}header=${N0_COLOR}    - don't print header info;
+ ${N2_COLOR}jname=${N0_COLOR}     - work with <VM>;
+
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-efivar jname=vm1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bhyve-efivar-tui --help
+  cbsd bconfig --help
+  cbsd bget --help
+  cbsd bset --help
+
+"
+
+human=1
+quiet=0
+. ${cbsdinit}
+. ${strings}
+
+# defaults
+[ -z "${display}" -a -z "${odisplay}" ] && display="boot,name,item"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | ${TR_CMD} ',' '|' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	#local _header="${myheader}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+show_jaildata_from_sql()
+{
+	local i=
+	local val=
+
+	for i in ${name_list}; do
+		eval val=\$${i}
+
+		[ -z "${val}" ] && val="unknown"
+		#[ -z "${val}" ] && continue
+
+		printf "${N0_COLOR}" # for column sort
+
+		if [ "${i}" = "Boot${curboot}" ]; then
+			${ECHO} "${N2_COLOR}*|${i}|${val}${N0_COLOR}"
+		else
+			${ECHO} "${N4_COLOR}-|${i}|${val}${N0_COLOR}"
+		fi
+	done
+}
+
+show_local()
+{
+	show_header
+	show_jaildata_from_sql local
+}
+
+
+### MAIN
+. ${subrdir}/rcconf.subr
+[ ${?} -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Only for bhyve type VMs${N0_COLOR}"
+shift #skip for jname
+
+VM_VARS="${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd"
+
+[ ! -r "${VM_VARS}" ] && err 1 "${N1_COLOR}${CBSD_APP}: no such UEFI VARS file: ${N2_COLOR}${VM_VARS}${N0_COLOR}"
+temp=$( ${MKTEMP_CMD} )
+trap "${RM_CMD} -f ${temp}" HUP INT ABRT BUS TERM EXIT
+${miscdir}/efivar ${VM_VARS} > ${temp}
+
+# We normalize it in the shell, since the original C output is needed for debugging.
+# although it doesn't look very good:
+curboot=$( ${AWK_CMD} '/BootOrder:/{print $2}' ${temp} | ${TR_CMD} -d ',' )
+name_list=$( ${GREP_CMD} -E -v '(^BootCurrent:)|(^BootOrder:)|(Unreferenced)' ${temp} | ${TR_CMD} '+*' ' ' | ${GREP_CMD} Boot0 | ${SED_CMD} 's://::g' | ${AWK_CMD} '/Boot[0-9]+/{print $1}' | ${SORT_CMD} -u | ${XARGS_CMD} )
+
+eval $( ${GREP_CMD} -E -v '(^BootCurrent:)|(^BootOrder:)|(Unreferenced)' ${temp} | ${TR_CMD} '+*' ' ' | ${GREP_CMD} Boot0 | ${SED_CMD} 's://::g' | while read _name _other; do
+	echo "${_name}=\"${_other}\""
+done )
+
+if [ -z "${name_list}" ]; then
+	if [ "${quiet}" = "1" ]; then
+		exit 1
+	else
+		err 1 "${N1_COLOR}${CBSD_APP}: VARS not found: ${N2_COLOR}${VM_VARS}${N0_COLOR}"
+	fi
+fi
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+if [ ${human} -eq 1 ]; then
+	show_local | ${COLUMN_CMD} -t -s'|'
+else
+	show_local
+fi
+
+exit 0

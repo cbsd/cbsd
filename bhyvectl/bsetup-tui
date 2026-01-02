@@ -48,24 +48,28 @@ commit()
 		eval VAL=\$$i
 		eval OVAL=\$OLDVAL_${i}
 
-		if [ "${i}" = "jname" ]; then
-			_oldjname="${OVAL}"
-			_newjname="${VAL}"
-			continue
-		fi
-
-		if [ "${i}" = "vm_ram" ]; then
-			# In SQLite3 we store vm_ram in bytes, convert it
-			# test for human
-			if is_number ${VAL}; then
-				if conv2bytes ${VAL}; then
-					VAL="${convval}"
+		case "${i}" in
+			jname)
+				_oldjname="${OVAL}"
+				_newjname="${VAL}"
+				continue
+				;;
+			vm_ram)
+				# In SQLite3 we store vm_ram in bytes, convert it
+				# test for human
+				if is_number ${VAL}; then
+					if conv2bytes ${VAL}; then
+						VAL="${convval}"
+					fi
+				else
+					# Assume than user input in MB, so convert to bytes
+					VAL=$(( convval * 1024 * 1024 ))
 				fi
-			else
-				# Assume than user input in MB, so convert to bytes
-				VAL=$(( convval * 1024 * 1024 ))
-			fi
-		fi
+				;;
+			vm_iso_path2)
+				[ -z "${VAL}" ] && VAL="0"
+				;;
+		esac
 
 		[ "${VAL}" = "${OVAL}" ] && continue
 
@@ -113,7 +117,7 @@ dialog_menu_main()
 
 	# don't show it in main menu:
 	local _in_sub_menu="bhyve_generate_acpi bhyve_wire_memory bhyve_rts_keeps_utc bhyve_force_msi_irq bhyve_x2apic_mode bhyve_mptable_gen bhyve_ignore_msr_acc cd_vnc_wait bhyve_vnc_resolution bhyve_vnc_tcp_bind \
-	vnc_password bhyve_vnc_vgaconf on_crash on_poweroff on_reboot double_acpi virtio_rnd bhyverun_wrapper bhyvestop_wrapper boot_delay bhyve_cmd efi_firmware bhyve_vnc_kbdlayout tpm"
+	vnc_password bhyve_vnc_vgaconf on_crash on_poweroff on_reboot double_acpi virtio_rnd bhyverun_wrapper bhyvestop_wrapper boot_delay bhyve_cmd efi_firmware bhyve_vnc_kbdlayout tpm vm_hostbridge hidden debug_engine"
 
 	item_let="A"
 	item_num=0
@@ -138,7 +142,15 @@ dialog_menu_main()
 				[ "${i}" = "${y}" ] && skip=1
 		done
 
+		if [ "${i}" = "vm_iso_path2" ]; then
+			[ -z "${vm_iso_path}" ] && skip=1
+			[ "${vm_iso_path2}" = "0" ] && vm_iso_path2=''
+		fi
+
 		[ ${skip} -eq 1 ] && continue
+
+		eval _mydesc="\$DESC_MSG_${i}"
+		[ -z "${_mydesc}" ] && _mydesc="empty desc: DESC_MSG_${i}"
 
 		for x in ${_checkbox}; do
 
@@ -158,7 +170,6 @@ dialog_menu_main()
 				menu_list="${menu_list} '${item_let} ${x}'      '[${_mytest}]'  '${_mydesc}'"
 				skip=1
 			fi
-
 		done
 
 		[ ${skip} -eq 1 ] && continue
@@ -178,9 +189,9 @@ dialog_menu_main()
 		fi
 
 		if [ -z "${VAL}" ]; then
-			menu_list="${menu_list} '${item_let} ${i}'	' '	'Descr?'"
+			menu_list="${menu_list} '${item_let} ${i}'	' '		'${_mydesc}'"
 		else
-			menu_list="${menu_list} '${item_let} ${i}'	'${VAL}'	'Descr?'"
+			menu_list="${menu_list} '${item_let} ${i}'	'${VAL}'	'${_mydesc}'"
 		fi
 	done
 
@@ -228,9 +239,8 @@ dialog_menu_main()
 ### MAIN
 readconf bhyve-default-default.conf
 
-
 . ${subrdir}/rcconf.subr
-[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+[ ${?} -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 [ "${emulator}" != "bhyve" ] && err 1 "${N1_COLOR}Only for bhyve type VMs${N0_COLOR}"
 
 shift #skip for jname
@@ -281,7 +291,7 @@ while [ 1 ]; do
 			;;
 		b_order|order)
 			border-tui jname="${jname}"
-			b_order=$( cbsdsqlro local "SELECT b_order FROM jails WHERE jname=\"${jname}\"" 2>/dev/null )
+			b_order=$( cbsdsqlro local "SELECT b_order FROM jails WHERE jname='${jname}'" 2>/dev/null )
 			;;
 		"EXIT")
 			f_die
@@ -289,7 +299,7 @@ while [ 1 ]; do
 		"COMMIT")
 			commit
 			;;
-		astart|protected|hidden|bhyve_generate_acpi|bhyve_wire_memory|bhyve_rts_keeps_utc|bhyve_force_msi_irq|bhyve_x2apic_mode|bhyve_mptable_gen|bhyve_ignore_msr_acc|xhci|tablet|fbuf|jailed|chrooted|double_acpi|virtio_rnd)
+		astart|protected|bhyve_generate_acpi|bhyve_wire_memory|bhyve_rts_keeps_utc|bhyve_force_msi_irq|bhyve_x2apic_mode|bhyve_mptable_gen|bhyve_ignore_msr_acc|xhci|tablet|fbuf|jailed|chrooted|double_acpi|virtio_rnd)
 			invert_checkbox ${mychoice}
 			continue
 			;;
@@ -297,8 +307,8 @@ while [ 1 ]; do
 			get_construct_interface -d 1 -s "tap bridge vboxnet"
 			;;
 		bhyve_audio_options)
-			soundhw_play=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT soundhw_play FROM bhyve_soundhw 2>/dev/null )
-			soundhw_rec=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT soundhw_rec FROM bhyve_soundhw 2>/dev/null )
+			soundhw_play=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT soundhw_play FROM bhyve_soundhw" 2>/dev/null )
+			soundhw_rec=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT soundhw_rec FROM bhyve_soundhw" 2>/dev/null )
 			get_construct_bhyve_audio_options -u
 			;;
 		*)

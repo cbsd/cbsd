@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -19,6 +20,7 @@
 
 #define FALSE 0
 #define TRUE 1
+
 
 static int timeout = 0;
 
@@ -35,28 +37,31 @@ cbsd_pwait_usage(void)
 	printf("require: --pid, --timeout\n");
 	printf(
 	    "usage: cbsd_pwait --pid=pid --timeout=0 (in seconds, 0 is infinity)\n");
-	return (EX_USAGE);
+	return(EX_USAGE);
 }
 
 int
 cbsd_pwaitcmd(int argc, char **argv)
 {
 	int kq;
-	struct kevent *e;
-	int n, i;
-	long pid = 0;
-	char *end;
+	struct kevent change, event;
+	int n;
+	pid_t pid = -1;
+	char *end = NULL;
 	int optcode = 0;
 	int option_index = 0;
 	struct timespec tv;
 
-	struct option long_options[] = { { "pid", required_argument, 0, C_PID },
+	static struct option long_options[] = { { "pid", required_argument, 0,
+						    C_PID },
 		{ "timeout", required_argument, 0, C_TIMEOUT },
 		/* End of options marker */
 		{ 0, 0, 0, 0 } };
 
-	if (argc != 3)
+	if (argc != 3) {
 		cbsd_pwait_usage();
+		return(EX_USAGE);
+	}
 
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
@@ -65,11 +70,32 @@ cbsd_pwaitcmd(int argc, char **argv)
 			break;
 		switch (optcode) {
 		case C_PID:
-			pid = strtol(optarg, &end, 10);
+		{
+			errno = 0;
+			long lp = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0') {
+				out2fmt_flush("invalid --pid: %s", optarg);
+				return 1;
+			}
+			if (lp <= 0 || lp > INT_MAX) {
+				out2fmt_flush("pid out of range: %s", optarg);
+				return 1;
+			}
+			pid = (pid_t)lp;
 			break;
+		}
 		case C_TIMEOUT:
-			timeout = atoi(optarg);
+		{
+			errno = 0;
+			long lt = strtol(optarg, &end, 10);
+			if (errno != 0 || end == optarg || *end != '\0' ||
+			    lt < 0 || lt > INT_MAX) {
+				out2fmt_flush("invalid --timeout: %s", optarg);
+				return 1;
+			}
+			timeout = (int)lt;
 			break;
+		}
 		}
 	} // while
 
@@ -89,34 +115,23 @@ cbsd_pwaitcmd(int argc, char **argv)
 		return 1;
 	}
 
-	e = malloc(argc * sizeof(struct kevent));
-	if (e == NULL) {
-		out2fmt_flush("malloc");
+	EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		out2fmt_flush("kevent register pid %d", (int)pid);
 		return 1;
 	}
-	i = 0;
-
-	EV_SET(e + i, pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
-	if (kevent(kq, e + i, 1, NULL, 0, NULL) == -1)
-		out2fmt_flush("%ld", pid);
-	else
-		i++;
-
 	tv.tv_sec = timeout;
 	tv.tv_nsec = 0;
 	// tv.tv_usec = 0;
 
-	while (i > 0) {
-		if (timeout == 0)
-			n = kevent(kq, NULL, 0, e, i, NULL);
-		else
-			n = kevent(kq, NULL, 0, e, i, &tv);
-		if (n == -1) {
-			out2fmt_flush("kevent");
-			return 1;
-		}
-		i--;
+	if (timeout == 0)
+		n = kevent(kq, NULL, 0, &event, 1, NULL);
+	else
+		n = kevent(kq, NULL, 0, &event, 1, &tv);
+	if (n == -1) {
+		out2fmt_flush("kevent wait");
+		return 1;
 	}
-
-	return (EX_OK);
+	(void)close(kq);
+	return(EX_OK);
 }

@@ -67,17 +67,26 @@ HOME_URL="https://alpinelinux.org/"
 BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"
 ```
 
-![cbsd-oci1.png](https://convectix.com/img/cbsd-oci1.png)
-
 ## Errata
 
 - Support for `buildah/OCI` is experimental (Also `buildah` package is marked as experimental by itself) - do not use it in production;
 - CBSD uses `buildah` tool only to get an image (or generate and push a jail container to the Docker registry);
-- At the moment CBSD ignores OCI image `Entrypoints` - work is underway on integration with CBSD daemonize;
 - CBSD uses a `buildah` with alternative paths (to store data in the CBSD hier/structure). If you have difficulties with the `buildah` images via CBSD, call it with the appropriate arguments (check out `cbsd buildah` output).
+- CBSD does not act as a supervisor for the process specified as an entrypoint ( or any other health check functions )
 - On ZFS and non-ZFS system, images are stored in different places. With ZFS, the CBSD uses a snapshot and works as a `zfs_snapsrc` parameter when creating a container. If the ZFS is absent, 
   the image is located in the ~cbsd/basejail/ directory and the container is created by copying files (which, of course, is much slower compared to CoW).
   Images on a non-ZFS system are also visible as 'cbsd bases: 
-  
+- The OCI hier currently doesn't support the FreeBSD approach: "mount the RO base" and RW data in an overlay;
+- At the moment, there is no known vendor that makes NATIVE images for FreeBSD for their services.
 
-![cbsd-oci1.png](https://convectix.com/img/cbsd-oci2.png)
+
+All containers you can try now (~2026y) will require Linuxulator, which has very limited capabilities. 
+In other words, no vendor will support software if they find it running on FreeBSD via Linuxulator. 
+Therefore, if you're using a Linux container, you're unlikely to get support, and be prepared to be left alone with the problem.
+
+
+Perhaps the situation with native OCI images for FreeBSD will change in the future — for example, the idea of integrating OCI image generation 
+into the FreeBSD ports framework is a good solution. Imagine if some ports with services also had a container file (e.g., `/usr/ports/www/nginx/Containerfile` ) 
+that allowed you to run the `make ociimage` command!
+
+

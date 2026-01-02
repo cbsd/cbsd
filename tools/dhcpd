@@ -2,7 +2,7 @@
 #v12.2.0
 # Detect first available IPv6 from ippool's
 MYARG=""
-MYOPTARG="cleanup dhcpd_helper ip4pool lease_time lock pass"
+MYOPTARG="cleanup dhcpd_helper ip4pool lease_time lock pass dhcpd_ipv4_exclude"
 MYDESC="Detect first available IPv4 from pools"
 ADDHELP="
 
@@ -24,6 +24,7 @@ ${H3_COLOR}Options${N0_COLOR}:
                  cleanup=\"10.0.0.1 10.0.0.2\";
  ${N2_COLOR}dhcpd_helper=${N0_COLOR} - <path_to_executable> overwrite dhcpd_helper settings
                  from dhcpd.conf;
+ ${N2_COLOR}dhcpd_ipv4_exclude=${N0_COLOR} - Exclude/blacklist IPs;
  ${N2_COLOR}ip4pool=${N0_COLOR}      - use alternative pool, comma-separated if multiple
                  valid value sample:
                    ip4pool=\"192.168.0.0/24\"
@@ -39,6 +40,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd dhcpd
  # cbsd dhcpd ip4pool=\"192.168.0.5-10\"
+ # cbsd dhcpd dhcpd_ipv4_exclude=\"192.168.0.5-10 10.0.0.1 10.0.0.254 192.168.0.20/29\"
  # cbsd dhcpd dhcpd_helper=\"/root/bin/myhelper\"
 
 ${H3_COLOR}See also${N0_COLOR}:
@@ -55,12 +57,16 @@ pass=
 lease_time=30
 cleanup=
 dhcpd_helper=
+dhcpd_ipv4_exclude=
+odhcpd_ipv4_exclude=
 . ${cbsdinit}
-
+[ -n "${dhcpd_ipv4_exclude}" ] && odhcpd_ipv4_exclude="${dhcpd_ipv4_exclude=}"
 [ -n "${dhcpd_helper}" ] && odhcpd_helper="${dhcpd_helper}"
 
 # dhcpd_helper?
 readconf dhcpd.conf
+
+[ -n "${odhcpd_ipv4_exclude}" ] && dhcpd_ipv4_exclude="${odhcpd_ipv4_exclude=}"
 
 #
 # ipv4_to_ip10 ipv4 ip10
@@ -506,6 +512,71 @@ init_network()
 	return 0
 }
 
+# return 0 when $ip in $network
+# where network, e.g:
+#  192.168.0.2
+#  192.168.0.0/29
+#  192.168.0.0-10
+ip_in_range()
+{
+	local _ip="${1}" _in="${2}"
+	local _match=0
+	local _e1= _e2= _e3= _e4=
+ 	local _s1= _s2= _s3= _s4=
+	local _i1= _i2= _i3= _i4=
+	local _tmp=
+
+	# direct match
+	[ "${_in}" = "${1}" ] && return 0
+
+	# user ip range
+	sqllistdelimer="."
+	sqllist "${_ip}" _i1 _i2 _i3 _i4
+	sqllistdelimer=
+
+	# /prefix form
+	eval $( ${miscdir}/sipcalc ${_in} )
+	if [ -n "${_network_range_start}" -a -n "${_network_range_end}" ]; then
+
+		# start range
+		sqllistdelimer="."
+		sqllist "${_network_range_start}" _s1 _s2 _s3 _s4
+		sqllistdelimer=
+
+		# end range
+		sqllistdelimer="."
+		sqllist "${_network_range_end}" _e1 _e2 _e3 _e4
+		sqllistdelimer=
+
+
+		if [ "${_i1}" = "${_s1}" -a "${_i2}" = "${_s2}" ]; then
+			[ ${_i4} -gt ${_s4} -a ${_i4} -lt ${_e4} ] && return 0
+		fi
+	fi
+
+	# start range
+	sqllistdelimer="."
+	sqllist "${_in}" _s1 _s2 _s3 _tmp
+	sqllistdelimer=
+
+	strpos --str="${_tmp}" --search="-"
+	_pos=$?
+	if [ ${_pos} -eq 0 ]; then
+		return 1
+	fi
+
+	_s4=${_tmp%-*}
+	_e4=${_tmp#*-}
+	[ -z "${_s4}" -o -z "${_e4}" ] && return 1
+
+	if [ "${_i1}" = "${_s1}" -a "${_i2}" = "${_s2}" ]; then
+		[ ${_i4} -gt ${_s4} -a ${_i4} -lt ${_e4} ] && return 0
+	fi
+
+	return 1
+}
+
+
 LOCKFILE="${ftmpdir}/dhcpd.lock"
 LEASE_FILE="${tmpdir}/dhcpd.lease"
 # list of locked/skip IPS
@@ -699,9 +770,17 @@ for tmpnet in ${nodeippool}; do
 					tmpip="${w1}.${w2}.${w3}.${w4}"
 					iptype ${tmpip} >/dev/null 2>&1
 					[ $? -ne 1 ] && continue
-					for n in ${skip_ip} ${LOCKFILE_SKIPLIST}; do
-						[ "${n}" = "${tmpip}" ] && skip=1
+
+					for i in ${dhcpd_ipv4_exclude}; do
+						if ip_in_range ${tmpip} ${i}; then
+							skip=1
+						fi
 					done
+					if [ ${skip} -eq 0 ]; then
+						for n in ${skip_ip} ${LOCKFILE_SKIPLIST}; do
+							[ "${n}" = "${tmpip}" ] && skip=1
+						done
+					fi
 					[ ${skip} -eq 1 ] && continue
 					# regulate via conf ?
 					${ARP_CMD} -dn ${tmpip} > /dev/null 2>&1

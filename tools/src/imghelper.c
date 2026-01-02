@@ -57,6 +57,7 @@ main(int argc, char *argv[])
 	int find_param = 0; // also find and replace param= by newval
 	char *newval_buf;
 	off_t total_bytes = 0; // bytes processed
+	size_t newval_buf_size = 0;
 
 	static struct option long_options[] = { { "start", required_argument, 0,
 						    C_START_SIGN },
@@ -127,15 +128,26 @@ main(int argc, char *argv[])
 
 	len_st = strlen(st);
 	len_end = strlen(end);
+	if (len_st == 0 || len_end == 0) {
+		err(1, "Empty start or end label is not allowed");
+	}
 
 	off_t start_pos = 0;
 	off_t stop_pos = 0;
 	off_t param_pos = 0;
 
 	if (find_param == 1) {
+		if (param == NULL || newval == NULL) {
+			err(1, "Both --param and --newval are required together");
+		}
 		len_param = strlen(param);
-		newval_buf = malloc(len_param + strlen(newval) +
-		    3); // +2: extra char for quotes + \0
+		// Required size for "%s=\"%s\"\\n" is:
+		// len_param + len_newval + 5 ( '=', two quotes, newline, NUL )
+		newval_buf_size = (size_t)len_param + strlen(newval) + 5;
+		newval_buf = malloc(newval_buf_size);
+		if (newval_buf == NULL) {
+			err(1, "malloc failed for newval buffer");
+		}
 		printf("Find and replace param mode\r\n");
 		if ((fp = fopen(infile, "r+b")) == NULL) {
 			err(1, "error open for write: %s\r\n", infile);
@@ -146,9 +158,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	char buf_start[len_st];
-	char buf_end[len_end];
-	char buf_param[len_param];
+	// Remove unused variable-length buffers which could lead to issues when length is zero
 
 	int hammer = 0;
 	int hammer_param = 0;
@@ -178,10 +188,8 @@ main(int argc, char *argv[])
 				// we only respond if it is the beginning of a
 				// new line, stored in prev_c variable
 				if ((i == 0) && (prev_c == 10)) {
-					buf_start[i] = c;
 					i++;
 				} else if (i != 0) {
-					buf_start[i] = c;
 					i++;
 				}
 			} else {
@@ -193,6 +201,7 @@ main(int argc, char *argv[])
 				start_pos = ftello(fp) + 1;
 				// start sign found on start_pos (%ld)
 				hammer++;
+				i = 0; // reset index before matching end label
 			}
 			break;
 		case 1:
@@ -200,12 +209,8 @@ main(int argc, char *argv[])
 				// we only respond if it is the beginning of a
 				// new line, stored in prev_c variable
 				if ((i == 0) && (prev_c == 10)) {
-					// fprintf(stderr,"H2 PREV:
-					// [%c][%d]\n",prev_c,prev_c);
-					buf_end[i] = c;
 					i++;
 				} else if (i != 0) {
-					buf_end[i] = c;
 					i++;
 				}
 			} else {
@@ -214,7 +219,6 @@ main(int argc, char *argv[])
 
 			if (find_param == 1) {
 				if (c == param[j]) {
-					buf_param[j] = c;
 					j++;
 				} else {
 					j = 0;
@@ -222,11 +226,13 @@ main(int argc, char *argv[])
 				if (j == len_param) {
 					param_pos = ftello(fp) - len_param;
 					fseek(fp, param_pos, SEEK_SET);
-					sprintf(newval_buf, "%s=\"%s\"\n",
-					    param, newval);
-					fwrite(newval_buf, strlen(newval_buf),
-					    1, fp);
+					int written = snprintf(newval_buf, newval_buf_size, "%s=\"%s\"\n", param, newval);
+					if (written < 0 || (size_t)written >= newval_buf_size) {
+						err(1, "Failed to format new parameter value safely");
+					}
+					fwrite(newval_buf, (size_t)written, 1, fp);
 					find_param = 0;
+					free(newval_buf);
 					fclose(fp);
 					exit(0);
 				}
@@ -285,6 +291,16 @@ main(int argc, char *argv[])
 
 	free(st);
 	free(end);
+	free(infile);
+	if (outfile != NULL && strcmp(outfile, "/dev/stdout") != 0) {
+		free(outfile);
+	}
+	if (param) {
+		free(param);
+	}
+	if (newval) {
+		free(newval);
+	}
 
 	fclose(fo);
 	fclose(fp);

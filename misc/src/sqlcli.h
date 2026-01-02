@@ -13,7 +13,7 @@ const struct nodes_db nodesdb_info[] = {
 	{ "nodename", "TEXT UNIQUE PRIMARY KEY" }, { "ip", "TEXT" },
 	{ "port", "INTEGER" }, { "keyfile", "TEXT" }, { "rootkeyfile", "TEXT" },
 	{ "status", "INTEGER" }, { "invfile", "TEXT" },
-	{ "idle", "TIMESTAMP DATE DEFAULT (datetime('now','localtime'))" },
+	{ "idle", "TIMESTAMP DEFAULT (datetime('now','localtime'))" },
 	{ "\n", NULL }
 }; // this must be last
 

@@ -1,0 +1,149 @@
+#!/bin/sh
+# stop/start swtpm for VM
+# -a start -b /usr/local/bin/swtpm -d /usr/jails/jails-system/windows1/tpm -e error -p swtpm.pid -l tpm.log -v 20 -u swtpm-sock -s mystate
+# -a stop -b /usr/local/bin/swtpm -d /usr/jails/jails-system/windows1/tpm -e error -p swtpm.pid -l tpm.log -v 20 -u swtpm-sock -s mystate
+PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+ACTION=
+BIN_CMD=
+DST_DIR=
+ERROR_FILE=
+PID_FILE=
+LOG_FILE=
+VERBOSE_LEVEL=
+STATE_FILE=
+UNIX_SOCK_FILE=
+
+while getopts "a:b:d:e:p:l:v:s:u:" opt; do
+	case "${opt}" in
+		a)
+			ACTION="${OPTARG}"
+			;;
+		b)
+			BIN_CMD="${OPTARG}"
+			;;
+		d)
+			DST_DIR="${OPTARG}"
+			;;
+		e)
+			ERROR_FILE="${OPTARG}"
+			;;
+		p)
+			PID_FILE="${OPTARG}"
+			;;
+		l)
+			LOG_FILE="${OPTARG}"
+			;;
+		v)
+			VERBOSE_LEVEL="${OPTARG}"
+			;;
+		s)
+			STATE_FILE="${OPTARG}"
+			;;
+		u)
+			UNIX_SOCK_FILE="${OPTARG}"
+			;;
+	esac
+	shift $(($OPTIND - 1))
+done
+
+err() {
+	exitval=$1
+	shift
+	echo "$*" 1>&2
+	exit ${exitval}
+}
+
+pid_exist()
+{
+	local _pid=
+
+	_pid=$( ps axopid,state,ucomm,command -ww 2>/dev/null | while read pid state ucomm command; do
+		[ "${ucomm}" != "swtpm" ] && continue
+		echo "${command}" | grep -q ${DST_DIR}/${UNIX_SOCK_FILE}
+		_ret=$?
+
+		if [ ${_ret} -eq 0 ]; then
+			echo "${pid}"
+		fi
+	done )
+
+	if [ -n "${_pid}" ]; then
+		echo "${_pid}"
+		return 1
+	else
+		return 0
+	fi
+}
+
+start()
+{
+	local _pid= _ret=
+	_pid=$( pid_exist 2>/dev/null )
+	_ret=$?
+	if [ ${_ret} -eq 1 ]; then
+		echo "swtpm: already launched for ${DST_DIR}: ${_pid}"
+		return 0
+	fi
+
+	for i in ${STATE_FILE} ${UNIX_SOCK_FILE} ${PID_FILE} ${LOG_FILE} ${ERROR_FILE} ${ERROR_FILE}.result; do
+		[ -r ${DST_DIR}/${i} ] && rm -f ${DST_DIR}/${i}
+	done
+
+	cmd="${BIN_CMD} \
+		socket \
+		--tpmstate backend-uri=file://${DST_DIR}/${STATE_FILE} \
+		--tpm2 \
+		--server \
+		type=unixio,path=${DST_DIR}/${UNIX_SOCK_FILE} \
+		--log file=${DST_DIR}/${LOG_FILE},level=${VERBOSE_LEVEL},truncate \
+		--pid file=${DST_DIR}/${PID_FILE} \
+		--flags not-need-init \
+		--daemon"
+
+	[ -r ${DST_DIR}/${ERROR_FILE}.result ] && rm -f ${DST_DIR}/${ERROR_FILE}.result
+	[ -r ${DST_DIR}/${ERROR_FILE} ] && rm -f ${DST_DIR}/${ERROR_FILE}
+
+	${cmd} > ${DST_DIR}/${ERROR_FILE}.result 2>&1
+	_ret=$?
+
+	if [ ${_ret} -ne 0 ]; then
+		echo "error cmd: ${_cmd}" > ${DST_DIR}/${ERROR_FILE}
+		cat ${DST_DIR}/${ERROR_FILE}.result >> ${DST_DIR}/${ERROR_FILE}
+		rm -f ${DST_DIR}/${ERROR_FILE}.result
+	fi
+
+	return 0
+}
+
+stop()
+{
+	local _pid= _ret=
+	_pid=$( pid_exist 2>/dev/null )
+	_ret=$?
+	if [ ${_ret} -eq 1 ]; then
+		kill -9 ${_pid}
+	fi
+
+	for i in ${STATE_FILE} ${UNIX_SOCK_FILE} ${PID_FILE} ${LOG_FILE} ${ERROR_FILE} ${ERROR_FILE}.result; do
+		[ -r ${DST_DIR}/${i} ] && rm -f ${DST_DIR}/${i}
+	done
+
+	return 0
+}
+
+## MAIN
+[ -z "${ACTION}" ] && err 1 "empty: -a ACTION"
+[ ! -x "${BIN_CMD}" ] && err 1 "'-b BIN_CMD' not executable: ${BIN_CMD}"
+[ -z "${DST_DIR}" ] && err "empty: -d DST_DIR"
+[ ! -d "${DST_DIR}" ] && mkdir -p ${DST_DIR}
+
+case "${ACTION}" in
+	start|stop)
+		${ACTION}
+		;;
+	*)
+		err 1 "unknown action"
+		;;
+esac
+
+exit ${_ret}

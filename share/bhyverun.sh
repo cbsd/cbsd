@@ -1,5 +1,4 @@
 #!/bin/sh
-
 on_crash_status()
 {
 	local _ret=0
@@ -145,7 +144,7 @@ nic_address_cmd=
 . ${conf}
 
 # jailed process?
-jailed=$( sysctl -qn security.jail.jailed 2>/dev/null )
+jailed=$( ${SYSCTL_CMD} -qn security.jail.jailed 2>/dev/null )
 [ -z "${jailed}" ] && jailed=0
 [ -z "${chrooted}" ] && chrooted=0
 
@@ -174,6 +173,12 @@ fi
 
 orig_vnc_args="${vnc_args}"
 
+if [ ! -r "${workdir}/cmd.subr" ]; then
+	echo "no such ${workdir}/cmd.subr"
+	exit 1
+fi
+
+. "${workdir}/cmd.subr"
 . /usr/local/cbsd/cbsd.conf
 . ${subrdir}/nc.subr		# readconf
 # mod_cbsd_queue_enabled?
@@ -183,26 +188,28 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
-[ -z "${bhyve_cmd}" ] && bhyve_cmd="/usr/sbin/bhyve"
+if [ -n "${bhyve_cmd}" ]; then
+	BHYVE_CMD="${bhyve_cmd}"
+fi
 
-if [ ! -x "${bhyve_cmd}" ]; then
-	echo "bhyverun.sh: bhyve cmd not executable: ${bhyve_cmd}. Please set proper bhyve_cmd"
+if [ ! -x "${BHYVE_CMD}" ]; then
+	echo "bhyverun.sh: bhyve cmd not executable: ${BHYVE_CMD}. Please set proper bhyve_cmd"
 	exit 1
 fi
 
-[ -r ${vm_logfile} ] && /bin/rm -f ${vm_logfile}
-[ -r ${vm_logfile}.tmp ] && /bin/rm -f ${vm_logfile}.tmp
-[ -f ${tmpdir}/bhyvestop.${jname}.lock ] && /bin/rm -f ${tmpdir}/bhyvestop.${jname}.lock
+[ -r ${vm_logfile} ] && ${RM_CMD} -f ${vm_logfile}
+[ -r ${vm_logfile}.tmp ] && ${RM_CMD} -f ${vm_logfile}.tmp
+[ -f ${tmpdir}/bhyvestop.${jname}.lock ] && ${RM_CMD} -f ${tmpdir}/bhyvestop.${jname}.lock
 
 while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 
 	vnc_args="${orig_vnc_args}"
 
-	/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1
-	/bin/date > ${vm_logfile}
+	${BHYVECTL_CMD} --vm=${jname} --destroy > /dev/null 2>&1
+	${DATE_CMD} > ${vm_logfile}
 
 	if [ ${cd_boot_once} -ne 0 ]; then
-		echo "Boot from CD" | /usr/bin/tee -a ${vm_logfile}
+		echo "Boot from CD" | ${TEE_CMD} -a ${vm_logfile}
 	fi
 
 	case "${vm_boot}" in
@@ -232,7 +239,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 
 	if [ ${jailed} -eq 0 ]; then
 		for i in ${mytap}; do
-			/sbin/ifconfig ${i} up
+			${IFCONFIG_CMD} ${i} up
 		done
 	fi
 	if [ ${chrooted} -eq 1 ]; then
@@ -293,20 +300,6 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		fi
 	fi
 
-	# TPM args
-	if [ -n "${tpm}" ]; then
-		case "${tpm}" in
-			0)
-				;;
-			new)
-				echo "emulate tpm"
-				;;
-			*)
-				add_bhyve_opts="${add_bhyve_opts} -l tpm,passthru,${tpm}"
-				;;
-		esac
-	fi
-
 	if [ -n "${soundhw_args}" ]; then
 		if [ "${soundhw_args}" = "none" -o ${freebsdhostversion} -lt 1300034 ]; then
 			soundhw_args=
@@ -324,7 +317,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			break
 		else
 			. ${jailsysdir}/${jname}/live_migration.conf
-			my_hostname=$( cat ${workdir}/nodename | awk '{printf $1}' )
+			my_hostname=$( ${CAT_CMD} ${workdir}/nodename | ${AWK_CMD} '{printf $1}' )
 			if [ "${my_hostname}" = "${live_migration_dst_nodename}" ]; then
 				# this is for me!
 				live_migration_args="-R ${live_migration_args}"
@@ -339,8 +332,8 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		eval $( ${nic_address_cmd} )
 	fi
 
-	bhyve_cmd_run="env LIB9P_LOGGING=${jailsysdir}/${jname}/cbsd_lib9p.log /usr/bin/nice -n ${nice} ${bhyve_cmd} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
-	debug_bhyve_cmd_run="env LIB9P_LOGGING=${jailsysdir}/${jname}/cbsd_lib9p.log ${bhyve_cmd} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	bhyve_cmd_run="env LIB9P_LOGGING=${jailsysdir}/${jname}/cbsd_lib9p.log ${NICE_CMD} -n ${nice} ${BHYVE_CMD} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
+	debug_bhyve_cmd_run="env LIB9P_LOGGING=${jailsysdir}/${jname}/cbsd_lib9p.log ${BHYVE_CMD} ${bhyve_flags} -c ${vm_cpus} -m ${vm_ram} ${add_bhyve_opts} ${hostbridge_args} ${virtio_9p_args} ${uefi_boot_args} ${dsk_args} ${dsk_controller_args} ${cd_args} ${nic_args} ${nvme_args} ${virtiornd_args} ${pci_passthru_args} ${vnc_args} ${xhci_args} ${soundhw_args} ${lpc_args} ${console_args} ${efi_args} ${checkpoint_args} ${live_migration_args} ${jname}"
 
 	echo "[debug] ${bhyve_cmd_run}"
 	logger -t bhyverun.sh "[debug] ${bhyve_cmd_run}"
@@ -373,8 +366,8 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -batch --args ${debug_bhyve_cmd_run}"
-			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -ex run --args ${debug_bhyve_cmd_run}
+			echo "${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -batch --args ${debug_bhyve_cmd_run}"
+			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -ex run --args ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		lldb)
@@ -397,17 +390,17 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch LLDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}"
-			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}
+			echo "${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}"
+			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		*)
-			/usr/bin/lockf -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${bhyve_cmd_run} > ${vm_logfile}.tmp 2>&1
+			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${bhyve_cmd_run} > ${vm_logfile}.tmp 2>&1
 			bhyve_exit=$?
 			# remove special char used by bhyve output via tr
 			#cp -a ${vm_logfile}.tmp ${vm_logfile}.tmp1
-			tr -dC '[:print:]\t\n' < ${vm_logfile}.tmp >> ${vm_logfile}
-			rm -f ${vm_logfile}.tmp
+			${TR_CMD} -dC '[:print:]\t\n' < ${vm_logfile}.tmp >> ${vm_logfile}
+			${RM_CMD} -f ${vm_logfile}.tmp
 			;;
 	esac
 
@@ -416,7 +409,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	case ${bhyve_exit} in
 		0)
 			if [ -d ${jailsysdir}/${jname}/master_reboot.d ]; then
-				/usr/bin/find "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and  \( -perm -u=x -o -perm -g=x -o -perm -o=x \) -depth 1 -maxdepth 1 -exec /usr/bin/basename {} \; | while read _file; do
+				${FIND_CMD} "${jailsysdir}/${jname}/master_reboot.d" \( -type l -or -type f \) -and  \( -perm -u=x -o -perm -g=x -o -perm -o=x \) -depth 1 -maxdepth 1 -exec ${BASENAME_CMD} {} \; | while read _file; do
 					echo "  bhyverun: execute master reboot script:${_file}"
 					${jailsysdir}/${jname}/master_reboot.d/${_file}
 				done
@@ -429,7 +422,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 
 	if [ ${ret} -eq 0 ]; then
 		# exit from loop
-		touch ${tmpdir}/bhyvestop.${jname}.lock
+		${TOUCH_CMD} ${tmpdir}/bhyvestop.${jname}.lock
 		echo "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must stoppped"
 		logger -t bhyverun.sh "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must stopped"
 		case ${bhyve_exit} in
@@ -439,12 +432,12 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 				# bhyve error or crash
 				echo "See ${vm_logfile} for details"
 				echo
-				/usr/bin/tail -n50 ${vm_logfile}
+				${TAIL_CMD} -n50 ${vm_logfile}
 				echo "Sleep 1 seconds..."
 				sleep 1
 		esac
 	else
-		/usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1
+		${BHYVECTL_CMD} --vm=${jname} --destroy > /dev/null 2>&1
 		# for some reason, not always a virtual machine can start instantly
 		sleep 1
 		echo "bhyve exit code: ${bhyve_exit}. exit_action settings: ${exit_action}, exit_action_mode ret: ${ret}: must continue"
@@ -460,8 +453,7 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		vm_boot="hdd"
 
 		# replace hdd boot in conf
-		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_boot_once=0
-		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} vm_boot=hdd
+		/usr/local/cbsd/misc/cbsdsysrc -qf ${conf} cd_boot_once=0 vm_boot=hdd
 		# remove CD string for EFI
 		if [ "${vm_efi}" != "none" ]; then
 			if [ -n "${cd_args2}" ]; then
@@ -478,7 +470,22 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 	fi
 	reset
 	clear
+
+
+	## create UEFI VARS first boot backup. todo: custom vars filename?
+	if [ -r "${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd" ]; then
+		_bkp_exist=$( ${FIND_CMD} ${jailsysdir}/${jname}/  -mindepth 1 -maxdepth 1 -type f -name BHYVE_UEFI_VARS.fd-\*.bak )
+		if [ -z "${_bkp_exist}" ]; then
+			_dt=$( ${DATE_CMD} "+%Y-%m-%d" )
+			_bkp="BHYVE_UEFI_VARS.fd-${_dt}.bak"
+			_vars=$( ${miscdir}/efivar ${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd | ${GREP_CMD} -E -v '(^BootCurrent:)|(^BootOrder:)' | ${WC_CMD} -l | ${AWK_CMD} '{printf $1}' )
+			if [ ${_vars} -gt 2 ]; then
+				${CP_CMD} -a ${jailsysdir}/${jname}/BHYVE_UEFI_VARS.fd ${jailsysdir}/${jname}/${_bkp}
+			fi
+		fi
+	fi
 done
+
 
 # live migration todo
 # check for bhyve migrated successful to me ( bregister and/or bstatus passed ? )
@@ -492,9 +499,14 @@ if [ -x "${moduledir}/cbsd_queue.d/cbsd_queue" ]; then
 	[ "${cbsd_queue_name}" != "none" ] && /usr/local/bin/cbsd cbsd_queue cbsd_queue_name=${cbsd_queue_name} id=${jname} cmd=bstop status=2 data_status=0
 fi
 
+
 # extra destroy
-/usr/bin/nice -n ${nice} /usr/sbin/bhyvectl --vm=${jname} --destroy > /dev/null 2>&1 || true
-/bin/rm -f ${tmpdir}/bhyvestop.${jname}.lock
+${NICE_CMD} -n ${nice} ${BHYVECTL_CMD} --vm=${jname} --destroy > /dev/null 2>&1 || true
+${RM_CMD} -f ${tmpdir}/bhyvestop.${jname}.lock
+if [ "${tpm}" = "new" ]; then
+	/usr/local/cbsd/misc/daemonize /usr/local/cbsd/misc/swtpm -a stop -b ${SWTPM_CMD} -d ${jailsysdir}/${jname}/tpm -e error -p swtpm.pid -l tpm.log -v 20 -u swtpm-sock -s mystate
+fi
+
 # extra stop/cleanup
 /usr/local/bin/cbsd bstop cbsd_queue_name=none jname=${jname}
 

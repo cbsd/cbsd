@@ -28,7 +28,7 @@ SQLite version 3.8.6 2014-08-15 11:46:33
 Enter ".help" for usage hints.
 
 sqlite> .schema traffic
-CREATE TABLE traffic (  dt TIMESTAMP DATE DEFAULT (datetime('now','localtime')) UNIQUE PRIMARY KEY, incoming integer, outgoing integer  );
+CREATE TABLE traffic (  dt TIMESTAMP DEFAULT (datetime('now','localtime')) UNIQUE PRIMARY KEY, incoming integer, outgoing integer  );
 
 sqlite> select * from traffic order by dt desc limit 15;
 2014-09-20 15:00:52|142704274|4958246

@@ -42,12 +42,13 @@ get_dsk_controller()
 	local menu_list="
 		'virtio-blk'	'virtio block storage, direct'	'direct attached to motherboard'
 		'ahci-hd'	'ahci-hd controller, direct'	'direct attached to motherboard'
+		'nvme'		'NVME controller, direct'	'direct attached to motherboard'
 	" # END-QUOTE
 
 	if [ -n "${jname}" ]; then
 		_dsk_controller_name=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM bhyve_dskcontroller WHERE name != "0" | ${XARGS_CMD} )
 		for i in ${_dsk_controller_name}; do
-			_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM bhyve_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+			_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT type FROM bhyve_dskcontroller WHERE name='${_dsk_controller_name}'" )
 			menu_list="${menu_list} '${i}'	'${_dsk_controller_type} controller'	'controller attached to arbitrary devices'"
 		done
 	fi
@@ -108,16 +109,23 @@ get_controller_id()
 # form for $new_dsk_size
 get_dsk_size()
 {
-	local _input _defsize="20g"
+	local _input _defsize="20g" last_new_dsk_size=
 
 	f_dialog_title " image size "
-
 	[ -n "${new_dsk_size}" ] && _defsize="${new_dsk_size}"
+
+	if [ -r ${tmpdir}/get_dsk_size.conf ]; then
+		. ${tmpdir}/get_dsk_size.conf
+		[ -n "${last_new_dsk_size}" ] && _defsize="${last_new_dsk_size}"
+	fi
 
 	f_dialog_input _input "Input size, eg: 20g" "${_defsize}" \
 		"${_message}" || return $?
 
-	[ -n "${_input}" ] && new_dsk_size="${_input}"
+	if [ -n "${_input}" ]; then
+		echo "last_new_dsk_size=\"${_input}\"" > ${tmpdir}/get_dsk_size.conf
+		new_dsk_size="${_input}"
+	fi
 }
 
 
@@ -133,10 +141,9 @@ add_dsk()
 	local newdsk=
 	local sectorsize=
 	local serial=
-	local _res _msg i _zvol_opt=
+	local _res= _msg= i= _zvol_opt=
 	local _ctr_list= _ctr_exist=0
-	local data
-
+	local data=
 
 	while getopts "c:d:i:n:o:s:z:" opt; do
 		case "${opt}" in
@@ -253,10 +260,15 @@ add_dsk()
 		fi
 	fi
 
+#	if [ -n "${controller}" ]; then
+#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( \"${jname}\",\"${controller}\",\"${newdsk}\","0",\"${sectorsize}\",\"${serial}\" )"
+#	else
+#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( \"${jname}\",\"${newdsk}\","0",\"${sectorsize}\",\"${serial}\" )"
+#	fi
 	if [ -n "${controller}" ]; then
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( \"${jname}\",\"${controller}\",\"${newdsk}\","0",\"${sectorsize}\",\"${serial}\" )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( '${jname}','${controller}','${newdsk}',"0",'${sectorsize}','${serial}' )"
 	else
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( \"${jname}\",\"${newdsk}\","0",\"${sectorsize}\",\"${serial}\" )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_sectorsize,dsk_serial ) VALUES ( '${jname}','${newdsk}',"0",'${sectorsize}','${serial}' )"
 	fi
 
 	return 0

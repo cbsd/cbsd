@@ -1,0 +1,312 @@
+/*
+ * XML Parser for CPU topology files
+ * Parses XML files with information about sockets, cores and threads
+ * 
+ * Usage: ./a.out [path_to_file.xml]
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX_LINE 1024
+#define MAX_CPUS 128
+#define MAX_SOCKETS 16
+
+// Structure for storing CPU group
+typedef struct {
+	int cpu_ids[MAX_CPUS];	// Array of processor IDs
+	int count;				// Number of processors in group
+} cpu_group_t;
+
+// Structure for storing processor topology
+typedef struct {
+	cpu_group_t cores[MAX_SOCKETS];		// Cores by sockets
+	cpu_group_t threads[MAX_SOCKETS];	// Threads by sockets
+	int socket_count;					// Number of sockets
+	int total_cores;					// Total number of cores
+	int total_threads;					// Total number of threads
+	int max_cores;						// Maximum number of cores per socket
+} topology_t;
+
+// Function to trim whitespace from beginning and end of string
+void trim(char *str) {
+	char *end;
+	while (isspace((unsigned char)*str)) str++;
+	if (*str == 0) return;
+	end = str + strlen(str) - 1;
+	while (end > str && isspace((unsigned char)*end)) end--;
+	end[1] = '\0';
+}
+
+// Function to extract attribute value from XML tag
+char* get_attribute_value(const char *line, const char *attr_name) {
+	char search_str[256];
+	sprintf(search_str, "%s=\"", attr_name);
+	char *start = strstr(line, search_str);
+	if (!start) return NULL;
+	
+	start += strlen(search_str);
+	char *end = strchr(start, '"');
+	if (!end) return NULL;
+	
+	int len = end - start;
+	char *value = malloc(len + 1);
+	strncpy(value, start, len);
+	value[len] = '\0';
+	return value;
+}
+
+// Function to analyze XML file
+void parse_xml_file(const char *filename, topology_t *topology) {
+	FILE *file = fopen(filename, "r");
+	if (!file) {
+		fprintf(stderr, "Error opening file %s\n", filename);
+		return;
+	}
+	
+	// Initialize structure
+	memset(topology, 0, sizeof(topology_t));
+	
+	char line[MAX_LINE];
+	int current_level = 0;
+	int current_socket = 0;
+	int max_level = 0;
+	
+	// First determine maximum level in file
+	while (fgets(line, sizeof(line), file)) {
+		if (strstr(line, "<group") && strstr(line, "level=")) {
+			char *level_str = get_attribute_value(line, "level");
+			if (level_str) {
+				int level = atoi(level_str);
+				if (level > max_level) max_level = level;
+				free(level_str);
+			}
+		}
+	}
+	
+	// Return to beginning of file
+	rewind(file);
+	
+	// Determine topology type
+	int is_multi_socket = (max_level >= 3);
+	
+	if (is_multi_socket) {
+		// Multi-socket topology
+		while (fgets(line, sizeof(line), file)) {
+			trim(line);
+			
+			// Search for <group> tag with level attribute
+			if (strstr(line, "<group") && strstr(line, "level=")) {
+				char *level_str = get_attribute_value(line, "level");
+				if (level_str) {
+					current_level = atoi(level_str);
+					
+					if (current_level == 2) {
+						current_socket = topology->socket_count;
+						topology->socket_count++;
+					}
+					
+					free(level_str);
+				}
+			}
+			
+			// Search for <cpu> tag with count attribute
+			if (strstr(line, "<cpu") && strstr(line, "count=")) {
+				char *count_str = get_attribute_value(line, "count");
+				if (count_str) {
+					free(count_str);
+					
+					char *start = strchr(line, '>');
+					if (start) {
+						start++;
+						char *end = strstr(start, "</cpu>");
+						if (end) {
+							int len = end - start;
+							char cpu_content[MAX_LINE];
+							strncpy(cpu_content, start, len);
+							cpu_content[len] = '\0';
+							trim(cpu_content);
+							
+							if (current_level == 2) {
+								// Level 2 - these are sockets, add all CPUs as cores
+								char *str_copy = strdup(cpu_content);
+								char *token = strtok(str_copy, ",");
+								
+								while (token != NULL && topology->cores[current_socket].count < MAX_CPUS) {
+									trim(token);
+									int cpu_id = atoi(token);
+									topology->cores[current_socket].cpu_ids[topology->cores[current_socket].count] = cpu_id;
+									topology->cores[current_socket].count++;
+									token = strtok(NULL, ",");
+								}
+								
+								free(str_copy);
+							} else if (current_level == 3) {
+								// Level 3 - these are thread groups
+								char *str_copy = strdup(cpu_content);
+								char *token = strtok(str_copy, ",");
+								int cpu_index = 0;
+								
+								while (token != NULL && cpu_index < 2) {
+									trim(token);
+									int cpu_id = atoi(token);
+									
+									if (cpu_index == 1) {
+										// Second CPU is a thread
+										topology->threads[current_socket].cpu_ids[topology->threads[current_socket].count] = cpu_id;
+										topology->threads[current_socket].count++;
+									}
+									
+									cpu_index++;
+									token = strtok(NULL, ",");
+								}
+								
+								free(str_copy);
+							}
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// Single-socket topology
+		topology->socket_count = 1;
+		
+		while (fgets(line, sizeof(line), file)) {
+			trim(line);
+			
+			// Search for <group> tag with level attribute
+			if (strstr(line, "<group") && strstr(line, "level=")) {
+				char *level_str = get_attribute_value(line, "level");
+				if (level_str) {
+					current_level = atoi(level_str);
+					free(level_str);
+				}
+			}
+			
+			// Search for <cpu> tag with count attribute
+			if (strstr(line, "<cpu") && strstr(line, "count=")) {
+				char *count_str = get_attribute_value(line, "count");
+				if (count_str) {
+					free(count_str);
+					
+					char *start = strchr(line, '>');
+					if (start) {
+						start++;
+						char *end = strstr(start, "</cpu>");
+						if (end) {
+							int len = end - start;
+							char cpu_content[MAX_LINE];
+							strncpy(cpu_content, start, len);
+							cpu_content[len] = '\0';
+							trim(cpu_content);
+							
+							if (current_level == 2) {
+								// Level 2 - these are thread groups
+								char *str_copy = strdup(cpu_content);
+								char *token = strtok(str_copy, ",");
+								int cpu_index = 0;
+								
+								while (token != NULL && cpu_index < 2) {
+									trim(token);
+									int cpu_id = atoi(token);
+									
+									if (cpu_index == 0) {
+										// First CPU is a core
+										topology->cores[0].cpu_ids[topology->cores[0].count] = cpu_id;
+										topology->cores[0].count++;
+									} else if (cpu_index == 1) {
+										// Second CPU is a thread
+										topology->threads[0].cpu_ids[topology->threads[0].count] = cpu_id;
+										topology->threads[0].count++;
+									}
+									
+									cpu_index++;
+									token = strtok(NULL, ",");
+								}
+								
+								free(str_copy);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Calculate total values
+	topology->total_cores = 0;
+	topology->total_threads = 0;
+	topology->max_cores = 0;
+	
+	for (int i = 0; i < topology->socket_count; i++) {
+		topology->total_cores += topology->cores[i].count;
+		topology->total_threads += topology->threads[i].count;
+		if (topology->cores[i].count > topology->max_cores) {
+			topology->max_cores = topology->cores[i].count;
+		}
+	}
+	
+	fclose(file);
+}
+
+// Function to output results in required format
+void print_results(const topology_t *topology) {
+	printf("sockets_num=\"%d\"\n", topology->socket_count);
+	printf("cores_num=\"%d\"\n", topology->total_cores);
+	printf("threads_num=\"%d\"\n", topology->total_threads);
+	printf("cores_max=\"%d\"\n", topology->max_cores);
+	printf("\n");
+	
+	for (int i = 0; i < topology->socket_count; i++) {
+		printf("cores_by_socket%d=\"", i);
+		for (int j = 0; j < topology->cores[i].count; j++) {
+			printf("%d", topology->cores[i].cpu_ids[j]);
+			if (j < topology->cores[i].count - 1) printf(" ");
+		}
+		printf("\"\n");
+		
+		printf("threads_by_socket%d=\"", i);
+		for (int j = 0; j < topology->threads[i].count; j++) {
+			printf("%d", topology->threads[i].cpu_ids[j]);
+			if (j < topology->threads[i].count - 1) printf(" ");
+		}
+		printf("\"\n");
+	}
+}
+
+// Function to display help
+void print_usage(const char *program_name) {
+	printf("Usage: %s [path_to_file.xml]\n", program_name);
+	printf("\n");
+	printf("Examples:\n");
+	printf("  %s                    # Uses default file\n", program_name);
+	printf("  %s /home/xml/1.xml    # Specifies specific file\n", program_name);
+}
+
+int main(int argc, char *argv[]) {
+	const char *filename = "/tmp/2.xml";
+
+	// Process command line arguments
+	if (argc > 2) {
+		fprintf(stderr, "Error: too many arguments\n");
+		print_usage(argv[0]);
+		return 1;
+	}
+	
+	if (argc == 2) {
+		if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+			print_usage(argv[0]);
+			return 0;
+		}
+		filename = argv[1];
+	}
+	
+	topology_t topology;
+	parse_xml_file(filename, &topology);
+	print_results(&topology);
+	
+	return 0;
+} 

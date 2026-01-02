@@ -70,6 +70,7 @@ oquiet=0
 . ${subrdir}/bhyve.subr
 . ${subrdir}/xen.subr
 . ${subrdir}/virtual.subr
+. ${subrdir}/time.subr
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
@@ -454,6 +455,7 @@ storage_detach()
 	attached_to_me=$( cbsdsqlro storage_media "SELECT jname FROM media WHERE path='${path}' AND ( name='${name}' OR NAME='${name}.vhd' ) AND jname='${jname}' LIMIT 1" )
 	[ "${attached_to_me}" != "${jname}" ] && err 1 "${N1_COLOR}disk ${name} with name:${name} and path:${path} is not attached to: ${N2_COLOR}${jname}${N0_COLOR}"
 
+	# mutli-attach ?
 	attached_to_jname=$( cbsdsqlro storage_media "SELECT jname FROM media WHERE path='${path}' AND ( name='${name}' OR NAME='${name}.vhd' ) AND jname!='${jname}' LIMIT 1" )
 
 	# not attached?
@@ -483,11 +485,17 @@ storage_detach()
 	esac
 
 	if [ -n "${attached_to_jname}" ]; then
-		# shared disk: delete record with my jname
-		sql="DELETE FROM media WHERE ( name='${dsk_name}' name='${dsk_name}.vhd' )  AND path='${dsk_path}' AND jname='${jname}'"
+		# shared or ISO disk which is presented to more than one environment: delete record with my jname
+		sql="DELETE FROM media WHERE ( name='${dsk_name}' OR name='${dsk_name}.vhd' ) AND path='${dsk_path}' AND jname='${jname}'"
 	else
 		# disk is orphaned now: drop to '-' jname
 		sql="UPDATE media SET jname='-' WHERE jname='${jname}' AND ( name='${dsk_name}' OR name='${dsk_name}.vhd' ) AND path='${dsk_path}'"
+	fi
+
+	# also try to remove from pcibus
+	if [ -r "${jailsysdir}/${jname}/local.sqlite" ]; then
+		cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "DELETE FROM pcibus WHERE pcislot_name='ahci-cd' AND pcislot_desc LIKE '${dsk_path}-%'"
+		cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "DELETE FROM pcibus_run WHERE pcislot_name='ahci-cd' AND pcislot_desc LIKE '${dsk_path}-%'"
 	fi
 
 	[ ${quiet} -ne 1 ] && echo "${sql}"
@@ -505,6 +513,8 @@ storage_detach()
 			;;
 		iso)
 			bset quiet=${quiet} jname=${jname} vm_iso_path=''
+			# remove ISO data
+			/usr/local/cbsd/misc/daemonize /usr/local/cbsd/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/etc/vm-${vm_os_type}-${vm_os_profile}.conf iso_img="" iso_site="" register_iso_as="" register_iso_name="" iso_img2="" iso_site2="" register_iso_as2="" register_iso_name2="" >/dev/null 2>&1
 			;;
 	esac
 
@@ -535,7 +545,7 @@ which_vm_depens_on_zvol()
 try_to_rm()
 {
 	local path="${1}"
-	local _vm_list
+	local _vm_list=
 
 	[ -z "${path}" ] && err 1 "${N1_COLOR}media: try_to_rm: empty path${N0_COLOR}"
 
@@ -676,13 +686,11 @@ case "${mode}" in
 
 			# need before actual delete from SQL due to zvol deps check
 			[ "${type}" = "iso" ] && try_to_rm ${path}
-
 			if [ "${jname}" = "-" ]; then
 				cbsdsqlrw storage_media "DELETE FROM media WHERE name='${name}' AND path='${path}' AND type='${type}'"
 			else
 				cbsdsqlrw storage_media "DELETE FROM media WHERE name='${name}' AND path='${path}' AND type='${type}' AND jname='${jname}'"
 			fi
-
 		else
 			if [ -n "${name}" ]; then
 				select_by_name
@@ -735,10 +743,13 @@ case "${mode}" in
 		err 0 "${N1_COLOR}Deleted${N0_COLOR}"
 		;;
 	deleteall|removeall)
-		for i in $( cbsdsqlro storage_media SELECT path FROM media WHERE type != 'hdd' ); do
+		st_time=$( ${DATE_CMD} +%s )
+		[ -z "${FULL_ST_TIME}" ] && FULL_ST_TIME="${st_time}"
+		for i in $( cbsdsqlro storage_media "SELECT path FROM media WHERE type != 'hdd'" ); do
 			${ECHO} "${N1_COLOR}removing: ${N2_COLOR}${i}${N1_COLOR} ...${N0_COLOR}"
 			media mode=remove path="${i}" type="iso"
 		done
+		time_stats "${N1_COLOR}media deleteall"
 		exit 0
 		;;
 	update)
@@ -766,7 +777,6 @@ case "${mode}" in
 		sqldelimer=${osqldelimer}
 		;;
 	*)
-
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
 		;;
 esac

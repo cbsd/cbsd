@@ -1,16 +1,38 @@
 #!/usr/local/bin/cbsd
 #v10.1.2
 MYARG=""
-MYOPTARG="dst rev"
+MYOPTARG="dst rev checkout_method"
 MYDESC="Update FreeBSD ports tree in /usr/ports"
-ADDHELP="\
- dst= alternative path instead of /usr/ports\n\
- rev=XXX where XXX - scm revision (req. for turn off --depth=1 via config\n\
+ADDHELP="
+
+${H3_COLOR}Description${N0_COLOR}:
+
+Checkout and/or update FreeBSD ports tree ( /usr/ports dir )
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}checkout_method=${N0_COLOR}  - <method, alternative checkout method. Default is: 'gitup git';
+ ${N2_COLOR}dst=${N0_COLOR}              - <path>, alternative path, default: /usr/ports;
+ ${N2_COLOR}rev=${N0_COLOR}              - <revision>, alternative checkout commit, default: 'head';
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd portsup checkout_method=gitup
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd srcup --help
+
 "
 
 . ${subrdir}/nc.subr
-readconf portsup.conf
+checkout_method=
+ocheckout_method=
 . ${cbsdinit}
+
+[ -n "${checkout_method}" ] && ocheckout_method="${checkout_method}"
+readconf portsup.conf
+[ -n "${ocheckout_method}" ] && checkout_method="${ocheckout_method}"
 
 init_svn()
 {
@@ -21,7 +43,8 @@ init_svn()
 	elif [ -f "/usr/local/bin/svn" ]; then
 		SCM="/usr/local/bin/svn"
 	else
-		err 1 "${N1_COLOR}No svn in the base. Please install devel/subversion${N0_COLOR}"
+		${ECHO} "${N1_COLOR}No svn in the base. Please install devel/subversion${N0_COLOR}"
+		return 1
 	fi
 
 	if [ -z "${scmbase}" ]; then
@@ -40,7 +63,8 @@ init_git()
 	if [ -f "/usr/local/bin/git" ]; then
 		SCM="/usr/local/bin/git"
 	else
-		err 1 "${N1_COLOR}no git in the base. please install: ${N2_COLOR}pkg install -y devel/git${N0_COLOR}"
+		${ECHO} "${N1_COLOR}no git in the base. please install: ${N2_COLOR}pkg install -y devel/git${N0_COLOR}"
+		return 1
 	fi
 
 	if [ -z "${scmbase}" ]; then
@@ -67,7 +91,33 @@ init_git()
 	return 0
 }
 
-svn_checkout()
+init_gitup()
+{
+	SCM=
+
+	if [ -f "/usr/local/bin/gitup" ]; then
+		SCM="/usr/local/bin/gitup"
+	else
+		${ECHO} "${N1_COLOR}no gitup in the base. please install: ${N2_COLOR}pkg install -y net/gitup${N0_COLOR}"
+		return 1
+	fi
+
+#	if [ -z "${scmbase}" ]; then
+#		[ -z "${GITBASE}" ] && err 1 "${N1_COLOR}empty GITBASE variable. Please specify GITBASE via ${N2_COLOR}srcup.conf${N0_COLOR}"
+#		scmbase="${GITBASE}"
+#	fi
+#	SCM_URL="${scmbase}"
+
+	if [ -d "${dst}/.git" ]; then
+		${ECHO} "A .git directory was found -- gitup does not update this directory which will cause problems for the official Git client."
+		${ECHO} "If you wish to use gitup, please remove /usr/ports/.git and rerun gitup"
+		return 1
+	fi
+
+	return 0
+}
+
+checkout_svn()
 {
 	local _srcdir
 
@@ -84,7 +134,7 @@ svn_checkout()
 	nice -n 19 ${IDLE_IONICE} ${SCM} checkout -r ${rev} ${SCM_URL} ${_srcdir}
 }
 
-git_checkout()
+checkout_git()
 {
 	local _depth _remotes _origin
 	local _ret=0 _p2 _branch
@@ -140,15 +190,20 @@ git_checkout()
 	return ${_ret}
 }
 
+checkout_gitup()
+{
+	local _ret=
+	${ECHO} "${N1_COLOR}selected branch: ${N2_COLOR}${SCM_GIT_BRANCH}${N0_COLOR}"
+	nice -n 19 ${IDLE_IONICE} ${SCM} ports
+	_ret=$?
+
+	return ${_ret}
+}
 
 ### MAIN ###
 . ${subrdir}/build.subr
 readconf buildworld.conf
 . ${subrdir}/universe.subr
-
-set +e
-. ${subrdir}/build.subr
-set -e
 
 [ -z "${dst}" ] && dst="/usr/ports"
 
@@ -175,22 +230,29 @@ if [ "${platform}" = "DragonFly" ]; then
 	exit $?
 fi
 
+
+[ -z "${checkout_method}" ] && err 1 "${N1_COLOR}empty checkout method (valid: git,gitup,svn). Please specify it via: ${N2_COLOR}portsup.conf${N0_COLOR}"
+
 [ ! -d "${dst}" ] && ${MKDIR_CMD} -p ${dst}
 
-case "${checkout_method}" in
-	svn*)
-		init_svn
-		svn_checkout
-		;;
-	git*)
-		init_git
-		git_checkout
-		;;
-	*)
-		err 1 "${ECHO}Unknown checkout method. Please specify it via: ${N2_COLOR}portsup.conf${N0_COLOR}"
-esac
+for cur_checkout_method in ${checkout_method}; do
+	${ECHO} "${N1_COLOR}Using method: ${N2_COLOR}${cur_checkout_method}${N0_COLOR}"
+	case "${cur_checkout_method}" in
+		git|gitup|svn)
+			init_${cur_checkout_method}
+			_ret=$?
+			[ ${_ret} -ne 0 ] && continue
+			checkout_${cur_checkout_method}
+			;;
+		*)
+			err 1 "${N1_COLOR}unknown checkout method (${cur_checkout_method}, valid: git,gitup,svn). Please specify it via: ${N2_COLOR}portsup.conf${N0_COLOR}"
+			;;
+	esac
+done
 
 end_time=$( ${DATE_CMD} +%s )
 diff_time=$(( end_time - st_time ))
 diff_time=$( displaytime ${diff_time} )
 ${ECHO} "${N1_COLOR}${CBSD_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+
+exit 0

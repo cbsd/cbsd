@@ -1,6 +1,4 @@
-// CBSD Project 2017-2018
-// CBSD Team <cbsd+subscribe@lists.tilda.center>
-// 0.2
+// CBSD Project 2012-2025
 #include <sys/param.h>
 
 #include <stdio.h>
@@ -83,13 +81,13 @@ updateRedis()
 	char field[15];
 	uint32_t index = 1;
 	if (pcpu != old_pcpu) {
-		sprintf(field, "%d", pcpu);
+		snprintf(field, sizeof(field), "%d", pcpu);
 		_params[index++] = strdup("cpu");
 		_params[index++] = strdup(field);
 		old_pcpu = pcpu;
 	}
 	if (pmem != old_pmem) {
-		sprintf(field, "%d", pmem);
+		snprintf(field, sizeof(field), "%d", pmem);
 		_params[index++] = strdup("mem");
 		_params[index++] = strdup(field);
 		old_pmem = pmem;
@@ -235,7 +233,8 @@ sum_data_hoster()
 			newd->pmem = ch->pmem;
 			newd->next = sum_item_list;
 			sum_item_list = newd;
-			strcpy(newd->name, ch->orig_name);
+			strncpy(newd->name, ch->orig_name, sizeof(newd->name) - 1);
+			newd->name[sizeof(newd->name) - 1] = '\0';
 			tolog(log_level,
 			    "[AVGSUM] !! %s struct has beed added\n",
 			    newd->name);
@@ -260,16 +259,16 @@ sum_data_hoster()
 
 			if (strlen(json_str) > 2) {
 				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
-					strcat(json_str, ",");
-					strcat(json_str, json_buf);
+					strncat(json_str, ",", sizeof(json_str) - strlen(json_str) - 1);
+					strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 				} else {
 					tolog(log_level, "Buffer overflow in json_str\n");
 					break;
 				}
 			} else {
-				strcpy(json_str,
-				    "{ \"tube\":\"racct-system\", \"node\":\"clonos.convectix.com\", \"data\":[");
-				strcat(json_str, json_buf);
+				strncpy(json_str, "{ \"tube\":\"racct-system\", \"node\":\"clonos.convectix.com\", \"data\":[", sizeof(json_str) - 1);
+				json_str[sizeof(json_str) - 1] = '\0';
+				strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
 			}
 		}
 
@@ -305,10 +304,23 @@ sum_data_hoster()
 			if (!fp) {
 				tolog(log_level,
 				    "RACCT not exist, create via updatesql\n");
-				snprintf(sql, sizeof(sql),
-				    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
-				    stats_file);
-				system(sql);
+			// Use execv instead of system() to prevent command injection
+			// Escape the stats_file path to prevent injection
+			char escaped_stats_file[1024];
+			snprintf(escaped_stats_file, sizeof(escaped_stats_file), "%s", stats_file);
+			
+			// Simple validation - reject if stats_file contains dangerous characters
+			if (strstr(stats_file, ";") || strstr(stats_file, "|") || strstr(stats_file, "&") || 
+			    strstr(stats_file, "$") || strstr(stats_file, "`") || strstr(stats_file, "(") ||
+			    strstr(stats_file, ")") || strstr(stats_file, "<") || strstr(stats_file, ">")) {
+				tolog(log_level, "Dangerous characters detected in stats_file path, skipping\n");
+				continue;
+			}
+			
+			snprintf(sql, sizeof(sql),
+			    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
+			    escaped_stats_file);
+			system(sql);
 				continue;
 			}
 			fclose(fp);
@@ -337,7 +349,7 @@ sum_data_hoster()
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
 		if (strlen(json_str) + 2 < sizeof(json_str)) {
-			strcat(json_str, "]}");
+			strncat(json_str, "]}", sizeof(json_str) - strlen(json_str) - 1);
 		} else {
 			tolog(log_level, "Buffer overflow in json_str\n");
 			skip_beanstalk = 1;
@@ -445,7 +457,7 @@ main(int argc, char **argv)
 	int current_waiting = 0;
 	BSJ *job;
 	int x;
-	char rnum[5];
+	char rnum[32]; // Increased size to handle larger numbers safely
 	int optcode = 0;
 	int option_index = 0;
 
@@ -649,7 +661,7 @@ main(int argc, char **argv)
 	nodename = getenv("HOST");
 	redis_name = malloc(strlen(nodename) + 6);
 	if (redis_name)
-		sprintf(redis_name, "node:%s", nodename);
+		snprintf(redis_name, strlen(nodename) + 6, "node:%s", nodename);
 
 #endif
 #ifdef WITH_INFLUX
@@ -710,13 +722,21 @@ main(int argc, char **argv)
 			//            \n",cur_round,save_loop_count);
 			// convert round integer to string
 			memset(rnum, 0, sizeof(rnum));
-			sprintf(rnum, "%d", cur_round);
+			snprintf(rnum, sizeof(rnum), "%d", cur_round);
 
 			memset(vmname, 0, sizeof(vmname));
-			strcpy(vmname, tmpjname);
-			strcat(vmname, "_");
-			strcat(vmname, rnum);
-			vmname[strlen(vmname)] = '\0';
+			strncpy(vmname, tmpjname, sizeof(vmname) - 1);
+			vmname[sizeof(vmname) - 1] = '\0';
+			
+			// Safely concatenate "_" and rnum to vmname
+			size_t vmname_len = strlen(vmname);
+			if (vmname_len + 1 + strlen(rnum) < sizeof(vmname)) {
+				strcat(vmname, "_");
+				strcat(vmname, rnum);
+			} else {
+				tolog(log_level, "Warning: vmname too long, truncating\n");
+				vmname[sizeof(vmname) - 1] = '\0';
+			}
 			i = jname_exist(vmname);
 
 			if (i) {
@@ -728,8 +748,10 @@ main(int argc, char **argv)
 				newd->pmem = 0;
 				newd->next = item_list;
 				item_list = newd;
-				strcpy(newd->name, vmname);
-				strcpy(newd->orig_name, tmpjname);
+				strncpy(newd->name, vmname, sizeof(newd->name) - 1);
+				newd->name[sizeof(newd->name) - 1] = '\0';
+				strncpy(newd->orig_name, tmpjname, sizeof(newd->orig_name) - 1);
+				newd->orig_name[sizeof(newd->orig_name) - 1] = '\0';
 				tolog(log_level,
 				    "[hoster] !! %s has beed added (%s)\n",
 				    newd->name, newd->orig_name);

@@ -1,0 +1,1108 @@
+#!/usr/local/bin/cbsd
+#v15.0.0
+MYDESC="console dialog wizard for VM profile creation"
+MYARG=""
+MYOPTARG=""
+EXTHELP=""
+
+. ${subrdir}/nc.subr
+. ${cbsdinit}
+. ${subrdir}/settings-tui.subr
+. ${subrdir}/settings-tui-jail.subr
+
+# $1 - filename
+get_file_ext()
+{
+	local _filename="${1}"
+	local _ext=${_filename##*.}
+
+	[ "${_filename}" = "${_ext}" ] && _ext=""
+	echo "${_ext}"
+}
+
+# $wizard_mode
+get_wizard_mode()
+{
+	local _res= _ret=
+	local pos=0
+	local _resfile=
+
+	_res=$( tty )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && exit 1
+	[ "${_res}" = "not a tty" ] && exit 1
+
+	echo
+	export wizard_mode=""
+
+	get_source_msg="${H2_COLOR}${BOLD}${H1_COLOR} * Please type of profile: 'ISO', 'CLOUD':"
+	${ECHO} "${BOLD}${get_source_msg}"
+	${ECHO} "${N0_COLOR}   - At the moment, the cloud image wizard is only supported for FreeBSD guests;"
+	${ECHO} "${N0_COLOR}   - PXE requires the presence of a 'cbsdpxe' jail/storage container;"
+	echo
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}" HUP INT ABRT BUS TERM EXIT
+
+	TPUT_CMD=$( which tput 2>/dev/null )
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} civis
+
+	trap "[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm; echo; exit 1" HUP INT ABRT BUS TERM EXIT
+
+	while : ; do
+		SELECTOR=
+		SELECTOR_PRE="${UNDERLINE}${H7_COLOR}>[ ${H3_COLOR}${BOLD}"
+		SELECTOR_POST="${H7_COLOR} ]<${N0_COLOR}"
+
+		case ${pos} in
+			0)
+				printf "${SELECTOR_PRE}(i)ISO${SELECTOR_POST}   (c)CLOUD     (z)CANCEL    \r"
+				_res="iso"
+				;;
+			1)
+				printf "   (i)ISO   ${SELECTOR_PRE}(c)CLOUD${SELECTOR_POST}  (z)CANCEL    \r"
+				_res="cloud"
+				;;
+			2)
+				printf "   (i)ISO      (c)CLOUD  ${SELECTOR_PRE}(z)CANCEL${SELECTOR_POST}\r"
+				_res="cancel"
+				;;
+		esac
+
+		opmode=$( /usr/local/cbsd/misc/getch )
+		_ret=$?
+		if [ ${_ret} -ge 100 ]; then
+			echo
+			exit 1
+		fi
+
+		case "${opmode}" in
+			68)
+				pos=$(( pos - 1 ))
+				[ ${pos} -lt 0 ] && pos=2
+				;;
+			67)
+				pos=$(( pos + 1 ))
+				[ ${pos} -gt 2 ] && pos=0
+				;;
+			i)
+				pos=0
+				;;
+			c)
+				pos=1
+				;;
+			z)
+				pos=2
+				;;
+			27)
+				echo
+				exit 0
+				;;
+			'')
+				echo "${_res}" > ${_resfile}
+				echo
+				break
+				;;
+		esac
+	done
+
+	_ret=$?
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	_res=
+	[ -r ${_resfile} ] && read -r _res < ${_resfile}
+	${RM_CMD} -f ${_resfile}
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm
+	case "${_res}" in
+		iso|cloud)
+			export wizard_mode="${_res}"
+			return 0
+			;;
+		cancel)
+			exit 0
+			;;
+	esac
+
+	return 1
+}
+
+# $get_guest_fs
+get_guest_fs()
+{
+	local _res= _ret=
+	local pos=0
+	local _resfile=
+
+	_res=$( tty )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && exit 1
+	[ "${_res}" = "not a tty" ] && exit 1
+
+	echo
+	export wizard_mode=""
+
+	get_source_msg="${H2_COLOR}${BOLD}${H1_COLOR} * Please select the primary FS for the guest: 'UFS2', 'ZFS', 'P9FS', 'NFSv3', 'NFSv4', 'ISCSI':"
+	${ECHO} "${BOLD}${get_source_msg}"
+	${ECHO} "${N0_COLOR}   (P9FS/NFSv4/NFSv4/ISCSI will mount the remote file system before multi-user mode)"
+	echo
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}" HUP INT ABRT BUS TERM EXIT
+
+	TPUT_CMD=$( which tput 2>/dev/null )
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} civis
+
+	trap "[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm; echo; exit 1" HUP INT ABRT BUS TERM EXIT
+
+
+	while : ; do
+		SELECTOR=
+		SELECTOR_PRE="${UNDERLINE}${H7_COLOR}>[ ${H3_COLOR}${BOLD}"
+		SELECTOR_POST="${H7_COLOR} ]<${N0_COLOR}"
+
+		case ${pos} in
+			0)
+				printf "${SELECTOR_PRE}(u)UFS2${SELECTOR_POST}   (z)ZFS     (z)CANCEL    \r"
+				_res="ufs2"
+				;;
+			1)
+				printf "   (u)UFS2   ${SELECTOR_PRE}(z)ZFS${SELECTOR_POST}  (z)CANCEL    \r"
+				_res="zfs"
+				;;
+			2)
+				printf "   (u)UFS2      (z)ZFS  ${SELECTOR_PRE}(z)CANCEL${SELECTOR_POST}\r"
+				_res="cancel"
+				;;
+		esac
+
+		opmode=$( /usr/local/cbsd/misc/getch )
+		_ret=$?
+		if [ ${_ret} -ge 100 ]; then
+			echo
+			exit 1
+		fi
+
+		case "${opmode}" in
+			68)
+				pos=$(( pos - 1 ))
+				[ ${pos} -lt 0 ] && pos=2
+				;;
+			67)
+				pos=$(( pos + 1 ))
+				[ ${pos} -gt 2 ] && pos=0
+				;;
+			i)
+				pos=0
+				;;
+			c)
+				pos=1
+				;;
+			z)
+				pos=2
+				;;
+			27)
+				echo
+				exit 0
+				;;
+			'')
+				echo "${_res}" > ${_resfile}
+				echo
+				break
+				;;
+		esac
+	done
+
+	_ret=$?
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	_res=
+	[ -r ${_resfile} ] && read -r _res < ${_resfile}
+	${RM_CMD} -f ${_resfile}
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm
+	case "${_res}" in
+		freebsd|linux|openbsd|netbsd|dflybsd|windows|other)
+			export vm_os_type="${_res}"
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+
+
+# $source + $fetch + $imgsize + imgsize_bytes +
+# $iso_img + $iso_img_dist + $iso_extract
+#iso_img="FreeBSD-14.3-RELEASE-amd64-disc1.iso"
+#iso_img_dist="FreeBSD-14.3-RELEASE-amd64-disc1.iso.xz"
+#iso_extract="nice -n 19 ${IDLE_IONICE} ${XZ_CMD} -d ${iso_img_dist}"
+#iso_img="debian-13.1.0-amd64-DVD-1.iso"
+get_source()
+{
+	local _input=""
+	local _ok=0 _default=
+	local _valid_schema=0 _prefix=
+	local _basename= _ext=
+	local _resfile=
+
+	export source=""
+	export fetch=""
+	export imgsize=""
+	export imgsize_bytes=""
+	export iso_img=""
+	export iso_img_dist=""
+	export iso_extract=""
+	export ext=""
+
+	#iso_img="9front-11321.amd64.iso"
+	#iso_img_dist="9front-11321.amd64.iso.gz"
+	get_source_msg="${H2_COLOR}[1/5]${BOLD}${H1_COLOR} * Where do we get the original/source image? (Ctrl+C or '0' to break)\n Enter path to image ( ISO, RAW ), or URL to fetch"
+	#_default="https://example.com/product.iso"
+	#_default="https://mirror.convectix.com/iso/alpine-standard-3.20.3-x86_64.iso"
+	_default="https://mirror.convectix.com/iso/dfly-x86_64-6.4.2_REL.iso.bz2"
+	#_default="https://mirror.convectix.com/iso/FreeBSD-14.3-RELEASE-amd64-disc1.iso.xz"
+	#_default="https://mirror.convectix.com/iso/batocera-x86_64-42-20251006.img.gz"
+	#_default="https://mirror.convectix.com/iso/OPNsense-25.7-dvd-amd64.iso.bz2"
+
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}; exit 1" HUP INT ABRT BUS TERM EXIT
+
+	while [ ${_ok} -ne 2 ]; do
+		echo
+		$ECHO "${BOLD}${get_source_msg}, e.g: ${N2_COLOR}${_default}${N0_COLOR}\n"
+		read _input
+
+		[ -z "${_input}" ] && continue
+		[ "${_input}" = "0" ] && exit 1
+
+		prefix=$( substr --pos=0 --len=1 --str=${_input} )
+		if [ "${prefix}" = "/" ]; then
+			${ECHO} "${N0_COLOR}OK: \"${_input}\" - local path, we won't need to download${N0_COLOR}"
+			fetch=0
+			if [ -d "${_input}" -o ! -e "${_input}" ]; then
+				${ECHO} "${W1_COLOR}Warning: ${N0_COLOR}File not readable: ${N2_COLOR}${_input}${N0_COLOR}"
+				continue
+			else
+				iso_img=$( ${BASENAME_CMD} ${_input} )
+				ext=$( get_file_ext "${iso_img}" )
+				ext=$( get_file_ext "${iso_img}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
+
+				if [ -n "${ext}" ]; then
+					case "${ext}" in
+						iso|raw|img)
+							true
+							;;
+						*)
+							${ECHO} "${W1_COLOR}Warning: ${N0_COLOR}Only RAW images with the following extensions are supported (not ${ext}): ${N2_COLOR}iso, raw, img${N0_COLOR}"
+							continue
+					esac
+				else
+					${ECHO} "${W1_COLOR}Warning: ${N0_COLOR}Only RAW images with the following extensions are supported: ${N2_COLOR}iso, raw, img${N0_COLOR}"
+					continue
+				fi
+
+				imgsize_bytes=$( get_file_bytes ${_input} )
+				if [ -n "${imgsize_bytes}" ]; then
+					if conv2human "${imgsize_bytes}"; then
+						imgsize="${convval}"
+					else
+						imgsize="${imgsize_bytes}"
+					fi
+					${ECHO} "${N0_COLOR}OK: file available, size: ${imgsize_bytes} bytes -> ${N2_COLOR}${imgsize}${N0_COLOR}"
+				else
+					imgsize=0
+					${ECHO} "${N0_COLOR}OK: file available, size: ${imgsize_bytes} bytes -> ${N2_COLOR}${imgsize}${N0_COLOR}"
+				fi
+				fetch=0
+				_ok=2
+				source="${_input}"
+			fi
+		else
+			_valid_schema=0
+			_prefix=$( substr --pos=0 --len=6 --str=${_input} )
+			if [ "${_prefix}" = "ftp://" ]; then
+				_valid_schema=1
+			else
+				_prefix=$( substr --pos=0 --len=7 --str=${_input} )
+				if [ "${_prefix}" = "http://" ]; then
+					_valid_schema=1
+				else
+					_prefix=$( substr --pos=0 --len=8 --str=${_input} )
+					if [ "${_prefix}" = "https://" ]; then
+						_valid_schema=1
+					fi
+				fi
+			fi
+
+			if [ ${_valid_schema} -eq 0 ]; then
+				${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}Valid URL schema list: ${N2_COLOR}ftp:// ${N1_COLOR}or${N2_COLOR} http:// ${N1_COLOR}or${N2_COLOR} https://${N0_COLOR}"
+				continue
+			else
+				iso_img=$( ${BASENAME_CMD} ${_input} )
+				ext=$( get_file_ext "${iso_img}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
+
+				if [ -n "${ext}" ]; then
+					case "${ext}" in
+						bz2|bzip2|gz|tgz|txz|xz|zip)
+							iso_img_dist="${iso_img}"
+							xext=".${ext}"
+							iso_img=${iso_img_dist%%${xext}*}
+							case "${ext}" in
+								bz2|bzip2|zip)
+									iso_extract="nice -n 19 \${IDLE_IONICE} \${BZIP2_CMD} -d \${iso_img_dist}"
+									;;
+								gz|tgz)
+									iso_extract="nice -n 19 \${IDLE_IONICE} \${GUNZIP_CMD} -d \${iso_img_dist}"
+									;;
+								xz|txz)
+									iso_extract="nice -n 19 \${IDLE_IONICE} \${XZ_CMD} -d \${iso_img_dist}"
+									;;
+							esac
+							true
+							;;
+						raw|img|iso)
+							true
+							;;
+						*)
+							${ECHO} "${W1_COLOR}Warning: bad extension: ${ext}: ${N0_COLOR}Only following extensions are supported: ${N2_COLOR}iso, raw, img${N0_COLOR}"
+							continue
+					esac
+				fi
+				fetch=1
+				_ok=1
+			fi
+		fi
+
+		if [ ${_ok} -eq 1 ]; then
+			${ECHO} "${N0_COLOR}${CBSD_APP}: Trying to check the resource availability: ${N2_COLOR}${_input}${N0_COLOR}"
+
+			headers=$( ${CURL_CMD} --connect-timeout 20 -s -I --follow "${_input}" )
+			status=$( echo "${headers}" | ${GREP_CMD} -i '^HTTP/' | ${TAIL_CMD} -n1 | ${AWK_CMD} '{print $2}' )
+			imgsize_bytes=$( echo "${headers}" | ${GREP_CMD} -i '^Content-Length' | ${TAIL_CMD} -n1 | ${AWK_CMD} '{print $2}' | ${TR_CMD} -d ';\r\n' )
+
+			if [ "${status}" -eq 200 ]; then
+				if [ -n "${imgsize_bytes}" ]; then
+					if conv2human "${imgsize_bytes}"; then
+						imgsize="${convval}"
+					else
+						imgsize="${imgsize_bytes}"
+					fi
+					${ECHO} "${N0_COLOR}OK: file available, size: ${imgsize_bytes} bytes -> ${N2_COLOR}${imgsize}${N0_COLOR}"
+				else
+					imgsize=0
+					${ECHO} "${N0_COLOR}OK: file available, size: ${imgsize_bytes} bytes -> ${N2_COLOR}${imgsize}${N0_COLOR}"
+				fi
+				_ok=2
+				source="${_input}"
+			else
+				res_ok=0
+				${ECHO} "${N0_COLOR}${CBSD_APP} ${W1_COLOR}error: ${N1_COLOR}file not available, HTTP-status: ${status}: ${N2_COLOR}${_input}${N0_COLOR}"
+				continue
+			fi
+		fi
+
+		if [ ${_ok} -eq 2 ]; then
+			unset DIALOG
+			echo
+			if getyesno "${N0_COLOR}Is everything okay for you and can we continue?"; then
+				true
+			else
+				_ok=0
+				continue
+			fi
+		fi
+
+		${CAT_CMD} > ${_resfile} <<________________EOF
+export source="${source}"
+export fetch="${fetch}"
+export imgsize="${imgsize}"
+export imgsize_bytes="${imgsize_bytes}"
+export iso_img="${iso_img}"
+export iso_img_dist="${iso_img_dist}"
+export iso_extract="${iso_extract}"
+export ext="${ext}"
+________________EOF
+
+	done
+
+	[ -r ${_resfile} ] && . ${_resfile}
+	${RM_CMD} -f ${_resfile}
+
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	return 0
+}
+
+# $vm_os_type
+get_profile_os_type()
+{
+	local _res= _ret=
+	local pos=1
+	local _resfile=
+
+	_res=$( tty )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && exit 1
+	[ "${_res}" = "not a tty" ] && exit 1
+
+	echo
+
+	export vm_os_type=""
+
+	get_source_msg="${H2_COLOR}[2/5]${BOLD}${H1_COLOR} * Please select guest VM type. CBSD divides systems into seven types:"
+	$ECHO "${BOLD}${get_source_msg}\n"
+
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}" HUP INT ABRT BUS TERM EXIT
+
+	TPUT_CMD=$( which tput 2>/dev/null )
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} civis
+
+	trap "[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm; echo; exit 1" HUP INT ABRT BUS TERM EXIT
+
+	# filter by name
+	echo "${source}" | ${GREP_CMD} -qi windows
+	[ ${?} -eq 0 ] && pos=5
+
+	while : ; do
+		SELECTOR=
+		SELECTOR_PRE="${UNDERLINE}${H7_COLOR}>[ ${H3_COLOR}${BOLD}"
+		SELECTOR_POST="${H7_COLOR} ]<${N0_COLOR}"
+
+		case ${pos} in
+			0)
+				printf "${SELECTOR_PRE}(f)freebsd${SELECTOR_POST}   (l)linux     (o)openbsd     (n)netbsd     (d)dflybsd     (w)windows     (z)other    \r"
+				_res="freebsd"
+				;;
+			1)
+				printf "   (f)freebsd   ${SELECTOR_PRE}(l)linux${SELECTOR_POST}  (o)openbsd     (n)netbsd     (d)dflybsd     (w)windows     (z)other    \r"
+				_res="linux"
+				;;
+			2)
+				printf "   (f)freebsd      (l)linux  ${SELECTOR_PRE}(o)openbsd${SELECTOR_POST}  (n)netbsd     (d)dflybsd     (w)windows     (z)other   \r"
+				_res="openbsd"
+				;;
+			3)
+				printf "   (f)freebsd      (l)linux     (o)openbsd  ${SELECTOR_PRE}(n)netbsd${SELECTOR_POST}  (d)dflybsd     (w)windows     (z)other   \r"
+				_res="netbsd"
+				;;
+			4)
+				printf "   (f)freebsd      (l)linux     (o)openbsd     (n)netbsd  ${SELECTOR_PRE}(d)dflybsd${SELECTOR_POST}  (w)windows     (z)other   \r"
+				_res="dflybsd"
+				;;
+			5)
+				printf "   (f)freebsd      (l)linux     (o)openbsd     (n)netbsd     (d)dflybsd  ${SELECTOR_PRE}(w)windows${SELECTOR_POST}  (z)other   \r"
+				_res="windows"
+				;;
+			6)
+				printf "   (f)freebsd      (l)linux     (o)openbsd     (n)netbsd     (d)dflybsd     (w)windows  ${SELECTOR_PRE}(z)other${SELECTOR_POST}\r"
+				_res="other"
+				;;
+		esac
+
+		opmode=$( /usr/local/cbsd/misc/getch )
+		_ret=$?
+		if [ ${_ret} -ge 100 ]; then
+			echo
+			exit 1
+		fi
+
+		case "${opmode}" in
+			68)
+				pos=$(( pos - 1 ))
+				[ ${pos} -lt 0 ] && pos=6
+				;;
+			67)
+				pos=$(( pos + 1 ))
+				[ ${pos} -gt 6 ] && pos=0
+				;;
+			f)
+				pos=0
+				;;
+			l)
+				pos=1
+				;;
+			o)
+				pos=2
+				;;
+			n)
+				pos=3
+				;;
+			d)
+				pos=4
+				;;
+			w)
+				pos=5
+				;;
+			z)
+				pos=6
+				;;
+			27)
+				echo
+				exit 0
+				;;
+			'')
+				echo "${_res}" > ${_resfile}
+				echo
+				break
+				;;
+		esac
+	done
+
+	_ret=$?
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	_res=
+	[ -r ${_resfile} ] && read -r _res < ${_resfile}
+	${RM_CMD} -f ${_resfile}
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm
+	case "${_res}" in
+		freebsd|linux|openbsd|netbsd|dflybsd|windows|other)
+			export vm_os_type="${_res}"
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+
+#default_jailname="freebsd"
+# this is one-string additional info strings in dialogue menu
+#long_description="FreeBSD: 15.0-RELEASE"
+#long_description="Oracle Linux: R8-U8"
+#long_description="Debian: 13.1.0"
+#long_description="PetaSAN: 4.0.0"
+# $default_jailname + $long_description
+# $profile_ver=
+# $profile_major_ver=
+get_profile_name()
+{
+	get_source_msg="${H2_COLOR}[3/5]${BOLD}${H1_COLOR} * What should we call your profile in one word? (Ctrl+C or '0' to break)\nIt doesn't have to be a long name., e.g: myprofile1, CustomOS ?"
+
+	unset DIALOG
+	local _ok=0
+	local _default="myprofile1"
+
+	trap "exit 1" HUP INT ABRT BUS TERM EXIT
+
+	while [ ${_ok} -ne 1 ]; do
+		echo
+		$ECHO "${BOLD}${get_source_msg} e.g: ${N2_COLOR}${_default}${N0_COLOR}\n"
+		read _input
+		echo
+		[ "${_input}" = "0" ] && exit 1
+		[ -z "${_input}" ] && _input="${_default}"
+
+		if [ -r ${workdir}/etc/vm-${vm_os_type}-${_input}.conf ]; then
+			${ECHO} "${W1_COLOR}Warning: ${N0_COLOR}Profile already exist with same type/name: ${N2_COLOR}${workdir}/etc/vm-${vm_os_type}-${_input}.conf${N0_COLOR}"
+			continue
+		fi
+
+		if getyesno "${N0_COLOR}Profile name is: [${_input}]. Is okay?"; then
+			_ok=1
+		else
+			_ok=0
+			continue
+		fi
+	done
+
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	if [ -n "${_input}" ]; then
+		export profile_name="${_input}"
+	fi
+}
+
+
+get_windows_virtio()
+{
+	local get_source_msg="${BOLD}${H1_COLOR} * You've selected WINDOWS OS type and virtio. Do you want me to attach virtio-win ISO as a second image?${N0_COLOR}"
+	local _ret=0
+
+	unset DIALOG
+
+	if getyesno "${get_source_msg}"; then
+		_ret=1
+	else
+		_ret=0
+	fi
+
+	case ${_ret} in
+		1)
+			export ATTACH_VIRTIO="1"
+			;;
+	esac
+
+	return 0
+}
+
+
+#default_jailname="freebsd"
+# this is one-string additional info strings in dialogue menu
+#long_description="FreeBSD: 15.0-RELEASE"
+#long_description="Oracle Linux: R8-U8"
+#long_description="Debian: 13.1.0"
+#long_description="PetaSAN: 4.0.0"
+# $default_jailname + $long_description
+# $profile_ver=
+# $profile_major_ver=
+get_profile_version()
+{
+	local _tmpver=
+	local _ok=
+	local _resfile=
+
+	export profile_ver=""
+	export profile_major_ver=""
+
+	_tmpver=$( echo ${iso_img} | ${TR_CMD} -d '\-_' | ${TR_CMD} -d [:alpha:] | ${SED_CMD} 's:86::g' | ${SED_CMD} 's:64::g' | ${TR_CMD} "." " " )
+
+	if [ -n "${_tmpver}" ]; then
+		_tmp_major_ver=$( echo ${_tmpver} | ${AWK_CMD} '{printf $1}' )
+		_tmpver=$( echo ${_tmpver} | ${TR_CMD} " " "." )
+	fi
+
+	get_source_msg="${H2_COLOR}[4/5]${BOLD}${H1_COLOR} * Is there a digital version of image, e.g. 25.06, 16.0 ( '0' - without version ) ?"
+	if [ -n "${_tmpver}" ]; then
+		_default="${_tmpver}"
+	else
+		_default=$( ${DATE_CMD} "+%y" )
+	fi
+
+	unset DIALOG
+	_ok=0
+
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}; exit 1" HUP INT ABRT BUS TERM EXIT
+
+	while [ ${_ok} -ne 1 ]; do
+		echo
+		$ECHO "${BOLD}${get_source_msg} e.g: ${N2_COLOR}${_default}${N0_COLOR}\n"
+		read _input
+		echo
+
+		if [ -z "${_input}" ]; then
+			_input="${_default}"
+		fi
+
+		if [ "${_input}" = "0" ]; then
+			_msg="The version is not specified. Is okay?"
+		else
+			_msg="${N0_COLOR}The image version is: ${N2_COLOR}${_input}${N0_COLOR}. Is okay?"
+		fi
+
+		if getyesno "${_msg}"; then
+			profile_ver="${_input}"
+			profile_major_ver=$( echo ${_input} | ${TR_CMD} -d '\-_' | ${TR_CMD} -d [:alpha:] | ${TR_CMD} "." " " | ${AWK_CMD} '{printf $1}' )
+			if [ -n "${profile_major_ver}" ]; then
+				if [ "${profile_ver}" != "${profile_major_ver}" ]; then
+					# modify profile name with major version
+					profile_name_maj="${profile_name}-${profile_major_ver}"
+				fi
+			fi
+
+			[ -z "${profile_name_maj}" ] && profile_name_maj="${profile_name}"
+
+			if [ -r ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf ]; then
+				${ECHO} "${W1_COLOR}Warning: ${N0_COLOR}Profile already exist with same type/name: ${N2_COLOR}${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf${N0_COLOR}"
+				continue
+			fi
+
+			_ok=1
+		else
+			_ok=0
+			continue
+		fi
+
+		if [ ${_ok} -eq 1 ]; then
+			${CAT_CMD} > ${_resfile} <<________________________EOF
+export profile_name_maj="${profile_name_maj}"
+export profile_ver="${profile_ver}"
+export profile_major_ver="${profilE_major_ver}"
+________________________EOF
+		fi
+	done
+
+	[ -r ${_resfile} ] && . ${_resfile}
+	${RM_CMD} -f ${_resfile}
+
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	return 0
+}
+
+
+gen_new_profile()
+{
+	iso_site=$( ${DIRNAME_CMD} ${source} )
+	iso_name=$( ${BASENAME_CMD} ${source} | ${SED_CMD} "s:.${ext}::g" )
+
+	${CAT_CMD} > ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf <<________EOF
+# don't remove this line:
+vm_profile="${profile_name_maj}"
+vm_os_type="${vm_os_type}"
+
+# this is one-string additional info strings in dialogue menu
+long_description="${profile_name}: ${profile_ver}"
+
+________EOF
+
+	# Fetch area
+	if [ "${fetch}" = "1" ]; then
+		${CAT_CMD} >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf <<________________EOF
+
+# custom settings:
+fetch=1
+
+# Official resources to fetch ISO's
+iso_site="${iso_site}/"
+
+# Official CBSD project mirrors ( info: https://github.com/cbsd/mirrors )
+#cbsd_iso_mirrors="https://mirror.convectix.com/iso/ https://raw.githubusercontent.com/cbsd/mirrors/refs/heads/main/cbsd-iso.txt"
+
+iso_img="${iso_img}"
+________________EOF
+
+	else
+		echo "iso_img=\"${iso_img}\"" >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf
+		${ECHO} "${N0_COLOR}Create symlink from ~cbsd/src/iso/cbsd-iso-${iso_name} -> ${N2_COLOR}${source}${N0_COLOR}"
+		${LN_CMD} -sf ${source} ~cbsd/src/iso/cbsd-iso-${iso_name}
+	fi
+
+	[ -n "${iso_img_dist}" ] && echo "iso_img_dist=\"${iso_img_dist}\"" >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf
+	[ -n "${iso_extract}" ] && echo "iso_extract=\"${iso_extract}\"" >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf
+
+	if [ "${ATTACH_VIRTIO}" = "1" ]; then
+		${CAT_CMD} >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf <<________________EOF
+# secondary ISO: virtio
+iso_site2="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.285-1/"
+iso_img2="virtio-win-0.1.285.iso"
+register_iso_name2="cbsd-iso-virtio-win.iso"
+register_iso_as2="iso-virtio-win"
+sha256sum2="e14cf2b94492c3e925f0070ba7fdfedeb2048c91eea9c5a5afb30232a3976331"
+________________EOF
+	fi
+
+case "${vm_os_type}" in
+	windows)
+		vm_cpus=2
+		vm_ram="4g"
+		imgsize_min="10g"
+		imgsize="64g"
+		;;
+	*)
+		vm_cpus=1
+		vm_ram="2g"
+		imgsize_min="10g"
+		imgsize="10g"
+		;;
+esac
+
+	${CAT_CMD} >> ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf <<________EOF
+
+# register_iso as:
+register_iso_name="cbsd-iso-${iso_name}"
+register_iso_as="iso-${iso_name}"
+
+# default VM name prefix: vm1, vm2, ...
+default_jailname="vm"
+
+#vm_efi="uefi"
+vm_package="small1"
+
+vm_cpus="${vm_cpus}"
+vm_ram="${vm_ram}"
+imgsize_min="${imgsize_min}"
+imgsize="${imgsize}"
+
+# UTC
+bhyve_rts_keeps_utc="1"
+
+# VNC
+vm_vnc_port="0"
+vm_efi="uefi"
+
+# disable profile?
+xen_active=1
+bhyve_active=1
+qemu_active=1
+
+# Available in ClonOS?
+clonos_active=1
+sha256sum="0"
+iso_img_dist_size="${imgsize_bytes}"
+
+# enable birtio RNG interface?
+virtio_rnd="1"
+
+bhyve_vnc_tcp_bind="${vnc_tcp_bind}"
+vnc_password="${vnc_password}"
+virtio_type="${virtio_type}"
+nic_driver="${nic_driver}"
+________EOF
+
+	${ECHO} "${H1_COLOR}Created new profile in: ${N2_COLOR}${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf${N0_COLOR}"
+
+	return 0
+}
+
+
+get_profile_crc()
+{
+	local _ok=0
+	local get_source_msg=
+
+	case "${fetch}" in
+		0)
+			return 0
+			#get_source_msg="${H2_COLOR}[5/5]${BOLD}${H1_COLOR} * Final question: Would you like me to calculate and write the image checksum to the profile?"
+			;;
+		1)
+			get_source_msg="${H2_COLOR}[5/5]${BOLD}${H1_COLOR} * Final question: Do you want me to download the image and write the image checksum to the profile?"
+			;;
+	esac
+
+	trap "exit 1" HUP INT ABRT BUS TERM EXIT
+
+	while [ ${_ok} -ne 1 ]; do
+		echo
+		unset DIALOG
+		if getyesno "${N0_COLOR}${BOLD}${get_source_msg}${N0_COLOR}"; then
+			/usr/local/cbsd/misc/cbsdsysrc -qf ${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf sha256sum=1
+			${ECHO} "${N0_COLOR} Updating SHA256: fetch_iso dstdir=default keepname=0 purge=0 cloud=0 gen_sha256=1 path=${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf${N0_COLOR}"
+			fetch_iso dstdir=default keepname=0 purge=0 cloud=0 gen_sha256=1 path=${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf
+			_ok=1
+		else
+			_ok=1
+			echo "SKIP UPDATE CRC"
+		fi
+	done
+
+	trap "" HUP INT ABRT BUS TERM EXIT
+}
+
+
+finalize_wizard()
+{
+
+	local _res= _ret=
+	local pos=0
+	local _resfile=
+	local _p1= _p2=
+
+	_res=$( tty )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && exit 1
+	[ "${_res}" = "not a tty" ] && exit 1
+
+	echo
+
+	# upper first letter: CBSD profile style
+	_p1=$( substr --pos=0 --len=1 --str="${profile_name_maj}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
+	_p2=$( substr --pos=2 --len=0 --str="${profile_name_maj}" )
+
+	export profile_name_maj="${_p1}${_p2}"
+
+	export wizard_mode=""
+
+	get_source_msg="${H2_COLOR}${BOLD}${H1_COLOR} ==================== [SUMMARY] ==================== "
+
+	_resfile=$( ${MKTEMP_CMD} )
+	trap "${RM_CMD} -f ${_resfile}" HUP INT ABRT BUS TERM EXIT
+
+	TPUT_CMD=$( which tput 2>/dev/null )
+
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} civis
+
+	trap "[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm; echo; exit 1" HUP INT ABRT BUS TERM EXIT
+
+	vnc_tcp_bind="127.0.0.1"
+	vnc_password="cbsd"
+	virtio_type="virtio-blk"
+	nic_driver="vtnet"
+
+	while : ; do
+
+		clear
+		${ECHO} "${BOLD}${get_source_msg}${N0_COLOR}"
+		echo " Press the corresponding number to change the value:"
+		echo
+		${ECHO} " Please note: You can further customize the profile as a text "
+		${ECHO} "  file yourself in any editor: ${N2_COLOR}${workdir}/etc/vm-${vm_os_type}-${profile_name_maj}.conf${N0_COLOR}"
+		${ECHO} "  (for example you may want to adjust the default valuesfor: vm_cpus, vm_ram, imgsize, imgsize_min, ...)"
+		echo
+
+		SELECTOR=
+		SELECTOR_PRE="${H7_COLOR}>[ ${H3_COLOR}${BOLD}"
+		SELECTOR_POST="${H7_COLOR} ]<${N0_COLOR}"
+
+		printf "  (1) Default vnc_tcp_bind   : ${H2_COLOR}${vnc_tcp_bind}${N0_COLOR}\n"
+		printf "  (2) Default vnc_password   : ${H2_COLOR}${vnc_password}${N0_COLOR}\n"
+		printf "  (3) Default virtio_type    : ${H2_COLOR}${virtio_type}${N0_COLOR}\n"
+		printf "  (4) Default nic_driver     : ${H2_COLOR}${nic_driver}${N0_COLOR}\n"
+
+		echo
+		case "${pos}" in
+			0)
+				printf "${SELECTOR_PRE}(o)OK${SELECTOR_POST}             (c)CANCEL\n"
+				;;
+			1)
+				printf "   (o)OK             ${SELECTOR_PRE}(c)CANCEL${SELECTOR_POST}\n"
+				;;
+		esac
+
+		opmode=$( /usr/local/cbsd/misc/getch )
+		_ret=$?
+		if [ ${_ret} -ge 100 ]; then
+			echo
+			exit 1
+		fi
+
+		case "${opmode}" in
+			68)
+				pos=$(( pos - 1 ))
+				[ ${pos} -lt 0 ] && pos=1
+				;;
+			67)
+				pos=$(( pos + 1 ))
+				[ ${pos} -gt 1 ] && pos=0
+				;;
+			1)
+				case "${vnc_tcp_bind}" in
+					0.0.0.0)
+						vnc_tcp_bind="127.0.0.1"
+						;;
+					127.0.0.1)
+						vnc_tcp_bind="0.0.0.0"
+						;;
+				esac
+				;;
+			2)
+				DIALOG="${DIALOG_CMD}"
+				. ${dialog}
+				if get_password; then
+					vnc_password="${mtag}"
+				fi
+				;;
+			3)
+				case "${virtio_type}" in
+					virtio-blk)
+						virtio_type="virtio-ahci"
+						;;
+					virtio-ahci)
+						virtio_type="nvme"
+						;;
+					nvme)
+						virtio_type="virtio-blk"
+						;;
+				esac
+				;;
+			4)
+				case "${nic_driver}" in
+					vtnet)
+						nic_driver="e1000"
+						;;
+					e1000)
+						nic_driver="vtnet"
+						;;
+				esac
+				;;
+			27)
+				exit 0
+				;;
+			'')
+				if [ "${pos}" = "0" ]; then
+					${CAT_CMD} > ${_resfile}<<________________________________________EOF
+vnc_tcp_bind="${vnc_tcp_bind}"
+vnc_password="${vnc_password}"
+virtio_type="${virtio_type}"
+nic_driver="${nic_driver}"
+________________________________________EOF
+					echo
+					break
+				else
+					echo
+					exit 1
+				fi
+				;;
+		esac
+	done
+
+	_ret=$?
+	_res=
+	[ -n "${TPUT_CMD}" ] && ${TPUT_CMD} cnorm
+	[ ${_ret} -ne 0 ] && exit ${_ret}
+	[ -r ${_resfile} ] && read -r _res < ${_resfile}
+	${RM_CMD} -f ${_resfile}
+	trap "" HUP INT ABRT BUS TERM EXIT
+	return 0
+}
+
+
+## MAIN
+if [ -z "${CURL_CMD}" ]; then
+	CURL_CMD=$( which curl )
+	if [ -z "${CURL_CMD}" ]; then
+		${ECHO} "${N1_COLOR}${CBSD_APP} no curl found, please install ${N2_COLOR}'curl'${N1_COLOR} tools first${N0_COLOR}"
+		read p
+		exit 1
+	fi
+fi
+
+# Make sure the user can't access rootshell by pressing Ctrl-Z
+trap : 18
+
+cat <<EOF_HEADER
+---------[vm-profile-wizard]---------
+
+Welcome to CBSD VM profile config constructor script.
+
+This wizard will help you create a virtual machine profile in
+ the ~cbsd/etc/ directory in interactive mode.
+
+CBSD recommends using profiles to describe any machines you create. A profile
+ is simply a named grouping of settings. You can easily extend the official CBSD
+ profile set (contrib) with your own custom and private profiles and share them
+ between your hosts.
+
+If you're creating a profile for a widely available OS and it's not in the CBSD catalog,
+ you can upload your profile to the CBSD GitHub account, thereby making other users happy!
+
+The wizard consists of ~5 questions/answers.
+
+You can interrupt the wizard with a CTRL+'c' combination (or type '0' as value)
+
+-------------------------------------
+EOF_HEADER
+
+. ${subrdir}/build.subr
+
+#1
+get_source
+#2
+get_profile_os_type
+#3
+get_profile_name
+#4
+get_profile_version
+#5
+get_windows_virtio
+finalize_wizard
+gen_new_profile
+get_profile_crc
+
+# retcode
+${CAT_CMD} > ${workdir}//tmp/bconstruct.conf-new <<EOF
+vm_profile="${profile_name_maj}"
+vm_os_type="${vm_os_type}"
+EOF
+
+exit 0

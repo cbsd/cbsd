@@ -425,7 +425,7 @@ phase1()
 	id ${cbsduser} > /dev/null 2>&1
 
 	if [ $? -eq 1 ]; then
-		echo "No such user ${cbsduser}. Please follow instruction at https://www.convectix.com/en/installing_cbsd.html"
+		echo "No such user ${cbsduser}. Please follow instruction at https://github.com/cbsd/cbsd/blob/develop/share/docs/general/cbsd_quickstart.md"
 		echo "if you install not from the ports"
 		exit 1
 	fi
@@ -541,7 +541,9 @@ phase2()
 	[ ! -f "${distdir}/bin/cbsdssh6" ] && compile_cc ${distdir}/bin/src/cbsdssh6.c -o ${distdir}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include
 	[ ! -f "${distdir}/sbin/netmask" ] && compile_cc ${distdir}/sbin/src/netmask.c -o ${distdir}/sbin/netmask
 	[ ! -f "${distdir}/bin/cfetch" ] && compile_cc ${distdir}/bin/src/cfetch.c -o ${distdir}/bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${distdir}/misc/exec_jail" ] && compile_cc ${distdir}/misc/src/exec_jail.c -o ${distdir}/misc/exec_jail
+	[ ! -f "${distdir}/misc/jexec_env" ] && compile_cc ${distdir}/misc/src/jexec_env.c -o ${distdir}/misc/jexec_env
+	[ ! -f "${distdir}/misc/jail_env" ] && compile_cc ${distdir}/misc/src/jail_env.c -o ${distdir}/misc/jail_env
+	[ ! -f "${distdir}/misc/getshell" ] && compile_cc ${distdir}/misc/src/getshell.c -o ${distdir}/misc/getshell
 
 	if [ ! -f "${distdir}/misc/sqlcli" ]; then
 		_pkgconf=$( ${WHICH_CMD} pkg-config )
@@ -577,8 +579,10 @@ phase2()
 	if [ "${arch}" = "i386" -o "${arch}" = "amd64" ]; then
 		[ ! -f "${distdir}/misc/popcnttest" ] && compile_cc ${distdir}/misc/src/popcnttest.c -o ${distdir}/misc/popcnttest -msse4.2 > /dev/null 2>&1 || true
 	fi
-	[ ! -f "${distdir}/misc/efivar" ] && compile_cc ${distdir}/misc/src/efivar.c -o ${distdir}/misc/efivar
+	[ ! -f "${distdir}/misc/efivar" ] && compile_cc ${distdir}/misc/src/efivar2.c -o ${distdir}/misc/efivar
 	[ ! -f "${distdir}/misc/cbsdtee" ] && compile_cc ${distdir}/misc/src/cbsdtee.c -o ${distdir}/misc/cbsdtee
+	[ ! -f "${distdir}/misc/getch" ] && compile_cc ${distdir}/misc/src/getch.c -o ${distdir}/misc/getch
+	[ ! -f "${distdir}/misc/pexec" ] && compile_cc ${distdir}/misc/src/pexec.c -o ${distdir}/misc/pexec
 	[ ! -f "${distdir}/tools/imghelper" ] && compile_cc ${distdir}/tools/src/imghelper.c -o ${distdir}/tools/imghelper
 	[ ! -f "${distdir}/misc/cbsdlogtail" ] && compile_cc ${distdir}/misc/src/cbsdlogtail.c -o ${distdir}/misc/cbsdlogtail
 	[ ! -f "${distdir}/misc/daemonize" ] && compile_cc ${distdir}/misc/src/daemonize/daemonize.c ${distdir}/misc/src/daemonize/getopt.c -I${distdir}/misc/src/daemonize -O2 -o ${distdir}/misc/daemonize
@@ -766,7 +770,10 @@ EOF
 #	[ ! -d "${sharedir}/${platform}-jail-debian-bullseye-skel" -a ! -d "${platform}/share/${platform}-jail-debian-bullseye-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-debian-bullseye-skel ${sharedir}/
 #	[ ! -d "${sharedir}/${platform}-jail-centos-7-skel" -a ! -d "${platform}/share/${platform}-jail-centos-7-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-centos-7-skel ${sharedir}/
 	[ ! -d "${sharedir}/bhyve-system-default" -a -d "${distdir}/share/bhyve-system-default" ] && /bin/cp -a ${distdir}/share/bhyve-system-default ${sharedir}/
+	# legacy
 	[ ! -d "${sharedir}/jail-system-default" -a -d "${distdir}/share/jail-system-default" ] && /bin/cp -a ${distdir}/share/jail-system-default ${sharedir}/
+
+	[ ! -d "${sharedir}/FreeBSD-jail-default-system-skel" -a -d "${distdir}/share/FreeBSD-jail-default-system-skel" ] && /bin/cp -a ${distdir}/share/FreeBSD-jail-default-system-skel ${sharedir}/
 	[ ! -d "${sharedir}/${platform}-jail-puppet-system-skel" -a -d "${distdir}/share/${platform}-jail-puppet-system-skel" ] && /bin/cp -a ${distdir}/share/${platform}-jail-puppet-system-skel ${sharedir}/
 	[ ! -d "${sharedir}/qemu-system-default" -a -d "${distdir}/share/qemu-system-default" ] && /bin/cp -a ${distdir}/share/qemu-system-default ${sharedir}/
 	[ ! -d "${sharedir}/xen-system-default" -a -d "${distdir}/share/xen-system-default" ] && /bin/cp -a ${distdir}/share/xen-system-default ${sharedir}/
@@ -858,9 +865,9 @@ phase5()
 	[ -z "${natip6}" ] && natip6="auto"
 	[ -z "${nodeippool}" ] && nodeippool="auto"
 	#system information
+
 	. ${toolsdir}/sysinv
 	update_netinfo
-
 	init_items_desc
 	init_items_default
 
@@ -918,12 +925,25 @@ phase5()
 	[ ! -f "${nodenamefile}" ] && echo "${nodename}" > "${nodenamefile}"
 	[ ! -f "${dbdir}/nodes.sqlite" ] && env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/nodes.sqlite ${distdir}/share/node-nodelist.schema nodelist
 
+	_opwd=$( pwd )
+
 	if [ ! -f "${dbdir}/inv.${nodename}.sqlite" ]; then
 		env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-unconfigured.schema unconfigured
 		env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-local.schema local
 		env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-jails.schema jails
+		cd ${dbdir}
+		${LN_CMD} -sfn inv.${nodename}.sqlite local.sqlite
+		cd "${_opwd}"
+		unset _opwd
+
 		$ECHO "${N1_COLOR}Empty inventory database created: ${N2_COLOR}${dbdir}/inv.${nodename}.sqlite${N0_COLOR}"
 		${miscdir}/sqlcli ${dbdir}/inv.${nodename}.sqlite "INSERT INTO local ( nodename ) VALUES ( '${nodename}' )"
+		update_netinfo
+	else
+		cd ${dbdir}
+		${LN_CMD} -sfn inv.${nodename}.sqlite local.sqlite
+		cd "${_opwd}"
+		unset _opwd
 	fi
 
 	# extra re-check for empty values
@@ -960,12 +980,15 @@ phase5()
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-qemu.schema qemu
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vnetnic.schema vnetnic
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vmpackages.schema vmpackages
-	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT name FROM vmpackages WHERE name=\"small1\" LIMIT 1" )
-	if [ -z "${_tmpval}" ]; then
+
+	# insert sample/defaults
+	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT COUNT(name) FROM vmpackages;" 2>/dev/null )
+	if [ -z "${_tmpval}" -o "${_tmpval}" = "0" ]; then
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'small1',  '1', '2g',  '20g',  'admin' )"
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'medium1', '4', '8g',  '60g',  'admin' )"
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "INSERT INTO vmpackages ( name, pkg_vm_cpus, pkg_vm_ram, pkg_vm_disk, owner ) VALUES ( 'large1',  '8', '16g', '100g', 'admin' )"
 	fi
+
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-vm_cpu_topology.schema vm_cpu_topology
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/cbsdtaskd.sqlite ${distdir}/share/cbsdtaskd-taskd.schema taskd
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/vpnet.sqlite ${distdir}/share/vpnet-vpnet.schema vpnet
@@ -973,16 +996,13 @@ phase5()
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/storage_media.sqlite ${distdir}/share/local-storage_media_map.schema media
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/images.sqlite ${distdir}/share/local-images.schema images
 	env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${distdir}/share/local-storage_pools.schema storage_pools
+
 	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT id FROM storage_pools LIMIT 1" )
 	if [ -z "${_tmpval}" ]; then
 		${miscdir}/sqlcli ${dbdir}/inv.${nodename}.sqlite "INSERT INTO storage_pools (id,name,driver,description,poolpath,state) VALUES(1,'default','dir','','jails-data',1); )"
 	fi
 
 	[ -f "${dbdir}/nodes.sqlite" ] && env workdir=${workdir} /usr/local/bin/cbsd ${miscdir}/updatesql ${dbdir}/nodes.sqlite ${distdir}/share/node-nodelist.schema nodelist
-
-	cd ${dbdir}
-	#${LN_CMD} -sfh inv.${nodename}.sqlite local.sqlite
-	${LN_CMD} -sfn inv.${nodename}.sqlite local.sqlite
 
 	_myfs="ufs"
 
@@ -1004,8 +1024,9 @@ phase5()
 		[ $? -eq 0 ] && _myfs="hammer"
 	fi
 
-	_uncfg=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT items FROM unconfigured" )
-	[ $? -ne 0 ] && err 1 "Error for unconfigured query"
+	_uncfg=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT items FROM unconfigured" 2>&1 )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "Error for unconfigured query: err:${_ret}: ${_uncfg}"
 
 	if [ -n "${INITCFG}" ]; then
 		onodename="${nodename}"
@@ -1041,7 +1062,7 @@ phase5()
 					continue
 				fi
 				if [ "${_checkme}" = "hammerfeat" -a ${_myfs} != "hammer" ]; then
-					${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET hammer='0'"
+					${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET hammerfeat='0'"
 					continue
 				fi
 
@@ -1078,6 +1099,7 @@ phase5()
 			fi
 		done
 	done
+
 	# flush unconfigured marker
 	${miscdir}/sqlcli ${dbdir}/local.sqlite "DELETE FROM unconfigured"
 	# constants and static param. FIX ME
@@ -1104,9 +1126,10 @@ phase5()
 
 	fs="${_myfs}"
 
-	for i in ipfw_enable fs jail_interface nodedescr nodename hostname vnet racct platform node_ip4_active node_ip6_active nodeip natip; do
+	for i in ipfw_enable fs jail_interface nodedescr nodename hostname racct platform node_ip4_active node_ip6_active nodeip natip; do
 		T=
 		eval T="\$$i"
+		[ -z "${T}" ] && T="0"
 		${miscdir}/sqlcli ${dbdir}/local.sqlite "UPDATE local SET ${i}='${T}'"
 	done
 

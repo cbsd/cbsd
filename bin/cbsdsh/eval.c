@@ -72,6 +72,11 @@ __FBSDID("$FreeBSD: head/bin/sh/eval.c 340284 2018-11-09 14:58:24Z jilles $");
 #include "myhistedit.h"
 #endif
 
+// CBSD
+#include <sys/time.h>
+extern int cbsd_function_time;
+int cbsd_function_time = 0;
+
 int evalskip;		  /* set if we are skipping commands */
 int skipcount;		  /* number of levels to skip */
 static int loopnest;	  /* current loop nesting level */
@@ -821,6 +826,9 @@ evalcommand(union node *cmd, int flags, struct backcmd *backcmd)
 	const char *path = pathval();
 	int i;
 
+	//CBSD
+	struct timeval start, end;
+
 	/* First expand the arguments. */
 	TRACE(("evalcommand(%p, %d) called\n", (void *)cmd, flags));
 	emptyarglist(&arglist);
@@ -1004,6 +1012,9 @@ evalcommand(union node *cmd, int flags, struct backcmd *backcmd)
 		trputs("Shell function:  ");
 		trargs(argv);
 #endif
+		if (cbsd_function_time == 1) {
+			gettimeofday(&start, NULL);
+		}
 		saveparam = shellparam;
 		shellparam.malloc = 0;
 		shellparam.reset = 1;
@@ -1052,6 +1063,14 @@ evalcommand(union node *cmd, int flags, struct backcmd *backcmd)
 		}
 		if (jp)
 			exitshell(exitstatus);
+
+		if (cbsd_function_time==1) {
+			gettimeofday(&end, NULL);
+			long seconds = end.tv_sec - start.tv_sec;
+			long useconds = end.tv_usec - start.tv_usec;
+			double elapsed = seconds + useconds / 1e6;
+			out2fmt_flush("cbsd_function_time{function=\"%s\"} %.6f\n", argv[0],elapsed);
+		}
 	} else if (cmdentry.cmdtype == CMDBUILTIN) {
 #ifdef DEBUG
 		trputs("builtin command:  ");
