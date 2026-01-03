@@ -45,14 +45,13 @@ chaselibs=0
 [ -z "${mtree}" ] && mtree=0
 
 [ -n "${excludedir}" ] && excludedir=$( echo ${excludedir} | ${TR_CMD} '|' ' ' )
-
 BASE_DIR="${basedir}"
 FILES="${filelist}"
 DST_DIR="${dstdir}"
 
 strip_path()
 {
-	local _path
+	local _path=
 
 	_path=$( echo "${1}" | ${TR_CMD} -s "/" )
 	echo -n "${_path}"
@@ -69,6 +68,29 @@ make_mtree()
 	[ ! -d "${DST_DIR}/usr/tests" ] && ${MKDIR_CMD} -p "${DST_DIR}/usr/tests"
 	[ -f ${BASE_DIR}/etc/mtree/BSD.tests.dist ] && ${MTREE_CMD} -deU -f ${BASE_DIR}/etc/mtree/BSD.tests.dist -p ${DST_DIR}/usr/tests >/dev/null
 }
+
+# $1 - $source
+# $2 - $destination
+mkdir_inherit_mode()
+{
+	local _mode=
+
+	if [ -d "${1}" ]; then
+		case "${platform}" in
+			Linux)
+				_mode=$( ${STAT_CMD} -c "%a" ${1} )
+				;;
+			*)
+				_mode=$( ${STAT_CMD} -f "%Lp" ${1} )
+				;;
+		esac
+	else
+		_mode="0755"
+	fi
+	#echo "${MKDIR_CMD} -m \"${_mode}\" \"${2}\""
+	${MKDIR_CMD} -p -m "${_mode}" "${2}"
+}
+
 
 make_libmap()
 {
@@ -175,7 +197,17 @@ copy_binlib()
 			D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
 			_destination_path=$( strip_path ${DST_DIR}/${D} )
 
-			[ ! -d "{_destination_path}" ] && ${MKDIR_CMD} -p ${_destination_path}
+			if [ "${BASE_DIR}" = "/" ]; then
+				_realdir="${D}"
+			else
+				_realdir="${BASE_DIR}${D}"
+			fi
+
+			if [ ! -d "{_destination_path}" ]; then
+				mkdir_inherit_mode "${_realdir}" "${_destination_path}"
+				#${MKDIR_CMD} -p ${_destination_path}
+			fi
+
 			_dstfile=$( ${BASENAME_CMD} ${line} )
 			_source_path=$( strip_path ${BASE_DIR}/${line} )
 
@@ -197,7 +229,17 @@ copy_binlib()
 							S=$( ${DIRNAME_CMD} ${_source_path} )
 							_destination_path_readlink=$( strip_path ${DST_DIR}/${S} )
 						fi
-						[ ! -d "{_destination_path_readlink}" ] && ${MKDIR_CMD} -p ${_destination_path_readlink}
+
+						if [ "${BASE_DIR}" = "/" ]; then
+							_realdir="${_destination_path_readlink}"
+						else
+							_realdir="${BASE_DIR}${_destination_path_readlink}"
+						fi
+
+						if [ ! -d "{_destination_path_readlink}" ]; then
+							mkdir_inherit_mode "${_source_path}" "${_destination_path_readlink}"
+							#${MKDIR_CMD} -p ${_destination_path_readlink}
+						fi
 
 						[ ${verbose} -eq 1 ] && echo "binlib: source is symlink: ${_source_path} -> ${_source_readlink}"
 
@@ -233,7 +275,10 @@ copy_binlib()
 				D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${i} )
 				_destination_path=$( strip_path ${DST_DIR}/${D} )
 
-				[ ! -d "{_destination_path}" ] && ${MKDIR_CMD} -p ${_destination_path}
+				if [ ! -d "{_destination_path}" ]; then
+					#mkdir_inherit_mode "${BASE_DIR}/${i}" "${_destination_path}"
+					${MKDIR_CMD} -p ${_destination_path}
+				fi
 				_dstfile=$( ${BASENAME_CMD} ${i} )
 				_source_path=$( strip_path ${BASE_DIR}/${i} )
 
@@ -286,9 +331,19 @@ copy_binlib()
 		[ ! -r "${_source_path}" -a ${verbose} -eq 1 ] && ${ECHO} "\n${W1_COLOR}Notice: exist in index, but not found in ${N2_COLOR}${BASE_DIR}: ${N1_COLOR}${line}${N0_COLOR}\n" && continue
 		D=$( ${CHROOT_CMD} ${BASE_DIR} ${DIRNAME_CMD} ${line} )
 
+		if [ "${BASE_DIR}" = "/" ]; then
+			_realdir="${D}"
+		else
+			_realdir="${BASE_DIR}${D}"
+		fi
+
 		_destination_dir=$( strip_path ${DST_DIR}/${D} )
 
-		[ ! -d "${_destination_dir}" ] && ${MKDIR_CMD} -p ${_destination_dir}
+		if [ ! -d "${_destination_dir}" ]; then
+			mkdir_inherit_mode "${_realdir}" "${_destination_dir}"
+			#echo "${MKDIR_CMD} -p ${_destination_dir} ( from: ${_realdir} )"
+			#${MKDIR_CMD} -p ${_destination_dir}
+		fi
 		[ ${verbose} -eq 1 ] && echo "${RSYNC_CMD} -L -a ${_source_path} ${_destination_dir}"
 		${RSYNC_CMD} -L -a --hard-links --acls --xattrs --devices --numeric-ids --recursive --partial ${_source_path} ${_destination_dir}
 		_dotnum=$(( _dotnum + 1 ))
@@ -321,6 +376,7 @@ prunelist()
 	done
 }
 
+# MAIN
 [ ! -d "${BASE_DIR}" ] && err 1 "No such ${BASE_DIR}
 [ ! -r "${FILES}" ] && err 1 "No such ${FILES}
 

@@ -18,9 +18,9 @@ if [ ! -r ${conf} ]; then
 fi
 
 # Update settings tables for tablet column
-: ${distdir="/usr/local/cbsd"}
-[ ! -r "${distdir}/subr/cbsdbootstrap.subr" ] && exit 1
-. ${distdir}/subr/cbsdbootstrap.subr || exit 1
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ ! -r "${CIX_DISTDIR}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${CIX_DISTDIR}/subr/cbsdbootstrap.subr || exit 1
 
 . ${conf}
 
@@ -78,14 +78,14 @@ target iqn.172.16.0.3:target0 {		# CBSD_iscsi_${jname}
 EOF
 
 ${CHMOD_CMD} 0400 /etc/ctl.conf
-/usr/local/cbsd/misc/cbsdsysrc ctld_enable="YES"
+${CIX_DISTDIR}/misc/cbsdsysrc ctld_enable="YES"
 ${SERVICE_CMD} ctld restart
 
 
 cat <<EOF
 ======== CLIENT SETUP INFO ==========
 
-/usr/local/cbsd/misc/cbsdsysrc iscsid_enable="YES" 
+${CIX_DISTDIR}/misc/cbsdsysrc iscsid_enable="YES" 
 service iscsid restart
 
 iscsictl -A -p 172.16.0.1 -t iqn.172.16.0.3:target0

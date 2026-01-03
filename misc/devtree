@@ -1,0 +1,78 @@
+#!/bin/sh
+# source http://www.grosbein.net/files/devtree2
+# devtree > /tmp/myhost.dot
+#  dot -Tsvg < /tmp/myhost.dot >myserver.svg
+#  dot -Tpng < /tmp/myhost.dot >myserver.png
+showdisks() {
+  diskinfo -v $(sysctl -n kern.disks) 2>/dev/null | awk -F'#' '
+/^[^[:space:]]/	{ sub(/[0-9]+/, ".&", $1); name=$1 }
+/descr/		{ sub(/^[[:space:]]+/,"", $1); sub(/[[:space:]]+$/,"", $1);
+		  desc=$1
+		}
+/Attachment/	{ sub(/^[[:space:]]+/,"", $1); sub(/[[:space:]]+$/,"", $1);
+		  if ($1 != "") {
+		    printf "dev.%s.%%parent: %s\n", name, $1;
+		    printf "dev.%s.%%desc: %s\n", name, desc;
+		  }
+		}
+  '
+}
+
+echo 'digraph g {'
+echo ' rankdir="LR";'
+
+{ sysctl dev; showdisks; } | awk -vd=0 -F'[:.]' '
+BEGIN { color[0]="black"; color[1]="red"; color[2]="blue"; color[3]="yellow";
+        color[4]="magenta"; color[5]="brown"; color[6]="aqua" }
+{
+  if ($2 !~ /^(acpi_perf|acpi_sysresource|coretemp|cpufreq|est|pci_link)$/) {
+    dev = $2 $3
+
+    if ($4 == "%parent")        { par[dev]  = substr($5, 2, length($5)) }
+    else if ($4 == "%desc")     { desc[dev] = substr($5, 2, length($5)) }
+    else if ($4 == "%location") {
+      split($0, a, ":");
+      i = index(a[2], "_PXM=");
+      if (i != 0) {
+        prox[dev] = substr(a[2], i+5, length(a[2]))
+        clist[prox[dev]] = "_PXM " prox[dev]
+      }
+    }
+  }
+}
+END {
+  if(clist[0] == "") { clist[0] = "No _PXM"; prox["nexus0"] = 0 }
+  for (dummy in par) {
+      found = 0
+      for (dev in par) {
+        if(prox[dev] == "" && prox[par[dev]] != "") {
+          prox[dev]=prox[par[dev]]
+          found=1
+        }
+      }
+      if (found == 0) { break }
+  }
+  for (clust in clist) {
+    printf " subgraph cluster%u {\n", clust
+    printf "  edge [color=\"" color[clust] "\"];\n"
+    printf "  node [color=\"" color[clust] "\"];\n"
+    printf "  label = \"%s\";\n", clist[clust]
+    for (dev in par) {
+      if(prox[dev] == "") prox[dev] = 0;
+      if(prox[dev] == clust) {
+        attr = ""
+        label = ""
+        if(d == 1 && desc[dev] != "") { label = dev "\\n" desc[dev] }
+        if(label != "") { attr = " label=\"" label "\"" }
+        if(dev ~ /^[ci]x/) { attr = attr " style=\"filled\" shape=\"box\" fillcolor=\"Gold\"" }
+        if(dev ~ /^cpu/)   { attr = attr " style=\"filled\" shape=\"box\" fillcolor=\"Gold\"" }
+        if(dev ~ /^(.?da|aacd|mfi(sysp)?d|nvd|vtbd)[0-9]+/)  { attr = attr " style=\"filled\" shape=\"box\" fillcolor=\"aqua\"" }
+        if(attr != "") { attr = " [" attr " ]" }
+        printf "  %s -> %s;\n", par[dev], dev
+        printf "  %s%s;\n", dev, attr;
+      }
+    }
+    printf " }\n"
+  }
+}'
+echo '}'

@@ -1,9 +1,9 @@
 #!/bin/sh
-: ${distdir="/usr/local/cbsd"}
-[ ! -r "${distdir}/subr/cbsdbootstrap.subr" ] && exit 1
-. ${distdir}/subr/cbsdbootstrap.subr || exit 1
-. ${distdir}/subr/nc.subr
-. ${distdir}/subr/tools.subr
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ ! -r "${CIX_DISTDIR}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${CIX_DISTDIR}/subr/cbsdbootstrap.subr || exit 1
+. ${CIX_DISTDIR}/subr/nc.subr
+. ${CIX_DISTDIR}/subr/tools.subr
 test_sql_stuff
 
 [ ! -h "${dbdir}/local.sqlite" ] && exit

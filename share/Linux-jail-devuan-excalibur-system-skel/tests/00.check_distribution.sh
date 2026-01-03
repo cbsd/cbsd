@@ -7,7 +7,7 @@ VERSION_CODENAME="excalibur"
 
 . ${subrdir}/nc.subr
 . ${cbsdinit}
-: ${distdir="/usr/local/cbsd"}
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 unset workdir
 
 # MAIN
@@ -18,9 +18,9 @@ if [ -z "${cbsd_workdir}" ]; then
 else
 	workdir="${cbsd_workdir}"
 fi
-[ ! -r "${distdir}/cbsd.conf" ] && exit 1
+[ ! -r "${CIX_DISTDIR}/cbsd.conf" ] && exit 1
 
-. ${distdir}/cbsd.conf
+. ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/nc.subr
 . ${system}
 . ${strings}

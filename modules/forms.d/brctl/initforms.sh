@@ -3,7 +3,7 @@ MYDIR="$( /usr/bin/dirname $0 )"
 FORM_PATH="$( /bin/realpath ${MYDIR} )"
 HELPER="brctl"
 
-: ${distdir="/usr/local/cbsd"}
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 # MAIN
 if [ -z "${workdir}" ]; then
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
@@ -12,7 +12,7 @@ if [ -z "${workdir}" ]; then
 fi
 
 set -e
-. ${distdir}/cbsd.conf
+. ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/tools.subr
 . ${subrdir}/nc.subr
 set +e

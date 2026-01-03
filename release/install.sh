@@ -85,7 +85,7 @@ ${dsk}p3 / ufs rw 1 1
 ${dsk}p2 none swap sw 0 0
 EOF
 
-/usr/local/cbsd/misc/cbsdsysrc -qf /tmp/mnt/boot/loader.conf bitmap_load=NO
+${CIX_DISTDIR}/misc/cbsdsysrc -qf /tmp/mnt/boot/loader.conf bitmap_load=NO
 
 cd /
 umount /tmp/mnt
@@ -152,11 +152,11 @@ done
 apply_net()
 {
 if [ $DHCP -eq 0 ]; then
-	/usr/local/cbsd/misc/cbsdsysrc -qf /etc/rc.conf ifconfig_${mynic}="${myip} netmask ${mymask}"
-	/usr/local/cbsd/misc/cbsdsysrc -qf /etc/rc.conf defaultrouter=${mygw}
+	${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf ifconfig_${mynic}="${myip} netmask ${mymask}"
+	${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf defaultrouter=${mygw}
 else
-	/usr/local/cbsd/misc/cbsdsysrc -qf /etc/rc.conf ifconfig_${mynic}=DHCP
-	/usr/local/cbsd/misc/cbsdsysrc -qf /etc/rc.conf defaultrouter=NO
+	${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf ifconfig_${mynic}=DHCP
+	${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf defaultrouter=NO
 fi
 }
 

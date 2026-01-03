@@ -5,7 +5,7 @@
 # Additional: https://www.convectix.com/en/articles/cbsd_cloud_init.html
 
 set -e
-. ${distdir}/cbsd.conf
+. ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/nc.subr
 . ${cbsdinit}
 set +e
