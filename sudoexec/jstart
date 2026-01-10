@@ -570,10 +570,14 @@ if [ "${vnet}" = "1" ]; then
 		nic_parent=
 		nic_address=
 		nic_type=
+		nic_mtu=
+		nic_flags=
+		nic_vlan_untagged=
+		nic_vlan_tagged=
 		_A=
-		_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr FROM jailnic WHERE name='${i}'" )
+		_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic WHERE name='${i}'" )
 
-		sqllist "${_A}" nic_parent nic_address nic_hwaddr
+		sqllist "${_A}" nic_parent nic_address nic_hwaddr nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged
 
 		tmp_type=${nic_parent%%-*}		# cut all before '#'
 		tmp_iface=${nic_parent##*-}		# cut all after '#'
@@ -651,7 +655,7 @@ if [ "${vnet}" = "1" ]; then
 				epairb_list="${epairb_list},${myepair}b"
 			fi
 		else
-			myepair=$( get_my_epair ${mybridge} )
+			myepair=$( get_my_epair "${mybridge}" "${nic_vlan_untagged}" "${nic_vlan_tagged}" )
 			[ $? -eq 1 ] && err 1 "${N1_COLOR}Error: Cant get_my_epair by: ${N2_COLOR}${mybridge}${N0_COLOR}"
 			if [ -z "${epairb_list}" ]; then
 				epaira_list="${myepair}a"
@@ -730,6 +734,30 @@ if [ "${vnet}" = "1" ]; then
 					${IFCONFIG_CMD} ${myepair}a inet ${nic_address} up
 				fi
 		esac
+
+		# Custom MTU override (0 means inherit from bridge/parent)
+		if [ -n "${nic_mtu}" -a "${nic_mtu}" != "0" ]; then
+			cbsdlogger NOTICE ${CIX_APP}: jail ${jname}: set custom MTU ${nic_mtu} for ${myepair}a and ${myepair}b
+			${IFCONFIG_CMD} ${myepair}a mtu ${nic_mtu}
+			${IFCONFIG_CMD} ${myepair}b mtu ${nic_mtu}
+		fi
+
+		# NIC FLAGS processing (e.g. private for bridge member isolation)
+		if [ -n "${nic_flags}" -a "${nic_flags}" != "0" -a -n "${mybridge}" ]; then
+			OIFS="${IFS}"
+			IFS=","
+			for _flag in ${nic_flags}; do
+				IFS="${OIFS}"
+				case "${_flag}" in
+					private)
+						cbsdlogger NOTICE ${CIX_APP}: jail ${jname}: set private flag for ${myepair}a on bridge ${mybridge}
+						${IFCONFIG_CMD} ${mybridge} private ${myepair}a
+						;;
+				esac
+				IFS=","
+			done
+			IFS="${OIFS}"
+		fi
 	done
 
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N0_COLOR}"

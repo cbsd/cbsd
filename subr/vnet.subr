@@ -288,24 +288,40 @@ get_my_device()
 }
 
 # create epair and switch epairXa to bridge $1
+# $1 - bridge name
+# $2 - (optional) untagged VLAN ID, 0 or empty = disabled
+# $3 - (optional) tagged VLAN set (comma-separated), 0 or empty = disabled
 # out of created epair
 get_my_epair()
 {
 	local _firstfree
 	local _parent_mtu
+	local _bridge="${1}"
+	local _vlan_untagged="${2}"
+	local _vlan_tagged="${3}"
+	local _addm_args=
 
-	[ -z "${1}" ] && echo "No bridge" && return 1
+	[ -z "${_bridge}" ] && echo "No bridge" && return 1
 
 	_firstfree=$( get-next-nic name=epair )
 	[ $? -eq 1 ] && echo "No free available epair" && return 1
 
 	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
-	_parent_mtu=$( ${toolsdir}/nic_info --nic=${1} --mtu --quiet 2>/dev/null )
+	_parent_mtu=$( ${toolsdir}/nic_info --nic=${_bridge} --mtu --quiet 2>/dev/null )
 
 	${IFCONFIG_CMD} ${_firstfree}a mtu ${_parent_mtu}
 	${IFCONFIG_CMD} ${_firstfree}b mtu ${_parent_mtu}
 
-	${IFCONFIG_CMD} ${1} addm ${_firstfree}a >/dev/null 2>/dev/null
+	# Build addm arguments with VLAN options
+	_addm_args="${_firstfree}a"
+	if [ -n "${_vlan_untagged}" -a "${_vlan_untagged}" != "0" ]; then
+		_addm_args="${_addm_args} untagged ${_vlan_untagged}"
+	fi
+	if [ -n "${_vlan_tagged}" -a "${_vlan_tagged}" != "0" ]; then
+		_addm_args="${_addm_args} tagged ${_vlan_tagged}"
+	fi
+
+	${IFCONFIG_CMD} ${_bridge} addm ${_addm_args} >/dev/null 2>/dev/null
 
 	# MAC MGMT
 	local maca=
@@ -319,7 +335,7 @@ get_my_epair()
 
 	if [ -z "${macb}" -o "${macb}" = "0" ]; then
 		macb=$( mac_gen 02:ff:f0 )
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${macb}\" )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( \"epairb\",\"0\",\"0\",\"auto\",\"${macb}\",\"0\",\"0\",\"0\",\"0\" )"
 	fi
 
 	# flush stdout
