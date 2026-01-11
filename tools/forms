@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.17
 MYARG=""
-MYOPTARG="bootstrap config debug_form export formfile group groupname header index inter jname module out table updcol"
+MYOPTARG="bootstrap config debug_form export formfile group groupname header index inter jname module noop out table updcol"
 MYDESC="Assistant for configuring containers/services, TUI/CLI"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -41,6 +41,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}index=${N0_COLOR}  - index id for group_add and group_del operation;
  ${N2_COLOR}group=${N0_COLOR}  - group=add or group=del to add/del custom params group, 
              in dynamical forms;
+ ${N2_COLOR}noop=${N0_COLOR}   - no operation when '1': without apply;
  ${N2_COLOR}out=${N0_COLOR}    - out manifest content to file, when jname=cbsdpuppet1;
  ${N2_COLOR}table=${N0_COLOR}  - initial table, default is forms;
  ${N2_COLOR}updcol=${N0_COLOR} - 'new' (default) update 'new' value, 'cur' - update 'cur' value;
@@ -88,6 +89,9 @@ updcol=
 export=
 oexport=
 show_vars_only=0
+noop=
+onoop=
+
 for i in $*; do
 	[ "${i}" = "vars" ] && show_vars_only=1
 done
@@ -98,6 +102,8 @@ done
 [ -n "${export}" ] && oexport="${export}"
 [ -z "${export}" ] && export="stdout"
 [ -n "${groupname}" ] && ogroupname="${groupname}"
+[ -n "${noop}" ] && onoop="${noop}"
+[ -z "${noop}" ] && noop="0"
 
 . ${subrdir}/settings-tui.subr
 . ${dialog}
@@ -412,9 +418,6 @@ get_order_id()
 	fi
 
 	_new_order_id=$( ${SQLITE3_CMD} ${formfile} "SELECT order_id FROM forms WHERE groupname = '${groupname}' ORDER BY order_id DESC LIMIT 1" )
-#	echo "${SQLITE3_CMD} ${formfile} \"SELECT order_id FROM forms WHERE groupname = '${groupname}' ORDER BY order_id DESC LIMIT 1\"" >> /tmp/forms.txt
-#	echo "N: ${_new_order_id}" >> /tmp/forms.txt
-
 	if [ -z "${_new_order_id}" ]; then
 		printf "get_order_id: empty new_order_id: SELECT order_id FROM forms WHERE groupname = '${groupname}'"
 		return 1
@@ -610,15 +613,19 @@ export_vars()
 
 	for param in ${_param}; do
 		_seq_ind=$(( _seq_ind + 1 ))
-		_id="$( cbsdsqlro ${formfile} \"SELECT idx FROM ${table} WHERE param='${param}' LIMIT 1\" )"
-		type="$( cbsdsqlro ${formfile} \"SELECT type FROM ${table} WHERE idx='${_id}'\" )"
+		_id=$( cbsdsqlro ${formfile} "SELECT idx FROM ${table} WHERE param='${param}' LIMIT 1" )
+		[ -z "${_id}" ] && continue
+		type=$( cbsdsqlro ${formfile} "SELECT type FROM ${table} WHERE idx='${_id}'" )
 		case "${type}" in
 			hiddendelim|subtable|delimer)
 				continue
 				;;
 		esac
 
-		_res="$( cbsdsqlro ${formfile} \"SELECT cur FROM ${table} WHERE idx='${_id}'\" )"
+		_res="$( cbsdsqlro ${formfile} "SELECT cur FROM ${table} WHERE idx='${_id}'" )"
+		if [ -z "${_res}" ]; then
+			_res="$( cbsdsqlro ${formfile} "SELECT def FROM ${table} WHERE idx='${_id}'" )"
+		fi
 		[ -z "${_res}" ] && continue
 
 		readconf forms_export_vars.conf
@@ -645,8 +652,7 @@ show_vars()
 	[ -z "${table}" ] && table="forms"
 
 	idx=0
-	_param="$( cbsdsqlro ${formfile} \"SELECT param FROM ${table} ORDER BY CAST\(order_id AS int\)\" | ${XARGS_CMD} )"
-
+	_param="$( cbsdsqlro ${formfile} "SELECT param FROM ${table} ORDER BY CAST(order_id AS int)" | ${XARGS_CMD} )"
 	helpername=$( cbsdsqlro ${formfile} "SELECT helpername FROM system" )
 	# First SQL sequence is 1
 	_id=0
@@ -656,8 +662,8 @@ show_vars()
 
 	for param in ${_param}; do
 		_seq_ind=$(( _seq_ind + 1 ))
-		_id="$( cbsdsqlro ${formfile} \"SELECT idx FROM ${table} WHERE param='${param}' LIMIT 1\" )"
-		type="$( cbsdsqlro ${formfile} \"SELECT type FROM ${table} WHERE idx='${_id}'\" )"
+		_id="$( cbsdsqlro ${formfile} "SELECT idx FROM ${table} WHERE param='${param}' LIMIT 1" )"
+		type="$( cbsdsqlro ${formfile} "SELECT type FROM ${table} WHERE idx='${_id}'" )"
 		case "${type}" in
 			hiddendelim|subtable|delimer)
 				continue
@@ -796,9 +802,12 @@ else
 	x=1
 fi
 
+ret=0
+
 while [ ${x} -eq 1 ]; do
 	dialog_menu_main
-	ret=$?
+	export ret=$?
+
 	case ${ret} in
 		${DIALOG_OK})
 			[ -z "${mtag}" ] && continue
@@ -833,10 +842,14 @@ while [ ${x} -eq 1 ]; do
 			continue
 			;;
 		*)
-			exit 0
+			break
 			;;
 	esac
 done
+
+if [ ${ret} -ne 0 ]; then
+	exit ${ret}
+fi
 
 # mostly for inter=0 operation (e.g. webdev/clonos/other frontend)
 # before with_bootstrap exit
@@ -859,16 +872,25 @@ esac
 #fi
 
 # no bootrstap? this is the end my beautiful friend
-[ ${with_bootstrap} -eq 0 ] && exit 0
+[ ${with_bootstrap} -eq 0 ] && exit ${ret}
 
 [ -n "${oupdcol}" ] && updcol="${oupdcol}"
+
+[ -n "${oexport}" ] && export="${oexport}"
+if [ "${export}" = "1" ]; then
+	export_vars
+fi
+
+[ -n "${onoop}" ] && noop="${onoop}"
+[ ${noop} -eq 1 ] && exit 0
+
 update_params ${updcol}
 
 # commit when works with module
-if [ -n "$helper_module}" ]; then
+if [ -n "${helper_module}" ]; then
 	case "${jname}" in
 		CBSDSYS)
-			echo "HERE ${formfile}, debug: ${debug_form}"
+
 			if [ -r ${distmoduledir}/forms.d/${module}/cbsdsys ]; then
 				${distmoduledir}/forms.d/${module}/cbsdsys ${formfile}
 			else
@@ -885,15 +907,12 @@ if [ -n "$helper_module}" ]; then
 					${distmoduledir}/forms.d/${module}/cbsdsys ${formfile} ${jname}
 					;;
 				*)
-					echo "${helper_module} jname=${jname} module=${module} mode=apply debug_form=${debug_form}"
+					echo "${helper_module} jname=${jname} module=${module} mode=apply debug_form=${debug_form}" 1>&2
 					${helper_module} jname=${jname} module=${module} mode=apply debug_form=${debug_form}
 					# re-export global variable
 #					if [ -r "${distmoduledir}/puppet.d/sync_env2form" ]; then
 #						sync_env2form
 #					fi
-
-					[ -n "${oexport}" ] && export="${oexport}"
-					[ -n "${export}" ] && export_vars
 
 					# Looking for helpers pre/post hooks (todo: also lookup in $moduledir)
 					if [ -d "${distmoduledir}/forms.d/${module}/jail-system-default" ]; then
