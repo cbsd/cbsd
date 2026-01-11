@@ -23,6 +23,9 @@ Tested/supported with following OSes and hypervisor/container engines:
 :information_source: [^3] | Linux support is experimental, currently the following distributions have been successfully tested: Debian, Ubuntu, Manjaro;
 :---: | :---
 
+![jail demo](https://convectix.com/img/jdemo.gif)
+![bhyve demo](https://convectix.com/img/bdemo.gif)
+![cbsdfile jail demo](https://convectix.com/img/cbsdfile-jail0.gif)
 
 ## Usage
 
