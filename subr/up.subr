@@ -431,12 +431,78 @@ run_jail()
 		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
 	fi
 
-	if [ -d ${myworkdir}/skel ]; then
+	if [ -d "${myworkdir}/skel" ]; then
 		JAIL_ARGS="${JAIL_ARGS} customskel=${myworkdir}/skel"
 	fi
-	if [ -d ${myworkdir}/jails-system ]; then
+
+	if [ -d "${myworkdir}/jails-system" ]; then
 		JAIL_ARGS="${JAIL_ARGS} jailsysskeldir=${myworkdir}/jails-system"
+		if [ -r "${myworkdir}/jails-system/fstab.local" ]; then
+			# create external data volumes according to fstab.local
+			${CAT_CMD} ${myworkdir}/jails-system/fstab.local | while read _device _mountpt _fs _mode _a _b; do
+				[ -z "${_mountpt}" ] && continue
+
+				case ":${_device}" in
+					:#* | :)
+						continue
+						;;
+				esac
+
+				# don't allow "..", "()", "|" in path
+				echo "${_device}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
+				if [ $? -eq 0 ]; then
+					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_device}${N0_COLOR}"
+					continue
+				fi
+
+				# don't allow "..", "()", "|" in path
+				echo "${_mountpt}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
+				if [ $? -eq 0 ]; then
+					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_mountpt}${N0_COLOR}"
+					continue
+				fi
+
+				case "${_mountpt}" in
+					:#* | :)
+						continue
+						;;
+				esac
+
+				_spec_device=${_device%%/*}
+				# Detect/recognize entries like: 'WORKDIR_VOLUMES/home    /home   nullfs  rw 0 0'
+				# and map to ~cbsd/VOLUMES dataset's
+				if [ "${_spec_device}" = "WORKDIR_VOLUMES" ]; then
+					[ "${_fs}" != "nullfs" ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}only nullfs supported for WORKDIR_VOLUMES: ${N2_COLOR}${_fs}${N0_COLOR}"
+				else
+					continue
+				fi
+
+				_rvolpath="${_device#*/}"
+				_volpath="/${_rvolpath}"
+				_device="${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
+				printf "${N1_COLOR}${CIX_APP}: WORKDIR_VOLUMES: ${N2_COLOR}${_device} -> ${_volpath}: ${N0_COLOR}" 1>&2
+				if [ -d "${_device}" ]; then
+					${ECHO} "${N2_COLOR}exist${N0_COLOR}"
+				else
+					${ECHO} "${N2_COLOR}created${N0_COLOR}"
+					if [ -d "${myworkdir}/VOLUMES/${_rvolpath}" ]; then
+						# copy from VOLUMES/<datadir>
+						${MKDIR_CMD} -p "${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
+						${RSYNC_CMD} -avz "${myworkdir}/VOLUMES/${_rvolpath}/" "${workdir}/VOLUMES/${jname}-data/${_rvolpath}/"
+					else
+						# create empty dir
+						${MKDIR_CMD} -p "${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
+					fi
+					${ECHO} "${N2_COLOR}created${N0_COLOR}"
+				fi
+			done
+		fi
 	fi
+
+#			#_device="${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
+#			#${FIND_CMD} ${myworkdir}/jails-system/VOLUMES/ -mindepth 1 -maxdepth 1 -type d
+#		fi
+#	fi
 
 	${ECHO} "${N1_COLOR}invoking command: ${N2_COLOR} ${ENV_CMD} cbsd_workdir="${cbsd_workdir}" jcreate jname=${jname} ${N1_COLOR}${JAIL_ARGS} ${CBSDFILE_ARGS}${N0_COLOR}" | ${TR_CMD} -d \\t
 	trap "cd ${OBSD_PWD}" HUP INT ABRT BUS TERM EXIT
