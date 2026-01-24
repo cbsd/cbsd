@@ -2,8 +2,9 @@
 #v12.0.12
 # TODO: became too complex, split into modules.
 MYARG="dstdir jname media"
-MYOPTARG="applytpl dstname efi freesize fromfile gw4 host_hostname inter ip4_addr label name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs \
-mfsbsd_hostname mfsbsd_interface mfsbsd_vlan mfsbsd_defaultrouter mfsbsd_ip_addr mfsbsd_nameservers mfsbsd_origin_site mfs_struct_only extra_part extra_part_label mfsbsd_leave_kernel_dir"
+MYOPTARG="applytpl dstname efi extra_part extra_part_label freesize fromfile gw4 host_hostname inter ip4_addr kernel_dir label mfs_struct_only \
+mfsbsd_defaultrouter mfsbsd_hostname mfsbsd_interface mfsbsd_ip_addr mfsbsd_leave_kernel_dir mfsbsd_nameservers mfsbsd_origin_site mfsbsd_vlan \
+name nameserver nic nobase product prunelist publisher quiet swapsize timezone ver vm_guestfs"
 
 MYDESC="Create bootable ISO/Memstick/MFSBSD image from CBSD jail"
 
@@ -30,6 +31,7 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}host_hostname=${N0_COLOR} - set hostname in rc.conf image (freebsd only);
  ${N2_COLOR}ip4_addr=${N0_COLOR}      - set ip4 addr or 'DHCP' in rc.conf image (FreeBSD only);
  ${N2_COLOR}jname=${N0_COLOR}         - source data jail name;
+ ${N2_COLOR}kernel_dir${N0_COLOR}     - alternative kernel directory path;
  ${N2_COLOR}label=${N0_COLOR}         - label for media;
  ${N2_COLOR}media=${N0_COLOR}         - 'iso','memstick','livecd','bhyve' or 'mfs';
  ${N2_COLOR}name=${N0_COLOR}          - for alternative kernel name (GENERIC is default);
@@ -107,8 +109,11 @@ mfs_struct_only=0
 extra_part=
 extra_part_label=
 mfsbsd_leave_kernel_dir=
+kernel_dir=
+okernel_dir=
 . ${cbsdinit}
 
+[ -n "${kernel_dir}" ] && okernel_dir="${kernel_dir}"
 if [ -z "${ver}" -o "${ver}" = "native" ]; then
 	# ver=$( ${SYSCTL_CMD} -n kern.osrelease | ${CUT_CMD} -d - -f 1 )
 	# we preffer uname as source, due to some environment have UNAME_r for overwrite version
@@ -177,8 +182,13 @@ else
 fi
 
 [ -n "${oname}" ] && name="${oname}"
+[ -n "${okernel_dir}" ] && kernel_dir="${okernel_dir}"
 
-init_kerneldir
+if [ -n "${kernel_dir}" ]; then
+	KERNEL_DIR="${kernel_dir}"
+else
+	init_kerneldir
+fi
 ${ECHO} "${N1_COLOR}${CIX_APP}: KERNEL_DIR: ${N2_COLOR}${KERNEL_DIR}${N0_COLOR}"
 
 [ -n "${label}" ] && LABEL="${label}"
@@ -330,7 +340,7 @@ epilogue_img()
 		fi
 	else
 		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${_rootfs}/etc/rc.conf mfsbsd_enable="YES"
-
+		${CP_CMD} ${CIX_DISTDIR}/share/mfs/mfsbsd /${_rootfs}/etc/rc.d/mfsbsd
 	fi
 
 #		case "${mfsbsd_interface}" in
@@ -382,6 +392,15 @@ makemfsroot()
 		${CP_CMD} -a ${KERNEL_DIR}/boot/kernel/*.ko ${_tmpdir}/boot/kernel/
 		#${MAKEFS_CMD} -t ffs -m ${MFSROOT_MAXSIZE} -f ${MFSROOT_FREE_INODES} -b ${MFSROOT_FREE_BLOCKS} ${WRKDIR}/disk/mfsroot ${_ROOTDIR}
 		${CAT_CMD} >> ${_tmpdir}/boot/loader.conf << EOF
+kernels_autodetect="NO"
+kern.msgbuf_show_timestamp=1
+#hw.usb.no_boot_wait=1
+#hw.usb.no_shutdown_wait="1"
+#hw.usb.no_pf="1"
+hw.memtest.tests=0
+boot_serial=NO
+boot_multicons=NO
+console=efi
 hw.efi.poweroff=0
 mfs_load="YES"
 mfs_type="mfs_root"
@@ -669,22 +688,34 @@ make_ufs()
 	local _kernel_path=
 
 	if [ "${ver}" = "empty" ]; then
-		# checks kernel inside hier
-		if [ -r "${path}/boot/kernel" ]; then
-			_kernel_path="${path}/boot/kernel"
-		elif [ -r "${path}/boot/kernel.gz" ]; then
-			_kernel_path="${path}/boot/kernel.gz"
-		fi
-		if [ -n "${_kernel_path}" ]; then
-			${ECHO} "${N1_COLOR}kernel found inside hier, will be used: ${N2_COLOR}${_kernel_path}${N0_COLOR}" 1>&2
-			KERNEL_DIR="${path}"
+
+		[ -n "${okernel_dir}" ] && kernel_dir="${kernel_dir}"
+
+		if [ -z "${kernel_dir}" ]; then
+			# checks kernel inside hier
+			if [ -r "${path}/boot/kernel" ]; then
+				_kernel_path="${path}/boot/kernel"
+			elif [ -r "${path}/boot/kernel.gz" ]; then
+				_kernel_path="${path}/boot/kernel.gz"
+			fi
+			if [ -n "${_kernel_path}" ]; then
+				${ECHO} "${N1_COLOR}kernel found inside hier, will be used: ${N2_COLOR}${_kernel_path}${N0_COLOR}" 1>&2
+				KERNEL_DIR="${path}"
+			else
+				err "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
+			fi
 		else
-			err "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
+			KERNEL_DIR="${kernel_dir}"
 		fi
 	else
 		${ECHO} "${N1_COLOR}kernel required ver: ${ver}${N0_COLOR}" 1>&2
 		# move to kernel init?
-		get_kernel
+		[ -n "${okernel_dir}" ] && kernel_dir="${kernel_dir}"
+		if [ -n "${kernel_dir}" ]; then
+			KERNEL_DIR="${kernel_dir}"
+		else
+			get_kernel
+		fi
 		[ ! -d "${KERNEL_DIR}" ] && err 1 "No such ${KERNEL_DIR}"
 	fi
 
@@ -749,7 +780,6 @@ make_ufs()
 			*)
 				## build list first
 				TDIR=$( ${MKTEMP_CMD} -d )
-				
 				for i in ${mfsbsd_leave_kernel_dir}; do
 					${FIND_CMD} ${TMP_DIR}/boot/kernel/ -type f -name ${i} | while read _f; do
 						${MV_CMD} ${_f} ${TDIR}/
@@ -791,7 +821,6 @@ make_ufs()
 			${ECHO} "${N1_COLOR}${CIX_APP}: custom loader.conf absent in ${jailsysdir}/${jname}/loader.conf${N0_COLOR}"
 		fi
 	fi
-
 
 	case "${media}" in
 		bhyve)
@@ -948,6 +977,16 @@ EOF
 			${CAT_CMD} "${jailsysdir}/${jname}/loader.conf" > ${TMP_DIR}/mfsroot1/boot/loader.conf
 		else
 			${CAT_CMD} > ${TMP_DIR}/mfsroot1/boot/loader.conf <<EOF
+kernels_autodetect="NO"
+kern.msgbuf_show_timestamp=1
+#hw.usb.no_boot_wait=1
+#hw.usb.no_shutdown_wait="1"
+#hw.usb.no_pf="1"
+hw.memtest.tests=0
+boot_serial=NO
+boot_multicons=NO
+console=efi
+
 aesni_load="YES"
 ahci_load="YES"
 autoboot_delay="-1"
@@ -1026,9 +1065,9 @@ EOF
 
 		# ZERO layer
 		${MKDIR_CMD} -p ${TMP_DIR}/root
-		${CAT_CMD} > ${TMP_DIR}/root/boot.config <<EOF
--D
-EOF
+#		${CAT_CMD} > ${TMP_DIR}/root/boot.config <<EOF
+#-D
+#EOF
 		${MKDIR_CMD} -p ${TMP_DIR}/root/boot/defaults \
 			${TMP_DIR}/root/boot/kernel \
 			${TMP_DIR}/root/boot/lua
@@ -1146,6 +1185,16 @@ pmbr \
 			${CAT_CMD} "${jailsysdir}/${jname}/loader.conf" >> ${TMP_DIR}/root/boot/loader.conf
 		else
 			${CAT_CMD} > ${TMP_DIR}/root/boot/loader.conf <<EOF
+kernels_autodetect="NO"
+kern.msgbuf_show_timestamp=1
+#hw.usb.no_boot_wait=1
+#hw.usb.no_shutdown_wait="1"
+#hw.usb.no_pf="1"
+hw.memtest.tests=0
+boot_serial=NO
+boot_multicons=NO
+console=efi
+
 # CDBOOT
 aesni_load="YES"
 ahci_load="YES"
@@ -1374,7 +1423,7 @@ case "${media}" in
 			if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
 				# gptboot not for aarch64: jail2iso: no such boot/gptboot in hier: /usr/jails/tmp/cloud-iso.56237/boot/gptboot
 				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-			elif [ -r ${TMP_DIR}/boot/boot1.efi ]; then
+			elif [ -r ${TMP_DIR}/boot/boot1.efi -o -r ${TMP_DIR}/boot/loader.efi ]; then
 				_efi_part=$( ${MKTEMP_CMD} )
 				${TRUNCATE_CMD} -s64M ${_efi_part}
 				unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${_efi_part} 2>&1 )
@@ -1444,7 +1493,7 @@ case "${media}" in
 			if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
 				# gptboot not for aarch64: jail2iso: no such boot/gptboot in hier: /usr/jails/tmp/cloud-iso.56237/boot/gptboot
 				${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot -p freebsd-ufs:=${dstdir}/${dstname}.part -p freebsd-swap::1M -o ${dstdir}/${dstname}
-			elif [ -r ${TMP_DIR}/boot/boot1.efi ]; then
+			elif [ -r ${TMP_DIR}/boot/boot1.efi -o -r ${TMP_DIR}/boot/loader.efi ]; then
 				_efi_part=$( ${MKTEMP_CMD} )
 				${TRUNCATE_CMD} -s64M ${_efi_part}
 				unit=$( ${MDCONFIG_CMD} -a -t vnode -f ${_efi_part} 2>&1 )
@@ -1535,7 +1584,7 @@ case "${media}" in
 					if [ -r ${TMP_DIR}/boot/boot1.efifat ]; then
 						# gptboot not for aarch64: jail2iso: no such boot/gptboot in hier: /usr/jails/tmp/cloud-iso.56237/boot/gptboot
 						${MKIMG_CMD} -s gpt -b ${TMP_DIR}/boot/pmbr -p efi:=${TMP_DIR}/boot/boot1.efifat -p freebsd-boot:=${TMP_DIR}/boot/gptboot ${_swap_args} -p freebsd-ufs:=${dstdir}/${dstname}.part -o ${dstdir}/${dstname}
-					elif [ -r ${TMP_DIR}/boot/boot1.efi ]; then
+					elif [ -r ${TMP_DIR}/boot/boot1.efi -o -r ${TMP_DIR}/boot/loader.efi ]; then
 						# gptboot not for aarch64: jail2iso: no such boot/gptboot in hier: /usr/jails/tmp/cloud-iso.56237/boot/gptboot
 						[ ! -r ${TMP_DIR}/boot/gptboot ] && err 1 "${N1_COLOR}${CIX_APP}: no such boot/gptboot in hier: ${N2_COLOR}${TMP_DIR}/boot/gptboot${N0_COLOR}"
 						_efi_part=$( ${MKTEMP_CMD} )
