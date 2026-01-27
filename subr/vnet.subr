@@ -291,6 +291,9 @@ get_my_device()
 # $1 - bridge name
 # $2 - (optional) untagged VLAN ID, 0 or empty = disabled
 # $3 - (optional) tagged VLAN set (comma-separated), 0 or empty = disabled
+# $4 - (optional) MTU, 0 or empty = inherit from parent
+# $5 - (optional) flags, 0 or empty = no flags
+#       - "private" for bridge member isolation (ifconfig <bridge> private <epaira>)
 # out of created epair
 get_my_epair()
 {
@@ -299,8 +302,10 @@ get_my_epair()
 	local _bridge="${1}"
 	local _vlan_untagged="${2}"
 	local _vlan_tagged="${3}"
+	local _mtu="${4}"
+	local _nic_flags="${5}"
 	local _addm_args=
-
+	local _vlans=false
 	[ -z "${_bridge}" ] && echo "No bridge" && return 1
 
 	_firstfree=$( get-next-nic name=epair )
@@ -309,19 +314,48 @@ get_my_epair()
 	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
 	_parent_mtu=$( ${toolsdir}/nic_info --nic=${_bridge} --mtu --quiet 2>/dev/null )
 
-	${IFCONFIG_CMD} ${_firstfree}a mtu ${_parent_mtu}
-	${IFCONFIG_CMD} ${_firstfree}b mtu ${_parent_mtu}
+	[ -z "${_mtu}" -o "${_mtu}" = "0" ] && _mtu=${_parent_mtu}
+
+	${IFCONFIG_CMD} ${_firstfree}a mtu ${_mtu}
+	${IFCONFIG_CMD} ${_firstfree}b mtu ${_mtu}
 
 	# Build addm arguments with VLAN options
 	_addm_args="${_firstfree}a"
+
 	if [ -n "${_vlan_untagged}" -a "${_vlan_untagged}" != "0" ]; then
 		_addm_args="${_addm_args} untagged ${_vlan_untagged}"
+		_vlans=true
 	fi
 	if [ -n "${_vlan_tagged}" -a "${_vlan_tagged}" != "0" ]; then
 		_addm_args="${_addm_args} tagged ${_vlan_tagged}"
+		_vlans=true
+	fi
+
+	# Check if VLANFILTER is enabled on bridge if VLAN options are used
+	if ${_vlans} && ! ${IFCONFIG_CMD} ${_bridge} 2>/dev/null | ${GREP_CMD} -q 'VLANFILTER'; then
+		cbsdlogger "WARNING ${CIX_APP}: get_my_epair: VLANFILTER not enabled on ${_bridge}, please enable it manually"
 	fi
 
 	${IFCONFIG_CMD} ${_bridge} addm ${_addm_args} >/dev/null 2>/dev/null
+
+	if [ -n "${_nic_flags}" -a "${_nic_flags}" != "0" -a -n "${_bridge}" ]; then
+		OIFS="${IFS}"
+		IFS=","
+		for _flag in ${_nic_flags}; do
+			IFS="${OIFS}"
+			case "${_flag}" in
+				private)
+					cbsdlogger NOTICE ${CIX_APP}: set private flag for ${_firstfree}a on bridge ${_bridge}
+					${IFCONFIG_CMD} ${_bridge} private ${_firstfree}a
+					;;
+				*)
+					cbsdlogger "WARNING ${CIX_APP}: get_my_epair: unknown flag: ${_flag} for ${_firstfree}a on bridge ${_bridge}"
+					;;
+			esac
+			IFS=","
+		done
+		IFS="${OIFS}"
+	fi
 
 	# MAC MGMT
 	local maca=
