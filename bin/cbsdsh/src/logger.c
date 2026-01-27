@@ -107,6 +107,7 @@ cbsdloggercmd(int argc, char **argv)
 	char msg[LOG_MAX_LEN];
 	int i;
 	int res = 0;
+	int truncated = 0;
 
 	i = init_logvars();
 	if (i != 0)
@@ -136,10 +137,36 @@ cbsdloggercmd(int argc, char **argv)
 	for (i = 2; i < argc; i++)
 		res += strlen(argv[i]) + 1;
 	if (res) {
+		size_t len = 0;
+
 		memset(msg, 0, sizeof(msg));
-		for (i = 2; i < argc; i++) {
-			strcat(msg, argv[i]);
-			strcat(msg, " ");
+		for (i = 2; i < argc && len < (LOG_MAX_LEN - 1); i++) {
+			int n = snprintf(msg + len, LOG_MAX_LEN - len, "%s%s",
+			    (i == 2) ? "" : " ", argv[i]);
+
+			if (n < 0)
+				break;
+
+			if ((size_t)n >= (LOG_MAX_LEN - len)) {
+				/* The message was truncated. */
+				len = LOG_MAX_LEN - 1;
+				truncated = 1;
+				break;
+			}
+
+			len += (size_t)n;
+		}
+
+		/*
+		 * If the original message exceeded LOG_MAX_LEN, truncate the
+		 * stored message and mark the end with "...", keeping the
+		 * total length (including '\0') within LOG_MAX_LEN.
+		 */
+		if (truncated && LOG_MAX_LEN > 4) {
+			msg[LOG_MAX_LEN - 4] = '.';
+			msg[LOG_MAX_LEN - 3] = '.';
+			msg[LOG_MAX_LEN - 2] = '.';
+			msg[LOG_MAX_LEN - 1] = '\0';
 		}
 	}
 

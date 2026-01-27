@@ -1,5 +1,6 @@
 // CBSD Project, 2018
-// olevole@olevole.ru
+// Syslog message maximum length generally defaults to 1024 bytes (older RFC 3164)
+// RFC 5424 (Modern): Recommends systems handle at least 2048 bytes
 #define LOG_MAX_LEN 1024 /* Default maximum length of syslog messages */
 
 /* Log levels */
