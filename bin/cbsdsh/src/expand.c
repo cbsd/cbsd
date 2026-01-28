@@ -2128,7 +2128,13 @@ _rmescapes(char *str, int flag)
 				tail = 0;
 			}
 
-			q = mempcpy(q, p, ml);
+			/*
+			 * Destination can precede source by one byte when
+			 * we decremented q above; use memmove to avoid
+			 * overlap issues (ASan memcpy-param-overlap).
+			 */
+			memmove(q, p, ml);
+			q += ml;
 			p += ml + tail;
 			goto setnesc;
 		}
