@@ -552,6 +552,8 @@ fi
 epairb_list=
 # for traffic count
 epaira_list=
+# NIC names from DB (for interface renaming inside jail)
+nic_name_list=
 
 # extract and export/rewrite interface variable from jailnic for vnet-based jails
 if [ "${vnet}" = "1" ]; then
@@ -562,10 +564,9 @@ if [ "${vnet}" = "1" ]; then
 		printf "${_int} "
 	done ) || err 1 "${N1_COLOR}jstart: error get interfaces name for vnet nic map${N0_COLOR}"
 
-	eth_seq=0
-	printf "${N1_COLOR}create epair: "
 
 	for i in ${interfaces}; do
+		printf "${N1_COLOR}create nic: ${i}${N0_COLOR} "
 		nic_hwaddr=
 		nic_parent=
 		nic_address=
@@ -647,8 +648,6 @@ if [ "${vnet}" = "1" ]; then
 				fi
 		esac
 
-		echo "NT: ${nic_type}"
-
 		if [ "${nic_type}" = "ppt" ]; then
 			myepair="${i}"
 			if [ -z "${epairb_list}" ]; then
@@ -662,9 +661,11 @@ if [ "${vnet}" = "1" ]; then
 			if [ -z "${epairb_list}" ]; then
 				epaira_list="${myepair}a"
 				epairb_list="${myepair}b"
+				nic_name_list="${i}"
 			else
 				epaira_list="${epaira_list},${myepair}a"
 				epairb_list="${epairb_list},${myepair}b"
+				nic_name_list="${nic_name_list},${i}"
 			fi
 		fi
 
@@ -695,19 +696,18 @@ if [ "${vnet}" = "1" ]; then
 		[ -n "${nic_mtu}" -a "${nic_mtu}" != "0" ] && _extra_info="${_extra_info} mtu:${nic_mtu}"
 		[ -n "${nic_flags}" -a "${nic_flags}" != "0" ] && _extra_info="${_extra_info} flags:${nic_flags}"
 
-		printf "${H3_COLOR}${myepair}(type:${nic_type}):${N2_COLOR}${nic_parent}${_extra_info}"
+		printf "${H3_COLOR}${myepair}(type:${nic_type}):${N2_COLOR}${nic_parent}${_extra_info}\n"
 
 		case "${nic_type}" in
 			ppt)
-				#${IFCONFIG_CMD} ${myepair} description ${jname}-eth${eth_seq} up
 				${IFCONFIG_CMD} ${myepair} description ${jname}-${myepair} up
 				;;
 			*)
-				${IFCONFIG_CMD} ${myepair}a description ${jname}-eth${eth_seq} up
+				# Use NIC name from DB (${i}) for description
+				${IFCONFIG_CMD} ${myepair}a description ${jname}-${i} up
 				;;
 		esac
 
-		eth_seq=$(( eth_seq + 1 ))
 
 		case "${nic_type}" in
 			ppt)
@@ -1017,50 +1017,55 @@ fi
 if [ ${vnet} -eq 1 ]; then
 	OIFS="${IFS}"
 	IFS=","
-	eth_seq=0
+	_nic_idx=1
 	int_iface=
 	for i in ${epairb_list}; do
 		[ -z "${i}" ] && continue
 		IFS="${OIFS}"
 		${IFCONFIG_CMD} ${i} up
-		# we need setup lock here due to ethX name possible conflict with other jail
+
+		# Get NIC name from nic_name_list (parallel list)
+		_target_nic_name=$( echo "${nic_name_list}" | ${CUT_CMD} -d',' -f${_nic_idx} )
+		[ -z "${_target_nic_name}" ] && _target_nic_name="eth$(( _nic_idx - 1 ))"
+
+		# we need setup lock here due to interface name possible conflict with other jail
 		_wait_count=0
 		[ -z "${_iface_rename}" ] && _iface_rename=0
 
 		if [ ${_iface_rename} -eq 1 ]; then
-			while [ -r ${tmpdir}/eth${eth_seq}.locked ]; do
+			while [ -r ${tmpdir}/${_target_nic_name}.locked ]; do
 				_cur_time=$( ${DATE_CMD} +%s )
-				eval $( ${STAT_CMD} -s ${tmpdir}/eth${eth_seq}.locked )
+				eval $( ${STAT_CMD} -s ${tmpdir}/${_target_nic_name}.locked )
 				_diff_time=$(( _cur_time - st_mtime ))
 
 				if [ ${_diff_time} -gt 8 ]; then
-					${IFCONFIG_CMD} eth${eth_seq} > /dev/null 2>&1
+					${IFCONFIG_CMD} ${_target_nic_name} > /dev/null 2>&1
 					_ret=$?
 					if [ ${_ret} -ne 0 ]; then
 						# remove orphaned lock
-						${RM_CMD} -f ${tmpdir}/eth${eth_seq}.locked
+						${RM_CMD} -f ${tmpdir}/${_target_nic_name}.locked
 						break
 					fi
 				fi
 
-				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}jstart: eth${eth_seq} locked (${_diff_time}), waiting (${_wait_count}/12)..${N0_COLOR}"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}jstart: ${_target_nic_name} locked (${_diff_time}), waiting (${_wait_count}/12)..${N0_COLOR}"
 
 				_wait_count=$(( _wait_count + 1 ))
 
 				if [ ${_wait_count} -gt 12 ]; then
-					_res=$( ${CAT_CMD} ${tmpdir}/eth${eth_seq}.locked )
+					_res=$( ${CAT_CMD} ${tmpdir}/${_target_nic_name}.locked )
 					jstop jname=${jname} fast=1
 					${IFCONFIG_CMD} ${i} destroy
-					log_err 1 "${N1_COLOR}${CIX_APP}: waiting for unlock: still locked by [${_res}]: ${N2_COLOR}${tmpdir}/eth${eth_seq}.locked${N0_COLOR}"
+					log_err 1 "${N1_COLOR}${CIX_APP}: waiting for unlock: still locked by [${_res}]: ${N2_COLOR}${tmpdir}/${_target_nic_name}.locked${N0_COLOR}"
 				fi
 
 				sleep 1
 			done
 
 			# make lock
-			echo "${jname}" > ${tmpdir}/eth${eth_seq}.locked
-			${IFCONFIG_CMD} ${i} name eth${eth_seq} && ${IFCONFIG_CMD} eth${eth_seq} vnet ${jname}
-			int_iface="eth${eth_seq}"
+			echo "${jname}" > ${tmpdir}/${_target_nic_name}.locked
+			${IFCONFIG_CMD} ${i} name ${_target_nic_name} && ${IFCONFIG_CMD} ${_target_nic_name} vnet ${jname}
+			int_iface="${_target_nic_name}"
 		else
 			${IFCONFIG_CMD} ${i} vnet ${jname}
 			int_iface="${i}"
@@ -1221,8 +1226,8 @@ if [ ${vnet} -eq 1 ]; then
 		done
 
 		# release lock
-		[ -r ${tmpdir}/eth${eth_seq}.locked ] && ${RM_CMD} -f ${tmpdir}/eth${eth_seq}.locked
-		eth_seq=$(( eth_seq + 1 ))
+		[ -r ${tmpdir}/${_target_nic_name}.locked ] && ${RM_CMD} -f ${tmpdir}/${_target_nic_name}.locked
+		_nic_idx=$(( _nic_idx + 1 ))
 		IFS=","
 	done
 
