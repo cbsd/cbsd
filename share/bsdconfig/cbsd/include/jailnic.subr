@@ -13,9 +13,13 @@ load_nic_info()
 		unset nic_parent${last_nic}
 		unset nic_hwaddr${last_nic}
 		unset nic_address${last_nic}
+		unset nic_mtu${last_nic}
+		unset nic_flags${last_nic}
+		unset nic_vlan_untagged${last_nic}
+		unset nic_vlan_tagged${last_nic}
 	done
 
-	eval $( cbsdsqlro ${mysqlite} SELECT id,name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address FROM jailnic | while read nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address; do
+	eval $( cbsdsqlro ${mysqlite} SELECT id,name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic | while read nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged; do
 		echo "export nic_id${nic_last_id}=\"${nic_id}\""
 		echo "export nic_name${nic_last_id}=\"${nic_name}\""
 		echo "export nic_order${nic_last_id}=\"${nic_order}\""
@@ -23,6 +27,10 @@ load_nic_info()
 		echo "export nic_parent${nic_last_id}=\"${nic_parent}\""
 		echo "export nic_hwaddr${nic_last_id}=\"${nic_hwaddr}\""
 		echo "export nic_address${nic_last_id}=\"${nic_address}\""
+		echo "export nic_mtu${nic_last_id}=\"${nic_mtu}\""
+		echo "export nic_flags${nic_last_id}=\"${nic_flags}\""
+		echo "export nic_vlan_untagged${nic_last_id}=\"${nic_vlan_untagged}\""
+		echo "export nic_vlan_tagged${nic_last_id}=\"${nic_vlan_tagged}\""
 		nic_last_id=$(( nic_last_id + 1 ))
 	done ) || err 1 "${N1_COLOR}Error while create nic map${N0_COLOR}"
 }
@@ -38,6 +46,28 @@ find_first_free_nic_id()
 	done
 
 	echo "${last_nic}"
+}
+
+# form for $nic_vlan_untagged
+get_construct_nic_vlan_untagged()
+{
+	local _input _message="Untagged VLAN ID for bridge member (ifconfig bridge addm interface untagged <vlan-id>). Set 0 to disable."
+
+	f_dialog_input _input "Input untagged VLAN ID (0 - disabled)" "${nic_vlan_untagged}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nic_vlan_untagged="${_input}"
+}
+
+# form for $nic_vlan_tagged
+get_construct_nic_vlan_tagged()
+{
+	local _input _message="Tagged VLAN set for bridge member (ifconfig bridge addm interface tagged <vlan-set>). Comma-separated list, e.g: 100,200,300. Set 0 to disable."
+
+	f_dialog_input _input "Input tagged VLAN set (comma-separated, 0 - disabled)" "${nic_vlan_tagged}" \
+		"${_message}" || return $?
+
+	[ -n "${_input}" ] && nic_vlan_tagged="${_input}"
 }
 
 # form for $nic_parent
@@ -87,19 +117,27 @@ get_vale_switch()
 }
 
 # form for new nic
-# -h hwaddr -n nic_name -p nic_parent -z nic_persistent
+# -h hwaddr -n nic_name -p nic_parent -z nic_persistent -m nic_mtu -f nic_flags -u nic_vlan_untagged -t nic_vlan_tagged
 add_nic()
 {
 	local nic_name=
 	local nic_hwaddr=
 	local nic_parent=
 	local nic_persistent=
+	local nic_mtu=
+	local nic_flags=
+	local nic_vlan_untagged=
+	local nic_vlan_tagged=
 
-	while getopts "h:n:p:z:" opt; do
+	while getopts "f:h:m:n:p:t:u:z:" opt; do
 		case "${opt}" in
+			f) nic_flags="${OPTARG}" ;;
 			h) nic_hwaddr="${OPTARG}" ;;
+			m) nic_mtu="${OPTARG}" ;;
 			n) nic_name="${OPTARG}" ;;
 			p) nic_parent="${OPTARG}" ;;
+			t) nic_vlan_tagged="${OPTARG}" ;;
+			u) nic_vlan_untagged="${OPTARG}" ;;
 			z) nic_persistent="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
@@ -107,11 +145,15 @@ add_nic()
 
 	[ -z "${nic_address}" ] && nic_address="0"
 	[ -z "${nic_parent}" ] && nic_parent="auto"
-	[ -z "${nic_persistent}" ] && nic_parent="0"
+	[ -z "${nic_persistent}" ] && nic_persistent="0"
+	[ -z "${nic_mtu}" ] && nic_mtu="0"
+	[ -z "${nic_flags}" ] && nic_flags="0"
+	[ -z "${nic_vlan_untagged}" ] && nic_vlan_untagged="0"
+	[ -z "${nic_vlan_tagged}" ] && nic_vlan_tagged="0"
 	[ -z "${nic_name}" ] && err 1 "${N1_COLOR}Empty nic_name${N0_COLOR}"
 	[ -z "${nic_hwaddr}" ] && err 1 "${N1_COLOR}Empty nic_hwaddr${N0_COLOR}"
 
-	cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_parent,nic_hwaddr,nic_persistent ) VALUES ( \"${nic_name}\", \"${nic_parent}\", \"${nic_hwaddr}\", \"${nic_persistent}\" )"
+	cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_parent,nic_hwaddr,nic_persistent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${nic_name}', '${nic_parent}', '${nic_hwaddr}', '${nic_persistent}', '${nic_mtu}', '${nic_flags}', '${nic_vlan_untagged}', '${nic_vlan_tagged}' )"
 
 	return 0
 }
@@ -125,7 +167,7 @@ update_nic_hwaddr()
 	[ -z "${nic_hwaddr}" ] && return 0
 	[ -z "${jname}" -o -z "${nic}" ] && return 0
 
-	cbsdsqlrw ${mysqlite} UPDATE jailnic SET nic_hwaddr=\"${nic_hwaddr}\" WHERE id=\"${nic}\"
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}' WHERE id='${nic}'"
 
 	return 0
 }
@@ -138,7 +180,7 @@ update_nic_address()
 	[ -z "${nic_address}" ] && return 0
 	[ -z "${jname}" -o -z "${nic}" ] && return 0
 
-	cbsdsqlrw ${mysqlite} UPDATE jailnic SET nic_address=\"${nic_address}\" WHERE id=\"${nic}\"
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_address='${nic_address}' WHERE id='${nic}'"
 
 	return 0
 }
@@ -151,7 +193,59 @@ update_nic_parent()
 	[ -z "${nic_parent}" ] && return 0
 	[ -z "${jname}" -o -z "${nic}" ] && return 0
 
-	cbsdsqlrw ${mysqlite} UPDATE jailnic SET nic_parent=\"${nic_parent}\" WHERE id=\"${nic}\"
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_parent='${nic_parent}' WHERE id='${nic}'"
+
+	return 0
+}
+
+# update nic_mtu by nic id
+# $nic_mtu must be set
+update_nic_mtu()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_mtu}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_mtu='${nic_mtu}' WHERE id='${nic}'"
+
+	return 0
+}
+
+# update nic_flags by nic id
+# $nic_flags must be set
+update_nic_flags()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_flags}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_flags='${nic_flags}' WHERE id='${nic}'"
+
+	return 0
+}
+
+# update nic_vlan_untagged by nic id
+# $nic_vlan_untagged must be set
+update_nic_vlan_untagged()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_vlan_untagged}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_untagged='${nic_vlan_untagged}' WHERE id='${nic}'"
+
+	return 0
+}
+
+# update nic_vlan_tagged by nic id
+# $nic_vlan_tagged must be set
+update_nic_vlan_tagged()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_vlan_tagged}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_tagged='${nic_vlan_tagged}' WHERE id='${nic}'"
 
 	return 0
 }
