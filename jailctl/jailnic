@@ -1,0 +1,367 @@
+#!/usr/local/bin/cbsd
+#v15.0.1
+CBSDMODULE="jail"
+MYARG=""
+MYOPTARG="jname mode name slot interface hwaddr address mtu flags vlan_untagged vlan_tagged header display new_name"
+MYDESC="Manage jail vnet NIC"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Manage virtual network interfaces for vnet-based jails.
+
+${H3_COLOR}Usage${N0_COLOR}:
+
+ cbsd jailnic mode=list jname=<jail>
+ cbsd jailnic mode=add jname=<jail> [name=ethX] [interface=auto] ...
+ cbsd jailnic mode=update jname=<jail> name=<nic> [interface=...] ...
+ cbsd jailnic mode=delete jname=<jail> name=<nic>
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode= | arg1${N0_COLOR}    - action: list, add, update, delete (or del)
+ ${N2_COLOR}jname= | arg2${N0_COLOR}   - jail name
+ ${N2_COLOR}name= | arg3${N0_COLOR}    - NIC name, used as interface name inside jail (e.g., eth0, eth1)
+ ${N2_COLOR}slot=${N0_COLOR}           - NIC slot number
+ ${N2_COLOR}interface=${N0_COLOR}      - parent interface (auto, bridge0, em0, etc.)
+ ${N2_COLOR}hwaddr=${N0_COLOR}         - MAC address (0 = auto-generate)
+ ${N2_COLOR}address=${N0_COLOR}        - IP address for epairA host side (0 = disabled)
+ ${N2_COLOR}mtu=${N0_COLOR}            - MTU size (0 = inherit from parent)
+ ${N2_COLOR}flags=${N0_COLOR}          - NIC flags: private (bridge isolation)
+ ${N2_COLOR}vlan_untagged=${N0_COLOR}  - untagged VLAN ID for bridge addm (0 = disabled)
+ ${N2_COLOR}vlan_tagged=${N0_COLOR}    - tagged VLAN set, comma-separated (0 = disabled)
+ ${N2_COLOR}header=${N0_COLOR}         - show header in list mode (1 = yes, 0 = no)
+ ${N2_COLOR}display=${N0_COLOR}        - comma-separated columns to display
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jailnic jail1 list
+ # cbsd jailnic jail1 add interface=bridge0 vlan_untagged=100
+ # cbsd jailnic jail1 update nic1 mtu=1400 flags=private
+ # cbsd jailnic jail1 update nic1 name=nic8
+ # cbsd jailnic jail1 delete nic1
+
+
+ # cbsd jailnic jname=jail1 mode=list
+ # cbsd jailnic jname=jail1 mode=add interface=bridge0 vlan_untagged=100
+ # cbsd jailnic jname=jail1 mode=update name=nic1 mtu=1400 flags=private
+ # cbsd jailnic jname=jail1 mode=delete name=nic1
+
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd jailnic-tui --help
+ cbsd jstart --help
+
+"
+
+. ${subrdir}/nc.subr
+. ${strings}
+. ${tools}
+
+. ${cbsdinit}
+
+# Normalize arguments: drop all x=y args
+normalize_argv() {
+	local args=""
+	local space=""
+	for arg in "$@"; do
+		case "${arg}" in
+			*=*)
+				# skip x=y args
+				;;
+			*)
+				args="${args}${space}${arg}"
+				space=" "
+				;;
+		esac
+	done
+	echo "${args}"
+}
+
+# Handle positional arguments: jailnic <mode> <jname> [name]
+# e.g.: cbsd jailnic list myjail
+#       cbsd jailnic delete myjail eth0
+
+set -- $(normalize_argv "$@")
+[ -z "${jname}" -a -n "${1}" ] && jname="${1}" && shift
+[ -z "${mode}"  -a -n "${1}" ] && mode="${1}" && shift
+
+if [ -n "${1}" ]; then
+	if [ -z "${name}" ]; then
+		name="${1}"
+	else
+		# rename case
+		new_name="${name}"  # name suppied as name=xxx
+		name="${1}"  		# name supplied as positional argument
+	fi
+	shift
+fi
+
+if [ -n "${1}" ]; then
+	err 1 "${N1_COLOR}jailnic: too many arguments: ${N2_COLOR}${1}${N0_COLOR}"
+fi
+
+# Defaults
+[ -z "${header}" ] && header=1
+[ -z "${display}" ] && display="name,nic_slot,nic_parent,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged"
+
+# Validate jname
+[ -z "${jname}" ] && err 1 "${N1_COLOR}jailnic: ${N2_COLOR}jname=${N1_COLOR} is required. Use ${N2_COLOR}help${N1_COLOR} for usage.${N0_COLOR}"
+
+# Save 'name' before rcconf.subr (it unsets columns from local-jails.schema including 'name')
+_saved_nic_name="${name}"
+
+. ${subrdir}/rcconf.subr
+[ $? -eq 1 ] && err 1 "${N1_COLOR}jailnic: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+# Restore 'name' after rcconf.subr
+name="${_saved_nic_name}"
+[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}jailnic: ${N2_COLOR}${jname}${N1_COLOR} is not a jail (emulator=${emulator})${N0_COLOR}"
+
+mysqlite="${jailsysdir}/${jname}/local.sqlite"
+
+# Ensure jailnic table exists
+if [ ! -r "${mysqlite}" ]; then
+	/usr/local/bin/cbsd ${miscdir}/updatesql ${mysqlite} ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
+fi
+
+# Normalize mode
+case "${mode}" in
+	""|list)
+		mode="list"
+		;;
+	del|delete)
+		mode="delete"
+		;;
+	help)
+		init --help
+		;;
+esac
+
+#
+# List NICs
+#
+jailnic_list()
+{
+	local _sql _header_printed=0
+	local _id _name _nic_slot _nic_parent _nic_hwaddr _nic_address _nic_mtu _nic_flags _nic_vlan_untagged _nic_vlan_tagged
+
+	# Check if table exists
+	_table_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jailnic';" )
+	if [ "${_table_exists}" = "0" ]; then
+		${ECHO} "${N1_COLOR}No NIC configuration for ${N2_COLOR}${jname}${N0_COLOR}"
+		return 0
+	fi
+
+	# Print header
+	if [ "${header}" = "1" ]; then
+		printf "${BOLD}"
+		local _dfields
+		_dfields=$( echo "${display}" | ${TR_CMD} ',' ' ' )
+		for _f in ${_dfields}; do
+			case "${_f}" in
+				name) printf "%-12s" "NAME" ;;
+				nic_slot|slot) printf "%-6s" "SLOT" ;;
+				nic_parent|interface) printf "%-14s" "INTERFACE" ;;
+				nic_hwaddr|hwaddr) printf "%-20s" "HWADDR" ;;
+				nic_address|address) printf "%-16s" "ADDRESS" ;;
+				nic_mtu|mtu) printf "%-6s" "MTU" ;;
+				nic_flags|flags) printf "%-10s" "FLAGS" ;;
+				nic_vlan_untagged|vlan_untagged) printf "%-10s" "UNTAGGED" ;;
+				nic_vlan_tagged|vlan_tagged) printf "%-14s" "TAGGED" ;;
+			esac
+		done
+		printf "${N0_COLOR}\n"
+	fi
+
+	# Query and display
+	cbsdsqlro ${mysqlite} "SELECT name,nic_slot,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic" | while read _line; do
+		local IFS="|"
+		set -- ${_line}
+		_name="${1}"
+		_nic_slot="${2}"
+		_nic_parent="${3}"
+		_nic_hwaddr="${4}"
+		_nic_address="${5}"
+		_nic_mtu="${6}"
+		_nic_flags="${7}"
+		_nic_vlan_untagged="${8}"
+		_nic_vlan_tagged="${9}"
+		IFS=" "
+
+		local _dfields
+		_dfields=$( echo "${display}" | ${TR_CMD} ',' ' ' )
+		for _f in ${_dfields}; do
+			case "${_f}" in
+				name) printf "%-12s" "${_name}" ;;
+				nic_slot|slot) printf "%-6s" "${_nic_slot}" ;;
+				nic_parent|interface) printf "%-14s" "${_nic_parent}" ;;
+				nic_hwaddr|hwaddr) printf "%-20s" "${_nic_hwaddr}" ;;
+				nic_address|address) printf "%-16s" "${_nic_address}" ;;
+				nic_mtu|mtu) printf "%-6s" "${_nic_mtu}" ;;
+				nic_flags|flags) printf "%-10s" "${_nic_flags}" ;;
+				nic_vlan_untagged|vlan_untagged) printf "%-10s" "${_nic_vlan_untagged}" ;;
+				nic_vlan_tagged|vlan_tagged) printf "%-14s" "${_nic_vlan_tagged}" ;;
+			esac
+		done
+		printf "\n"
+	done
+}
+
+#
+# Add NIC
+#
+jailnic_add()
+{
+	local _last_nic _last_slot _res
+
+	# Find next free NIC name if not specified (eth0, eth1, ...)
+	if [ -z "${name}" ]; then
+		for _last_nic in $( ${SEQ_CMD} 0 16 ); do
+			_res=$( cbsdsqlro ${mysqlite} "SELECT name FROM jailnic WHERE name='eth${_last_nic}'" 2>&1 )
+			[ -z "${_res}" ] && break
+		done
+		name="eth${_last_nic}"
+	fi
+
+	# Check if name already exists
+	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	[ "${_exists}" != "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} already exists${N0_COLOR}"
+
+	# Find next free slot if not specified
+	if [ -z "${slot}" ]; then
+		for _last_slot in $( ${SEQ_CMD} 0 16 ); do
+			_res=$( cbsdsqlro ${mysqlite} "SELECT nic_slot FROM jailnic WHERE nic_slot=${_last_slot}" 2>&1 )
+			[ -z "${_res}" ] && break
+		done
+		slot="${_last_slot}"
+	fi
+
+	# Defaults
+	[ -z "${interface}" ] && interface="auto"
+	[ -z "${hwaddr}" ] && hwaddr="0"
+	[ -z "${address}" ] && address="0"
+	[ -z "${mtu}" ] && mtu="0"
+	[ -z "${flags}" ] && flags="0"
+	[ -z "${vlan_untagged}" ] && vlan_untagged="0"
+	[ -z "${vlan_tagged}" ] && vlan_tagged="0"
+
+	cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_slot,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${name}', '${slot}', '${interface}', '${hwaddr}', '${address}', '${mtu}', '${flags}', '${vlan_untagged}', '${vlan_tagged}' )"
+
+	${ECHO} "${N1_COLOR}NIC ${N2_COLOR}${name}${N1_COLOR} added to ${N2_COLOR}${jname}${N0_COLOR}"
+	# Warn if jail is running
+	if [ "${jid}" != "0" -a -n "${jid}" ]; then
+		${ECHO} "${N1_COLOR}Note: jail is running, ${N2_COLOR}cbsd jrestart ${jname}${N1_COLOR} required to apply changes${N0_COLOR}"
+	fi
+}
+
+#
+# Update NIC
+#
+jailnic_update()
+{
+	[ -z "${name}" ] && err 1 "${N1_COLOR}jailnic update: ${N2_COLOR}name=${N1_COLOR} is required${N0_COLOR}"
+
+	# Check if NIC exists
+	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	[ "${_exists}" = "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} not found${N0_COLOR}"
+
+	local _updated=0
+
+	if [ -n "${new_name}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET name='${new_name}' WHERE name='${name}'"
+		name="${new_name}"
+		_updated=1
+	fi
+
+	if [ -n "${slot}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_slot='${slot}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${interface}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_parent='${interface}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${hwaddr}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_hwaddr='${hwaddr}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${address}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_address='${address}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${mtu}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_mtu='${mtu}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${flags}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_flags='${flags}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${vlan_untagged}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_untagged='${vlan_untagged}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ -n "${vlan_tagged}" ]; then
+		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_tagged='${vlan_tagged}' WHERE name='${name}'"
+		_updated=1
+	fi
+
+	if [ ${_updated} -eq 1 ]; then
+		${ECHO} "${N1_COLOR}NIC ${N2_COLOR}${name}${N1_COLOR} updated in ${N2_COLOR}${jname}${N0_COLOR}"
+		# Warn if jail is running
+		if [ "${jid}" != "0" -a -n "${jid}" ]; then
+			${ECHO} "${N1_COLOR}Note: jail is running, ${N2_COLOR}cbsd jrestart ${jname}${N1_COLOR} required to apply changes${N0_COLOR}"
+		fi
+	else
+		${ECHO} "${N1_COLOR}No parameters specified to update${N0_COLOR}"
+	fi
+}
+
+#
+# Delete NIC
+#
+jailnic_delete()
+{
+	[ -z "${name}" ] && err 1 "${N1_COLOR}jailnic delete: ${N2_COLOR}name=${N1_COLOR} is required${N0_COLOR}"
+
+	# Check if NIC exists
+	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	[ "${_exists}" = "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} not found${N0_COLOR}"
+
+	cbsdsqlrw ${mysqlite} "DELETE FROM jailnic WHERE name='${name}'"
+
+	${ECHO} "${N1_COLOR}NIC ${N2_COLOR}${name}${N1_COLOR} deleted from ${N2_COLOR}${jname}${N0_COLOR}"
+	# Warn if jail is running
+	if [ "${jid}" != "0" -a -n "${jid}" ]; then
+		${ECHO} "${N1_COLOR}Note: jail is running, ${N2_COLOR}cbsd jrestart ${jname}${N1_COLOR} required to apply changes${N0_COLOR}"
+	fi
+}
+
+# Main
+case "${mode}" in
+	list)
+		jailnic_list
+		;;
+	add)
+		jailnic_add
+		;;
+	update)
+		jailnic_update
+		;;
+	delete)
+		jailnic_delete
+		;;
+	*)
+		err 1 "${N1_COLOR}jailnic: unknown mode: ${N2_COLOR}${mode}${N1_COLOR}. Use: list, add, update, delete${N0_COLOR}"
+		;;
+esac
+
+exit 0
