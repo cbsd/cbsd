@@ -346,7 +346,6 @@ int
 substrcmd(int argc, char **argv)
 {
 	char *pointer;
-	int c;
 	int optcode = 0;
 	int option_index = 0;
 	char *str = NULL;
@@ -394,7 +393,20 @@ substrcmd(int argc, char **argv)
 
 	if (str == NULL)
 		return 1;
-	pointer = malloc(len + 1);
+	/* Clamp pos/len to string bounds to avoid overruns */
+	size_t start = 0;
+	size_t slen = strlen(str);
+	if (pos < 1)
+		pos = 1;
+	start = (size_t)(pos - 1);
+	if (start > slen)
+		start = slen;
+	if (len < 0)
+		len = 0;
+	if ((size_t)len > (slen - start))
+		len = (int)(slen - start);
+
+	pointer = malloc((size_t)len + 1);
 
 	if (pointer == NULL) {
 		out1fmt("Unable to allocate memory.\n");
@@ -402,16 +414,11 @@ substrcmd(int argc, char **argv)
 		return 1;
 	}
 
-	for (c = 0; c < pos - 1; c++)
-		str++;
-
-	for (c = 0; c < len; c++) {
-		*(pointer + c) = *str;
-		str++;
-	}
-	*(pointer + c) = '\0';
+	memcpy(pointer, str + start, (size_t)len);
+	pointer[len] = '\0';
 	out1fmt("%s", pointer);
 	free(pointer);
+	free(str);
 	return 0;
 }
 
