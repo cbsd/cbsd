@@ -119,6 +119,7 @@ void unwindfiles(struct parsefile *);
 void popallfiles(void);
 void flush_input(void);
 void reset_input(void);
+void exitreset_input(void);	/* unwind input stack to base; call first in exitreset */
 
 static inline int input_get_lleft(struct parsefile *pf)
 {

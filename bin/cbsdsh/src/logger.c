@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <syslog.h>
+#include <time.h>
 #include <sys/time.h>
 #include "var.h"
 #include "input.h"

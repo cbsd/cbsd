@@ -1,0 +1,67 @@
+#!/bin/sh
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
+# Always run from the directory where the script lives
+cd "$(dirname "$0")" || exit 1
+
+PLATFORM=$( uname -s )
+echo "Build platform: ${PLATFORM}"
+
+# Export for configure (cbsd_fwatch / cbsd_fwatch_linux choice, etc.)
+export CBSD_PLATFORM="${PLATFORM}"
+
+# debug memleaks/free/invalid pointer
+export CFLAGS="-g -fsanitize=address"
+export LDFLAGS="-fsanitize=address"
+
+case "${PLATFORM}" in
+	Linux)
+		MAKE_CMD=$( which make )
+		export CONFIGURE_ARGS="--with-libsqlite3"
+		;;
+	FreeBSD)
+		MAKE_CMD=$( which gmake )
+		export CPPFLAGS="-I/usr/include -I/usr/local/include"
+		export LDFLAGS="-L/usr/lib -L/usr/local/lib"
+		export LD_LIBRARY_PATH="/usr/lib /usr/local/lib"
+		export C_INCLUDE_PATH="/usr/include /usr/local/include"
+		export CONFIGURE_ARGS="--with-libsqlite3 --with-libjail"
+		;;
+	*)
+		MAKE_CMD="make"
+		;;
+esac
+
+AUTORECONF_CMD=$( which autoreconf )
+
+if [ ! -x "${MAKE_CMD}" ]; then
+	echo "no such make: ${MAKE_CMD}"
+	exit 1
+fi
+if [ ! -x "${AUTORECONF_CMD}" ]; then
+	echo "no such autoreconf cmd"
+	exit 1
+fi
+
+${MAKE_CMD} distclean >/dev/null 2>&1 || true
+${AUTORECONF_CMD} -i
+ret=$?
+if [ ${ret} -ne 0 ]; then
+	echo "${AUTORECONF_CMD} -i failed, errcode: ${ret}"
+	exit ${ret}
+fi
+
+./configure ${CONFIGURE_ARGS}
+ret=$?
+if [ ${ret} -ne 0 ]; then
+	echo "configure failed, errcode: ${ret}"
+	exit ${ret}
+fi
+
+${MAKE_CMD} -C src
+ret=$?
+
+if [ ${ret} -ne 0 ]; then
+	echo "${MAKE_CMD} error: ${ret}"
+	exit ${ret}
+fi

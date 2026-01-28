@@ -125,6 +125,7 @@ STATIC const struct builtincmd bltin = {
 INCLUDE "eval.h"
 
 EXITRESET {
+	exitreset_input();
 	if (savestatus >= 0) {
 		if (exception == EXEXIT || evalskip == SKIPFUNCDEF)
 			exitstatus = savestatus;

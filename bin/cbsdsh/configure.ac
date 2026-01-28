@@ -140,12 +140,22 @@ if test "$ac_cv_func_signal" != yes; then
 fi
 
 dnl Check for stat64 (dietlibc/klibc).
-AC_CHECK_DECL(stat64, AC_CHECK_FUNC(stat64))
-if test "$ac_cv_func_stat64" != yes; then
+dnl On FreeBSD and some other systems, stat64 doesn't exist as a separate function
+dnl We check if the function exists by trying to link it, and if not, create aliases
+AC_MSG_CHECKING([for stat64 function])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([
+#include <sys/stat.h>
+], [
+	struct stat st;
+	if (stat64("/", &st) != 0) return 1;
+])], [
+	AC_MSG_RESULT([yes])
+], [
+	AC_MSG_RESULT([no])
 	AC_DEFINE(fstat64, fstat, [64-bit operations are the same as 32-bit])
 	AC_DEFINE(lstat64, lstat, [64-bit operations are the same as 32-bit])
 	AC_DEFINE(stat64, stat, [64-bit operations are the same as 32-bit])
-fi
+])
 
 AC_CHECK_FUNC(glob64,, [
 	AC_DEFINE(glob64_t, glob_t, [64-bit operations are the same as 32-bit])
@@ -230,8 +240,42 @@ if test "$use_libjail" != "yes"; then
 else
 	export LIBS="$LIBS -ljail"
 fi
+AM_CONDITIONAL([USE_LIBJAIL], [test "$use_libjail" = "yes"])
 
 export LIBS="$LIBS -pthread"
+
+dnl Detect platform for cbsd_fwatch (use CBSD_PLATFORM from build script if set)
+AC_MSG_CHECKING([for operating system])
+if test -n "${CBSD_PLATFORM}"; then
+	case "${CBSD_PLATFORM}" in
+		Linux)
+			platform_fwatch="linux"
+			;;
+		FreeBSD|DragonFly|OpenBSD|NetBSD)
+			platform_fwatch="freebsd"
+			;;
+		*)
+			AC_MSG_WARN([Unknown CBSD_PLATFORM "${CBSD_PLATFORM}", defaulting to linux])
+			platform_fwatch="linux"
+			;;
+	esac
+else
+	case `uname -s 2>/dev/null` in
+		FreeBSD|DragonFly|OpenBSD|NetBSD)
+			platform_fwatch="freebsd"
+			;;
+		Linux)
+			platform_fwatch="linux"
+			;;
+		*)
+			AC_MSG_WARN([Unknown OS, defaulting to Linux])
+			platform_fwatch="linux"
+			;;
+	esac
+fi
+AC_MSG_RESULT([$platform_fwatch])
+AM_CONDITIONAL([USE_FWATCH_LINUX], [test "$platform_fwatch" = "linux"])
+AM_CONDITIONAL([USE_FWATCH_FREEBSD], [test "$platform_fwatch" = "freebsd"])
 
 AC_ARG_ENABLE(lineno, AS_HELP_STRING(--disable-lineno, \
 				     [Disable LINENO support]))

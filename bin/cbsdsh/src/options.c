@@ -138,6 +138,8 @@ char* find_command_in_path(const char* command_name, const char* env_var_name) {
 //	fclose(fp);
 	if ( command_name == NULL )
 		return NULL;
+	if ( env_var_name == NULL )
+		return NULL;
 
 	if (command_name[0] == '/' ) {
 		// Check if the file exists and is executable

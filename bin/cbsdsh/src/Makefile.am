@@ -21,7 +21,23 @@ dash_CFILES = \
 	histedit.c input.c jobs.c mail.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c parser.c redir.c show.c trap.c output.c \
 	bltin/printf.c system.c bltin/test.c bltin/times.c var.c about.c spawn_task.c \
-	sqlcmd.c jail.c logger.c cbsd_fwatch.c cbsd_pwait.c
+	sqlcmd.c logger.c
+
+if USE_FWATCH_LINUX
+dash_CFILES += cbsd_fwatch_linux.c
+else
+dash_CFILES += cbsd_fwatch.c
+endif
+
+if USE_FWATCH_LINUX
+dash_CFILES += cbsd_pwait_linux.c
+else
+dash_CFILES += cbsd_pwait.c
+endif
+
+if USE_LIBJAIL
+dash_CFILES += jail.c
+endif
 dash_SOURCES = \
 	$(dash_CFILES) \
 	alias.h arith_yacc.h bltin/bltin.h cd.h error.h eval.h exec.h \
@@ -42,7 +58,9 @@ man_MANS = dash.1
 EXTRA_DIST = \
 	$(man_MANS) \
 	mktokens mkbuiltins builtins.def.in mkinit.c \
-	mknodes.c nodetypes nodes.c.pat mksyntax.c mksignames.c
+	mknodes.c nodetypes nodes.c.pat mksyntax.c mksignames.c \
+	cbsd_fwatch.c cbsd_fwatch_linux.c \
+	cbsd_pwait.c cbsd_pwait_linux.c
 
 token.h token_vars.h: mktokens
 	$(AM_V_GEN)$(SHELL) $^

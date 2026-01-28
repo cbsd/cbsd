@@ -428,7 +428,7 @@ sqlitecmdrw(int argc, char **argv)
 
 	if (stmt)
 		sqlite3_finalize(stmt);
-	sqlite3_free(query);
+	free(query);
 	sqlite3_close(db);
 
 	return 0;
@@ -532,7 +532,7 @@ sqlitecmdro(int argc, char **argv)
 
 	if (stmt)
 		sqlite3_finalize(stmt);
-	sqlite3_free(query);
+	free(query);
 	sqlite3_close(db);
 
 	return 0;

@@ -121,8 +121,9 @@ main(int argc, char **argv)
 		cix_distdir="/usr/local/cbsd";
 	}
 
-	cix_distdir_conf = calloc(strlen(cix_distdir)+10, sizeof(char *));            // + /cbsd.conf
-	sprintf(cix_distdir_conf, "%s/cbsd.conf", cix_distdir);
+	cix_distdir_conf = calloc(strlen(cix_distdir) + 11, sizeof(char));  /* + strlen("/cbsd.conf") + '\0' */
+	if (cix_distdir_conf)
+		sprintf(cix_distdir_conf, "%s/cbsd.conf", cix_distdir);
 
 //        _REDIS(cbsd_redis_init();)
 //        _INFLUX(cbsd_influx_init();)
@@ -210,8 +211,9 @@ main(int argc, char **argv)
 	setvar("CIX_SHELL", "1", VEXPORT);
 
 	setvar("PS1", "cbsd# ", VEXPORT);
-	//if (cix_subshell == NULL) 
-	read_profile(cix_distdir_conf);
+	//if (cix_subshell == NULL)
+	if (cix_distdir_conf)
+		read_profile(cix_distdir_conf);
 
 	cix_distdir = getenv("CIX_DISTDIR");
 	setvar("CIX_PATH", lookupvar("CIX_PATH"), VEXPORT);
@@ -270,6 +272,7 @@ exit:
 		_mcleanup();
 	}
 #endif
+	free(cix_distdir_conf);
 	exitshell();
 	/* NOTREACHED */
 }

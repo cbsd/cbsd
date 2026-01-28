@@ -215,3 +215,11 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	free(wd);
 	return(0);
 }
+
+
+// temporary noop function for Linux.
+int
+cbsdjlscmd(int argc, char **argv)
+{
+	return 0;
+}

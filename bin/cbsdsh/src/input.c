@@ -657,6 +657,17 @@ void __attribute__((noinline)) unwindfiles(struct parsefile *stop)
 		popfile();
 }
 
+/*
+ * Unwind input stack to base.  Call this first in exitreset so that
+ * the script's parsefile (when run via setinputfile(path, 0)) is freed
+ * before ifsfree/unwindredir; otherwise Linux glibc can hit
+ * free(): invalid pointer at exit.
+ */
+void
+exitreset_input(void)
+{
+	unwindfiles(&basepf);
+}
 
 /*
  * Return to top level.
