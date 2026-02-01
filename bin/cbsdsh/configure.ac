@@ -141,7 +141,9 @@ fi
 
 dnl Check for stat64 (dietlibc/klibc).
 dnl On FreeBSD and some other systems, stat64 doesn't exist as a separate function
-dnl We check if the function exists by trying to link it, and if not, create aliases
+dnl We check if the function exists by trying to link it, and if not, create aliases.
+dnl Only apply the stat64->stat defines on BSD; on Linux (glibc) they cause
+dnl "redefinition of struct stat" when system headers are included (e.g. sqlite3.h).
 AC_MSG_CHECKING([for stat64 function])
 AC_LINK_IFELSE([AC_LANG_PROGRAM([
 #include <sys/stat.h>
@@ -152,9 +154,13 @@ AC_LINK_IFELSE([AC_LANG_PROGRAM([
 	AC_MSG_RESULT([yes])
 ], [
 	AC_MSG_RESULT([no])
-	AC_DEFINE(fstat64, fstat, [64-bit operations are the same as 32-bit])
-	AC_DEFINE(lstat64, lstat, [64-bit operations are the same as 32-bit])
-	AC_DEFINE(stat64, stat, [64-bit operations are the same as 32-bit])
+	case `uname -s 2>/dev/null` in
+	FreeBSD|DragonFly|OpenBSD|NetBSD)
+		AC_DEFINE(fstat64, fstat, [64-bit operations are the same as 32-bit])
+		AC_DEFINE(lstat64, lstat, [64-bit operations are the same as 32-bit])
+		AC_DEFINE(stat64, stat, [64-bit operations are the same as 32-bit])
+		;;
+	esac
 ])
 
 AC_CHECK_FUNC(glob64,, [

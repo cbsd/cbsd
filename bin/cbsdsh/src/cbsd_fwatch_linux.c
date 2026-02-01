@@ -71,18 +71,11 @@ static void displayInotifyEvent(struct inotify_event *i)
 int
 cbsd_fwatchcmd(int argc, char *argv[])
 {
-	int fd;
-	int ret;
-	fd_set rfds;
-	int kq;
-	int nev;
-	int inotifyFd, j;
-	//	static const struct timespec tout = { 1, 0 };
+	int inotifyFd;
 	struct inotify_event *event;
 	ssize_t numRead;
 	char buf[BUF_LEN] __attribute__ ((aligned(8)));
 	char *p;
-//	struct pollfd fds[2];
 	struct pollfd fds[1];
 	nfds_t nfds;
 	int poll_num;
@@ -92,7 +85,6 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	int option_index = 0;
 	char *watchfile = NULL;
 	int timeout = 10;
-	char cmd[10];
 
 	struct option long_options[] = { { "file", required_argument, 0,
 					     C_FILE },
