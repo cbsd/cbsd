@@ -1,17 +1,46 @@
-# $FreeBSD$
+PREFIX ?= /usr/local
+DESTDIR ?=
 
-NO_OBJ=
+NO_OBJ =
 
-SUBDIR= include
+LIBEXECDIR = $(PREFIX)/libexec
+FILESDIR = $(LIBEXECDIR)/bsdconfig/cbsd
+FILES = INDEX USAGE
 
-LIBEXECDIR=	/usr/local/libexec
-FILESDIR=	${LIBEXECDIR}/bsdconfig/cbsd
-FILES=		INDEX USAGE
+SCRIPTSDIR = $(FILESDIR)
+SCRIPTS = basecfg bhyvecfg bhyvedsk bhyvenic cbsd jailcfg
 
-SCRIPTSDIR=	${FILESDIR}
-SCRIPTS=	basecfg bhyvecfg bhyvedsk bhyvenic cbsd jailcfg
+INSTALL ?= install
+INSTALL_DATA ?= $(INSTALL) -m 644
+INSTALL_SCRIPT ?= $(INSTALL) -m 755
+MKDIR ?= mkdir -p
+
+.PHONY: all install clean beforeinstall subdir-install
+
+all: subdir-all
+
+subdir-all:
+	$(MAKE) -C include all
 
 beforeinstall:
-	mkdir -p ${DESTDIR}${FILESDIR}
+	$(MKDIR) $(DESTDIR)$(FILESDIR)
 
-.include <bsd.prog.mk>
+install: beforeinstall install-files install-scripts subdir-install
+
+install-files: beforeinstall
+	@for f in $(FILES); do \
+		$(INSTALL_DATA) "$$f" "$(DESTDIR)$(FILESDIR)/$$f"; \
+	done
+
+install-scripts: beforeinstall
+	@for f in $(SCRIPTS); do \
+		$(INSTALL_SCRIPT) "$$f" "$(DESTDIR)$(SCRIPTSDIR)/$$f"; \
+	done
+
+subdir-install:
+	$(MAKE) -C include install
+
+clean: subdir-clean
+
+subdir-clean:
+	$(MAKE) -C include clean

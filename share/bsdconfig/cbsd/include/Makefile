@@ -1,12 +1,28 @@
-# $FreeBSD$
+# Converted from FreeBSD bmake for GNU make
 
-NO_OBJ=
+PREFIX ?= /usr/local
+DESTDIR ?=
 
-LIBEXECDIR=	/usr/local/libexec
-FILESDIR=	${LIBEXECDIR}/bsdconfig/cbsd/include
-FILES=		messages.subr
+NO_OBJ =
+
+LIBEXECDIR = $(PREFIX)/libexec
+FILESDIR = $(LIBEXECDIR)/bsdconfig/cbsd/include
+FILES = messages.subr
+
+INSTALL ?= install
+INSTALL_DATA ?= $(INSTALL) -m 644
+MKDIR ?= mkdir -p
+
+.PHONY: all install clean beforeinstall
+
+all:
 
 beforeinstall:
-	mkdir -p ${DESTDIR}${FILESDIR}
+	$(MKDIR) $(DESTDIR)$(FILESDIR)
 
-.include <bsd.prog.mk>
+install: beforeinstall
+	@for f in $(FILES); do \
+		$(INSTALL_DATA) "$$f" "$(DESTDIR)$(FILESDIR)/$$f"; \
+	done
+
+clean:
