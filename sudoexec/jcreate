@@ -690,6 +690,10 @@ case "${emulator}" in
 esac
 
 get_base -v ${ver} ${_basename_args}
+ret=$?
+if [ ${ret} -ne 0 ]; then
+	err 1 "${W1_COLOR}${CIX_APP}: get_base error${N0_COLOR}"
+fi
 
 [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Please wait: ${N2_COLOR}this will take a while...${N0_COLOR}"
 
@@ -738,13 +742,6 @@ else
 fi
 
 [ ! -d "${data}" ] && err 1 "Can't create datadir ${data}"
-
-# inherit /var/db/pkg for base-in-pkg bases
-if [ -d "${BASE_DIR}/var/db/pkg" ]; then
-	[ -d "${data}/var/db/pkg" ] && ${RM_CMD} -rf "${data}/var/db/pkg"
-	[ ! -d "${data}/var/db" ] && ${MKDIR_CMD} -p ${data}/var/db
-	${CP_CMD} -a "${BASE_DIR}/var/db/pkg" ${data}/var/db/
-fi
 
 [ -z "${jailsysskeldir}" ] && jailsysskeldir="${sharedir}/${platform}-${emulator}-${jail_profile}-system-skel"
 
@@ -815,6 +812,20 @@ if [ -z "${zfs_snapsrc}" ]; then
 			[ "${ver}" != "empty" ] && populate_freebsd_world
 			;;
 	esac
+fi
+
+# don't inherit /var/db/pkg for base-in-pkg in baserw=0:
+if [ "${ver}" != "empty" ]; then
+	if [ ${baserw} -ne 1 -a -d "${BASE_DIR}/var/db/pkg" ]; then
+		[ -d "${data}/var/db/pkg" ] && ${RM_CMD} -rf "${data}/var/db/pkg"
+		[ ! -d "${data}/var/db" ] && ${MKDIR_CMD} -m 0755 -p ${data}/var/db
+	elif [ ${baserw} -eq 1 -a -d "${data}/var/db" ]; then
+		# Let's delete the 'pkg' entry, as this may prevent the pkg from being (re-)installed correctly
+		# (there are no files in the /usr/local)
+		if [ -r ${data}/var/db/local.sqlite ]; then
+			cbsdsqlrw ${data}/var/db/local.sqlite "DELETE FROM packages WHERE name='pkg' OR name='pkg-devel'"
+		fi
+	fi
 fi
 
 customskel
@@ -1128,7 +1139,7 @@ if [ "${vnet}" = "1" -a "${ver}" != "empty" ]; then
 fi
 
 jswmode jname=${jname} mode=master comment='0'
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+myjid=$( cbsdsqlro local "SELECT jid FROM jails WHERE jname='${jname}'" 2>/dev/null )
 [ -z "${myjid}" ] && myjid=0
 
 # sysrc: post-create sysrc(8) for any jail rc.conf customization
@@ -1142,7 +1153,7 @@ fi
 # autostart asap upon jail created
 [ "${runasap}" = "1" -a ${myjid} -eq 0 ] && jstart jname=${jname} quiet=${quiet}
 
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+myjid=$( cbsdsqlro local "SELECT jid FROM jails WHERE jname='${jname}'" 2>/dev/null )
 [ -z "${myjid}" ] && myjid=0
 
 if [ ${myjid} -eq 0 ]; then
