@@ -5,7 +5,11 @@ CBSD_HOME=${PREFIX}/cbsd
 STRIP="/usr/bin/strip"
 RM="/bin/rm"
 CP="/bin/cp"
-MAKE="/usr/bin/make"
+.if ${OSTYPE} != Linux
+MAKE?= gmake
+.else
+MAKE?= make
+.endif
 ENV="/usr/bin/env"
 INSTALL="/usr/bin/install"
 MKDIR="/bin/mkdir"
@@ -159,7 +163,7 @@ cbsd: pkg-config-check
 	EXTRAC+=" ../../bin/cbsdsh/cbsdredis.c ../../bin/cbsdsh/contrib/credis.c -DWITH_REDIS"
 .endif
 	${CC} tools/src/select_jail.c -o tools/select_jail && ${STRIP} tools/select_jail
-	${MAKE} -C bin/cbsdsh && ${STRIP} bin/cbsdsh/cbsd
+	bin/cbsdsh/build && ${STRIP} bin/cbsdsh/src/dash && mv bin/cbsdsh/src/dash bin/cbsdsh/cbsd
 	${MAKE} -C misc/src/sipcalc && ${STRIP} misc/src/sipcalc/sipcalc
 	${MAKE} -C misc/src/cbsd_md5 && ${STRIP} misc/src/cbsd_md5/cbsd_md5
 	${MAKE} -C share/bsdconfig/cbsd
