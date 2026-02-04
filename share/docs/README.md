@@ -2,6 +2,8 @@
 
 The CBSD book doesn't exist yet, but thanks to *Michael Reim*, this series of articles could be a good start: [Exploring the CBSD virtual environment management framework](https://eerielinux.wordpress.com/2022/12/10/exploring-the-cbsd-virtual-environment-management-framework-part-1-introduction-and-installation/)
 
+Several articles: [https://github.com/cbsd/cbsd-articles/blob/main/en/dnsmasq_service.md](https://github.com/cbsd/cbsd-articles/blob/main/en/dnsmasq_service.md)
+
 ## General information
 
 - [CBSD Quick Start](general/cbsd_quickstart.md)
