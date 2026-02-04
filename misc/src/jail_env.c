@@ -1,7 +1,7 @@
 // Part of the CBSD Project
 // Similar to jexec_env but execute command in hoster, but call /usr/sbin/jail instead of jexec
 // In the long term, this could be used to run unprivileged containers (as a user other than root)
-// /usr/local/cbsd/misc/daemonize -e /usr/jails/ftmp/jstart.test.err -p /usr/jails/ftmp/jstart.test.88952 /usr/bin/nice -n 1 /usr/sbin/jail -f /usr/jails/ftmp/test.conf -c test
+// ${miscdir}/daemonize -e /usr/jails/ftmp/jstart.test.err -p /usr/jails/ftmp/jstart.test.88952 /usr/bin/nice -n 1 /usr/sbin/jail -f /usr/jails/ftmp/test.conf -c test
 // -> ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/exec_envjail /usr/jails/ftmp/test.conf
 #include <stdio.h>
 #include <stdlib.h>
