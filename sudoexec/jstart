@@ -1015,6 +1015,13 @@ fi
 # for VNET-based jail we also need special route
 # due to jail.conf doesn't support for multiple NICs
 if [ ${vnet} -eq 1 ]; then
+	if [ "${is_freebsd}" -eq 1 ]; then
+		distro="freebsd"
+	else
+		distro=$( ${AWK_CMD} -F= '/^ID=/{gsub(/"/,"",$2); gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2}' ${path}/etc/os-release)
+		${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}unknown distro: ${H3_COLOR}${distro}${N2_COLOR} - setup network configuration outside of jail${N0_COLOR}" 1>&2
+	fi
+
 	OIFS="${IFS}"
 	IFS=","
 	_nic_idx=1
@@ -1064,7 +1071,7 @@ if [ ${vnet} -eq 1 ]; then
 
 			# make lock
 			echo "${jname}" > ${tmpdir}/${_target_nic_name}.locked
-			${IFCONFIG_CMD} ${i} name ${_target_nic_name} && ${IFCONFIG_CMD} ${_target_nic_name} vnet ${jname}
+			${IFCONFIG_CMD} ${i} name ${_target_nic_name} > /dev/null && ${IFCONFIG_CMD} ${_target_nic_name} vnet ${jname}
 			int_iface="${_target_nic_name}"
 		else
 			${IFCONFIG_CMD} ${i} vnet ${jname}
@@ -1102,48 +1109,14 @@ if [ ${vnet} -eq 1 ]; then
 					# just skip
 					;;
 				*)
-					# alias ? mtu ?
 					# we need to re-build ifconfig_${int_iface} vars if values already exist to merge new IP address and
 					# and do not spoil the remaining data
-
-					# Whats about Linux jail?
-					if [ ! -r ${data}/etc/rc.conf ]; then
-						if [ -x ${path}/bin/sh ]; then
-							_osname=$( ${miscdir}/elf_tables --osname /bin/sh )
-							# warning relevant for FreeBSD-based env
-							if [ "${osname}" = "freebsd" ]; then
-								${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/rc.conf: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_${int_iface}${N0_COLOR}" 1>&2
-							else
-								# Linux env?
-								if [ ! -r "${path}/etc/os-release" ]; then
-									${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/os-release: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_${int_iface}${N0_COLOR}" 1>&2
-								else
-									. ${path}/etc/os-release
-									case "${ID}" in
-										debian)
-											${ECHO} "${N1_COLOR}${CIX_APP} use debian helper for config_${int_iface}${N1_COLOR}"
-											# just test, netlink/BSD wIP
-											# mgmt for first boot only? ! -r ${data}/etc/network/interfaces.d/* ?
-#											${CAT_CMD} > ${data}/etc/network/interfaces.d/lo <<EOF
-#auto lo
-#iface lo inet loopback
-#EOF
-#											${CAT_CMD} > ${data}/etc/network/interfaces.d/${int_iface} <<EOF
-#auto ${int_iface}
-#iface ${int_iface} inet static
-#    address ${ip4_addr}/24
-#    gateway 192.168.0.1
-#
-#EOF
-											;;
-										*)
-											${ECHO} "${W1_COLOR}warning: ${N1_COLOR}skip config for ifconfig_${int_iface}: distri not supported yet: ${N2_COLOR}${ID}${N0_COLOR}" 1>&2
-											;;
-									esac
-								fi
-							fi
+					if [ "${is_freebsd}" -eq 1 ]; then
+						if [ ! -r ${data}/etc/rc.conf ]; then
+							${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/rc.conf: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_${int_iface}${N0_COLOR}" 1>&2
+							break
 						fi
-					else
+
 						# FreeBSD-based env
 						ifconfig_eth0=
 						# build new ifconfig_eth0
@@ -1221,7 +1194,11 @@ if [ ${vnet} -eq 1 ]; then
 							done
 						fi
 						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ${find_ifconfig}="${new_ifconfig_eth0}" > /dev/null 2>&1
+					else
+						# Linux/unknown distro: fallback to pre-configuration
+						$IFCONFIG_CMD -j ${jname} ${int_iface} alias ${_pureip}
 					fi
+					;;
 			esac
 		done
 
@@ -1267,19 +1244,24 @@ if [ ${vnet} -eq 1 ]; then
 					# 1 - ipv4
 					# 2 - ipv6
 					# * - unknown
-					case ${myip_type} in
-						1)
-							${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf defaultrouter="${_pureip}" > /dev/null 2>&1
-							;;
-						2)
-							${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ipv6_defaultrouter="${_pureip}" > /dev/null 2>&1
-							;;
-						*)
-							;;
-					esac
-					;;
+
+					if [ "${is_freebsd}" -eq 1 ]; then
+						[ ${myip_type} -eq 1 ] && rcvar="defaultrouter"
+						[ ${myip_type} -eq 2 ] && rcvar="ipv6_defaultrouter"
+						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ${rcvar}="${_pureip}" > /dev/null 2>&1
+					else
+						# will bypass route from outside of jail
+						[ ${myip_type} -eq 1 ] && af_flag="-4"
+						[ ${myip_type} -eq 2 ] && af_flag="-6"
+						${ROUTE_CMD} -j ${jname} -q add ${af_flag} default ${_pureip}
+					fi
 			esac
 		done
+    fi
+
+	if [ "${is_freebsd}" -eq 0 ]; then
+		[ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ] && $IFCONFIG_CMD -j ${jname} lo0 inet 127.0.0.1 netmask 255.0.0.0 up
+		[ -n "${ip6_addr}" -a "${ip6_addr}" != "0" ] && $IFCONFIG_CMD -j ${jname} lo0 inet6 ::1 prefixlen 128 up
 	fi
 
 	IFS="${OIFS}"
