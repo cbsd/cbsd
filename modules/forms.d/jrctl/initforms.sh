@@ -4,6 +4,8 @@ FORM_PATH="$( /bin/realpath ${MYDIR} )"
 HELPER="jrctl"
 
 [ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+
 # MAIN
 if [ -z "${workdir}" ]; then
 	[ -z "${cbsd_workdir}" ] && . /etc/rc.conf
@@ -22,8 +24,8 @@ FORM_PATH="${workdir}/formfile"
 [ ! -d "${FORM_PATH}" ] && err 1 "No such ${FORM_PATH}"
 [ -f "${FORM_PATH}/${HELPER}.sqlite" ] && /bin/rm -f "${FORM_PATH}/${HELPER}.sqlite"
 
-/usr/local/bin/cbsd ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms.schema forms
-/usr/local/bin/cbsd ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite /usr/local/cbsd/share/forms_system.schema system
+${CIX_BIN} ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite ${CIX_DISTDIR}/share/forms.schema forms
+${CIX_BIN} ${miscdir}/updatesql ${FORM_PATH}/${HELPER}.sqlite ${CIX_DISTDIR}/share/forms_system.schema system
 
 ${SQLITE3_CMD} ${FORM_PATH}/${HELPER}.sqlite << EOF
 BEGIN TRANSACTION;

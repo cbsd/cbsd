@@ -40,6 +40,8 @@ int execute_cmd(char *jname, char **argv)
 	char *workdir = getenv("workdir");
 	const char *term;
 	const char *blocksize;
+	const char *cix_distdir_env = getenv("CIX_DISTDIR");
+	const char *cix_distdir;
 	int home_set=0, jexec_index=0, freebsd_ver=0;
 	FILE *fp;
 	char buffer[128];
@@ -53,6 +55,13 @@ int execute_cmd(char *jname, char **argv)
 	if (!jname) {
 		fprintf(stderr, "Jail name is required.\n");
 		exit(1);
+	}
+
+	// Set default values if environment variables are not set
+	if (cix_distdir_env == NULL) {
+		cix_distdir = "/usr/local/cbsd";
+	} else {
+		cix_distdir = cix_distdir_env;
 	}
 
 	// inherit TERM/BLOCKSIZE by default
@@ -81,9 +90,11 @@ int execute_cmd(char *jname, char **argv)
 		}
 
 		// jexec -d supported in FreeBSD 14.3+
-		fp = popen("/usr/local/cbsd/misc/elf_tables --ver /bin/sh", "r");
+		char elf_cmd[512];
+		snprintf(elf_cmd, sizeof(elf_cmd), "%s/misc/elf_tables --ver /bin/sh", cix_distdir);
+		fp = popen(elf_cmd, "r");
 		if (fp == NULL) {
-			fprintf(stderr, "/usr/local/cbsd/misc/elf_tables --ver /bin/sh\n");
+			fprintf(stderr, "%s/misc/elf_tables --ver /bin/sh\n", cix_distdir);
 			exit(1);
 		}
 

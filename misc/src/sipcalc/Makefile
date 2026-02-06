@@ -1,6 +1,10 @@
+MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+MKFILE_DIR  := $(dir $(MKFILE_PATH))
+
+PREFIX := $(abspath $(MKFILE_DIR)../../..)
+
 CC?= cc
-OSTYPE?= uname -s
-CFLAGS = -O2 -pipe  -fstack-protector-strong -fno-strict-aliasing
+CFLAGS = -O2 -pipe -fstack-protector-strong -fno-strict-aliasing
 RM?= rm
 INSTALL?= install
 
@@ -9,5 +13,7 @@ sipcalc: sub-func.c interface.c sipcalc.c sub-output.c
 
 clean:
 	@$(RM) -f .depend* sipcalc sipcalc.debug sipcalc.full *.o
+
 install:
-	${INSTALL:} -s -o root -g wheel -m 0555 sipcalc /usr/local/cbsd/misc/sipcalc
+	$(INSTALL) -d -m 0755 $(PREFIX)/misc
+	$(INSTALL) -s -o root -g wheel -m 0555 sipcalc $(PREFIX)/misc/sipcalc

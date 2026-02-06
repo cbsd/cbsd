@@ -1,4 +1,7 @@
 #!/bin/sh
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+
 on_crash_status()
 {
 	local _ret=0
@@ -179,7 +182,7 @@ if [ ! -r "${workdir}/cmd.subr" ]; then
 fi
 
 . "${workdir}/cmd.subr"
-. /usr/local/cbsd/cbsd.conf
+. ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/nc.subr		# readconf
 # mod_cbsd_queue_enabled?
 . ${inventory}
@@ -504,7 +507,7 @@ fi
 ${NICE_CMD} -n ${nice} ${BHYVECTL_CMD} --vm=${jname} --destroy > /dev/null 2>&1 || true
 ${RM_CMD} -f ${tmpdir}/bhyvestop.${jname}.lock
 if [ "${tpm}" = "new" ]; then
-	${miscdir}/daemonize /usr/local/cbsd/misc/swtpm -a stop -b ${SWTPM_CMD} -d ${jailsysdir}/${jname}/tpm -e error -p swtpm.pid -l tpm.log -v 20 -u swtpm-sock -s mystate
+	${miscdir}/daemonize ${CIX_DISTDIR}/misc/swtpm -a stop -b ${SWTPM_CMD} -d ${jailsysdir}/${jname}/tpm -e error -p swtpm.pid -l tpm.log -v 20 -u swtpm-sock -s mystate
 fi
 
 # extra stop/cleanup

@@ -1,5 +1,8 @@
+MKFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+MKFILE_DIR  := $(dir $(MKFILE_PATH))
+PREFIX := $(abspath $(MKFILE_DIR)../..)
+
 CC?= cc
-OSTYPE?= uname -s
 CFLAGS = -Wall -Wextra -O3
 RM?= rm
 INSTALL?= install
@@ -11,4 +14,4 @@ clean:
 	@$(RM) -f cbsd_md5
 
 install:
-	${INSTALL} -s -o root -g 0 -m 0555 cbsd_md5 /usr/local/cbsd/misc/cbsd_md5
+	$(INSTALL) -s -o root -g 0 -m 0555 cbsd_md5 $(PREFIX)/cbsd_md5

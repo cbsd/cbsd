@@ -92,6 +92,10 @@ sum_data()
 	char sql[512];
 	char stats_file[1024];
 	const char *hostname = getenv("HOST");
+	const char *cix_distdir_env = getenv("CIX_DISTDIR");
+	const char *cix_bin_env = getenv("CIX_BIN");
+	const char *cix_distdir;
+	const char *cix_bin;
 	int ret = 0;
 	FILE *fp;
 	char json_str[20000];
@@ -105,6 +109,18 @@ sum_data()
 	struct sum_item_data *temp;
 	struct sum_item_data *sumch;
 	struct sum_item_data *next_sumch;
+
+	// Set default values if environment variables are not set
+	if (cix_distdir_env == NULL) {
+		cix_distdir = "/usr/local/cbsd";
+	} else {
+		cix_distdir = cix_distdir_env;
+	}
+	if (cix_bin_env == NULL) {
+		cix_bin = "/usr/local/bin/cbsd";
+	} else {
+		cix_bin = cix_bin_env;
+	}
 
 	tolog(log_level, "\n ***---calc jail avgdata---*** \n");
 
@@ -233,8 +249,8 @@ sum_data()
 			}
 			
 			snprintf(sql, sizeof(sql),
-			    "/usr/local/bin/cbsd /usr/local/cbsd/misc/updatesql %s /usr/local/cbsd/share/racct.schema racct",
-			    escaped_stats_file);
+			    "%s %s/misc/updatesql %s %s/share/racct.schema racct",
+			    cix_bin, cix_distdir, escaped_stats_file, cix_distdir);
 			system(sql);
 				continue;
 			}
