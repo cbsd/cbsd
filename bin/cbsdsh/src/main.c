@@ -109,7 +109,7 @@ main(int argc, char **argv)
 	struct stackmark smark;
 	int login;
 
-//CIX
+	//CIX
 	char *cix_subshell = getenv("CIX_SHELL");
 
 	cix_distdir = getenv("CIX_DISTDIR");
@@ -118,7 +118,20 @@ main(int argc, char **argv)
 	char *cix_distdir_conf = NULL;
 
 	if (cix_distdir == NULL) {
-		cix_distdir="/usr/local/cbsd";
+		// transparent support for APPIMAGE ( e.g.: /tmp/.mount_cbsd.A5tyr8g )
+		char *appdir = getenv("APPDIR");
+		if (appdir == NULL) {
+			cix_distdir = "/usr/local/cbsd";
+		} else {
+			char *tmp = calloc(strlen(appdir) + strlen("/usr/local/cbsd") + 1, sizeof(char));
+			if (tmp) {
+				sprintf(tmp, "%s/usr/local/cbsd", appdir);
+				cix_distdir = tmp;
+			} else {
+				cix_distdir = "/usr/local/cbsd";
+			}
+		}
+		setvar("CIX_DISTDIR", cix_distdir, VEXPORT);
 	}
 
 	cix_distdir_conf = calloc(strlen(cix_distdir) + 11, sizeof(char));  /* + strlen("/cbsd.conf") + '\0' */
@@ -215,7 +228,7 @@ main(int argc, char **argv)
 	if (cix_distdir_conf)
 		read_profile(cix_distdir_conf);
 
-	cix_distdir = getenv("CIX_DISTDIR");
+//	cix_distdir = getenv("CIX_DISTDIR");
 	setvar("CIX_PATH", lookupvar("CIX_PATH"), VEXPORT);
 
 	// non-interactive global env
