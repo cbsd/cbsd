@@ -498,60 +498,12 @@ if [ -n "${from}" ]; then
 			_md5_nover=$(${miscdir}/cbsd_md5 "${_path}")
 			if [ "${from_md5}" = "${_md5_ver}" -o "${from_md5}" = "${_md5_nover}" ]; then
 
-				# sh -c docker-entrypoint.sh redis-server & ??
-				# sh -c /entrypoint.sh influxd & ??
-
-				_cmd=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r '.OCIv1.config | ( [(.Cmd) | join(" ")]) | map("" + . + "") | join(" ")' 2>/dev/null )
-
-				#_env=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r '.OCIv1.config | ( [(.Env) | join(" ")]) | map("" + . + "") | join(" ")' )
-				_env=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r '.OCIv1.config | ( [(.Env) | join("\n")]) | map("" + . + "") | join(" ")' 2>/dev/null )
-
-#				${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r '.OCIv1.config | ( [(.Env) | join("\n")]) | map("" + . + "") | join(" ")' > ${workdir}/jails-system/${jname}/environment
-
-				_entrypoint=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r '.OCIv1.config | ( [(.Entrypoint) | join(" ")]) | map("" + . + "") | join(" ")' 2>/dev/null )
-
-#				_exec_start=$(${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} \
-#					| ${JQ_CMD}  -r '.OCIv1.config | (.Env + ["sh", "-c"] + [(.Entrypoint + .Cmd + ["&"]) | join(" ")]) | map("\"" + . + "\"") | join(" ")' \
-#				)
-#				_exec_start=$(${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} \
-#					| ${JQ_CMD}  -r '.OCIv1.config | (.Env + ["sh", "-c"] + [(.Cmd + ["&"]) | join(" ")]) | map("\"" + . + "\"") | join(" ")' \
-#				)
-
-				if [ -n "${_env}" ]; then
-					echo "${_env}" > ${workdir}/jails-system/${jname}/environment
-				fi
-
-				_exec_start=
-				if [ -n "${_entrypoint}" ]; then
-					if [ -r "${workdir}/jails-data/${jname}-data${_entrypoint}" ]; then
-						_entrypoint="${_entrypoint}"
-					elif [ -r "${workdir}/jails-data/${jname}-data/entrypoint.sh" ]; then
-						_entrypoint="/entrypoint.sh"
-					elif [ -r "${workdir}/jails-data/${jname}-data/usr/local/bin/docker-entrypoint.sh" ]; then
-						_entrypoint="/usr/local/bin/docker-entrypoint.sh"
-					else
-						echo "entrypoint not found: ${workdir}/jails-data/${jname}-data${_entrypoint}"
-						unset _entrypoint
-					fi
-				fi
-
-				if [ -n "${_entrypoint}" ]; then
-					_exec_start="${_entrypoint}"
-					echo "entrypoint found: ${_entrypoint}"
-				fi
-
-				if [ -n "${_cmd}" ]; then
-					if [ -n "${_exec_start}" ]; then
-						_exec_start="${_exec_start} ${_cmd}"
-					else
-						_exec_start="${_cmd}"
-					fi
-				fi
-
-				[ -z "${_exec_start}" ] && err 1 "no entrypoint or cmd"
-
-				jset jname=${jname} exec_start="${_exec_start} &" exec_stop="/bin/kill -TERM -1"
-				break
+				oci_dir="${workdir}/jails-system/${jname}/oci"
+				${MKDIR_CMD} -p ${oci_dir}
+				oci_config="${oci_dir}/v1.config"
+				${BUILDAH_CMD} --root ${workdir}/basejail/buildah inspect ${_image_id} | ${JQ_CMD} -r .OCIv1.config > ${oci_config}
+				${JQ_CMD} -r '(.Env // [])[]' < ${oci_config} > ${workdir}/jails-system/${jname}/environment
+				jset jname=${jname} emulator_flags="ocijail" ver=empty
 			fi
 		done
 	fi
@@ -565,18 +517,19 @@ if [ -n "${from}" ]; then
 	fi
 
 	for i in ${MYOPTARG}; do
+		eval T="\$o${i}"
+
 		case "${i}" in
 			jname|from|removejconf)
 				continue
 				;;
+			nic_*|interface)
+				[ -n "${T}" ] && jailnic ${jname} update eth0 ${i##nic_}="${T}"
+				;;
+			   *)
+				[ -n "${T}" ] && jset jname=${jname} ${i}="${T}"
+				;;
 		esac
-
-		eval T="\$o${i}"
-
-		if [ -n "${T}" ]; then
-#			echo "jset jname=${jname} ${i}=\"${T}\""
-			jset jname=${jname} ${i}="${T}"
-		fi
 	done
 
 	# autostart asap upon jail created
