@@ -91,3 +91,687 @@ start_bhyve()
 	exit 0
 }
 
+# get command to set CPU affinity for jail
+get_cpuset_cmd()
+{
+	local _cpuset=
+	if [ -r "${jailsysdir}/${jname}/cpu" ]; then
+		. ${jailsysdir}/${jname}/cpu
+		_cpuset="${CPUSET_CMD} ${cpuset}"
+	else
+		if [ "${cpuset}" != "0" ]; then
+			_cpuset="${CPUSET_CMD} ${cpuset}"
+		fi
+	fi
+	echo "${_cpuset}"
+}
+
+# extract and export/rewrite interface variable from jailnic for vnet-based jails
+# variables:
+# - vnet
+# - jname
+# returns:
+# - epaira_list
+# - epairb_list
+# - nic_name_list
+prepare_jail_vnet()
+{
+	local nic_hwaddr nic_parent nic_address nic_type nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged
+
+	epairb_list=   # args for makejconf
+	epaira_list=   # for traffic count
+	nic_name_list= # NIC names from DB (for interface renaming inside jail)
+
+	[ ${vnet} -ne 1 ] && return 0
+
+	interfaces=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM jailnic" | while read _int; do
+		printf "${_int} "
+	done ) || err 1 "${N1_COLOR}jstart: error get interfaces name for vnet nic map${N0_COLOR}"
+
+	for i in ${interfaces}; do
+		printf "${N1_COLOR}create nic: ${i}${N0_COLOR} "
+		nic_hwaddr=
+		nic_parent=
+		nic_address=
+		nic_type=
+		nic_mtu=
+		nic_flags=
+		nic_vlan_untagged=
+		nic_vlan_tagged=
+		_A=
+		_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic WHERE name='${i}'" )
+
+		sqllist "${_A}" nic_parent nic_address nic_hwaddr nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged
+
+		tmp_type=${nic_parent%%-*}		# cut all before '#'
+		tmp_iface=${nic_parent##*-}		# cut all after '#'
+
+		case "${tmp_type}" in
+			ppt|epair|ovs)
+				nic_type="${tmp_type}"
+				i="${tmp_iface}"
+				;;
+			*)
+				nic_type="epair"		# epair by default
+				;;
+		esac
+
+		unset tmp_type tmp_type
+
+		# when ip=0 and interface=auto we must use default interface for upstream
+
+		#[ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ] && nic_parent=$( getnics-by-ip ip=0.0.0.0 skip=bridge )
+		# bridge is valid parent for non-vnet and epair vnet
+
+		if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
+			iptype "${ip4_addr}"
+			_ret=$?
+			# todo: inherit default interface= (e.g. from jail-default-default.conf ?)
+			if [ ${_ret} -eq 0 -o -z "${IWM}" ]; then
+				_byip="0.0.0.0"
+			else
+				_byip="${IWM}"
+			fi
+			nic_parent=$( getnics-by-ip ip=${_byip} )
+			unset _byip
+		fi
+
+		case "${nic_parent}" in
+			vpc-*)
+				VPC_ROOT_DIR="${dbdir}/vpc"
+				_arg_len=$( strlen ${nic_parent} )
+				vpc_name=$( substr --pos=5 --len=${_arg_len} --str="${nic_parent}" )
+				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+				[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+
+				mybridge=
+				if ! mybridge=$( get_my_device vpc vpc-${vpc_name} ); then
+					err 1 "${N1_COLOR}${CIX_APP} failed to get VPC bridge: ${mybridge}${N0_COLOR}"
+				fi
+
+				${IFCONFIG_CMD} ${mybridge} > /dev/null 2>&1
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					err 1 "${N1_COLOR}no such bridge interface: ${N2_COLOR}${mybridge}${N0_COLOR}"
+				fi
+				;;
+			bridge*)
+				mybridge="${nic_parent}"
+				;;
+			cbsdvale*)
+				mybridge="${nic_parent}"
+				;;
+			ppt-*)
+				mybridge=
+				true
+				;;
+			*)
+				if ! mybridge=$( get_my_device bridge ${nic_parent} ); then
+					err 1 "${N1_COLOR}Error: Cant get_my_device for ${nic_parent}: ${mybridge}${N0_COLOR}"
+				fi
+		esac
+
+		if [ "${nic_type}" = "ppt" ]; then
+			myepair="${i}"
+			if [ -z "${epairb_list}" ]; then
+				epairb_list="${myepair}"
+			else
+				epairb_list="${epairb_list},${myepair}b"
+			fi
+		else
+			myepair=$( get_my_epair "${mybridge}" "${nic_vlan_untagged}" "${nic_vlan_tagged}" "${nic_mtu}" "${nic_flags}" )
+			[ $? -eq 1 ] && err 1 "${N1_COLOR}Error: Cant get_my_epair by: ${N2_COLOR}${mybridge}${N0_COLOR}"
+			if [ -z "${epairb_list}" ]; then
+				epaira_list="${myepair}a"
+				epairb_list="${myepair}b"
+				nic_name_list="${i}"
+			else
+				epaira_list="${epaira_list},${myepair}a"
+				epairb_list="${epairb_list},${myepair}b"
+				nic_name_list="${nic_name_list},${i}"
+			fi
+		fi
+
+		case "${nic_parent}" in
+			cbsdvale*)
+				strpos --str="${nic_parent}" --search="_"
+				_pos=$?
+				if [ ${_pos} -eq 0 ]; then
+					# not vale_XXX form
+					err 1 "${N1_COLOR}${CIX_APP}: vale switch not vale_XXX form: ${N2_COLOR}${nic_parent}${N0_COLOR}"
+				else
+					_arg_len=$( strlen ${nic_parent} )
+					_pref=$(( _arg_len - _pos ))
+					_vale_arg=$( substr --pos=0 --len=${_pos} --str="${nic_parent}" )
+					_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${nic_parent}" )
+				fi
+				valeid=$( cbsdsqlro local "SELECT idx FROM vale WHERE name='${_sw}'"  )
+				[ -z "${valeid}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: can't determine vale nic for: ${nic_parent}, sw: ${_sw}${N0_COLOR}"
+				#mytap="vale${valeid}:${jname}"
+				cbsdlogger NOTICE "${CIX_APP}: vale switch id: ${valeid} (vale${valeid})"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP}: attach to vale switch id: ${valeid} (${N2_COLOR}vale${valeid}${N1_COLOR})${N0_COLOR}"
+				${CIX_DISTDIR}/tools/vale-ctl -h vale${valeid}:${myepair}a
+		esac
+
+		_extra_info=""
+		[ -n "${nic_vlan_untagged}" -a "${nic_vlan_untagged}" != "0" ] && _extra_info="${_extra_info} vlan_untagged:${nic_vlan_untagged}"
+		[ -n "${nic_vlan_tagged}" -a "${nic_vlan_tagged}" != "0" ] && _extra_info="${_extra_info} vlan_tagged:${nic_vlan_tagged}"
+		[ -n "${nic_mtu}" -a "${nic_mtu}" != "0" ] && _extra_info="${_extra_info} mtu:${nic_mtu}"
+		[ -n "${nic_flags}" -a "${nic_flags}" != "0" ] && _extra_info="${_extra_info} flags:${nic_flags}"
+
+		printf "${H3_COLOR}${myepair}(type:${nic_type}):${N2_COLOR}${nic_parent}${_extra_info}\n"
+
+		case "${nic_type}" in
+			ppt)
+				${IFCONFIG_CMD} ${myepair} description ${jname}-${myepair} up
+				;;
+			*)
+				# Use NIC name from DB (${i}) for description
+				${IFCONFIG_CMD} ${myepair}a description ${jname}-${i} up
+				;;
+		esac
+
+
+		case "${nic_type}" in
+			ppt)
+				true
+#				TRAP="${TRAP} ${IFCONFIG_CMD} eth${eth_seq} name ${myepair};"
+#				trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+				;;
+			*)
+				TRAP="${TRAP} ${IFCONFIG_CMD} ${myepair}a destroy;"
+				trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
+				;;
+		esac
+
+		# MAC MGMT
+		if [ "${nic_hwaddr}" = "0" ]; then
+			nic_hwaddr=$( mac_gen 00:a0:98 )
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}' WHERE name='${i}'"
+		fi
+
+		_iface_rename=0
+
+		case "${nic_type}" in
+			ppt)
+				cbsdlogger NOTICE ${CIX_APP}: jail ${jname}: set hwaddr for vnet interface ${myepair}: ${nic_hwaddr}
+				${IFCONFIG_CMD} ${myepair} ether ${nic_hwaddr}
+				;;
+			*)
+				cbsdlogger NOTICE ${CIX_APP}: jail ${jname}: set hwaddr for vnet interface ${myepair}b: ${nic_hwaddr}
+				_iface_rename=1
+				${IFCONFIG_CMD} ${myepair}b ether ${nic_hwaddr}
+				if [ "${nic_address}" != "0" ]; then
+					${IFCONFIG_CMD} ${myepair}a inet ${nic_address} up
+				fi
+		esac
+
+	done
+
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N0_COLOR}"
+
+	return 0
+}
+
+# Setup vnet=1 network configuration inside of jail
+# variables expected in env
+# - vnet
+# - is_freebsd
+# - nic_name_list
+# - epairb_list
+# - ip4_addr
+# - ip6_addr
+# - oci_gw4
+# - ci_gw4
+# - exec_start
+# - quiet
+setup_jail_vnet()
+{
+	[ ${vnet} -ne 1 ] && return 0
+
+	if [ "${is_freebsd}" -eq 1 ]; then
+		distro="freebsd"
+	else
+		distro=""
+		[ -r ${path}/etc/os-release ] &&
+			distro=$( ${AWK_CMD} -F= '/^ID=/{gsub(/"/,"",$2); gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2}' ${path}/etc/os-release)
+		${ECHO} "${N1_COLOR}unknown distro: ${H3_COLOR}${distro}${N2_COLOR} setup network configuration outside of jail${N0_COLOR}" 1>&2
+	fi
+
+	OIFS="${IFS}"
+	IFS=","
+	_nic_idx=1
+	int_iface=
+	for i in ${epairb_list}; do
+		[ -z "${i}" ] && continue
+		IFS="${OIFS}"
+		${IFCONFIG_CMD} ${i} up
+
+		# Get NIC name from nic_name_list (parallel list)
+		_target_nic_name=$( echo "${nic_name_list}" | ${CUT_CMD} -d',' -f${_nic_idx} )
+		[ -z "${_target_nic_name}" ] && _target_nic_name="eth$(( _nic_idx - 1 ))"
+
+		# we need setup lock here due to interface name possible conflict with other jail
+		_wait_count=0
+		[ -z "${_iface_rename}" ] && _iface_rename=0
+
+		if [ ${_iface_rename} -eq 1 ]; then
+			while [ -r ${tmpdir}/${_target_nic_name}.locked ]; do
+				_cur_time=$( ${DATE_CMD} +%s )
+				eval $( ${STAT_CMD} -s ${tmpdir}/${_target_nic_name}.locked )
+				_diff_time=$(( _cur_time - st_mtime ))
+
+				if [ ${_diff_time} -gt 8 ]; then
+					${IFCONFIG_CMD} ${_target_nic_name} > /dev/null 2>&1
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						# remove orphaned lock
+						${RM_CMD} -f ${tmpdir}/${_target_nic_name}.locked
+						break
+					fi
+				fi
+
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}jstart: ${_target_nic_name} locked (${_diff_time}), waiting (${_wait_count}/12)..${N0_COLOR}"
+
+				_wait_count=$(( _wait_count + 1 ))
+
+				if [ ${_wait_count} -gt 12 ]; then
+					_res=$( ${CAT_CMD} ${tmpdir}/${_target_nic_name}.locked )
+					jstop jname=${jname} fast=1
+					${IFCONFIG_CMD} ${i} destroy
+					log_err 1 "${N1_COLOR}${CIX_APP}: waiting for unlock: still locked by [${_res}]: ${N2_COLOR}${tmpdir}/${_target_nic_name}.locked${N0_COLOR}"
+				fi
+
+				sleep 1
+			done
+
+			# make lock
+			echo "${jname}" > ${tmpdir}/${_target_nic_name}.locked
+			${IFCONFIG_CMD} ${i} name ${_target_nic_name} > /dev/null && ${IFCONFIG_CMD} ${_target_nic_name} vnet ${jname}
+			int_iface="${_target_nic_name}"
+		else
+			${IFCONFIG_CMD} ${i} vnet ${jname}
+			int_iface="${i}"
+		fi
+
+		# more than one IPs in ip4_addr?
+		multi_ip=0
+		multi_ip4=0
+		multi_ip6=0
+
+		# duplicate code with cloudinit: todo: merge into generic func
+		OIFS="${IFS}"
+		IFS=","
+
+		for _pureip in ${ip4_addr}; do
+			IFS="${OIFS}"
+
+			multi_ip=$(( multi_ip + 1 ))
+
+			case "${_pureip}" in
+				[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
+					# this file can be managed by users and/or 3rd party stuff (e.g. Reggae)
+					[ -r ${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network ] && . "${workdir}/jails-data/${jname}-data/etc/rc.conf.d/network"
+					if [ -z "${dhclient_program}" ]; then
+						# todo: FIB? NICE? FreeBSD-only environment?
+						DHCLIENT_PROGRAM=`${CPUSET} ${JEXEC_CMD} ${jname} sysrc -n dhclient_program`
+					else
+						DHCLIENT_PROGRAM=${dhclient_program}
+					fi
+					# todo: FIB? NICE?
+					${CPUSET} ${JEXEC_CMD} ${jname} ${DHCLIENT_PROGRAM} ${int_iface}
+					;;
+				0|[Dd][Hh][Cc][Pp])
+					# just skip
+					;;
+				*)
+					# we need to re-build ifconfig_${int_iface} vars if values already exist to merge new IP address and
+					# and do not spoil the remaining data
+					if [ "${is_freebsd}" -eq 1 ]; then
+						if [ ! -r ${data}/etc/rc.conf ]; then
+							${ECHO} "${W1_COLOR}warning: ${N1_COLOR}no such /etc/rc.conf: ${N2_COLOR}${name}${N1_COLOR}, skip for config ifconfig_${int_iface}${N0_COLOR}" 1>&2
+							break
+						fi
+
+						# FreeBSD-based env
+						ifconfig_eth0=
+						# build new ifconfig_eth0
+						nomask=0
+						strpos --str="${_pureip}" --search="/"
+						nomask=$?
+						mask=
+						iptype ${_pureip}
+						myip_type=$?
+						# 1 - ipv4
+						# 2 - ipv6
+						# * - unknown
+						case ${myip_type} in
+							1)
+								modif="inet"
+								[ ${nomask} -eq 0 ] && mask="24"
+								multi_ip4=$(( multi_ip4 + 1 ))
+								;;
+							2)
+								modif="inet6"
+								[ ${nomask} -eq 0 ] && mask="64"
+								multi_ip6=$(( multi_ip6 + 1 ))
+								;;
+							*)
+								modif=
+								;;
+						esac
+
+						if [ -n "${modif}" ]; then
+							if [ -n "${mask}" ]; then
+								new_ifconfig_eth0="${modif} ${_pureip}/${mask}"
+							else
+								new_ifconfig_eth0="${modif} ${_pureip}"
+							fi
+						else
+							# unknown IP type, pass as-is
+							new_ifconfig_eth0="${_pureip}"
+						fi
+
+						case "${myip_type}" in
+							1)
+								if [ ${multi_ip4} -lt 2 ]; then
+									find_ifconfig="ifconfig_${int_iface}"
+								else
+									alias_num=$(( multi_ip4 - 2 ))
+									find_ifconfig="ifconfig_${int_iface}_alias${alias_num}"
+								fi
+								;;
+							2)
+								if [ ${multi_ip6} -lt 2 ]; then
+									find_ifconfig="ifconfig_${int_iface}_ipv6"
+								else
+									alias_num=$(( multi_ip6 - 2 ))
+									find_ifconfig="ifconfig_${int_iface}_ipv6_alias${alias_num}"
+								fi
+								;;
+						esac
+
+						eval $( ${GREP_CMD} ^${find_ifconfig}= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
+						if [ -n "${ifconfig_eth0}" ]; then
+							${ECHO} "${N1_COLOR}adjust IP address for ${int_iface}: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
+							for _part in ${ifconfig_eth0}; do
+								[ "${_part}" = "inet" ] && continue
+								[ "${_part}" = "inet6" ] && continue
+								iptype ${_part}
+								if [ $? -eq 1 ]; then
+									#echo "!! IPv4 detected: ${_part}, skipp"
+									continue
+								fi
+								if [ -z "${new_ifconfig_eth0}" ]; then
+									new_ifconfig_eth0="${_part}"
+								else
+									new_ifconfig_eth0="${new_ifconfig_eth0} ${_part}"
+								fi
+							done
+						fi
+						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ${find_ifconfig}="${new_ifconfig_eth0}" > /dev/null 2>&1
+					else
+						# Linux/unknown distro: fallback to pre-configuration
+						$IFCONFIG_CMD -j ${jname} ${int_iface} alias ${_pureip}
+					fi
+					;;
+			esac
+		done
+
+		# release lock
+		[ -r ${tmpdir}/${_target_nic_name}.locked ] && ${RM_CMD} -f ${tmpdir}/${_target_nic_name}.locked
+		_nic_idx=$(( _nic_idx + 1 ))
+		IFS=","
+	done
+
+	IFS="${OIFS}"
+
+	[ -n "${oci_gw4}" ] && ci_gw4="${oci_gw4}"
+
+	if [ -n "${ci_gw4}" ]; then
+		OIFS="${IFS}"
+		IFS=","
+
+		for _pureip in ${ci_gw4}; do
+			IFS="${OIFS}"
+
+			case ${_pureip} in
+				0)
+					# do nothing
+					;;
+				auto)
+					# always first?
+					nic_address=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_address FROM jailnic LIMIT 1" )
+					# is ip?
+					if [ -n "${nic_address}" -a "${nic_address}" != "0" ]; then
+						echo "${N1_COLOR}${CIX_APP}: set defaultrouter to nic_address: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+					elif [ -n "${oci_gw4}" ];then
+						nic_address="${oci_gw4}"
+						echo "${N1_COLOR}${CIX_APP}: set defaultrouter to by config file: ${N2_COLOR}[${nic_address}]${N0_COLOR}"
+						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf defaultrouter="${nic_address}" > /dev/null 2>&1
+					else
+						echo "${N1_COLOR}${CIX_APP}: ci_gw4 sets to auto, but nic_address is empty${N0_COLOR}"
+					fi
+					;;
+				*)
+					myip_type=0
+					iptype ${_pureip} || myip_type=$?
+					# 1 - ipv4
+					# 2 - ipv6
+					# * - unknown
+
+					if [ "${is_freebsd}" -eq 1 ]; then
+						[ ${myip_type} -eq 1 ] && rcvar="defaultrouter"
+						[ ${myip_type} -eq 2 ] && rcvar="ipv6_defaultrouter"
+						${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ${rcvar}="${_pureip}" > /dev/null 2>&1
+					else
+						# will bypass route from outside of jail
+						[ ${myip_type} -eq 1 ] && af_flag="-4"
+						[ ${myip_type} -eq 2 ] && af_flag="-6"
+						${ROUTE_CMD} -j ${jname} -q add ${af_flag} default ${_pureip}
+					fi
+			esac
+		done
+    fi
+
+	if [ "${is_freebsd}" -eq 0 ]; then
+		[ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ] && $IFCONFIG_CMD -j ${jname} lo0 inet 127.0.0.1 netmask 255.0.0.0 up
+		[ -n "${ip6_addr}" -a "${ip6_addr}" != "0" ] && $IFCONFIG_CMD -j ${jname} lo0 inet6 ::1 prefixlen 128 up
+	fi
+
+	IFS="${OIFS}"
+}
+
+# Update OCI config in _config_json variable (in/out)
+ocijail_config_jq()
+{
+	_config_json=$(echo "${_config_json}" | ${JQ_CMD} "$@")
+}
+
+# create OCI bundle (config file in directory)
+ocijail_bundle()
+{
+	local _oci_dir _oci_v1_cfg _oci_bundle_config
+
+	_oci_dir="${jailsysdir}/${jname}/oci"
+	_oci_v1_cfg="${_oci_dir}/v1.config"
+	_oci_bundle_config="${_oci_dir}/config.json"
+	_config_json=$(${JQ_CMD} '.' <<EOF
+{
+  "ociVersion": "1.0.2",
+  "process": {
+    "args": $( ${JQ_CMD} '[ (.Entrypoint // []), (.Cmd // []) ] | add' < ${_oci_v1_cfg} ),
+    "env": $( ${JQ_CMD} -R -s 'split("\n") | map(select(length>0))' ${jailsysdir}/${jname}/environment ),
+    "cwd": "/"
+  },
+  "root": {
+     "path": "${workdir}/jails-data/${jname}-data"
+  },
+  "mounts": []
+}
+EOF
+	)
+
+	[ "${exec_start}" != "0" ] &&
+		ocijail_config_jq  --slurpfile v1 ${_oci_v1_cfg} --arg exec_start "${exec_start}" \
+		'.process.args = ([($v1[0].Entrypoint // []), ($exec_start | split(" "))] | add)'
+
+	if [ "${vnet}" -eq 1 ]; then
+		ocijail_config_jq '.annotations = (.annotations // {}) | .annotations += {"org.freebsd.jail.vnet":"new"}'
+	else
+		# not works actually
+		[ -n "${ip4_addr}" -a "${ip4_addr}" != "0" ] && ocijail_config_jq --arg ip4 "${ip4_addr}" \
+			'.annotations = (.annotations // {}) | .annotations += {"org.freebsd.jail.ip4.addr": $ip4}'
+
+		[ -n "${ip6_addr}" -a "${ip6_addr}" != "0" ] && ocijail_config_jq --arg ip6 "${ip6_addr}" \
+			'.annotations = (.annotations // {}) | .annotations += {"org.freebsd.jail.ip6.addr": $ip6}'
+	fi
+
+	[ -n "${mount_devfs}" ] && \
+		ocijail_config_jq '.mounts +=
+			[
+				{
+					"destination": "/dev",
+					"type": "devfs",
+					"source": "devfs",
+					"options": [
+						"ruleset='${devfs_ruleset}'",
+						"rule=path shm unhide mode 1777"
+					]
+				},
+				{
+					"destination": "/dev/shm",
+					"type": "tmpfs",
+					"source": "shm"
+				}
+			]
+		'
+
+	[ -n "${mount_fdescfs}" ] && \
+		ocijail_config_jq '.mounts += [{ "destination": "/dev/fd", "type": "fdescfs", "source": "fdesc" }]'
+
+	[ -n "${mount_procfs}" ] && \
+		ocijail_config_jq '.mounts += [{ "destination": "/proc", "type": "procfs", "source": "proc" }]'
+
+	[ -n "${mount_linprocfs}" ] && \
+		ocijail_config_jq '.mounts += [{ "destination": "/proc", "type": "linprocfs", "source": "linprocfs" }]'
+
+	[ -n "${mount_linsysfs}" ] && \
+		ocijail_config_jq '.mounts += [{ "destination": "/sys", "type": "linsysfs", "source": "linsysfs" }]'
+
+	echo "${_config_json}" | ${JQ_CMD} '.' > ${_oci_bundle_config}
+
+	echo "${_oci_dir}"
+
+	return 0
+}
+
+# Write down OCI jail status and jid into database from OCI data
+# variables:
+# - jname
+ocijail_update_status()
+{
+	local _status _jid _running
+	_status=$(ocijail state ${jname} | ${JQ_CMD} -r .status)
+	_jid=$(${JLS_CMD} -j ${jname} jid 2>/dev/null) || _jid=0
+	if [ -n "${_jid}" ]; then
+		[ "${_status}" = "running" ] && _running=1 || _running=0
+		cbsdsqlrw local "UPDATE jails SET jid=${_jid},status=${_running} where jname='${jname}'"
+		cbsdlogger NOTICE "Update OCI jail jid=${_jid} status=${status} for ${jname}"
+	fi
+
+	echo "${_status}"
+}
+
+ocijail_check()
+{
+	local _res _ret
+
+	_res=$( emulator_exec_check )
+	_ret=$?
+
+	if [ ${_ret} -ne 0 ]; then
+		[ ${quiet} -ne 1 ] && $ECHO "${N1_COLOR}emulator error: ${N2_COLOR}${_res}${N0_COLOR}"
+		jcleanup jname="${jname}"
+		exit 0
+	fi
+
+	if [ -z "${OCIJAIL_CMD}" ]; then
+		err 1 "${N1_COLOR}OCIJAL_CMD is not set please 'pkg install ocijail'${N0_COLOR}"
+	fi
+}
+
+# Start OCI jail
+# variables:
+# - jname
+# - ftmpdir
+# - NICE_CMD
+# - CPUSET
+ocijail_create()
+{
+	local _oci_bundle= _status _log_out _log_err
+
+	set -e
+	_oci_bundle=$(ocijail_bundle)
+	_log_err="${ftmpdir}/jstart.${jname}.err"
+	_log_out="${ftmpdir}/jstart.${jname}.out"
+
+	ocijail_check
+
+	# cleanup old jail
+	${OCIJAIL_CMD} delete ${jname} 2>/dev/null || true
+
+	# create OCI jail, ocijail create will wait until star command, then exec process inside
+    ${miscdir}/daemonize \
+		-e ${_log_err} \
+		-o ${_log_out} \
+		-p ${ftmpdir}/jstart.${jname}.$$ \
+		${CPUSET} ${NICE_CMD} -n ${nice} \
+		${OCIJAIL_CMD} create -b ${_oci_bundle} ${jname}
+
+	${ECHO} "${N1_COLOR}Jail logs: ${N2_COLOR}${_log_out} ${_log_err}${N0_COLOR}"
+
+	_status=$(ocijail_update_status)
+
+	setup_jail_vnet
+
+	# cp local default resolv.conf skel
+	if [ ${floatresolv} -eq 1 ]; then
+		[ -d ${data}/etc ] && makeresolv jname=${jname}
+	fi
+
+	${OCIJAIL_CMD} start ${jname}
+	for i in 1 2 3 4 5 6; do
+		sleep 1
+		_status=$(ocijail_update_status)
+		if [ "${quiet}" != "1" ]; then
+			printf "${CLRLINE}"
+			printf "${CURSORRST}"
+			printf "${N1_COLOR}${CIX_APP}: waiting for ${jname} JID ${N2_COLOR}status=${_status}: ${i}/6 ... ${N0_COLOR}"
+		fi
+		[ "${_status}" != "created" ] && break
+	done
+	${ECHO} "${N0_COLOR}"
+
+
+	# do not cleanup network interfaces if jail start failed - XXX: instead of run command
+	trap "" HUP INT ABRT BUS TERM EXIT
+
+	if [ "${_status}" != "running" ]; then
+		${ECHO} "${W1_COLOR}Error${N1_COLOR}: OCI jail ${jname} failed to start${N0_COLOR}"
+		${CAT_CMD} ${_log_err}
+		${RM_CMD} -f ${_log_err}
+
+		exit 1
+	fi
+
+	if [ "${quiet}" != "1" ]; then
+		${ECHO} "${N1_COLOR}Startup logs: ${N2_COLOR}"
+		${CAT_CMD} ${_log_out}
+		${ECHO} "${N0_COLOR}"
+	fi
+
+	set +e
+	return 0
+}
