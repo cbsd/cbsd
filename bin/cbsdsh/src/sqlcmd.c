@@ -597,68 +597,56 @@ sqlitecmdro(int argc, char **argv)
  *   assign columns from the first row into shell variables.
  *
  * Usage (in shell):
- *   cbsdsqlro_vars var1 var2 ... -- <dbfile> <query...>
+ *   cbsdsqlro_vars <dbfile> <query> var1 [var2 ...]
  *
  * Example:
- *   cbsdsqlro_vars mnt_start mnt_stop -- "${_sqlfile}" \
- *     "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'"
+ *   cbsdsqlro_vars "${_sqlfile}" "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'" mnt_start mnt_stop
  */
 int
 sqlitecmdro_vars(int argc, char **argv)
 {
 	sqlite3 *db;
-	char *query = NULL;
 	char *dbdir;
 	char *dbfile;
 	int ret = 0;
 	sqlite3_stmt *stmt = NULL;
 	int maxretry = 50;
 	int retry = 0;
-	int sep;
 	int nvars;
+	int i;
 
-	/* Need at least: builtin var -- dbfile query */
-	if (argc < 5) {
-		out1fmt("usage: cbsdsqlro_vars var [...] -- <dbfile> <query>\n");
+	/* Need at least: dbfile query var1 */
+	if (argc < 4) {
+		out1fmt("usage: cbsdsqlro_vars <dbfile> <query> var [var ...]\n");
 		return 1;
 	}
 
-	/* Find "--" separator between variable names and DB / query */
-	for (sep = 1; sep < argc; sep++) {
-		if (strcmp(argv[sep], "--") == 0)
-			break;
-	}
-	if (sep == argc || sep < 2 || sep >= argc - 2) {
-		out1fmt("usage: cbsdsqlro_vars var [...] -- <dbfile> <query>\n");
-		return 1;
-	}
+	nvars = argc - 3;
 
-	nvars = sep - 1;
-
-	/* dbfile handling is the same as in sqlitecmdro */
-	if (argv[sep + 1][0] != '/') {
+	/* argv[1] = dbfile (relative or absolute) */
+	if (argv[1][0] != '/') {
 		dbdir = lookupvar("dbdir");
 		if (!dbdir) {
 			out1fmt("dbdir not set!\n");
 			return 1;
 		}
-		size_t dbfile_len = strlen(dbdir) + strlen(argv[sep + 1]) +
+		size_t dbfile_len = strlen(dbdir) + strlen(argv[1]) +
 		    strlen(DBPOSTFIX) + 2;
 		dbfile = calloc(dbfile_len, sizeof(char));
 		if (dbfile == NULL) {
 			out1fmt("Out of memory!\n");
 			return 1;
 		}
-		snprintf(dbfile, dbfile_len, "%s/%s%s", dbdir, argv[sep + 1],
+		snprintf(dbfile, dbfile_len, "%s/%s%s", dbdir, argv[1],
 		    DBPOSTFIX);
 	} else {
-		size_t dbfile_len = strlen(argv[sep + 1]) + 1;
+		size_t dbfile_len = strlen(argv[1]) + 1;
 		dbfile = calloc(dbfile_len, sizeof(char));
 		if (dbfile == NULL) {
 			out1fmt("Out of memory!\n");
 			return 1;
 		}
-		snprintf(dbfile, dbfile_len, "%s", argv[sep + 1]);
+		snprintf(dbfile, dbfile_len, "%s", argv[1]);
 	}
 
 	db = cbsd_sqlite_get(dbfile, 0);
@@ -666,16 +654,9 @@ sqlitecmdro_vars(int argc, char **argv)
 	if (!db)
 		return 1;
 
-	/* Build query from arguments after dbfile */
-	query = build_query(argc, argv, sep + 2);
-	if (!query) {
-		out1fmt("Failed to build query string!\n");
-		return 1;
-	}
-
-	/* Prepare statement with retry logic, as in sqlitecmdro */
+	/* argv[2] = query (single string) */
 	do {
-		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+		ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
 		if (ret == SQLITE_OK)
 			break;
 		retry++;
@@ -687,12 +668,11 @@ sqlitecmdro_vars(int argc, char **argv)
 		ret = sqlite3_step(stmt);
 		if (ret == SQLITE_ROW) {
 			int cols = sqlite3_column_count(stmt);
-			int i;
 
 			for (i = 0; i < nvars && i < cols; i++) {
 				const unsigned char *txt =
 				    sqlite3_column_text(stmt, i);
-				setvar(argv[1 + i],
+				setvar(argv[3 + i],
 				    txt ? (const char *)txt : "", 0);
 			}
 		}
@@ -700,7 +680,6 @@ sqlitecmdro_vars(int argc, char **argv)
 
 	if (stmt)
 		sqlite3_finalize(stmt);
-	free(query);
 
 	return 0;
 }
