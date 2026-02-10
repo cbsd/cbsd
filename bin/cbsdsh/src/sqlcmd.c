@@ -392,7 +392,7 @@ sqlitecmdrw(int argc, char **argv)
 	}
 	free(dbfile);
 
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+	sql_exec(db, "PRAGMA mmap_size = 4194304;");		// 4MB
 	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
 	sql_exec(db, "PRAGMA journal_mode = WAL;");
 	sql_exec(db, "PRAGMA synchronous = NORMAL;");
@@ -508,7 +508,7 @@ sqlitecmdro(int argc, char **argv)
 		return 1;
 	}
 
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+	sql_exec(db, "PRAGMA mmap_size = 4194304;");		// 4 MB
 
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
