@@ -264,6 +264,8 @@ Or navigate via TUI: `cbsd bconfig` -> `vm_boot`.
 :---: | :---
 
 
+:information_source: Do you want more examples with PXE server/diskless boot? See: [NFSv4/DHCP/PXE jail-based (vnet) service via (dnsmasq)](https://github.com/cbsd/cbsd-articles/blob/main/en/dnsmasq_service.md)
+
 
 ## other common commands and operations
 
