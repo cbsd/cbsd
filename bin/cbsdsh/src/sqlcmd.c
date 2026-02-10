@@ -25,6 +25,8 @@
 
 #define CBSD_SQLITE_BUSY_TIMEOUT 25000
 
+char *nm(void);
+
 char *delim;
 #ifdef WITH_DBI
 extern cbsddbi_t *databases;
@@ -48,6 +50,88 @@ void (*_dbi_conn_error_handler)(dbi_conn Conn,
 void (*_dbi_set_verbosity)(int verbosity, dbi_inst Inst);
 
 #endif
+
+struct cbsd_sqlite_conn {
+	char *path;
+	sqlite3 *db;
+	int is_rw;
+	int pragmas_init;
+	struct cbsd_sqlite_conn *next;
+};
+
+static struct cbsd_sqlite_conn *cbsd_sqlite_conns = NULL;
+
+static sqlite3 *
+cbsd_sqlite_get(const char *dbfile, int is_rw)
+{
+	struct cbsd_sqlite_conn *c;
+	int flags;
+
+	for (c = cbsd_sqlite_conns; c; c = c->next) {
+		if (c->is_rw == is_rw && strcmp(c->path, dbfile) == 0)
+			return c->db;
+	}
+
+	sqlite3 *db = NULL;
+
+	if (is_rw)
+		flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
+		    SQLITE_OPEN_SHAREDCACHE;
+	else
+		flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE;
+
+	if (sqlite3_open_v2(dbfile, &db, flags, NULL) != SQLITE_OK) {
+		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
+		if (db)
+			sqlite3_close(db);
+		return NULL;
+	}
+
+	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+
+	/* Apply PRAGMAs once per connection */
+	if (is_rw) {
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
+		sql_exec(db, "PRAGMA journal_mode = WAL;");
+		sql_exec(db, "PRAGMA synchronous = NORMAL;");
+	} else {
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
+	}
+
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void *)0);
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void *)0);
+
+	c = malloc(sizeof(*c));
+	if (!c) {
+		out1fmt("Out of memory!\n");
+		sqlite3_close(db);
+		return NULL;
+	}
+	c->path = savestr(dbfile);
+	c->db = db;
+	c->is_rw = is_rw;
+	c->pragmas_init = 1;
+	c->next = cbsd_sqlite_conns;
+	cbsd_sqlite_conns = c;
+
+	return db;
+}
+
+void
+cbsd_sqlite_close_all(void)
+{
+	struct cbsd_sqlite_conn *c = cbsd_sqlite_conns;
+	while (c) {
+		struct cbsd_sqlite_conn *next = c->next;
+		if (c->db)
+			sqlite3_close(c->db);
+		if (c->path)
+			free(c->path);
+		free(c);
+		c = next;
+	}
+	cbsd_sqlite_conns = NULL;
+}
 
 char *
 nm(void)
@@ -329,7 +413,6 @@ int
 sqlitecmdrw(int argc, char **argv)
 {
 	sqlite3 *db;
-	int res;
 	char *query = NULL;
 	char *dbdir;
 	char *dbfile;
@@ -381,28 +464,13 @@ sqlitecmdrw(int argc, char **argv)
 		snprintf(dbfile, dbfile_len, "%s", argv[1]);
 	}
 
-	if (SQLITE_OK !=
-	    (res = sqlite3_open_v2(dbfile, &db,
-		 SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
-		     SQLITE_OPEN_SHAREDCACHE,
-		 NULL))) {
-		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
-		free(dbfile);
-		return 1;
-	}
+	db = cbsd_sqlite_get(dbfile, 1);
 	free(dbfile);
-
-	sql_exec(db, "PRAGMA mmap_size = 4194304;");		// 4MB
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
-	sql_exec(db, "PRAGMA journal_mode = WAL;");
-	sql_exec(db, "PRAGMA synchronous = NORMAL;");
-
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
+	if (!db)
+		return 1;
 
 	query = build_query(argc, argv, 2);
 	if (!query) {
-		sqlite3_close(db);
 		out1fmt("Failed to build query string!\n");
 		return 1;
 	}
@@ -429,7 +497,6 @@ sqlitecmdrw(int argc, char **argv)
 	if (stmt)
 		sqlite3_finalize(stmt);
 	free(query);
-	sqlite3_close(db);
 
 	return 0;
 }
@@ -438,7 +505,6 @@ int
 sqlitecmdro(int argc, char **argv)
 {
 	sqlite3 *db;
-	int res;
 	char *query = NULL;
 	char *dbdir;
 	char *dbfile;
@@ -490,28 +556,16 @@ sqlitecmdro(int argc, char **argv)
 		snprintf(dbfile, dbfile_len, "%s", argv[1]);
 	}
 
-	if (SQLITE_OK !=
-	    (res = sqlite3_open_v2(dbfile, &db,
-		 SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE, NULL))) {
-		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
-		free(dbfile);
-		return 1;
-	}
+	db = cbsd_sqlite_get(dbfile, 0);
 	free(dbfile);
-
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+	if (!db)
+		return 1;
 
 	query = build_query(argc, argv, 2);
 	if (!query) {
-		sqlite3_close(db);
 		out1fmt("Failed to build query string!\n");
 		return 1;
 	}
-
-	sql_exec(db, "PRAGMA mmap_size = 4194304;");		// 4 MB
-
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
 
 	do {
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
@@ -533,7 +587,120 @@ sqlitecmdro(int argc, char **argv)
 	if (stmt)
 		sqlite3_finalize(stmt);
 	free(query);
-	sqlite3_close(db);
+
+	return 0;
+}
+
+/*
+ * sqlitecmdro_vars:
+ *   Read-only query like sqlitecmdro, but instead of printing result,
+ *   assign columns from the first row into shell variables.
+ *
+ * Usage (in shell):
+ *   cbsdsqlro_vars var1 var2 ... -- <dbfile> <query...>
+ *
+ * Example:
+ *   cbsdsqlro_vars mnt_start mnt_stop -- "${_sqlfile}" \
+ *     "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'"
+ */
+int
+sqlitecmdro_vars(int argc, char **argv)
+{
+	sqlite3 *db;
+	char *query = NULL;
+	char *dbdir;
+	char *dbfile;
+	int ret = 0;
+	sqlite3_stmt *stmt = NULL;
+	int maxretry = 50;
+	int retry = 0;
+	int sep;
+	int nvars;
+
+	/* Need at least: builtin var -- dbfile query */
+	if (argc < 5) {
+		out1fmt("usage: cbsdsqlro_vars var [...] -- <dbfile> <query>\n");
+		return 1;
+	}
+
+	/* Find "--" separator between variable names and DB / query */
+	for (sep = 1; sep < argc; sep++) {
+		if (strcmp(argv[sep], "--") == 0)
+			break;
+	}
+	if (sep == argc || sep < 2 || sep >= argc - 2) {
+		out1fmt("usage: cbsdsqlro_vars var [...] -- <dbfile> <query>\n");
+		return 1;
+	}
+
+	nvars = sep - 1;
+
+	/* dbfile handling is the same as in sqlitecmdro */
+	if (argv[sep + 1][0] != '/') {
+		dbdir = lookupvar("dbdir");
+		if (!dbdir) {
+			out1fmt("dbdir not set!\n");
+			return 1;
+		}
+		size_t dbfile_len = strlen(dbdir) + strlen(argv[sep + 1]) +
+		    strlen(DBPOSTFIX) + 2;
+		dbfile = calloc(dbfile_len, sizeof(char));
+		if (dbfile == NULL) {
+			out1fmt("Out of memory!\n");
+			return 1;
+		}
+		snprintf(dbfile, dbfile_len, "%s/%s%s", dbdir, argv[sep + 1],
+		    DBPOSTFIX);
+	} else {
+		size_t dbfile_len = strlen(argv[sep + 1]) + 1;
+		dbfile = calloc(dbfile_len, sizeof(char));
+		if (dbfile == NULL) {
+			out1fmt("Out of memory!\n");
+			return 1;
+		}
+		snprintf(dbfile, dbfile_len, "%s", argv[sep + 1]);
+	}
+
+	db = cbsd_sqlite_get(dbfile, 0);
+	free(dbfile);
+	if (!db)
+		return 1;
+
+	/* Build query from arguments after dbfile */
+	query = build_query(argc, argv, sep + 2);
+	if (!query) {
+		out1fmt("Failed to build query string!\n");
+		return 1;
+	}
+
+	/* Prepare statement with retry logic, as in sqlitecmdro */
+	do {
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+		if (ret == SQLITE_OK)
+			break;
+		retry++;
+		if (retry > maxretry)
+			break;
+	} while (ret != SQLITE_OK);
+
+	if (ret == SQLITE_OK) {
+		ret = sqlite3_step(stmt);
+		if (ret == SQLITE_ROW) {
+			int cols = sqlite3_column_count(stmt);
+			int i;
+
+			for (i = 0; i < nvars && i < cols; i++) {
+				const unsigned char *txt =
+				    sqlite3_column_text(stmt, i);
+				setvar(argv[1 + i],
+				    txt ? (const char *)txt : "", 0);
+			}
+		}
+	}
+
+	if (stmt)
+		sqlite3_finalize(stmt);
+	free(query);
 
 	return 0;
 }
