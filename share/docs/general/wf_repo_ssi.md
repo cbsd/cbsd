@@ -7,11 +7,6 @@
 
 ```
 
-```
-			% cbsd repo-tui
-
-```
-
 **Description**:
 
 Work with a repository of bases, kernels and images. The quantity a repository can be more than one and they are specified through a gap in the file repo variable _$workdir/nc.inventory_. Downloading will occur from the first repository where the object will find. Respectively, if the local repository is used — it should be the first.
