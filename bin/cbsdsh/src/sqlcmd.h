@@ -46,4 +46,3 @@ typedef struct {
 	} while (0)
 
 int sql_exec(sqlite3 *s, const char *sql, ...);
-void cbsd_sqlite_close_all(void);

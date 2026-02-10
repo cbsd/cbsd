@@ -53,7 +53,6 @@
 #include "error.h"
 #include "trap.h"
 #include "mystring.h"
-#include "sqlcmd.h"
 
 /*
  * Sigmode records the current value of the signal handlers for the various
@@ -428,7 +427,6 @@ exitshell(void)
 out:
 	exitreset();
 	postexitreset();
-	cbsd_sqlite_close_all();
 	/*
 	 * Disable job control so that whoever had the foreground before we
 	 * started can get it back.
