@@ -229,12 +229,12 @@ INSTALL_DATA = ${INSTALL} -m 644
 INSTALL_PROGRAM = ${INSTALL}
 INSTALL_SCRIPT = ${INSTALL}
 INSTALL_STRIP_PROGRAM = $(install_sh) -c -s
-LDFLAGS = -L/usr/lib -L/usr/local/lib -fsanitize=address
+LDFLAGS = -L/usr/lib -L/usr/local/lib
 LIBOBJS = 
 LIBS =  -lsqlite3 -ljail -pthread
 LTLIBOBJS = 
 MAKEINFO = ${SHELL} '/usr/local/cbsd/bin/cbsdsh/missing' makeinfo
-MKDIR_P = /usr/local/bin/gmkdir -p
+MKDIR_P = mkdir -p
 OBJEXT = o
 PACKAGE = dash
 PACKAGE_BUGREPORT = 
