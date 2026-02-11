@@ -336,10 +336,16 @@ sqlitecmdro(int argc, char **argv)
  *   variable separated by '\n'.
  *
  * Usage (in shell):
- *   cbsdsqlro_vars <dbfile> <query> var1 [var2 ...]
+ *   cbsdsqlro_vars <dbfile> <query> [ var1 ...]
+ *
+ *  Set of returned variables - matches columns selected ("*" -> all table columns)
+ *  You may specify variables names explicitly as argv or let them to be named after columns
+ *  If the number of specified variables is less than the number of columns in the query,
+ *  column names will be used for rest of variables.
  *
  * Example:
- *   cbsdsqlro_vars "${_sqlfile}" "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'" mnt_start mnt_stop
+ *   cbsdsqlro_vars "${_sqlfile}" "SELECT mnt_start,mnt_stop FROM bhyve WHERE jname='$1'"
+ *   cbsdsqlro_vars "${_sqlfile}" "SELECT jid,jname FROM bhyve WHERE jname='$1'" myjid myjname
  */
 int
 sqlitecmdro_vars(int argc, char **argv)
@@ -357,8 +363,8 @@ sqlitecmdro_vars(int argc, char **argv)
 	int got_row = 0;
 
 	/* Need at least: dbfile query var1 */
-	if (argc < 4) {
-		out1fmt("usage: cbsdsqlro_vars <dbfile> <query> var [var ...]\n");
+	if (argc < 3) {
+		out1fmt("usage: cbsdsqlro_vars <dbfile> <query> [ var1 [var2 ...]]\n");
 		return 1;
 	}
 
@@ -415,24 +421,33 @@ sqlitecmdro_vars(int argc, char **argv)
 	} while (ret != SQLITE_OK);
 
 	if (ret == SQLITE_OK) {
-		/* init vars with empty values */
+		/* init argv vars with empty values */
 		for (i = 0; i < nvars; i++)
 			setvar(argv[3 + i], "", 0);
+
+		bool cleanup_vars_finished = false;
 
 		ret = sqlite3_step(stmt);
 		while (ret == SQLITE_ROW) {
 			int j;
 			int ncols = sqlite3_column_count(stmt);
-			int used_cols = nvars < ncols ? nvars : ncols;
+
+			if (!cleanup_vars_finished) {
+				// if more columns returned than variables passed, clean up rest of variables
+				for (j = nvars; j < ncols; j++) {
+					setvar(sqlite3_column_name(stmt, j), "", 0);
+				}
+				cleanup_vars_finished = true;
+			}
 
 			got_row = 1;
 
-			for (j = 0; j < used_cols; j++) {
-				const unsigned char *txt_uc =
-				    sqlite3_column_text(stmt, j);
-				const char *txt =
-				    txt_uc ? (const char *)txt_uc : "";
-				const char *old = lookupvar(argv[3 + j]);
+			for (j = 0; j < ncols; j++) {
+				const char *colname = sqlite3_column_name(stmt, j);
+				const unsigned char *txt_uc = sqlite3_column_text(stmt, j);
+				const char *txt = txt_uc ? (const char *)txt_uc : "";
+				const char *varname = (j < nvars) ? argv[3 + j] : colname;
+				const char *old = lookupvar(varname);
 
 				/* Append \n when data exist */
 				if (old && *old) {
@@ -447,10 +462,10 @@ sqlitecmdro_vars(int argc, char **argv)
 					nv[oldlen] = '\n';
 					memcpy(nv + oldlen + 1, txt, slen);
 					nv[oldlen + 1 + slen] = '\0';
-					setvar(argv[3 + j], nv, 0);
+					setvar(varname, nv, 0);
 					free(nv);
 				} else {
-					setvar(argv[3 + j], txt, 0);
+					setvar(varname, txt, 0);
 				}
 			}
 
