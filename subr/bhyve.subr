@@ -11,7 +11,7 @@ _CBSD_BHYVE_SUBR=1
 # test environment for bhyveing
 init_bhyve()
 {
-	local _i _res
+	local _i= _res=
 
 	[ "${skip_bhyve_check_env}" = "1" ] && return 0			# all fine!
 
@@ -175,8 +175,7 @@ store_bhyve_pci_slot()
 	cbsdsqlrw ${_mydb} "INSERT INTO pcibus_run ( pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc,modified ) VALUES ( '${_pcislot_name}', '${_pcislot_bus}', '${_pcislot_pcislot}', '${_pcislot_function}', '${_pcislot_desc}', true )"
 
 	_search_condition="pcislot_name=\"${_pcislot_name}\""
-	[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc='${_pcislot_desc}'"
-	_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} "SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1" | ${AWK_CMD} '{printf $1}' )
+	cbsdsqlro_vars "${_mydb}" "SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1" _tmp_bhyve_pci_index
 
 	if [ -n "${_tmp_bhyve_pci_index}" ]; then
 		# update modified flags
@@ -240,7 +239,7 @@ next_pci_id()
 		_mydb="${jailsysdir}/${jname}/local.sqlite"
 		_search_condition="pcislot_name='${_pcislot_name}'"
 		[ -n "${_pcislot_desc}" ] && _search_condition="${_search_condition} AND pcislot_desc='${_pcislot_desc}'"
-		_tmp_bhyve_pci_index=$( cbsdsqlro ${_mydb} SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1 | ${AWK_CMD} '{printf $1}' )
+		cbsdsqlro_vars "${_mydb}" "SELECT pcislot_bus FROM pcibus WHERE ${_search_condition} LIMIT 1" _tmp_bhyve_pci_index
 		if [ -n "${_tmp_bhyve_pci_index}" ]; then
 			# update modified
 			cbsdsqlrw ${_mydb} "UPDATE pcibus SET modified=true WHERE ${_search_condition}"
@@ -250,14 +249,14 @@ next_pci_id()
 		fi
 	fi
 	# end of lookup database stored first
-
 	[ ${_start_bus_id} -gt ${_end_bus_id} ] && ${ECHO} "${N1_COLOR}next_pci_id: invalid range${N0_COLOR}" && return 1
 	[ -z "${bhyve_pci_index}" ] && bhyve_pci_index="0"
 
 	bhyve_pci_index=0
 
 	for bhyve_pci_index in $( ${SEQ_CMD} ${_start_bus_id} ${_end_bus_id} ); do
-		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT idx FROM pcibus WHERE pcislot_bus=${bhyve_pci_index} LIMIT 1 2>/dev/null )
+		cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT idx FROM pcibus WHERE pcislot_bus=${bhyve_pci_index} LIMIT 1" _res
+
 		[ -n "${_res}" ] && continue		# probably already used by another devices
 
 		if ! is_bhyve_pci_id_busy ${bhyve_pci_index}; then
@@ -437,11 +436,9 @@ compile_dsk_args()
 				;;
 		esac
 
-		dsk_conf=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_conf FROM bhyvedsk WHERE dsk_path='${dsk_path}' LIMIT 1" 2>/dev/null )
+		cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT dsk_conf,dsk_sectorsize FROM bhyvedsk WHERE dsk_path='${dsk_path}' LIMIT 1"
 		# back compatible for < CBSD 12.0.12, unset sectorsize=512
 		[ "${dsk_conf}" = "sectorsize=512" -o "${dsk_conf}" = "0" ] && dsk_conf=
-
-		dsk_sectorsize=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_sectorsize FROM bhyvedsk WHERE dsk_path='${dsk_path}' LIMIT 1" 2>/dev/null )
 
 		if [ -n "${dsk_sectorsize}" ]; then
 			if [ -n "${dsk_conf}" ]; then
@@ -570,7 +567,7 @@ compile_dsk_args()
 	done
 
 	# shared devices
-	_shared_devs=$( cbsdsqlro storage_media "SELECT path FROM media WHERE type='shared' AND jname='${jname}'" )
+	cbsdsqlro_vars storage_media "SELECT path FROM media WHERE type='shared' AND jname='${jname}'" _shared_devs
 
 	for i in ${_shared_devs}; do
 
