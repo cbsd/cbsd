@@ -675,23 +675,30 @@ EOF
 # - jname
 ocijail_update_status()
 {
-	local _state _status _jid _running
-
-	_state=$(${OCIJAIL_CMD} state ${jname}) ||
-		log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to get ${H3_COLOR}${jname}${N2_COLOR} status${N0_COLOR}"
+	local _state= _status= _jid= _running= _ret=
+	_state=$( ${OCIJAIL_CMD} state ${jname} )
+	_ret=$?
+	[ ${_ret} -ne 0 ] && return ${_ret}
 
 	_status=$(${ECHO} "${_state}" | ${JQ_CMD} -r .status)
 	_jid=$(${ECHO} "${_state}" | ${JQ_CMD} -r '.annotations."org.freebsd.jail.jid" // ""')
 	[ -z "${_jid}" ] && _jid=$(${JLS_CMD} -j ${jname} jid 2>/dev/null) || _jid=0  # fallback to jls 
 
-
 	if [ -n "${_jid}" ]; then
-		[ "${_status}" = "running" ] && _running=1 || _running=0
+		case "${_status}" in
+			running)
+				_running=1
+				;;
+			*)
+				_running=0
+				;;
+		esac
 		cbsdsqlrw local "UPDATE jails SET jid=${_jid},status=${_running} where jname='${jname}'"
 		cbsdlogger NOTICE "Update OCI jail jid=${_jid} status=${status} for ${jname}"
 	fi
 
 	echo "${_status}"
+	return 0
 }
 
 ocijail_check()
@@ -720,9 +727,11 @@ ocijail_check()
 # - CPUSET
 ocijail_create()
 {
-	local _oci_bundle= _status _log_out _log_err
+	local _oci_bundle= _status= _log_out= _log_err=
+	local _ret= _i=
+	[ -z "${nice}" ] && nice="1"
 
-	set -e
+#	set -e
 	_oci_bundle=$(ocijail_bundle)
 	_log_err="${ftmpdir}/jstart.${jname}.err"
 	_log_out="${ftmpdir}/jstart.${jname}.out"
@@ -738,11 +747,30 @@ ocijail_create()
 		-o ${_log_out} \
 		-p ${ftmpdir}/jstart.${jname}.$$ \
 		${CPUSET} ${NICE_CMD} -n ${nice} \
-		${OCIJAIL_CMD} create -b ${_oci_bundle} ${jname} || \
-				log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to create ${H3_COLOR}${jname}${N0_COLOR}"
+		${OCIJAIL_CMD} create -b ${_oci_bundle} ${jname}
+	_ret=$?
+	if [ ${_ret} -ne 0 ]; then
+		log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to create ${H3_COLOR}${jname}${N0_COLOR} (${OCIJAIL_CMD} create -b ${_oci_bundle} ${jname})"
+		[ -r ${_log_out} ] && ${CAT_CMD} ${_log_out}
+		[ -r ${_log_err} ] && ${CAT_CMD} ${_log_err}
+		exit ${_ret}
+	fi
 
-	_status=$(ocijail_update_status)
-	# XXX: should stop on error here
+#	# On slow systems, it may take some time for the system to initialize, e.g.:
+#	# 2026-02-12T15:30:07000930472Z: opening state lock: No such file or directory
+#	for _i in 1 2 3; do
+#		_status=$(ocijail_update_status)
+#		_ret=$?
+#		[ ${_ret} -eq 0 ] && break
+#		sleep 0.5
+#	done
+
+	if [ ${_ret} -ne 0 ]; then
+		log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to get status ${H3_COLOR}${jname}${N0_COLOR}"
+		[ -r ${_log_out} ] && ${CAT_CMD} ${_log_out}
+		[ -r ${_log_err} ] && ${CAT_CMD} ${_log_err}
+		exit ${_ret}
+	fi
 
 	setup_jail_vnet
 
@@ -752,29 +780,41 @@ ocijail_create()
 	fi
 
 	${OCIJAIL_CMD} start ${jname}
-	for i in 1 2 3 4 5 6; do
+	if [ ${_ret} -ne 0 ]; then
+		log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}${OCIJAIL_CMD} start ${H3_COLOR}${jname}${N0_COLOR}"
+		exit ${_ret}
+	fi
+
+	for _i in 1 2 3 4 5 6; do
 		sleep 1
 		_status=$(ocijail_update_status)
 		if [ "${quiet}" != "1" ]; then
 			printf "${CLRLINE}"
 			printf "${CURSORRST}"
-			printf "${N1_COLOR}${CIX_APP}: waiting for ${jname} JID ${N2_COLOR}status=${_status}: ${i}/6 ... ${N0_COLOR}"
+			printf "${N1_COLOR}${CIX_APP}: waiting for ${jname} JID ${N2_COLOR}status=${_status}: ${_i}/6 ... ${N0_COLOR}"
 		fi
-		[ "${_status}" != "created" ] && break
+		case "${_status}" in
+			created|running)
+				break
+				;;
+		esac
 	done
 	${ECHO} "${N0_COLOR}"
 
 	# do not cleanup network interfaces if jail start failed - XXX: instead of run command
 	trap "" HUP INT ABRT BUS TERM EXIT
 
-	if [ "${_status}" != "running" ]; then
-		${ECHO} "${W1_COLOR}Error${N1_COLOR}: OCI jail ${jname} failed to start${N0_COLOR}"
-		${CAT_CMD} ${_log_err}
-		${RM_CMD} -f ${_log_err} ${_log_out}
-
-		exit 1
-	fi
-
+	case "${_status}" in
+		created|running)
+			true
+			;;
+		*)
+			${ECHO} "${W1_COLOR}Error${N1_COLOR}: OCI jail ${jname} failed to start${N0_COLOR}"
+			${CAT_CMD} ${_log_err}
+			${RM_CMD} -f ${_log_err} ${_log_out}
+			exit 1
+			;;
+	esac
 	${ECHO} "${N1_COLOR}Jail logs: ${N2_COLOR}${_log_out} ${_log_err}${N0_COLOR}"
 
 	if [ "${quiet}" != "1" ]; then
