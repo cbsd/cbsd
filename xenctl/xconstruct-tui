@@ -6,7 +6,6 @@ CBSDMODULE="xen"
 MYDESC="Ncurses based Xen guest creation wizard"
 EXTHELP="wf_xcreate"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
 The CBSD supports a large number of options for creating environments
@@ -15,6 +14,9 @@ This is an interactive dialog that generates a configuration file for the
 'cbsd xcreate' command. You can see this configuration file if you answer
 negatively to the 'Do you want to create jail immediately?' question at
 the end of the dialogue.
+
+If you create the environment often and in large quantities, the CBSD
+recommends using the CBSDfile (Vagrant style) instead of bcreate/xconstruct-tui.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -49,7 +51,7 @@ extra_default_item=
 
 gen_newjail_conf()
 {
-	local _i _required _mytest _ret
+	local _i= _required= _mytest= _ret=
 
 	_required="jname host_hostname ip4_addr ver arch imgsize"
 
@@ -76,22 +78,24 @@ gen_newjail_conf()
 		[ -z "${sectorsize}" ] && sectorsize="4096"
 	fi
 
-	#check for ip if oninterface
-	if [ "${interface}" != "0" -a -n "${ip4_addr}" ]; then
-		checkip ip=${ip4_addr} check=1 2>/dev/null
-		case $? in
-			2)
-				msg_yes="ok"
-				msg_no="not ok"
-				f_dialog_noyes "It seems like ${ip4_addr} address already used on several devices on the LAN\nYou can found MAC address by \"arp -an\" command.\n If you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
-				case $? in
-					0)
-						;;
-					*)
-						return 0
-						;;
-				esac
-		esac
+	if [ "${ip4_addr}" != "REALDHCP" ]; then
+		#check for ip if oninterface
+		if [ "${interface}" != "0" -a -n "${ip4_addr}" ]; then
+			checkip ip=${ip4_addr} check=1 2>/dev/null
+			case $? in
+				2)
+					msg_yes="ok"
+					msg_no="not ok"
+					f_dialog_noyes "It seems like ${ip4_addr} address already used on several devices on the LAN\nYou can found MAC address by \"arp -an\" command.\n If you believe that it's ok, choose 'ok' to continue or 'not ok' for another IP address" "WARNING"
+					case $? in
+						0)
+							;;
+						*)
+							return 0
+							;;
+					esac
+			esac
+		fi
 	fi
 
 	if [ "${spice_enabled}" = "1" ]; then
@@ -112,12 +116,13 @@ dialog_menu_main()
 	local title=" ${product} v${myversion} "
 	local btitle="${DIALOG_BACKTITLE}"
 	local prompt="Use menu to construct VM and create config file"
+	local _vm_package_num=
 
 	local defaultitem= # Calculated below
 
 	local hline=
-	local mark
-	local i _mytest
+	local mark=
+	local i= _mytest=
 
 	f_dialog_default_fetch defaultitem
 
@@ -144,11 +149,11 @@ dialog_menu_main()
 		menu_list="${menu_list}	'${item_let} jprofile'	'$(curval jprofile)'		'Select jail profile for jcreate'"
 	fi
 
-	local vm_package_num=$( cbsdsqlro local "SELECT COUNT\(name\) FROM vmpackages" )
+	cbsdsqlro_vars local "SELECT COUNT(name) FROM vmpackages" _vm_package_num
 
-	if ! is_number ${vm_package_num}; then
-		if [ ${vm_package_num} -gt 0 ]; then
-			menu_list="${menu_list}	'${item_let} vm_package'	'$(curval vm_package)'		'Package group name'"
+	if ! is_number ${_vm_package_num}; then
+		if [ ${_vm_package_num} -gt 0 ]; then
+			menu_list="${menu_list} '${item_let} vm_package'	'$(curval vm_package)'		'Package group name'"
 			inc_menu_index item_let
 		fi
 	fi
@@ -173,8 +178,13 @@ dialog_menu_main()
 
 	if [ ${is_cloud} -eq 0 ]; then
 		# not for cloud
-		menu_list="${menu_list}	'${item_let} vm_iso_path'	'$(curval vm_iso_path)'	'ISO Path for CD-ROM'"
+		menu_list="${menu_list} '${item_let} vm_iso_path'		'$(curval vm_iso_path)'		'ISO Path for CD-ROM'"
 		inc_menu_index item_let
+
+		if [ -n "${vm_iso_path}" ]; then
+			menu_list="${menu_list} '${item_let} vm_iso_path2'	'$(curval vm_iso_path2)'	'ISO Path for CD-ROM2'"
+			inc_menu_index item_let
+		fi
 	fi
 
 	menu_list="${menu_list}	'${item_let} astart'		'[${astart_mark}]'		'Autostart with system'"
@@ -263,6 +273,7 @@ dialog_menu_main()
 		done
 		IFS="${OIFS}"
 	fi
+
 	cbsd_menubox_with_help
 	retval=$?
 
@@ -359,6 +370,7 @@ if [ "${default_profile}" = "default" -a -r ${tmpdir}/xconstruct.conf ]; then
 	fi
 else
 	vm_iso_path="${register_iso_as}"
+	[ -n "${register_iso_as2}" ] && vm_iso_path2="${register_iso_as2}"
 	apply_vm_package
 fi
 
@@ -385,8 +397,7 @@ while [ 1 ]; do
 			;;
 		"GO")
 			# store last choices
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${tmpdir}/xconstruct.conf last_vm_os_type="${vm_os_type}" > /dev/null 2>&1
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${tmpdir}/xconstruct.conf last_vm_os_profile="${vm_os_profile}" > /dev/null 2>&1
+			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${tmpdir}/xconstruct.conf last_vm_os_type="${vm_os_type}" last_vm_os_profile="${vm_os_profile}" > /dev/null 2>&1
 			gen_newjail_conf
 			;;
 		"-")
