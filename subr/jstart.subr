@@ -313,6 +313,13 @@ prepare_jail_vnet()
 	return 0
 }
 
+# Setup nice for jail in nice= variable
+setup_jail_nice()
+{
+	[ -z "${nice}" ] && nice="0" || true
+	[ "${nice}" != "0" ] && [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}jail renice: ${N2_COLOR}${nice}${N0_COLOR}" || true
+}
+
 # Setup vnet=1 network configuration inside of jail
 # variables expected in env
 # - vnet
@@ -677,16 +684,23 @@ ocijail_update_status()
 {
 	local _state _status _jid _running
 
-	_state=$(${OCIJAIL_CMD} state ${jname}) ||
-		log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to get ${H3_COLOR}${jname}${N2_COLOR} status${N0_COLOR}"
+	# suppress stderr to avoid noise when ocijail not yet initialized
+	_state=$(${OCIJAIL_CMD} state ${jname} 2>/dev/null) || return $?
 
 	_status=$(${ECHO} "${_state}" | ${JQ_CMD} -r .status)
 	_jid=$(${ECHO} "${_state}" | ${JQ_CMD} -r '.annotations."org.freebsd.jail.jid" // ""')
 	[ -z "${_jid}" ] && _jid=$(${JLS_CMD} -j ${jname} jid 2>/dev/null) || _jid=0  # fallback to jls 
 
-
 	if [ -n "${_jid}" ]; then
-		[ "${_status}" = "running" ] && _running=1 || _running=0
+		case "${_status}" in
+			running)
+				_running=1
+				;;
+			*)
+				_running=0
+				;;
+		esac
+
 		cbsdsqlrw local "UPDATE jails SET jid=${_jid},status=${_running} where jname='${jname}'"
 		cbsdlogger NOTICE "Update OCI jail jid=${_jid} status=${status} for ${jname}"
 	fi
@@ -728,11 +742,12 @@ ocijail_create()
 	_log_out="${ftmpdir}/jstart.${jname}.out"
 
 	ocijail_check
+	setup_jail_nice
 
 	# cleanup old jail
 	${OCIJAIL_CMD} delete ${jname} 2>/dev/null || true
 
-	# create OCI jail, ocijail create will wait until star command, then exec process inside
+	# create OCI jail, ocijail create will wait until start command, then execute process inside
 	${miscdir}/daemonize \
 		-e ${_log_err} \
 		-o ${_log_out} \
@@ -741,48 +756,68 @@ ocijail_create()
 		${OCIJAIL_CMD} create -b ${_oci_bundle} ${jname} || \
 				log_msg WARNING "${W1_COLOR}warning: ${N2_COLOR}Failed to create ${H3_COLOR}${jname}${N0_COLOR}"
 
-	_status=$(ocijail_update_status)
-	# XXX: should stop on error here
+	# wait for jail creation
+	for i in 1 2 3 4 5 6; do
+		sleep 0.5
+		_status=$(ocijail_update_status) || true  # may fail if jail not yet created, but ok
+		if [ "${quiet}" != "1" ]; then
+			printf "${CLRLINE}"
+			printf "${CURSORRST}"
+			printf "${N1_COLOR}${CIX_APP}: waiting for ${jname} JID ${N2_COLOR}status=${_status}: ${i}/6 ... ${N0_COLOR}"
+		fi
+		[ "${_status}" = "created" ] && break
+	done
+	${ECHO} "${N0_COLOR}"
 
-	setup_jail_vnet
+	if [ "${_status}" != "created" ]; then
+		${ECHO} "${W1_COLOR}Error${N1_COLOR}: OCI jail ${jname} failed to create${N2_COLOR}"
+		${CAT_CMD} ${_log_err} ${_log_out}
+		${RM_CMD} -f ${_log_err} ${_log_out}
+		${ECHO} "${N0_COLOR}"
+		return 1
+	fi
+
+	set +e
+	setup_jail_vnet # setup network for jail
+	set -e
 
 	# cp local default resolv.conf skel
 	if [ ${floatresolv} -eq 1 ]; then
 		[ -d ${data}/etc ] && makeresolv jname=${jname}
 	fi
 
-	${OCIJAIL_CMD} start ${jname}
-	for i in 1 2 3 4 5 6; do
-		sleep 1
-		_status=$(ocijail_update_status)
-		if [ "${quiet}" != "1" ]; then
-			printf "${CLRLINE}"
-			printf "${CURSORRST}"
-			printf "${N1_COLOR}${CIX_APP}: waiting for ${jname} JID ${N2_COLOR}status=${_status}: ${i}/6 ... ${N0_COLOR}"
-		fi
-		[ "${_status}" != "created" ] && break
-	done
-	${ECHO} "${N0_COLOR}"
-
 	# do not cleanup network interfaces if jail start failed - XXX: instead of run command
 	trap "" HUP INT ABRT BUS TERM EXIT
 
-	if [ "${_status}" != "running" ]; then
+	${OCIJAIL_CMD} start ${jname}
+	_rc=$?
+
+	_status=$(ocijail_update_status)
+
+	# XXX: should also validate "${_status}" != "running" -> if root process exited with error
+	# XXX: will enable the check after interactive start is implemented
+	if [ ${_rc} -ne 0 ]; then
 		${ECHO} "${W1_COLOR}Error${N1_COLOR}: OCI jail ${jname} failed to start${N0_COLOR}"
 		${CAT_CMD} ${_log_err}
 		${RM_CMD} -f ${_log_err} ${_log_out}
 
-		exit 1
+		return 1
 	fi
 
-	${ECHO} "${N1_COLOR}Jail logs: ${N2_COLOR}${_log_out} ${_log_err}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}Startup logs: ${N2_COLOR}${_log_out} ${_log_err}${N0_COLOR}"
 
 	if [ "${quiet}" != "1" ]; then
-		${ECHO} "${N1_COLOR}Startup logs: ${N2_COLOR}"
+		printf "${N2_COLOR}"
 		${CAT_CMD} ${_log_out}
-		${ECHO} "${N0_COLOR}"
+		printf "${N0_COLOR}"
 	fi
 
-	set +e
+	end_time=$( ${DATE_CMD} +%s )
+	diff_time=$(( end_time - st_time ))
+	diff_time=$( displaytime ${diff_time} )
+
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}" || true
+	cbsdlogger NOTICE ${CIX_APP}: jail ${jname} started in ${diff_time}
+
 	return 0
 }
