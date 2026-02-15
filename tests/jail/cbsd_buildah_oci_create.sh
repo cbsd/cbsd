@@ -17,11 +17,11 @@ oneTimeTearDown()
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
-testFreeBSDVersion()
+testLinuxOS()
 {
-	${CIX_BIN} jcreate jname="${jname}" baserw=1 ver=empty applytpl=0 mount_devfs=0 mount_ports=0 mount_src=0 floatresolv=0 etcupdate_init=0 pkg_bootstrap=0
-	is_empty=$( ls -1 ~cbsd/jails-data/${jname}-data/ )
-	assertEquals "Jail FreeBSD version" "${jail_version}" ""
+	${CIX_BIN} jcreate jname="${jname}" runasap=1 from=docker.io/library/busybox platform=linux emulator=linux pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
+	is_linux=$( ${CIX_BIN} jexec jname="${jname}" uname -s )
+	assertEquals "Linux OS" "${is_linux}" "Linux"
 }
 
 . ${progdir}/../shunit2

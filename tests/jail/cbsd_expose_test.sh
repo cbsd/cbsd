@@ -24,7 +24,7 @@ setUp()
 
 tearDown()
 {
-	${CIX_BIN} expose jname=${jname} mode=flush
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 test_expose_delete()
