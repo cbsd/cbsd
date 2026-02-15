@@ -10,7 +10,11 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
-jname=jcreate1
+oneTimeSetUp()
+{
+	jname="jcreate1"
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
+}
 
 oneTimeTearDown()
 {

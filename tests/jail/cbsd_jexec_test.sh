@@ -17,7 +17,7 @@ oneTimeSetUp()
 {
 	ver="native"
 	jname="jexec1"
-	${CIX_BIN} jdestroy jname=${jname} || true
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 setUp()
