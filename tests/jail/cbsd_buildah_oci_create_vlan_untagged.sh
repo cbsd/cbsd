@@ -38,6 +38,10 @@ testLinuxVlanUntagged()
 		runasap=1
 
 	# TODO: how to test ?
+	# ifconfig ${DEFAULT_FREEBSD_JAIL_INTERFACE} | grep 'untagged 20$'
+	# e.g.:
+#        member: epair2a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
+#                port 10 priority 128 path cost 2000 vlan protocol 802.1q untagged 20
 
 }
 
