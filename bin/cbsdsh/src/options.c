@@ -144,7 +144,7 @@ char* find_command_in_path(const char* command_name, const char* env_var_name) {
 	if (command_name[0] == '/' ) {
 		// Check if the file exists and is executable
 		if (access(command_name, F_OK | X_OK) == 0)
-			return command_name; // Found it
+			return (char *)command_name; // Found it
 		else
 			return NULL;
 	}
