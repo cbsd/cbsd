@@ -24,7 +24,7 @@ oneTimeTearDown()
 testEmptyDataset()
 {
 	${CIX_BIN} jcreate jname="${jname}" baserw=1 ver=empty applytpl=0 mount_devfs=0 mount_ports=0 mount_src=0 floatresolv=0 etcupdate_init=0 pkg_bootstrap=0 quiet=1
-	is_empty=$( ls -1 ~cbsd/jails-data/${jname}-data/ )
+	is_empty=$( ls ~cbsd/jails-data/${jname}-data/ | xargs )
 	assertEquals "Check empty dataset" "${is_empty}" ""
 }
 

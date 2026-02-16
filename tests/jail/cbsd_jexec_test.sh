@@ -15,22 +15,14 @@ set +e
 
 oneTimeSetUp()
 {
-	ver="native"
 	jname="jexec1"
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
+	${CIX_BIN} jcreate jname=${jname} runasap=1 ver=${DEFAULT_FREEBSD_JAIL_VER} etcupdate_init=0 pkg_bootstrap=0 quiet=1 runasap=1
 }
 
-setUp()
+oneTimeTearDown()
 {
-	${CIX_BIN} jcreate jname=${jname} runasap=1 ver="native"
-	dir=$(mktemp -d)
-	cd "${dir}" || exit
-}
-
-tearDown()
-{
-	${CIX_BIN} jremove ${jname}
-	rm -rf "${dir}"
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 # simple jexec
@@ -65,7 +57,7 @@ EOF
 ### CBSDfile
 testCBSDFile()
 {
-	cat >CBSDfile <<EOF
+	cat >/tmp/test-CBSDfile <<EOF
 quiet=0
 
 jail_${jname}()
@@ -98,17 +90,16 @@ XEOF
 
 }
 EOF
-	cp -a CBSDfile /tmp/
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 
-	${CIX_BIN} jdestroy jname=${jname} || true
-
-	${CIX_BIN} up
+	${CIX_BIN} up cbsdfile=/tmp/test-CBSDfile
 
 	. /etc/rc.conf
 
 	assertTrue "[ -r ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file ]"
 	test=$( cat ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file | awk '{printf $1}' )
 	assertEquals "failed: not equal ${cbsd_workdir}/jails-data/${jname}-data/tmp/jexec.file:" "${test}" "/tmp"
+	rm -f /tmp/test-CBSDfile
 }
 
 # TODO1: jexec jname='*'
