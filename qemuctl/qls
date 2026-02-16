@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v11.1.12
 CBSDMODULE="qemu"
-MYARG=""
-MYOPTARG="alljails display header hidden node order shownode"
+CIXARG=""
+CIXOPTARG="alljails display header hidden node order shownode"
 MYDESC="List QEMU domain and status"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -52,7 +52,7 @@ EXTHELP="wf_qls"
 . ${nodes}
 
 readconf qls.conf
-. ${cbsdinit}
+cixinit
 
 [ ! -d "${workdir}" ] && err 1 "${N1_COLOR}${CIX_APP}: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
 
@@ -99,7 +99,13 @@ fi
 [ -z "${order}" ] && order="asc"
 
 #remove commas for loop action on header
-mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
+OIFS="${IFS}"
+IFS=','
+set -f
+set -- ${display}
+set +f
+IFS="${OIFS}"
+mydisplay="$*"
 
 # upper for header
 myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
@@ -108,7 +114,7 @@ JLS=
 
 conv_status()
 {
-	local _maintain_reason=
+	local _maintenance=
 
 	case "${status}" in
 		0)
@@ -121,9 +127,9 @@ conv_status()
 			status="Slave"
 			;;
 		3)
-			_maintain_reason=$( cbsdsqlro local SELECT maintenance FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
-			if [ -n "${_maintain_reason}" -a "${_maintain_reason}" != "0" ]; then
-				status="Maintenance:${_maintain_reason}"
+			cbsdsqlro_vars local "SELECT maintenance FROM jails WHERE jname='${jname}'" _maintenance
+			if [ -n "${_maintenance}" -a "${_maintenance}" != "0" ]; then
+				status="Maintenance:${_maintenance}"
 			else
 				status="Maintenance"
 			fi
@@ -154,9 +160,9 @@ get_rctl()
 populate_output_data()
 {
 	local unregister="0"
-	local _tmpport _tmpbind
-	local _pid=0 _node_is_online=0 _md5_node_name
-	local _A _ALLJCOL _state _ret _test_pid
+	local _tmpport= _tmpbind=
+	local _pid=0 _node_is_online=0 _md5_node_name=
+	local _A= _ALLJCOL= _state= _ret= _test_pid=
 
 	printf "${N0_COLOR}" # for column sort
 
@@ -176,7 +182,7 @@ populate_output_data()
 	if [ "${sqlfile}" = "local" ]; then
 		. ${subrdir}/qemu.subr
 		if [ -r ${jailsysdir}/${jname}/qemu.pid ]; then
-			_test_pid=$( ${CAT_CMD} ${jailsysdir}/${jname}/qemu.pid 2>/dev/null )
+			read -r _test_pid < ${jailsysdir}/${jname}/qemu.pid
 			if [ -n "${_test_pid}" ]; then
 				${PS_CMD} -p ${_test_pid} > /dev/null 2>&1
 				_ret=$?
@@ -213,7 +219,7 @@ populate_output_data()
 		eval _node_is_online=\$node_${_md5_node_name}_online
 		if [ "${_node_is_online}" = "1" ]; then
 			# retr from sql
-			jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+			cbsdsqlro_vars "${sqlfile}" "SELECT jid FROM jails WHERE jname='${jname}'"
 			case ${jid} in
 				0)
 					printf "${N4_COLOR}"
@@ -282,7 +288,7 @@ populate_output_data()
 					fi
 					;;
 				vnc_port)
-					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+					cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT vnc_port FROM settings LIMIT 1" _tmpport
 					if [ -n "${_tmpport}" ]; then
 						_val="${_tmpport}"
 					else
@@ -290,10 +296,10 @@ populate_output_data()
 					fi
 					;;
 				vnc)
-					_tmpport=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+					cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT vnc_port FROM settings LIMIT 1" _tmpport
 					if [ -n "${_tmpport}" ]; then
 						# jailed?
-						_jailed=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+						cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT jailed FROM settings LIMIT 1" _jailed
 						[ -z "${_jailed}" ] && _jailed="0"
 						if [ "${_jailed}" != "0" ]; then
 							# this is jailed qemu, try to obtain jail IPs
@@ -315,9 +321,9 @@ populate_output_data()
 							if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
 								# we need for special route of tcpbind presentation for foreign qemu. replace 0.0.0.0 by nodeip
 								if [ "${sqlfile}" != "local" ]; then
-									_tmpbind=$( cbsdsqlro ${sqlfile} "SELECT nodeip FROM local LIMIT 1" 2>/dev/null )
+									cbsdsqlro_vars "${sqlfile}" "SELECT nodeip FROM local LIMIT 1" _tmpbind
 								else
-									_tmpbind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+									cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT qemu_vnc_tcp_bind FROM settings ORDER BY (created) DESC LIMIT 1" _tmpbind
 								fi
 							else
 								_tmpbind="Unk"
@@ -330,7 +336,7 @@ populate_output_data()
 					;;
 				ip4_addr)
 					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" 2>/dev/null )
+						cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT ip4_addr FROM settings ORDER BY (created) DESC LIMIT 1" _val
 					else
 						_val="Unk"
 					fi
@@ -338,7 +344,7 @@ populate_output_data()
 					;;
 				vm_zfs_guid)
 					if [ -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-						_val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vm_zfs_guid FROM settings LIMIT 1" 2>/dev/null )
+						cbsdsqlro_vars "${sqlfile_sysdir}/${jname}/local.sqlite" "SELECT vm_zfs_guid FROM settings LIMIT 1" _val
 					else
 						_val="0"
 					fi
@@ -360,7 +366,7 @@ populate_output_data()
 # $1 - which file from. Eg: local
 show_jaildata_from_sql()
 {
-	local _i
+	local _i=
 
 	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
@@ -375,7 +381,7 @@ show_jaildata_from_sql()
 		sqlfile_sysdir="${tmpdir}/${1}"
 	fi
 
-	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"qemu\" ORDER BY jname ASC | while read jname; do
+	cbsdsqlro ${sqlfile} "SELECT jname FROM jails WHERE emulator='qemu' ORDER BY jname ASC" | while read jname; do
 
 		_status=
 
@@ -402,7 +408,7 @@ show_jaildata_from_sql()
 
 show_local()
 {
-	local _errcode _status
+	local _errcode= _status=
 
 	show_header
 	show_jaildata_from_sql local
@@ -437,7 +443,7 @@ show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null | ${XARGS_CMD} )
+	[ -z "${node}" ] && cbsdsqlro_vars nodes "SELECT nodename FROM nodelist" node
 
 	for _n in ${node}; do
 		nodename="${_n}"
