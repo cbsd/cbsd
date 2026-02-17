@@ -1,13 +1,16 @@
 #!/usr/local/bin/cbsd
 #v12.1.8
-MYARG=""
-MYOPTARG="delay environment jname inter quiet"
+CIXARG=""
+CIXOPTARG="delay environment jname inter quiet"
 MYDESC="Start jail"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
  Start the jail container. When used in a directory with a CBSDfile,
 the jstart command only processes the environments described in the CBSDfile.
+
+This script supports the reserved word WHERE, which allows you to write SQL condition,
+please see 'schema jails' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -25,6 +28,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jstart
  # cbsd jstart jname='memcach*'
  # cbsd jstart jname=\"test\" environment=\"VAR1=var1\" environment=\"VAR2=var2\"
+ # cbsd jstart WHERE astart=1 AND vnet=1 AND ip4_addr LIKE \'1%\'
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -39,17 +43,8 @@ EXTHELP="wf_jstop_jstart"
 . ${subrdir}/tools.subr		# for select_jail_by_list
 
 readconf buildworld.conf
-readconf jail-freebsd-default.conf
 
 jname=
-
-if [ -n "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
-	oci_gw4="${ci_gw4}"
-else
-	if [ -n "${default_ci_gw4}" -a "${default_ci_gw4}" != "0" ]; then
-		oci_gw4="${default_ci_gw4}"
-	fi
-fi
 
 # check for cloud function when CBSDfile exist
 Makefile="${CIX_PWD}/CBSDfile"
@@ -61,7 +56,17 @@ delay=0
 odelay=
 oenvironment=
 environment=
-. ${cbsdinit}
+cixinit
+
+if [ -z "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
+	if [ -n "${default_ci_gw4}" -a "${default_ci_gw4}" != "0" ]; then
+		oci_gw4="${default_ci_gw4}"
+	fi
+fi
+
+readconf jail-freebsd-default.conf
+
+
 ojname="${jname}"
 [ -n "${delay}" ] && odelay="${delay}"
 
@@ -133,9 +138,9 @@ if [ -r "${Makefile}" ]; then
 	fi
 else
 	cbsd_api=0
-	# trim args from "$*"
 
-	for i in ${*}; do
+	# trim args from "$*"
+	for i in ${CIX_OTHER_ARGS}; do
 		strpos --str="${i}" --search="="
 		_pos=$?
 
@@ -164,6 +169,10 @@ else
 			jail_list="${jail_list} ${i}"
 		fi
 	done
+
+	if [ -n "${CIXINIT_SQL_CONDITION}" ]; then
+		jail_list=$( cbsdsqlro local "SELECT jname FROM jails WHERE emulator='jail' AND ${CIXINIT_SQL_CONDITION}" 2>/dev/null | ${XARGS_CMD} )
+	fi
 
 	[ -n "${ojname}" ] && jail_list="${ojname}"
 
@@ -207,7 +216,7 @@ JLIST=
 jail_num=0
 jname=
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" )
+	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
 	if [ -n "${exist}" ]; then
 		if [ -n "${JLIST}" ]; then
 			JLIST="${JLIST} ${i}"
@@ -241,8 +250,7 @@ if [ ${jail_num} -gt 1 ]; then
 		wait_pid_files=
 
 		for jname in ${JLIST}; do
-			_boot_delay=$( cbsdsqlro local "SELECT boot_delay FROM jails WHERE jname='${jname}' LIMIT 1" )
-
+			cbsdsqlro_vars local "SELECT boot_delay FROM jails WHERE jname='${jname}' LIMIT 1" _boot_delay
 			if [ -z "${_boot_delay}" ]; then
 				_boot_delay=0
 			fi
