@@ -1379,6 +1379,9 @@ dotail2:
 	case NXHERE:
 		p = "<<...";
 		goto dotail2;
+	case NSTRING:
+		p = "<<<...";
+		goto dotail2;
 	case NCASE:
 		cmdputs("case ");
 		cmdputs(n->ncase.expr->narg.text);
