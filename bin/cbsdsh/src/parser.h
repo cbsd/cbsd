@@ -61,11 +61,12 @@ union node;
 #define VSPLUS		0x3		/* ${var+text} */
 #define VSQUESTION	0x4		/* ${var?message} */
 #define VSASSIGN	0x5		/* ${var=text} */
-#define VSTRIMRIGHT	0x6		/* ${var%pattern} */
-#define VSTRIMRIGHTMAX 	0x7		/* ${var%%pattern} */
-#define VSTRIMLEFT	0x8		/* ${var#pattern} */
-#define VSTRIMLEFTMAX	0x9		/* ${var##pattern} */
-#define VSLENGTH	0xa		/* ${#var} */
+#define VSJQEXPR	0x6		/* ${var@jqexpr} */
+#define VSTRIMRIGHT	0x7		/* ${var%pattern} */
+#define VSTRIMRIGHTMAX 	0x8		/* ${var%%pattern} */
+#define VSTRIMLEFT	0x9		/* ${var#pattern} */
+#define VSTRIMLEFTMAX	0xa		/* ${var##pattern} */
+#define VSLENGTH	0xb		/* ${#var} */
 /* VSLENGTH must come last. */
 
 /* values of checkkwd variable */

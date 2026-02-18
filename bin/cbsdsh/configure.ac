@@ -248,6 +248,28 @@ else
 fi
 AM_CONDITIONAL([USE_LIBJAIL], [test "$use_libjail" = "yes"])
 
+AC_ARG_WITH(libjq, AS_HELP_STRING(--with-libjq, [Compile with libjq (jq) support]))
+use_libjq=
+if test "$with_libjq" = "yes"; then
+	AC_CHECK_LIB(jq, jq_init, [
+		AC_CHECK_HEADER([jq.h], [
+			AC_CHECK_HEADER([jv.h], [use_libjq="yes"],
+				AC_MSG_ERROR([Can't find required jv.h header.]))
+		], AC_MSG_ERROR([Can't find required jq.h header.]))
+	], [
+		AC_MSG_ERROR([Can't find libjq.])
+	])
+fi
+
+if test "$use_libjq" != "yes"; then
+	AC_DEFINE([SMALL], 1, [Define if you build with -DSMALL])
+else
+	AC_DEFINE([HAVE_LIBJQ], 1, [Define if building with libjq support])
+	AC_CHECK_LIB(onig, onig_version, [export LIBS="$LIBS -lonig"], :)
+	export LIBS="$LIBS -ljq"
+fi
+AM_CONDITIONAL([USE_LIBJQ], [test "$use_libjq" = "yes"])
+
 export LIBS="$LIBS -pthread"
 
 dnl Detect platform for cbsd_fwatch (use CBSD_PLATFORM from build script if set)

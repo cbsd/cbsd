@@ -1348,7 +1348,7 @@ parseredir: {
 
 parsesub: {
 	const char *newsyn = synstack->syntax;
-	static const char types[] = "}-+?=";
+	static const char types[] = "}-+?=@";
 	int subtype;
 	char *p;
 

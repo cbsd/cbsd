@@ -57,6 +57,9 @@
 #include <wchar.h>
 #include <wctype.h>
 
+#include <jq.h>
+#include <jv.h>
+
 /*
  * Routines to expand arguments to commands.  We have to deal with
  * backquotes, shell variables, and file metacharacters.
@@ -772,6 +775,113 @@ out:
 
 
 /*
+ * jq_eval_once()
+ *  - json:   input JSON text
+ *  - filter: jq program (e.g. ".name.value")
+ *  - ok:     set to 1 on success, 0 on failure
+ *
+ * Returns:
+ *  - malloc()'d C string (caller must free), or NULL on hard failure.
+ *  - If jq produces no output, returns strdup("") with ok=1.
+ */
+static char *
+jq_eval_once(const char *json, const char *filter, int *ok)
+{
+	jq_state *jq = NULL;
+	jv input, out, dumped;
+	char *ret = NULL;
+	size_t retlen = 0;
+
+	if (ok) *ok = 0;
+	if (json == NULL) json = "";
+	if (filter == NULL) return NULL;
+
+	jq = jq_init();
+	if (jq == NULL)
+		return NULL;
+
+	if (!jq_compile(jq, filter)) {
+		jq_teardown(&jq);
+		return NULL;
+	}
+
+	input = jv_parse(json);
+	if (!jv_is_valid(input)) {
+		jv_free(input);
+		jq_teardown(&jq);
+		return NULL;
+	}
+
+	jq_start(jq, input, 0);
+	dumped = jv_invalid();
+
+	for (;;) {
+		out = jq_next(jq);
+
+		/* No output is not an error for our purposes */
+		if (!jv_is_valid(out)) {
+			/* out is invalid sentinel; free it to be safe */
+			jv_free(out);
+			break;
+		}
+
+		const char *chunk = NULL;
+		switch (jv_get_kind(out)) {
+		case JV_KIND_STRING:
+			/* raw string (no quotes) */
+			chunk = jv_string_value(out);
+			break;
+
+		case JV_KIND_NUMBER:
+		case JV_KIND_TRUE:
+		case JV_KIND_FALSE:
+		case JV_KIND_NULL:
+		case JV_KIND_ARRAY:
+		case JV_KIND_OBJECT:
+		default:
+			/* dump JSON for non-strings */
+			dumped = jv_dump_string(out, 0);
+			chunk = jv_string_value(dumped);
+			break;
+		}
+
+		if (chunk) {
+			size_t clen = strlen(chunk);
+			size_t need = retlen + clen + (retlen ? 1 : 0) + 1;
+			char *nret = realloc(ret, need);
+			if (nret == NULL) {
+				if (jv_is_valid(dumped))
+					jv_free(dumped);
+				jv_free(out);
+				free(ret);
+				jq_teardown(&jq);
+				return NULL;
+			}
+			ret = nret;
+			if (retlen) {
+				ret[retlen] = '\n';
+				retlen++;
+			}
+			memcpy(ret + retlen, chunk, clen);
+			retlen += clen;
+			ret[retlen] = '\0';
+		}
+
+		if (jv_is_valid(dumped))
+			jv_free(dumped);
+		dumped = jv_invalid();
+		jv_free(out);
+	}
+
+	if (ret == NULL)
+		ret = strdup("");
+	jq_teardown(&jq);
+
+	if (ret != NULL && ok) *ok = 1;
+	return ret;
+}
+
+/*
  * Expand a variable, and return a pointer to the next character in the
  * input string.
  */
@@ -806,8 +916,10 @@ evalvar(char *p, int flag)
 		break;
 	}
 
+	int novalue = 0;
 again:
-	varlen = varvalue(var, varflags, flag | mbchar);
+	novalue = (subtype == VSJQEXPR) ? EXP_DISCARD : 0;
+	varlen = varvalue(var, varflags, flag | mbchar | novalue);
 	if (varflags & VSNUL)
 		varlen--;
 
@@ -822,6 +934,42 @@ again:
 	case VSMINUS:
 		p = argstr(p, flag | EXP_TILDE | EXP_WORD |
 			      (discard ^ EXP_DISCARD));
+		goto record;
+
+		case VSJQEXPR: {
+			/* remember start offset in stack */
+			ptrdiff_t start = expdest - (char *)stackblock();
+
+			/* parse jq expression into expdest */
+			p = argstr(p, flag);
+
+			/* refresh base after argstr (stack may have moved) */
+			char *base = (char *)stackblock();
+			char *jqexpr = base + start;
+
+			/* NUL-terminate expression */
+			STPUTC('\0', expdest);
+			rmescapes(jqexpr);
+
+			if (!(flag & EXP_DISCARD)) {
+				const char *val = lookupvar(var);
+				if (val == NULL) val = "";
+
+				int ok = 0;
+				char *result = jq_eval_once(val, jqexpr, &ok);
+
+				/* rollback expdest so jqexpr doesn't appear in output */
+				STADJUST((int)(start - (expdest - base)), expdest);
+
+				if (ok && result)
+					memtodest(result, strlen(result), flag);
+
+				free(result);
+			} else {
+				/* rollback even if discarding output */
+				STADJUST((int)(start - (expdest - base)), expdest);
+			}
+		}
 		goto record;
 
 	case VSASSIGN:
