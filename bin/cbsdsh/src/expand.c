@@ -1618,7 +1618,9 @@ static void *opendir_interruptible(const char *pathname)
 	return opendir(pathname);
 }
 #else
+#ifndef GLOB_ALTDIRFUNC
 #define GLOB_ALTDIRFUNC 0
+#endif
 #endif
 
 static void expandmeta_glob(struct strlist *str)
