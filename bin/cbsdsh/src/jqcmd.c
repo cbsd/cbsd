@@ -610,6 +610,7 @@ out:
 	jv_free(program_arguments);
 	jq_util_input_free(&input_state);
 	jq_teardown(&jq);
+	fflush(stdout);
 
 	if (options & JQ_OPT_EXIT_STATUS) {
 		if (ret != JQ_OK_NO_OUTPUT)
