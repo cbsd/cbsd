@@ -784,12 +784,13 @@ out:
  *  - malloc()'d C string (caller must free), or NULL on hard failure.
  *  - If jq produces no output, returns strdup("") with ok=1.
  */
- static char *
- jq_eval_once(const char *json, const char *filter, int *ok)
+static char *
+jq_eval_once(const char *json, const char *filter, int *ok)
 {
 	jq_state *jq = NULL;
 	jv input, out, dumped;
 	char *ret = NULL;
+	size_t retlen = 0;
 
 	if (ok) *ok = 0;
 	if (json == NULL) json = "";
@@ -812,52 +813,68 @@ out:
 	}
 
 	jq_start(jq, input, 0);
+	dumped = jv_invalid();
 
-	out = jq_next(jq);
+	for (;;) {
+		out = jq_next(jq);
 
-	/* No output is not an error for our purposes */
-	if (!jv_is_valid(out)) {
-		/* out is invalid sentinel; free it to be safe */
+		/* No output is not an error for our purposes */
+		if (!jv_is_valid(out)) {
+			/* out is invalid sentinel; free it to be safe */
+			jv_free(out);
+			break;
+		}
+
+		const char *chunk = NULL;
+		switch (jv_get_kind(out)) {
+		case JV_KIND_STRING:
+			/* raw string (no quotes) */
+			chunk = jv_string_value(out);
+			break;
+
+		case JV_KIND_NUMBER:
+		case JV_KIND_TRUE:
+		case JV_KIND_FALSE:
+		case JV_KIND_NULL:
+		case JV_KIND_ARRAY:
+		case JV_KIND_OBJECT:
+		default:
+			/* dump JSON for non-strings */
+			dumped = jv_dump_string(out, 0);
+			chunk = jv_string_value(dumped);
+			break;
+		}
+
+		if (chunk) {
+			size_t clen = strlen(chunk);
+			size_t need = retlen + clen + (retlen ? 1 : 0) + 1;
+			char *nret = realloc(ret, need);
+			if (nret == NULL) {
+				if (jv_is_valid(dumped))
+					jv_free(dumped);
+				jv_free(out);
+				free(ret);
+				jq_teardown(&jq);
+				return NULL;
+			}
+			ret = nret;
+			if (retlen) {
+				ret[retlen] = '\n';
+				retlen++;
+			}
+			memcpy(ret + retlen, chunk, clen);
+			retlen += clen;
+			ret[retlen] = '\0';
+		}
+
+		if (jv_is_valid(dumped))
+			jv_free(dumped);
+		dumped = jv_invalid();
 		jv_free(out);
+	}
+
+	if (ret == NULL)
 		ret = strdup("");
-		if (ret != NULL && ok) *ok = 1;
-		jq_teardown(&jq);
-		return ret;
-	}
-
-	switch (jv_get_kind(out)) {
-	case JV_KIND_STRING:
-		/* raw string (no quotes) */
-		ret = strdup(jv_string_value(out));
-		break;
-
-	case JV_KIND_NUMBER:
-	case JV_KIND_TRUE:
-	case JV_KIND_FALSE:
-	case JV_KIND_NULL:
-		/* scalars: dump as text (already raw-ish) */
-		dumped = jv_dump_string(out, 0);
-		ret = strdup(jv_string_value(dumped));
-		jv_free(dumped);
-		break;
-
-	case JV_KIND_ARRAY:
-	case JV_KIND_OBJECT:
-		/* structured: dump JSON */
-		dumped = jv_dump_string(out, 0); /* or JV_PRINT_PRETTY if you want */
-		ret = strdup(jv_string_value(dumped));
-		jv_free(dumped);
-		break;
-
-	default:
-		/* should not happen, but be safe */
-		dumped = jv_dump_string(out, 0);
-		ret = strdup(jv_string_value(dumped));
-		jv_free(dumped);
-		break;
-	}
-
-	jv_free(out);
 	jq_teardown(&jq);
 
 	if (ret != NULL && ok) *ok = 1;
