@@ -329,11 +329,41 @@ sqlitecmdquery(int argc, char **argv)
 	sqlite3_stmt *stmt = NULL;
 	int maxretry = 50;
 	int retry = 0;
-	if (argc != 3) {
-		out1fmt("usage: cbsdsqlquery <dbfile> <query>\n");
+	int limit = -1;
+	int rowcount = 0;
+	const char *dbarg = NULL;
+	const char *query = NULL;
+	int arg_error = 0;
+
+	for (int i = 1; i < argc; i++) {
+		const char *arg = argv[i];
+		if (arg[0] == '-' && arg[1] == 'n') {
+			if (arg[2] != '\0') {		// -n1
+				limit = atoi(arg + 2);
+			} else if (i + 1 < argc) {	// -n 1
+				limit = atoi(argv[++i]);
+			} else {
+				arg_error = 1;
+				break;
+			}
+			continue;
+		}
+		if (dbarg == NULL) {
+			dbarg = arg;
+		} else if (query == NULL) {
+			query = arg;
+		} else {
+			arg_error = 1;
+			break;
+		}
+	}
+
+	if (dbarg == NULL || query == NULL || arg_error) {
+		out1fmt("usage: cbsdsqlquery [-n num] <dbfile> <query>\n");
 		return 1;
 	}
-	db = sql_open(argv[1],
+
+	db = sql_open(dbarg,
 	    SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
 	if (db == NULL)
 		return 1;
@@ -344,7 +374,7 @@ sqlitecmdquery(int argc, char **argv)
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void *)0);
 
 	do {
-		ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
+		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
 		if (ret == SQLITE_OK)
 			break;
 		retry++;
@@ -412,6 +442,11 @@ sqlitecmdquery(int argc, char **argv)
 			out1fmt("%s\n", jv_string_value(dumped));
 			jv_free(dumped);
 			jv_free(row);
+			rowcount++;
+			if (limit >= 0 && rowcount >= limit) {
+				ret = SQLITE_DONE;
+				break;
+			}
 			ret = sqlite3_step(stmt);
 		}
 	}
