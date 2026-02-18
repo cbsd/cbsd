@@ -659,6 +659,14 @@ parsefname(void)
 			for (p = heredoclist ; p->next ; p = p->next);
 			p->next = here;
 		}
+	} else if (n->type == NSTRING) {
+		union node *doc;
+		doc = (union node *)stalloc(sizeof (struct narg));
+		doc->narg.type = NARG;
+		doc->narg.next = NULL;
+		doc->narg.text = wordtext;
+		doc->narg.backquote = backquotelist;
+		n->nhere.doc = doc;
 	} else if (n->type == NTOFD || n->type == NFROMFD) {
 		fixredir(n, wordtext, 0);
 	} else {
@@ -1310,9 +1318,14 @@ parseredir: {
 				np->nfile.fd = 0;
 			}
 			np->type = NHERE;
+			c = pgetc_eatbnl();
+			if (c == '<') {
+				np->type = NSTRING;
+				break;
+			}
 			heredoc = (struct heredoc *)stalloc(sizeof (struct heredoc));
 			heredoc->here = np;
-			if ((c = pgetc_eatbnl()) == '-') {
+			if (c == '-') {
 				heredoc->striptabs = 1;
 			} else {
 				heredoc->striptabs = 0;

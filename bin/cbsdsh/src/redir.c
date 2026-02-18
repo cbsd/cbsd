@@ -276,6 +276,7 @@ do_open:
 		/* Fall through to eliminate warning. */
 	case NHERE:
 	case NXHERE:
+	case NSTRING:
 		f = openhere(redir);
 		break;
 	}
@@ -359,16 +360,23 @@ openhere(union node *redir)
 	char *p;
 
 	p = redir->nhere.doc->narg.text;
-	if (redir->type == NXHERE) {
+	if (redir->type == NXHERE || redir->type == NSTRING) {
 		expandarg(redir->nhere.doc, NULL, EXP_QUOTED);
 		p = stackblock();
 	}
 
 	len = strlen(p);
+	if (redir->type == NSTRING)
+		len++;
 	memfd = sh_pipe(pip, len > PIPESIZE);
 
 	if (memfd || len <= PIPESIZE) {
-		xwrite(pip[1], p, len);
+		if (redir->type == NSTRING) {
+			xwrite(pip[1], p, len - 1);
+			xwrite(pip[1], "\n", 1);
+		} else {
+			xwrite(pip[1], p, len);
+		}
 		lseek(pip[1], 0, SEEK_SET);
 		goto out;
 	}
@@ -382,7 +390,12 @@ openhere(union node *redir)
 		signal(SIGTSTP, SIG_IGN);
 #endif
 		signal(SIGPIPE, SIG_DFL);
-		xwrite(pip[1], p, len);
+		if (redir->type == NSTRING) {
+			xwrite(pip[1], p, len - 1);
+			xwrite(pip[1], "\n", 1);
+		} else {
+			xwrite(pip[1], p, len);
+		}
 		_exit(0);
 	}
 out:
