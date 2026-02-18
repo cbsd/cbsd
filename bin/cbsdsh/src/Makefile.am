@@ -21,7 +21,7 @@ dash_CFILES = \
 	histedit.c input.c jobs.c mail.c main.c memalloc.c miscbltin.c \
 	mystring.c options.c parser.c redir.c show.c trap.c output.c \
 	bltin/printf.c system.c bltin/test.c bltin/times.c var.c about.c spawn_task.c \
-	sqlcmd.c logger.c
+	sqlcmd.c jqcmd.c logger.c
 
 if USE_FWATCH_LINUX
 dash_CFILES += cbsd_fwatch_linux.c

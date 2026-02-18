@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "shell.h"
 #include "main.h"
@@ -22,6 +23,8 @@
 #include <stdbool.h>
 
 #include "sqlcmd.h"
+
+#include <jv.h>
 
 #define CBSD_SQLITE_BUSY_TIMEOUT 25000
 
@@ -323,6 +326,148 @@ sqlitecmdro(int argc, char **argv)
 	if (stmt)
 		sqlite3_finalize(stmt);
 	free(query);
+	sqlite3_close(db);
+
+	return 0;
+}
+
+/*
+ * sqlitecmdquery:
+ *   Read-only query against dbfile and print one JSON per row to stdout.
+ *
+ * Usage (in shell):
+ *   cbsdsqlquery <dbfile> "<query>"
+ */
+int
+sqlitecmdquery(int argc, char **argv)
+{
+	sqlite3 *db;
+	int res;
+	char *dbdir;
+	char *dbfile;
+	int ret = 0;
+	sqlite3_stmt *stmt = NULL;
+	int maxretry = 50;
+	int retry = 0;
+	if (argc != 3) {
+		out1fmt("usage: cbsdsqlquery <dbfile> <query>\n");
+		return 1;
+	}
+
+	if (argv[1][0] != '/') {
+		dbdir = lookupvar("dbdir");
+		if (!dbdir) {
+			out1fmt("dbdir not set!\n");
+			return 1;
+		}
+		size_t dbfile_len = strlen(dbdir) + strlen(argv[1]) +
+		    strlen(DBPOSTFIX) + 2;
+		dbfile = calloc(dbfile_len, sizeof(char));
+		if (dbfile == NULL) {
+			out1fmt("Out of memory!\n");
+			return 1;
+		}
+		snprintf(dbfile, dbfile_len, "%s/%s%s", dbdir, argv[1],
+		    DBPOSTFIX);
+	} else {
+		size_t dbfile_len = strlen(argv[1]) + 1;
+		dbfile = calloc(dbfile_len, sizeof(char));
+		if (dbfile == NULL) {
+			out1fmt("Out of memory!\n");
+			return 1;
+		}
+		snprintf(dbfile, dbfile_len, "%s", argv[1]);
+	}
+
+	if (SQLITE_OK !=
+	    (res = sqlite3_open_v2(dbfile, &db,
+		 SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE, NULL))) {
+		out1fmt("%s: Can't open database file: %s\n", nm(), dbfile);
+		free(dbfile);
+		return 1;
+	}
+	free(dbfile);
+
+	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void *)0);
+	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void *)0);
+
+	do {
+		ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
+		if (ret == SQLITE_OK)
+			break;
+		retry++;
+		if (retry > maxretry)
+			break;
+	} while (ret != SQLITE_OK);
+
+	if (ret == SQLITE_OK) {
+		ret = sqlite3_step(stmt);
+		while (ret == SQLITE_ROW) {
+			int icol;
+			int allcol = sqlite3_column_count(stmt);
+			jv row = jv_object();
+
+			for (icol = 0; icol < allcol; icol++) {
+				const char *colname =
+				    sqlite3_column_name(stmt, icol);
+				switch (sqlite3_column_type(stmt, icol)) {
+				case SQLITE_INTEGER:
+					row = jv_object_set(row,
+					    jv_string(colname),
+					    jv_number(
+						(double)sqlite3_column_int64(
+						    stmt, icol)));
+					break;
+				case SQLITE_FLOAT:
+					row = jv_object_set(row,
+					    jv_string(colname),
+					    jv_number(
+						sqlite3_column_double(stmt,
+						    icol)));
+					break;
+				case SQLITE_TEXT: {
+					const unsigned char *txt_uc =
+					    sqlite3_column_text(stmt, icol);
+					const char *txt = txt_uc
+					    ? (const char *)txt_uc
+					    : "";
+					row = jv_object_set(row,
+					    jv_string(colname),
+					    jv_string(txt));
+					break;
+				}
+				case SQLITE_NULL:
+					row = jv_object_set(row,
+					    jv_string(colname), jv_null());
+					break;
+				case SQLITE_BLOB:
+				default:
+					row = jv_object_set(row,
+					    jv_string(colname), jv_null());
+					break;
+				}
+			}
+			jv dumped = jv_dump_string(row, 0);
+			if (!jv_is_valid(dumped)) {
+				jv msg = jv_invalid_get_msg(jv_copy(dumped));
+				out1fmt("%s\n", jv_string_value(msg));
+				jv_free(msg);
+				jv_free(dumped);
+				jv_free(row);
+				ret = 1;
+				break;
+			}
+			out1fmt("%s\n", jv_string_value(dumped));
+			jv_free(dumped);
+			jv_free(row);
+			ret = sqlite3_step(stmt);
+		}
+	}
+
+	if (stmt)
+		sqlite3_finalize(stmt);
 	sqlite3_close(db);
 
 	return 0;
