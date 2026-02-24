@@ -7,7 +7,7 @@
 set -e
 . ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/nc.subr
-. ${cbsdinit}
+cixinit
 set +e
 
 export NOCOLOR=1
@@ -16,7 +16,7 @@ NETWORK_CONFIG="${jailsysdir}/${jname}/cloud-init/network-config"
 
 seq=0
 
-for i in $( cbsd bpcibus jname=${jname} mode=get device_name=virtio-net ); do
+for i in $( bpcibus jname=${jname} mode=get device_name=virtio-net ); do
 	iface_index=$( echo ${i} | ${AWK_CMD} '{ printf $1 }' )
 	[ -z "${iface_index}" ] && err 0 "cloud_init_set_netname.sh helper for $jname: unable to get iface index, skipp"
 	#todo: ci_interface_name ( default_ci_interface_name )
