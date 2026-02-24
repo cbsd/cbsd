@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.5
-MYARG=""
-MYOPTARG="cfg_only checkpoint debug debug_engine jname lm"
+CIXARG=""
+CIXOPTARG="cfg_only checkpoint debug debug_engine jname lm"
 MYDESC="Start XEN domain"
 ADDHELP="\
  cfg_only=<file_path>          - when set, find/create tap/vnc and generate bhyve.conf \n\
@@ -35,7 +35,7 @@ readconf jail-freebsd-default.conf
 odebug_engine=		# overwrite debug_engine variable
 debug_engine=		# reset debug_engine before init
 
-. ${cbsdinit}
+cixinit
 
 # live migration
 if [ "${lm}" = "1" ]; then
@@ -99,8 +99,8 @@ EOF
 
 start_xen()
 {
-	local XENCFG
-	local xvm_ram
+	local XENCFG=
+	local xvm_ram=
 
 	# profile
 	readconf vm-${vm_os_type}-${vm_os_profile}.conf
@@ -116,7 +116,7 @@ start_xen()
 		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_xen_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=xstart status=1 workdir="${workdir}"
 	fi
 
-	vm_boot=$( cbsdsqlro ${main_sqlite_local} SELECT vm_boot FROM settings 2>/dev/null )
+	cbsdsqlro_vars "${main_sqlite_local}" "SELECT vm_boot FROM settings"
 
 	# todo: shared bhyve/xen virtual
 	# Cloud-init init. Cloud init only for empty disk
@@ -269,11 +269,6 @@ start_xen()
 #		unset cd_args
 #	fi
 
-	# init nic_args
-	if ! compile_nic_args ; then
-		${ECHO} "${N1_COLOR}No such nic for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
-		unset nic_args
-	fi
 
 	# init console_args
 	#if ! compile_console_args; then
@@ -312,12 +307,20 @@ start_xen()
 	eval mybridge="\$nic0"
 
 	${CAT_CMD} >> ${XENCFG} << EOF
+xen_platform_pci = 1
+
 name = "${jname}"
 memory = ${xvm_ram}
 vcpus = ${vm_cpus}
 
 # Network devices
-vif = [ "bridge=${mybridge}" ]
+#vif = [ "bridge=${mybridge}" ]
+#vif = [ 
+#    'bridge=xenbr0, mac=00:16:3e:00:00:01, type=vif',
+#    'bridge=xenbr1, mac=00:16:3e:00:00:02, type=vif' 
+#]
+
+# vif = [ 'bridge=xenbr0, vifname=guest1-eth0, mac=00:16:3e:0a:11:01' ]
 
 # Boot args
 ${boot_arg}
@@ -365,7 +368,9 @@ nestedhvm="${xen_nestedhvm}"
 #cpuid = ['0x1:ecx=0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx']
 
 #nographics = 1
-#bios = "ovmf"
+
+# UEFI
+bios = "ovmf"
 #bios_override = "/usr/local/share/edk2-xen/XEN_X64_EFI.fd"
 
 apic=1
@@ -375,6 +380,12 @@ usb=1
 
 EOF
 
+	# init nic_args
+	if ! compile_nic_args ${XENCFG}; then
+		${ECHO} "${N1_COLOR}No such nic for VMs: ${N2_COLOR}${jname}${N0_COLOR}"
+		#unset nic_args
+	fi
+
 	case ${spice_default} in
 		0)
 			${CAT_CMD} >> ${XENCFG} <<EOF
@@ -383,7 +394,9 @@ spice = 0
 # todo: check v6:
 # XEN confuses the presence of a port if we use in6 ( [::] )
 vnclisten = "${xen_vnc_tcp_bind}"
-vncpasswd="${vnc_password}"
+# Cipher backend does not support DES algorithm
+# https://alioth-lists.debian.net/pipermail/pkg-xen-devel/2023-July/009211.html
+#vncpasswd="${vnc_password}"
 vncdisplay="${vncdisplay}"
 EOF
 			;;
@@ -417,11 +430,11 @@ EOF
 #vnc = 1
 ##vnclisten = '0.0.0.0'
 #vif = ['bridge=bridge0,mac=00:02:04:15:fd:e1','bridge=bridge1,mac=00:02:04:15:fd:e2']
+# vif = [ 'mac=00:16:3E:74:34:32,bridge=bridge1,model=virtio-net' ]
 #memory=8192
 #vcpus=6
 #vga = "stdvga"
 #videoram = 16
-#;xen_platform_pci=1
 
 # UEFI
 #bios = 'ovmf'
@@ -488,11 +501,13 @@ EOF
 	fi
 
 	echo "[debug]: $xl_cmd"
-	#${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
+	${tmuxcmd} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
 
 	if [ -d /var/log/xen ]; then
 		[ -r /var/log/xen/qemu-dm-${jname}.log ] && ${RM_CMD} /var/log/xen/qemu-dm-${jname}.log
 	fi
+
+	exit 0
 
 	case "${debug_engine}" in
 		gdb)
@@ -558,7 +573,7 @@ EOF
 	fi
 
 	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
-	cbsdsqlrw local "UPDATE jails SET jid=\"${vm_pid}\" WHERE jname=\"${jname}\""
+	cbsdsqlrw local "UPDATE jails SET jid='${vm_pid}' WHERE jname='${jname}'"
 
 	# update state_time
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
@@ -666,7 +681,8 @@ fi
 main_sqlite_local="${jailsysdir}/${jname}/local.sqlite"
 
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
-MDFILE=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_path FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" LIMIT 1 2>/dev/null )
+
+cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT dsk_path FROM xendsk WHERE jname='${jname}' AND dsk_type='vhd' LIMIT 1" MDFILE
 
 if [ -z "${MDFILE}" ]; then
 	${ECHO} "${N1_COLOR}Warning: no any storage device found for this VM${N0_COLOR}"
@@ -703,8 +719,8 @@ done
 
 # test for incorrect state
 if [ ${status} -eq 3 ]; then
-	cbsdsqlrw local UPDATE jails SET maintenance=\"${comment}\" WHERE jname=\"${jname}\"
-	comment="cbsdsqlro local SELECT maintenance FROM jails WHERE jname=\"${jname}\""
+	cbsdsqlrw local "UPDATE jails SET maintenance='${comment}' WHERE jname='${jname}'"
+	comment="cbsdsqlro local SELECT maintenance FROM jails WHERE jname='${jname}'"
 	if [ "${comment}" = "Stopping_VM" ]; then
 		jswmode jname=${jname} mode=master comment='0'
 	else

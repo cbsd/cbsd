@@ -11,10 +11,8 @@ _CBSD_XEN_SUBR=1
 
 [ -z "${XL_CMD}" ] && XL_CMD="/usr/local/sbin/xl"
 
-init_xen_usage()
+init_xen_usage_freebsd()
 {
-	[ "${skip_xen_check_env}" = "1" -o "${skip_xen_init_warning}" = "1" ] && return 0		# all fine!
-
 	echo
 	${ECHO} "${N1_COLOR}Please follow ${H3_COLOR}https://wiki.freebsd.org/Xen ${N1_COLOR}and/or ${H3_COLOR}https://wiki.xen.org/wiki/FreeBSD_Dom0${N1_COLOR} instruction to setup FreeBSD host:${N0_COLOR}"
 	echo
@@ -30,8 +28,10 @@ init_xen_usage()
 
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xc0	"/usr/libexec/getty Pc"		xterm	onifconsole secure' >> /etc/ttys${N0_COLOR}"
 	${ECHO} "${H1_COLOR}*${N0_COLOR} mkdir -p /var/lock /var/run/xen${N0_COLOR}"
-	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh com1=115200,8n1 guest_loglvl=all loglvl=all vga=keep noreboot\"' >> /boot/loader.conf${N0_COLOR}"
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_kernel=\"/boot/xen\"' >> /boot/loader.conf${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M,max:2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh dom0_vcpus_pin\"' >> /boot/loader.conf${N0_COLOR}"
+	${ECHO} "${H1_COLOR}  Or, If you're having trouble, try adding a little more detail:${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M,max:2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh dom0_vcpus_pin com1=115200,8n1 guest_loglvl=all loglvl=all vga=keep noreboot\"' >> /boot/loader.conf${N0_COLOR}"
 	echo
 	${ECHO} "${N1_COLOR}Where ${H3_COLOR}bge0${N1_COLOR} is your uplink interface${N0_COLOR}"
 
@@ -48,6 +48,36 @@ init_xen_usage()
 	exit 0
 }
 
+init_xen_usage_linux()
+{
+	echo
+	${ECHO} "${N1_COLOR}Please follow ${H3_COLOR}https://wiki.debian.org/Xen:${N0_COLOR}"
+	echo
+	${ECHO} "${H1_COLOR}*${N0_COLOR}  apt install ${H3_COLOR}xen-system-amd64 xen-utils-common${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} Optional: edit /etc/default/grub.d/xen.cfg: GRUB_CMDLINE_XEN_DEFAULT=\"dom0_mem=${H3_COLOR}2048M${N0_COLOR},max:${H3_COLOR}2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR}\""
+	${ECHO} "${H1_COLOR}*${N0_COLOR} update-grub${N0_COLOR}"
+	echo
+	${ECHO} "${N1_COLOR}To disable this warning, please set in ${workdir}/etc/xen-default-default.conf: ${N2_COLOR}skip_xen_init_warning=1${N0_COLOR}"
+
+	exit 0
+}
+
+init_xen_usage()
+{
+	[ "${skip_xen_check_env}" = "1" -o "${skip_xen_init_warning}" = "1" ] && return 0		# all fine!
+
+	case "${platform}" in
+		FreeBSD)
+			init_xen_usage_freebsd
+			;;
+		Linux)
+			init_xen_usage_linux
+			;;
+		*)
+			err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}Unsupported platform (freebsd,linux): ${N2_COLOR}${platform}${N0_COLOR}"
+			;;
+	esac
+}
 
 # test environment for xening
 # init tmuxcmd
@@ -65,27 +95,22 @@ init_xen()
 		exit 1
 	fi
 
-	if [ ${freebsdhostversion} -lt 1201499 ]; then
-		local _required_kmods="if_tap if_bridge"
-	else
-		local _required_kmods="if_tuntap if_bridge"
-	fi
-
-#	${IFCONFIG_CMD} bridge0 > /dev/null 2>&1
-
-#	if [ $? -ne 0 ]; then
-#		${ECHO} "${N1_COLOR}init_xen : Interface ${N2_COLOR}bridge0${N1_COLOR} not exist${N0_COLOR}"
-#		_host_ready=0
-#	fi
-
-	for _i in ${_required_kmods}; do
-		if ! ${KLDSTAT_CMD} -qm ${_i} >/dev/null 2>&1; then
-			${ECHO} "${N1_COLOR}No kldloaded module: ${N2_COLOR}${_i}${N0_COLOR}"
-			${ECHO} "${N1_COLOR}Put ${N2_COLOR}kld_list=\"if_tuntap if_bridge\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host. Or, for example, run:${N0_COLOR}"
-			${ECHO} "${N2_COLOR} sysrc kld_list+=\"if_tuntap if_tuntap if_bridge\" && service kld restart${N0_COLOR}"
-			_host_ready=0
+	if [ "${platform}" = "freebsd" ]; then
+		if [ ${freebsdhostversion} -lt 1201499 ]; then
+			local _required_kmods="if_tap if_bridge"
+		else
+			local _required_kmods="if_tuntap if_bridge"
 		fi
-	done
+
+		for _i in ${_required_kmods}; do
+			if ! ${KLDSTAT_CMD} -qm ${_i} >/dev/null 2>&1; then
+				${ECHO} "${N1_COLOR}No kldloaded module: ${N2_COLOR}${_i}${N0_COLOR}"
+				${ECHO} "${N1_COLOR}Put ${N2_COLOR}kld_list=\"if_tuntap if_bridge\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host. Or, for example, run:${N0_COLOR}"
+				${ECHO} "${N2_COLOR} sysrc kld_list+=\"if_tuntap if_tuntap if_bridge\" && service kld restart${N0_COLOR}"
+				_host_ready=0
+			fi
+		done
+	fi
 
 	if [ ! -x "${XL_CMD}" ]; then
 		${ECHO} "${N1_COLOR}No such: ${XL_CMD}${N0_COLOR}"
@@ -98,16 +123,29 @@ init_xen()
 	fi
 
 	tmuxcmd=$( which tmux )
-	[ -z "${tmuxcmd}" ] && err 1 "${N1_COLOR}Current version required for ${N2_COLOR}tmux${N1_COLOR}\nPlease ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
-
-	lockedmemory=$( ${ULIMIT_CMD} -l | ${AWK_CMD} '{printf $1}' )
-	if [ "${lockedmemory}" != "unlimited" ]; then
-		# https://lists.freebsd.org/pipermail/freebsd-xen/2015-May/002391.html
-		${ECHO} "${N1_COLOR}Xen requires for enlarged locked memory, see: ${N2_COLOR}ulimits -l${N0_COLOR}"
-		${ECHO} "${N1_COLOR}Please set: ${N2_COLOR}memorylocked=unlimited${N1_COLOR} via ${N2_COLOR}/etc/login.conf${N1_COLOR} in default class, re-run:${N0_COLOR}"
-		${ECHO} "${N2_COLOR}cap_mkdb /etc/login.conf${N0_COLOR}"
-		err 1 "${N1_COLOR}and re-login${N0_COLOR}"
+	if [ -z "${tmuxcmd}" ]; then
+		case "${platform}" in
+			freebsd)
+				err 1 "${N1_COLOR}Current version required for ${N2_COLOR}tmux${N1_COLOR}\nPlease ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
+				;;
+			*)
+				err 1 "${N1_COLOR}Current version required for ${N2_COLOR}tmux${N1_COLOR}\nPlease ${N2_COLOR}apt install tmux${N0_COLOR}"
+				;;
+		esac
 	fi
+
+	if [ "${platform}" = "freebsd" ]; then
+		lockedmemory=$( ${ULIMIT_CMD} -l | ${AWK_CMD} '{printf $1}' )
+		if [ "${lockedmemory}" != "unlimited" ]; then
+			# https://lists.freebsd.org/pipermail/freebsd-xen/2015-May/002391.html
+			${ECHO} "${N1_COLOR}Xen requires for enlarged locked memory, see: ${N2_COLOR}ulimits -l${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Please set: ${N2_COLOR}memorylocked=unlimited${N1_COLOR} via ${N2_COLOR}/etc/login.conf${N1_COLOR} in default class, re-run:${N0_COLOR}"
+			${ECHO} "${N2_COLOR}cap_mkdb /etc/login.conf${N0_COLOR}"
+			err 1 "${N1_COLOR}and re-login${N0_COLOR}"
+		fi
+	fi
+
+	return 0
 }
 
 # export arguments for bhyve cd_args and cd_args2 (second boot after empty disk check)
@@ -296,7 +334,7 @@ normalize_nic_hwaddr()
 }
 
 
-# export arguments for xen about nic vms in $nic_args variable
+# export arguments for bhyve about nic vms in $nic_args variable
 # $jname must be set's
 # sample:
 # jname="debian"
@@ -307,65 +345,308 @@ normalize_nic_hwaddr()
 # fi
 compile_nic_args()
 {
+	local _xencfg="${1}"
 	local _id=0 i _res taplist=
 	local sqldelimer=" "
-	local mybridge
+	local mybridge=
+	local net_emul=
+	local _parent_mtu=0
+	local _ret=
+	local _is_bridge=
+	local _is_graph=
+	local autoconn_iface=$( ${CIX_DISTDIR}/misc/cbsdsysrc -n cbsd_autoconnect_bridge 2>&1 )
+	local _pcislot_args= _pref=
+	local _nic_address_id=
+	local _nic_address_cmd=
+	local _cnt=0
+
+	[ -z "${_xencfg}" -o ! -r "${_xencfg}" ] && return 1
 
 	. ${subrdir}/vnet.subr		# for get_vm_uplink_interface
 
 	local errmsg=
 
-	# xstart.conf: clear VM hwaddr in global ARP table
+	# bstart.conf: clear VM hwaddr in global ARP table
 	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM xennic WHERE jname=\"${jname}\" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+	cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT COUNT(id) FROM xennic WHERE jname='${jname}'" _cnt
 
-		# when ip=0 and interface=auto we must use default interface for upstream
-		if [ "${nic_parent}" = "0" -o "${nic_parent}" = "auto" ]; then
-			_is_bridge=
-			[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
-			if [ "${_is_bridge}" != "bridge" ]; then
-				# this is not bridge, detect uplink iface
-				cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
-				get_vm_uplink_interface -p ${nic_parent}
-				cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+	[ -z "${_cnt}" -o "${_cnt}" = "0" ] && return 0
 
-				if [ "${interface}" != "disable" ]; then
-					# always up parent device
-					[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
-					cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
-					if ! mybridge=$( get_my_device bridge ${interface} ); then
-						err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+	echo "vif = [" >> ${_xencfg}
+
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags FROM xennic WHERE jname='${jname}'" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit nic_flags; do
+		_is_graph=0
+
+#                'e1000'         'Intel E1000 (82540EM) network interface'       'Emulates the Intel E1000 (82540EM) Gigabit Ethernet card'
+#                'ne2k_pci'      'Novel NE2000'                                  'Emulates a Novell NE2000-compatible PCI network card'
+#                'pcnet'         'PCnet-PCI II'                                  'Emulates the AMD PCnet-PCI II (Am79C970A) controller'
+#                'rtl8139'       'Realtek RTL8139 10/100 Mbps PCI'               'Emulates the Realtek RTL8139 10/100 Mbps PCI Ethernet controller.'
+#                'vtnet'         'Virtio Ethernet driver'                        'virtio-net: A modern, high-performance paravirtualized network driver'
+# type: ioemu or vif
+
+		case "${nic_driver}" in
+			vtnet)
+				#net_emul="virtio"
+				type="ioemu"
+				net_emul="virtio-net"
+				;;
+			*)
+				type="ioemu"
+				net_emul="${nic_driver}"
+				;;
+		esac
+
+		cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: nic driver: ${nic_driver}, nic_parent: ${nic_parent}, nic_flags [${nic_flags}]
+
+		# when nic_persistent=1 just put it to args
+		if [ ${nic_persistent} -eq 1 ]; then
+			_pref3=$( substr --pos=0 --len=3 --str=${nic_parent} )
+			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
+			${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
+			nic_hwaddr="0"
+			mytap="${nic_parent}"
+			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: ${mytap} marked as persistent
+		else	# << if [ ${nic_persistent} -eq 0 ]
+			case ${nic_parent} in
+				cbsdslirp*)
+					# slirp,hostfwd=proto:hostaddr:hostport-guestaddr:guestport
+					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				cbsdvale*)
+					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				cbsdng_ng*)
+					# -s X:Y:Z,[virtio-net,e1000],netgraph,socket=vmX,path=vmbridge:,hook=vmlink,peerhook=link0
+					# netgraph,socket=vm0,path=vmbridge:,hook=vm0link,peerhook=link0
+					_is_graph=1
+					#myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=${jname}_${_id},path=${nic_parent}:,hook=${jname}_${_id}link,peerhook=link${_id}"
+
+					mytap="${nic_parent}:${jname}_${_id}link"
+					cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: netgraph backend selected for nic: ${_id}: ${nic_parent}
+					;;
+				vale*)
+					get_vm_uplink_interface -p ${nic_parent} -u
+					;;
+				*)
+
+
+					# VPC support
+					case "${nic_parent}" in
+						vpc-*)
+							VPC_ROOT_DIR="${dbdir}/vpc"
+							_arg_len=$( strlen ${nic_parent} )
+							vpc_name=$( substr --pos=5 --len=${_arg_len} --str="${nic_parent}" )
+							_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
+							[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
+							mybridge=
+							if ! mybridge=$( get_my_device vpc vpc-${vpc_name} ); then
+								err 1 "${N1_COLOR}${CIX_APP} failed to get VPC bridge: ${mybridge}${N0_COLOR}"
+							fi
+							${IFCONFIG_CMD} ${mybridge} > /dev/null 2>&1
+							_ret=$?
+							if [ ${_ret} -ne 0 ]; then
+								err 1 "${N1_COLOR}no such VPC bridge interface: ${N2_COLOR}${mybridge}${N0_COLOR}"
+							fi
+							;;
+						*)
+							if [ "${nic_parent}" != "0" -o "${nic_parent}" = "auto" ]; then
+								_is_bridge=
+								[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+								if [ "${_is_bridge}" != "bridge" ]; then
+									# this is not bridge, detect uplink iface
+									cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
+									get_vm_uplink_interface -p ${nic_parent}
+									cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: uplink interface selected: ${interface}
+
+									if [ "${interface}" != "disable" ]; then
+										# always up parent device
+
+										if [ "${interface}" != "auto" ]; then
+											case "${platform}" in
+												Linux)
+													${IP_CMD} link set dev ${interface} up
+													;;
+												*)
+													${IFCONFIG_CMD} ${interface} up
+													;;
+											esac
+										fi
+										cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
+										if ! mybridge=$( get_my_device bridge ${interface} ); then
+											err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
+										fi
+										cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
+									else
+										# don't create/attach to bridge
+										mybridge="disable"
+									fi
+								else
+									${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+									_ret=$?
+									[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
+									mybridge="${nic_parent}"
+								fi
+							else
+								# don't create/attach to bridge
+								mybridge="disable"
+							fi
+							;;
+					esac
+
+#					mytap=$( get_my_tap ${mybridge} )
+#					_ret=$?
+#					[ ${_ret} -eq 1 ] && err 1 "errmsg=\"Error:get_my_tap_for_${mybridge}: ${mybridge}\""
+
+					# MTU management, should be before addm
+					[ -z "${nic_mtu}" ] && nic_mtu=0	# AUTO
+					_parent_mtu=0
+					if [ ${nic_mtu} -eq 0 -a "${mybridge}" != "disable" ]; then
+						# Get parent MTU size
+						_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						_ret=$?
+						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
+						nic_mtu="${_parent_mtu}"
+						if [ ${_ret} -eq 0 ]; then
+							# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
+							# when MTU is same?
+							[ -n "${_parent_mtu}" ] && _ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1 )
+						fi
+					else
+						# Get parent MTU size
+						# compare MTU with parent
+						#_parent_mtu=$( ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null )
+						#_ret=$?
+						#if [ ${_ret} -eq 0 ]; then
+						#	[ ${nic_mtu} -gt ${_parent_mtu} ]
+						#fi
+						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
+						# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
+						# when MTU is same?
+						_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1 )
+						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
-					cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
-				else
-					# don't create/attach to bridge
-					mybridge="disable"
-				fi
-			else
-				${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
-				_ret=$?
-				[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
-				mybridge="${nic_parent}"
-			fi
-		else
-			# don't create/attach to bridge
-			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
-			if ! mybridge=$( get_my_device bridge ${interface} ); then
-				err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
-			fi
-			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: bridge interface selected: ${mybridge}
+
+#					${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
+
+#					if [ "${mybridge}" != "disable" ]; then
+#						if [ "${autoconn_iface}" = "NO" ]; then
+#							${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
+#							# export in mytap_X_bridge= as bridge members
+#							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
+#						else
+#							${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+#							# export in mytap_X_bridge= as bridge members
+#							echo "export mytap_${mytap}_bridge=\"${mybridge}\";"
+#						fi
+#
+#						if [ "${nic_flags}" != "0" ]; then
+#							OIFS="${IFS}"
+#							IFS=","
+#							for i in ${nic_flags}; do
+#								IFS="${OIFS}"
+#								case "${i}" in
+#									private)
+#										${IFCONFIG_CMD} ${mybridge} private ${mytap}
+#										;;
+#								esac
+#								IFS=","
+#							done
+#							IFS="${OIFS}"
+#						fi
+#					fi
+					;;
+			esac
+		fi	# << if [ ${nic_persistent} -eq 0 ]
+		# MAC MGMT
+		if [ "${nic_hwaddr}" = "0" ]; then
+			nic_hwaddr=$( mac_gen 00:a0:98 )
+			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE xennic SET nic_hwaddr='${nic_hwaddr}' WHERE id='${nic_id}'"
 		fi
 
-		echo "export nic${_id}=\"${mybridge}\" ;"
+#		if [ "${clean_arp_table_by_vm}" = "1" ]; then
+#			${ARP_CMD} -an | ${AWK_CMD} -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | ${SORT_CMD} | ${TR_CMD} -d '()' | while read _ip; do
+#				cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+#				${ARP_CMD} -n -d ${_ip} > /dev/null 2>&1 || true
+#				#V6
+#			done
+#		fi
+
+#		# todo: name as descr? or mac as desc?
+#		if ! next_pci_id -n ${net_emul} -d ${nic_id}; then
+#			# no free pci bus
+#			exit 0
+#		fi
+
+#		_pcislot_args=$( get_pcislot_args -i ${bhyve_pci_index} )
+
+#		if [ ${_is_graph} -eq 1 ]; then
+#			# tmp hack - to external script with locking/mutual protection
+#			mylink=$( get-next-ng-port ngid=${nic_parent} )
+#			ret=$?
+#			[ ${ret} -ne 0 ] && err 1 "errmsg=\"Error:get_my_tap_for_${nic_parent}: get-next-ng-port ngid=${nic_parent}\""
+#			[ -z "${mylink}" ] && err 1 "errmsg=\"Error:get_my_tap_for_${nic_parent}: empty: get-next-ng-port ngid=${nic_parent}\" "
+#			myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=${jname}_${_id},path=${nic_parent}:,hook=${jname}_${_id}link,peerhook=${mylink}"
+#			#myargs="-s ${_pcislot_args},${net_emul},netgraph,socket=vm1,path=vmbridge:,hook=vm1link,peerhook=link1"
+#		else
+#			myargs="-s ${_pcislot_args},${net_emul},${mytap}"
+#		fi
+
+		if [ "${nic_hwaddr}" != "0" ]; then
+			unset mymac
+			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+			myargs="${myargs},mac=${mymac}"
+
+			echo "export nic_hwaddr${_id}=\"${mymac}\""
+		fi
+
 		_id=$(( _id + 1 ))
+
+		[ -z "${nic_mtu}" ] && nic_mtu="1500"
+
+		if [ ${_id} -eq ${_cnt} ]; then
+			echo "  'bridge=${mybridge},mac=${nic_hwaddr},type=${type},model=${net_emul},mtu=${nic_mtu}'" >> ${_xencfg}
+		else
+			echo "  'bridge=${mybridge},mac=${nic_hwaddr},type=${type},model=${net_emul},mtu=${nic_mtu}'," >> ${_xencfg}
+		fi
+#    'bridge=xenbr0, vifname=guest1-eth0, mac=00:16:3e:00:00:01, type=vif, mtu=1500'
+#    'bridge=xenbr1, vifname=guest1-eth0, mac=00:16:3e:00:00:02, type=vif, mtu=1500'
+
+#		if [ "${bhyve_have_net_ratelimit}" = "1" ]; then
+#			if [ "${nic_ratelimit}" != "0" ]; then
+#				myargs="${myargs},ratelimit=${nic_ratelimit}"
+#			fi
+#		fi
+#		if [ "${nic_hwaddr}" != "0" ]; then
+#			unset mymac
+#			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+#			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap},mac=${mymac}\" ;"
+#		else
+#			echo "export nic${_id}=\"-s ${_pcislot_args},${net_emul},${mytap}\" ;"
+#		fi
+
+#		cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: myargs for nic ${_id}: ${myargs}
+
+#		echo "export nic${_id}=\"${myargs}\" ;"
+
+		# todo: name as descr? or mac as desc?
+#		store_bhyve_pci_slot -n ${net_emul} -d ${nic_id} -a ${bhyve_pci_index}
+#		echo "export mytap${_id}=\"${mytap}\";"
+
 	done ) || err 1 "${N1_COLOR}Error while creating nic map: ${errmsg}${N0_COLOR}"
+
+	echo "]" >> ${_xencfg}
+
+	[ -n "${errmsg}" ] && err 1 "${N1_COLOR}Error while creating nic map: ${N2_COLOR}${errmsg}${N0_COLOR}"
 
 	nic_args=
 
 	# export in mytap fill list of vm NICs
 	mytap=
 
+	# vale/netgraph skip taplist?
 	for i in $( ${SEQ_CMD} 0 31 ); do
 		eval T="\$nic$i"
 		eval taplist="\$mytap$i"
@@ -379,10 +660,22 @@ compile_nic_args()
 		fi
 	done
 
-	[ -z "${nic_args}" ] && return 1
+	# clean_arp extra loop by known IP
+#	if [ "${clean_arp_table_by_vm}" = "1" ]; then
+#		${ARP_CMD} -an | ${AWK_CMD} -v pattern=" ${nic_hwaddr} " '$0 ~ pattern { print $2 }' | ${SORT_CMD} | ${TR_CMD} -d '()' | while read _ip; do
+#			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: clean_arp_table_by_vm set to 1: prune ${nic_hwaddr} for ${_ip} in ARP table
+#			${ARP_CMD} -n -d ${_ip} > /dev/null 2>&1 || true
+#			#V6
+#		done
+#	fi
+
+#	cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: full nic_args: ${nic_args}
+
+#	[ -z "${nic_args}" ] && return 1
 
 	return 0
 }
+
 
 # detach and remove disk image from xen VMs
 # jname must be set
