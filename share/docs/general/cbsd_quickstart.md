@@ -21,7 +21,7 @@ pkg install -y cbsd
 
 Debian/Ubuntu:
 ```
-apt install -y sudo uuid-runtime bridge-utils net-tools gcc ovmf daemon psmisc make pkgconf pax rsync sharutils libsqlite3-dev libssh2-1-dev libssh2-1 libelf-dev libelf1 libbsd0 libbsd-dev qemu-system-x86 tmux dialog libsqlite3-dev sqlite3 curl libcurl4 libcurl4-openssl-dev libmagic-dev xorriso libedit-dev bc bsdmainutils netcat-traditional iputils-ping nftables
+apt install -y sudo uuid-runtime bridge-utils net-tools gcc ovmf daemon psmisc make pkgconf pax rsync sharutils libsqlite3-dev libssh2-1-dev libssh2-1 libelf-dev libelf1 libbsd0 libbsd-dev qemu-system-x86 tmux dialog libsqlite3-dev sqlite3 curl libcurl4 libcurl4-openssl-dev libmagic-dev xorriso libedit-dev bc bsdmainutils netcat-traditional iputils-ping nftables jq libjq-dev libjq1
 ```
 
 Manjaro:
