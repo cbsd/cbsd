@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v13.0.11
-MYARG=""
+CIXARG=""
 # should be in sync with run_bhyve() func: tools/up script
-MYOPTARG="jconf inter removejconf"
+CIXOPTARG="jconf inter removejconf"
 # allow all bhyve settings
 BHYVE_ARGS="relative_path jname path data double_acpi rcconf host_hostname ip4_addr astart nic_hwaddr nic_ratelimit zfs_snapsrc runasap interface rctl_nice emulator imgsize imgtype vm_cpus vm_ram vm_os_type \
 vm_efi iso_site iso_img register_iso_name register_iso_as vm_hostbridge bhyve_flags virtio_rnd virtio_type vm_os_profile swapsize vm_iso_path vm_iso_path2 vm_guestfs vm_vnc_port bhyve_generate_acpi bhyve_wire_memory \
@@ -11,7 +11,7 @@ media_auto_eject vm_cpu_topology debug_engine xhci cd_boot_firmware jailed chroo
 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add ci_user_pw_user ci_user_pw_root ci_user_pubkey ci_user_pubkey2 uuid ci_interface_mtu ci_ip4_addr2 ci_gw42 ci_interface_mtu2 \
 interface2 ci_interface2 nic_flags nic2_flags bhyve_vnc_kbdlayout progress_state_file extra_profile_dir flavor vars_img tpm app_frontend bootrom com1 com2 com3 com4 vm_vars_enable vm_vars_file vm_vars_boot"
 
-MYOPTARG="${MYOPTARG} ${BHYVE_ARGS}"
+CIXOPTARG="${CIXOPTARG} ${BHYVE_ARGS}"
 
 MYDESC="Create bhyve VM from config file or args"
 ADDHELP="
@@ -180,31 +180,39 @@ ocom4=
 . ${subrdir}/bhyve.subr
 
 progress_state_file=
-. ${cbsdinit}
-
-# if some of params specified via args, store them as temporary vars
-for i in ${BHYVE_ARGS}; do
-	unset o${i}
-	eval "o${i}=\$$i"
-done
+export CIX_INIT_SAVE2FILE="new"
+#export CIX_INIT_SKIP="environment"	# multiple: environment=X environment=Y we process separately as $CIX_OTHER_ARGS
+cixinit
 
 readconf bhyve-default-default.conf
 
+. ${tools}
 . ${system}
 . ${mdtools}
 . ${jfs}
 
+#if [ -z "${jconf}" ]; then
+#	jconf=$( ${MKTEMP_CMD} )
+#	export CBSD_INIT_SAVE2FILE=${jconf}		# save args and generate jconf
+#	[ -z "${removejconf}" ] && removejconf="0"  # do not delete jconf by default
+#	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf} removejconf="${removejconf}" >/dev/null 2>&1
+#	. ${cbsdinit}
+#	unset CBSD_INIT_SAVE2FILE
+#fi
 if [ -z "${jconf}" ]; then
-	jconf=$( ${MKTEMP_CMD} )
-	export CBSD_INIT_SAVE2FILE=${jconf}		# save args and generate jconf
-	[ -z "${removejconf}" ] && removejconf="0"  # do not delete jconf by default
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf} removejconf="${removejconf}" >/dev/null 2>&1
-	. ${cbsdinit}
-	unset CBSD_INIT_SAVE2FILE
+	jconf="${CIX_INIT_CONF}"
+	[ -z "${removejconf}" ] && removejconf=1
 fi
 
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}Please set for bcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -n "${removejconf}" ] && oremovejconf="${removejconf}"
+
+cbsd_queue_remove()
+{
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=2 emulator=${emulator}
+	fi
+}
 
 really_create_base()
 {
@@ -295,6 +303,12 @@ really_create_vm()
 
 ### MAIN
 [ ! -f "${jconf}" ] && log_err 1 "${N1_COLOR}no such jconf file${N0_COLOR}";
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
 st_time=$( ${DATE_CMD} +%s )
 over="${ver}"
 oarch="${arch}"
@@ -395,17 +409,30 @@ for i in ${BHYVE_ARGS}; do
 	fi
 done
 
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} emulator=${emulator} vnc_port='0' status=1
+fi
+
 if [ -n "${_res}" ]; then
 	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ${_res} > /dev/null 2>&1
 	unset _res
 fi
 
 jstatus jname=${jname} > /dev/null 2>&1
-[ $? -eq 0 ] || log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+if [ $? -ne 0 ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
 
 # profile
-[ -z "${vm_os_profile}" ] && log_err 1 "${N1_COLOR}No such vm_os_profile=${N0_COLOR}"
-[ -z "${vm_os_type}" ] && log_err 1 "${N1_COLOR}No such vm_os_type=${N0_COLOR}"
+if [ -z "${vm_os_profile}" ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}No such vm_os_profile=${N0_COLOR}"
+fi
+if [ -z "${vm_os_type}" ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}No such vm_os_type=${N0_COLOR}"
+fi
 template_profile=
 template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
 
@@ -596,15 +623,6 @@ fi
 [ -n "${ci_ip4_addr2}" -a -z "${ci_interface2}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: ci_ip4_addr2 set, but ci_interface2 is empty${N0_COLOR}"
 [ -z "${interface2}" -a -n "${ci_interface2}" ] && interface2="${ci_interface2}"
 
-if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	readconf cbsd_queue.conf
-	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
-fi
-
-# CBSD QUEUE
-if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' status=1
-fi
 
 # ip validate
 if [ -n "${interface}" -a "${inteface}" != "0" ]; then
@@ -1267,7 +1285,7 @@ ${miscdir}/daemonize ${toolsdir}/save-jail-info jname=${jname}
 jcleanup jname=${jname}
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate status=2 data_status=0
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=bcreate status=2 data_status=0 emulator=${emulator}
 fi
 
 # expose

@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v11.1.7
-MYARG="mode"
-MYOPTARG="jname header display options p9device p9path ro"
-MYDESC="Manage bhyve 9P (Plan 9 Filesystem Protocol) shared folders"
+CIXARG="mode"
+CIXOPTARG="jname header display options p9device p9path ro"
+MYDESC="Manage bhyve 9P/P9 (Plan 9 Filesystem Protocol) shared folders"
 CBSDMODULE="bhyve"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -59,14 +59,13 @@ oro=
 ro=
 ooptions=
 options=
-. ${cbsdinit}
-[ -n "${ro}" ] && oro="${ro}"
+
+cixinit
+
 [ -z "${ro}" ] && ro="0"		# default mode: RW
-[ -n "${options}" ] && ooptions="${options}"
 [ -z "${options}" ] && options="0"
 
 . ${system}
-
 [ -z "${display}" ] && display="jname,p9path,p9device,ro"
 
 #remove commas for loop action on header
@@ -84,14 +83,17 @@ show_header()
 # if $1 = "Unregister" then overwrite status to "Unregister"
 populate_output_data()
 {
-	local _i _val
-
+	local _i= _val=
 	_status=
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
 		_val=""
-		eval _val=\$$_i
+		if [ "${_i}" = "jname" ]; then
+			_val="${jname}"
+		else
+			eval _val=\${j@.${_i}}
+		fi
 		[ -z "${_val}" ] && return 0
 
 		if [ -z "${_status}" ]; then
@@ -106,7 +108,7 @@ populate_output_data()
 # $1 - which file from. Eg: local
 show_jaildata_from_sql()
 {
-	local _i
+	local _i=
 
 	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
@@ -119,7 +121,8 @@ show_jaildata_from_sql()
 
 	_status=
 	_sql="SELECT p9path,p9device,ro,options FROM p9shares"
-	cbsdsqlro ${sqlfile} ${_sql}| while read p9path p9device ro options; do
+
+	cbsdsqlquery ${sqlfile} "${_sql}" | while read j; do
 		populate_output_data
 		printf "${N2_COLOR}"
 		printf "${_status}"
@@ -132,9 +135,9 @@ show_jaildata_from_sql()
 #  $p9device, $mydb must be set
 share_exist()
 {
-	local _tmp
+	local _tmp=
 
-	_tmp=$( cbsdsqlro ${mydb} SELECT p9path FROM p9shares WHERE p9device=\"${p9device}\" 2>/dev/null )
+	cbsdsqlro_vars "${mydb}" "SELECT p9path FROM p9shares WHERE p9device='${p9device}' LIMIT 1"
 
 	if [ -n "${_tmp}" ]; then
 		return 0
@@ -160,8 +163,12 @@ sqldelimer=" "
 
 case "${mode}" in
 	list)
-		[ -z "${jname}" ] && jname=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" )
-		show_shares | ${COLUMN_CMD} -t
+		if [ -z "${jname}" ]; then
+			cbsdsqlro_vars local "SELECT jname FROM jails WHERE emulator = 'bhyve'"
+		fi
+		if [ -n "${jname}" ]; then
+			show_shares | ${COLUMN_CMD} -t
+		fi
 		;;
 	attach)
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}Please set ${N2_COLOR}jname=${N0_COLOR}"
@@ -183,7 +190,7 @@ case "${mode}" in
 				ro="true"
 				;;
 		esac
-		cbsdsqlrw ${mydb} "INSERT INTO p9shares ( p9path, p9device, ro, options ) VALUES ( \"${p9path}\", \"${p9device}\", \"${ro}\", \"${options}\" )"
+		cbsdsqlrw ${mydb} "INSERT INTO p9shares ( p9path, p9device, ro, options ) VALUES ( '${p9path}', '${p9device}', '${ro}', '${options}' )"
 		${ECHO} "${N1_COLOR}Attached${N0_COLOR}" 2>&1
 		;;
 	detach)
@@ -192,15 +199,16 @@ case "${mode}" in
 		mydb="${jailsysdir}/${jname}/local.sqlite"
 
 		if share_exist; then
-			cbsdsqlrw ${mydb} "DELETE FROM p9shares WHERE p9device=\"${p9device}\""
+			cbsdsqlrw ${mydb} "DELETE FROM p9shares WHERE p9device='${p9device}'"
 		else
 			err 1 "${N1_COLOR}Share with p9device=${N2_COLOR}${p9device}${N1_COLOR} not exist${N0_COLOR}"
 		fi
-		cbsdsqlrw ${mydb} "DELETE FROM p9shares WHERE p9device=\"${p9device}\""
+		cbsdsqlrw ${mydb} "DELETE FROM p9shares WHERE p9device='${p9device}'"
 		${ECHO} "${N1_COLOR}Dettached${N0_COLOR}" 2>&1
 		;;
 	*)
 		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
 esac
 
 exit 0
