@@ -191,14 +191,6 @@ readconf bhyve-default-default.conf
 . ${mdtools}
 . ${jfs}
 
-#if [ -z "${jconf}" ]; then
-#	jconf=$( ${MKTEMP_CMD} )
-#	export CBSD_INIT_SAVE2FILE=${jconf}		# save args and generate jconf
-#	[ -z "${removejconf}" ] && removejconf="0"  # do not delete jconf by default
-#	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf} removejconf="${removejconf}" >/dev/null 2>&1
-#	. ${cbsdinit}
-#	unset CBSD_INIT_SAVE2FILE
-#fi
 if [ -z "${jconf}" ]; then
 	jconf="${CIX_INIT_CONF}"
 	[ -z "${removejconf}" ] && removejconf=1
@@ -532,20 +524,12 @@ case "${platform}" in
 		;;
 esac
 
-${TRUNCATE_CMD} -s0 ${jconf_tmp}
-
-# Merge with default and profile settings ( users_template_profile can be '${etcdir}/${template_profile}' + '${extra_profile_dir}/${template_profile}"
-for merge_me in ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${users_template_profile} ${temprcconf}; do
-	[ ! -r "${merge_me}" ] && continue;
-	tmp_merge=$( ${MKTEMP_CMD} )
-	merge from=${jconf_tmp} to=${merge_me} out=${tmp_merge}
-	[ -f ${tmp_merge} ] && ${MV_CMD} ${tmp_merge} ${jconf_tmp}
-done
+eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/bhyve-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/bhyve-default-default.conf ${users_template_profile} ${temprcconf} 2>/dev/null )
 
 # make permission for group write
 ${CHOWN_CMD} ${conf_owner}:${conf_group} ${jconf_tmp}
 
-. ${jconf_tmp}
+#. ${jconf_tmp}
 
 # minimal config allows not to specify rcconf variable
 # e.g: minimal config
@@ -573,10 +557,10 @@ if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
 		. ${subrdir}/settings-tui.subr
 		if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/jail-freebsd-${jprofile}.conf${N0_COLOR}"
-			merge_apply_profiles ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf_tmp}
+			eval $( ${miscdir}/merge ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf_tmp} 2>/dev/null )
 		elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
 			${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
-			merge_apply_profiles ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf_tmp}
+			eval $( ${miscdir}/merge ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf_tmp} 2>/dev/null )
 		fi
 	fi
 
@@ -623,26 +607,25 @@ fi
 [ -n "${ci_ip4_addr2}" -a -z "${ci_interface2}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: ci_ip4_addr2 set, but ci_interface2 is empty${N0_COLOR}"
 [ -z "${interface2}" -a -n "${ci_interface2}" ] && interface2="${ci_interface2}"
 
-
 # ip validate
-if [ -n "${interface}" -a "${inteface}" != "0" ]; then
-	### CHECK FOR IP ( 1 - check for interfaces) ####
-	checkip ip=${ips} check=1 > /dev/null 2>&1
-	case $? in
-		0)
-			log_err 1 "${N1_COLOR}Ip not in pool range${N0_COLOR}"
-			;;
-		1)
-			true
-			;;
-		2)
-			${ECHO} "${N1_COLOR}Warning:${N2_COLOR} Ip already exists in LAN${N0_COLOR}"
-			;;
-		*)
-			log_err 1 "Unknown code from checkip"
-			;;
-	esac
-fi
+#if [ -n "${interface}" -a "${inteface}" != "0" ]; then
+#	### CHECK FOR IP ( 1 - check for interfaces) ####
+#	checkip ip=${ips} check=1 > /dev/null 2>&1
+#	case $? in
+#		0)
+#			log_err 1 "${N1_COLOR}Ip not in pool range: ${N2_COLOR}${CIX_BIN} checkip ip=${ips} check=1${N0_COLOR}"
+#			;;
+#		1)
+#			true
+#			;;
+#		2)
+#			${ECHO} "${N1_COLOR}Warning:${N2_COLOR} Ip already exists in LAN: ${N2_COLOR}${CIX_BIN} checkip ip=${ips} check=1${N0_COLOR}"
+#			;;
+#		*)
+#			log_err 1 "Unknown code from checkip: checkip ip=${ips} check=1"
+#			;;
+#	esac
+#fi
 
 # imgsize validate
 if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
@@ -722,6 +705,7 @@ fi
 [ ! -d "${data}" ] && log_err 1 "Can't create datadir ${data}"
 [ ! -d ${jailfstabdir}  ] && ${MKDIR_CMD} -m 0770 -p ${jailfstabdir}
 
+##
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-bhyvedsk.schema bhyvedsk
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-bhyve-dskcontroller.schema bhyve_dskcontroller
 /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-bhyve-nvme.schema bhyve_nvme
@@ -935,7 +919,7 @@ if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 	cd_name="${register_iso_as}"
 	cd_path="${srcdir}/iso/${register_iso_name}"
 
-	cd_rec_num=$( cbsdsqlro storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" )
+	cbsdsqlro_vars storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" cd_rec_num
 
 	if [ "${cd_rec_num}" = "0" ]; then
 		# register new ISO with assignment to this VM
@@ -952,7 +936,7 @@ if [ -n "${register_iso_as2}" -a -n "${register_iso_name2}" ]; then
 	cd_name="${register_iso_as2}"
 	cd_path="${srcdir}/iso/${register_iso_name2}"
 
-	cd_rec_num=$( cbsdsqlro storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" )
+	cbsdsqlro_vars storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" cd_rec_num
 
 	if [ "${cd_rec_num}" = "0" ]; then
 		# register new ISO with assignment to this VM
@@ -1206,7 +1190,7 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ -z "${ci_gw4}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_gw4="${ci_gw4}" > /dev/null 2>&1
 
 	# GET MAC
-	nic_hwaddr0=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr FROM bhyvenic LIMIT 1" )
+	cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT nic_hwaddr FROM bhyvenic LIMIT 1" nic_hwaddr0
 
 	if [ "${nic_hwaddr0}" = "0" ]; then
 		# gen MAC
@@ -1247,7 +1231,7 @@ fi
 [ "${vnc_password}" = "0" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
 
 # copy tpm settings
-tpm=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT lpcslot_value FROM lpc WHERE lpcslot_name='tpm'" )
+cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT lpcslot_value FROM lpc WHERE lpcslot_name='tpm'" tpm
 cbsdsqlrw local "UPDATE bhyve SET tpm='${tpm}' WHERE jname='${jname}'"
 cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET tpm='${tpm}'"
 
