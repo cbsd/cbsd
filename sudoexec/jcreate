@@ -217,9 +217,10 @@ readconf jcreate.conf
 
 mkfstab()
 {
-	local _dir
+	local _dir=
 
-	_dir=$( ${DIRNAME_CMD} ${mount_fstab} )
+	# dirname ${mount_fstab}
+	_dir="${mount_fstab%/*}"
 
 	[ ! -d ${_dir} ] && ${MKDIR_CMD} -p ${_dir}
 
@@ -251,11 +252,13 @@ EOF
 install_and_apply_helpers()
 {
 	local _srcfile="${1}"
+	local module=
 
-	local module
 	# shellcheck disable=SC2016
 	# $1 is expanded by awk
-	module=$( cbsdsqlro "${_srcfile}" "SELECT helpername FROM system ORDER BY helpername ASC" | ${AWK_CMD} '{printf $1}' )
+	#module=$( cbsdsqlro "" "SELECT helpername FROM system ORDER BY helpername ASC" | ${AWK_CMD} '{printf $1}' )
+
+	cbsdsqlro_vars "${_srcfile}" "SELECT helpername FROM system LIMIT 1" module
 
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Install and apply helpers ${_srcfile}: ${N2_COLOR}${module}${N0_COLOR}"
 
@@ -390,9 +393,7 @@ done
 # todo: there is a lot of duplicate code (for example, create_fs/from_zfssnap): cleaning required.
 if [ -n "${from}" ]; then
 	. "${temprcconf}"
-	jstatus jname="${jname}" > /dev/null 2>&1 \
-	|| stderr 1 "${N1_COLOR}${CIX_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
-
+	jstatus jname="${jname}" > /dev/null 2>&1 || stderr 1 "${N1_COLOR}${CIX_APP}: jail already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ ! -r ${dbdir}/images.sqlite ] && ${miscdir}/updatesql ${dbdir}/images.sqlite ${CIX_DISTDIR}/share/local-images.schema images
 
 	from_md5=
@@ -529,6 +530,8 @@ fi
 
 . ${temprcconf}
 
+[ -z "${jname}" ] && err 1 "${N1_COLOR}No such jname variable${N0_COLOR}"
+
 # Redis
 if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then
 	cbsdredis publish cbsd_events '{"cmd":"jcreate", "node":"'${nodename}'", "jail":"'${jname}'", "status":1, "ip4_addr":"'${ip4_addr}'"}'
@@ -539,10 +542,10 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=jcreate ip4_addr=${ip4_addr} protected=${protected} vnc_port=0 status=1
 fi
 
-
 # re-read default tpl for apply dynamic variable with $jname
 readconf jail-freebsd-default.conf
 
+# TODO: merge
 if [ -n "${jprofile}" ]; then
 	if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
 		${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/jail-freebsd-${jprofile}.conf${N0_COLOR}"
@@ -584,8 +587,6 @@ fi
 #[ -n "${fsquota}" ] && rctl_fsquota="${fsquota}"
 #old
 #. ${subrdir}/build.subr
-
-[ -z "${jname}" ] && err 1 "${N1_COLOR}No such jname variable${N0_COLOR}"
 
 init_jail_path
 init_target_arch
@@ -894,20 +895,23 @@ if [ -n "${with_img_helpers}" ]; then
 	done
 fi
 
+# cached sqlite3
+if [ ! -r "${tmpdir}/jail-local.sqlite" ]; then
+	jsqlite-cache-create file=${tmpdir}/jail-local.sqlite
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N2_COLOR}jsqlite-cache-create file=${tmpdir}/jail-local.sqlite${N0_COLOR}"
+fi
+${CP_CMD} -a ${tmpdir}/jail-local.sqlite ${jailsysdir}/${jname}/local.sqlite
+
 if [ -n "${jailnic_temp_sql}" ]; then
 	[ ! -r "${jailnic_temp_sql}" ] && err 1 "${N1_COLOR}${CIX_APP}: jailnic_temp_sql file not readable: ${N2_COLOR}${jailnic_temp_sql}${N0_COLOR}"
-	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
-	# dump and import jailnic table
-	_tmp_table_file=$( ${MKTEMP_CMD} )
-	${ECHO} "${N1_COLOR}${CIX_APP}: import jailnic data from: ${N2_COLOR}${jailnic_temp_sql} ${N1_COLOR}via${N2_COLOR} ${_tmp_table_file}${N1_COLOR} dump${N0_COLOR}"
-	${SQLITE3_CMD} ${jailnic_temp_sql} .dump > ${_tmp_table_file}
-	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite "DROP table jailnic"
-	${SQLITE3_CMD} ${jailsysdir}/${jname}/local.sqlite < ${_tmp_table_file}
-	${RM_CMD} -f ${_tmp_table_file} ${jailnic_temp_sql} ${jailnic_temp_sql}-shm ${jailnic_temp_sql}-wal
-else
-	[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
-	# create default record
 
+	# dump and import jailnic table
+	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP}: import jailnic data from: ${N2_COLOR}${jailnic_temp_sql} ${N1_COLOR}via${N2_COLOR} ${_tmp_table_file}${N1_COLOR} dump${N0_COLOR}"
+	cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "DELETE FROM jailnic"
+	${SQLITE3_CMD} "${jailnic_temp_sql}" ".mode insert jailnic" "SELECT * FROM jailnic;" | ${SQLITE3_CMD} "${jailsysdir}/${jname}/local.sqlite"
+	${RM_CMD} -f ${jailnic_temp_sql} ${jailnic_temp_sql}-shm ${jailnic_temp_sql}-wal
+else
 	tmp_type=${interface%%-*}		# cut all after '#'
 	tmp_iface=${interface##*-}		# cut all before '#'
 
