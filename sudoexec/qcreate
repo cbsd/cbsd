@@ -90,8 +90,8 @@ ${H3_COLOR}Options${N0_COLOR}:
  ${N2_COLOR}interface2=${N0_COLOR}        - <parent>, create VM with two interfaces, <parent> is uplink for nic2,
                       do not confuse with the ci_interface2 parameter.
  ${N2_COLOR}quiet=${N0_COLOR}             - 0,1: be quiet, dont output verbose message.
- ${N2_COLOR}removejconf=${N0_COLOR}       - 0,1: remove jconf after bcreate? 0 - don't remove.
- ${N2_COLOR}runasap=${N0_COLOR}           - 0,1: when 1 - run a VM immediately (atomic bcreate+bstart).
+ ${N2_COLOR}removejconf=${N0_COLOR}       - 0,1: remove jconf after qcreate? 0 - don't remove.
+ ${N2_COLOR}runasap=${N0_COLOR}           - 0,1: when 1 - run a VM immediately (atomic qcreate+qstart).
  ${N2_COLOR}vm_cpus=${N0_COLOR}           - VM CPUs cores, e.g.: '2'.
  ${N2_COLOR}vm_os_profile=${N0_COLOR}     - <name>: full config file is: vm-\${vm_os_type}-\${vm_os_profile}.conf, file
                       must be present in ~cbsd/etc/defaults/ or ~cbsd/etc/ directory.
@@ -120,7 +120,7 @@ ${H3_COLOR}Cloud-Init Options${N0_COLOR}:
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd qcreate jname=vm1 vm_os_type=linux vm_os_profile=CentOS-7-x86_64 vm_ram=1g vm_cpus=1 runasap=1 imgsize=10g
- # cbsd qcreate jname=c1 vm_ram=4g vm_cpus=2 vm_os_type=freebsd vm_os_profile=cloud-FreeBSD-ufs-x64-13.2 imgsize=20g ci_ip4_addr=10.0.1.88 ci_gw4=10.0.1.3
+ # cbsd qcreate jname=c1 vm_ram=4g vm_cpus=2 vm_os_type=freebsd vm_os_profile=cloud-FreeBSD-15.0-ufs-x86_64 imgsize=20g ci_ip4_addr=10.0.1.88 ci_gw4=10.0.1.3
  # cbsd qcreate jname=gateway flavor=small1 vm_os_type=linux vm_os_profile=cloud-Debian-x86-12 ci_ip4_addr=10.0.1.88 ci_gw4=10.0.1.3 ci_interface2=bridge2 ci_ip4_addr2=192.168.0.2 ci_gw42=192.168.0.1
 
 # When qemu-system-aarch64/riscv installed, (Non-?)-native ARCH also possible:
@@ -203,6 +203,13 @@ fi
 [ -z "${jconf}" -a -z "${jname}" ] && err 1 "${N1_COLOR}Please set for qcreate: ${N2_COLOR}${jconf}${N0_COLOR}"
 [ -n "${removejconf}" ] && oremovejconf="${removejconf}"
 
+cbsd_queue_remove()
+{
+	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=2 emulator=${emulator}
+	fi
+}
+
 really_create_base()
 {
 	if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
@@ -239,7 +246,7 @@ really_create_vm()
 
 	_res=$( substr --pos=0 --len=5 --str=${imgtype} )
 	if [ "${_res}" = "/dev/" ]; then
-		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: imgtype = raw: ${imgtype}
+		cbsdlogger NOTICE ${CIX_APP}: qcreate for ${jname}: imgtype = raw: ${imgtype}
 		 [ ! -c "${imgtype}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such character device: ${N2_COLOR}${imgtype}${N0_COLOR}"
 		oimgtype="raw"
 		raw_path_dsk0="${imgtype}"
@@ -290,6 +297,12 @@ really_create_vm()
 
 ### MAIN
 [ ! -f "${jconf}" ] && err 1 "${N1_COLOR}no such jconf file${N0_COLOR}";
+
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
+
 st_time=$( ${DATE_CMD} +%s )
 over="${ver}"
 oarch="${arch}"
@@ -385,15 +398,29 @@ for i in ${QEMU_ARGS}; do
 	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ${i}="${_mytest}" > /dev/null 2>&1
 done
 
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=qcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} emulator=${emulator} vnc_port='0' status=1
+fi
+
 jstatus jname=${jname} > /dev/null 2>&1
-[ $? -eq 0 ] || log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+if [ $? -ne 0 ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
+fi
 
 vm_os_type=$( echo "${vm_os_type}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
 ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
 
 # profile
-[ -z "${vm_os_profile}" ] && log_err 1 "${N1_COLOR}No such vm_os_profile=${N0_COLOR}"
-[ -z "${vm_os_type}" ] && log_err 1 "${N1_COLOR}No such vm_os_type=${N0_COLOR}"
+if [ -z "${vm_os_profile}" ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}No such vm_os_profile=${N0_COLOR}"
+fi
+if [ -z "${vm_os_type}" ]; then
+	cbsd_queue_remove
+	log_err 1 "${N1_COLOR}No such vm_os_type=${N0_COLOR}"
+fi
+
 template_profile=
 template_profile="vm-${vm_os_type}-${vm_os_profile}.conf"
 
@@ -488,7 +515,7 @@ case "${platform}" in
 		;;
 esac
 
-eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/qemu-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/qemu-default-default.conf ${etcdir}/${template_profile} ${temprcconf} )
+eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/qemu-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/qemu-default-default.conf ${etcdir}/${template_profile} ${temprcconf} 2>/dev/null )
 
 # minimal config allows not to specify rcconf variable
 # e.g: minimal config
@@ -516,10 +543,10 @@ if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
 		. ${subrdir}/settings-tui.subr
 		if [ -r "${etcdir}/jail-freebsd-${jprofile}.conf" ]; then
 			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/jail-freebsd-${jprofile}.conf${N0_COLOR}"
-			eval $( ${miscdir}/merge ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf_tmp} )
+			eval $( ${miscdir}/merge ${etcdir}/jail-freebsd-${jprofile}.conf ${jconf_tmp} 2>/dev/null )
 		elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
 			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
-			eval $( ${miscdir}/merge ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf_tmp} )
+			eval $( ${miscdir}/merge ${etcdir}/defaults/jail-freebsd-${jprofile}.conf ${jconf_tmp} 2>/dev/null )
 		fi
 	fi
 
@@ -572,24 +599,6 @@ fi
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_qemu_queue_name=${cbsd_qemu_queue_name} id=${jname} cmd=qcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} vnc_port='0' status=1
-fi
-
-# ip validate
-if [ -n "${interface}" -a "${inteface}" != "0" ]; then
-	### CHECK FOR IP ( 1 - check for interfaces) ####
-	checkip ip=${ips} check=1 > /dev/null 2>&1
-	case $? in
-		0)
-			log_err 1 "${N1_COLOR}Ip not in pool range${N0_COLOR}"
-			;;
-		1)	;;
-		2)
-			${ECHO} "${N1_COLOR}Warning:${N2_COLOR} Ip already exists in LAN${N0_COLOR}"
-			;;
-		*)
-			log_err 1 "Unknown code from checkip"
-			;;
-	esac
 fi
 
 # imgsize validate
@@ -797,7 +806,7 @@ if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 		# register new ISO with assignment to this VM
 		_res=$( media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname} 2>&1 )
 		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}bcreate: media register error: ${_res}${N0_COLOR}"
+		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}qcreate: media register error: ${_res}${N0_COLOR}"
 	else
 		# we have free/unassignent CD. link to this VM
 		cbsdsqlrw storage_media "UPDATE media SET jname=\"${jname}\" WHERE jname=\"-\" AND type=\"iso\" AND name=\"${cd_name}\" AND path=\"${cd_path}\""
@@ -947,7 +956,7 @@ if [ ${is_cloud} -eq 1 ]; then
 	if [ "${nic_hwaddr0}" = "0" ]; then
 		# gen MAC
 		nic_hwaddr0=$( mac_gen 00:a0:98 )
-		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: MAC address randomized and updated for nic id 1: ${nic_hwaddr0}
+		cbsdlogger NOTICE ${CIX_APP}: qcreate for ${jname}: MAC address randomized and updated for nic id 1: ${nic_hwaddr0}
 		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemunic SET nic_hwaddr=\"${nic_hwaddr0}\" WHERE id=\"1\""
 	fi
 
@@ -1008,7 +1017,19 @@ ${miscdir}/daemonize ${toolsdir}/save-jail-info jname=${jname}
 jcleanup jname=${jname}
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_qemu_queue_name=${cbsd_qemu_queue_name} id="${jname}" cmd=qcreate status=2 data_status=0
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" cmd=qcreate status=2 data_status=0 emulator=${emulator}
+fi
+
+# expose
+if [ -n "${app_frontend}" ]; then
+	case "${app_frontend}" in
+		mybqt)
+			${TOUCH_CMD} ${jailsysdir}/${jname}/mybqt
+			;;
+		*)
+			true
+			;;
+	esac
 fi
 
 end_time=$( ${DATE_CMD} +%s )

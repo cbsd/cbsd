@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v19.1.9
 CBSDMODULE="jail"
-MYARG=""
-MYOPTARG="alljails display header hidden jname node order shownode"
+CIXARG=""
+CIXOPTARG="alljails display header hidden jname node order shownode"
 MYDESC="List and show status of jails"
 [ "${racct}" = "1" ] && . ${distsharedir}/rctl.conf
 ADDHELP="
@@ -12,7 +12,7 @@ The script shows the table of environments. You can adjust the content of the co
 through the display= parameter. 
 You can limit scope of environment via arg list: 'cbsd jls j1 j2'
 Also, you can get list of the environment with specified condition ( by SQL field, e.g.
-to show only running jail, you can use: 'cbsd jls status=1'
+to show only running jail, you can use: 'cbsd jls WHERE status=1 AND astart=1'
 In addition, you can add your own parameters for the output and external sources 
 for this data.
 
@@ -40,7 +40,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
  # cbsd jls myjail1
  # cbsd jls header=0 display=jname,status,ip4_addr,astart
  # cbsd jls display=jname,cpu,vmemoryuse,fsquota,ver,etcver
- # cbsd jls ver=13.1 astart=1
+ # cbsd jls ver=15.1 WHERE astart=1
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -63,14 +63,10 @@ jname=
 ojname=
 jname_only=
 
-. ${cbsdinit}
+cixinit
 
 [ ! -d "${workdir}" ] && err 1 "${N1_COLOR}jls: no such workdir: ${N2_COLOR}${workdir}${N0_COLOR}"
-
 [ -n "${display}" ] && odisplay="${display}"	# store original display settings
-oalljails="${alljails}"				# store original settings, they have more weight vs auto
-oshownode="${shownode}"				# store original settings, they have more weight vs auto
-ohidden="${hidden}"				# show hidden env?
 
 is_cluster_mode
 cluster_mode=$?		# cluster_mode=0 when we have any node
@@ -130,7 +126,7 @@ populate_output_data()
 	done
 
 	[ -z "${sqlfile}" ] && sqlfile="local"
-	active=$( cbsdsqlro ${sqlfile} "SELECT jid FROM jails WHERE jname='${jname}'" )
+	cbsdsqlro_vars "${sqlfile}" "SELECT jid FROM jails WHERE jname='${jname}'" active
 
 	if [ "${sqlfile}" != "local" ]; then
 		# pop status variable from node_is_online()
@@ -152,10 +148,6 @@ populate_output_data()
 			printf "${N4_COLOR}"
 		fi
 	fi
-
-	# strip extra spaces + translate to "param1|param2|param3"
-	#_rctl_params=$( echo "${RCTL} ${RCTL_EXTRA} " | ${SED_CMD} 's/.$//' | ${TR_CMD} " " "|" )
-	#echo "PARA[${_rctl_params}]" >> /tmp/ap
 
 	#populate values for in output string
 	for _i in ${mydisplay}; do
@@ -222,7 +214,7 @@ populate_output_data()
 					# RACCT
 					if [ -r ${jailsysdir}/${jname}/helpers/jrctl.sqlite ]; then
 						#_tmp=${_i##*rctl_}
-						_val=$( cbsdsqlro ${jailsysdir}/${jname}/helpers/jrctl.sqlite "SELECT cur FROM forms WHERE param=\"${_i}\" LIMIT 1"; )
+						cbsdsqlro_vars "${jailsysdir}/${jname}/helpers/jrctl.sqlite" "SELECT cur FROM forms WHERE param='${_i}' LIMIT 1" _val
 						[ -z "${_val}" ] && _val="\-"
 					fi
 			esac
@@ -246,7 +238,10 @@ show_jaildata_from_sql()
 		sqlfile="local"
 	fi
 
-	cbsdsqlro ${sqlfile} "SELECT jname,hidden FROM jails WHERE ( emulator='jail' OR emulator='qemu-arm-static' OR emulator='qemu-mips64-static' OR emulator='qemu-aarch64-static' OR emulator='qemu-ppc64-static' OR emulator='qemu-riscv64-static' ) ${additional_condition} ORDER BY jname ${order}" | while read jname hidden; do
+	cbsdsqlquery ${sqlfile} "SELECT jname,hidden FROM jails WHERE ( emulator='jail' OR emulator='qemu-arm-static' OR emulator='qemu-mips64-static' OR emulator='qemu-aarch64-static' OR emulator='qemu-ppc64-static' OR emulator='qemu-riscv64-static' ) ${additional_condition} ORDER BY jname ${order}" | while read j; do
+		jname="${j@.jname}"
+		hidden="${j@.hidden}"
+
 		if [ -n "${jname_only}" ]; then
 			# limited output
 			_skip=1
@@ -303,7 +298,7 @@ show_remote()
 {
 	show_header=
 
-	[ -z "${node}" ] && node=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null | ${XARGS_CMD} )
+	[ -z "${node}" ] && cbsdsqlro_vars nodes "SELECT nodename FROM nodelist" node
 
 	for _n in ${node}; do
 		nodename="${_n}"
@@ -333,67 +328,24 @@ show_jails()
 [ -z "${header}" ] && header=1
 sqldelimer=" "
 
-additional_condition=
+if [ -n "${CIXINIT_SQL_CONDITION}" ]; then
+	additional_condition="AND ${CIXINIT_SQL_CONDITION}"
+else
+	additional_condition=
+fi
 
-# parse args
-OIFS="${IFS}"
-IFS="~"
-cmd="$@"
-IFS="${OIFS}"
-while [ -n "${1}" ]; do
-	IFS="~"
-	strpos --str="${1}" --search="="
+for i in ${CIX_OTHER_ARGS}; do
+	strpos --str="${i}" --search="="
 	_pos=$?
 	if [ ${_pos} -eq 0 ]; then
 		# not params=value form
-		#printf "${1} "         # (printf handles -args (with dashes)
-		#echo -n "${1} "
 		if [ -z "${jname}" ]; then
-			jname="${1}"
+			jname="${i}"
 		else
-			jname="${jname} ${1}"
+			jname="${jname} ${i}"
 		fi
-		shift
-		IFS="${OIFS}"
-		continue
-	else
-		# its patam=value data, skip for existed data
-		param=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		case "${param}" in
-			alljails|display|header|jname|node|order|shownode)
-				# known params, skip
-				shift
-				continue
-				;;
-			*)
-				len=$( strlen "${1}" )
-				VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${len} --str="${1}" )
-				case "${param}" in
-					status)
-						case "${VAL}" in
-							on|On|ON)
-								VAL="1"
-								;;
-							off|Off|OFF)
-								VAL="0"
-								;;
-						esac
-						;;
-				esac
-
-				if [ -z "${additional_condition}" ]; then
-					additional_condition="AND ${param}=\"${VAL}\""
-				else
-					additional_condition="${additional_condition} AND ${param}=\"${VAL}\""
-				fi
-				;;
-		esac
 	fi
-	shift
-	IFS="${OIFS}"
 done
-
-IFS="${OIFS}"
 
 jname_only="${jname}"
 
