@@ -1,0 +1,231 @@
+#!/usr/local/bin/cbsd
+#v15.0.0
+CBSDMODULE="bhyve"
+CIXARG="jname"
+CIXOPTARG="con_name con_socket display header mode"
+MYDESC="Manage bhyve virtio console"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Manage bhyve virtio console ports.
+
+Virtio console interface, which exposes multiple ports to
+the guest in the form of simple char devices for simple
+ IO between the guest and host userspaces.
+
+A maximum of 16 ports per device can be created.  Every port is named and
+ corresponds to a Unix domain socket created by bhyve.  bhyve accepts at
+ most one connection per port at a time.
+
+In FreeBSD guest, /dev/vtcon/ will contain your virtual devices.
+
+By default all sockets created in ~cbsd/jails-system/\$jname/virtio_console/ directory;
+
+When the con_socket= parameter is missing, by default we create a socket in
+~cbsd/jails-system/\$jname/virtio_console/ with the con_name= name, e.g.:
+
+con_name=test -> con_socket=test.sock
+
+If the parameter con_socket= does not start with a slash "/", we assume a 
+directory-relative path ~cbsd/jails-system/\$jname/virtio_console/;
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}  - target VM.
+ ${N2_COLOR}mode=${N0_COLOR}   - mode (list by default when no other arguments):
+           * reset -   reset to default;
+           * get   -   get values;
+           * list  -   (default) list of devices;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd bvirtio_console jname=vm1
+  # cbsd bvirtio_console jname=vm1 mode=add con_name=cbsd0
+  # cbsd bvirtio_console jname=vm1 mode=add con_name=port1 con_socket=/tmp/port1.sock
+  # cbsd bvirtio_console jname=vm1 mode=delete con_name=port1
+  # cbsd bvirtio_console jname=vm1 mode=delete con_socket=/tmp/testsock1.sock
+  # cbsd bvirtio_console jname=vm1 mode=reset
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd bconfig --help
+
+"
+
+. ${subrdir}/nc.subr
+. ${tools}
+. ${strings}
+
+device_name=
+
+con_name=
+con_socket=
+display=
+header=
+mode=
+cixinit
+
+. ${subrdir}/rcconf.subr
+case "${emulator}" in
+	bhyve|xen|qemu)
+		true
+		;;
+	*)
+		log_err 1 "${N1_COLOR}Not supported emulator: ${N2_COLOR}${jname}${N0_COLOR}"
+		;;
+esac
+
+[ -z "${display}" ] && display="con_name,con_socket"
+
+#remove commas for loop action on header
+mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
+
+# upper for header
+myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+# if $1 = "Unregister" then overwrite status to "Unregister"
+populate_output_data()
+{
+	local _i= _val= src_size=
+
+	_status=
+
+	#populate values for in output string
+	for _i in ${mydisplay}; do
+		_val=
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+		if [ -z "${_status}" ]; then
+			_status="${N0_COLOR}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+
+# $1 - which file from. Eg: local
+show_basesdata_from_sql()
+{
+	local _i=
+
+	#   set sqlfile for ". rcconf" including
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	_sql="SELECT con_name,con_socket FROM virtio_console"
+
+	OIFS="${IFS}"
+	IFS="|"
+	sqldelimer="|"
+
+	cbsdsqlro ${sqlfile} ${_sql} | while read con_name con_socket; do
+		IFS="${OIFS}"
+		populate_output_data
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
+		IFS="|"
+	done
+	IFS="${OIFS}"
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && node=$( node mode=list header=0 allinfo=0 )
+
+	for _n in ${node}; do
+		nodename="${_n}"
+		show_basesdata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode= _status=
+
+	show_header
+	show_basesdata_from_sql ${jailsysdir}/${jname}/local.sqlite
+}
+
+show_con()
+{
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	show_local
+}
+
+add_rec()
+{
+	local _val=
+	if [ -n "${con_name}" -a -z "${con_socket}" ]; then
+		con_socket="${con_name}"
+	elif [ -n "${con_socket}" -a -z "${con_name}" ]; then
+		con_name="${con_socket}"
+	fi
+
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT con_name FROM virtio_console WHERE con_name='${con_name}' OR con_socket='${con_socket}'"  _val
+
+	[ -n "${_val}" ] && err 1 "${N1_COLOR}${CIX_APP} error: already exist: ${_val}${N2_COLOR}WHERE con_name='${con_name}' OR con_socket='${con_socket}'${N0_COLOR}"
+
+	cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "INSERT INTO virtio_console ( con_name, con_socket ) VALUES ( '${con_name}', '${con_socket}' )"
+}
+
+#### MAIN
+[ -z "${header}" ] && header=1
+_args=0
+
+# any oXXX params is set? When no mode set and no args = force to mode=list
+for i in con_name con_socket; do
+	eval _val=\$o$i
+	[ -n "${_val}" ] && _args=$(( _args + 1 ))
+done
+ 
+[ ${_args} -eq 0 -a -z "${mode}" ] && mode=list
+[ ${_args} -ne 0 -a -z "${mode}" ] && mode=add
+
+case "${mode}" in
+	get)
+		if [ -n "${con_name}" ]; then
+			_sql="SELECT con_socket FROM virtio_console WHERE con_name='${con_name}'"
+		elif [ -n "${con_socket}" ]; then
+			_sql="SELECT con_name FROM virtio_console WHERE con_socket='${lpcslot_name}'"
+		else
+			err 1 "${N2_COLOR}con_name=${N1_COLOR} or ${N2_COLOR}con_socket=${N1_COLOR} is mandatory${N0_COLOR}"
+		fi
+		cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "${_sql}" _val
+		err 0 "${_val}"
+		;;
+	list)
+		sqllistdelimer=" "
+		show_con | ${COLUMN_CMD} -t
+		exit 0
+		;;
+	reset)
+		# truncate pcibus_run table
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM virtio_console"
+		${ECHO} "${N1_COLOR}Reset virtio_console table for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		exit 0
+		;;
+	add)
+		[ -z "${con_name}" -a -z "${con_socket}" ] && err 1 "${N2_COLOR}con_name=${N1_COLOR} or ${N2_COLOR}con_socket=${N1_COLOR} is mandatory${N0_COLOR}"
+		add_rec
+		exit 0		
+		;;
+esac
+
+exit 0
