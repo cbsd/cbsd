@@ -1,10 +1,11 @@
 #!/usr/local/bin/cbsd
 #v12.1.11
-MYARG=""
-MYOPTARG="emulator"
-MYDESC="Alternative view for [bjq]ls commands"
+CIXARG=""
+CIXOPTARG="emulator file"
+MYDESC="Alternative JSON view for [bjq]ls commands"
 CBSDMODULE="sys"
 ADDHELP="
+
   Alternative view for [bjq]ls commands
 
 Example:
@@ -15,16 +16,19 @@ Example:
 
 . ${subrdir}/nc.subr
 . ${strings}
+. ${tools}
 emulator=
 cwd=
 jname=
 CLOUD_URL=
 CLOUD_KEY=
-. ${cbsdinit}
+file=
+cixinit
 
 local_cluster()
 {
 	local _env_list=
+
 	if [ -n "${emulator}" ]; then
 		case "${emulator}" in
 			jail)
@@ -54,31 +58,23 @@ local_cluster()
 	local _total_env=0
 	local _json_files=
 
-
 	for i in ${_env_list}; do
 		_total_env=$(( _total_env + 1 ))
 	done
-#${CAT_CMD} <<EOF
-#{
-#  "servers":
-#EOF
 	_json_files=
 
 	if [ ${_total_env} -ne 0 ]; then
-
 		for i in ${_env_list}; do
 			[ ! -r "${jailsysdir}/${i}/stats.json" ] && save-jail-info jname=${i}
 			if [ -r "${jailsysdir}/${i}/stats.json" ]; then
 				_json_files="${_json_files} ${jailsysdir}/${i}/stats.json"
 			fi
 		done
-
-		${CAT_CMD} ${_json_files} | ${JQ_CMD} -s 'flatten' > /tmp/servers.json.$$
+		${CAT_CMD} ${_json_files} | ${JQ_CMD} -s 'flatten' > ${ftmpdir}/servers.json.$$
 	else
-		echo '{}' > /tmp/servers.json.$$
+		echo '{}' > ${ftmpdir}/servers.json.$$
 	fi
-
-${CAT_CMD} > /tmp/clusters.json.$$ <<EOF
+	${CAT_CMD} > ${ftmpdir}/clusters.json.$$ <<________EOF
   {
     "total_environment": ${_total_env},
     "total_cpus": 6,
@@ -87,15 +83,21 @@ ${CAT_CMD} > /tmp/clusters.json.$$ <<EOF
     "total_imgsize_bytes": 32212254720,
     "total_imgsize": "30 Gb"
   }
-EOF
+________EOF
 
-	${CAT_CMD} /tmp/servers.json.$$ | ${JQ_CMD} '{ servers: . }' > /tmp/servers1.json.$$
-	${CAT_CMD} /tmp/clusters.json.$$ | ${JQ_CMD} '{ clusters: . }' > /tmp/clusters1.json.$$
-	${JQ_CMD} -s '.[0] * .[1]' /tmp/servers1.json.$$ /tmp/clusters1.json.$$
+	${CAT_CMD} ${ftmpdir}/servers.json.$$ | ${JQ_CMD} '{ servers: . }' > ${ftmpdir}/servers1.json.$$
+	${CAT_CMD} ${ftmpdir}/clusters.json.$$ | ${JQ_CMD} '{ clusters: . }' > ${ftmpdir}/clusters1.json.$$
 
-	${RM_CMD} -f /tmp/servers.json.$$ /tmp/clusters.json.$$ /tmp/servers1.json.$$ /tmp/clusters1.json.$$
+	if [ -n "${file}" ]; then
+		${JQ_CMD} -s '.[0] * .[1]' ${ftmpdir}/servers1.json.$$ ${ftmpdir}/clusters1.json.$$ > ${file}.$$
+		${MV_CMD} ${file}.$$ ${file}
+	else
+		${JQ_CMD} -s '.[0] * .[1]' ${ftmpdir}/servers1.json.$$ ${ftmpdir}/clusters1.json.$$
+	fi
+	${RM_CMD} -f ${ftmpdir}/servers.json.$$ ${ftmpdir}/clusters.json.$$ ${ftmpdir}/servers1.json.$$ ${ftmpdir}/clusters1.json.$$
 }
 
+## MAIN
 # init CBSDfile data
 if [ -n "${cwd}" ]; then
 	if [ ! -r ${cwd}/CBSDfile ]; then
@@ -110,15 +112,15 @@ if [ -z "${cbsdfile}" -a ! -r "${CIX_PWD}/CBSDfile" ]; then
 	local_cluster
 	exit 0
 fi
-. ${subrdir}/cbsdfile.subr
 
+. ${subrdir}/cbsdfile.subr
 . ${subrdir}/time.subr
 
 cluster_status()
 {
-	local CURL_CMD=$( which curl )
-	local _cid
+	local _cid=
 
+	[ -z "${CURL_CMD}" ] && CURL_CMD=$( which curl )
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )

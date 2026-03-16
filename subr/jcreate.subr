@@ -11,7 +11,9 @@ _CBSD_JCREATE_SUBR=1
 # $2 - jconf (for fromfile)
 postcreate_module_action()
 {
-	local jname jconf _ret=0 _logfile
+	local jname= jconf= _ret=0 _logfile=
+
+	[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
 
 	[ -n "${1}" ] && jname="${1}"
 	[ -n "${2}" ] && jconf="${2}"
@@ -53,29 +55,39 @@ postcreate_module_action()
 			# not for DFLY: https://mirror-master.dragonflybsd.org/dports/bootstraps/bootstrap_pkg_03_x86-64.tar.xz have old pkg, we use pkg-static from the base,
 			# thanks to preparebase
 			if [ "${ver}" != "empty" ]; then
-				pkg mode=bootstrap jname=${jname} cbsd_pkg_verbose=0 > ${_logfile} 2>&1
-				_ret=$?
-				if [ ${_ret} -ne 0 ]; then
-					${ECHO} "${N1_COLOR}${CIX_APP}: ${W1_COLOR}pkg bootstrap error:${N0_COLOR}"
-					echo "--"
-					${CAT_CMD} ${_logfile}
-					echo "--"
-					${RM_CMD} -f ${_logfile}
-					return ${_ret}
+				# bootstrap in parallel when no pkglist
+				if [ -z "${pkglist}" ]; then
+					${miscdir}/daemonize ${CIX_BIN} pkg mode=bootstrap jname=${jname} cbsd_pkg_verbose=0 > /dev/null 2>&1
+				else
+					pkg mode=bootstrap jname=${jname} cbsd_pkg_verbose=0 > ${_logfile} 2>&1
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						${ECHO} "${N1_COLOR}${CIX_APP}: ${W1_COLOR}pkg bootstrap error:${N0_COLOR}"
+						echo "--"
+						${CAT_CMD} ${_logfile}
+						echo "--"
+						${RM_CMD} -f ${_logfile}
+						return ${_ret}
+					fi
 				fi
 			fi
 		fi
 		if [ -n "${pkglist}" -a "${pkglist}" != "NO" -a "${ver}" != "empty" ]; then
-			if [ ! -f "${pkglist}" ]; then
+			if [ ! -r "${pkglist}" ]; then
 				# use CBSD pkg from pkg.d
-				pkg mode=install jname=${jname} ${pkglist} cbsd_pkg_verbose=1 > ${_logfile} 2>&1
-				_ret=$?
-				if [ ${_ret} -ne 0 ]; then
-					${CAT_CMD} ${_logfile}
-					${RM_CMD} -f ${_logfile}
-					return ${_ret}
+				# bootstrap in parallel when no pkglist
+				if [ -z "${pkglist}" ]; then
+					${miscdir}/daemonize ${CIX_BIN} pkg mode=install jname=${jname} ${pkglist} cbsd_pkg_verbose=1 > /dev/null 2>&1
 				else
-					${CAT_CMD} ${_logfile}
+					pkg mode=install jname=${jname} ${pkglist} cbsd_pkg_verbose=1 > ${_logfile} 2>&1
+					_ret=$?
+					if [ ${_ret} -ne 0 ]; then
+						${CAT_CMD} ${_logfile}
+						${RM_CMD} -f ${_logfile}
+						return ${_ret}
+					else
+						${CAT_CMD} ${_logfile}
+					fi
 				fi
 			else
 				# use CBSD pkg from pkg.d
@@ -118,8 +130,10 @@ external_exec_script()
 
 	[ -z "${_dir}" ] && return 1
 
-	[ ! -d "${jailsysdir}/${jname}/${_dir}" ] && return 0
-	_fexist=$( ${FIND_CMD} ${jailsysdir}/${jname}/${_dir}/ -mindepth 1 -maxdepth 1 -type f -and -not -name placeholder -exec ${BASENAME_CMD} {} \; )
+	_fexist=$( cix_read_dir ${jailsysdir}/${jname}/${_dir} 2>/dev/null )
+	[ $? -ne 0 ] && return 0
+
+	#_fexist=$( ${FIND_CMD} ${jailsysdir}/${jname}/${_dir}/ -mindepth 1 -maxdepth 1 -type f -and -not -name placeholder -exec ${BASENAME_CMD} {} \; )
 	[ -z "${_fexist}"  ] && return 0
 	[ -d "${data}/tmp/${_dir}" ] && ${RM_CMD} -rf "${data}/tmp/${_dir}"
 	${CP_CMD} -a "${jailsysdir}/${jname}/${_dir}" ${data}/tmp/${_dir}
@@ -165,8 +179,12 @@ external_exec_master_script()
 		_srcdir="${jailsysdir}/${jname}/${_dir}"
 	fi
 
-	[ ! -d "${_srcdir}" ] && return 0
-	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
+	if ! cix_read_dir ${_srcdir} > /dev/null 2>&1; then
+		return 0
+	fi
+
+#	[ ! -d "${_srcdir}" ] && return 0
+#	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
 
 	[ -z "${quiet}" ] && quiet=0
 
@@ -212,8 +230,12 @@ external_exec_local_script()
 
 	local _srcdir="${jailsysdir}/${jname}/${_dir}"
 
-	[ ! -d "${_srcdir}" ] && return 0
-	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
+	if ! cix_read_dir ${_srcdir} > /dev/null 2>&1; then
+		return 0
+	fi
+
+#	[ ! -d "${_srcdir}" ] && return 0
+#	[ -z "$( ${LS_CMD} ${_srcdir}/ )" ] && return 0
 
 	local CBSDPATH="${PATH}"
 	# reset CBSD PATH
@@ -480,7 +502,7 @@ export_qemu_data_for_external_hook()
 # $* - additional vars, e.g: $data, $newdata
 export_jail_data_for_external_hook()
 {
-	local nic_id _i T
+	local nic_id= _i= T=
 
 	. ${subrdir}/vnet.subr		# for get_vm_uplink_interface
 
@@ -497,7 +519,7 @@ export_jail_data_for_external_hook()
 	done
 
 	if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
-		nic_address=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_address FROM jailnic LIMIT 1" )
+		cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT nic_address FROM jailnic LIMIT 1"
 		[ -z "${nic_address}" ] && nic_address="0"
 	else
 		nic_address="0"

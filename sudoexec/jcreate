@@ -138,7 +138,6 @@ Usage examples:
   cbsd jcreate jname=test1 vnet=1 inteface=bridge0 nic_flags=private
   cbsd jcreate jname=test1 vnet=1 inteface=bridge0 nic_mtu=1500
 
-
 # Nice example HOW TO create micro-jail (~8MB, 'busybox' like) with SSH root access:
 
  # cbsd jcreate jname=micro1 baserw=1 ver=empty applytpl=0
@@ -481,7 +480,6 @@ if [ -n "${from}" ]; then
 			_md5_ver=$(${miscdir}/cbsd_md5 "${_path}:${_tag}")
 			_md5_nover=$(${miscdir}/cbsd_md5 "${_path}")
 			if [ "${from_md5}" = "${_md5_ver}" -o "${from_md5}" = "${_md5_nover}" ]; then
-
 				oci_dir="${workdir}/jails-system/${jname}/oci"
 				${MKDIR_CMD} -p ${oci_dir}
 				oci_config="${oci_dir}/v1.config"
@@ -577,9 +575,13 @@ else
 	ostable=0
 fi
 
+# append sysrc
+SYSRC_TEMPRCCONF=
+
 # apply pkglist from tpl_pkglist
 if [ -n "${tpl_pkglist}" ]; then
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} pkglist="${tpl_pkglist}" > /dev/null 2>&1
+#	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} pkglist="${tpl_pkglist}" > /dev/null 2>&1
+	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} pkglist=\"${tpl_pkglist}\""
 	pkglist="${tpl_pkglist}"
 fi
 
@@ -778,7 +780,8 @@ case "${ip4_addr}" in
 	[Dd][Hh][Cc][Pp])
 		ip4_addr=$( dhcpd )
 		[ $? -eq 2 ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}${jname}: no free IP address for DHCP in 'nodeippool', please check: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
+		#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
+		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ip4_addr=\"${ip4_addr}\""
 		# CBSD QUEUE
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 			[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=update ip4_addr=${ip4_addr} vnc_port=0 status=1
@@ -787,13 +790,15 @@ case "${ip4_addr}" in
 	[Dd][Hh][Cc][Pp][vV]6)
 		ip4_addr=$( dhcpdv6 )
 		[ $? -eq 2 ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}${jname}: no free IP address for DHCPv6 in 'nodeip6pool', please check: ${N2_COLOR}cbsd initenv-tui${N0_COLOR}"
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
+		#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ip4_addr="${ip4_addr}" > /dev/null
+		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ip4_addr=\"${ip4_addr}\""
 		# CBSD QUEUE
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 			[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id=${jname} cmd=update ip4_addr=${ip4_addr} vnc_port=0 status=1
 		fi
 		;;
 esac
+
 
 ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} \
 	arch="${arch}" \
@@ -803,9 +808,10 @@ ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} \
 	mount_fstab="${mount_fstab}" \
 	rcconf="${rcconf}" \
 	data="${data}" \
-	jnameserver="${jnameserver}" >/dev/null
+	jnameserver="${jnameserver}" ${SYSRC_TEMPRCCONF} >/dev/null
 
-${CP_CMD} ${temprcconf} ${rcconf}
+#${CP_CMD} ${temprcconf} ${rcconf}
+${MV_CMD} ${temprcconf} ${rcconf}
 
 if [ -n "${fstablocal}" ]; then
 	# relativepath?
@@ -1133,15 +1139,26 @@ diff_time=$( displaytime ${diff_time} )
 [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 cbsdlogger NOTICE ${CIX_APP}: jail ${jname} has been created in ${diff_time}
 
-# create.d hook
-geniplist	${ip4_addr}			# for ipvX_first_public-like vars
-export_jail_data_for_external_hook
-external_exec_master_script "master_create.d"
-external_exec_script -s create.d -a
+# hook
+hooks_exist=0
+if cix_read_dir ${jailsysdir}/${jname}/master_create.d/ >/dev/null 2>&1; then
+	hooks_exists=1
+fi
+
+if cix_read_dir ${jailsysdir}/${jname}/create.d/ >/dev/null 2>&1; then
+	hooks_exists=1
+fi
+
+if [ ${hooks_exist} -eq 1 ]; then
+	geniplist	${ip4_addr}			# for ipvX_first_public-like vars
+	export_jail_data_for_external_hook
+	external_exec_master_script "master_create.d"
+	external_exec_script -s create.d -a
+fi
 
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 if [ ${removejconf} = "1" ]; then
-	${RM_CMD} -f ${temprcconf} ${jconf} > /dev/null 2>&1
+	${RM_CMD} -f ${jconf} > /dev/null 2>&1
 fi
 
 exit 0
