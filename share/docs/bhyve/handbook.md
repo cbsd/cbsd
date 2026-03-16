@@ -281,7 +281,7 @@ manage (attach/detach/remove new ISO image): `cbsd media --help`
 
 manage virtual disks: `cbsd bhyve-dsk --help`
 
-configure P9FS (9P) shares: `bhyve-p9shares --help`
+configure P9FS (9P) shares: `p9shares --help`
 
 manage bhyve checkpoints: `cbsd bcheckpoint --help`
 

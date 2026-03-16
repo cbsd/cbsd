@@ -1,9 +1,9 @@
 # bhyve shared folders via virtio-p9
 
-## Commands bhyve-p9shares
+## Commands p9shares
 
 ```
-	% cbsd bhyve-p9shares
+	% cbsd p9shares
 ```
 
 **Description**:
@@ -23,7 +23,7 @@ To configure shared folders, you need to have the directory to share on on the f
 To view existing shared folders, use the command:
 
 ```
-% cbsd bhyve-p9shares mode=list
+% cbsd p9shares mode=list
 
 JNAME    P9PATH       P9DEVICE
 f111     /root        root
@@ -35,13 +35,13 @@ debian1  /tmp/share2  share2
 Or for an individual virtual machine:
 
 ```
-cbsd bhyve-p9shares mode=list jname=XXX
+cbsd p9shares mode=list jname=XXX
 ```
 
 To enable shared folders for a specific virtual machine, use **mode=attach** with **p9path**, **p9device** arguments to specify a directory and a shared resource name, e.g:
 
 ```
-cbsd bhyve-p9shares mode=attach p9device=share1 p9path=/tmp/share1 jname=debian1
+cbsd p9shares mode=attach p9device=share1 p9path=/tmp/share1 jname=debian1
 ```
 
 To disable shared folders for a specific virtual machine, use **mode=detach** with **p9device** argument.
