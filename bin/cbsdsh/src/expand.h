@@ -86,3 +86,7 @@ void arith_lex_reset(void);
 #define arith_lex_reset()
 #endif
 int yylex(void);
+
+//CIX
+int cix_read_dir(int, char **);
+//CIX

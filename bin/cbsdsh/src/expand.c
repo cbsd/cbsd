@@ -2367,6 +2367,38 @@ void restore_handler_expandarg(struct jmploc *savehandler, int err)
 	}
 }
 
+//CIX
+int
+cix_read_dir(int argc, char **argv)
+{
+	if ( argc!=2 ) return 1;
+	DIR *d = opendir(argv[1]);
+	struct dirent *entry;
+	int found = 0;
+
+	if (d == NULL) {
+		outfmt(out2, "cix_read_dir: no such directory: %s\n", argv[1]);
+		return 1;
+	}
+
+	while ((entry = readdir(d)) != NULL) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+		out1fmt("%s ", entry->d_name);
+		found = 1;
+	}
+
+	closedir(d);
+	if (found==1) {
+		out1fmt("\n");
+		return 0;
+	}
+
+	return 0;
+}
+//CIX
+
 #ifdef mkinit
 
 INCLUDE "expand.h"
