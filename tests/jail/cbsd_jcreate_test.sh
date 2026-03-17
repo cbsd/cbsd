@@ -31,9 +31,12 @@ tearDown()
 
 testFreeBSDVersion()
 {
-	${CIX_BIN} jcreate jname="${jname}" ver=${DEFAULT_FREEBSD_JAIL_VER} etcupdate_init=0 pkg_bootstrap=0 quiet=1 runasap=1
+	local tmpver=$( uname -r )
+	local ver=${tmpver%%-*}
+
+	${CIX_BIN} jcreate jname="${jname}" ver=native etcupdate_init=0 pkg_bootstrap=0 quiet=1 runasap=1
 	jail_version=$( ${CIX_BIN} jexec jname="${jname}" freebsd-version | cut -d "-" -f 1-2 )		# trim -pXX (e.g.: 14.2-RELEASE-p11 -> 14.2-RELEASE )
-	assertEquals "Jail FreeBSD version" "${jail_version}" "${DEFAULT_FREEBSD_JAIL_VER}-RELEASE"
+	assertEquals "Jail FreeBSD version" "${jail_version}" "${ver}-RELEASE"
 }
 
 # Test authorized_keys
