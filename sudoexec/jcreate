@@ -799,8 +799,9 @@ case "${ip4_addr}" in
 		;;
 esac
 
+#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} \
 
-${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} \
+updateconf ${temprcconf} \
 	arch="${arch}" \
 	ver="${ver}" \
 	stable="${stable}" \
@@ -808,7 +809,7 @@ ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} \
 	mount_fstab="${mount_fstab}" \
 	rcconf="${rcconf}" \
 	data="${data}" \
-	jnameserver="${jnameserver}" ${SYSRC_TEMPRCCONF} >/dev/null
+	jnameserver="${jnameserver}" ${SYSRC_TEMPRCCONF}
 
 #${CP_CMD} ${temprcconf} ${rcconf}
 ${MV_CMD} ${temprcconf} ${rcconf}
@@ -883,23 +884,8 @@ else
 	exit 1
 fi
 
-# update state_time
-cbsdsqlrw local UPDATE jails SET state_time="(strftime('%s','now'))" WHERE jname='${jname}'
-
-# always start jail when img_helpers exist
-if [ -n "${with_img_helpers}" ]; then
-	jswmode jname=${jname} mode=master comment='0'
-	jstart jname=${jname} quiet=${quiet}
-
-	for i in ${with_img_helpers}; do
-		if [ ! -r "${i}" ]; then
-			${ECHO} "${N1_COLOR}Helper doesn't available by path: ${N2_COLOR}${i}${N0_COLOR}"
-			continue
-		else
-			install_and_apply_helpers ${i}
-		fi
-	done
-fi
+SQL_JAIL_BULK=
+cbsdsqlrw local "UPDATE jails SET state_time='${st_time}' WHERE jname='${jname}'"
 
 # cached sqlite3
 if [ ! -r "${tmpdir}/jail-local.sqlite" ]; then
@@ -923,10 +909,12 @@ else
 
 	case "${tmp_type}" in
 		ppt|epair|ovs)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${tmp_iface}','0','0','auto','0','0','0','0' )"
+			#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${tmp_iface}','0','0','auto','0','0','0','0' )"
+			SQL_JAIL_BULK="${SQL_JAIL_BULK}; INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${tmp_iface}','0','0','auto','0','0','0','0' )"
 			;;
 		*)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','0','0','0','0' )"
+			#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','0','0','0','0' )"
+			SQL_JAIL_BULK="${SQL_JAIL_BULK}; INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','0','0','0','0' )"
 			;;
 	esac
 
@@ -934,7 +922,8 @@ else
 
 	if [ ${vnet} -eq 1 ]; then
 		# created from cli? inherit nic_parent from interface
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_parent='${interface}'"
+		#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_parent='${interface}'"
+		SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_parent='${interface}'"
 	fi
 fi
 
@@ -946,24 +935,30 @@ for i in ${RCTL} ${RCTL_EXTRA}; do
 	eval _val="\$${i}"
 	[ -z "${_val}" ] && continue
 	#echo "INIT RCTL: jrctl jname=${jname} mode=set ${i}=${_val}"
-	jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1 || true
+	${miscdir}/daemonize ${jailctldir}/jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1
 done
 
 # Apply NIC parameters from command line
 if [ -n "${nic_hwaddr}" ]; then
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}'"
+	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}'"
+	SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}'"
 fi
 if [ -n "${nic_mtu}" -a "${nic_mtu}" != "0" ]; then
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_mtu='${nic_mtu}'"
+	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_mtu='${nic_mtu}'"
+	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_mtu='${nic_mtu}'"
+	SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_mtu='${nic_mtu}'"
 fi
 if [ -n "${nic_flags}" -a "${nic_flags}" != "0" ]; then
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_flags='${nic_flags}'"
+	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_flags='${nic_flags}'"
+	SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_flags='${nic_flags}'"
 fi
 if [ -n "${nic_vlan_untagged}" -a "${nic_vlan_untagged}" != "0" ]; then
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_vlan_untagged='${nic_vlan_untagged}'"
+	SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_vlan_untagged='${nic_vlan_untagged}'"
 fi
 if [ -n "${nic_vlan_tagged}" -a "${nic_vlan_tagged}" != "0" ]; then
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_vlan_tagged='${nic_vlan_tagged}'"
+	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_vlan_tagged='${nic_vlan_tagged}'"
+	SQL_JAIL_BULK="${SQL_JAIL_BULK}; UPDATE jailnic SET nic_vlan_tagged='${nic_vlan_tagged}'"
 fi
 
 # pubkey ?
@@ -1028,7 +1023,8 @@ if [ "${vnet}" = "1" -a "${ver}" != "empty" ]; then
 	_check_ip=0
 	case "${ip4_addr}" in
 		[Rr][Ee][Aa][Ll][Dd][Hh][Cc][Pp])
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="DHCP" > /dev/null 2>&1
+			#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="DHCP" > /dev/null 2>&1
+			updateconf ${data}/etc/rc.conf ifconfig_eth0="DHCP"
 			;;
 		[Dd][Hh][Cc][Pp])
 			_check_ip=1
@@ -1074,11 +1070,13 @@ if [ "${vnet}" = "1" -a "${ver}" != "empty" ]; then
 					${ECHO} "${W1_COLOR}${CIX_APP} dhcp error, unknown IP type: ${N2_COLOR}cbsd dhcpd${N0_COLOR}"
 					;;
 				1)
-					${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="inet ${ip4_addr} up" > /dev/null 2>&1
+					#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="inet ${ip4_addr} up" > /dev/null 2>&1
+					updateconf ${data}/etc/rc.conf ifconfig_eth0="inet ${ip4_addr} up"
 					jset jname=${jname} ip4_addr="${ip4_addr}"
 					;;
 				2)
-					${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="inet6 ${ip4_addr} up" > /dev/null 2>&1
+					#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ifconfig_eth0="inet6 ${ip4_addr} up" > /dev/null 2>&1
+					updateconf ${data}/etc/rc.conf ifconfig_eth0="inet6 ${ip4_addr} up"
 					jset jname=${jname} ip4_addr="${ip4_addr}"
 					;;
 			esac
@@ -1086,7 +1084,8 @@ if [ "${vnet}" = "1" -a "${ver}" != "empty" ]; then
 
 	if [ -n "${ci_gw4}" ]; then
 		if [ "${ci_gw4}" != "0" ]; then
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
+			#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf defaultrouter="${ci_gw4}" > /dev/null 2>&1
+			updateconf ${data}/etc/rc.conf defaultrouter="${ci_gw4}"
 		fi
 	fi
 fi
@@ -1103,6 +1102,24 @@ if [ -n "${sysrc}" ]; then
 	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${data}/etc/rc.conf ${sysrc} > /dev/null 2>&1
 EOF
 fi
+
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "${SQL_JAIL_BULK}"
+
+# always start jail when img_helpers exist
+if [ -n "${with_img_helpers}" ]; then
+	jswmode jname=${jname} mode=master comment='0'
+	jstart jname=${jname} quiet=${quiet}
+
+	for i in ${with_img_helpers}; do
+		if [ ! -r "${i}" ]; then
+			${ECHO} "${N1_COLOR}Helper doesn't available by path: ${N2_COLOR}${i}${N0_COLOR}"
+			continue
+		else
+			install_and_apply_helpers ${i}
+		fi
+	done
+fi
+
 
 [ -n "${orunasap}" ] && runasap="${orunasap}"
 # autostart asap upon jail created
