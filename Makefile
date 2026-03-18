@@ -66,6 +66,7 @@ distclean:
 	$(RM) -f misc/conv2human
 	$(RM) -f misc/cbsd_fwatch
 	$(RM) -f misc/merge
+	$(RM) -f misc/mountpoint
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
 	$(RM) -f misc/popcnttest
@@ -135,6 +136,7 @@ cbsd: pkg-config-check
 	$(CC) misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && $(STRIP) misc/conv2human
 	$(CC) misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && $(STRIP) misc/cbsd_fwatch
 	$(CC) misc/src/daemonize/daemonize.c misc/src/daemonize/getopt.c -Imisc/src/daemonize -O2 -o misc/daemonize && $(STRIP) misc/daemonize
+	$(CC) misc/src/mountpoint.c -o misc/mountpoint && $(STRIP) misc/mountpoint
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
 	$(CC) misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && $(STRIP) misc/popcnttest > /dev/null 2>&1 || /usr/bin/true
