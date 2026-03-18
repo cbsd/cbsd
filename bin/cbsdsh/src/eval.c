@@ -36,6 +36,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <errno.h>
+#include <fcntl.h>
 
 /*
  * Evaluate a command.
@@ -108,6 +110,7 @@ STATIC int evalfun(struct funcnode *, int, char **, int);
 STATIC void prehash(union node *);
 STATIC int eprintlist(struct output *, struct strlist *, int);
 STATIC int bltincmd(int, char **);
+int capturecmd(int, char **);
 
 
 STATIC const struct builtincmd bltin = {
@@ -1090,6 +1093,195 @@ bltincmd(int argc, char **argv)
 	 * as POSIX mandates
 	 */
 	return back_exitstatus;
+}
+
+static int
+capture_read_all(int fd, char **out_buf, size_t *out_len)
+{
+	char *buf = NULL;
+	size_t cap = 0;
+	size_t len = 0;
+
+	*out_buf = NULL;
+	*out_len = 0;
+
+	for (;;) {
+		char tmp[4096];
+		ssize_t n;
+
+		do {
+			n = read(fd, tmp, sizeof(tmp));
+		} while (n < 0 && errno == EINTR);
+
+		if (n < 0) {
+			free(buf);
+			return 0;
+		}
+		if (n == 0)
+			break;
+
+		if (len + (size_t)n + 1 > cap) {
+			size_t ncap = cap ? cap * 2 : 8192;
+			while (ncap < len + (size_t)n + 1)
+				ncap *= 2;
+			char *nbuf = realloc(buf, ncap);
+			if (!nbuf) {
+				free(buf);
+				return 0;
+			}
+			buf = nbuf;
+			cap = ncap;
+		}
+
+		memcpy(buf + len, tmp, (size_t)n);
+		len += (size_t)n;
+	}
+
+	if (!buf) {
+		buf = strdup("");
+		if (!buf)
+			return 0;
+		len = 0;
+	} else {
+		buf[len] = '\0';
+	}
+
+	*out_buf = buf;
+	*out_len = len;
+	return 1;
+}
+
+static void
+capture_strip_trailing_newlines(char *s, size_t *lenp)
+{
+	size_t len = *lenp;
+	while (len > 0 && s[len - 1] == '\n') {
+		s[len - 1] = '\0';
+		len--;
+	}
+	*lenp = len;
+}
+
+/*
+ * capture VAR cmd [args...]
+ *
+ * Execute cmd and capture its stdout into VAR without using command
+ * substitution (no extra /bin/sh). Shell functions and builtins are
+ * executed in the current process (no fork); external commands are
+ * executed via vfork/exec as usual.
+ *
+ * On failure, VAR becomes empty and capture exits with status 1.
+ */
+int
+capturecmd(int argc, char **argv)
+{
+	const char *varname;
+	char **cmdv;
+	int cmdc;
+	struct cmdentry cmdentry;
+	int status;
+	int outsave = -1;
+	int capfd = -1;
+	char *buf = NULL;
+	size_t len = 0;
+
+	if (argc < 3)
+		return 1;
+
+	varname = argv[1];
+	if (!varname || !*varname || !goodname(varname))
+		return 1;
+
+	cmdv = argv + 2;
+	cmdc = argc - 2;
+
+	/* Create temporary file for captured stdout (avoids pipe deadlocks). */
+	{
+		char tmpl[] = "/tmp/cbsdsh.capture.XXXXXX";
+		capfd = mkstemp(tmpl);
+		if (capfd < 0)
+			goto fail;
+		(void)unlink(tmpl);
+	}
+
+	outsave = dup(1);
+	if (outsave < 0)
+		goto fail;
+
+	if (dup2(capfd, 1) < 0)
+		goto fail;
+
+	/* Resolve command like normal execution would. */
+	find_command(cmdv[0], &cmdentry, DO_ERR, pathval());
+
+	status = 1;
+	switch (cmdentry.cmdtype) {
+	case CMDUNKNOWN:
+		status = 127;
+		break;
+	case CMDBUILTIN:
+		if (evalbltin(cmdentry.u.cmd, cmdc, cmdv, 0))
+			longjmp(handler->loc, 1);
+		status = exitstatus;
+		break;
+	case CMDFUNCTION:
+		if (evalfun(cmdentry.u.func, cmdc, cmdv, 0))
+			longjmp(handler->loc, 1);
+		status = exitstatus;
+		break;
+	case CMDNORMAL: {
+		struct job *jp;
+		INTOFF;
+		jp = vforkexec(NULL, cmdv, pathval(), cmdentry.u.index);
+		status = waitforjob(jp);
+		INTON;
+		break;
+	}
+	default:
+		status = 127;
+		break;
+	}
+
+	flushall();
+
+	/* Restore stdout. */
+	if (dup2(outsave, 1) < 0)
+		goto fail;
+	close(outsave);
+	outsave = -1;
+
+	/* Read captured output. */
+	if (lseek(capfd, 0, SEEK_SET) < 0)
+		goto fail;
+	if (!capture_read_all(capfd, &buf, &len))
+		goto fail;
+	close(capfd);
+	capfd = -1;
+
+	capture_strip_trailing_newlines(buf, &len);
+
+	if (status != 0) {
+		setvar(varname, "", 0);
+		free(buf);
+		return 1;
+	}
+
+	setvar(varname, buf, 0);
+	free(buf);
+	return 0;
+
+fail:
+	/* Best-effort restore stdout and cleanup. */
+	free(buf);
+	if (outsave >= 0) {
+		(void)dup2(outsave, 1);
+		close(outsave);
+	}
+	if (capfd >= 0)
+		close(capfd);
+	if (varname && *varname)
+		setvar(varname, "", 0);
+	return 1;
 }
 
 

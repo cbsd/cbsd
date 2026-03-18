@@ -57,6 +57,7 @@
 #include "input.h"
 #include "options.h"
 #include "system.h"
+#include "var.h"
 
 
 char nullstr[1];		/* zero length string */
@@ -85,6 +86,7 @@ const char dotdir[] = ".";
 #include <sys/file.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <sys/time.h>
 #include <stdio.h>
 
 int optreset;				/* getopt(3) external variable */
@@ -321,6 +323,35 @@ is_numbercmd(int argc, char **argv)
 		return is_number(argv[1]);
 	else
 		return 1;
+}
+
+/*
+ * gettime VAR
+ *   Assign current epoch seconds (like `date +%s`) to VAR.
+ *   Avoids external commands and command substitution.
+ */
+int
+gettimecmd(int argc, char **argv)
+{
+	struct timeval tv;
+	char buf[32];
+	const char *varname;
+
+	if (argc != 2)
+		return 1;
+
+	varname = argv[1];
+	if (!varname || !*varname || !goodname(varname))
+		return 1;
+
+	if (gettimeofday(&tv, NULL) != 0) {
+		setvar(varname, "", 0);
+		return 1;
+	}
+
+	snprintf(buf, sizeof(buf), "%ld", (long)tv.tv_sec);
+	setvar(varname, buf, 0);
+	return 0;
 }
 
 int
