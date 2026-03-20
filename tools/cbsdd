@@ -1,24 +1,22 @@
 #!/usr/local/bin/cbsd
 #v11.0.6
-MYARG=""
-MYOPTARG="reload"
+CIXARG=""
+CIXOPTARG="reload"
 MYDESC="Daemon for executing nexttask"
 CBSDMODULE="taskd"
 EXTHELP="wf_taskd"
 
 . ${subrdir}/nc.subr
-
-. ${cbsdinit}
+cixinit
 . ${system}
-
-[ -z "${reload}" ] && reload=0
+: "${reload:=0}"
 
 # reset hour for fwupdate
 last_hour_fwupdate=0
 
 shmux()
 {
-	local _mylock SSH_ARGS _locallockfile _locallock _remotelockfile _remotelock
+	local _mylock= SSH_ARGS= _locallockfile= _locallock= _remotelockfile= _remotelock=
 
 	_locallockfile="${ftmpdir}/shmux_${_ip}.lock"
 	_remotelockfile="ftmp/from_${nodename}.lock"
@@ -49,9 +47,12 @@ shmux()
 
 update_jaillock()
 {
-	local jname
+	local jname=
+	local _res=
 
-	for jname in $( cbsdsqlro local SELECT jname FROM jails WHERE status=1 ); do
+	capture _res cbsdsqlro local "SELECT jname FROM jails WHERE status=1"
+
+	for jname in ${_res}; do
 		jaillock="${jailsysdir}/${jname}/locked"
 		case "${platform}" in
 			Linux)
@@ -62,11 +63,14 @@ update_jaillock()
 				;;
 		esac
 	done
+
+	unset _res
 }
 
 update_fw_counters()
 {
-	local _curhour=$( ${DATE_CMD} "+%H" )
+	local _curhour=
+	capture _curhour ${DATE_CMD} "+%H"
 
 	[ "${platform}" = "Linux" ] && return 0
 
@@ -107,7 +111,7 @@ configure_default_vs_bridge()
 
 	[ ${_ret} -eq 0 ] && return 0
 
-	_cbsd_vs=$( ${CIX_DISTDIR}/tools/get-next-nic name=bridge )
+	capture _cbsd_vs ${CIX_DISTDIR}/tools/get-next-nic name=bridge
 	_ret=$?
 	[ ${_ret} -ne 0 ] && err 1 "${CIX_APP} configure_default_vs, ret: ${_ret}: ${_cbsd_vs}"
 	[ -z "${_cbsd_vs}" ] && err 1 "${CIX_APP} configure_default_vs, ret: ${_ret}: empty _cbsd_vs"
@@ -154,7 +158,7 @@ configure_default_vs()
 	local _ret=
 
 	if [ "${configure_default_cbsd_vs_cidr4}" = "auto" ]; then
-		configure_default_cbsd_vs_cidr4=$( find_free_cidr4 )
+		capture configure_default_cbsd_vs_cidr4 find_free_cidr4
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			cbsdlogger NOTICE ${CIX_APP}: configure_default_vs warning: unable to find available free cidr4, please set 'configure_default_cbsd_vs_cidr4' manually via global.conf
@@ -232,6 +236,8 @@ cbsdlogger NOTICE ${CIX_APP}: cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeo
 
 tik=0
 
+capture SEQ ${SEQ_CMD} 1 ${max}
+
 while [ 1 ]; do
 
 	tik=$(( tik + 1 ))
@@ -260,24 +266,30 @@ while [ 1 ]; do
 		tik=0
 	fi
 
-	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+	#queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+	cbsdsqlro_vars cbsdtaskd "SELECT COUNT(id) FROM taskd WHERE status='0'" queue
 
 	if [ -z "${queue}" -o "${queue}" = "0" ]; then
 		cbsd_fwatch --file=${dbdir}/cbsdtaskd.sqlite --timeout=${loop_timeout} >/dev/null 2>&1
 		tik=$(( tik + loop_timeout ))
 	fi
 
-	queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+	unset queue
+	#queue=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="0"' 2>/dev/null )
+	cbsdsqlro_vars cbsdtaskd "SELECT COUNT(id) FROM taskd WHERE status='0'" queue
 
 	if [ -z "${queue}" -o "${queue}" = "0" ]; then
+		unset queue
 		sleep 1
 		continue
 	fi
 
-	queue_active=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="1"' 2>/dev/null )
+	#queue_active=$( cbsdsqlro cbsdtaskd 'SELECT COUNT(id) FROM taskd WHERE status="1"' 2>/dev/null )
+	cbsdsqlro_vars cbsdtaskd "SELECT COUNT(id) FROM taskd WHERE status='1'" queue_active
 
 	if [ ${queue_active} -gt ${max_simul_jobs} ]; then
 		cbsdlogger NOTICE ${CIX_APP}: active: ${queue_active}/${max_simul_jobs}
+		unset queue_active
 		# too many in progress
 		sleep 1
 		continue
@@ -289,12 +301,14 @@ while [ 1 ]; do
 		max=${queue}
 	fi
 
+	unset queue
+
 	if [ -z "${max}" ]; then
 		#echo "cbsdd: wrong max variable"
 		exit 1
 	fi
 
-	for i in $( ${SEQ_CMD} 1 ${max} ); do
+	for i in ${SEQ}; do
 		cbsdlogger NOTICE ${CIX_APP}: runtask ${i}/${max} [$max_simul_jobs max]
 		${ENV_CMD} workdir=${workdir} ${miscdir}/daemonize -E workdir=${workdir} ${CIX_DISTDIR}/tools/nexttask
 		# wait for pid of daemon here!!!

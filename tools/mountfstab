@@ -49,83 +49,24 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 . ${subrdir}/nc.subr
+. ${tools}
+. ${system}
 jname=
 ojname=
 fstab=
 jroot=
-. ${tools}
 cixinit
-. ${system}
-
-mountfstab_by_jname()
-{
-	local _jroot= _ret=
-
-	. ${subrdir}/rcconf.subr
-	if [ $? -eq 1 ]; then
-		${ECHO} "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-		return 1
-	fi
-
-	if [ ${baserw} -eq 0 ]; then
-		_jroot="${path}"
-	else
-		_jroot="${data}"
-	fi
-
-	_ret=0
-
-	if [ -r ${mount_fstab} ]; then
-		mountfstab jroot="${_jroot}" fstab="${mount_fstab}"
-		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}mountfstab jroot=\"${_jroot}\" fstab=\"${mount_fstab}\"${N0_COLOR}"
-	fi
-	if [ -r ${mount_fstab}.local ]; then
-		mountfstab jroot="${_jroot}" fstab="${mount_fstab}.local"
-		_ret=$?
-		[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}mountfstab jroot=\"${_jroot}\" fstab=\"${mount_fstab}.local\"${N0_COLOR}"
-	fi
-}
-
-if [ -z "${fstab}" -a -z "${jroot}" ]; then
-	# mount by jname
-	[ -z "${jname}" -a -z "${1}" ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}mandatory params: ${N2_COLOR}fstab= jroot= ${N1_COLOR}or ${N2_COLOR}jname=${N0_COLOR}"
-	[ -z "${jname}" ] && jname="${*}"
-
-	emulator="jail"         # for jname_is_multiple
-	jname_is_multiple
-
-	[ -z "${jail_list}" ] && jail_list="${jname}"
-
-	if [ -n "${jail_list}" ]; then
-		for jname in ${jail_list}; do
-			mountfstab_by_jname
-			_ret=$?
-		done
-	fi
-	exit ${_ret}
-fi
-
-[ ! -f "${fstab}" ] && err 1 "${fstab} does not exist"
-[ ! -d "${jroot}" ] && err 1 "${jroot} does not exist"
-
-# local fstab exist ?
-have_local=0
-
-# special sign for zfs attach
-with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
+SEQ=
 
 init_localmpt_fstab()
 {
-	local _ret=
 	[ ! -f "${fstab}.local" ] && return 0
-
-	have_local=1
+	local _ret=
 
 	local i=0
 
 	# check for CRLF at the end of file
-	_ret=$( ${TAIL_CMD} -n1 "${fstab}.local" )
+	capture _ret ${TAIL_CMD} -c1 "${fstab}.local"
 
 	if [ -n "${_ret}" ]; then
 		# append CRLF for proper while read loop
@@ -142,7 +83,7 @@ init_localmpt_fstab()
 		case ":${_device}" in
 			:#* | :)
 				continue
-			;;
+				;;
 			*)
 				case "${_fs}" in
 					external)
@@ -165,9 +106,12 @@ init_localmpt_fstab()
 						i=$(( i + 1 ))
 						;;
 				esac
-			;;
+				;;
 		esac
 	done )
+
+	[ -n "${local_mpt0}" ] && capture SEQ ${SEQ_CMD} 0 128
+
 }
 
 # return 0 if no such mount point in fstab.local exist
@@ -180,10 +124,8 @@ init_localmpt_fstab()
 check_for_localmpt_fstab()
 {
 	local _res=0 i= local_mpt=
-
 	[ -z "${1}" ] && return 0
-
-	for i in $( ${SEQ_CMD} 0 128 ); do
+	for i in ${SEQ}; do
 		eval local_mpt="\$local_mpt${i}"
 		[ -z "${local_mpt}" ] && break
 		[ "${local_mpt}" = "${1}" ] && _res=1 && break
@@ -192,171 +134,228 @@ check_for_localmpt_fstab()
 	return ${_res}
 }
 
+check_fstab_file()
+{
+	local _fstab="${1}"
+
+	# first pass: test for fstab is valid
+	${CAT_CMD} ${_fstab} | while read _device _mountpt _fs _mode _a _b; do
+		case ":${_device}" in
+			:#* | :)
+				continue
+				;;
+		esac
+
+		# don't allow "..", "()", "|" in path
+		echo "${_mountpt}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
+		if [ $? -eq 0 ]; then
+			${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_mountpt}${N0_COLOR}"
+			continue
+		fi
+
+		# don't allow "..", "()", "|" in path
+		echo "${_device}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
+		if [ $? -eq 0 ]; then
+			${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_device}${N0_COLOR}"
+			continue
+		fi
+
+		case "${_fs}" in
+			external)
+				if [ ! -x "${_device}" ]; then
+					err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}external script not found or not executable, check fstabs: ${N2_COLOR}${_device}${N0_COLOR}"
+					continue
+				fi
+				;;
+			geli)
+				is_mounted ${gelidir} && continue
+				err 1 "Error: ${gelidir} is not initializated. Please use: 'cbsd geli mode=initmaster' first"
+				;;
+			zfs)
+				if [ ${allow_zfs} -ne 1 ]; then
+					${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: jail has a zfs dataset:: ${N2_COLOR}${_device}${N0_COLOR}"
+					${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: but allow_zfs options is not enabled. please use: ${N2_COLOR}cbsd jset jname=${jname} allow_zfs=1${N0_COLOR}"
+					continue
+				fi
+				# we need special route for jails with zfs attach, make sign for jstart script
+				${TOUCH_CMD} ${with_zfs_attach}
+				continue
+				;;
+		esac
+	done
+}
+
+
 ## MAIN
+# mode1, single_fstab=0:
+# by jname (+opt: jroot)
+# mode2, single_fstab=1:
+# by jroot + fstab file
+have_local=0
+
+if [ -z "${jname}" ]; then
+	[ -z "${jroot}" -a -z "${fstab}" ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}mandatory params: ${N2_COLOR}fstab= jroot= ${N1_COLOR}or ${N2_COLOR}jname=${N0_COLOR}"
+	[ ! -f "${fstab}" ] && err 1 "${fstab} does not exist"
+	[ ! -d "${jroot}" ] && err 1 "${jroot} does not exist"
+	single_fstab=1
+else
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	if [ -z "${jroot}" ]; then
+		if [ ${baserw} -eq 0 ]; then
+			jroot="${path}"
+		else
+			jroot="${data}"
+		fi
+	fi
+
+	if [ -z "${fstab}" ]; then
+		fstab="${mount_fstab}"
+	fi
+
+	[ -r "${fstab}.local" ] && have_local=1
+	single_fstab=0
+fi
+
+# special sign for zfs attach
+with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
+
 # check for CRLF at the end of file
 [ ! -r ${fstab} ] && err 1 "${N1_COLOR}no such fstab file: ${N2_COLOR}${fstab}${N0_COLOR}"
-_ret=$( ${TAIL_CMD} -c1 "${fstab}" )
+capture _res ${TAIL_CMD} -c1 "${fstab}"
 
 if [ -n "${_ret}" ]; then
 	# append CRLF for proper while read loop
 	printf '\n' >> "${fstab}"
 fi
 
-init_localmpt_fstab
+[ ${single_fstab} -eq 0 ] && init_localmpt_fstab
 
 # always rewrite CBSDROOT first
 replacewdir file0="${fstab}" old="CBSDROOT"
 
-# first pass: test for fstab is valid
-${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
-	case ":${_device}" in
-		:#* | :)
-			continue
-			;;
-		*)
-			case "${_fs}" in
-				external)
-					if [ ! -x "${_device}" ]; then
-						err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}external script not found or not executable, check fstabs: ${N2_COLOR}${_device}${N0_COLOR}"
-						continue
-					fi
-					;;
-				geli)
-					is_mounted ${gelidir} && continue
-					err 1 "Error: ${gelidir} is not initializated. Please use: 'cbsd geli mode=initmaster' first"
-					;;
-				zfs)
-					if [ ${allow_zfs} -ne 1 ]; then
-						${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: jail has a zfs dataset:: ${N2_COLOR}${_device}${N0_COLOR}"
-						${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}mountfstab: but allow_zfs options is not enabled. please use: ${N2_COLOR}cbsd jset jname=${jname} allow_zfs=1${N0_COLOR}"
-						continue
-					fi
-					# we need special route for jails with zfs attach, make sign for jstart script
-					${TOUCH_CMD} ${with_zfs_attach}
-					continue
-					;;
-				*)
-					[ -z "${_device}" ] && continue
-					# append workdir if it not full path
-					prefix=$( substr --pos=0 --len=1 --str=${_device} )
-					[ "${prefix}" != "/" ] && _device="${workdir}/${_device}"
-					;;
-			esac
-			;;
-	esac
-done
+check_fstab_file ${fstab}
 
-${CAT_CMD} ${fstab} | while read _device _mountpt _fs _mode _a _b; do
-	[ "${_fs}" = "zfs" ] && continue
+if [ ${have_local} -eq 1 ]; then
+	check_fstab_file ${fstab}.local
+	init_localmpt_fstab
+fi
 
-	case ":${_device}" in
-		:#* | :)
-			continue
-			;;
-	esac
+mount_fstab_file()
+{
+	local _fstab="${1}"
+	local _have_local="${2}"
 
-	# don't allow "..", "()", "|" in path
-	echo "${_mountpt}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
-	if [ $? -eq 0 ]; then
-		${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_mountpt}${N0_COLOR}"
-		continue
-	fi
+	${CAT_CMD} ${_fstab} | while read _device _mountpt _fs _mode _a _b; do
+		[ "${_fs}" = "zfs" ] && continue
 
-	if ${miscdir}/mountpoint "${jroot}${_mountpt}"; then
-		#${ECHO} "${N1_COLOR}${CIX_APP} info: already mounted: ${N2_COLOR}${jroot}${_mountpt}${N2_COLOR}" 1>&2
-		continue
-	fi
+		case ":${_device}" in
+			:#* | :)
+				continue
+				;;
+		esac
 
-	# don't allow "..", "()", "|" in path
-	echo "${_device}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
-	if [ $? -eq 0 ]; then
-		${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_device}${N0_COLOR}"
-		continue
-	fi
-
-	# SKIP mount when mount point also exist in fstab.local. fstab.local is preferred
-	if [ ${have_local} -eq 1 ]; then
-		if ! check_for_localmpt_fstab ${_mountpt}; then
+		if ${miscdir}/mountpoint "${jroot}${_mountpt}"; then
+			#${ECHO} "${N1_COLOR}${CIX_APP} info: already mounted: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}" 1>&2
 			continue
 		fi
-	fi
 
-	prefix=$( substr --pos=0 --len=1 --str="${_device}" )
-
-	if [ "${_fs}" = "geli" ]; then
-		# prepare src part
-		if [ "${prefix}" != "/" ]; then
-			if [ -z "${jname}" ]; then
-				_device="${workdir}/${_device}"
-			else
-				_device="${jailsysdir}/${jname}/${_device}"
+		# SKIP mount when mount point also exist in fstab.local. fstab.local is preferred
+		if [ ${_have_local} -eq 1 ]; then
+			if ! check_for_localmpt_fstab ${_mountpt}; then
+				continue
 			fi
 		fi
-		attachgeli file="${_device}" dst="${jroot}${_mountpt}" mode="${_mode}"
-		continue
-	fi
 
-	if [ "${_fs}" = "external" ]; then
-		${_device} -p ${jroot}${_mountpt} -o ${_mode} ${jname}
-		ret=$?
-		[ ${ret} -ne 0 ] && ${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}unable to create mountpoint via external ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
-		continue
-	fi
+		capture prefix substr --pos=0 --len=1 --str="${_device}"
 
-	_spec_device=${_device%%/*}
-	# Detect/recognize entries like: 'WORKDIR_VOLUMES/home    /home   nullfs  rw 0 0'
-	# and map to ~cbsd/VOLUMES dataset's
-	if [ "${_spec_device}" = "WORKDIR_VOLUMES" ]; then
-		[ "${_fs}" != "nullfs" ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}only nullfs supported for WORKDIR_VOLUMES: ${N2_COLOR}${_fs}${N0_COLOR}"
-		_rvolpath="${_device#*/}"
-		_volpath="/${_rvolpath}"
-		_device="${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
-		${ECHO} "${N1_COLOR}${CIX_APP}: WORKDIR_VOLUMES: ${N2_COLOR}${_device} -> ${_volpath}${N0_COLOR}" 1>&2
-		[ ! -d "${_device}" ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}no such volume directory: ${N2_COLOR}${_device}${N0_COLOR}"
-	else
-		if [ "${_fs}" = "nullfs" ]; then
+		if [ "${_fs}" = "geli" ]; then
+			# prepare src part
 			if [ "${prefix}" != "/" ]; then
-				_device="${workdir}/${_device}"
-			else
-				if ! [ -d "${_device}" ]; then
-					if [ ! -c "${_device}" -o ! -b "${_device}" ]; then
-						# notes: Unix socket not supported by nullfs, only regular files
-						if [ ! -f "${_device}" ]; then
-							${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: no such source (directory or file) for jail ${jname}: ${N2_COLOR}${_device}${N0_COLOR}"
-							continue
+				if [ -z "${jname}" ]; then
+					_device="${workdir}/${_device}"
+				else
+					_device="${jailsysdir}/${jname}/${_device}"
+				fi
+			fi
+			attachgeli file="${_device}" dst="${jroot}${_mountpt}" mode="${_mode}"
+			continue
+		fi
+
+		if [ "${_fs}" = "external" ]; then
+			${_device} -p ${jroot}${_mountpt} -o ${_mode} ${jname}
+			ret=$?
+			[ ${ret} -ne 0 ] && ${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}unable to create mountpoint via external ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
+			continue
+		fi
+
+		_spec_device=${_device%%/*}
+		# Detect/recognize entries like: 'WORKDIR_VOLUMES/home    /home   nullfs  rw 0 0'
+		# and map to ~cbsd/VOLUMES dataset's
+		if [ "${_spec_device}" = "WORKDIR_VOLUMES" ]; then
+			[ "${_fs}" != "nullfs" ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}only nullfs supported for WORKDIR_VOLUMES: ${N2_COLOR}${_fs}${N0_COLOR}"
+			_rvolpath="${_device#*/}"
+			_volpath="/${_rvolpath}"
+			_device="${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
+			${ECHO} "${N1_COLOR}${CIX_APP}: WORKDIR_VOLUMES: ${N2_COLOR}${_device} -> ${_volpath}${N0_COLOR}" 1>&2
+			[ ! -d "${_device}" ] && log_err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}no such volume directory: ${N2_COLOR}${_device}${N0_COLOR}"
+		else
+			if [ "${_fs}" = "nullfs" ]; then
+				if [ "${prefix}" != "/" ]; then
+					_device="${workdir}/${_device}"
+				else
+					if ! [ -d "${_device}" ]; then
+						if [ ! -c "${_device}" -o ! -b "${_device}" ]; then
+							# notes: Unix socket not supported by nullfs, only regular files
+							if [ ! -f "${_device}" ]; then
+								${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: no such source (directory or file) for jail ${jname}: ${N2_COLOR}${_device}${N0_COLOR}"
+								continue
+							fi
 						fi
 					fi
 				fi
 			fi
 		fi
-	fi
 
-	# /usr/compat - work-around for migrate from /usr/compat -> /compat introduced in CBSD 11.0.16
-	[ "${_mountpt}" = "/usr/compat" ] && _mountpt="/compat"
+		# /usr/compat - work-around for migrate from /usr/compat -> /compat introduced in CBSD 11.0.16
+		[ "${_mountpt}" = "/usr/compat" ] && _mountpt="/compat"
 
-	_dst_is_dir=1
+		_dst_is_dir=1
 
-	# single file ?
-	if [ -f "${_device}" ]; then
-		_dst_is_dir=0
-	fi
-
-	if [ ! -d "${jroot}${_mountpt}" ]; then
-		if [ ${_dst_is_dir} -eq 1 ]; then
-			${MKDIR_CMD} -p "${jroot}${_mountpt}"
-			_ret=$?
-		else
-			${TOUCH_CMD} "${jroot}/${_mountpt}"
-			_ret=$?
+		# single file ?
+		if [ -f "${_device}" ]; then
+			_dst_is_dir=0
 		fi
+
+		if [ ! -d "${jroot}${_mountpt}" ]; then
+			if [ ${_dst_is_dir} -eq 1 ]; then
+				${MKDIR_CMD} -p "${jroot}${_mountpt}"
+				_ret=$?
+			else
+				${TOUCH_CMD} "${jroot}/${_mountpt}"
+				_ret=$?
+			fi
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: unable to create mountpoint for ${_fs} ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
+				${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: read-only location? Skip mount for: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
+				continue
+			fi
+		fi
+
+		${MOUNT_CMD} -t ${_fs} -o${_mode} "${_device}" "${jroot}${_mountpt}"
+		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: unable to create mountpoint for ${_fs} ${_device}: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
-			${ECHO} "${W1_COLOR}${CIX_APP} warning: ${N1_COLOR}mountfstab: read-only location? Skip mount for: ${N2_COLOR}${jroot}${_mountpt}${N0_COLOR}"
-			continue
+			[ -n "${jname}" ] && jcleanup jname="${jname}"
+			log_err 1 "${W1_COLOR}${CIX_APP} error: mount failed (${_fstab}: ${N2_COLOR}${MOUNT_CMD} -t ${_fs} -o${_mode} \"${_device}\" \"${jroot}${_mountpt}\"${N0_COLOR}"
 		fi
-	fi
+	done
+}
 
-	${MOUNT_CMD} -t ${_fs} -o${_mode} "${_device}" "${jroot}${_mountpt}"
-done
+mount_fstab_file ${fstab} ${have_local}
+
+if [ ${have_local} -eq 1 ]; then
+	mount_fstab_file ${fstab}.local 0
+fi
 
 exit 0

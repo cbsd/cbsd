@@ -123,9 +123,12 @@ for jname in ${JLIST}; do
 		[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=bremove status=1 emulator=${emulator}
 	fi
 
-	. ${subrdir}/jcreate.subr
-	export_bhyve_data_for_external_hook
-	external_exec_master_script "remove.d"
+	if cix_read_dir ${jailsysdir}/${jname}/remove.d/ > /dev/null 2>&1; then
+		. ${subrdir}/jcreate.subr
+		export_bhyve_data_for_external_hook
+		external_exec_master_script "remove.d"
+	fi
+
 	PARENT_SNAPSHOTS=
 	DEPENDENT_VMS=
 	PARENT_ZVOL=
@@ -151,12 +154,16 @@ for jname in ${JLIST}; do
 			base_vm_disks=
 			# skip for raw disk: /dev/ without zvol
 			for i in ${obase_vm_disks}; do
-				vm=$( echo ${i} | ${CUT_CMD} -f 1 -d '|' )
-				disk_path=$( echo ${i} | ${CUT_CMD} -f 2 -d '|' )
-				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
-				_res=$( substr --pos=0 --len=5 --str=${disk_path} )
+#				echo "${i}" >> /tmp/destroy.txt
+#				vm=$( echo ${i} | ${CUT_CMD} -f 1 -d '|' )
+#				disk_path=$( echo ${i} | ${CUT_CMD} -f 2 -d '|' )
+#				#disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
+				capture disk_zvol ${READLINK_CMD} -f ${i}
+#				_res=$( substr --pos=0 --len=5 --str=${disk_zvol} )
+				capture _res substr --pos=0 --len=5 --str="${disk_zvol}"
 				if [ "${_res}" = "/dev/" ]; then
-					_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+					#_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+					capture _res substr --pos=0 --len=10 --str="${disk_zvol}"
 					[ "${_res}" != "/dev/zvol/" ] && continue
 				fi
 				if [ -z "${base_vm_disks}" ]; then
@@ -168,26 +175,32 @@ for jname in ${JLIST}; do
 			unset obase_vm_disks
 
 			for vm_item in ${base_vm_disks}; do
-				# detect for shared disk
-				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
-				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
-				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
+				#echo "[${vm_item}]" >> /tmp/destroy.txt
 
-				_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+				# detect for shared disk
+#				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
+#				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
+				#disk_zvol=$( ${READLINK_CMD} -f ${disk_path} )
+				capture disk_zvol ${READLINK_CMD} -f ${vm_item}
+
+				#_res=$( substr --pos=0 --len=10 --str=${disk_zvol} )
+				capture _res substr --pos=0 --len=10 --str="${disk_zvol}"
 				# can be raw, check for /dev/zvol
 				[ "${_res}" != "/dev/zvol/" ] && continue
 
 				disk_zvol=$( echo ${disk_zvol} | ${SED_CMD} 's;^/dev/zvol/;;' )
 
 				[ -z "${disk_zvol}" ] && continue
-				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				#parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				capture parent_snapshot ${ZFS_CMD} get -Ho value origin ${disk_zvol}
 				if [ "${parent_snapshot}" = "-" ]; then
 					continue
 				fi
 
 				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
 				for _disk_path in ${base_vm_disks}; do
-					original_disk_path=$( ${READLINK_CMD} -f ${_disk_path} )
+					#original_disk_path=$( ${READLINK_CMD} -f ${_disk_path} )
+					capture original_disk_path ${READLINK_CMD} -f ${_disk_path}
 					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
 						DEPENDENT_VMS="${DEPENDENT_VMS}\n${vm}"
 					fi
@@ -203,20 +216,22 @@ for jname in ${JLIST}; do
 				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
 				PARENT_ZVOL="${PARENT_ZVOL} ${disk_zvol}"
-				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				#parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				capture parent_snapshot ${ZFS_CMD} get -Ho value origin ${disk_zvol}
 				if [ "${parent_snapshot}" != "-" ]; then
 					PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${parent_snapshot}"
 				fi
 			done
 
-			path_parent=$( ${ZFS_CMD} get -Ho value origin ${DST} )
+			#path_parent=$( ${ZFS_CMD} get -Ho value origin ${DST} )
+			capture path_parent ${ZFS_CMD} get -Ho value origin ${DST}
 			if [ "${path_parent}" != "-" ]; then
 				PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${path_parent}"
 			fi
 
 		fi
 		jcleanup jname=${jname}
-		${UMOUNT_CMD} ${path} 2>/dev/null
+		${miscdir}/mountpoint ${path} && ${UMOUNT_CMD} ${path}
 	fi
 
 	# scan for -boot snapshot created by cloud-init
@@ -224,7 +239,8 @@ for jname in ${JLIST}; do
 		for i in $( ${FIND_CMD} ${data}/ -mindepth 1 -maxdepth 1 -type l ); do
 			if is_getzvol ${i}; then
 				if [ -n "${is_zvol}" ]; then
-					_parent=$( ${ZFS_CMD} get -Ho value origin ${is_zvol} )
+					#_parent=$( ${ZFS_CMD} get -Ho value origin ${is_zvol} )
+					capture _parent ${ZFS_CMD} get -Ho value origin ${is_zvol}
 					if [ -n "${_parent}" ]; then
 						_len=$( strlen ${_parent} )
 						strpos --str="${_parent}" --search="@"
@@ -243,7 +259,8 @@ for jname in ${JLIST}; do
 	# jailed process?
 	# if we are not inside jail then check for jailed bhyve and remove hoster jail
 	_jailed="0"	# no hoster jail
-	pjailed=$( ${SYSCTL_CMD} -qn security.jail.jailed 2>/dev/null )
+	#pjailed=$( ${SYSCTL_CMD} -qn security.jail.jailed 2>/dev/null )
+	capture pjailed ${SYSCTL_CMD} -qn security.jail.jailed
 	[ -z "${pjailed}" ] && pjailed=0
 
 	if [ "${pjailed}" = "0" ]; then
@@ -258,7 +275,7 @@ for jname in ${JLIST}; do
 	[ ${zfsfeat} -eq 1 ] && jsnapshot mode=destroyall_original jname=${jname}
 
 	if [ ${unregister} -eq 0 ]; then
-		junregister jname=${jname} rcfile=${JAILRCCONF} destroy=1
+		junregister jname=${jname} destroy=1
 	fi
 
 	[ -d "${JAILFSTAB_DIR}" ] && removedir ${JAILFSTAB_DIR}
@@ -287,7 +304,8 @@ for jname in ${JLIST}; do
 		zfsmnt "${vmdir}"
 		_ret=$?
 		if [ ${_ret} -eq 1 -o ${_ret} -eq 2 ]; then
-			_msg=$( ${ZFS_CMD} destroy ${ZPOOL} )
+			#_msg=$( ${ZFS_CMD} destroy ${ZPOOL} )
+			capture _msg ${ZFS_CMD} destroy ${ZPOOL}
 			_ret=$?
 			if [ ${_ret} -ne 0 ]; then
 				${ECHO} "${N1_COLOR}bremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"

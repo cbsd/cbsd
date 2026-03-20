@@ -1,6 +1,6 @@
 #!/usr/local/bin/cbsd
 #v11.1.4
-MYARG="jname"
+CIXARG="jname"
 CBSDMODULE="bhyve"
 
 . ${subrdir}/nc.subr
@@ -8,7 +8,7 @@ CBSDMODULE="bhyve"
 
 #concat for bhyve arg
 JARG="${MYCOL} nice vm_pid soundhw soundhw_play soundhw_rec nic_ratelimit dsk_iops_limit dsk_mbps_limit gid quiet com1 com2 com3 com4"
-MYOPTARG="jconf ${JARG}"
+CIXOPTARG="jconf ${JARG}"
 
 MYDESC="Modify parameters for bhyve domain"
 ADDHELP="
@@ -43,10 +43,10 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 . ${tools}
 . ${strings}
-
+. ${tools}
 quiet=0
 oquiet=0
-. ${cbsdinit}
+cixinit
 
 emulator="bhyve"	# for jname_is_multiple
 jname_is_multiple
@@ -54,8 +54,8 @@ jname_is_multiple
 if [ -n "${jail_list}" ]; then
 	new_arg=
 
-	for i in $*; do
-		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+	for i in ${CIX_OTHER_ARGS}; do
+		capture _is_jname substr --pos=0 --len=5 --str="${i}"
 		[ "${_is_jname}" = "jname" ] && continue
 		new_arg="${new_arg} ${i}"
 	done
@@ -77,54 +77,57 @@ update_jails()
 	eval TMPVAL="\$$i"
 
 	# restore spaces from '%' ( see todo in init func from nc.subr for val="one two" )
-	VAL=$( echo "${TMPVAL}" | ${TR_CMD} '%' ' ' )
+	#VAL=$( echo "${TMPVAL}" | ${TR_CMD} '%' ' ' )
 
 	case "${i}" in
 		vm_ram)
-			if is_number ${VAL}; then
-				if conv2bytes ${VAL}; then
-					VAL="${convval}"
+			if is_number ${TMPVAL}; then
+				if conv2bytes ${TMPVAL}; then
+					TMPVAL="${convval}"
 				fi
 			else
 				# Assume value in MB, convert it to bytes
-				VAL=$(( ${VAL} * 1024 * 1024 ))
+				TMPVAL=$(( ${TMPVAL} * 1024 * 1024 ))
 			fi
 			;;
 		vm_pid)
-			VAL=
+			TMPVAL=
 			case "${vm_pid}" in
 				[Aa][Uu][Tt][Oo])
 					. ${subrdir}/bhyve.subr
 					check_for_bhyve_process -j ${jname}
 					if [ $? -eq 0 ]; then
-						VAL=0
+						TMPVAL=0
 					else
-						VAL="${vm_pid}"
+						TMPVAL="${vm_pid}"
 					fi
 					;;
 				*)
-					VAL="${vm_pid}"
+					TMPVAL="${vm_pid}"
 					;;
 			esac
-			[ -z "${VAL}" ] && err 1 "${N1_COLOR}bset vm_pid: unable to determine pid for: ${N2_COLOR}${jname}${N0_COLOR}"
+			[ -z "${TMPVAL}" ] && err 1 "${N1_COLOR}bset vm_pid: unable to determine pid for: ${N2_COLOR}${jname}${N0_COLOR}"
 
-			if is_number ${VAL}; then
-				err 1 "${N1_COLOR}bset vm_pid: not number: ${N2_COLOR}${VAL}${N0_COLOR}"
+			if is_number ${TMPVAL}; then
+				err 1 "${N1_COLOR}bset vm_pid: not number: ${N2_COLOR}${TMPVAL}${N0_COLOR}"
 			fi
 			;;
 	esac
 
+	SQL_LOCAL_QUERY=
+	SQL_VM_QUERY=
+
 	case "${i}" in
 		com1|com2|com3|com4)
 			# LPC database
-			blpc jname=${jname} ${i}="${VAL}"
+			blpc jname=${jname} ${i}="${TMPVAL}"
 			;;
 		tpm)
 			# LPC database
-			blpc jname=${jname} ${i}="${VAL}"
+			blpc jname=${jname} ${i}="${TMPVAL}"
 			# needs to dup ;-(
-			cbsdsqlrw local "UPDATE bhyve SET ${i}='${VAL}' WHERE jname='${jname}'"
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET ${i}='${VAL}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE bhyve SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE settings SET ${i}='${TMPVAL}'"
 			;;
 		nice)
 			_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
@@ -132,52 +135,52 @@ update_jails()
 				${ECHO} "${N1_COLOR}No such rctl file: ${N2_COLOR}${_formfile}${N0_COLOR}"
 				return 1
 			fi
-			cbsdsqlrw ${_formfile} "UPDATE forms set cur='${VAL}' WHERE param='nice'"
+			cbsdsqlrw ${_formfile} "UPDATE forms set cur='${TMPVAL}' WHERE param='nice'"
 			brenice jname=${jname}
 			;;
 		vm_pid)
 			# pid stored in jails settings as JID (should be moved to settings table)
-			cbsdsqlrw local "UPDATE jails SET jid='${VAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE jails SET jid='${TMPVAL}' WHERE jname='${jname}'"
 			;;
 		gid)
 			# pid stored in jails settings as JID (should be moved to settings table)
-			cbsdsqlrw local "UPDATE jails SET gid='${VAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE jails SET gid='${TMPVAL}' WHERE jname='${jname}'"
 			;;
 		soundhw_play|soundhw_rec)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyve_soundhw SET ${i}='${VAL}'"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE bhyve_soundhw SET ${i}='${TMPVAL}'"
 			;;
 		nic_ratelimit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_ratelimit='${VAL}' WHERE id='1'"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE bhyvenic SET nic_ratelimit='${TMPVAL}' WHERE id='1'"
 			;;
 		dsk_iops_limit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_iops_limit='${VAL}' WHERE dsk_path='dsk1.vhd'"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE bhyvedsk SET dsk_iops_limit='${TMPVAL}' WHERE dsk_path='dsk1.vhd'"
 			;;
 		dsk_mbps_limit)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_mbps_limit='${VAL}' WHERE dsk_path='dsk1.vhd'"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE bhyvedsk SET dsk_mbps_limit='${TMPVAL}' WHERE dsk_path='dsk1.vhd'"
 			;;
 		ip4_addr)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET ${i}='${VAL}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE settings SET ${i}='${TMPVAL}'"
 			# back compatible
-			cbsdsqlrw local "UPDATE bhyve SET ${i}='${VAL}' WHERE jname='${jname}'"
-			cbsdsqlrw local "UPDATE jails SET ${i}='${VAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE bhyve SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE jails SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
 			if [ -f "${jailsysdir}/${jname}/rc.conf_${jname}" ]; then
 				# current setting used by cloud-init helper/blogin
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ${i}="${VAL}" > /dev/null 2>&1
+				updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ${i}="${TMPVAL}"
 			fi
 			;;
 		*)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET ${i}='${VAL}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE settings SET ${i}='${TMPVAL}'"
 			# back compatible
-			cbsdsqlrw local "UPDATE bhyve SET ${i}='${VAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE bhyve SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
 			;;
 	esac
 
-	cbsdlogger NOTICE ${CIX_APP}: ${argpart}: ${VAL}
+	cbsdlogger NOTICE ${CIX_APP}: ${argpart}: ${TMPVAL}
 	[ ${quiet} -ne 1 ] && ${ECHO} "${argpart}: ${N1_COLOR}changed${N0_COLOR}"
 }
 
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
-jid=$( jstatus jname=${jname} )
+capture jid jstatus jname=${jname}
 [ $? -eq 0 ] && err 1 "${N1_COLOR}No such bhyve: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -n "${jconf}" ]; then
@@ -195,7 +198,7 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" emulator=${emulator} cmd=update ${allstr} 
 fi
 
-for n in "$@"; do
+for n in "${CIX_OTHER_ARGS}"; do
 	argpart="${n%%=*}"
 
 	for i in ${JARG}; do
@@ -205,6 +208,12 @@ for n in "$@"; do
 		fi
 	done
 done
+
+	SQL_LOCAL_QUERY=
+	SQL_VM_QUERY=
+
+[ -z "${SQL_LOCAL_QUERY}" ] && cbsdsqlrw local ${SQL_LOCAL_QUERY}
+[ -z "${SQL_VM_QUERY}" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite ${SQL_VM_QUERY}
 
 # exit code 0 is nessesary for dot()
 exit 0
