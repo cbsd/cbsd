@@ -65,7 +65,7 @@ if [ -r "${Makefile}" ]; then
 		jname="${ojname}"
 	else
 		# cbsd bstart <env1> <env2> route
-		for i in $*; do
+		for i in ${CIX_OTHER_ARGS}; do
 			strpos --str="${i}" --search="="
 			if [ $? -eq 0 ]; then
 				jname_in_args=1
@@ -112,9 +112,9 @@ else
 	cbsd_api=0
 fi
 
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No bhyve specified${N0_COLOR}"
+[ -z "${jname}" -a -z "${CIX_OTHER_ARGS}" ] && err 1 "${N1_COLOR}No bhyve specified${N0_COLOR}"
 
-[ -z "${TMUX_CMD}" ] && TMUX_CMD=$( which tmux )
+[ -z "${TMUX_CMD}" ] && capture TMUX_CMD which tmux
 [ -z "${TMUX_CMD}" ] && err 1 "${N1_COLOR}no such tmux${N0_COLOR}"
 
 . ${system}
@@ -122,7 +122,6 @@ fi
 . ${subrdir}/bhyve.subr
 
 [ -n "${inter}" ] && shift
-. ${subrdir}/jcreate.subr	# external_exec_master_script
 
 # MAIN
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -138,7 +137,7 @@ emulator="bhyve" # for jname_is_multiple
 if [ -n "${jail_list}" ]; then
 	TMP_JLIST="${jail_list}"
 else
-	TMP_JLIST=$*
+	TMP_JLIST="${CIX_OTHER_ARGS}"
 fi
 
 JLIST=
@@ -146,7 +145,7 @@ JLIST=
 # check for actual vm list in arg list
 jail_num=0
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" )
+	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
 		jail_num=$(( jail_num + 1 ))
@@ -163,7 +162,10 @@ if [ ${jail_num} -gt 1 ]; then
 		${miscdir}/daemonize -p ${ftmpdir}/bstop.${jname}.$$ /usr/local/bin/cbsd bstop jname=${jname} noacpi=${noacpi} hard_timeout=${hard_timeout}
 		#lets save .pid file
 		sleep 1
-		[ -f "${ftmpdir}/bstop.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/bstop.${jname}.$$ ) --timeout=${parallel}
+		if [ -f "${ftmpdir}/bstop.${jname}.$$" ]; then
+			read -r _pid < ${ftmpdir}/bstop.${jname}.$$
+			cbsd_pwait --pid=${_pid} --timeout=${parallel}
+		fi
 	done
 
 	wait_for_fpid -a stop
@@ -184,7 +186,7 @@ fi
 . ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
-	remotenode=$( bwhereis ${jname} )
+	capture remotenode bwhereis ${jname}
 	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 	for i in ${remotenode}; do
 		${ECHO} "${N1_COLOR}Remote bstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
@@ -207,11 +209,16 @@ fi
 
 check_for_bhyve_process -j ${jname}
 
-# for external hook variables
-geniplist ${ip4_addr}
+# hook
+if cix_read_dir ${jailsysdir}/${jname}/master_prestop.d/ >/dev/null 2>&1; then
+	exported_data_for_hooks=1
+	. ${subrdir}/jcreate.subr	# external_exec_master_script
+	# for external hook variables
+	geniplist ${ip4_addr}
 
-export_bhyve_data_for_external_hook
-external_exec_master_script "master_prestop.d"
+	export_bhyve_data_for_external_hook
+	external_exec_master_script "master_prestop.d"
+fi
 
 TRAP=""
 TRAP="${TRAP} jswmode jname=${jname} mode=master comment='0';"
@@ -224,11 +231,15 @@ if [ ${noacpi} -eq 0 ]; then
 		# soft stop, send SIGTERM
 		tleft=$(( hard_timeout - 1 ))
 		kill -15 ${vm_pid} > /dev/null 2>&1
-		for i in $( ${SEQ_CMD} 1 ${hard_timeout} ); do
+
+		capture SEQ_HARD ${SEQ_CMD} 1 ${hard_timeout}
+
+		for i in ${SEQ_HARD}; do
 			printf "${CLRLINE}"
 			printf "${CURSORRST}"
 			printf "${N1_COLOR}Send SIGTERM to ${N2_COLOR}${jname}${N1_COLOR}. Soft timeout is ${N2_COLOR}${hard_timeout}${N1_COLOR} sec. ${W1_COLOR}${tleft}${N1_COLOR} seconds left [${N0_COLOR}"
-			for x in $( ${SEQ_CMD} 1 ${i} ); do
+			capture SEQ_WAIT ${SEQ_CMD} 1 ${i}
+			for x in ${SEQ_WAIT}; do
 				printf "${N1_COLOR}."
 			done
 			cbsd_pwait --pid=${vm_pid} --timeout=1 > /dev/null 2>&1
@@ -244,19 +255,21 @@ if [ ${noacpi} -eq 0 ]; then
 			kill -9 ${vm_pid} > /dev/null 2>&1 || true
 		fi
 	else
-		${ECHO} "${N1_COLOR}Warning: unable to determine bhyve pid for: ${N2_COLOR}${jname}${N0_COLOR}"
+		err 0 "${N1_COLOR}Warning: unable to determine bhyve pid for: ${N2_COLOR}${jname}${N0_COLOR}"
 	fi
 else
-	kill -9 ${vm_pid} > /dev/null 2>&1 || true
+	if [ -n "${vm_pid}" ]; then
+		kill -9 ${vm_pid} > /dev/null 2>&1 || true
+	else
+		err 0 "${N1_COLOR}Warning: unable to determine bhyve pid for: ${N2_COLOR}${jname}${N0_COLOR}"
+	fi
 fi
-
 
 for i in vnc_port vnc_bind ssh_port ssh_host rdp_port rdp_host; do
 	[ -r ${jailsysdir}/${jname}/${i} ] && ${RM_CMD} -f ${jailsysdir}/${jname}/${i}
 done
 
-_res=$( ${BHYVECTL_CMD} --destroy --vm="${jname}" 2>&1 )
-
+capture _res ${BHYVECTL_CMD} --destroy --vm="${jname}"
 
 # extra check for no any cbsd process related to this VM is active
 epid=$( ${PS_CMD} axopid,ucomm,command -ww | ${GREP_CMD} "${tmpdir}/bhyveload.${jname}.lock" | ${GREP_CMD} -v grep | ${AWK_CMD} '{printf $1" "}' )
@@ -275,19 +288,28 @@ jswmode jname=${jname} mode=master comment='0'
 . ${subrdir}/vnet.subr
 
 fwcounters jname=${jname} mode=remove
-expose mode=clear
+expose mode=clear jname=${jname}
 
 # delete orphaned vale_ports if exists
 #cbsdsqlrw local "DELETE FROM vale_ports WHERE jname='${jname}'"
 bcleanup jname=${jname}
 
 # update state_time
-cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET state_time=(strftime('%s','now'))"
 
 # update state_time and pid in local DB
-cbsdsqlrw local "UPDATE jails SET jid=0,state_time=\"(strftime('%s','now'))\" WHERE jname='${jname}'"
+cbsdsqlrw local "UPDATE jails SET jid=0,state_time=(strftime('%s','now')) WHERE jname='${jname}'"
 
-external_exec_master_script "master_poststop.d"
+if cix_read_dir ${jailsysdir}/${jname}/master_poststop.d/ >/dev/null 2>&1; then
+	if [ "${exported_data_for_hooks}" != "1" ]; then
+		. ${subrdir}/jcreate.subr	# external_exec_master_script
+		# for external hook variables
+		geniplist ${ip4_addr}
+
+		export_bhyve_data_for_external_hook
+	fi
+	external_exec_master_script "master_prestop.d"
+fi
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -295,8 +317,9 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 fi
 
 # jailed?
-_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
-[ -z "${_jailed}" ] && _jailed="0"
+cbsdsqlro_vars /usr/jails/var/db/local.sqlite "SELECT jailed FROM settings LIMIT 1" _jailed
+# Если var пуста, присвоить "default"
+: "${_jailed:=0}"
 
 if [ "${_jailed}" != "0" ]; then
 	${ECHO} "${N1_COLOR}Stopping jailhost: ${N2_COLOR}${_jailed}${N0_COLOR}"
