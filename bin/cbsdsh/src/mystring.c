@@ -390,6 +390,9 @@ substrcmd(int argc, char **argv)
 	char *str = NULL;
 	int pos = 0;
 	int len = 0;
+	int have_pos = 0;
+	int have_len = 0;
+	int have_str = 0;
 
 	struct option long_options[] = { { "pos", required_argument, 0, C_POS },
 		{ "len", required_argument, 0, C_LEN },
@@ -398,7 +401,17 @@ substrcmd(int argc, char **argv)
 		{ 0, 0, 0, 0 } };
 
 	if (argc != 4)
-		substr_usage();
+		return substr_usage();
+
+	/*
+	 * Reset getopt state for repeated invocations.
+	 * capture() executes builtins in-process (no fork), so getopt globals
+	 * can leak state between calls if we don't reset before parsing.
+	 */
+	optind = 1;
+	optopt = 0;
+	opterr = 0;
+	optreset = 1;
 
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
@@ -408,18 +421,36 @@ substrcmd(int argc, char **argv)
 		switch (optcode) {
 		case C_POS:
 			pos = atoi(optarg);
+			have_pos = 1;
 			break;
 		case C_LEN:
 			len = atoi(optarg);
+			have_len = 1;
 			break;
 		case C_STR:
-			str = malloc(strlen(optarg) + 1);
-			memset(str, 0, strlen(optarg) + 1);
-			strcpy(str, optarg);
+		{
+			char *tmp = malloc(strlen(optarg) + 1);
+
+			if (tmp == NULL) {
+				out1fmt("Unable to allocate memory.\n");
+				return 1;
+			}
+			/* Copy trailing '\0' too */
+			strcpy(tmp, optarg);
+			free(str);
+			str = tmp;
+			have_str = 1;
 			break;
+		}
 		}
 	} // while
 
+	if (str == NULL)
+		return 1;
+	if (!have_pos || !have_len || !have_str)
+		return substr_usage();
+
+	/* --len=0 means "read until end" (see substr_usage). */
 	if (len == 0)
 		len = strlen(str);
 
@@ -430,8 +461,6 @@ substrcmd(int argc, char **argv)
 	opterr = 0;
 	optreset = 0;
 
-	if (str == NULL)
-		return 1;
 	/* Clamp pos/len to string bounds to avoid overruns */
 	size_t start = 0;
 	size_t slen = strlen(str);
@@ -469,6 +498,9 @@ strposcmd(int argc, char **argv)
 	char *str = NULL;
 	char *search = NULL;
 	int pos = 0;
+	int have_search = 0;
+	int have_str = 0;
+	int rc = 1;
 
 	struct option long_options[] = { { "search", required_argument, 0,
 					     D_SEARCH },
@@ -477,7 +509,13 @@ strposcmd(int argc, char **argv)
 		{ 0, 0, 0, 0 } };
 
 	if (argc != 3)
-		strpos_usage();
+		return strpos_usage();
+
+	/* Reset getopt state for repeated invocations. */
+	optind = 1;
+	optopt = 0;
+	opterr = 0;
+	optreset = 1;
 
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
@@ -486,35 +524,54 @@ strposcmd(int argc, char **argv)
 			break;
 		switch (optcode) {
 		case D_SEARCH:
-			search = malloc(strlen(optarg) + 1);
-			memset(search, 0, strlen(optarg) + 1);
-			strcpy(search, optarg);
+		{
+			char *tmp = malloc(strlen(optarg) + 1);
+
+			if (tmp == NULL)
+				goto out;
+			strcpy(tmp, optarg);
+			free(search);
+			search = tmp;
+			have_search = 1;
 			break;
+		}
 		case D_STR:
-			str = malloc(strlen(optarg) + 1);
-			memset(str, 0, strlen(optarg) + 1);
-			strcpy(str, optarg);
+		{
+			char *tmp = malloc(strlen(optarg) + 1);
+
+			if (tmp == NULL)
+				goto out;
+			strcpy(tmp, optarg);
+			free(str);
+			str = tmp;
+			have_str = 1;
 			break;
+		}
 		}
 	} // while
 
-	// zero for getopt* variables for next execute
+	if (!have_search || !have_str)
+		rc = strpos_usage();
+	else if (search == NULL || str == NULL)
+		rc = 1;
+	else {
+		char *p = strstr(str, search);
+		if (p)
+			pos = (int)(p - str);
+		rc = pos;
+	}
+
+	/* zero for getopt* variables for next execute (best-effort) */
 	optarg = NULL;
 	optind = 0;
 	optopt = 0;
 	opterr = 0;
 	optreset = 0;
 
-	if (str == NULL)
-		return 1;
-
-	char *p = strstr(str, search);
-	if (p)
-		pos = p - str;
-
-	if (pos < 0)
-		pos = 0;
-	return pos;
+out:
+	free(search);
+	free(str);
+	return rc;
 }
 
 int
@@ -535,6 +592,8 @@ roundupcmd(int argc, char **argv)
 {
 	unsigned long long numtoround = 0;
 	unsigned long long multiple = 0;
+	int have_num = 0;
+	int have_multiple = 0;
 	int optcode = 0;
 	int option_index = 0;
 
@@ -543,15 +602,14 @@ roundupcmd(int argc, char **argv)
 		/* End of options marker */
 		{ 0, 0, 0, 0 } };
 
-	// zero for getopt* variables for next execute
-	optarg = NULL;
-	optind = 0;
+	if (argc != 3)
+		return roundup_usage();
+
+	/* Reset getopt state for repeated invocations. */
+	optind = 1;
 	optopt = 0;
 	opterr = 0;
-	optreset = 0;
-
-	if (argc != 3)
-		roundup_usage();
+	optreset = 1;
 
 	while (TRUE) {
 		optcode = getopt_long_only(argc, argv, "", long_options,
@@ -560,24 +618,48 @@ roundupcmd(int argc, char **argv)
 			break;
 		switch (optcode) {
 		case C_NUM:
-			numtoround = atoll(optarg);
-			break;
-		case C_MULTIPLE:
-			multiple = atol(optarg);
+		{
+			char *endp = NULL;
+
+			errno = 0;
+			numtoround = strtoull(optarg, &endp, 10);
+			if (errno != 0 || endp == optarg || (endp && *endp != '\0'))
+				return roundup_usage();
+			have_num = 1;
 			break;
 		}
+		case C_MULTIPLE:
+		{
+			char *endp = NULL;
+
+			errno = 0;
+			multiple = strtoull(optarg, &endp, 10);
+			if (errno != 0 || endp == optarg || (endp && *endp != '\0'))
+				return roundup_usage();
+			have_multiple = 1;
+			break;
+		}
+		}
 	} // while
+
+	// zero for getopt* variables for next execute (best-effort)
+	optarg = NULL;
+	optind = 0;
+	optopt = 0;
+	opterr = 0;
+	optreset = 0;
+
+	if (!have_num || !have_multiple)
+		return roundup_usage();
 
 	if (multiple == 0) {
 		out1fmt("%llu", numtoround);
 		return 0;
 	}
 
-	unsigned long long rounddown = ((unsigned long long)(numtoround) /
-					   multiple) *
-	    multiple;
-	unsigned long long roundup = rounddown + multiple;
-	unsigned long long roundcalc = roundup;
+	/* If already multiple, keep it; otherwise round up to next multiple. */
+	unsigned long long rem = numtoround % multiple;
+	unsigned long long roundcalc = (rem == 0) ? numtoround : (numtoround - rem + multiple);
 
 	out1fmt("%llu", roundcalc);
 	return 0;

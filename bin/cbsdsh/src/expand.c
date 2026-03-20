@@ -2395,7 +2395,7 @@ cix_read_dir(int argc, char **argv)
 		return 0;
 	}
 
-	return 0;
+	return 1;
 }
 //CIX
 

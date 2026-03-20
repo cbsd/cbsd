@@ -188,11 +188,8 @@ sqlitecmdrw(int argc, char **argv)
 {
 	sqlite3 *db;
 	char *query = NULL;
-	int ret = 0;
-	sqlite3_stmt *stmt = NULL;
+//	int ret = 0;
 	char *cp;
-	int maxretry = 50;
-	int retry = 0;
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
@@ -223,27 +220,27 @@ sqlitecmdrw(int argc, char **argv)
 		return 1;
 	}
 
-	do {
-		sqlite3_exec(db, "BEGIN", 0, 0, 0);
-		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-		sqlite3_exec(db, "COMMIT", 0, 0, 0);
-		if (ret == SQLITE_OK)
-			break;
-		retry++;
-		if (retry > maxretry)
-			break;
-	} while (ret != SQLITE_OK);
-
-	if (ret == SQLITE_OK) {
-		ret = sqlite3_step(stmt);
-		while (ret == SQLITE_ROW) {
-			sqlCB(stmt);
-			ret = sqlite3_step(stmt);
-		}
+	/* Execute arbitrary SQL string, allowing multiple statements separated by ';' */
+	if (!sql_exec(db, "BEGIN TRANSACTION;")) {
+		free(query);
+		sqlite3_close(db);
+		return 1;
 	}
 
-	if (stmt)
-		sqlite3_finalize(stmt);
+	if (!sql_exec(db, "%s", query)) {
+		/* Rollback on error */
+		sql_exec(db, "ROLLBACK;");
+		free(query);
+		sqlite3_close(db);
+		return 1;
+	}
+
+	if (!sql_exec(db, "COMMIT;")) {
+		free(query);
+		sqlite3_close(db);
+		return 1;
+	}
+
 	free(query);
 	sqlite3_close(db);
 
