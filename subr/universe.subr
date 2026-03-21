@@ -80,7 +80,7 @@ init_basedir()
 		shift $(($OPTIND - 1))
 	done
 
-	[ -z "${target_arch}" ] && target_arch=$( ${UNAME_CMD} -p )
+	[ -z "${target_arch}" ] && capture target_arch ${UNAME_CMD} -p
 
 	if [ -n "${basename}" -a -z "${_basename}" ]; then
 		[ "${basename}" != "0" ] && _basename="${basename}"
@@ -156,8 +156,11 @@ init_supported_arch()
 # require: $arch, $target_arch
 init_target_arch()
 {
-	local _my_arch=$( ${UNAME_CMD} -m )
-	local _my_target_arch=$( ${UNAME_CMD} -p )
+	local _my_arch=
+	local _my_target_arch=
+
+	capture _my_arch ${UNAME_CMD} -m
+	capture _my_target_arch ${UNAME_CMD} -p
 
 	[ "${_my_arch}" = "x86_64" ] && _my_arch="amd64"
 
@@ -248,7 +251,8 @@ init_scm_and_version()
 			;;
 	esac
 
-	[ -z "${SCM_REV}" ] && SCM_REV=$( ${DATE_CMD} "+%Y-%m-%d-%H:%M:%S" )
+	[ -z "${SCM_REV}" ] && capture SCM_REV ${DATE_CMD} "+%Y-%m-%d-%H:%M:%S"
+
 	return 0
 }
 
@@ -370,7 +374,7 @@ get_baseidx()
 # args, e.g: -a amd64 -p FreeBSD -s 0 -t amd64 -v 12
 get_kernelidx()
 {
-	local arch platform stable target_arch ver idx
+	local arch= platform= stable= target_arch= ver= idx=
 
 	while getopts "a:p:s:t:v:" opt; do
 		case "${opt}" in
@@ -383,16 +387,17 @@ get_kernelidx()
 		shift $(($OPTIND - 1))
 	done
 
-	idx=$( cbsdsqlro local "SELECT idx FROM bsdkernel WHERE platform='${platform}' AND arch='${arch}' AND targetarch='${target_arch}' AND ver='${ver}' AND stable='${stable}'" 2>/dev/null )
+	cbsdsqlro_vars local "SELECT idx FROM bsdkernel WHERE platform='${platform}' AND arch='${arch}' AND targetarch='${target_arch}' AND ver='${ver}' AND stable='${stable}'"
+
 	echo "${idx}"
 }
-
 
 
 # return idx from sql for src
 get_srcidx()
 {
-	cbsdsqlro local "SELECT idx FROM bsdsrc WHERE platform='${platform}' AND ver='${ver}'" 2>/dev/null
+	cbsdsqlro_vars local "SELECT idx FROM bsdsrc WHERE platform='${platform}' AND ver='${ver}'"
+	[ -n "${idx}" ] && echo "${idx}"
 }
 
 
@@ -400,17 +405,19 @@ get_srcidx()
 # Require: $platform, $ver, ( $SCM_REV - opt )
 register_src()
 {
+	local idx=
 	[ -z "${platform}" ] && echo "register_src: empty platform" && return 0
 	[ -z "${ver}" ] && echo "register_src: empty ver" && return 0
 	[ -z "${SCM_REV}" ] && SCM_REV="unknown"
 	[ -z "${SCM_URL}" ] && SCM_URL="unknown"
 
-	local idx=$( get_srcidx )
+	local idx=
+	capture idx get_srcidx
 
 	if [ -n "${idx}" ]; then
 		cbsdsqlrw local "UPDATE bsdsrc SET rev='${SCM_REV}',date=datetime('now','localtime'),source='${SCM_URL}' WHERE idx='${idx}'"
-		local dt=$( cbsdsqlro local "SELECT date FROM bsdsrc WHERE rev='${SCM_REV}' AND idx='${idx}'" )
-		date=$( ${DATE_CMD} -j -f "%Y-%m-%d %H:%M:%S" "${dt}" "+%s" )
+		cbsdsqlro_vars local "SELECT date FROM bsdsrc WHERE rev='${SCM_REV}' AND idx='${idx}'" dt
+		capture date ${DATE_CMD} -j -f "%Y-%m-%d %H:%M:%S" "${dt}" "+%s"
 	else
 		cbsdsqlrw local "INSERT INTO bsdsrc ( platform,name,ver,rev,source ) VALUES ( '${platform}', 'src', '${ver}', '${SCM_REV}', '${SCM_URL}' )"
 	fi
@@ -490,7 +497,8 @@ base_status()
 
 	[ -z "${TARGET_ARCH}" ] && TARGET_ARCH="${arch}"
 
-	_ret=$( cbsdsqlro local "SELECT status FROM bsdbase WHERE platform='${platform}' AND name='base' AND arch='${arch}' AND targetarch='${TARGET_ARCH}' AND ver='${ver}' AND stable='${stable}'" )
+	cbsdsqlro_vars local "SELECT status FROM bsdbase WHERE platform='${platform}' AND name='base' AND arch='${arch}' AND targetarch='${TARGET_ARCH}' AND ver='${ver}' AND stable='${stable}'" _ret
+
 	[ -z "${_ret}" ] && _ret=0
 	return ${_ret}
 }
