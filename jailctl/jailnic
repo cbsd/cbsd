@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v15.0.1
 CBSDMODULE="jail"
-MYARG=""
-MYOPTARG="address display flags header hwaddr interface jname mode mtu name new_name slot tagged untagged vlan_tagged vlan_untagged"
+CIXMYARG=""
+CIXOPTARG="address display flags header hwaddr interface jname mode mtu name new_name slot tagged untagged vlan_tagged vlan_untagged"
 MYDESC="Manage jail vnet NIC"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -61,17 +61,18 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
-
-. ${cbsdinit}
+cixinit
 
 # Normalize arguments: drop all x=y args
-normalize_argv() {
+normalize_argv()
+{
 	local args=""
 	local space=""
-	for arg in "$@"; do
+	for arg in "${CIX_OTHER_ARGS}"; do
 		case "${arg}" in
 			*=*)
 				# skip x=y args
+				true
 				;;
 			*)
 				args="${args}${space}${arg}"
@@ -86,7 +87,7 @@ normalize_argv() {
 # e.g.: cbsd jailnic list myjail
 #       cbsd jailnic delete myjail eth0
 
-set -- $(normalize_argv "$@")
+set -- $(normalize_argv "${CIX_OTHER_ARGS}")
 [ -z "${jname}" -a -n "${1}" ] && jname="${1}" && shift
 [ -z "${mode}"  -a -n "${1}" ] && mode="${1}" && shift
 
@@ -157,7 +158,8 @@ jailnic_list()
 	local _id _name _nic_slot _nic_parent _nic_hwaddr _nic_address _nic_mtu _nic_flags _nic_vlan_untagged _nic_vlan_tagged
 
 	# Check if table exists
-	_table_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jailnic';" )
+	cbsdsqlro_vars ${mysqlite} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jailnic'" _table_exists
+
 	if [ "${_table_exists}" = "0" ]; then
 		${ECHO} "${N1_COLOR}No NIC configuration for ${N2_COLOR}${jname}${N0_COLOR}"
 		return 0
@@ -223,25 +225,27 @@ jailnic_list()
 #
 jailnic_add()
 {
-	local _last_nic _last_slot _res
+	local _last_nic= _last_slot= _res= _seq=
 
 	# Find next free NIC name if not specified (eth0, eth1, ...)
 	if [ -z "${name}" ]; then
 		for _last_nic in $( ${SEQ_CMD} 0 16 ); do
-			_res=$( cbsdsqlro ${mysqlite} "SELECT name FROM jailnic WHERE name='eth${_last_nic}'" 2>&1 )
+			cbsdsqlro_vars ${mysqlite} "SELECT name FROM jailnic WHERE name='eth${_last_nic}'" _res
 			[ -z "${_res}" ] && break
 		done
 		name="eth${_last_nic}"
 	fi
 
 	# Check if name already exists
-	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	cbsdsqlro_vars ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" _exist
+
 	[ "${_exists}" != "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} already exists${N0_COLOR}"
 
 	# Find next free slot if not specified
 	if [ -z "${slot}" ]; then
-		for _last_slot in $( ${SEQ_CMD} 0 16 ); do
-			_res=$( cbsdsqlro ${mysqlite} "SELECT nic_slot FROM jailnic WHERE nic_slot=${_last_slot}" 2>&1 )
+		capture _seq ${SEQ_CMD} 0 16
+		for _last_slot in ${_seq}; do
+			cbsdsqlro_vars ${mysqlite} "SELECT nic_slot FROM jailnic WHERE nic_slot=${_last_slot}" _res
 			[ -z "${_res}" ] && break
 		done
 		slot="${_last_slot}"
@@ -270,61 +274,73 @@ jailnic_add()
 #
 jailnic_update()
 {
+	local _SQL_UPDATE=
 	[ -z "${name}" ] && err 1 "${N1_COLOR}jailnic update: ${N2_COLOR}name=${N1_COLOR} is required${N0_COLOR}"
 
 	# Check if NIC exists
-	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	cbsdsqlro_vars  ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" _exists
+
 	[ "${_exists}" = "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} not found${N0_COLOR}"
 
 	local _updated=""
 
 	if [ -n "${new_name}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET name='${new_name}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET name='${new_name}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET name='${new_name}' WHERE name='${name}'"
 		name="${new_name}"
 		_updated="${_updated} name=${new_name}"
 	fi
 
 	if [ -n "${slot}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_slot='${slot}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_slot='${slot}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_slot='${slot}' WHERE name='${name}'"
 		_updated="${_updated} slot=${slot}"
 	fi
 
 	if [ -n "${interface}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_parent='${interface}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_parent='${interface}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_parent='${interface}' WHERE name='${name}'"
 		_updated="${_updated} interface=${interface}"
 	fi
 
 	if [ -n "${hwaddr}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_hwaddr='${hwaddr}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_hwaddr='${hwaddr}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_hwaddr='${hwaddr}' WHERE name='${name}'"
 		_updated="${_updated} hwaddr=${hwaddr}"
 	fi
 
 	if [ -n "${address}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_address='${address}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_address='${address}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_address='${address}' WHERE name='${name}'"
 		_updated="${_updated} address=${address}"
 	fi
 
 	if [ -n "${mtu}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_mtu='${mtu}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_mtu='${mtu}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_mtu='${mtu}' WHERE name='${name}'"
 		_updated="${_updated} mtu=${mtu}"
 	fi
 
 	if [ -n "${flags}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_flags='${flags}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_flags='${flags}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_flags='${flags}' WHERE name='${name}'"
 		_updated="${_updated} flags=${flags}"
 	fi
 
 	if [ -n "${vlan_untagged}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_untagged='${vlan_untagged}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_untagged='${vlan_untagged}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_vlan_untagged='${vlan_untagged}' WHERE name='${name}'"
 		_updated="${_updated} vlan_untagged=${vlan_untagged}"
 	fi
 
 	if [ -n "${vlan_tagged}" ]; then
-		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_tagged='${vlan_tagged}' WHERE name='${name}'"
+#		cbsdsqlrw ${mysqlite} "UPDATE jailnic SET nic_vlan_tagged='${vlan_tagged}' WHERE name='${name}'"
+		_SQL_UPDATE="${_SQL_UPDATE}; UPDATE jailnic SET nic_vlan_tagged='${vlan_tagged}' WHERE name='${name}'"
 		_updated="${_updated} vlan_tagged=${vlan_tagged}"
 	fi
 
-	if [ -n "${_updated}" ]; then
+	if [ -n "${_SQL_UPDATE}" ]; then
+		cbsdsqlrw ${mysqlite} ${_SQL_UPDATE}
 		${ECHO} "${NO_COLOR}${name}:${N1_COLOR}${_updated} ${N0_COLOR}"
 		# Warn if jail is running
 		if [ "${jid}" != "0" -a -n "${jid}" ]; then
@@ -343,7 +359,8 @@ jailnic_delete()
 	[ -z "${name}" ] && err 1 "${N1_COLOR}jailnic delete: ${N2_COLOR}name=${N1_COLOR} is required${N0_COLOR}"
 
 	# Check if NIC exists
-	_exists=$( cbsdsqlro ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" )
+	cbsdsqlro_vars ${mysqlite} "SELECT COUNT(*) FROM jailnic WHERE name='${name}'" _exists
+
 	[ "${_exists}" = "0" ] && err 1 "${N1_COLOR}jailnic: NIC ${N2_COLOR}${name}${N1_COLOR} not found${N0_COLOR}"
 
 	cbsdsqlrw ${mysqlite} "DELETE FROM jailnic WHERE name='${name}'"

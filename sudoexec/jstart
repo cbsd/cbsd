@@ -271,7 +271,9 @@ if [ ${jail_num} -gt 1 ]; then
 		# wait loop
 		for i in ${wait_pid_files}; do
 			[ ! -r ${i} ] && continue
-			cbsd_pwait --pid=$( ${CAT_CMD} ${i} ) --timeout=${parallel}
+			read -r _pid < ${i}
+			[ -z "${_pid}" ] && continue
+			cbsd_pwait --pid=${_pid} --timeout=${parallel}
 		done
 
 		wait_for_fpid -a start -t ${parallel}
@@ -295,7 +297,7 @@ fi
 if [ $? -eq 1 ]; then
 	# remote start
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-	remotenode=$( jwhereis ${jname} )
+	capture remotenode jwhereis ${jname}
 	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	for i in ${remotenode}; do
 		if [ "${i}" = "${nodename}" ]; then
@@ -325,7 +327,7 @@ fi
 gettime st_time
 
 if [  "${ver}" = "native" ]; then
-	tmpver=$( ${UNAME_CMD} -r )
+	capture tmpver ${UNAME_CMD} -r
 	ver=${tmpver%%-*}
 	unset tmpver
 	[ "${stable}" = "1" ] && ver=${ver%%.*}
@@ -334,7 +336,7 @@ if [  "${ver}" = "native" ]; then
 fi
 
 if [ "${arch}" = "native" ]; then
-	arch=$( ${UNAME_CMD} -m )
+	capture arch ${UNAME_CMD} -m
 	[ "${arch}" = "x86_64" ] && arch="amd64"
 
 	init_target_arch
@@ -376,7 +378,7 @@ TRAP=""
 #Check for shared lock
 jaillock="${jailsysdir}/${jname}/locked"
 if [ -f "${jaillock}" ]; then
-	masterhost=$( ${CAT_CMD} ${jaillock} )
+	read -r masterhost < ${jaillock}
 	if [ "${masterhost}" = "${nodename}" -o -z "${masterhost}" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: jail ${jname}: remove my stale lock file: ${jaillock}
 		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Remove my stale lock file: ${N2_COLOR}${jaillock}${N0_COLOR}"
@@ -436,7 +438,7 @@ init_basedir
 
 if [ ${baserw} -eq 0 ]; then
 	if [ -r "${BASE_DIR_LOCKFILE}" ]; then
-		locked_by=$( ${CAT_CMD} ${BASE_DIR_LOCKFILE} )
+		read -r locked_by < ${BASE_DIR_LOCKFILE}
 		log_err 1 "${N1_COLOR}basedir locked: ${N2_COLOR}${BASE_DIR}${N1_COLOR}, by pid: ${N2_COLOR}${locked_by}${N1_COLOR}. Please try later or remove ${BASE_DIR_LOCKFILE}${N0_COLOR}"
 	fi
 fi
@@ -468,7 +470,8 @@ fi
 
 check_environment_script "tests"
 
-[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
+# moved to jsqlite-cache-create
+#[ ! -r ${jailsysdir}/${jname}/local.sqlite ] && /usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
 
 # check for DHCP in ip4_addr string and replace them by ip
 OIFS="${IFS}"
@@ -479,13 +482,13 @@ _mod=0
 for _tmp in ${ip4_addr}; do
 	case ${_tmp} in
 		[Dd][Hh][Cc][PP])
-			_tmp=$( dhcpd )
+			capture _tmp dhcpd
 			[ $? -eq 2 ] && log_err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: set ip4_addr for ${jname} via DHCP: ${_tmp}
 			_mod=1
 			;;
 		[Dd][Hh][Cc][PP][vV]6)
-			_tmp=$( dhcpdv6 )
+			capture _tmp dhcpdv6
 			[ $? -eq 2 ] && log_err 1 "${N1_COLOR}No free IP6 address for DHCP in nodeip6pool${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: set ip4_addr for ${jname} via DHCPv6: ${_tmp}
 			_mod=1
@@ -573,7 +576,7 @@ case ${zfsfeat} in
 		zfsmnt ${data}
 		if [ $? -eq 2 ]; then
 			# ZFS encryption?
-			zfs_encryption_val=$( ${ZFS_CMD} get -Ho value encryption ${ZPOOL} 2>/dev/null )
+			capture zfs_encryption_val ${ZFS_CMD} get -Ho value encryption ${ZPOOL}
 			if [ -n "${zfs_encryption_val}" -a "${zfs_encryption_val}" != "off" ]; then
 				${ECHO} "${N1_COLOR}${CIX_APP}: encrypted dataset: ${N2_COLOR}${zfs_encryption_val}${N0_COLOR}"
 				zfs_encryption_keyformat=$( ${ZFS_CMD} get -Ho value keyformat ${ZPOOL} 2>/dev/null )
@@ -595,7 +598,7 @@ esac
 
 if [ "${ver}" != "empty" ]; then
 	if [ ${baserw} -eq 1 ]; then
-		path=${data}
+		path="${data}"
 		[ ! -f "${path}/bin/sh" ] && switch_baserw ${path} 1
 		[ -f ${mount_fstab} ] && ${RM_CMD} -f ${mount_fstab}
 	fi
@@ -657,8 +660,12 @@ with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
 [ -r ${with_zfs_attach} ] && ${RM_CMD} -f ${with_zfs_attach}
 
 mount_jail_fstab
-export_jail_data_for_external_hook
-external_exec_master_script "master_prestart.d"
+
+# hook
+if cix_read_dir ${jailsysdir}/${jname}/master_prestart.d/ >/dev/null 2>&1; then
+	export_jail_data_for_external_hook
+	external_exec_master_script "master_prestart.d"
+fi
 
 if [ "${ver}" = "empty" ]; then
 	#path="/"
@@ -675,15 +682,15 @@ if [ ${baserw} -eq 1 ]; then
 else
 	elftest="${BASE_DIR}/bin/sh"
 fi
-[ -f "${elftest}" ] && osname=$( ${miscdir}/elf_tables --osname ${elftest} )
+[ -f "${elftest}" ] && capture osname ${miscdir}/elf_tables --osname ${elftest}
 
 [ "${osname}" = "freebsd" ] && is_freebsd=1
 
 # check for freshed version of the base via elf from /bin/sh
 if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
 	if [ -n ${BASE_DIR} -a -f "${BASE_DIR}/bin/sh" ]; then
-		baseelf=$( ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh 2>/dev/null )
-		jailelf=$( ${miscdir}/elf_tables --ver ${elftest} 2>/dev/null )
+		capture baseelf ${miscdir}/elf_tables --ver ${BASE_DIR}/bin/sh
+		capture jailelf ${miscdir}/elf_tables --ver ${elftest}
 		if [ ${baseelf} -gt ${jailelf} ]; then
 			[ ${quiet} -ne 1 ] && ${ECHO} "${BOLD}Notice: ${N1_COLOR}You have a more recent version of the base in ${BASE_DIR} (${N2_COLOR}${baseelf}${N1_COLOR}/${N2_COLOR}${jailelf}${N1_COLOR}).${N0_COLOR}"
 			[ ${quiet} -ne 1 ] && ${ECHO} "${BOLD}Notice: ${N1_COLOR}Please consider upgrading jail base via ${N2_COLOR}cbsd jupgrade${N0_COLOR}"
@@ -702,14 +709,11 @@ set +e
 
 #rctl/limits area
 jrctl jname=${jname} mode=set quiet=${quiet}
-[ -r "${jailsysdir}/${jname}/helpers/jrctl.sqlite" ] && nice=$( cbsdsqlro ${jailsysdir}/${jname}/helpers/jrctl.sqlite "SELECT cur FROM forms WHERE param='nice'" )
+if [ -r "${jailsysdir}/${jname}/helpers/jrctl.sqlite" ]; then
+	cbsdsqlro_vars ${jailsysdir}/${jname}/helpers/jrctl.sqlite "SELECT cur FROM forms WHERE param='nice'" nice
+fi
 
 setup_jail_nice
-
-# 2021-10: Lost relevance?
-#unset_changes_20140930
-#set_changes_20140930
-
 etcupdate_check
 
 [ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Starting jail: ${N2_COLOR}${jname}, parallel timeout=${parallel}${N0_COLOR}"
@@ -717,7 +721,7 @@ TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/jstart.${jname}.$$;"
 trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 
 # check that the emulator is able to execute commands
-res=$( emulator_exec_check )
+capture res emulator_exec_check
 ret=$?
 
 if [ ${ret} -ne 0 ]; then
@@ -732,7 +736,7 @@ fi
 # tmpfs on /usr/jails/jails/jail2/var (tmpfs, local)
 # tmpfs on /usr/jails/jails/jail2/tmp (tmpfs, local)
 
-CPUSET=$(get_cpuset_cmd)
+capture CPUSET get_cpuset_cmd
 
 [ -r ${ftmpdir}/jstart.${jname}.err ] && ${RM_CMD} -f ${ftmpdir}/jstart.${jname}.err
 
@@ -777,7 +781,10 @@ fi
 
 trap "" HUP INT ABRT BUS TERM EXIT
 
-[ -r "${ftmpdir}/jstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstart.${jname}.$$ ) --timeout=${parallel} > /dev/null 2>&1
+if [ -r "${ftmpdir}/jstart.${jname}.$$" ]; then
+	read -r _pid < ${ftmpdir}/jstart.${jname}.$$
+	cbsd_pwait --pid=${_pid} --timeout=${parallel} > /dev/null 2>&1
+fi
 sleep 1
 
 jstart_slow=0
@@ -849,8 +856,13 @@ FID="/var/run/jail_${UNDHOSTNAME}.id"
 echo ${ST} > ${FID}
 
 # todo: CPUSET, NICE, FIB?
+
 exec_cbsdjail_first_boot
-external_exec_script -s start.d
+
+# hook
+if cix_read_dir ${jailsysdir}/${jname}/start.d/ >/dev/null 2>&1; then
+	external_exec_script -s start.d
+fi
 
 get_jid
 jid=${myjid}
@@ -859,7 +871,10 @@ if [ "${platform}" = "DragonFly" ]; then
 	[ ${allow_raw_sockets} -eq 1 ] && ${SYSCTL_CMD} -w jail.${jid}.net_raw_sockets=1
 fi
 
-external_exec_master_script "master_poststart.d"
+# hook
+if cix_read_dir ${jailsysdir}/${jname}/master_poststart.d/ >/dev/null 2>&1; then
+	external_exec_master_script "master_poststart.d"
+fi
 
 if [ ${myjid} -gt 0 ]; then
 	status="1"
@@ -870,7 +885,12 @@ else
 	status="0"
 	# looks like jail start is failed, execute post script
 	exec_master_poststop
-	external_exec_master_script "master_poststop.d"
+
+	# hook
+	if cix_read_dir ${jailsysdir}/${jname}/master_poststop.d/ >/dev/null 2>&1; then
+		external_exec_master_script "master_poststop.d"
+	fi
+
 	exec_poststop
 	jcleanup jname=${jname}
 
@@ -885,7 +905,7 @@ fi
 cbsdsqlrw local "UPDATE jails SET jid=${myjid},status=${status} where jname='${jname}'"
 ${RM_CMD} -f ${ftmpdir}/${jname}.conf
 fwcounter
-expose mode=apply
+expose mode=apply jname=${jname}
 
 if [ ${myjid} -gt 0 ]; then
 	if [ -r "${jailsysdir}/${jname}/cpu" ]; then
@@ -921,7 +941,7 @@ if [ ${myjid} -gt 0 -a "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_RED
 	cbsdredis hset "jail:${jname}" status 2 jid ${myjid} started ${st_time} echo "WARNING: Failed to update Redis"
 	cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
 fi
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 
 if [ -f "${jailsysdir}/${jname}/jail-message" -a ${quiet} -ne 1 ]; then
 	${ECHO} "${N1_COLOR}---- ${N2_COLOR}jail messages ${N1_COLOR}----${N0_COLOR}" 1>&2

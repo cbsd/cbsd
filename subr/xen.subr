@@ -9,7 +9,7 @@ _CBSD_XEN_SUBR=1
 
 . ${subrdir}/virtual.subr
 
-[ -z "${XL_CMD}" ] && XL_CMD="/usr/local/sbin/xl"
+[ -z "${XL_CMD}" ] && capture XL_CMD whereis xl
 
 init_xen_usage_freebsd()
 {
@@ -31,7 +31,9 @@ init_xen_usage_freebsd()
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_kernel=\"/boot/xen\"' >> /boot/loader.conf${N0_COLOR}"
 	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M,max:2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh dom0_vcpus_pin\"' >> /boot/loader.conf${N0_COLOR}"
 	${ECHO} "${H1_COLOR}  Or, If you're having trouble, try adding a little more detail:${N0_COLOR}"
-	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M,max:2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh dom0_vcpus_pin com1=115200,8n1 guest_loglvl=all loglvl=all vga=keep noreboot\"' >> /boot/loader.conf${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'xen_cmdline=\"dom0_mem=${H3_COLOR}2048M,max:2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR} dom0=pvh dom0_vcpus_pin com1=115200,8n1 guest_loglvl=all loglvl=all console=vga vga=gfx-1280x1024x16 noreboot\"' >> /boot/loader.conf${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'kern.vt.fb.default_mode="1280x1024" ' >> /boot/loader.conf${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} echo 'efi_max_resolution="1280x1024"' >> /boot/loader.conf${N0_COLOR}"
 	echo
 	${ECHO} "${N1_COLOR}Where ${H3_COLOR}bge0${N1_COLOR} is your uplink interface${N0_COLOR}"
 
@@ -122,8 +124,9 @@ init_xen()
 		exit 1
 	fi
 
-	tmuxcmd=$( which tmux )
-	if [ -z "${tmuxcmd}" ]; then
+	[ -z "${TMUX_CMD}" ] && capture TMUX_CMD whereis tmux
+
+	if [ -z "${TMUX_CMD}" ]; then
 		case "${platform}" in
 			freebsd)
 				err 1 "${N1_COLOR}Current version required for ${N2_COLOR}tmux${N1_COLOR}\nPlease ${N2_COLOR}pkg install tmux ${N1_COLOR} or ${N2_COLOR}make -C /usr/ports/sysutils/tmux install${N1_COLOR} it.${N0_COLOR}"
@@ -136,7 +139,7 @@ init_xen()
 
 	if [ "${platform}" = "freebsd" ]; then
 		# ulimit buildin
-		lockedmemory=$( ulimit -l | ${AWK_CMD} '{printf $1}' )
+		capture lockedmemory ulimit -l
 		if [ "${lockedmemory}" != "unlimited" ]; then
 			# https://lists.freebsd.org/pipermail/freebsd-xen/2015-May/002391.html
 			${ECHO} "${N1_COLOR}Xen requires for enlarged locked memory, see: ${N2_COLOR}ulimits -l${N0_COLOR}"
@@ -165,7 +168,7 @@ compile_cd_args()
 	fi
 
 	if [ ! -r "${iso_img}" ]; then
-		iso_img2=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
+		cbsdsqlro_vars storage_media "SELECT path FROM media WHERE jname='${jname}' AND type='iso' LIMIT 1" iso_img2
 		if [ ! -r ${iso_img2} ]; then
 			${ECHO} "${N1_COLOR}iso_img in not readable: ${N2_COLOR}${iso_img} ${iso_img2}${N0_COLOR}"
 			return 1
@@ -207,24 +210,14 @@ compile_cd_args()
 # fi
 compile_dsk_args()
 {
-	local dsk_id=0
-	local sqldelimer=" "
-	local prefix
-	local full_dsk_path
-	local XENCFG="${1}"
-	local dsk_count=0
-	local iso_count=0
-	local iso_img2=
-	local _media_count=0
-	local first_count=0
-	local _ascii _dev_letter _dev
-
+	local dsk_id=0 prefix= full_dsk_path= dsk_count=0 iso_count=0 iso_img2= _media_count=0
+	local sqldelimer=" " XENCFG="${1}"
+	local first_count=0 _ascii= _dev_letter= _dev=
 	local xvd_num=0		# vxd + hd have same counter
 	local sd_num=0
 
-	dsk_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM xendsk' )
-
-	iso_img2=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT COUNT(dsk_path) FROM xendsk" dsk_count
+	cbsdsqlro_vars storage_media "SELECT path FROM media WHERE jname='${jname}' AND type='iso' LIMIT 1" iso_img2
 
 	[ -r ${iso_img2} ] && iso_count=$(( iso_count + 1 ))
 
@@ -371,7 +364,6 @@ compile_nic_args()
 	[ -z "${clean_arp_table_by_vm}" ] && clean_arp_table_by_vm="1"
 
 	cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT COUNT(id) FROM xennic WHERE jname='${jname}'" _cnt
-
 	[ -z "${_cnt}" -o "${_cnt}" = "0" ] && return 0
 
 	echo "vif = [" >> ${_xencfg}
@@ -716,7 +708,7 @@ xen_remove_nic()
 	local id="${1}"; shift
 	[ -z "${jname}" -o -z "${id}" ] && return 0
 
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM xennic WHERE id=\"${id}\" AND jname=\"${jname}\"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM xennic WHERE id='${id}' AND jname='${jname}'"
 
 	return 0
 }
@@ -725,8 +717,7 @@ xen_remove_nic()
 # export vncdisplay
 compile_vnc_args()
 {
-	local vm_port
-	local vnc_bind
+	local vm_port= vnc_bind=
 
 	# spice by default?
 	[ ${spice_default} -eq 1 ] && return 1
@@ -1006,9 +997,9 @@ check_for_xen_process()
 
 	[ -z "${jname}" ] && return 0
 
-	_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
+	capture _state ${XL_CMD} list ${jname}
 	[ $? -ne 0 ] && return 0
-	_domid=$( ${XL_CMD} domid ${jname} )
+	capture _domid ${XL_CMD} domid ${jname}
 	. ${strings}
 
 	local search_cmd=" -xen-domid ${_domid} "
@@ -1038,7 +1029,7 @@ check_for_xen_process()
 # fi
 is_xen_dom0()
 {
-	local _ret
+	local _ret=
 	[ ! -d /dev/xen ] && return 1
 	[ ! -x ${_xen_cmd} ] && return 1
 	${XL_CMD} info > /dev/null 2>&1
