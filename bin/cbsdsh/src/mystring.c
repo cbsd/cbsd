@@ -414,7 +414,8 @@ substrcmd(int argc, char **argv)
 	optreset = 1;
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options,
+		/* NetBSD does not provide getopt_long_only() in base libc. */
+		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
 		if (optcode == -1)
 			break;
@@ -518,7 +519,8 @@ strposcmd(int argc, char **argv)
 	optreset = 1;
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options,
+		/* NetBSD does not provide getopt_long_only() in base libc. */
+		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
 		if (optcode == -1)
 			break;
@@ -612,7 +614,8 @@ roundupcmd(int argc, char **argv)
 	optreset = 1;
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options,
+		/* NetBSD does not provide getopt_long_only() in base libc. */
+		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
 		if (optcode == -1)
 			break;

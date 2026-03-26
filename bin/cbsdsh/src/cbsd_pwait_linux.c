@@ -67,7 +67,7 @@ cbsd_pwaitcmd(int argc, char **argv)
 	}
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options,
+		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
 		if (optcode == -1)
 			break;

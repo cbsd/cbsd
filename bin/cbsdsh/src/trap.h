@@ -49,7 +49,7 @@ void dotrap(void);
 void setinteractive(int);
 void exitshell(void) __attribute__((__noreturn__));
 int decode_signal(const char *, int);
-void sigblockall(sigset_t *oldmask);
+void dash_sigblockall(sigset_t *oldmask);
 
 static inline int have_traps(void)
 {

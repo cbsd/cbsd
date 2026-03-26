@@ -109,16 +109,16 @@ dump_iscsi_discovery:
 	$(STRIP) misc/dump_iscsi_discovery
 
 pkg-config-check:
-	@/usr/bin/which -s pkg-config || \
+	@/usr/bin/which pkg-config >/dev/null || \
 		(echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf"; /usr/bin/false)
 
 cbsd: pkg-config-check
-	$(CC) bin/src/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include && $(STRIP) bin/cbsdsftp
-	$(CC) bin/src/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include && $(STRIP) bin/cbsdsftp6
-	$(CC) bin/src/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include && $(STRIP) bin/cbsdssh
-	$(CC) bin/src/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include && $(STRIP) bin/cbsdssh6
+	$(CC) bin/src/cbsdsftp.c -o bin/cbsdsftp -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include && $(STRIP) bin/cbsdsftp
+	$(CC) bin/src/cbsdsftp6.c -o bin/cbsdsftp6 -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include && $(STRIP) bin/cbsdsftp6
+	$(CC) bin/src/cbsdssh.c -o bin/cbsdssh -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include && $(STRIP) bin/cbsdssh
+	$(CC) bin/src/cbsdssh6.c -o bin/cbsdssh6 -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include && $(STRIP) bin/cbsdssh6
 	$(CC) sbin/src/netmask.c -o sbin/netmask && $(STRIP) sbin/netmask
-	$(CC) bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include && $(STRIP) bin/cfetch
+	$(CC) bin/src/cfetch.c -o bin/cfetch -lcurl -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include && $(STRIP) bin/cfetch
 	$(CC) misc/src/efivar2.c -o misc/efivar && $(STRIP) misc/efivar
 	$(CC) misc/src/merge.c -o misc/merge && $(STRIP) misc/merge
 	$(CC) misc/src/getch.c -o misc/getch && $(STRIP) misc/getch
@@ -130,10 +130,10 @@ cbsd: pkg-config-check
 	$(CC) misc/src/chk_arp_byip.c -o misc/chk_arp_byip && $(STRIP) misc/chk_arp_byip
 	$(CC) misc/src/cbsdtee.c -o misc/cbsdtee && $(STRIP) misc/cbsdtee
 	$(CC) misc/src/pexec.c -o misc/pexec && $(STRIP) misc/pexec
-	$(CC) misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/elf_tables && $(STRIP) misc/elf_tables
+	$(CC) misc/src/elf_tables.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -L/usr/pkg/lib -lelf -o misc/elf_tables && $(STRIP) misc/elf_tables
 	$(CC) misc/src/fmagic.c -lmagic -o misc/fmagic && $(STRIP) misc/fmagic
 	$(CC) misc/src/getshell.c -o misc/getshell && $(STRIP) misc/getshell
-	$(CC) misc/src/conv2human.c -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -lelf -o misc/conv2human -lutil && $(STRIP) misc/conv2human
+	$(CC) misc/src/conv2human.c -I/usr/local/include -L/usr/local/lib -L/usr/pkg/lib -o misc/conv2human && $(STRIP) misc/conv2human
 	$(CC) misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && $(STRIP) misc/cbsd_fwatch
 	$(CC) misc/src/daemonize/daemonize.c misc/src/daemonize/getopt.c -Imisc/src/daemonize -O2 -o misc/daemonize && $(STRIP) misc/daemonize
 	$(CC) misc/src/mountpoint.c -o misc/mountpoint && $(STRIP) misc/mountpoint

@@ -468,7 +468,7 @@ int decode_signal(const char *string, int minsig)
 	return -1;
 }
 
-void sigblockall(sigset_t *oldmask)
+void dash_sigblockall(sigset_t *oldmask)
 {
 	sigset_t mask;
 

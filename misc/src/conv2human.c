@@ -3,16 +3,86 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-#ifdef WITH_BSD_H
-#include <bsd/libutil.h>
-#else
-#include <libutil.h>
-#endif
 #include <string.h>
+#include <stdint.h>
+#include <errno.h>
+#include <inttypes.h>
 
-#ifdef __DragonFly__
-#include "expand_number.c"
-#endif
+static int
+cbsd_expand_number(const char *s, uint64_t *out)
+{
+	char *endp = NULL;
+	uint64_t v;
+	uint64_t mul = 1;
+	unsigned long long ull;
+	char suf = 0;
+
+	if (!s || !*s || !out)
+		return -1;
+
+	errno = 0;
+	ull = strtoull(s, &endp, 10);
+	if (errno != 0 || endp == s)
+		return -1;
+	v = (uint64_t)ull;
+
+	if (endp && *endp) {
+		suf = (char)tolower((unsigned char)*endp);
+		endp++;
+		if (*endp != '\0') {
+			/* Reject junk like "10mbps". */
+			return -1;
+		}
+		switch (suf) {
+		case 'b':
+			mul = 1;
+			break;
+		case 'k':
+			mul = 1024ULL;
+			break;
+		case 'm':
+			mul = 1024ULL * 1024ULL;
+			break;
+		case 'g':
+			mul = 1024ULL * 1024ULL * 1024ULL;
+			break;
+		case 't':
+			mul = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+			break;
+		case 'p':
+			mul = 1024ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+			break;
+		case 'e':
+			mul = 1024ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+			break;
+		default:
+			return -1;
+		}
+	}
+
+	if (mul != 0 && v > UINT64_MAX / mul)
+		return -1;
+	*out = v * mul;
+	return 0;
+}
+
+static void
+cbsd_humanize_bytes(char *buf, size_t buflen, uint64_t bytes)
+{
+	static const char suffixes[] = "BKMGTPE";
+	size_t i = 0;
+	uint64_t v = bytes;
+
+	if (!buf || buflen == 0)
+		return;
+
+	while (v >= 1024 && i < (sizeof(suffixes) - 2)) {
+		v /= 1024;
+		i++;
+	}
+
+	(void)snprintf(buf, buflen, "%" PRIu64 "%c", v, suffixes[i]);
+}
 
 #define MAX_VAL_LEN 1024
 
@@ -20,12 +90,7 @@ int
 prthumanval(uint64_t bytes)
 {
 	char buf[6];
-	int flags;
-	// flags = HN_NOSPACE | HN_DECIMAL | HN_DIVISOR_1000;
-	// flags = HN_NOSPACE | HN_DECIMAL;
-	flags = HN_NOSPACE;
-
-	humanize_number(buf, sizeof(buf) - 1, bytes, "", HN_AUTOSCALE, flags);
+	cbsd_humanize_bytes(buf, sizeof(buf), bytes);
 
 	(void)printf("%s", buf);
 	return 0;
@@ -49,7 +114,6 @@ main(int argc, char *argv[])
 	uint64_t number;
 	int is_float = 0;
 	char metrics[] = "bkmgtpe";
-	char in_metrics;
 	int len = 0;
 	int in_index = -1;
 	int new_val;
@@ -84,7 +148,7 @@ main(int argc, char *argv[])
 		}
 		if (is_float == 1) {
 			char in_metrics = argv[1][len - 1];
-			for (i = 0; i < strlen(metrics); i++) {
+			for (i = 0; i < (int)strlen(metrics); i++) {
 				if (metrics[i] == in_metrics) {
 					in_index = i;
 					break;
@@ -104,7 +168,7 @@ main(int argc, char *argv[])
 			strncpy(buf, argv[1], strlen(argv[1]));
 		}
 
-		if (expand_number(buf, &number) == -1) {
+		if (cbsd_expand_number(buf, &number) == -1) {
 			// invalid value for val argument
 			//  printf("Bad value\n");
 			exit(1);

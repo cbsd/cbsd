@@ -1212,7 +1212,7 @@ waitproc(int block, int *status)
 		if (err || (err = -!block))
 			break;
 
-		sigblockall(&oldmask);
+		dash_sigblockall(&oldmask);
 
 		while (!gotsigchld && !pending_sig)
 			sigsuspend(&oldmask);
@@ -1551,7 +1551,7 @@ xtcsetpgrp(int fd, pid_t pgrp)
 {
 	int err;
 
-	sigblockall(NULL);
+	dash_sigblockall(NULL);
 	err = tcsetpgrp(fd, pgrp);
 	sigclearmask();
 

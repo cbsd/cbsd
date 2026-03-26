@@ -1,7 +1,6 @@
 #!/bin/sh
 pgm="${0##*/}"			# Program basename
 progdir="${0%/*}"		# Program directory
-export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 
 export NOCOLOR=1
 REALPATH_CMD=$( which realpath 2>/dev/null )
@@ -132,7 +131,8 @@ init_zfs_feat()
 					# first run?
 					if [ ! -d "${workdir}/var/db" ]; then
 						if [ "${_pool}" = "${_root_pool}" ]; then
-							_dirname=$( ${BASENAME_CMD} ${workdir} )
+							# basename
+							_dirname="${workdir##*/}"
 							_parent_pool=$( echo "${_root_pool}" | ${TR_CMD} "/" " " | ${AWK_CMD} '{printf $1}' )
 							if [ "${inter}" != "0" ]; then
 								echo
@@ -162,6 +162,86 @@ init_zfs_feat()
 		fi
 	fi
 
+	return 0
+}
+
+init_hammer2_feat()
+{
+	local HAMMER2_CMD= _ret=0 _work_pool=
+	local _root_pool= _pool= _dirname= _res=
+
+	zfsfeat=0
+
+	HAMMER2_CMD=$( ${WHICH_CMD} hammer2 2>/dev/null )
+	if [ -n "${HAMMER2_CMD}" ]; then
+		# volume0  /dev/vbd0s1d 128.00GB
+		if [ -d "${workdir}" ]; then
+			_work_pool=$( ${HAMMER2_CMD} volume-list ${workdir} > /tmp/init_hammer2_work_pool.$$ 2>/dev/null )
+			_ret=$?
+			if [ ${_ret} -eq 0 ]; then
+				_res=$( ${GREP_CMD} ^@ /tmp/init_hammer2_work_pool.$$ | ${AWK_CMD} '{printf $1}' )
+				if [ "${_res}" = "@JAILS" ]; then
+					# already hammer2fs
+					hammerfeat=1
+					${RM_CMD} -f /tmp/init_hammer2_work_pool.$$
+					return 0
+				fi
+				${RM_CMD} -f /tmp/init_hammer2_work_pool.$$
+			fi
+		fi
+		_pool=$( ${HAMMER2_CMD} volume-list ${workdir}/../ > /tmp/init_hammer2_feat.$$ 2>/dev/null )
+		_ret=$?
+		if [ ${_ret} -eq 0 ]; then
+			#_root_pool=$( ${ZFS_CMD} get -Ho value name / 2>/dev/null )
+			_root_pool=$( ${GREP_CMD} -E "^volume" /tmp/init_hammer2_feat.$$ | ${GREP_CMD} "/dev/" | ${AWK_CMD} '{printf $2}' )
+			_ret=$?
+			${RM_CMD} -f /tmp/init_hammer2_feat.$$
+			if [ -n "${_root_pool}" -a ${_ret} -eq 0 ]; then
+				# basename
+				_dev="${_root_pool##*/}"
+				_fs_root=$( ${MOUNT_CMD} | ${GREP_CMD} "${_dev} on " | ${AWK_CMD} '{printf $3}' )
+				[ -z "${_fs_root}" ] && return 1
+				hammerfeat=1
+				# first run?
+				if [ ! -d "${workdir}/var/db" ]; then
+					echo "HAMMER POOL: ${_root_pool} + ${_pool} + $inter"
+					if [ "${_pool}" != "${_root_pool}" ]; then
+						# basename
+						_dirname="${workdir##*/}"
+						if [ "${inter}" != "0" ]; then
+							echo
+							echo "Error: on HAMMER2-based systems, the CBSD requires a separate dataset different from the root one (${_root_pool})."
+							echo "Please create a separate dataset first, e.g.:"
+							echo
+							echo " ${HAMMER2_CMD} -s ${_fs_root} pfs-create JAILS"
+							echo " mount_hammer2 ${_root_pool}@JAILS ${workdir}"
+							echo
+							echo "Then re-run: env workdir=${workdir} ${CIX_DISTDIR}/sudoexec/initenv"
+							echo
+							echo "!!! Add to /etc/fstab:"
+							echo "${_root_pool}@JAILS    ${workdir}    hammer2    rw    0    0"
+							exit 1
+						else
+							# We will do automatically
+							${HAMMER2_CMD} -s ${_fs_root} pfs-create JAILS
+							mount_hammer2 ${_root_pool}@JAILS ${workdir}
+							_ret=$?
+							if [ ${_ret} -eq 0 ]; then
+								echo "CBSD pool created: ${HAMMER2_CMD} -s ${_fs_root} pfs-create JAILS; mount_hammer2 ${_root_pool}@JAILS ${workdir}"
+								echo "added fstab:"
+								echo "${_root_pool}@JAILS    ${workdir}    hammer2    rw    0    0" | tee -a /etc/fstab
+							else
+								echo "CBSD pool create failed: ${HAMMER2_CMD} -s ${_fs_root} pfs-create JAILS; mount_hammer2 ${_root_pool}@JAILS ${workdir}"
+								exit ${_ret}
+							fi
+						fi
+					fi
+				fi
+			fi
+		fi
+	fi
+
+	[ -r /tmp/init_hammer2_feat.$$ ] && ${RM_CMD} -f /tmp/init_hammer2_feat.$$
 	return 0
 }
 
@@ -370,7 +450,6 @@ phase0()
 	first_init=1
 
 	#. ${CIX_DISTDIR}/cbsd.conf
-	newver="${myversion}"
 
 	[ -z "${cbsd_workdir}" -a -r /etc/rc.conf ] && . /etc/rc.conf
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="/usr/jails"
@@ -407,7 +486,7 @@ phase0X()
 	# sometimes we have workdir/DB but no cbsdsql, double check with 'phase0'
 	[ ! -x ${miscdir}/sqlcli ] && return 0	# no build/first run?
 
-	${ECHO} "${N1_COLOR}[Stage 0:${N2_COLOR} upgrading and migration data from ${oldver} to ${newver}${N1_COLOR}]${N0_COLOR}"
+	${ECHO} "${N1_COLOR}[Stage 0:${N2_COLOR} upgrading and migration data from ${oldver} to ${cix_newver}${N1_COLOR}]${N0_COLOR}"
 
 	# build-in backup script
 	readconf initenv.conf
@@ -445,6 +524,10 @@ phase1()
 		case "${platform}" in
 			Linux)
 				echo "useradd ${cbsduser}"
+				;;
+			NetBSD)
+				echo "useradd ${cbsduser}"
+				echo "groupadd ${cbsduser}"
 				;;
 			*)
 				echo "pw useradd -n ${cbsduser}"
@@ -492,7 +575,11 @@ phase1()
 
 	# check ZFS root dataset vs CBSD dataset
 	init_zfs_feat
-
+	case "${platform}" in
+		DragonFly)
+			init_hammer2_feat
+			;;
+	esac
 	printf "${myversion}" > ${workdir}/ver
 
 	$ECHO "${N1_COLOR} * Check hier and permission..."
@@ -557,7 +644,7 @@ phase2()
 		Linux)
 			MAKE_CMD=$( which make )
 			;;
-		FreeBSD)
+		FreeBSD|DragonFly|NetBSD)
 			MAKE_CMD=$( which gmake )
 			;;
 		*)
@@ -573,12 +660,12 @@ phase2()
 		mod_cbsd_dbi_enabled=YES
 	fi
 
-	[ ! -f "${CIX_DISTDIR}/bin/cbsdsftp" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdsftp.c -o ${CIX_DISTDIR}/bin/cbsdsftp -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${CIX_DISTDIR}/bin/cbsdsftp6" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdsftp6.c -o ${CIX_DISTDIR}/bin/cbsdsftp6 -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${CIX_DISTDIR}/bin/cbsdssh" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdssh.c -o ${CIX_DISTDIR}/bin/cbsdssh -lssh2 -L/usr/local/lib -I/usr/local/include
-	[ ! -f "${CIX_DISTDIR}/bin/cbsdssh6" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdssh6.c -o ${CIX_DISTDIR}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${CIX_DISTDIR}/bin/cbsdsftp" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdsftp.c -o ${CIX_DISTDIR}/bin/cbsdsftp -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include
+	[ ! -f "${CIX_DISTDIR}/bin/cbsdsftp6" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdsftp6.c -o ${CIX_DISTDIR}/bin/cbsdsftp6 -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include
+	[ ! -f "${CIX_DISTDIR}/bin/cbsdssh" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdssh.c -o ${CIX_DISTDIR}/bin/cbsdssh -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include
+	[ ! -f "${CIX_DISTDIR}/bin/cbsdssh6" ] && compile_cc ${CIX_DISTDIR}/bin/src/cbsdssh6.c -o ${CIX_DISTDIR}/bin/cbsdssh6 -lssh2 -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include
 	[ ! -f "${CIX_DISTDIR}/sbin/netmask" ] && compile_cc ${CIX_DISTDIR}/sbin/src/netmask.c -o ${CIX_DISTDIR}/sbin/netmask
-	[ ! -f "${CIX_DISTDIR}/bin/cfetch" ] && compile_cc ${CIX_DISTDIR}/bin/src/cfetch.c -o ${CIX_DISTDIR}/bin/cfetch -lcurl -L/usr/local/lib -I/usr/local/include
+	[ ! -f "${CIX_DISTDIR}/bin/cfetch" ] && compile_cc ${CIX_DISTDIR}/bin/src/cfetch.c -o ${CIX_DISTDIR}/bin/cfetch -lcurl -L/usr/local/lib -L/usr/pkg/lib -I/usr/local/include -I/usr/pkg/include
 	[ ! -f "${CIX_DISTDIR}/misc/jexec_env" ] && compile_cc ${CIX_DISTDIR}/misc/src/jexec_env.c -o ${CIX_DISTDIR}/misc/jexec_env
 	[ ! -f "${CIX_DISTDIR}/misc/merge" ] && compile_cc ${CIX_DISTDIR}/misc/src/merge.c -o ${CIX_DISTDIR}/misc/merge
 	[ ! -f "${CIX_DISTDIR}/misc/jail_env" ] && compile_cc ${CIX_DISTDIR}/misc/src/jail_env.c -o ${CIX_DISTDIR}/misc/jail_env
@@ -596,19 +683,19 @@ phase2()
 
 	case "${platform}" in
 		Linux)
-			[ ! -f "${CIX_DISTDIR}/misc/conv2human" ] && compile_cc -DWITH_BSD_H -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${CIX_DISTDIR}/misc/src/conv2human.c -lelf -lutil -lbsd -o ${CIX_DISTDIR}/misc/conv2human
+			[ ! -f "${CIX_DISTDIR}/misc/conv2human" ] && compile_cc -I/usr/local/include -L/usr/local/lib ${CIX_DISTDIR}/misc/src/conv2human.c -o ${CIX_DISTDIR}/misc/conv2human
 			[ ! -f "${CIX_DISTDIR}/misc/cbsd_fwatch" ] && compile_cc ${CIX_DISTDIR}/misc/src/cbsd_lwatch.c -o ${CIX_DISTDIR}/misc/cbsd_fwatch
 			;;
 		*)
 			[ ! -f "${CIX_DISTDIR}/misc/pwcrypt" ] && compile_cc ${CIX_DISTDIR}/misc/src/pwcrypt.c -lcrypt -o ${CIX_DISTDIR}/misc/pwcrypt
-			[ ! -f "${CIX_DISTDIR}/misc/elf_tables" ] && compile_cc -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${CIX_DISTDIR}/misc/src/elf_tables.c -lelf -o ${CIX_DISTDIR}/misc/elf_tables
+			[ ! -f "${CIX_DISTDIR}/misc/elf_tables" ] && compile_cc -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib -L/usr/pkg/lib ${CIX_DISTDIR}/misc/src/elf_tables.c -lelf -o ${CIX_DISTDIR}/misc/elf_tables
 			[ ! -f "${CIX_DISTDIR}/misc/fmagic" ] && compile_cc ${CIX_DISTDIR}/misc/src/fmagic.c -lmagic -o ${CIX_DISTDIR}/misc/fmagic
 			[ ! -f "${CIX_DISTDIR}/misc/cbsd_fwatch" ] && compile_cc ${CIX_DISTDIR}/misc/src/cbsd_fwatch.c -o ${CIX_DISTDIR}/misc/cbsd_fwatch
 			[ ! -f "${CIX_DISTDIR}/misc/cbsd_dot" ] && compile_cc ${CIX_DISTDIR}/misc/src/cbsd_dot.c -o ${CIX_DISTDIR}/misc/cbsd_dot
 			[ ! -f "${CIX_DISTDIR}/misc/chk_arp_byip" ] && compile_cc ${CIX_DISTDIR}/misc/src/chk_arp_byip.c -o ${CIX_DISTDIR}/misc/chk_arp_byip
 			[ ! -f "${CIX_DISTDIR}/misc/resolv" ] && compile_cc ${CIX_DISTDIR}/misc/src/resolv.c -o ${CIX_DISTDIR}/misc/resolv
 			[ ! -f "${CIX_DISTDIR}/misc/daemon" ] && compile_cc ${CIX_DISTDIR}/misc/src/daemon.c -lutil -o ${CIX_DISTDIR}/misc/daemon
-			[ ! -f "${CIX_DISTDIR}/misc/conv2human" ] && compile_cc -I/usr/local/include -I/usr/local/include/libelf -L/usr/local/lib ${CIX_DISTDIR}/misc/src/conv2human.c -lelf -lutil -o ${CIX_DISTDIR}/misc/conv2human
+			[ ! -f "${CIX_DISTDIR}/misc/conv2human" ] && compile_cc -I/usr/local/include -L/usr/local/lib -L/usr/pkg/lib ${CIX_DISTDIR}/misc/src/conv2human.c -lutil -o ${CIX_DISTDIR}/misc/conv2human
 			;;
 	esac
 
@@ -626,7 +713,7 @@ phase2()
 	[ ! -f "${CIX_DISTDIR}/misc/daemonize" ] && compile_cc ${CIX_DISTDIR}/misc/src/daemonize/daemonize.c ${CIX_DISTDIR}/misc/src/daemonize/getopt.c -I${CIX_DISTDIR}/misc/src/daemonize -O2 -o ${CIX_DISTDIR}/misc/daemonize
 
 	case "${platform}" in
-		DragonFly|Linux)
+		DragonFly|Linux|NetBSD)
 			true
 			# not supported yet
 			;;
@@ -683,7 +770,7 @@ phase2()
 		compile_cc -o ${CIX_DISTDIR}/misc/ipv6range ${CIX_DISTDIR}/misc/src/ipv6range.c
 	fi
 	case "${platform}" in
-		DragonFly|Linux)
+		DragonFly|Linux|NetBSD)
 			true
 			;;
 		*)
@@ -1409,6 +1496,8 @@ start()
 	. ${subrdir}/initenv.subr
 	. ${subrdir}/ansiicolor.subr
 
+	cix_newver="${myversion}"
+
 	if [ "${workdir}" = "${CIX_DISTDIR}" ]; then
 		${ECHO} "${N1_COLOR}Please use difference path for workdir. Not ${N2_COLOR}${CIX_DISTDIR}${N0_COLOR}"
 		exit 1
@@ -1527,7 +1616,7 @@ EOF
 							echo "no /lib/systemd/system, skip"
 							break
 						fi
-						[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
+						[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} -e "s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g" -e "s:%%CIX_DISTDIR%%:${CIX_DISTDIR}:g" ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
 						${SYSTEMCTL_CMD} enable cbsdd.service
 						;;
 					*)
@@ -1548,7 +1637,7 @@ EOF
 					echo "no systemctl, skip"
 					break
 			else
-				[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
+				[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} -e "s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g" -e "s:%%CIX_DISTDIR%%:${CIX_DISTDIR}:g" ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
 				if [ -n "${cbsdd_enable}" ]; then
 					if [ "${cbsdd_enable}" = "YES" ]; then
 						_cbsd_enable=1
@@ -1704,6 +1793,8 @@ init_lock()
 }
 
 ### MAIN ###
+export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+
 WHICH_CMD=$( which which 2>/dev/null )
 [ -z "${WHICH_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: which"
 
@@ -1717,6 +1808,8 @@ UNAME_CMD=$( ${WHICH_CMD} uname 2>/dev/null )
 OS=$( ${UNAME_CMD} -s )
 platform="${OS}"
 arch=$( ${UNAME_CMD} -p )
+
+[ "${platform}" = "NetBSD" ] && export PATH="${PATH}:/usr/pkg/bin"
 
 init_lock
 
@@ -1804,7 +1897,7 @@ case "${platform}" in
 		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} usermod"
 		true
 		;;
-	FreeBSD)
+	FreeBSD|DragonFly)
 		MAIN_EXTRA_CMD="${MAIN_EXTRA_CMD} kldstat pw service"
 		;;
 esac

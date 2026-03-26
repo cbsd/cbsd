@@ -6,10 +6,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__) || defined(__DragonFly__)
 #include <sys/param.h>
 #include <sys/mount.h>
 #endif
+
 
 static void rstrip_slashes(char *s) {
   size_t n;
@@ -148,7 +149,7 @@ static int is_mountpoint_linux(const char *path_norm) {
 }
 #endif
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__) || defined(__DragonFly__)
 static int is_mountpoint_freebsd(const char *path_norm) {
   struct statfs *mnts = NULL;
   int n, i;
@@ -192,7 +193,7 @@ int main(int argc, char **argv) {
 
 #if defined(__linux__)
   is_mp = is_mountpoint_linux(path_norm);
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__DragonFly__)
   is_mp = is_mountpoint_freebsd(path_norm);
 #else
   /* Unsupported OS: behave as "not a mountpoint". */

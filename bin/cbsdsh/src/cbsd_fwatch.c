@@ -68,7 +68,8 @@ cbsd_fwatchcmd(int argc, char *argv[])
 	}
 
 	while (TRUE) {
-		optcode = getopt_long_only(argc, argv, "", long_options,
+		/* NetBSD does not provide getopt_long_only() in base libc. */
+		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
 		if (optcode == -1)
 			break;
@@ -189,3 +190,12 @@ cbsd_fwatchcmd(int argc, char *argv[])
 
 	return 0;
 }
+
+#if defined(__DragonFly__) || defined(__NetBSD__)
+// temporary noop function for non-FreeBSD
+int
+cbsdjlscmd(int argc, char **argv)
+{
+        return 0;
+}
+#endif
