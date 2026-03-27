@@ -1,13 +1,14 @@
 #!/usr/local/bin/cbsd
 #v12.0.11
-MYARG=""
-MYOPTARG="mode"
+CIXARG=""
+CIXOPTARG="mode"
 MYDESC="Collect and/or update system-related information in inventory tables"
 ADDHELP="sysinv withount mode=update only collect information and stored in variables\n\
 mode=update - collect and update in db\n"
 
 . ${subrdir}/nc.subr
-. ${cbsdinit}
+. ${tools}
+cixinit
 
 # create SQL schema
 #${miscdir}/sqlcli ${dbdir}/local.sqlite DROP TABLE IF EXISTS local
@@ -51,6 +52,9 @@ sysinv_get_info_cpumodel()
 		Linux)
 			cpumodel=$( ${GREP_CMD} "^model name" /proc/cpuinfo | ${HEAD_CMD} -n1 | ${AWK_CMD} '{ for (i=4; i<=NF; i++) printf("%s ",$i) }END{ print"" }' )
 			;;
+		NetBSD)
+			cpumodel=$( ${SYSCTL_CMD} -n machdep.cpu_brand 2>/dev/null )
+			;;
 		*)
 			cpumodel=$( ${SYSCTL_CMD} -n hw.model 2>/dev/null )
 			;;
@@ -77,6 +81,9 @@ sysinv_get_info_cpufreq()
 		Linux)
 			cpufreq=0
 			;;
+		NetBSD)
+			cpufreq=$( ${SYSCTL_CMD} -n machdep.dmi.processor-frequency 2>/dev/null )
+			;;
 		*)
 			cpufreq=$( ${SYSCTL_CMD} -n dev.cpu.0.freq 2>/dev/null )
 			;;
@@ -89,6 +96,9 @@ sysinv_get_info_kernhz()
 	case "${platform}" in
 		Linux)
 			kernhz=$( getconf CLK_TCK )
+			;;
+		NetBSD)
+			cpufreq=$( ${SYSCTL_CMD} -n kern.clockrate 2>/dev/null )
 			;;
 		*)
 			kernhz=$( ${SYSCTL_CMD} -n kern.hz 2>/dev/null )
@@ -116,6 +126,9 @@ sysinv_get_info_eventtimer()
 		Linux)
 			eventtimer="unknown"
 			;;
+		NetBSD)
+			eventtimer="unknown"
+			;;
 		*)
 			eventtimer=$( ${SYSCTL_CMD} -n kern.eventtimer.choice 2>/dev/null )
 			;;
@@ -140,6 +153,9 @@ sysinv_get_info_disks()
 				fi
 			done
 			;;
+		NetBSD)
+			disks=$( ${SYSCTL_CMD} -n hw.disknames)
+			;;
 		*)
 			disks=$( ${SYSCTL_CMD} -n kern.disks 2>/dev/null )
 			;;
@@ -159,6 +175,9 @@ sysinv_get_info_vimage_feature()
 		Linux)
 			vimage_feature=0
 			;;
+		NetBSD)
+			vimage_feature=0
+			;;
 		*)
 			_ret=$( ${SYSCTL_CMD} -n kern.features.vimage 2>/dev/null )
 			if [ -z "${_ret}" ]; then
@@ -174,6 +193,9 @@ sysinv_get_info_racct()
 {
 	case "${platform}" in
 		Linux)
+			racct=0
+			;;
+		NetBSD)
 			racct=0
 			;;
 		*)
@@ -202,6 +224,9 @@ sysinv_get_info_physmem()
 				if [ -n "${_realmem}" ]; then
 					_realmem=$(( _realmem * 1024 ))          # ->KB -> Bytes
 				fi
+				;;
+			NetBSD)
+				_realmem=$( ${SYSCTL_CMD} -n hw.physmem64 2>/dev/null )
 				;;
 			*)
 				_realmem=$( ${SYSCTL_CMD} -n hw.physmem 2>/dev/null )
@@ -239,6 +264,11 @@ sysinv_get_info_freemem()
 				if [ -n "${_freemem}" ]; then
 					_freemem=$(( _freemem * 1024 ))          # ->KB -> Bytes
 				fi
+				;;
+			NetBSD)
+				_page_size=$( ${SYSCTL_CMD} -n hw.pagesize )
+				_free_count=$( ${SYSCTL_CMD} -n vm.uvmexp.free )
+				_freemem=$(( _free_count * _page_size ))
 				;;
 			*)
 				_realmem=$( ${SYSCTL_CMD} -n hw.physmem 2>/dev/null )
@@ -318,59 +348,9 @@ sysinv_get_info_la()
 
 sysinv_get_info_is_virtual()
 {
-	local _tmp=
-
-	local smbios=
-
-	case "${platform}" in
-		Linux)
-			_tmp=$( ${GREP_CMD} hypervisor /proc/cpuinfo )
-			if [ -n "${_tmp}" ]; then
-				smbios="virtual"
-			else
-				smbios="physical"
-			fi
-			;;
-		*)
-			smbios=$( ${KENV_CMD} smbios.system.product )
-			;;
-	esac
-
-	case "${smbios}" in
-		VirtualBox*)
-			is_virtual="virtualbox"
-			;;
-		VMware*)
-			is_virtual="vmware"
-			;;
-		Parallels*)
-			is_virtual="parallels"
-			;;
-		KVM*)
-			is_virtual="kvm"
-			;;
-		"Virtual Machine")
-			is_virtual="hyperv"
-			;;
-		"RHEV Hypervisor")
-			is_virtual="redhat_ev"
-			;;
-		"oVirt Node")
-			is_virtual="ovirt"
-			;;
-		"HVM domU")
-			is_virtual="xen_hardware"
-			;;
-		Bochs*)
-			is_virtual="bochs"
-			;;
-		BHYVE)
-			is_virtual="bhyve"
-			;;
-		*)
-			is_virtual="physical"
-			;;
-	esac
+	[ -z "${CIX_DISTDIR}" ] && export CIX_DISTDIR="/usr/local/cbsd"
+	[ -x "${CIX_DISTDIR}/misc/detect-emulation" ] && capture is_virtual ${CIX_DISTDIR}/misc/detect-emulation
+	[ -z "${is_virtual}" ] && is_virtual="physical"
 }
 
 sysinv_get_info_cbsdver()

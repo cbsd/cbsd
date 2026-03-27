@@ -1,7 +1,8 @@
 #!/usr/local/bin/cbsd
 #v11.1.0
-MYARG="mode"
-MYOPTARG="logfile notify autoflush nodetask owner after client_id jname jconf exclusive cast_args"
+CIXARG="mode"
+#CIXOPTARG="logfile notify autoflush nodetask owner after client_id jname jconf exclusive cast_args"
+CIXOPTARG="logfile notify autoflush nodetask owner after client_id jconf exclusive cast_args"
 MYDESC="Task queue management"
 CBSDMODULE="taskd"
 ADDHELP="mode=new <cmd>, mode=cancel <jobid>, mode=cancelall, mode=flushall\n\
@@ -16,8 +17,8 @@ EXTHELP="wf_taskd"
 # todo: rewrite to substr
 # for init: disable double args initialization
 #double_args=0
-
-. ${cbsdinit}
+. ${tools}
+cixinit
 
 . ${system}
 [ -z "${exclusive}" ] && exclusive=0
@@ -28,7 +29,7 @@ try_remote()
 
 	. ${nodes}
 
-	_ip=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${node}\" 2>/dev/null )
+	cbsdsqlro_vars nodes "SELECT ip FROM nodelist WHERE nodename='${node}'" _ip
 	[ -z "${_ip}" ] && err 1 "${N1_COLOR}No such ip for node: ${N2_COLOR}${node}${N0_COLOR}"
 
 	if ! check_locktime ${ftmpdir}/shmux_${_ip}.lock > /dev/null 2>&1; then
@@ -45,51 +46,18 @@ try_remote()
 }
 
 ## MAIN
-[ -n "${logfile}" ] && shift
-[ -n "${notify}" ] && shift
-[ -n "${autoflush}" ] && shift
-[ -n "${node}" ] && shift
-[ -n "${owner}" ] && shift
-[ -n "${after}" ] && shift
-[ -n "${client_id}" ] && shift
-[ -n "${cast_args}" ] && shift
-
 # cast param=" ss val" into param=' ss val' by default
 [ -z "${cast_args}" ] && cast_args=1
-
 [ -n "${jconf}" -a -r "${jconf}" ] && . ${jconf}
 
-shift ## mode=xxx
+cmd="${CIX_OTHER_ARGS}"
 
-if [ ${cast_args} -eq 1 ]; then
-	# Pass '"' as ' in cmd
-	INIT_IFS="${IFS}"
-	IFS="~"
-	cmd="$@"
-	IFS="${INIT_IFS}"
-	cmd=$( while [ -n "${1}" ]; do
-		IFS="~"
-		strpos --str="${1}" --search="="
-		_pos=$?
-		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
-			#printf "${1} "		# (printf handles -args (with dashes)
-			echo -n "${1} "
-			shift
-			continue
-		fi
-
-		_arg_len=$( strlen ${1} )
-		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
-
-		printf "${ARG}='${VAL}' "
-		shift
-	done )
-else
-	cmd="$@"
-fi
+for i in ${CIX_OTHER_ARGS}; do
+	capture _is_jname substr --pos=0 --len=6 --str="${i}"
+	if [ "${_is_jname}" = "jname=" ]; then
+		capture jname substr --pos=7 --len=0 --str="${i}"
+	fi
+done
 
 ## place for default of all variables for remote node?
 [ -z "${notify}" ] && notify=1
@@ -104,34 +72,38 @@ case "${mode}" in
 
 		# test for exclusive
 		if [ ${exclusive} -eq 1 ]; then
-			_excl_test=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"${cmd}\" AND status != 2 AND owner=\"${owner}\" AND jname=\"${jname}\" ORDER BY id DESC LIMIT 1" )
+			cbsdsqlro_vars cbsdtaskd "SELECT id FROM taskd WHERE cmd='${cmd}' AND status != 2 AND owner='${owner}' AND jname='${jname}' ORDER BY id DESC LIMIT 1" _excl_test
 			[ -n "${_excl_test}" ] && err 1 "${N1_COLOR}This job is exclusive, waiting to complete: ${N2_COLOR}${_excl_test}${N0_COLOR}"
 		fi
 
 		if [ -n "${logfile}" ]; then
-			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"${cmd}\", 0, \"$logfile\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
+			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,logfile,logtype,notify,autoflush,owner,after,client_id,jname ) VALUES ( '${cmd}', 0, '$logfile', 0, '$notify', '$autoflush', '$owner', '$after', '$client_id', '${jname}' )" )
 		else
-			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush,owner,after,client_id,jname ) VALUES ( \"${cmd}\", 0, \"$notify\", \"$autoflush\", \"$owner\", \"$after\", \"$client_id\", \"${jname}\" )" )
+			_err=$( cbsdsqlrw cbsdtaskd "INSERT INTO taskd ( cmd,status,notify,autoflush,owner,after,client_id,jname ) VALUES ( '${cmd}', 0, '$notify', '$autoflush', '$owner', '$after', '$client_id', '${jname}' )" )
 		fi
 
 		[ $? -ne 0 ] && err 1 "${N1_COLOR}task mode=new error: ${_err}${N0_COLOR}"
-		tid=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd=\"${cmd}\" AND status=0 ORDER BY id DESC LIMIT 1" )
+		#tid=$( cbsdsqlro cbsdtaskd "SELECT id FROM taskd WHERE cmd='${cmd}' AND status=0 ORDER BY id DESC LIMIT 1" )
+		cbsdsqlro_vars cbsdtaskd "SELECT id FROM taskd WHERE cmd='${cmd}' AND status=0 ORDER BY id DESC LIMIT 1" tid
 		${TOUCH_CMD} ${workdir}/var/db/cbsdtaskd.sqlite
 		[ -z "${tid}" ] && err 1 "${N1_COLOR}task mode=new tid error: ${_err}${N0_COLOR}"
 		echo "${tid}"
 		;;
 	"cancel")
+		true
 		;;
 	"cancelall")
-		cbsdsqlrw cbsdtaskd UPDATE taskd SET status='2'
+		cbsdsqlrw cbsdtaskd "UPDATE taskd SET status='2'"
 		;;
 	"flushall")
-		for i in $( cbsdsqlro cbsdtaskd SELECT logfile FROM taskd WHERE status='2' ); do
+		for i in $( cbsdsqlro cbsdtaskd "SELECT logfile FROM taskd WHERE status='2'" ); do
 			[ -f "${i}" ] && ${RM_CMD} -f "${i}"
 		done
-		cbsdsqlrw cbsdtaskd DELETE FROM taskd WHERE status='2'
+		cbsdsqlrw cbsdtaskd "DELETE FROM taskd WHERE status='2'"
 		x=$( cbsdsqlro cbsdtaskd "SELECT COUNT(id) FROM taskd" )
 		# reset SQLITE_SEQUENCE
-		[ "${x}" = "0" ] && cbsdsqlrw cbsdtaskd "UPDATE sqlite_sequence SET seq=0 WHERE name=\"taskd\""
+		[ "${x}" = "0" ] && cbsdsqlrw cbsdtaskd "UPDATE sqlite_sequence SET seq=0 WHERE name='taskd'"
 		;;
 esac
+
+exit 0

@@ -2,21 +2,137 @@
 MYDESC="Detect host emulation"
 
 if [ "$1" = "--help" ]; then
-    echo $MYDESC
-    exit
+	echo $MYDESC
+	exit
 fi
 
-case "$(kenv smbios.system.product)" in
-VirtualBox)
-  echo "emulation: VIRTUALBOX"
-  exit 0
-  ;;
-VMware*)
-  echo "emulation: VMWARE"
-  exit 0
-  ;;
-*)
-  echo "emulation: NO"
-  exit 1
-  ;;
+normalize_engine()
+{
+	local _hypervisor="${1}"
+
+	case "${_hypervisor}" in
+		VirtualBox)
+			engine="virtualbox"
+			_ret=1
+			;;
+		VMware*)
+			engine="vmware"
+			_ret=1
+			;;
+		VirtualBox*)
+			engine="virtualbox"
+			_ret=1
+			;;
+		Parallels*)
+			engine="parallels"
+			_ret=1
+			;;
+		KVM*)
+			engine="kvm"
+			_ret=1
+			;;
+		"Virtual Machine")
+			engine="hyperv"
+			_ret=1
+			;;
+		"RHEV Hypervisor")
+			engine="redhat_ev"
+			_ret=1
+			;;
+		"oVirt Node")
+			engine="ovirt"
+			_ret=1
+			;;
+		"HVM domU")
+			engine="xen_hardware"
+			_ret=1
+			;;
+		Bochs*)
+			engine="bochs"
+			_ret=1
+			;;
+		BHYVE)
+			engine="bhyve"
+			_ret=1
+			;;
+		*)
+			engine="physical"
+			_ret=0
+			;;
+	esac
+
+	return ${_ret}
+}
+
+freebsd()
+{
+	local _ret=0
+	local _hypervisor=$( kenv smbios.system.product )
+
+	if [ -z "${_hypervisor}" ]; then
+		engine="physical"
+		return 0
+	fi
+
+	normalize_engine "${_hypervisor}"
+	_ret=$?
+
+	return ${_ret}
+}
+
+netbsd()
+{
+	local _ret=0
+	local _hypervisor=$( sysctl -n machdep.hypervisor )
+
+	if [ -z "${_hypervisor}" ]; then
+		engine="physical"
+		return 0
+	fi
+
+	normalize_engine "${_hypervisor}"
+	_ret=$?
+
+	return ${_ret}
+}
+
+linux()
+{
+	local _tmp= _ret=0
+	_tmp=$( grep hypervisor /proc/cpuinfo )
+
+	if [ -n "${_tmp}" ]; then
+		engine="virtual"
+		_ret=1
+	else
+		engine="physical"
+		_ret=0
+	fi
+
+	return ${_ret}
+}
+
+platform=$( uname -s )
+engine="unknown"
+
+case "${platform}" in
+	FreeBSD)
+		freebsd
+		_ret=$?
+		;;
+	Linux)
+		linux
+		_ret=$?
+		;;
+	NetBSD)
+		netbsd
+		_ret=$?
+		;;
+	*)
+		echo "detect-emulation: unsupported plaform: ${platform}"
+		exit 0
+		;;
 esac
+
+[ -n "${engine}" ] && echo "${engine}"
+exit ${_ret}
