@@ -840,7 +840,11 @@ jq_eval_once(const char *json, const char *filter, int *ok)
 		case JV_KIND_OBJECT:
 		default:
 			/* dump JSON for non-strings */
-			dumped = jv_dump_string(out, 0);
+			/*
+			 * jv_dump_string() consumes its input. We still need to
+			 * free `out` below, so dump a copy to avoid double-free.
+			 */
+			dumped = jv_dump_string(jv_copy(out), 0);
 			chunk = jv_string_value(dumped);
 			break;
 		}
@@ -1109,13 +1113,20 @@ static size_t memtodest(const char *p, size_t len, int flags)
 	if (likely(!(flags & (expq >> 3 | expq >> 4 | expq >> 8) &
 		     (QUOTES_ESC | EXP_MBCHAR)))) {
 		while (len >= 8) {
-			uint64_t x = *(uint64_t *)(p + count);
+			uint64_t x;
+
+			/*
+			 * The fast-path reads/writes 8 bytes at a time.
+			 * Use memcpy to avoid undefined behavior on unaligned
+			 * accesses (can miscompile and corrupt memory).
+			 */
+			memcpy(&x, p + count, sizeof(x));
 
 			if ((x | (x - 0x0101010101010101)) &
 			    0x8080808080808080)
 				break;
 
-			*(uint64_t *)(q + count) = x;
+			memcpy(q + count, &x, sizeof(x));
 
 			count += 8;
 			len -= 8;
@@ -1483,7 +1494,7 @@ ifsbreakup(char *string, int maxargs, struct arglist *arglist)
 						unsigned char b[8];
 					} x;
 
-					x.qw = *(uint64_t *)p;
+					memcpy(&x.qw, p, sizeof(x.qw));
 
 					if ((x.qw & 0x8080808080808080))
 						break;

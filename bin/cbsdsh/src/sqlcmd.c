@@ -3,6 +3,9 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "shell.h"
 #include "main.h"
@@ -30,6 +33,91 @@
 
 char *delim;
 
+/*
+ * SQL backend selection point (future work):
+ * this is the right place to route requests to different DB backends
+ * (sqlite/pgsql/mysql/influxdb/...) using backend-specific code.
+ *
+ * For now we isolate sqlite3 work in a child process to avoid heap
+ * corruption in the main shell process on some platforms/libc builds.
+ */
+
+static int write_full(int fd, const void *buf, size_t len)
+{
+	const char *p = (const char *)buf;
+	while (len) {
+		ssize_t n = write(fd, p, len);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return 0;
+		p += (size_t)n;
+		len -= (size_t)n;
+	}
+	return 1;
+}
+
+static int read_full(int fd, void *buf, size_t len)
+{
+	char *p = (char *)buf;
+	while (len) {
+		ssize_t n = read(fd, p, len);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return 0;
+		p += (size_t)n;
+		len -= (size_t)n;
+	}
+	return 1;
+}
+
+static int
+wait_child_exit_status(pid_t pid)
+{
+	int st;
+	pid_t r;
+
+	for (;;) {
+		r = waitpid(pid, &st, 0);
+		if (r == pid)
+			break;
+		if (r < 0 && errno == EINTR)
+			continue;
+		return 1;
+	}
+	return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
+}
+
+static int fork_sql_child_stdout(int *out_read_fd)
+{
+	int pfd[2];
+	pid_t pid;
+
+	if (pipe(pfd) != 0)
+		return -1;
+
+	pid = fork();
+	if (pid < 0) {
+		close(pfd[0]);
+		close(pfd[1]);
+		return -1;
+	}
+
+	if (pid == 0) {
+		/* child: stdout -> pipe */
+		(void)dup2(pfd[1], 1);
+		close(pfd[0]);
+		close(pfd[1]);
+		return 0;
+	}
+
+	/* parent */
+	close(pfd[1]);
+	*out_read_fd = pfd[0];
+	return (int)pid;
+}
+
 char *
 nm(void)
 {
@@ -46,6 +134,13 @@ sql_open(const char *dbarg, int open_flags)
 
 	if (dbarg == NULL)
 		return NULL;
+
+#ifdef SQLITE_OPEN_SHAREDCACHE
+	open_flags &= ~SQLITE_OPEN_SHAREDCACHE;
+#endif
+#ifdef SQLITE_OPEN_PRIVATECACHE
+	open_flags |= SQLITE_OPEN_PRIVATECACHE;
+#endif
 
 	if (dbarg[0] != '/') {
 		dbdir = lookupvar("dbdir");
@@ -186,129 +281,177 @@ static char *build_query(int argc, char **argv, int start) {
 int
 sqlitecmdrw(int argc, char **argv)
 {
-	sqlite3 *db;
-	char *query = NULL;
-//	int ret = 0;
-	char *cp;
+	int outfd = -1;
+	int cpid;
+	int st;
+	char buf[8192];
+	ssize_t n;
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
 		return 1;
 	}
 
-	if ((cp = lookupvar("sqldelimer")) == NULL)
-		delim = DEFSQLDELIMER;
-	else
-		delim = cp;
-	db = sql_open(argv[1], 
-		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_SHAREDCACHE);
-	if (db == NULL)
+	cpid = fork_sql_child_stdout(&outfd);
+	if (cpid < 0)
 		return 1;
+	if (cpid == 0) {
+		/* child: do sqlite work in isolated process */
+		sqlite3 *db;
+		char *query = NULL;
+		char *cp;
 
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
-	sql_exec(db, "PRAGMA journal_mode = WAL;");
-	sql_exec(db, "PRAGMA synchronous = NORMAL;");
+		if ((cp = lookupvar("sqldelimer")) == NULL)
+			delim = DEFSQLDELIMER;
+		else
+			delim = cp;
 
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
+		/*
+		 * Backend selection point (future): switch by env/var here.
+		 * Default backend: sqlite.
+		 */
+		db = sql_open(argv[1],
+		    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_SHAREDCACHE);
+		if (db == NULL)
+			_exit(1);
 
-	query = build_query(argc, argv, 2);
-	if (!query) {
-		sqlite3_close(db);
-		out1fmt("Failed to build query string!\n");
-		return 1;
-	}
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
+		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+		sql_exec(db, "PRAGMA journal_mode = WAL;");
+		sql_exec(db, "PRAGMA synchronous = NORMAL;");
 
-	/* Execute arbitrary SQL string, allowing multiple statements separated by ';' */
-	if (!sql_exec(db, "BEGIN TRANSACTION;")) {
+		query = build_query(argc, argv, 2);
+		if (!query) {
+			sqlite3_close(db);
+			out1fmt("Failed to build query string!\n");
+			_exit(1);
+		}
+
+		/* Execute arbitrary SQL string, allowing multiple statements separated by ';' */
+		if (!sql_exec(db, "BEGIN TRANSACTION;")) {
+			free(query);
+			sqlite3_close(db);
+			_exit(1);
+		}
+
+		if (!sql_exec(db, "%s", query)) {
+			/* Rollback on error */
+			sql_exec(db, "ROLLBACK;");
+			free(query);
+			sqlite3_close(db);
+			_exit(1);
+		}
+
+		if (!sql_exec(db, "COMMIT;")) {
+			free(query);
+			sqlite3_close(db);
+			_exit(1);
+		}
+
 		free(query);
 		sqlite3_close(db);
-		return 1;
+		/* Ensure buffered shell output is written into the pipe. */
+		flushall();
+		_exit(0);
 	}
 
-	if (!sql_exec(db, "%s", query)) {
-		/* Rollback on error */
-		sql_exec(db, "ROLLBACK;");
-		free(query);
-		sqlite3_close(db);
-		return 1;
-	}
-
-	if (!sql_exec(db, "COMMIT;")) {
-		free(query);
-		sqlite3_close(db);
-		return 1;
-	}
-
-	free(query);
-	sqlite3_close(db);
-
-	return 0;
+	/* parent: stream child's stdout to ours */
+	while ((n = read(outfd, buf, sizeof(buf))) > 0)
+		out1mem(buf, (size_t)n);
+	close(outfd);
+	st = wait_child_exit_status((pid_t)cpid);
+	/* Ensure buffered output is flushed to the actual stdout. */
+	flushout(&output);
+	return st;
 }
 
 int
 sqlitecmdro(int argc, char **argv)
 {
-	sqlite3 *db;
-	char *query = NULL;
-	int ret = 0;
-	sqlite3_stmt *stmt = NULL;
-	char *cp;
-	int maxretry = 50;
-	int retry = 0;
-
-	if ((cp = lookupvar("sqldelimer")) == NULL)
-		delim = DEFSQLDELIMER;
-	else
-		delim = cp;
+	int outfd = -1;
+	int cpid;
+	int st;
+	char buf[8192];
+	ssize_t n;
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
 		return 0;
 	}
-	db = sql_open(argv[1],
-	    SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
-	if (db == NULL)
+
+	cpid = fork_sql_child_stdout(&outfd);
+	if (cpid < 0)
 		return 1;
+	if (cpid == 0) {
+		/* child: do sqlite work in isolated process */
+		sqlite3 *db;
+		char *query = NULL;
+		int ret = 0;
+		sqlite3_stmt *stmt = NULL;
+		char *cp;
+		int maxretry = 50;
+		int retry = 0;
 
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+		if ((cp = lookupvar("sqldelimer")) == NULL)
+			delim = DEFSQLDELIMER;
+		else
+			delim = cp;
 
-	query = build_query(argc, argv, 2);
-	if (!query) {
-		sqlite3_close(db);
-		out1fmt("Failed to build query string!\n");
-		return 1;
-	}
+		/*
+		 * Backend selection point (future): switch by env/var here.
+		 * Default backend: sqlite.
+		 */
+		db = sql_open(argv[1], SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
+		if (db == NULL)
+			_exit(1);
 
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
 
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void*)0);
-
-	do {
-		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-		if (ret == SQLITE_OK)
-			break;
-		retry++;
-		if (retry > maxretry)
-			break;
-	} while (ret != SQLITE_OK);
-
-	if (ret == SQLITE_OK) {
-		ret = sqlite3_step(stmt);
-		while (ret == SQLITE_ROW) {
-			sqlCB(stmt);
-			ret = sqlite3_step(stmt);
+		query = build_query(argc, argv, 2);
+		if (!query) {
+			sqlite3_close(db);
+			out1fmt("Failed to build query string!\n");
+			_exit(1);
 		}
+
+		do {
+			ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
+			if (ret == SQLITE_OK)
+				break;
+			if (stmt) {
+				sqlite3_finalize(stmt);
+				stmt = NULL;
+			}
+			retry++;
+			if (retry > maxretry)
+				break;
+		} while (ret != SQLITE_OK);
+
+		if (ret == SQLITE_OK) {
+			ret = sqlite3_step(stmt);
+			while (ret == SQLITE_ROW) {
+				sqlCB(stmt);
+				ret = sqlite3_step(stmt);
+			}
+		}
+
+		if (stmt)
+			sqlite3_finalize(stmt);
+		free(query);
+		sqlite3_close(db);
+		/* Ensure buffered shell output is written into the pipe. */
+		flushall();
+		_exit(0);
 	}
 
-	if (stmt)
-		sqlite3_finalize(stmt);
-	free(query);
-	sqlite3_close(db);
-
-	return 0;
+	/* parent: stream child's stdout to ours */
+	while ((n = read(outfd, buf, sizeof(buf))) > 0)
+		out1mem(buf, (size_t)n);
+	close(outfd);
+	st = wait_child_exit_status((pid_t)cpid);
+	/* Ensure buffered output is flushed to the actual stdout. */
+	flushout(&output);
+	return st;
 }
 
 /*
@@ -321,103 +464,118 @@ sqlitecmdro(int argc, char **argv)
 int
 sqlitecmdquery(int argc, char **argv)
 {
-	sqlite3 *db;
-	int ret = 0;
-	sqlite3_stmt *stmt = NULL;
-	int maxretry = 50;
-	int retry = 0;
+	int outfd = -1;
+	int cpid;
+	int st;
+	char buf[8192];
+	ssize_t n;
+
 	if (argc != 3) {
 		out1fmt("usage: cbsdsqlquery <dbfile> <query>\n");
 		return 1;
 	}
-	db = sql_open(argv[1],
-	    SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
-	if (db == NULL)
+
+	cpid = fork_sql_child_stdout(&outfd);
+	if (cpid < 0)
 		return 1;
+	if (cpid == 0) {
+		/* child: do sqlite work in isolated process */
+		sqlite3 *db;
+		int ret = 0;
+		sqlite3_stmt *stmt = NULL;
+		int maxretry = 50;
+		int retry = 0;
 
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void *)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void *)0);
+		/*
+		 * Backend selection point (future): switch by env/var here.
+		 * Default backend: sqlite.
+		 */
+		db = sql_open(argv[1], SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
+		if (db == NULL)
+			_exit(1);
 
-	do {
-		ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
-		if (ret == SQLITE_OK)
-			break;
-		retry++;
-		if (retry > maxretry)
-			break;
-	} while (ret != SQLITE_OK);
+		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
 
-	if (ret == SQLITE_OK) {
-		ret = sqlite3_step(stmt);
-		while (ret == SQLITE_ROW) {
-			int icol;
-			int allcol = sqlite3_column_count(stmt);
-			jv row = jv_object();
-
-			for (icol = 0; icol < allcol; icol++) {
-				const char *colname =
-				    sqlite3_column_name(stmt, icol);
-				switch (sqlite3_column_type(stmt, icol)) {
-				case SQLITE_INTEGER:
-					row = jv_object_set(row,
-					    jv_string(colname),
-					    jv_number(
-						(double)sqlite3_column_int64(
-						    stmt, icol)));
-					break;
-				case SQLITE_FLOAT:
-					row = jv_object_set(row,
-					    jv_string(colname),
-					    jv_number(
-						sqlite3_column_double(stmt,
-						    icol)));
-					break;
-				case SQLITE_TEXT: {
-					const unsigned char *txt_uc =
-					    sqlite3_column_text(stmt, icol);
-					const char *txt = txt_uc
-					    ? (const char *)txt_uc
-					    : "";
-					row = jv_object_set(row,
-					    jv_string(colname),
-					    jv_string(txt));
-					break;
-				}
-				case SQLITE_NULL:
-					row = jv_object_set(row,
-					    jv_string(colname), jv_null());
-					break;
-				case SQLITE_BLOB:
-				default:
-					row = jv_object_set(row,
-					    jv_string(colname), jv_null());
-					break;
-				}
+		do {
+			ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
+			if (ret == SQLITE_OK)
+				break;
+			if (stmt) {
+				sqlite3_finalize(stmt);
+				stmt = NULL;
 			}
-			jv dumped = jv_dump_string(row, 0);
-			if (!jv_is_valid(dumped)) {
-				jv msg = jv_invalid_get_msg(jv_copy(dumped));
-				out1fmt("%s\n", jv_string_value(msg));
-				jv_free(msg);
+			retry++;
+			if (retry > maxretry)
+				break;
+		} while (ret != SQLITE_OK);
+
+		if (ret == SQLITE_OK) {
+			ret = sqlite3_step(stmt);
+			while (ret == SQLITE_ROW) {
+				int icol;
+				int allcol = sqlite3_column_count(stmt);
+				jv row = jv_object();
+
+				for (icol = 0; icol < allcol; icol++) {
+					const char *colname = sqlite3_column_name(stmt, icol);
+					switch (sqlite3_column_type(stmt, icol)) {
+					case SQLITE_INTEGER:
+						row = jv_object_set(row, jv_string(colname),
+						    jv_number((double)sqlite3_column_int64(stmt, icol)));
+						break;
+					case SQLITE_FLOAT:
+						row = jv_object_set(row, jv_string(colname),
+						    jv_number(sqlite3_column_double(stmt, icol)));
+						break;
+					case SQLITE_TEXT: {
+						const unsigned char *txt_uc = sqlite3_column_text(stmt, icol);
+						const char *txt = txt_uc ? (const char *)txt_uc : "";
+						row = jv_object_set(row, jv_string(colname), jv_string(txt));
+						break;
+					}
+					case SQLITE_NULL:
+						row = jv_object_set(row, jv_string(colname), jv_null());
+						break;
+					case SQLITE_BLOB:
+					default:
+						row = jv_object_set(row, jv_string(colname), jv_null());
+						break;
+					}
+				}
+				jv dumped = jv_dump_string(row, 0);
+				if (!jv_is_valid(dumped)) {
+					jv msg = jv_invalid_get_msg(jv_copy(dumped));
+					out1fmt("%s\n", jv_string_value(msg));
+					jv_free(msg);
+					jv_free(dumped);
+					jv_free(row);
+					ret = 1;
+					break;
+				}
+				out1fmt("%s\n", jv_string_value(dumped));
 				jv_free(dumped);
 				jv_free(row);
-				ret = 1;
-				break;
+				ret = sqlite3_step(stmt);
 			}
-			out1fmt("%s\n", jv_string_value(dumped));
-			jv_free(dumped);
-			jv_free(row);
-			ret = sqlite3_step(stmt);
 		}
+
+		if (stmt)
+			sqlite3_finalize(stmt);
+		sqlite3_close(db);
+
+		/* Ensure buffered shell output is written into the pipe. */
+		flushall();
+		_exit(0);
 	}
 
-	if (stmt)
-		sqlite3_finalize(stmt);
-	sqlite3_close(db);
-
-	return 0;
+	/* parent: stream child's stdout to ours */
+	while ((n = read(outfd, buf, sizeof(buf))) > 0)
+		out1mem(buf, (size_t)n);
+	close(outfd);
+	st = wait_child_exit_status((pid_t)cpid);
+	/* Ensure buffered output is flushed to the actual stdout. */
+	flushout(&output);
+	return st;
 }
 
 /*
@@ -442,14 +600,11 @@ sqlitecmdquery(int argc, char **argv)
 int
 sqlitecmdro_vars(int argc, char **argv)
 {
-	sqlite3 *db;
-	int ret = 0;
-	sqlite3_stmt *stmt = NULL;
-	int maxretry = 50;
-	int retry = 0;
+	int pfd[2];
+	pid_t pid;
+	int st;
 	int nvars;
 	int i;
-	int got_row = 0;
 
 	/* Need at least: dbfile query var1 */
 	if (argc < 3) {
@@ -458,91 +613,181 @@ sqlitecmdro_vars(int argc, char **argv)
 	}
 
 	nvars = argc - 3;
-	db = sql_open(argv[1],
-	    SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
-	if (db == NULL)
+
+	if (pipe(pfd) != 0)
 		return 1;
 
-	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
-	sql_exec(db, "PRAGMA mmap_size = 209715200;");
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void *)0);
-	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DML, 1, (void *)0);
+	pid = fork();
+	if (pid < 0) {
+		close(pfd[0]);
+		close(pfd[1]);
+		return 1;
+	}
 
-	/* argv[2] = query (single string) */
-	do {
-		ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
-		if (ret == SQLITE_OK)
-			break;
-		retry++;
-		if (retry > maxretry)
-			break;
-	} while (ret != SQLITE_OK);
+	if (pid == 0) {
+		/* child: execute query and send framed results to parent */
+		sqlite3 *db;
+		sqlite3_stmt *stmt = NULL;
+		int ret = 0;
+		int maxretry = 50;
+		int retry = 0;
+		int got_row = 0;
 
-	if (ret == SQLITE_OK) {
-		/* init argv vars with empty values */
-		for (i = 0; i < nvars; i++)
-			setvar(argv[3 + i], "", 0);
+		close(pfd[0]);
 
-		bool cleanup_vars_finished = false;
+		/*
+		 * Backend selection point (future): switch by env/var here.
+		 * Default backend: sqlite.
+		 */
+		db = sql_open(argv[1], SQLITE_OPEN_READONLY | SQLITE_OPEN_SHAREDCACHE);
+		if (db == NULL)
+			_exit(1);
+
+		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+
+		do {
+			ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
+			if (ret == SQLITE_OK)
+				break;
+			if (stmt) {
+				sqlite3_finalize(stmt);
+				stmt = NULL;
+			}
+			retry++;
+			if (retry > maxretry)
+				break;
+		} while (ret != SQLITE_OK);
+
+		if (ret != SQLITE_OK) {
+			if (stmt)
+				sqlite3_finalize(stmt);
+			sqlite3_close(db);
+			_exit(1);
+		}
+
+		/* dynamic arrays for values per column/var */
+		int ncols = sqlite3_column_count(stmt);
+		char **names = calloc((size_t)ncols, sizeof(char *));
+		char **vals = calloc((size_t)ncols, sizeof(char *));
+		size_t *vlen = calloc((size_t)ncols, sizeof(size_t));
+		if (!names || !vals || !vlen) {
+			sqlite3_finalize(stmt);
+			sqlite3_close(db);
+			_exit(1);
+		}
+
+		for (int j = 0; j < ncols; j++) {
+			const char *colname = sqlite3_column_name(stmt, j);
+			const char *varname = (j < nvars) ? argv[3 + j] : colname;
+			names[j] = strdup(varname);
+			if (!names[j]) {
+				sqlite3_finalize(stmt);
+				sqlite3_close(db);
+				_exit(1);
+			}
+		}
 
 		ret = sqlite3_step(stmt);
 		while (ret == SQLITE_ROW) {
-			int j;
-			int ncols = sqlite3_column_count(stmt);
-
-			if (!cleanup_vars_finished) {
-				// if more columns returned than variables passed, clean up rest of variables
-				for (j = nvars; j < ncols; j++) {
-					setvar(sqlite3_column_name(stmt, j), "", 0);
-				}
-				cleanup_vars_finished = true;
-			}
-
 			got_row = 1;
-
-			for (j = 0; j < ncols; j++) {
-				const char *colname = sqlite3_column_name(stmt, j);
+			for (int j = 0; j < ncols; j++) {
 				const unsigned char *txt_uc = sqlite3_column_text(stmt, j);
 				const char *txt = txt_uc ? (const char *)txt_uc : "";
-				const char *varname = (j < nvars) ? argv[3 + j] : colname;
-				const char *old = lookupvar(varname);
-
-				/* Append \n when data exist */
-				if (old && *old) {
-					size_t oldlen = strlen(old);
-					size_t slen = strlen(txt);
-					char *nv =
-					    malloc(oldlen + 1 + slen + 1);
-					if (!nv) {
-						goto cleanup;
-					}
-					memcpy(nv, old, oldlen);
-					nv[oldlen] = '\n';
-					memcpy(nv + oldlen + 1, txt, slen);
-					nv[oldlen + 1 + slen] = '\0';
-					setvar(varname, nv, 0);
-					free(nv);
-				} else {
-					setvar(varname, txt, 0);
+				size_t sl = strlen(txt);
+				size_t need = vlen[j] + sl + (vlen[j] ? 1 : 0);
+				char *nv = realloc(vals[j], need + 1);
+				if (!nv) {
+					sqlite3_finalize(stmt);
+					sqlite3_close(db);
+					_exit(1);
 				}
+				vals[j] = nv;
+				if (vlen[j]) {
+					vals[j][vlen[j]] = '\n';
+					memcpy(vals[j] + vlen[j] + 1, txt, sl);
+					vlen[j] = need;
+				} else {
+					memcpy(vals[j], txt, sl);
+					vlen[j] = sl;
+				}
+				vals[j][vlen[j]] = '\0';
 			}
-
 			ret = sqlite3_step(stmt);
 		}
+
+		sqlite3_finalize(stmt);
+		sqlite3_close(db);
+
+		if (!got_row) {
+			/* indicate "no rows" */
+			close(pfd[1]);
+			_exit(1);
+		}
+
+		/* frame: uint32 count, then (uint32 nlen, uint32 vlen, bytes...) */
+		uint32_t cnt = (uint32_t)ncols;
+		if (!write_full(pfd[1], &cnt, sizeof(cnt)))
+			_exit(1);
+		for (int j = 0; j < ncols; j++) {
+			uint32_t nl = (uint32_t)strlen(names[j]);
+			uint32_t vl = (uint32_t)(vals[j] ? strlen(vals[j]) : 0);
+			if (!write_full(pfd[1], &nl, sizeof(nl)) ||
+			    !write_full(pfd[1], &vl, sizeof(vl)) ||
+			    !write_full(pfd[1], names[j], nl) ||
+			    (vl && !write_full(pfd[1], vals[j], vl))) {
+				_exit(1);
+			}
+		}
+		close(pfd[1]);
+		_exit(0);
 	}
 
-cleanup:
-	if (stmt)
-		sqlite3_finalize(stmt);
-	sqlite3_close(db);
-
-	/* If no row returned, set all requested variables to empty */
-	if (!got_row) {
+	/* parent: read framed results and set vars */
+	close(pfd[1]);
+	uint32_t cnt = 0;
+	if (!read_full(pfd[0], &cnt, sizeof(cnt))) {
+		close(pfd[0]);
+		(void)wait_child_exit_status(pid);
 		for (i = 0; i < nvars; i++)
 			setvar(argv[3 + i], "", 0);
 		return 1;
 	}
-	return 0;
+	for (uint32_t j = 0; j < cnt; j++) {
+		uint32_t nl = 0, vl = 0;
+		char *nmbuf = NULL;
+		char *vlbuf = NULL;
+		if (!read_full(pfd[0], &nl, sizeof(nl)) ||
+		    !read_full(pfd[0], &vl, sizeof(vl))) {
+			close(pfd[0]);
+			(void)wait_child_exit_status(pid);
+			return 1;
+		}
+		nmbuf = ckmalloc((size_t)nl + 1);
+		if (!read_full(pfd[0], nmbuf, nl)) {
+			ckfree(nmbuf);
+			close(pfd[0]);
+			(void)wait_child_exit_status(pid);
+			return 1;
+		}
+		nmbuf[nl] = '\0';
+		vlbuf = ckmalloc((size_t)vl + 1);
+		if (vl) {
+			if (!read_full(pfd[0], vlbuf, vl)) {
+				ckfree(nmbuf);
+				ckfree(vlbuf);
+				close(pfd[0]);
+				(void)wait_child_exit_status(pid);
+				return 1;
+			}
+		}
+		vlbuf[vl] = '\0';
+		setvar(nmbuf, vlbuf, 0);
+		ckfree(nmbuf);
+		ckfree(vlbuf);
+	}
+	close(pfd[0]);
+	st = wait_child_exit_status(pid);
+	return st;
 }
 
 int

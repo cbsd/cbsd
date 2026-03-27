@@ -261,7 +261,7 @@ struct var *setvareq(char *s, int flags)
 			const char *n;
 
 			if (flags & VNOSAVE)
-				free(s);
+				ckfree(s);
 			n = vp->text;
 			sh_error("%.*s: is read only", strchrnul(n, '=') - n,
 				 n);

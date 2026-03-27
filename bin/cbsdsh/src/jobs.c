@@ -996,7 +996,12 @@ struct job *vforkexec(union node *n, char **argv, const char *path, int idx)
 		mypid = getpid();
 	vforked = mypid;
 
-	pid = vfork();
+	/*
+	 * Use fork() for portability and safety. vfork() shares the address
+	 * space with the parent and is fragile with modern libc allocators and
+	 * complex libraries (sqlite/jq) used inside the shell.
+	 */
+	pid = fork();
 
 	if (!pid) {
 		forkchild(jp, n, FORK_FG);
