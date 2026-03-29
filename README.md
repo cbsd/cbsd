@@ -3,8 +3,8 @@
 CBSD is a cross-platform wrapper for fast deployment of virtual machines and containers.
 
 The project provides a unique framework for building hybrid, vendor-lock-free cloud infrastructures. 
-By providing a unified interface across *FreeBSD, Linux, DragonFlyBSD, and NetBSD* OS, CBSD allows you to orchestrate 
-heterogeneous environments powered by *XEN, QEMU/KVM, QEMU-NVMM*, and *bhyve*. 
+By providing a unified interface across **FreeBSD, Linux, DragonFlyBSD, and NetBSD** OS, CBSD allows you to orchestrate 
+heterogeneous environments powered by **bhyve, XEN, QEMU/KVM, QEMU-NVMM**, and **jail**. 
 This flexibility enables you to design cloud solutions that are not only resilient to vendor lock-in but also allow for a 
 strategic mix of technologies and licenses—from a pure BSD stack to GPL-based solutions—tailored to your specific needs.
 
