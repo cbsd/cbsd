@@ -5,6 +5,22 @@
 CBSD works on multiple platforms. Follow the relevant instructions:
 
 <details>
+  <summary>Installation on DragonflyBSD</summary>
+
+1) Install 'cbsd' package:
+```
+pkg install -y cbsd
+```
+
+or via dports:
+```
+make -C /usr dports-create
+env BATCH=no make -C /usr/dports/sysutils/cbsd install
+```
+</details>
+
+
+<details>
   <summary>Installation on FreeBSD</summary>
 
 1) Install 'cbsd' package:
@@ -45,19 +61,23 @@ mv /usr/local/cbsd/bin/cbsd /usr/local/bin/
 </details>
 
 <details>
-  <summary>Installation on DragonflyBSD</summary>
+  <summary>Installation on NetBSD</summary>
 
-1) Install 'cbsd' package:
+1) Install dependencies:
 ```
-pkg install -y cbsd
+export PKG_PATH="https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/`uname -p`/`uname -r`/All/"
+pkg_add -v sqlite3 git curl gmake automake autoconf jq coreutils psmisc rsync sudo pkgconf dialog libssh2
 ```
 
-or via dports:
+
+2) CBSD hasn't been added to the pkgsrc repository yet. Install it from source code.
 ```
-make -C /usr dports-create
-env BATCH=no make -C /usr/dports/sysutils/cbsd install
+[ ! -d /usr/local ] && mkdir /usr/local
+git clone https://github.com/cbsd/cbsd.git /usr/local/cbsd
 ```
+
 </details>
+
 
 ## Initialization
 

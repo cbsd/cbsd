@@ -8,18 +8,19 @@ the port to GNU/Linux happened almost automatically as part of the work on suppo
 Tested/supported with following OSes and hypervisor/container engines:
 
 
-| Platform[*1]                                     | [bhyve](/share/docs/bhyve/handbook.md) | [jail](/share/docs/jail/cbsd_jail_quickstart.md) | [QEMU](/share/docs/qemu/cbsd_qemu_quickstart.md) | [KVM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [NVMM](/share/docs/qemu/cbsd_qemu_quickstart.md) | [XEN](http://www.xenproject.org/) |
-|------------------------------------------------- | ----- | ---- | ------- | --- | ---- | --- |
-| [DragonFlyBSD](https://www.dragonflybsd.org/)    |   -   |  y   |  y      |  -  |  y   |  -  |
-| [FreeBSD](https://www.freebsd.org/)              |   y   |  y   |  y [*2] |  -  |  -   |  y  |
-| [HardenedBSD](https://hardenedbsd.org/)          |   y   |  y   |  y      |  -  |  -   |  -  |
-| [XigmaNAS](https://xigmanas.com/xnaswp/)         |   y   |  y   |  -      |  -  |  -   |  -  |
-| GNU/Linux [*3]                                   |   -   |  -   |  y      |  y  |  -   |  -  |
+| Platform[*1]                                     |   [bhyve](share/docs/bhyve/handbook.md)    | [jail](share/docs/jail/cbsd_jail_quickstart.md) | [QEMU](share/docs/qemu/cbsd_qemu_quickstart.md) | [KVM](share/docs/qemu/cbsd_qemu_quickstart.md) | [NVMM](/share/docs/qemu/cbsd_qemu_quickstart.md) |      [XEN](http://www.xenproject.org/)     |
+|------------------------------------------------- | ------------------------------------------ | ----------------------------------------------- | ----------------------------------------------- | ---------------------------------------------- | ------------------------------------------------ | ------------------------------------------ |
+| [DragonFlyBSD](https://www.dragonflybsd.org/)    |                       -                    |    [y](share/docs/general/cbsd_quickstart.md)   | [y](share/docs/general/cbsd_quickstart.md)      |                        -                       |    [y](share/docs/general/cbsd_quickstart.md)    |                      -                     |
+| [FreeBSD](https://www.freebsd.org/)              | [y](share/docs/general/cbsd_quickstart.md) |    [y](share/docs/general/cbsd_quickstart.md)   | [y](share/docs/general/cbsd_quickstart.md) [*2] |                        -                       |                            -                     | [y](share/docs/general/cbsd_quickstart.md) |
+| GNU/Linux [*3]                                   |                       -                    |                          -                      | [y](share/docs/general/cbsd_quickstart.md)      |   [y](share/docs/general/cbsd_quickstart.md)   |                            -                     |                      -                     |
+| [HardenedBSD](https://hardenedbsd.org/)          | [y](share/docs/general/cbsd_quickstart.md) |    [y](share/docs/general/cbsd_quickstart.md)   | [y](share/docs/general/cbsd_quickstart.md)      |                        -                       |                            -                     |                      -                     |
+| [NetBSD](https://netbsd.org/)                    |                       -                    |                          -                      | [y](share/docs/general/cbsd_quickstart.md)      |                        -                       |    [y](share/docs/general/cbsd_quickstart.md)    | [y](share/docs/general/cbsd_quickstart.md) |
+| [XigmaNAS](https://xigmanas.com/xnaswp/)         | [y](share/docs/general/cbsd_quickstart.md) |    [y](share/docs/general/cbsd_quickstart.md)   |                           -                     |                        -                       |                            -                     |                      -                     |
 
 
-:information_source: [^1] | The project welcomes the addition of new platforms. On our horizon: [OpenBSD](https://www.openbsd.org/), [NetBSD](http://netbsd.org/), MacOS, CGROUP/systemd-nspawn (as container engine);
+:information_source: [^1] | The project welcomes the addition of new platforms. On our horizon: [OpenBSD](https://www.openbsd.org/), MacOS, CGROUP/systemd-nspawn (as container engine);
 :---: | :---
-:information_source: [^2] | Can be used without acceleration: user-mode for jails and/or emulation of non-native architectures;
+:information_source: [^2] | Can be used without acceleration: user-mode for jails and/or emulation of non-native architectures; + Also unofficial [patch for QEMU+vmm accel](https://wiki.freebsd.org/SummerOfCode2025Projects/VMMAcceleratorSupportForQEMU) available;
 :information_source: [^3] | Linux support is experimental, currently the following distributions have been successfully tested: Debian, Ubuntu, Manjaro;
 :---: | :---
 
