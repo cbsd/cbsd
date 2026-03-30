@@ -37,6 +37,14 @@ Quick start: [/share/docs/cbsd_quickstart.md](/share/docs/general/cbsd_quickstar
 
 Full guide: [/share/docs/docs.md](/share/docs/README.md)
 
+Discussion:
+
+- Github: [Discussions](https://github.com/cbsd/cbsd/discussions)
+
+- Telegram chat en: https://t.me/cbsdofficial
+
+- Telegram chat ru: https://t.me/cbsdofficial_ru
+
 # CBSD Project History and Goals
 
 ## Origins
