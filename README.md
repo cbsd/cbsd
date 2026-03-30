@@ -37,7 +37,7 @@ Quick start: [/share/docs/cbsd_quickstart.md](/share/docs/general/cbsd_quickstar
 
 Full guide: [/share/docs/docs.md](/share/docs/README.md)
 
-Discussion:
+Discussions:
 
 - Github: [Discussions](https://github.com/cbsd/cbsd/discussions)
 
