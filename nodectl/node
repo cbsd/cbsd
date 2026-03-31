@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v12.0.9
 CBSDMODULE="node"
-MYARG="mode"
-MYOPTARG="allinfo cbsdkeyfile display header ip node port pw rootkeyfile"
+CIXARG="mode"
+CIXOPTARG="allinfo cbsdkeyfile display header ip node port pw rootkeyfile"
 MYDESC="Manipulate or show information for remote nodes"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -57,8 +57,9 @@ EXTHELP="wf_node"
 
 readconf node.conf
 
-. ${cbsdinit}
 
+. ${tools}
+cixinit
 . ${nodes}
 
 [ -z "${display}" ] && display="nodename,ip,port,keyfile,status,idle"
@@ -83,8 +84,9 @@ show_header()
 
 getpw()
 {
-	local oldmodes=$( ${STTY_CMD} -g )
-	pw=""
+	local oldmodes=
+	pw=
+	capture oldmodes ${STTY_CMD} -g
 
 	trap "${STTY_CMD} ${oldmodes}" HUP INT ABRT BUS TERM EXIT
 
@@ -102,8 +104,7 @@ getpw()
 
 nodeadd()
 {
-	local _res= _ret=
-	local _myip=
+	local _res= _ret= _myip= _deblog=
 
 	[ -z "${node}" ] && err 1 "${N1_COLOR}Empty node${N0_COLOR}"
 	[ -z "${port}" ] && port=22
@@ -123,7 +124,7 @@ nodeadd()
 			_myip="${node}"
 			;;
 		*)
-			_myip=$( resolvhost ${node} )
+			capture _myip resolvhost ${node}
 			[ -z "${_myip}" ] && err 1 "${N1_COLOR}Can't resolv IP for ${node} hostname. Use IP address.${N0_COLOR}"
 			node=${_myip}
 			;;
@@ -160,7 +161,7 @@ nodeadd()
 	esac
 
 	${ECHO} "${N1_COLOR}Connecting to ${node} via ${proto}...${N0_COLOR}"
-	NODENAME=$( ${CBSD_SSH_CMD} /usr/local/bin/cbsd getinfo -q nodename )
+	capture NODENAME ${CBSD_SSH_CMD} /usr/local/bin/cbsd getinfo quiet=1 nodename
 	_ret=$?
 
 	cbsdlogger NOTICE ${CIX_APP}: remote node getinfo: ${CBSD_SSH_CMD}
@@ -179,11 +180,14 @@ nodeadd()
 
 	[ -z "${NODENAME}" ] && err 1 "${N1_COLOR}No nodename found. Check remote cbsd settings${N0_COLOR}"
 
-	MD5NAME=$( ${miscdir}/cbsd_md5 "${NODENAME}" )
+	capture MD5NAME ${miscdir}/cbsd_md5 "${NODENAME}"
+
+	capture _deblog ${MKTEMP_CMD}
+
 	if [ -n "${cbsdkeyfile}" ]; then
-		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} cbsdkeyfile=${cbsdkeyfile} > ${DEBLOG} 2>&1
+		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} cbsdkeyfile=${cbsdkeyfile} > ${_deblog} 2>&1
 	else
-		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > ${DEBLOG} 2>&1
+		nodeaddkey md5name=${MD5NAME} ip=${node} port=${port} pw=${pw} > ${_deblog} 2>&1
 	fi
 	_res=$?
 
@@ -192,29 +196,29 @@ nodeadd()
 			true
 			;;
 		1)
-			if [ -r ${DEBLOG} ]; then
-				${CAT_CMD} ${DEBLOG}
-				${RM_CMD} ${DEBLOG}
+			if [ -r ${_deblog} ]; then
+				${CAT_CMD} ${_deblog}
+				${RM_CMD} ${_deblog}
 			fi
 			err ${_res} "${N1_COLOR}Error: Bad password${N0_COLOR}"
 			;;
 		2)
-			if [ -r ${DEBLOG} ]; then
-				${CAT_CMD} ${DEBLOG}
-				${RM_CMD} ${DEBLOG}
+			if [ -r ${_deblog} ]; then
+				${CAT_CMD} ${_deblog}
+				${RM_CMD} ${_deblog}
 			fi
 			err ${_res} "${N1_COLOR}Error: No key found or wrong hostname. Please run: 'cbsd initenv' on remote machine${N0_COLOR}"
 			;;
 		*)
-			if [ -r ${DEBLOG} ]; then
-				${CAT_CMD} ${DEBLOG}
-				${RM_CMD} ${DEBLOG}
+			if [ -r ${_deblog} ]; then
+				${CAT_CMD} ${_deblog}
+				${RM_CMD} ${_deblog}
 			fi
 			err ${_res} "${N1_COLOR}Error: Unkown error${N0_COLOR}"
 			;;
 	esac
 
-	[ -r ${DEBLOG} ] && ${RM_CMD} ${DEBLOG}
+	[ -r ${_deblog} ] && ${RM_CMD} ${_deblog}
 
 	# Copy remote .pub into authorized_keys
 	printf "${N1_COLOR}Update ~cbsd/.ssh/authorized_keys...${N0_COLOR}"
@@ -225,33 +229,35 @@ nodeadd()
 		err 1 "failed: ${CP_CMD} -a .ssh/id_rsa.pub authorized_keys"
 	fi
 
-	${CAT_CMD} ${DEBLOG}
-	${ECHO} "${W1_COLOR}>>>   !Warning! Please note! !Warning!${N0_COLOR}"
-	${ECHO} "${H5_COLOR}Having a ~cbsd/.ssh/authorized_keys file on ${NODENAME}, anyone who gets private key (~cbsd/.ssh/id_rsa) will have the access from cbsd user!${N0_COLOR}"
-	${ECHO} "${H5_COLOR}In a multi-node configuration your commands can be run on remote servers.${N0_COLOR}"
-	${ECHO} "${H5_COLOR}Be careful with [xjb]remove-like command.${N0_COLOR}"
-	${ECHO} "${W1_COLOR}<<<   !Warning! Please note! !Warning!${N0_COLOR}"
+	#${CAT_CMD} ${_deblog} 1>&2
+	${ECHO} "${W1_COLOR}>>>   !Warning! Please note! !Warning!${N0_COLOR}" 1>&2
+	${ECHO} "${H5_COLOR}Having a ~cbsd/.ssh/authorized_keys file on ${NODENAME}, anyone who gets private key (~cbsd/.ssh/id_rsa) will have the access from cbsd user!${N0_COLOR}" 1>&2
+	${ECHO} "${H5_COLOR}In a multi-node configuration your commands can be run on remote servers.${N0_COLOR}" 1>&2
+	${ECHO} "${H5_COLOR}Be careful with [xjb]remove-like command.${N0_COLOR}" 1>&2
+	${ECHO} "${W1_COLOR}<<<   !Warning! Please note! !Warning!${N0_COLOR}" 1>&2
 	LOCALKEY="${rsshdir}/${MD5NAME}.id_rsa"
 	${TOUCH_CMD} ${rsshdir}/${NODENAME}.node
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${rsshdir}/${NODENAME}.node SSHKEY=${LOCALKEY} IP=${node} PORT=${port} > /dev/null
+	updateconf ${rsshdir}/${NODENAME}.node SSHKEY=${LOCALKEY} IP=${node} PORT=${port}
 	${CHOWN_CMD} ${cbsduser} ${rsshdir}/${NODENAME}.node
-	IP=$( cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${NODENAME}'" )
+
+	cbsdsqlro_vars nodes "SELECT ip FROM nodelist WHERE nodename='${NODENAME}'" IP
 	external_exec_master_node_script -a add.d -n ${NODENAME} -i ${node} -p ${port} -k ${LOCALKEY}
 	if [ -z "${IP}" ]; then
 		cbsdsqlrw nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( '${NODENAME}', '${node}', '${port}', '${LOCALKEY}', '${rootkeyfile}', 'inv.${NODENAME}.sqlite' )"
 	else
-		${ECHO} "${N1_COLOR}Already exist in database, updating: ${N2_COLOR}${node}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}Already exist in database, updating: ${N2_COLOR}${node}${N0_COLOR}" 1>&2
 		cbsdsqlrw nodes "DELETE FROM nodelist WHERE nodename='${NODENAME}'"
 		cbsdsqlrw nodes "INSERT INTO nodelist ( nodename, ip, port, keyfile, rootkeyfile, invfile ) VALUES ( '${NODENAME}', '${node}', '${port}', '${LOCALKEY}', '${rootkeyfile}', 'inv.${NODENAME}.sqlite' )"
 	fi
 	idle_update ${NODENAME}
 	retrinv node=${NODENAME} tryoffline=1
+
 	return ${_res}
 }
 
 nodedel()
 {
-	local _descext="descr role domain notes location" _res
+	local _descext="descr role domain notes location" _res=
 
 	[ -z "${node}" ] && err 1 "${N1_COLOR}Empty node${N0_COLOR}"
 	NODECONF="${rsshdir}/${node}.node"
@@ -265,13 +271,14 @@ nodedel()
 	fi
 
 	[ -f "${dbdir}/${node}.sqlite" ] && ${RM_CMD} -f "${dbdir}/${node}.sqlite"
-	_res=$( cbsdsqlrw nodes DELETE FROM nodelist WHERE nodename=\"${node}\" )
+	cbsdsqlrw nodes "DELETE FROM nodelist WHERE nodename='${node}'"
 
 	#descriptions die too
 	${FIND_CMD} ${dbdir}/nodedescr -mindepth 1 -maxdepth 1 -name ${node}.\*.descr -type f -delete
 	for i in ${_descext}; do
 		[ -f "${dbdir}/nodedescr/${node}.${i}" ] && ${RM_CMD} -f "${dbdir}/nodedescr/${node}.${i}"
 	done
+
 	err 0 "${N1_COLOR}Removed${N0_COLOR}"
 }
 
@@ -281,18 +288,17 @@ show_nodes()
 		cluster_nodes_show && return
 	fi
 
-	OIFS=${IFS}
-	local sqldelimer IFS
-
-
 	if [ ${allinfo} -eq 0 ]; then
-		cbsdsqlro nodes SELECT nodename FROM nodelist
+		cbsdsqlro nodes "SELECT nodename FROM nodelist"
 	else
 		show_header
-		sqldelimer="|"
-		IFS="|"
-		cbsdsqlro nodes SELECT nodename,ip,port,keyfile,idle FROM nodelist | while read nodename ip port keyfile idle; do
-			IFS=${OIFS}
+
+		cbsdsqlquery nodes "SELECT nodename,ip,port,keyfile,idle FROM nodelist" | while read q; do
+			nodename=${q@.nodename}
+			ip=${q@.ip}
+			port=${q@.port}
+			keyfile=${q@.keyfile}
+			idle=${q@.idle}
 
 			conv_idle "${idle}"
 
@@ -310,19 +316,17 @@ show_nodes()
 			done
 
 			${ECHO} "${_status}${N0_COLOR}"
-			IFS="|"
 			_status=
 		done
 	fi
-	unset sqldelimer
 }
 
-shownode() {
-	local _res
-
+shownode()
+{
+	local _res=
 	local sqldelimer=" "
-	_res=$( cbsdsqlro nodes "SELECT nodename FROM nodelist WHERE nodename='${node}'" )
 
+	cbsdsqlro_vars nodes "SELECT nodename FROM nodelist WHERE nodename='${node}'" _res
 	[ -z "${_res}" ] && err 1 "${N1_COLOR}No such node in databases: ${N2_COLOR}${node}${N0_COLOR}"
 
 	${ECHO} "${BOLD}  Summary statistics for ${node}  ${N0_COLOR}"
@@ -384,18 +388,16 @@ shownode() {
 
 update_node()
 {
-	local _port _ip
-
 	while getopts "i:p:" opt; do
 		case "${opt}" in
 			p)
 				_port="${OPTARG}"
-				cbsdsqlrw nodes UPDATE nodelist SET port=\"${_port}\" WHERE nodename=\"${node}\"
-			;;
+				cbsdsqlrw nodes "UPDATE nodelist SET port='${_port}' WHERE nodename='${node}'"
+				;;
 			i)
 				_ip="${OPTARG}"
-				cbsdsqlrw nodes UPDATE nodelist SET ip=\"${_ip}\" WHERE nodename=\"${node}\"
-			;;
+				cbsdsqlrw nodes "UPDATE nodelist SET ip='${_ip}' WHERE nodename='${node}'"
+				;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -410,20 +412,20 @@ gettime curtime
 [ -z "${header}" ] && header=1
 
 case "${mode}" in
-	"add")
+	add)
 		nodeadd
 		;;
-	"list")
+	list)
 		show_nodes | ${COLUMN_CMD} -t
 		;;
-	"remove")
+	remove)
 		nodedel
 		;;
-	"show")
+	show)
 		[ -z "${node}" ] && err 1 "${N1_COLOR}Please specify: ${N2_COLOR}node=${N0_COLOR}"
 		shownode
 		;;
-	"update")
+	update)
 		[ -z "${node}" ] && err 1 "${N1_COLOR}Please specify ${N2_COLOR}node=${N0_COLOR}"
 		modified=0
 		if [ -n "${port}" ]; then
