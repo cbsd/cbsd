@@ -160,49 +160,53 @@ fi
 JLIST=
 
 # check for actual vm list in arg list
-jail_num=0
-jname=
-for i in ${TMP_JLIST}; do
-	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
-	if [ -n "${exist}" ]; then
-		if [ -n "${JLIST}" ]; then
-			JLIST="${JLIST} ${i}"
-		else
-			JLIST="${i}"
+if [ -z "${jname}" ]; then
+	jail_num=0
+	for i in ${TMP_JLIST}; do
+		cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
+		if [ -n "${exist}" ]; then
+			if [ -n "${JLIST}" ]; then
+				JLIST="${JLIST} ${i}"
+			else
+				JLIST="${i}"
+			fi
+			if [ ${jail_num} -eq 0 ]; then
+				jname="${i}"
+			else
+				# when > 1, jname unused below
+				unset jname
+			fi
+			jail_num=$(( jail_num + 1 ))
 		fi
-		if [ ${jail_num} -eq 0 ]; then
-			jname="${i}"
-		else
-			# when > 1, jname unused below
-			unset jname
-		fi
-		jail_num=$(( jail_num + 1 ))
-	fi
-done
-
-. ${subrdir}/time.subr
-gettime st_time
-
-# this is multiple list, split it by parallel jstop execution
-if [ ${jail_num} -gt 1 ]; then
-	cbsdlogger NOTICE ${CIX_APP}: executing for multiple stopping: ${JLIST}
-	# multiple astart always non interactive
-	export inter=0
-	for jname in ${JLIST}; do
-		env NOINTER=1 ${miscdir}/daemonize -E NOINTER=1 -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
-		#lets save .pid file
-		sleep 1
-		[ -f "${ftmpdir}/jstop.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/jstop.${jname}.$$ ) --timeout=${parallel}
 	done
 
-	wait_for_fpid -a stop
+	. ${subrdir}/time.subr
+	gettime st_time
 
-	gettime end_time
-	diff_time=$(( end_time - st_time ))
-	capture diff_time displaytime ${diff_time}
-	${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
-	cbsdlogger NOTICE ${CIX_APP}: executing for multiple done in ${diff_time}: ${JLIST}
-	err 0 "${N1_COLOR}Multiple stop: ${N2_COLOR}done${N0_COLOR}"
+	# this is multiple list, split it by parallel jstop execution
+	if [ ${jail_num} -gt 1 ]; then
+		cbsdlogger NOTICE ${CIX_APP}: executing for multiple stopping: ${JLIST}
+		# multiple astart always non interactive
+		export inter=0
+		for jname in ${JLIST}; do
+			env NOINTER=1 ${miscdir}/daemonize -E NOINTER=1 -p ${ftmpdir}/jstop.${jname}.$$ /usr/local/bin/cbsd jstop jname=${jname}
+			#lets save .pid file
+			sleep 1
+			if [ -f "${ftmpdir}/jstop.${jname}.$$" ]; then
+				read -r _pid < "${ftmpdir}/jstop.${jname}.$$"
+				cbsd_pwait --pid=${_pid} --timeout=${parallel}
+			fi
+		done
+
+		wait_for_fpid -a stop
+
+		gettime end_time
+		diff_time=$(( end_time - st_time ))
+		capture diff_time displaytime ${diff_time}
+		${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+		cbsdlogger NOTICE ${CIX_APP}: executing for multiple done in ${diff_time}: ${JLIST}
+		err 0 "${N1_COLOR}Multiple stop: ${N2_COLOR}done${N0_COLOR}"
+	fi
 fi
 
 # single jname
@@ -217,7 +221,8 @@ if [ $? -eq 1 ]; then
 	for i in ${remotenode}; do
 		${ECHO} "${N1_COLOR}Remote jstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
 		rexe node=${i} cbsd jstop jname=${jname}
-		if [ $? -eq 0 ]; then
+		_ret=$?
+		if [ ${_ret} -eq 0 ]; then
 			# update inventory
 			${ECHO} "${N1_COLOR}Updating inventory...${N0_COLOR}"
 			task mode=new autoflush=2 cbsd retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
@@ -260,6 +265,9 @@ if [ "${vnet}" = "1" -a "${vimage_feature}" = "0" ]; then
 	${ECHO} "${N1_COLOR}Please recompile kernel with: ${N2_COLOR}options VIMAGE${N0_COLOR}"
 	vnet=0
 fi
+
+. ${subrdir}/time.subr
+gettime st_time
 
 # args for makejconf
 epairb_list=
@@ -517,6 +525,7 @@ fi
 ${miscdir}/daemonize ${toolsdir}/save-jail-info jname=${jname}
 
 gettime end_time
+. ${subrdir}/time.subr
 diff_time=$(( end_time - st_time ))
 # Update Redis
 if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; then

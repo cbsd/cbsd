@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v11.2.1
-MYARG=""
-MYOPTARG="data jname node tryoffline"
+CIXARG=""
+CIXOPTARG="data jname node tryoffline"
 MYDESC="Fetch sqldb from remote node"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -30,24 +30,24 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 . ${subrdir}/nc.subr
-. ${cbsdinit}
+. ${tools}
+cixinit
 . ${nodes}
 
 retr_db()
 {
-	local _rnode="${1}"
-	local _msg=
+	local _rnode="${1}" _msg=
 
 	[ -z "${_rnode}" ] && return 0
 
 	_cmd="nodescp ${checkforonline} ${_rnode}:var/db/inv.${_rnode}.sqlite ${dbdir}/${_rnode}.sqlite"
 	${_cmd} && ${CHMOD_CMD} 0640 "${dbdir}/${_rnode}.sqlite" && ${CHOWN_CMD} ${cbsduser} "${dbdir}/${_rnode}.sqlite"
 	if [ $? -eq 0 ]; then
-		${ECHO} "${N1_COLOR}CBSD: Fetching inventory done: ${N2_COLOR}${_rnode}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}CBSD: Fetching inventory done: ${N2_COLOR}${_rnode}${N0_COLOR}" 1>&2
 		idle_update ${_rnode}
 	else
-		${ECHO} "${N1_COLOR}CBSD: Fetching inventory failed: ${N2_COLOR}${_rnode}${N0_COLOR}"
-		${ECHO} "${N1_COLOR}Guru meditaion: ${N2_COLOR}${_cmd}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}CBSD: Fetching inventory failed: ${N2_COLOR}${_rnode}${N0_COLOR}" 1>&2
+		${ECHO} "${N1_COLOR}Guru meditaion: ${N2_COLOR}${_cmd}${N0_COLOR}" 1>&2
 	fi
 
 	return 0
@@ -55,9 +55,7 @@ retr_db()
 
 retr_nodedescr()
 {
-	local _rnode="${1}" _files= _i=
-	local _res=
-	local _ret=
+	local _rnode="${1}" _files= _i= _res= _ret=
 
 	[ -z "${_rnode}" ] && return 0
 	[ ! -d "${dbdir}/nodedescr" ] && ${MKDIR_CMD} -m 0700 -p "${dbdir}/nodedescr" && ${CHMOD_CMD} 0640 "${dbdir}/nodedescr" && ${cbsduser} "${dbdir}/nodedescr"
@@ -65,7 +63,7 @@ retr_nodedescr()
 	_files="descr role domain notes location"
 
 	for _i in ${_files}; do
-		_res=$( nodescp ${checkforonline} ${_rnode}:node.${_i} ${dbdir}/nodedescr/${_rnode}.${_i} 2>/dev/null )
+		capture _res nodescp ${checkforonline} ${_rnode}:node.${_i} ${dbdir}/nodedescr/${_rnode}.${_i}
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "nodescp failed [skipped]: ${_res}"
@@ -81,9 +79,7 @@ retr_nodedescr()
 # todo: check for shared FS
 retr_vm()
 {
-	local _rnode="${1}" _emulator="${2}"
-	local _files= _i= _sqlfile=
-	local _tmpdir=
+	local _rnode="${1}" _emulator="${2}" _files= _i= _sqlfile= _tmpdir= _jname=
 
 	[ -z "${_rnode}" ] && return 0
 
@@ -91,13 +87,14 @@ retr_vm()
 
 	[ ! -d ${_tmpdir} ] && ${MKDIR_CMD} -p ${_tmpdir}
 
-	cbsdsqlro ${_rnode} SELECT jname FROM jails WHERE emulator='${_emulator}' ORDER BY jname ASC | while read jname; do
-		[ ! -d ${_tmpdir}/${jname} ] && ${MKDIR_CMD} -p ${_tmpdir}/${jname}
-		_files="jails-system/${jname}"
-		_res=$( nodescp ${checkforonline} ${_rnode}:${_files}/local.sqlite ${_tmpdir}/${jname}/local.sqlite 2>/dev/null )
+	cbsdsqlro_vars ${_rnode} "SELECT jname FROM jails WHERE emulator='${_emulator}' ORDER BY jname ASC" _jname
+	for _i in ${_jname}; do
+		[ ! -d ${_tmpdir}/${_i} ] && ${MKDIR_CMD} -p ${_tmpdir}/${_j}
+		_files="jails-system/${_j}"
+		capture _res nodescp ${checkforonline} ${_rnode}:${_files}/local.sqlite ${_tmpdir}/${_i}/local.sqlite 2>/dev/null
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "nodescp failed [skipped]: ${_res}"
+			${ECHO} "nodescp failed [skipped]: ${_res}" 1>&2
 			continue
 		fi
 
@@ -109,8 +106,7 @@ retr_vm()
 
 retr_jail()
 {
-	local _rnode=${1} _files _i _sqlfile
-	local _tmpdir
+	local _rnode=${1} _files= _i= _sqlfile= _tmpdir=
 
 	[ -z "${_rnode}" ] && return 0
 	_tmpdir="${tmpdir}/${_rnode}"
@@ -123,8 +119,7 @@ retr_jail()
 
 retr_jdescr()
 {
-	local _rnode="${1}" _jname=
-	local _res=
+	local _rnode="${1}" _jname= _res=
 
 	[ -z "${_rnode}" ] && return 0
 
@@ -140,10 +135,10 @@ retr_jdescr()
 	[ -z "${_jname}" ] && return 0
 
 	for _i in ${_jname}; do
-		_res=$( nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/descr ${dbdir}/nodedescr/${_rnode}.${_i}.descr 2>/dev/null )
+		capture _res nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/descr ${dbdir}/nodedescr/${_rnode}.${_i}.descr 2>/dev/null
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "nodescp failed [skipped]: ${_res}"
+			${ECHO} "nodescp failed [skipped]: ${_res}" 1>&2
 			continue
 		fi
 		${CHMOD_CMD} 0640 "${dbdir}/nodedescr/${_rnode}.${_i}.descr"
@@ -153,8 +148,7 @@ retr_jdescr()
 
 retr_rctl()
 {
-	local _rnode="${1}" _jname=
-	local _res=
+	local _rnode="${1}" _jname= _res=
 
 	[ -z "${_rnode}" ] && return 0
 
@@ -170,10 +164,10 @@ retr_rctl()
 
 	for _i in ${_jname}; do
 		[ ! -d "${dbdir}/rctl/${_rnode}-${_i}" ] && ${MKDIR_CMD} -p "${dbdir}/rctl/${_rnode}-${_i}"
-		_res=$( nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null )
+		capture _res nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/rctl/* ${dbdir}/rctl/${_rnode}.${_i}.descr 2>/dev/null
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "nodescp failed [skipped]: ${_res}"
+			${ECHO} "nodescp failed [skipped]: ${_res}" 1>&2
 			continue
 		fi
 		${CHMOD_CMD} 0640 ${dbdir}/rctl/${_rnode}-${_i}/*
@@ -201,7 +195,7 @@ retr_fwcnt()
 
 	for _i in ${_jname}; do
 		[ ! -d "${dbdir}/fwcnt/${_rnode}-${_i}" ] && ${MKDIR_CMD} -p "${dbdir}/fwcnt/${_rnode}-${_i}"
-		_res=$( nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null )
+		capture _res nodescp ${checkforonline} ${_rnode}:jails-system/${_i}/traffic/* ${dbdir}/fwcnt/${_rnode}-${_i}/ 2>/dev/null
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "nodescp failed [skipped]: ${_res}"
@@ -224,19 +218,14 @@ else
 	checkforonline="tryoffline=${tryoffline}"
 fi
 
-if [ -z "${node}" ]; then
-	sqldelimer=" "
-	node=$( cbsdsqlro nodes select nodename from nodelist 2>/dev/null )
-	unset sqldelimer
-fi
+[ -z "${node}" ] && cbsdsqlro_vars nodes "SELECT nodename FROM nodelist" node
 
 # check node online and repopulate array of online nodes if needed
 if [ ${sqlreplica} -eq 1 -a ${tryoffline} -eq 0 ]; then
 	testnode="${node}"
 	node=
 	for i in ${testnode}; do
-		NODEDATA=$( cbsdsqlro nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${i}'" )
-		sqllist "${NODEDATA}" myip myport mykey
+		cbsdsqlro_vars nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${i}'" myip myport mykey
 		if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
 			${ECHO} "${N1_COLOR}Node is offline: ${N2_COLOR}${i}${N0_COLOR}"
 			continue

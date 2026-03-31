@@ -44,7 +44,6 @@ EXTHELP="wf_jstop_jstart"
 . ${subrdir}/tools.subr		# for select_jail_by_list
 
 readconf buildworld.conf
-
 jname=
 
 # check for cloud function when CBSDfile exist
@@ -210,83 +209,85 @@ fi
 
 JLIST=
 
-# check for actual vm list in arg list
-jail_num=0
-jname=
-for i in ${TMP_JLIST}; do
-	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
-	if [ -n "${exist}" ]; then
-		if [ -n "${JLIST}" ]; then
-			JLIST="${JLIST} ${i}"
-		else
-			JLIST="${i}"
-		fi
-		if [ ${jail_num} -eq 0 ]; then
-			jname="${i}"
-		else
-			# when > 1, jname unused below
-			unset jname
-		fi
-		jail_num=$(( jail_num + 1 ))
-	fi
-done
-
-# this is multiple list, split it by parallel jstart execution
-if [ ${jail_num} -gt 1 ]; then
-	cbsdlogger NOTICE ${CIX_APP}: executing for multiple starting: ${JLIST}
-	# multiple astart always non interactive
-	export inter=0
-
-	gettime st_time
-
-	if [ -z "${parallel}" -o "${parallel}" = "0" ]; then
-		for jname in ${JLIST}; do
-			/usr/local/bin/cbsd jstart inter=0 jname=${jname}
-		done
-	else
-		_seq=0
-		wait_pid_files=
-
-		for jname in ${JLIST}; do
-			cbsdsqlro_vars local "SELECT boot_delay FROM jails WHERE jname='${jname}' LIMIT 1" _boot_delay
-			if [ -z "${_boot_delay}" ]; then
-				_boot_delay=0
-			fi
-
-			if [ ${_boot_delay} -eq 0 ]; then
-				_boot_delay="${_seq}"
-			fi
-
-			env NOINTER=1 ${miscdir}/daemonize -E NOINTER=1 -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} delay=${_boot_delay}
-			if [ -z "${wait_pid_files}" ]; then
-				wait_pid_files="${ftmpdir}/jstart.${jname}.$$"
+if [ -z "${jname}" ]; then
+	# check for actual vm list in arg list
+	jail_num=0
+	jname=
+	for i in ${TMP_JLIST}; do
+		cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
+		if [ -n "${exist}" ]; then
+			if [ -n "${JLIST}" ]; then
+				JLIST="${JLIST} ${i}"
 			else
-				wait_pid_files="${wait_pid_files} ${ftmpdir}/jstart.${jname}.$$"
+				JLIST="${i}"
 			fi
+			if [ ${jail_num} -eq 0 ]; then
+				jname="${i}"
+			else
+				# when > 1, jname unused below
+				unset jname
+			fi
+			jail_num=$(( jail_num + 1 ))
+		fi
+	done
 
-			_seq=$(( _seq + 1 ))
-		done
+	# this is multiple list, split it by parallel jstart execution
+	if [ ${jail_num} -gt 1 ]; then
+		cbsdlogger NOTICE ${CIX_APP}: executing for multiple starting: ${JLIST}
+		# multiple astart always non interactive
+		export inter=0
 
-		#lets save .pid file
-		sleep 1
+		gettime st_time
 
-		# wait loop
-		for i in ${wait_pid_files}; do
-			[ ! -r ${i} ] && continue
-			read -r _pid < ${i}
-			[ -z "${_pid}" ] && continue
-			cbsd_pwait --pid=${_pid} --timeout=${parallel}
-		done
+		if [ -z "${parallel}" -o "${parallel}" = "0" ]; then
+			for jname in ${JLIST}; do
+				/usr/local/bin/cbsd jstart inter=0 jname=${jname}
+			done
+		else
+			_seq=0
+			wait_pid_files=
 
-		wait_for_fpid -a start -t ${parallel}
+			for jname in ${JLIST}; do
+				cbsdsqlro_vars local "SELECT boot_delay FROM jails WHERE jname='${jname}' LIMIT 1" _boot_delay
+				if [ -z "${_boot_delay}" ]; then
+					_boot_delay=0
+				fi
+
+				if [ ${_boot_delay} -eq 0 ]; then
+					_boot_delay="${_seq}"
+				fi
+
+				env NOINTER=1 ${miscdir}/daemonize -E NOINTER=1 -p ${ftmpdir}/jstart.${jname}.$$ /usr/local/bin/cbsd jstart inter=0 jname=${jname} delay=${_boot_delay}
+				if [ -z "${wait_pid_files}" ]; then
+					wait_pid_files="${ftmpdir}/jstart.${jname}.$$"
+				else
+					wait_pid_files="${wait_pid_files} ${ftmpdir}/jstart.${jname}.$$"
+				fi
+
+				_seq=$(( _seq + 1 ))
+			done
+
+			#lets save .pid file
+			sleep 1
+
+			# wait loop
+			for i in ${wait_pid_files}; do
+				[ ! -r ${i} ] && continue
+				read -r _pid < ${i}
+				[ -z "${_pid}" ] && continue
+				cbsd_pwait --pid=${_pid} --timeout=${parallel}
+			done
+
+			wait_for_fpid -a start -t ${parallel}
+		fi
+
+		gettime end_time
+		diff_time=$(( end_time - st_time ))
+		diff_time=$( displaytime ${diff_time} )
+		${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+		cbsdlogger NOTICE ${CIX_APP}: executing for multiple done in ${diff_time}: ${JLIST}
+		err 0 "${N1_COLOR}Multiple start: ${N2_COLOR}done${N0_COLOR}"
 	fi
-
-	gettime end_time
-	diff_time=$(( end_time - st_time ))
-	diff_time=$( displaytime ${diff_time} )
-	${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
-	cbsdlogger NOTICE ${CIX_APP}: executing for multiple done in ${diff_time}: ${JLIST}
-	err 0 "${N1_COLOR}Multiple start: ${N2_COLOR}done${N0_COLOR}"
 fi
 
 # MAIN
@@ -308,7 +309,8 @@ if [ $? -eq 1 ]; then
 		fi
 		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Remote jstart: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
 		rexe node=${i} cbsd jstart jname=${jname}
-		if [ $? -eq 0 ]; then
+		_ret=$?
+		if [ ${_ret} -eq 0 ]; then
 			# updating state and put task for retrinv inventory
 			[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Updating inventory...${N0_COLOR}"
 			task autoflush=2 mode=new retrinv node=${i} tryoffline=1 data=db > /dev/null 2>&1
