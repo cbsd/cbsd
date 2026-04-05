@@ -10,9 +10,10 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
+jname="jcreate1"
+
 oneTimeSetUp()
 {
-	jname="jcreate1"
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
@@ -23,6 +24,7 @@ oneTimeTearDown()
 
 testLinuxOS()
 {
+	echo "${CIX_BIN} jcreate jname=\"${jname}\" runasap=1 from=docker.io/library/busybox platform=linux emulator=linux pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0"
 	${CIX_BIN} jcreate jname="${jname}" runasap=1 from=docker.io/library/busybox platform=linux emulator=linux pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
 	is_linux=$( ${CIX_BIN} jexec jname="${jname}" uname -s )
 	assertEquals "Linux OS" "${is_linux}" "Linux"

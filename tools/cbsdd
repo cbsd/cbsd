@@ -10,6 +10,7 @@ EXTHELP="wf_taskd"
 cixinit
 . ${system}
 : "${reload:=0}"
+. ${tools}
 
 # reset hour for fwupdate
 last_hour_fwupdate=0
@@ -32,17 +33,13 @@ shmux()
 			;;
 	esac
 
-	. ${nodes}
 
-	if [ -f "${_locallockfile}" ]; then
-		if check_locktime ${_locallockfile} >/dev/null 2>&1; then
-			cbsdsqlrw nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE ip='${_ip}'"
-		fi
-		return 0
+	if check_locktime ${_locallockfile} >/dev/null 2>&1; then
+		cbsdsqlrw nodes "UPDATE nodelist SET idle=datetime('now','localtime') WHERE ip='${_ip}'"
 	fi
 
-	SSH_ARGS="-oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
-	[ ! -f "${_locallockfile}" ] && env workdir="${workdir}" ${miscdir}/daemon -u ${cbsduser} ${_locallock} ${SSH_CMD} ${SSH_ARGS} "${_remotelock} ${miscdir}/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated 2>${tmpdir}/inv.${_ip}.updated.err
+	SSH_ARGS="-tt -oControlPersist=30m -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${_port} -i ${_keyfile} -l ${cbsduser} ${_ip}"
+	env workdir="${workdir}" ${miscdir}/daemon -u ${cbsduser} ${_locallock} ${SSH_CMD} ${SSH_ARGS} "${_remotelock} ${miscdir}/cbsd_dot --file=var/db/local.sqlite" > ${tmpdir}/inv.${_ip}.updated 2>${tmpdir}/inv.${_ip}.updated.err
 }
 
 update_jaillock()
@@ -82,12 +79,15 @@ update_fw_counters()
 # if $1 = "force" skip for cbsd_dot check
 update_inventory()
 {
+	local _ip="${1}"
+
 	[ -z "${_ip}" ] && return 0
-	if [ "${1}" != "force" ]; then
+	if [ "${2}" != "force" ]; then
 		[ ! -s "${tmpdir}/inv.${_ip}.updated" ] && return 0
 		cbsdlogger NOTICE ${CIX_APP}: update remote inventory for ${_ip}: new changes
 	fi
 	${TRUNCATE_CMD} -s0 ${tmpdir}/inv.${_ip}.updated
+	echo "task mode=new exclusive=1 autoflush=2 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename}" >> /tmp/go.log
 	task mode=new exclusive=1 autoflush=2 owner=cbsddsys jname=#retrinv_${nodename} /usr/local/bin/cbsd retrinv node=${_nodename} >/dev/null 2>&1
 	${miscdir}/daemonize ${CIX_DISTDIR}/tools/nexttask
 }
@@ -217,7 +217,7 @@ cbsdsqlrw cbsdtaskd "UPDATE taskd SET status='0' WHERE status='1'" 2>/dev/null
 
 # remove stale lock and trash files
 ${FIND_CMD} -E ${ftmpdir} -mindepth 1 -maxdepth 1 \( -name shmux_\*.lock -or -name jstart\.\* -or -name jstop\.\* -or -name \*\.jconf \) -and -mtime +30m -delete > /dev/null 2>&1
-${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
+#${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name inv.\*.updated -delete > /dev/null 2>&1
 ${FIND_CMD} ${tmpdir} -mindepth 1 -maxdepth 1 -name \*.desc -delete > /dev/null 2>&1
 
 # retrinv
@@ -237,14 +237,31 @@ cbsdlogger NOTICE ${CIX_APP}: cbsdd: max_simul_jobs:${max_simul_jobs},loop_timeo
 tik=0
 
 capture SEQ ${SEQ_CMD} 1 ${max}
+. ${nodes}
 
 while [ 1 ]; do
-
 	tik=$(( tik + 1 ))
+
+	if [ ${sqlreplica} -eq 1 -a ${tik} -eq 1 ]; then
+		nip=
+		cbsdsqlro_vars nodes "SELECT ip FROM nodelist" nip
+		tik=301	# init shmux
+	fi
+
+	if [ ${sqlreplica} -eq 1 -a -n "${nip}" ]; then
+		for i in ${nip}; do
+			if [ -r ${tmpdir}/inv.${i}.updated ]; then
+				capture _bytes get_file_bytes ${tmpdir}/inv.${i}.updated
+				[ "${_bytes}" != "0" ] && update_inventory ${i} force
+			fi
+		done
+	fi
+
 
 	# ~5min
 	if [ ${tik} -gt 300 ]; then
 		update_jaillock
+
 		[ ${ipfw_enable} -eq 1 ] && update_fw_counters
 
 		unset ip port keyfile _ip _port _keyfile queue
@@ -256,12 +273,12 @@ while [ 1 ]; do
 				_port=${q@.port}
 				_keyfile=${q@.keyfile}
 				[ -n "${_ip}" ] && shmux
-				if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
+#				if [ ${retrinv_loop} -gt ${loop_per_retrinv} ]; then
 					cbsdlogger NOTICE ${CIX_APP}: update remote inventory for ${_ip} via loop_per_retrinv [${loop_per_retrinv}]
-					update_inventory force
-				else
-					update_inventory
-				fi
+					update_inventory ${i} force
+#				else
+#					update_inventory ${i}
+#				fi
 			done
 		fi
 		tik=0

@@ -11,7 +11,8 @@ set +e
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
 # hardcoded
-CBSD_JAIL_ROOT="zroot/jails"
+#CBSD_JAIL_ROOT="zroot/jails"
+CBSD_JAIL_ROOT="tank/jails"
 
 zfs list ${CBSD_JAIL_ROOT} > /dev/null 2>&1
 if [ $? -ne 0 ]; then
@@ -40,7 +41,6 @@ oneTimeTearDown()
 		zfs destroy ${CBSD_JAIL_ROOT}/${gold_jname}
 	fi
 }
-
 
 testCreateGold1()
 {
@@ -84,6 +84,5 @@ testCreateClone1()
 	# test: 0 - ok
 	assertEquals "File /root/date.txt not found inside Cloned jail" 0 "${_ret}"
 }
-
 
 . ${progdir}/../shunit2

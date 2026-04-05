@@ -120,7 +120,7 @@ get_device_uplink()
 #    fi
 get_my_device()
 {
-	local _i _uplink _firstfree _ret _test _dev _desc
+	local _i= _uplink= _firstfree= _ret= _test= _dev= _desc=
 	local _vpc=0 _dbpath _niclist= _res=
 	local _is_vtnet=0 _prefix5	# (see #254343 work-around)
 
@@ -134,8 +134,24 @@ get_my_device()
 		_dev="bridge"
 	fi
 
+	if [ "${_dev}" = "bridge" ]; then
+		# my parent already bridge?
+		if [ ${_vpc} -ne 1 ]; then
+			case "${platform}" in
+				Linux)
+					_res=$( ${IP_CMD} link show type bridge dev ${_desc} 2>/dev/null )
+					[ -n "${_res}" ] && echo "${_desc}" && return 0
+					;;
+				*)
+					_is_bridge=$( ${IFCONFIG_CMD} ${_desc} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+					[ "${_is_bridge}" = "bridge" ] && echo "${_desc}" && return 0
+					;;
+			esac
+		fi
+	fi
+
 	# workaround #254343
-	_prefix5=$( substr --pos=0 --len=5 --str="${_desc}" )
+	capture _prefix5 substr --pos=0 --len=5 --str="${_desc}"
 	[ "${_prefix5}" = "vtnet" ] && _is_vtnet=1
 
 	case "${platform}" in
@@ -185,20 +201,6 @@ get_my_device()
 				cbsdlogger NOTICE ${CIX_APP}: get_my_device $*: apply #254343 workaround: force to set PPROMISC for ${_desc}
 				${IFCONFIG_CMD} ${_desc} promisc
 			fi
-		fi
-
-		# my parent already bridge?
-		if [ ${_vpc} -ne 1 ]; then
-			case "${platform}" in
-				Linux)
-					_res=$( ${IP_CMD} link show type bridge dev ${_desc} 2>/dev/null )
-					[ -n "${_res}" ] && echo "${_desc}" && return 0
-					;;
-				*)
-					_is_bridge=$( ${IFCONFIG_CMD} ${_desc} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
-					[ "${_is_bridge}" = "bridge" ] && echo "${_desc}" && return 0
-					;;
-			esac
 		fi
 
 		# set desciption first
@@ -297,22 +299,17 @@ get_my_device()
 # out of created epair
 get_my_epair()
 {
-	local _firstfree
-	local _parent_mtu
-	local _bridge="${1}"
-	local _vlan_untagged="${2}"
-	local _vlan_tagged="${3}"
-	local _mtu="${4}"
-	local _nic_flags="${5}"
-	local _addm_args=
-	local _vlans=false
+	local _bridge="${1}" _vlan_untagged="${2}" _vlan_tagged="${3}" _mtu="${4}" _nic_flags="${5}"
+	local _addm_args= _vlans=false _firstfree= _parent_mtu= _ret= i=
+
 	[ -z "${_bridge}" ] && echo "No bridge" && return 1
 
-	_firstfree=$( get-next-nic name=epair )
-	[ $? -eq 1 ] && echo "No free available epair" && return 1
+	capture _firstfree get-next-nic name=epair 2>/dev/null
+	_ret=$?
+	[ ${_ret} -eq 1 ] && echo "No free available epair" && return 1
 
 	${IFCONFIG_CMD} ${_firstfree} create >/dev/null 2>/dev/null
-	_parent_mtu=$( ${toolsdir}/nic_info --nic=${_bridge} --mtu --quiet 2>/dev/null )
+	capture _parent_mtu ${toolsdir}/nic_info --nic=${_bridge} --mtu --quiet 2>/dev/null
 
 	if [ -n "${_parent_mtu}" ]; then
 		[ -z "${_mtu}" -o "${_mtu}" = "0" ] && _mtu=${_parent_mtu}
@@ -353,7 +350,7 @@ get_my_epair()
 			case "${_flag}" in
 				private)
 					cbsdlogger NOTICE ${CIX_APP}: set private flag for ${_firstfree}a on bridge ${_bridge}
-					${IFCONFIG_CMD} ${_bridge} private ${_firstfree}a
+					${IFCONFIG_CMD} ${_bridge} private ${_firstfree}a 2>/dev/null
 					;;
 				*)
 					log_msg WARNING "${W1_COLOR}Warning${N1_COLOR} get_my_epair: unknown flag: ${N2_COLOR}${_flag}${N1_COLOR} for ${N2_COLOR}${_firstfree}a${N1_COLOR} on bridge ${N2_COLOR}${_bridge}${N0_COLOR}"
@@ -368,15 +365,14 @@ get_my_epair()
 	local maca=
 	local macb=
 
-	if [ -r ${jailsysdir}/${jname}/local.sqlite ]; then
-		macb=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM jailnic )
-	else
-		/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
-	fi
+	[ -r ${jailsysdir}/${jname}/local.sqlite ] && cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr FROM jailnic LIMIT 1" macb
 
-	if [ -z "${macb}" -o "${macb}" = "0" ]; then
-		macb=$( mac_gen 02:ff:f0 )
+	if [ -z "${macb}" ]; then
+		capture macb mac_gen 02:ff:f0 2>/dev/null
 		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','${macb}','0','0','0','0' )"
+	elif [ "${macb}" = "0" ]; then
+		capture macb mac_gen 02:ff:f0 2>/dev/null
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${macb}' WHERE name='eth0'"
 	fi
 
 	cbsdlogger NOTICE ${CIX_APP}: get_my_epair: bring up ${_firstfree}a and ${_firstfree}b with mac ${macb}
@@ -384,7 +380,7 @@ get_my_epair()
 	${IFCONFIG_CMD} ${_firstfree}b ether ${macb} up > /dev/null 2>&1
 
 	# flush stdout
-	echo ${_firstfree}
+	echo "${_firstfree}"
 }
 
 # create tap and attach to bridge $1 if $1 is not "disable"

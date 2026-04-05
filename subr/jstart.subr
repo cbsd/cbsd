@@ -3,9 +3,7 @@
 # $1 - is source dir name ( tests )
 check_environment_script()
 {
-	local _res
-	local _dir="${1}"
-	local _testfiles
+	local _res= _dir="${1}" _testfiles=
 
 	[ -z "${_dir}" ] && return 1
 
@@ -116,20 +114,21 @@ get_cpuset_cmd()
 # - nic_name_list
 prepare_jail_vnet()
 {
-	local nic_hwaddr nic_parent nic_address nic_type nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged
+	local nic_hwaddr= nic_parent= nic_address= nic_type= nic_mtu= nic_flags= nic_vlan_untagged= nic_vlan_tagged=
+	local _interfaces= i=
 
-	epairb_list=   # args for makejconf
-	epaira_list=   # for traffic count
-	nic_name_list= # NIC names from DB (for interface renaming inside jail)
+	epairb_list=		# args for makejconf
+	epaira_list=		# for traffic count
+	nic_name_list=		# NIC names from DB (for interface renaming inside jail)
 
 	[ ${vnet} -ne 1 ] && return 0
 
-	interfaces=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM jailnic" | while read _int; do
-		printf "${_int} "
-	done ) || err 1 "${N1_COLOR}jstart: error get interfaces name for vnet nic map${N0_COLOR}"
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM jailnic" _interfaces
 
-	for i in ${interfaces}; do
-		printf "${N1_COLOR}create nic: ${i}${N0_COLOR} "
+	[ -z "${_interfaces}" ] && "${N1_COLOR}jstart: error get interfaces name for vnet nic map: empty jailnic${N0_COLOR}"
+
+	for i in ${_interfaces}; do
+		printf "${N1_COLOR}update nic: ${i}${N0_COLOR} "
 		nic_hwaddr=
 		nic_parent=
 		nic_address=
@@ -138,10 +137,10 @@ prepare_jail_vnet()
 		nic_flags=
 		nic_vlan_untagged=
 		nic_vlan_tagged=
-		_A=
-		_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic WHERE name='${i}'" )
 
-		sqllist "${_A}" nic_parent nic_address nic_hwaddr nic_mtu nic_flags nic_vlan_untagged nic_vlan_tagged
+		#_A=
+		#_A=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic WHERE name='${i}'" )
+		cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT nic_parent,nic_address,nic_hwaddr,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM jailnic WHERE name='${i}'"
 
 		tmp_type=${nic_parent%%-*}		# cut all before '#'
 		tmp_iface=${nic_parent##*-}		# cut all after '#'
@@ -172,15 +171,15 @@ prepare_jail_vnet()
 			else
 				_byip="${IWM}"
 			fi
-			nic_parent=$( getnics-by-ip ip=${_byip} )
+			capture nic_parent getnics-by-ip ip="${_byip}"
 			unset _byip
 		fi
 
 		case "${nic_parent}" in
 			vpc-*)
 				VPC_ROOT_DIR="${dbdir}/vpc"
-				_arg_len=$( strlen ${nic_parent} )
-				vpc_name=$( substr --pos=5 --len=${_arg_len} --str="${nic_parent}" )
+				capture _arg_len strlen "${nic_parent}"
+				capture vpc_name substr --pos=5 --len=${_arg_len} --str="${nic_parent}"
 				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
 				[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
 
@@ -206,8 +205,10 @@ prepare_jail_vnet()
 				true
 				;;
 			*)
-				if ! mybridge=$( get_my_device bridge ${nic_parent} ); then
-					err 1 "${N1_COLOR}Error: Cant get_my_device for ${nic_parent}: ${mybridge}${N0_COLOR}"
+				capture mybridge get_my_device bridge ${nic_parent} 2>/dev/null
+				_ret=$?
+				if [ ${_ret} -ne 0 ]; then
+					err 1 "${N1_COLOR}Error: Can't get_my_device for ${nic_parent}: ${mybridge}${N0_COLOR}"
 				fi
 		esac
 
@@ -219,8 +220,9 @@ prepare_jail_vnet()
 				epairb_list="${epairb_list},${myepair}b"
 			fi
 		else
-			myepair=$( get_my_epair "${mybridge}" "${nic_vlan_untagged}" "${nic_vlan_tagged}" "${nic_mtu}" "${nic_flags}" )
-			[ $? -eq 1 ] && err 1 "${N1_COLOR}Error: Cant get_my_epair by: ${N2_COLOR}${mybridge}${N0_COLOR}"
+			capture myepair get_my_epair "${mybridge}" "${nic_vlan_untagged}" "${nic_vlan_tagged}" "${nic_mtu}" "${nic_flags}" 2>/dev/null
+			_ret=$?
+			[ ${_ret} -eq 1 ] && err 1 "${N1_COLOR}Error: Cant get_my_epair by: ${N2_COLOR}${mybridge}${N0_COLOR}"
 			if [ -z "${epairb_list}" ]; then
 				epaira_list="${myepair}a"
 				epairb_list="${myepair}b"
@@ -240,12 +242,13 @@ prepare_jail_vnet()
 					# not vale_XXX form
 					err 1 "${N1_COLOR}${CIX_APP}: vale switch not vale_XXX form: ${N2_COLOR}${nic_parent}${N0_COLOR}"
 				else
-					_arg_len=$( strlen ${nic_parent} )
+					capture _arg_len strlen "${nic_parent}"
 					_pref=$(( _arg_len - _pos ))
-					_vale_arg=$( substr --pos=0 --len=${_pos} --str="${nic_parent}" )
-					_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${nic_parent}" )
+					capture _vale_arg substr --pos=0 --len=${_pos} --str="${nic_parent}"
+					capture substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${nic_parent}"
 				fi
-				valeid=$( cbsdsqlro local "SELECT idx FROM vale WHERE name='${_sw}'"  )
+				#valeid=$( cbsdsqlro local "SELECT idx FROM vale WHERE name='${_sw}'"  )
+				cbsdsqlro_vars local "SELECT idx FROM vale WHERE name='${_sw}'" valeid
 				[ -z "${valeid}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: can't determine vale nic for: ${nic_parent}, sw: ${_sw}${N0_COLOR}"
 				#mytap="vale${valeid}:${jname}"
 				cbsdlogger NOTICE "${CIX_APP}: vale switch id: ${valeid} (vale${valeid})"
@@ -271,7 +274,6 @@ prepare_jail_vnet()
 				;;
 		esac
 
-
 		case "${nic_type}" in
 			ppt)
 				true
@@ -286,7 +288,7 @@ prepare_jail_vnet()
 
 		# MAC MGMT
 		if [ "${nic_hwaddr}" = "0" ]; then
-			nic_hwaddr=$( mac_gen 00:a0:98 )
+			capture nic_hwaddr mac_gen 00:a0:98 2>/dev/null
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${nic_hwaddr}' WHERE name='${i}'"
 		fi
 

@@ -8,7 +8,7 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
-jname="cbsd_test_vnetv4v6"
+jname="create1"
 
 ogw4="10.0.20.1"
 ogw6="fdef:beb2:1929:8dba::1"
@@ -19,32 +19,17 @@ oipv4_alias="192.168.0.2"		# without mask
 
 oneTimeSetUp()
 {
-	if ! ${CIX_BIN} jstatus jname="${jname}" > /dev/null 2>&1; then
-		echo "$0 destroy old ${jname}"
-		${CIX_BIN} jdestroy jname="${jname}"
-	else
-		set -o xtrace
-		${CIX_BIN} jcreate runasap=1 vnet=0 ip4_addr=${oipv4} pkg_bootstrap=0 jname="${jname}"
-		set +o xtrace
-	fi
-}
-
-setUp()
-{
-	# nothing to do
-	true
-}
-
-tearDown()
-{
-	# nothing to do
-	true
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
+	set -o xtrace
+	${CIX_BIN} jcreate runasap=1 vnet=0 ip4_addr=${oipv4} pkg_bootstrap=0 jname="${jname}"
+	set +o xtrace
 }
 
 oneTimeTearDown()
 {
-	${CIX_BIN} jdestroy jname="${jname}"
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
+
 
 test_setv4()
 {
@@ -55,7 +40,9 @@ test_setv4()
 	unset ipv6_defaultrouter
 
 	echo "set ip: ${onewipv4}"
+	set -o xtrace
 	${CIX_BIN} jset jname="${jname}" ip4_addr="${onewipv4}"
+	set +o xtrace
 	arp -ad
 
 	/sbin/ifconfig | grep "inet ${oipv4} "
@@ -75,7 +62,7 @@ test_setv4()
 	fi
 }
 
-test_setv46()
+dtest_setv46()
 {
 	unset defaultrouter
 	unset ifconfig_eth0

@@ -8,28 +8,35 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
-jname="cbsd_test_jstart"
+jname="jcreate1"
 
 oneTimeSetUp()
 {
-	${CIX_BIN} jdestroy jname="${jname}"
-}
-
-setUp()
-{
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 	${CIX_BIN} jcreate runasap=0 jname="${jname}"
 }
 
-tearDown()
+oneTimeTearDown()
 {
-	${CIX_BIN} jdestroy jname="${jname}"
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
+
+
+#setUp()
+#{
+#	${CIX_BIN} jcreate runasap=0 jname="${jname}"
+#}
+
+#tearDown()
+#{
+#	${CIX_BIN} jdestroy jname="${jname}"
+#}
 
 # just test if jstart works at all
 test_jstart()
 {
 	${CIX_BIN} jstart jname="${jname}"
-	_test=$(jexec "${jname}" whoami)
+	_test=$( jexec "${jname}" whoami )
 	assertEquals "${_test}" "root"
 }
 

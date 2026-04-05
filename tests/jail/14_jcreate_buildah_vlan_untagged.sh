@@ -10,9 +10,10 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
+jname="jcreate1"
+
 oneTimeSetUp()
 {
-	jname="jcreate1"
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 	/sbin/ifconfig ${DEFAULT_FREEBSD_JAIL_INTERFACE} vlanfilter
 }
@@ -24,7 +25,6 @@ oneTimeTearDown()
 
 testLinuxVlanUntagged()
 {
-
 	${CIX_BIN} jcreate jname=${jname} \
 		vnet=1 \
 		interface=${DEFAULT_FREEBSD_JAIL_INTERFACE} \

@@ -8,9 +8,10 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
+jname="jcreate1"
+
 oneTimeSetUp()
 {
-	jname="jcreate1"
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 	${CIX_BIN} jcreate jname="${jname}" etcupdate_init=0 pkg_bootstrap=0 quiet=1
 }

@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v13.0.8
-MYARG="mode"
-MYOPTARG="md5 name path source platform"
+CIXARG="mode"
+CIXOPTARG="md5 name path source platform"
 MYDESC="Manage environment images"
 CBSDMODULE="sys"
 ADDHELP="
@@ -57,9 +57,7 @@ path=
 source=
 platform=
 oplatform=
-. ${cbsdinit}
-
-[ -n "${platform}" ] && oplatform="${platform}"
+cixinit
 
 # jaildatadir must be set
 get_zfs_image_snap()
@@ -115,18 +113,19 @@ images_register()
 		[ ! -r ${path} ] && stderr 1 "${N1_COLOR}${CIX_APP} error: file not found ${N2_COLOR}${path}${N0_COLOR}"
 	else
 		[ -z "${path}" ] && stderr 1 "${N1_COLOR}${CIX_APP} error: ${N2_COLOR}path= or name=${N1_COLOR} is mandatory${N0_COLOR}"
-		_res=$( ${BASENAME_CMD} "${path}" )
+		# basename
+		_res="${path##*/}"
 		_ret=0
-		_md5=$( ${miscdir}/cbsd_md5 "${path}" )
+		capture _md5 ${miscdir}/cbsd_md5 "${path}"
 		echo "${_res}" | ${GREP_CMD} -q "\.img$"
 		_ret=$?
 		if [ ${_ret} -eq 0 ]; then
 			# is .img$
-			prefix4=$( substr --pos=0 --len=4 --str="${path}" )
+			capture prefix4 substr --pos=0 --len=4 --str="${path}"
 
 			# fetch from remote
 			if [ "${prefix4}" = "http" ]; then
-				_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5='${_md5}'" 2>/dev/null )
+				cbsdsqlro_vars images "SELECT source FROM images WHERE md5='${_md5}'" _res
 				[ -n "${_res}" ] && stderr 1 "${N1_COLOR}${CIX_APP} error: ${N2_COLOR}${_md5}${N1_COLOR} already exist, source: ${N2_COLOR}${source}${N0_COLOR}"
 				${ECHO} "${N1_COLOR}${CIX_APP}: remote resource: ${N2_COLOR}${path}${N0_COLOR}" 1>&2
 				_tmpfile="${importdir}/${_md5}.img"
@@ -134,7 +133,8 @@ images_register()
 				${FETCH_CMD} -o "${_tmpfile}" "${path}"
 				[ ! -r ${_tmpfile} ] && err 1 "${N1_COLOR}${CIX_APP} error: unable to fetch: ${N2_COLOR}${path} -> ${_tmpfile}${N0_COLOR}"
 				opath="${path}"
-				_file=$( ${BASENAME_CMD} ${path} )
+				# basename
+				_file="${path##*/}"
 				name=$( echo ${_file} | ${SED_CMD} 's:\.img::g' )
 				source="${path}"
 				_omd5="${md5}"
@@ -146,19 +146,18 @@ images_register()
 				${ECHO} "${N1_COLOR}${CIX_APP}: buildah command not found. If ${path} is a registry resource,"
 				${ECHO} "please install package then re-run 'cbsd initenv': ${N2_COLOR}buildah${N0_COLOR}"
 			else
-				${ECHO} "${N1_COLOR}${CIX_APP}: let's try using the ${BUILDAH_CMD} utility...${N0_COLOR}"
+				${ECHO} "${N1_COLOR}${CIX_APP}: let's try using the ${BUILDAH_CMD} utility:${N0_COLOR}"
 
 				# doesn't work? for some reason ignored
 				export XDG_CONFIG_HOME="${workdir}/.config"
 				[ ! -d "${workdir}/basejail/buildah" ] && ${MKDIR_CMD} -p ${workdir}/basejail/buildah
 
-
 				# --platform linux
 				[ -n "${oplatform}" ] && platform="${oplatform}"
 				_buildah_platform=$( echo ${platform} | ${TR_CMD} '[:upper:]' '[:lower:]' )
-				echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path}"
+				${ECHO} "* ${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path}"
 
-				_imgname=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path} 2>/tmp/images.$$ )
+				capture _imgname ${BUILDAH_CMD} --root ${workdir}/basejail/buildah pull --platform ${_buildah_platform} ${path} 2>/tmp/images.$$
 				_ret=$?
 				if [ ${_ret} -ne 0 -o -z "${_imgname}" ]; then
 					${ECHO} "${N1_COLOR}${CIX_APP}: unable to pull${N0_COLOR}"
@@ -169,8 +168,8 @@ images_register()
 					exit 1
 				fi
 				[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
-				echo "Image name: ${_imgname}"
-				_imgshort=$( substr --pos=0 --len=12 --str="${_imgname}" )
+				${ECHO} "* ${N1_COLOR}Image name: ${N2_COLOR}${_imgname}\n"
+				capture _imgshort substr --pos=0 --len=12 --str="${_imgname}"
 				if [ -n "${NOCOLOR}" ]; then
 					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images ${_imgname} | ${GREP_CMD} "${_imgshort}"
 					_ret=$?
@@ -178,7 +177,7 @@ images_register()
 					${BUILDAH_CMD} --root ${workdir}/basejail/buildah images ${_imgname} | ${ENV_CMD} GREP_COLORS='mt=37;45' GREP_COLOR='37;45' ${GREP_CMD} --colour=always "${_imgshort}"
 					_ret=$?
 				fi
-
+				echo
 				if [ ${_ret} -ne 0 ]; then
 					err 1 "${N1_COLOR}${CIX_APP}: buildah image not found: ${N2_COLOR}${path}${N0_COLOR}"
 				fi
@@ -189,7 +188,7 @@ images_register()
 					${ECHO} "${N1_COLOR}${CIX_APP}: unable to create find top layer in image ${_imgname}${N0_COLOR}"
 					exit 1
 				fi
-                echo "image top layer: ${_image_top_layer}"
+				${ECHO} "* ${N1_COLOR}image top layer: ${N2_COLOR}${_image_top_layer}${N0_COLOR}"
 
 				case "${_buildah_platform}" in
 					freebsd)
@@ -205,35 +204,25 @@ images_register()
 
 				##ZFS
 				if [ ${zfsfeat} -eq 1 ]; then
-                    _image_volume_id=$(${JQ_CMD} -r '.[] | select(.id=="'${_image_top_layer}'") | .layer' ${workdir}/basejail/buildah/zfs-images/images.json)
+					_image_volume_id=$( ${JQ_CMD} -r '.[] | select(.id=="'${_image_top_layer}'") | .layer' ${workdir}/basejail/buildah/zfs-images/images.json )
 					_ret=$?
-					if [ ${_ret} -ne 0 -o -z "${_image_volume_id}" ]; then
-						${ECHO} "${N1_COLOR}${CIX_APP}: unable to find volume id for image top layer ${_image_top_layer}${N0_COLOR}"
-						exit 1
-					fi
+					[ ${_ret} -ne 0 -o -z "${_image_volume_id}" ] && err 1 "${N1_COLOR}${CIX_APP}: unable to find volume id for image top layer ${_image_top_layer}${N0_COLOR}"
 
-                    _zvol=$(${ZFS_CMD} get -Ho value name ${workdir}/basejail/buildah)
-                    _ret=$?
-                    if [ -z "${_zvol}" -o ${_ret} -ne 0 ]; then
-                        ${ECHO} "${N1_COLOR}${CIX_APP}: cannot find zfs volume for ${workdir}/basejail/buildah${N0_COLOR}"
-                        exit 1
-                    fi
-                    _image_volume="${_zvol}/${_image_volume_id}"
-
-					_image_snapshot=$(${ZFS_CMD} list -H -o name -t snapshot "${_image_volume}" | ${GREP_CMD} "@${_md5}")
-                    _ret=$?
+					capture _zvol ${ZFS_CMD} get -Ho value name ${workdir}/basejail/buildah
+					_ret=$?
+					[ -z "${_zvol}" -o ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: cannot find zfs volume for: ${N2_COLOR}${workdir}/basejail/buildah${N0_COLOR}"
+					_image_volume="${_zvol}/${_image_volume_id}"
+					_image_snapshot=$( ${ZFS_CMD} list -H -o name -t snapshot "${_image_volume}" | ${GREP_CMD} "@${_md5}" )
+					_ret=$?
 					if [ -z "${_image_snapshot}" -o ${_ret} -ne 0 ]; then
-                        ${ZFS_CMD} snapshot ${_image_volume}@${_md5}
-                        _ret=$?
-                        if [ ${_ret} -ne 0 ]; then
-                            ${ECHO} "${N1_COLOR}${CIX_APP}: unable to create ZFS snapshot for image volume ${_image_volume} ${N0_COLOR}"
-                            exit 1
-                        fi
-                        _image_snapshot="${_image_volume}@${_md5}"
+						${ZFS_CMD} snapshot ${_image_volume}@${_md5}
+						_ret=$?
+						[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: unable to create ZFS snapshot for image volume ${_image_volume} ${N0_COLOR}"
+						_image_snapshot="${_image_volume}@${_md5}"
 					fi
 
-					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain zfs_snapsrc="${_image_snapshot}"\
-						ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0
+					echo ">> jcreate jname=\"${_md5}\" host_hostname=${_md5}.my.domain zfs_snapsrc=\"${_image_snapshot}\" ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0 astart=0 ip4_addr=127.0.0.1 interface=0"
+					jcreate jname="${_md5}" host_hostname=${_md5}.my.domain zfs_snapsrc="${_image_snapshot}" ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0 astart=0 ip4_addr=127.0.0.1 interface=0
 					_ret=$?
 					[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}unable to create jail: ${N2_COLOR}jcreate jname="${_md5}" host_hostname=${_md5}.my.domain${N0_COLOR}"
 					_rootfs="${workdir}/jails-data/${_md5}-data"
@@ -244,42 +233,40 @@ images_register()
 					${RM_CMD} -rf ${jailsysdir}/${_md5}
 					# create_from_srcsnap loop
 					. ${subrdir}/zfs.subr
-					DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
-
+					capture DATA ${ZFS_CMD} get -Ho value name ${jaildatadir}
 					_zfssrc="${DATA}/${_md5}"
-					_zfssrc_snap=$( get_zfs_image_snap ${_zfssrc} )
+					capture _zfssrc_snap get_zfs_image_snap ${_zfssrc}
 					# with ZFS we dont need image file anymore
 					[ ${_remove_source} -eq 1 ] && ${RM_CMD} -f ${path}
-					_size=$( ${ZFS_CMD} get -Hp -o value used ${_zfssrc} 2>/dev/null )
+					capture _size ${ZFS_CMD} get -Hp -o value used ${_zfssrc}
 					source="${path}"
 				else
 					# non-ZFS
-
-                    echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname}"
-                    _res=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname} 2>/tmp/images.$$ )
-                    _ret=$?
-                    if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
-                        ${ECHO} "${N1_COLOR}${CIX_APP}: unable to create buildah container from ${_imgname}${N0_COLOR}"
-                        if [ -r /tmp/images.$$ ]; then
-                            ${CAT_CMD} /tmp/images.$$
-                            ${RM_CMD} -f /tmp/images.$$
-                        fi
-                        exit 1
-                    fi
-                    [ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
-                    echo "image: ${_res}"
-                    _imgpath=$( ${BUILDAH_CMD} --root ${workdir}/basejail/buildah mount ${_res} 2>/tmp/images.$$ )
-                    _ret=$?
-                    if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
-                        ${ECHO} "${N1_COLOR}${CIX_APP}: unable to mount buildah container from ${_res}${N0_COLOR}"
-                        if [ -r /tmp/images.$$ ]; then
-                            ${CAT_CMD} /tmp/images.$$
-                            ${RM_CMD} -f /tmp/images.$$
-                        fi
-                        exit 1
-                    fi
-                    [ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
-                    echo "imgpath: ${_imgpath}"
+					echo "${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname}"
+					capture _res ${BUILDAH_CMD} --root ${workdir}/basejail/buildah from --name ${_md5} ${_imgname} 2>/tmp/images.$$
+					_ret=$?
+					if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
+						${ECHO} "${N1_COLOR}${CIX_APP}: unable to create buildah container from ${_imgname}${N0_COLOR}"
+						if [ -r /tmp/images.$$ ]; then
+							${CAT_CMD} /tmp/images.$$
+							${RM_CMD} -f /tmp/images.$$
+						fi
+						exit 1
+					fi
+					[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
+					echo "image: ${_res}"
+					capture _imgpath ${BUILDAH_CMD} --root ${workdir}/basejail/buildah mount ${_res} 2>/tmp/images.$$
+					_ret=$?
+					if [ ${_ret} -ne 0 -o -z "${_res}" ]; then
+						${ECHO} "${N1_COLOR}${CIX_APP}: unable to mount buildah container from ${_res}${N0_COLOR}"
+						if [ -r /tmp/images.$$ ]; then
+							${CAT_CMD} /tmp/images.$$
+							${RM_CMD} -f /tmp/images.$$
+						fi
+						exit 1
+					fi
+					[ -r /tmp/images.$$ ] && ${RM_CMD} -f /tmp/images.$$
+					echo "imgpath: ${_imgpath}"
 
 					_rootfs="${workdir}/basejail/${_md5}"
 					[ ! -d "${_rootfs}" ] && ${MKDIR_CMD} -p ${_rootfs}
@@ -287,19 +274,21 @@ images_register()
 					sync
 					source="${path}"
 					register_base ver=empty basename="${_md5}" source="${source}" platform="${platform}"
-					_res=$( ${DU_CMD} -sk ${workdir}/basejail/${_md5} | ${AWK_CMD} '{printf $1"k"}' )
-					if is_number ${_res}; then
-						if conv2bytes ${_res}; then
-							_size="${convval}"
-						else
-							_size="0"
-						fi
-					else
-						_size="0"
-					fi
+					#_res=$( ${DU_CMD} -sk ${workdir}/basejail/${_md5} | ${AWK_CMD} '{printf $1"k"}' )
+					#if is_number ${_res}; then
+					#	if conv2bytes ${_res}; then
+					#		_size="${convval}"
+					#	else
+					#		_size="0"
+					#	fi
+					#else
+					#	_size="0"
+					#fi
 
-                    ${BUILDAH_CMD} --root ${workdir}/basejail/buildah unmount ${_md5}
-                    ${BUILDAH_CMD} --root ${workdir}/basejail/buildah rm ${_md5}
+					capture _size get_file_bytes ${workdir}/basejail/${_md5}
+
+					${BUILDAH_CMD} --root ${workdir}/basejail/buildah unmount ${_md5}
+					${BUILDAH_CMD} --root ${workdir}/basejail/buildah rm ${_md5}
 				fi
 
 				[ -z "${emulator}" ] && emulator="jail"
@@ -311,18 +300,20 @@ images_register()
 			fi
 		fi
 		[ ! -r "${path}" ] && stderr 1 "${N1_COLOR}${CIX_APP} error: resource not found ${N2_COLOR}${path}${N0_COLOR}"
-		path=$( ${REALPATH_CMD} ${path} )
+		capture path ${REALPATH_CMD} ${path}
 
 		if [ -z "${name}" ]; then
-			_file=$( ${BASENAME_CMD} ${path} )
+			# basename
+			_file="${path##*/}"
 			name=$( echo ${_file} | ${SED_CMD} 's:\.img::g' )
 		fi
 	fi
 
 	[ -z "${source}" ] && source="${path}"
-	_md5=$( ${miscdir}/cbsd_md5 "${source}" )
+	capture _md5 ${miscdir}/cbsd_md5 "${source}"
 
-	_res=$( cbsdsqlro images "SELECT source FROM images WHERE md5='${_md5}'" 2>/dev/null )
+	#_res=$( cbsdsqlro images  2>/dev/null )
+	cbsdsqlro_vars images "SELECT source FROM images WHERE md5='${_md5}'" _res
 	[ -n "${_res}" ] && stderr 1 "${N1_COLOR}${CIX_APP} error: ${N2_COLOR}${_md5}${N1_COLOR} already exist: source: ${N2_COLOR}${source}${N0_COLOR}"
 
 	# detect image emulator

@@ -15,21 +15,17 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
-jname="cbsd_test_fstabs"
+jname="jcreate1"
 
 oneTimeSetUp()
 {
-	${CIX_BIN} jdestroy jname="${jname}"
-}
-
-setUp()
-{
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 	${CIX_BIN} jcreate runasap=0 jname="${jname}" pkg_bootstrap=0
 }
 
-tearDown()
+oneTimeTearDown()
 {
-	${CIX_BIN} jdestroy jname="${jname}"
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 
@@ -44,7 +40,7 @@ EOF
 	echo "extra fstab:"
 	cat ~cbsd/jails-fstab/${jname}/fstab.local
 
-	${CIX_BIN} mountfstab ${jname}
+	${CIX_BIN} mountfstab jname=${jname}
 
 	_test=$( jexec "${jname}" realpath /var/TEST )
 

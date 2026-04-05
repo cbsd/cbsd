@@ -19,7 +19,7 @@ is_mounted()
 	else
 		# is ZFS?
 		if [ "${zfsfeat}" = "1" ]; then
-			capture _tst ${ZFS_CMD} get -Ho value mounted ${1}
+			capture _tst ${ZFS_CMD} get -Ho value mounted "${1}" 2>/dev/null
 			[ "${_tst}" = "yes" ] && return 0
 		fi
 	fi
@@ -216,7 +216,7 @@ get_kernel()
 mountbase()
 {
 	local basepath= kernelpath= sourcepath= objpath= _ports_path= distfilespath=
-	local _base_mounted=0 distpackagepath= db_ports_path= _ret=0 _cmd=
+	local _base_mounted=0 distpackagepath= db_ports_path= _ret=0 _cmd= _path=
 
 	# defaults
 	case "${platform}" in
@@ -250,22 +250,23 @@ mountbase()
 		shift $(($OPTIND - 1))
 	done
 
-	#already mounted?
-	is_mounted ${path} && _base_mounted=1
+	if [ "${baserw}" = "1" ]; then
+		_base_mounted=1
+		_path="${data}"
+	else
+		_path="${path}"
+		#already mounted?
+		is_mounted ${_path} && _base_mounted=1
+	fi
 
 	if [ ${_base_mounted} -eq 0 ]; then
 		#test for zfs mounted & mount if not
 		case ${zfsfeat} in
 			1)
 				. ${subrdir}/zfs.subr
-				[ ${baserw} -eq 1 ] && path="${data}"
-				zfsmnt ${path}
+				zfsmnt ${_path}
 				if [ $? -eq 2 ]; then
 					${ZFS_CMD} mount "${ZPOOL}"
-#					for i in 1 2 3; do
-#						is_mounted ${path} && break
-#						continue
-#					done
 				fi
 			;;
 		esac
@@ -273,31 +274,24 @@ mountbase()
 		if [ "${baserw}" = "0" ]; then
 			get_base -v ${ver}
 		else
-			[ ! -f "${path}/bin/sh" ] && get_base -v ${ver}
+			[ ! -f "${_path}/bin/sh" ] && get_base -v ${ver}
 		fi
 
-		[ ! -d "${path}" ] && ${MKDIR_CMD} -p ${path}
+		[ ! -d "${_path}" ] && ${MKDIR_CMD} -p ${_path}
 
 		if [ "${baserw}" = "0" ]; then
 			#check for md-based base location (postfix -md)
 			if [ -f "${BASE_DIR}-md/bin/sh" ]; then
 				${ECHO} "${N1_COLOR}Mount MD-based base location as base...${N0_COLOR}" 1>&2
-				_cmd="${MOUNT_NULL_CMD} -oro ${BASE_DIR}-md ${path}"
+				_cmd="${MOUNT_NULL_CMD} -oro ${BASE_DIR}-md ${_path}"
 			else
-				_cmd="${MOUNT_NULL_CMD} -oro ${BASE_DIR} ${path}"
+				_cmd="${MOUNT_NULL_CMD} -oro ${BASE_DIR} ${_path}"
 			fi
 
 			${_cmd}
 			_ret=$?
 			[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} mountbase error:${N1_COLOR} errcode: ${_ret}: ${N2_COLOR}${N1_COLOR}"
-
-#			# slow mount?
-#			for i in 1 2 3 4 5 6 7 8 9 10; do
-#				is_mounted ${path} && break
-#				sleep 0.1
-#			done
 		fi
-
 	fi # is _base_mounted=0
 
 	[ -n "${jname}" ] && mountfstab jname="${jname}"
@@ -305,37 +299,37 @@ mountbase()
 	if [ "${mount_kernel}" != "0" ]; then
 		# Other part
 		if [ -n "${kernelpath}" -a -d "${kernelpath}" ]; then
-			if ! ${miscdir}/mountpoint ${path}/boot/kernel; then
-				[ ! -d "${path}/boot/kernel" ] && ${MKDIR_CMD} -p ${path}/boot/kernel
-				${MOUNT_NULL_CMD} -oro ${kernelpath} ${path}/boot/kernel
+			if ! ${miscdir}/mountpoint ${_path}/boot/kernel; then
+				[ ! -d "${_path}/boot/kernel" ] && ${MKDIR_CMD} -p ${_path}/boot/kernel
+				${MOUNT_NULL_CMD} -oro ${kernelpath} ${_path}/boot/kernel
 			fi
 		fi
 	fi
 
 	if [ "${mount_source}" != "0" ]; then
 		if [ -n "${sourcepath}" -a -d "${sourcepath}" ]; then
-			if ! ${miscdir}/mountpoint ${path}/usr/src; then
-				[ ! -d "${path}/usr/src" ] && ${MKDIR_CMD} -p ${path}/usr/src
-				${MOUNT_NULL_CMD} -oro ${sourcepath} ${path}/usr/src
+			if ! ${miscdir}/mountpoint ${_path}/usr/src; then
+				[ ! -d "${_path}/usr/src" ] && ${MKDIR_CMD} -p ${_path}/usr/src
+				${MOUNT_NULL_CMD} -oro ${sourcepath} ${_path}/usr/src
 			fi
 		fi
 	fi
 
 	if [ "${mount_obj}" != "0" ]; then
 		if [ -n "${objpath}" -a -d "${objpath}" ]; then
-			if ! ${miscdir}/mountpoint ${path}/boot/obj; then
-				[ ! -d "${path}/usr/obj" ] && ${MKDIR_CMD} -p ${path}/usr/obj
-				${MOUNT_NULL_CMD} -orw ${objpath} ${path}/usr/obj
+			if ! ${miscdir}/mountpoint ${_path}/boot/obj; then
+				[ ! -d "${_path}/usr/obj" ] && ${MKDIR_CMD} -p ${_path}/usr/obj
+				${MOUNT_NULL_CMD} -orw ${objpath} ${_path}/usr/obj
 			fi
 		fi
 	fi
 
 	if [ "${mount_ports}" != "0" ]; then
 		if [ -n "${_ports_path}" ]; then
-			if ! ${miscdir}/mountpoint ${path}${_ports_path}; then
+			if ! ${miscdir}/mountpoint ${_path}${_ports_path}; then
 				[ ! -d "${_ports_path}" ] && ${MKDIR_CMD} -p ${_ports_path}
-				[ ! -d "${path}${_ports_path}" ] && ${MKDIR_CMD} -p ${path}${_ports_path}
-				${MOUNT_NULL_CMD} -oro ${_ports_path} ${path}${_ports_path}
+				[ ! -d "${_path}${_ports_path}" ] && ${MKDIR_CMD} -p ${_path}${_ports_path}
+				${MOUNT_NULL_CMD} -oro ${_ports_path} ${_path}${_ports_path}
 			fi
 		fi
 
@@ -343,26 +337,26 @@ mountbase()
 			# we need for valid mount point on /usr/ports/distifles
 
 			case "${platform}" in
-				DragonFly)
+				DragonFly|Linux)
 					true
 					;;
 				*)
 					[ ! -d ${_ports_path}/distfiles ] && ${MKDIR_CMD} -p ${_ports_path}/distfiles
-					[ ! -d "${path}${_ports_path}/distfiles" ] && ${MKDIR_CMD} -p ${path}${_ports_path}/distfiles
+					[ ! -d "${_path}${_ports_path}/distfiles" ] && ${MKDIR_CMD} -p ${_path}${_ports_path}/distfiles
 					[ ! -d "${distfilespath}" ] && ${MKDIR_CMD} -p ${distfilespath}
-					${miscdir}/mountpoint ${path}${_ports_path}/distfiles || ${MOUNT_NULL_CMD} -orw ${distfilespath} ${path}${_ports_path}/distfiles
+					${miscdir}/mountpoint ${_path}${_ports_path}/distfiles || ${MOUNT_NULL_CMD} -orw ${distfilespath} ${_path}${_ports_path}/distfiles
 
 					[ ! -d ${_ports_path}/packages ] && ${MKDIR_CMD} -p ${_ports_path}/packages
-					[ ! -d "${path}${_ports_path}/packages" ] && ${MKDIR_CMD} -p ${path}${_ports_path}/packages
+					[ ! -d "${_path}${_ports_path}/packages" ] && ${MKDIR_CMD} -p ${_path}${_ports_path}/packages
 					[ ! -d "${distpackagepath}" ] && ${MKDIR_CMD} -p ${distpackagepath}
-					${miscdir}/mountpoint ${path}${_ports_path}/packages || ${MOUNT_NULL_CMD} -orw ${distpackagepath} ${path}${_ports_path}/packages
+					${miscdir}/mountpoint ${_path}${_ports_path}/packages || ${MOUNT_NULL_CMD} -orw ${distpackagepath} ${_path}${_ports_path}/packages
 					;;
 			esac
 		fi
 	fi
 
 	if [ -f "${xfstab}" ]; then
-		mountfstab jroot="${path}" fstab="${xfstab}" jname="${jname}" 2>/dev/null
+		mountfstab jroot="${_path}" fstab="${xfstab}" jname="${jname}" 2>/dev/null
 		${RM_CMD} -f "${xfstab}"
 	fi
 

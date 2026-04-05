@@ -8,7 +8,10 @@ set +e
 
 [ "${JAIL_TEST_ENABLE}" != "1" ] && exit 0
 
-jname="cbsd_test_vnetv4v6"
+# get workdir
+. /etc/rc.conf
+
+jname="jcreate1"
 
 ogw4="10.0.20.1"
 ogw6="fdef:beb2:1929:8dba::1"
@@ -17,56 +20,46 @@ onewipv4="10.0.20.3"			# NEW IPv4 without mask
 oipv6="fdef:beb2:1929:8dba::2"		# without mask
 oipv4_alias="192.168.0.2"		# without mask
 
-
-oneTimeSetUp() {
-	if ! ${CIX_BIN} jstatus jname="${jname}" > /dev/null 2>&1; then
-		echo "$0 destroy old ${jname}"
-		${CIX_BIN} jdestroy jname="${jname}"
-	else
-		set -o xtrace
-		${CIX_BIN} jcreate runasap=0 vnet=1 ip4_addr=${oipv4},${oipv6},${oipv4_alias} ci_gw4=${ogw6},${ogw4} pkg_bootstrap=0 jname="${jname}"
-		set +o xtrace
-	fi
+oneTimeSetUp()
+{
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
+	set -o xtrace
+	${CIX_BIN} jcreate runasap=0 vnet=1 ip4_addr=${oipv4},${oipv6},${oipv4_alias} ci_gw4=${ogw6},${ogw4} pkg_bootstrap=0 jname="${jname}"
+	set +o xtrace
 }
 
-setUp() {
-	# nothing to do
-}
-
-tearDown() {
-	# nothing to do
-}
-
-oneTimeTearDown() {
-	${CIX_BIN} jdestroy jname="${jname}"
+oneTimeTearDown()
+{
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 # just test if jstart works at all
-test_jstart(){
+test_jstart()
+{
 	${CIX_BIN} jstart jname="${jname}"
 }
 
-test_rcconf(){
-
+test_rcconf()
+{
 	unset defaultrouter
 	unset ifconfig_eth0
 	unset ifconfig_eth0_ipv6
 	unset ifconfig_eth0_alias0
 	unset ipv6_defaultrouter
 
-	if [ ! -r ~cbsd/jails-data/${jname}-data/etc/rc.conf ]; then
-		echo "no such ~cbsd/jails-data/${jname}-data/etc/rc.conf"
+	if [ ! -r ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf ]; then
+		echo "no such ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf"
 		exit 1
 	fi
 
-	cat ~cbsd/jails-data/${jname}-data/etc/rc.conf
-	. ~cbsd/jails-data/${jname}-data/etc/rc.conf
+	cat ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf
+	. ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf
 
 	echo "check gw4"
 	assertEquals "${defaultrouter}" "${ogw4}"
 	echo "check gw6"
 	assertEquals "${ipv6_defaultrouter}" "${ogw6}"
-	echo "check IPv4"
+	echo "check IPv4-1"
 	assertEquals "${ifconfig_eth0}" "inet ${oipv4}"
 	echo "check IPv4 alias + mask"
 	assertEquals "${ifconfig_eth0_alias0}" "inet ${oipv4_alias}/24"		# CBSD should append /24 for IPv4 without mask
@@ -74,24 +67,29 @@ test_rcconf(){
 	assertEquals "${ifconfig_eth0_ipv6}" "inet6 ${oipv6}/64"			# CBSD should append /64 for IPv6 without mask
 }
 
-test_append_mtu(){
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ~cbsd/jails-data/${jname}-data/etc/rc.conf ifconfig_eth0+="mtu 9000"
-	cat ~cbsd/jails-data/${jname}-data/etc/rc.conf
+test_append_mtu()
+{
+	echo "append MTU"
+	echo
+	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf ifconfig_eth0+="mtu 9000"
+	cat ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf
 }
 
-test_change_ipv4(){
+test_change_ipv4()
+{
 	${CIX_BIN} jstop jname="${jname}"
 	${CIX_BIN} jset ip4_addr="${onewipv4},${oipv6},${oipv4_alias}" jname="${jname}"
 	${CIX_BIN} jls
 }
 
 test_new_ipv4(){
+
 	${CIX_BIN} jstart jname="${jname}"
 	# now we must have 'ifconfig_eth0="inet <NEWIP>/24 mtu 9000'
 	unset ifconfig_eth0
-	cat ~cbsd/jails-data/${jname}-data/etc/rc.conf
-	. ~cbsd/jails-data/${jname}-data/etc/rc.conf
-	echo "check IPv4"
+	cat ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf
+	. ${cbsd_workdir}/jails-data/${jname}-data/etc/rc.conf
+	echo "check IPv4-2"
 	assertEquals "${ifconfig_eth0}" "inet ${onewipv4}/24 mtu 9000"
 }
 

@@ -7,7 +7,7 @@ _CBSD_JFS_SUBR=1
 # movedata $1-from $2-to
 mvdata()
 {
-	local _src _dst _ret _zfsfeat _realsrc
+	local _src= _dst= _ret= _zfsfeat= _realsrc=
 	[ -z "$1" -o -z "$2" ] && err 1 "mvdata: empty arguments"
 
 	_src=${1}
@@ -28,7 +28,7 @@ mvdata()
 		return ${_ret}
 	fi
 
-	_realsrc=$( ${REALPATH_CMD} ${_src} )
+	capture _realsrc ${REALPATH_CMD} ${_src}
 	zfsmnt "${_realsrc}"
 	_res=$?
 
@@ -44,18 +44,18 @@ mvdata()
 			cd ${_src} && ${PAX_CMD} -p eme -rw . ${_dst}
 			[ "${platform}" != "Linux" ] && ${CHFLAGS_CMD} -R noschg ${_src}
 			${RM_CMD} -rf ${_src}
-		;;
+			;;
 		1)
 			${ZFS_CMD} umount -f ${_src} > /dev/null 2>&1
 			${ZFS_CMD} set mountpoint=${_dst} ${ZPOOL}
 			${ZFS_CMD} mount ${ZPOOL}
 			${RMDIR_CMD} ${_src}
-		;;
+			;;
 		2)
 			${ZFS_CMD} set mountpoint=${_dst} ${ZPOOL}
 			${ZFS_CMD} mount ${ZPOOL}
 			${RMDIR_CMD} ${_src}
-		;;
+			;;
 	esac
 
 	return 0
@@ -73,8 +73,8 @@ mvdata()
 # e.g: clonedata -s /usr/jails/jails-data/jail1-data -d /mn -m rsync
 clonedata()
 {
-	local _src _dst _mode _go _force _zpool _name _res _jname _orig_mode
-	local _dskname
+	local _src= _dst= _mode= _go= _force= _zpool= _name=
+	local _dskname= _res= _jname= _orig_mode=
 
 	_force=0
 
@@ -248,13 +248,13 @@ clonedata()
 # return 1 if failed
 removedir()
 {
-	local _data data
+	local _data= data=
 
 	[ -z "${1}"  ] && err 1 "removedir: empty arguments"
 	data="${1}"
 	# not dir and not link?
 	[ ! -d "${data}" -a ! -h "${data}" ] && return 0
-	_data=$( ${REALPATH_CMD} ${data} )
+	capture _data ${REALPATH_CMD} ${data}
 	[ ! -d "${_data}" ] && return 0
 	# determine if ${_data} is mountpoint and try to remove content inside dir first, 
 	# then - unmount and rmdir
@@ -286,15 +286,15 @@ removedir()
 # $jname must be set
 remove_data_dir()
 {
-	local _data _test _res _jaildatadir ZPOOL _jailfs data _ret
-	local _retry _max_retry
+	local _data= _test= _res= _jaildatadir= ZPOOL= _jailfs=
+	local _retry= _max_retry= data= _ret=
 
 	[ -z "${1}"  ] && err 1 "remove_data_dir: empty arguments"
 	[ -z "${jname}"  ] && err 1 "remove_data_dir: jname variable must be set"
 
 	data="${1}"
 
-	_data=$( ${REALPATH_CMD} ${data} )
+	capture _data ${REALPATH_CMD} ${data}
 
 	[ ! -d "${_data}" ] && return 0
 
@@ -313,8 +313,8 @@ remove_data_dir()
 				;;
 		esac
 		# extra check if zfs still exist
-		_jaildatadir=$( ${REALPATH_CMD} ${jaildatadir} )
-		ZPOOL=$( ${ZFS_CMD} get -Ho value name ${_jaildatadir} 2>/dev/null )
+		capture _jaildatadir ${REALPATH_CMD} ${jaildatadir}
+		capture ZPOOL ${ZFS_CMD} get -Ho value name ${_jaildatadir}
 		if [ -n "${ZPOOL}" ]; then
 			case "${emulator}" in
 				bhyve|xen|qemu)
@@ -376,10 +376,10 @@ remove_data_dir()
 # unmount if mount
 unmountdata()
 {
-	local _data OZPOOL
+	local _data= OZPOOL=
 
 	[ -z "$1" ] && err 1 "unmountdata: no arguments"
-	_data=$1
+	_data="$1"
 
 	[ ! -d "${_data}" ] && return 1
 
@@ -401,11 +401,11 @@ create_fs()
 	[ -z "${data}" ] && return 1
 
 	if [ "${zfsfeat}" = "1" ]; then
-		create_zfs_fs -d ${data}
+		create_zfs_fs -d "${data}"
 	elif [ "${hammerfeat}" = "1" ]; then
-		create_hammer_fs ${jname}
+		create_hammer_fs "${jname}"
 	else
-		[ ! -d ${data} ] && ${MKDIR_CMD} -p ${data}
+		[ ! -d ${data} ] && ${MKDIR_CMD} -p "${data}"
 	fi
 
 	return 0
@@ -418,8 +418,8 @@ create_fs()
 # -z zfs_snapsrc
 create_zfs_fs()
 {
-	local _data _mount_point _name _promote _zfs_snapsrc _ret
-	local _cmd
+	local _data= _mount_point= _name= _promote=
+	local _cmd= _zfs_snapsrc= _ret= ZPOOL= res=
 
 	while getopts "d:m:n:p:z:" opt; do
 		case "${opt}" in
@@ -432,16 +432,12 @@ create_zfs_fs()
 		shift $(($OPTIND - 1))
 	done
 
-	local res
-
 	[ -z "${_data}" ] && return 0
 	[ -z "${_name}" ] && _name="${jname}"
 	[ -n "${zfs_snapsrc}" ] && _zfs_snapsrc="${zfs_snapsrc}"
 	[ -z "${_promote}" ] && _promote=0
 
-	local ZPOOL
-
-	ZPOOL=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+	capture ZPOOL ${ZFS_CMD} get -Ho value name ${jaildatadir}
 
 	if zfsroot ${_name}; then
 		log_err 1 "create_zfs_fs: ${ZPOOL}/${_name} already in use"
@@ -483,7 +479,7 @@ create_zfs_fs()
 		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs create failed: ${res}. No ZFS and zfsfeat=1?${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: create_zfs_fs: ZFS ${ZPOOL}/${_name} has been created with mountpoint: ${_data}, opt: ${zfs_create_flags}
 	else
-		_cmd=$( ${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name} )
+		capture _cmd ${ZFS_CMD} clone -p ${_zfs_snapsrc} ${ZPOOL}/${_name}
 		res=$( ${_cmd} 2>&1 )
 		_ret=$?
 		[ ${_ret} -ne 0 ] && log_err 1 "${N1_COLOR}create_zfs_fs: zfs clone failed, code: ${_ret}: ${res}${N0_COLOR}"
@@ -491,12 +487,12 @@ create_zfs_fs()
 
 		if [ "${_mount_point}" != "none" ]; then
 			if [ -n "${_mount_point}" ]; then
-				_cmd=$( ${ZFS_CMD} set mountpoint=${_mount_point} ${ZPOOL}/${_name} )
+				capture _cmd ${ZFS_CMD} set mountpoint=${_mount_point} ${ZPOOL}/${_name}
 				${_cmd}
 				_ret=$?
 				cbsdlogger NOTICE ${CIX_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}
 			else
-				_cmd=$( ${ZFS_CMD} set mountpoint=${_data} ${ZPOOL}/${_name} )
+				capture _cmd ${ZFS_CMD} set mountpoint=${_data} ${ZPOOL}/${_name}
 				${_cmd}
 				_ret=$?
 				cbsdlogger NOTICE ${CIX_APP}: create_zfs_fs errcode: ${_ret}: ${_cmd}

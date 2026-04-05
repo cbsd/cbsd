@@ -1,6 +1,6 @@
 #!/usr/local/bin/cbsd
 #v12.1.10
-MYARG="jname"
+CIXARG="jname"
 CBSDMODULE="jail"
 MYDESC="Modify parameters for jail"
 ADDHELP="
@@ -36,17 +36,18 @@ ${H3_COLOR}See also${N0_COLOR}:
 EXTHELP="wf_jset"
 
 . ${subrdir}/nc.subr
+. ${tools}
 
 [ ! -f ${distsharedir}/jail-arg ] && err 1 "${N2_COLOR}no jail-arg file${N0_COLOR}";
 . ${distsharedir}/jail-arg
 
 # nic_address for FIRST jailnic interface.
 # todo: nic_address0 nic_address1 ...
-MYOPTARG="autorestart jconf ${JARG} nice nic_address"
+CIXOPTARG="autorestart jconf ${JARG} nice nic_address"
 
 . ${tools}
 . ${strings}
-. ${cbsdinit}
+cixinit
 
 emulator="jail"		# for jname_is_multiple
 jname_is_multiple
@@ -54,9 +55,7 @@ jname_is_multiple
 if [ -n "${jail_list}" ]; then
 	new_arg=
 
-	for i in $*; do
-		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
-		[ "${_is_jname}" = "jname" ] && continue
+	for i in ${@}; do
 		new_arg="${new_arg} ${i}"
 	done
 
@@ -81,26 +80,24 @@ need_for_restart=0
 validate_ipaddr()
 {
 	local _myvnet= _vnet_clause=
+	local _seq= _rec=0
 
 	[ -z "${ip4_addr}" ] && return 1
 
 	# load ip4_addr of all jails
-	_i=0
-	OIFS="${IFS}"
-	IFS="|"
-
 	# https://github.com/cbsd/cbsd/pull/839
-	_myvnet=$( cbsdsqlro local "SELECT vnet FROM jails WHERE jname='${jname}'" )
+	cbsdsqlro_vars local "SELECT vnet FROM jails WHERE jname='${jname}'" _myvnet
+	#_myvnet=$( cbsdsqlro local "SELECT vnet FROM jails WHERE jname='${jname}'" )
 	[ "${_myvnet}" = "0" ] && _vnet_clause="AND vnet!='0'"
 
-	eval $( cbsdsqlro local "SELECT jname,ip4_addr FROM jails WHERE ip4_addr!='0' ${_vnet_clause}" 2>/dev/null | while read _jname _ips; do
-		IFS="${OIFS}"
-		echo jname${_i}=\"$_jname\"
-		echo ips${_i}=\"${_ips}\"
+	_i=0
+
+	eval $( cbsdsqlquery local "SELECT jname,ip4_addr FROM jails WHERE ip4_addr!='0' ${_vnet_clause}" | while read q; do
+		echo "jname${_i}=\"${q@.jname}\""
+		echo "ips${_i}=\"${q@.ip4_addr}\""
+		echo "_rec=\"${_i}\""
 		_i=$(( _i + 1 ))
-		IFS="|"
 	done )
-	IFS="${OIFS}"
 
 	# Yes, we wrote in the example that the valid separator between NIC and address
 	# is '#' and not '|' as experienced jail.conf users can get used to.
@@ -140,15 +137,20 @@ validate_ipaddr()
 	done
 	IFS="${OIFS}"
 
+	capture _seq ${SEQ_CMD} -s ' ' 0 ${_rec}
+
+	OIFS="${IFS}"
+	IFS=" "
 	# check for other jails
-	for _i in $( ${SEQ_CMD} 0 255 ); do
+	for _i in ${_seq}; do
+		IFS="${OIFS}"
 		_ok=1
 		unset _existing_ipjail _existing_ip
-		eval _jname="\$jname$_i"
+
+		eval _jname="\$jname${_i}"
 		[ -z "${_jname}" ] && break
 		# skip for myself
 		[ "${_jname}" = "${jname}" ] && continue
-
 		eval _existing_ipjail="\$ips$_i"
 		[ -z "${_existing_ipjail}" ] && break
 
@@ -216,6 +218,7 @@ modify_ipaddr()
 		cbsdlogger NOTICE ${CIX_APP}: modify_ipaddr: on-the-fly disabled because jail option empty is 1
 		return 0
 	fi
+
 
 	# extra check
 	validate_ipaddr
@@ -1004,7 +1007,6 @@ modify_sysdir_volume()
 	${ECHO} "${argpart}: ${N1_COLOR}${sysdir_volume}${N0_COLOR}"
 }
 
-
 need_action()
 {
 	eval VAL="\$$i"
@@ -1097,8 +1099,9 @@ update_jails()
 
 # MAIN
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
-jid=$( jstatus jname=${jname} )
-[ $? -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+jid=$( jstatus jname="${jname}" )
+_ret=$?
+[ ${_ret} -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${N1_COLOR}No such jconf file: ${N2_COLOR}${jconf}${N0_COLOR}"
@@ -1169,7 +1172,7 @@ if [ -n "${jconf}" ]; then
 	${RM_CMD} ${jset_tmp}
 	exit 0
 else
-	my_arg="$@"
+	my_arg="${@}"
 fi
 
 for n in ${my_arg}; do
@@ -1185,11 +1188,9 @@ for n in ${my_arg}; do
 
 	for i in ${JARG} nice nic_address; do
 		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
-
 			if need_action; then
 				continue
 			fi
-
 			##### check for already running
 			if [ ${jid} -ne 0 ]; then
 				case "${argpart}" in

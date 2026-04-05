@@ -19,25 +19,15 @@ oipv4_alias="192.168.0.2"		# without mask
 
 oneTimeSetUp()
 {
-	if ! ${CIX_BIN} jstatus jname="${jname}" > /dev/null 2>&1; then
-		echo "$0 destroy old ${jname}"
-		${CIX_BIN} jdestroy jname="${jname}"
-	else
-		set -o xtrace
-		${CIX_BIN} jcreate runasap=1 vnet=1 ip4_addr=${oipv4} pkg_bootstrap=0 jname="${jname}"
-		set +o xtrace
-	fi
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
+	set -o xtrace
+	${CIX_BIN} jcreate runasap=1 vnet=1 ip4_addr=${oipv4} pkg_bootstrap=0 jname="${jname}"
+	set +o xtrace
 }
 
-setUp()
+oneTimeTearDown()
 {
-	# nothing to do
-	true
-}
-
-tearDown() {
-	# nothing to do
-	true
+	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
 }
 
 oneTimeTearDown()
