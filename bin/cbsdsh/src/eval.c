@@ -96,6 +96,7 @@ STATIC
 void evaltreenr(union node *, int) __attribute__ ((__noreturn__));
 STATIC int evalloop(union node *, int);
 STATIC int evalfor(union node *, int);
+STATIC int evalforarith(union node *, int);
 STATIC int evalcase(union node *, int);
 STATIC int evalsubshell(union node *, int);
 STATIC void expredir(union node *);
@@ -111,6 +112,8 @@ STATIC void prehash(union node *);
 STATIC int eprintlist(struct output *, struct strlist *, int);
 STATIC int bltincmd(int, char **);
 int capturecmd(int, char **);
+STATIC char *arith_for_expr_dup(const char *);
+STATIC intmax_t arith_for_eval(const char *);
 
 
 STATIC const struct builtincmd bltin = {
@@ -278,6 +281,9 @@ checkexit:
 		goto calleval;
 	case NFOR:
 		evalfn = evalfor;
+		goto calleval;
+	case NFORARITH:
+		evalfn = evalforarith;
 		goto calleval;
 	case NWHILE:
 	case NUNTIL:
@@ -449,6 +455,106 @@ evalfor(union node *n, int flags)
 	loopnest--;
 
 	return status;
+}
+
+STATIC int
+evalforarith(union node *n, int flags)
+{
+	int skip;
+	int status;
+	intmax_t v;
+	char *init;
+	char *cond;
+	char *update;
+
+	errlinno = lineno = n->nforarith.linno;
+	if (funcline)
+		lineno -= funcline - 1;
+
+	status = 0;
+	loopnest++;
+	flags &= EV_TESTED;
+
+	/*
+	 * Own copies for the whole loop: never read init/cond/update from the
+	 * parse tree after this (stable buffers; no stack allocator).
+	 */
+	init = arith_for_expr_dup(n->nforarith.init);
+	cond = arith_for_expr_dup(n->nforarith.cond);
+	update = arith_for_expr_dup(n->nforarith.update);
+
+	if (*init)
+		(void)arith_for_eval(init);
+
+	for (;;) {
+		if (*cond) {
+			v = arith_for_eval(cond);
+			if (v == 0)
+				break;
+		}
+
+		status = evaltree(n->nforarith.body, flags);
+		skip = skiploop();
+		if (skip & ~SKIPCONT)
+			break;
+
+		if (*update)
+			(void)arith_for_eval(update);
+	}
+
+	loopnest--;
+	ckfree(init);
+	ckfree(cond);
+	ckfree(update);
+	return status;
+}
+
+/*
+ * Copy loop header expressions into malloc'd storage and drop bytes that
+ * cannot appear in a valid arithmetic token stream (defensive).
+ */
+STATIC char *
+arith_for_expr_dup(const char *expr)
+{
+	const unsigned char *p;
+	char *out;
+	char *d;
+	size_t len;
+
+	if (!expr)
+		expr = "";
+
+	len = 0;
+	for (p = (const unsigned char *)expr; *p; p++) {
+		if (*p == '\t' || *p == '\n' || *p == ' ' ||
+		    (*p >= 0x21 && *p <= 0x7e))
+			len++;
+	}
+	out = ckmalloc(len + 1);
+	d = out;
+	for (p = (const unsigned char *)expr; *p; p++) {
+		if (*p == '\t' || *p == '\n' || *p == ' ' ||
+		    (*p >= 0x21 && *p <= 0x7e))
+			*d++ = *p;
+	}
+	*d = '\0';
+	return out;
+}
+
+/*
+ * Evaluate one arithmetic expression and release lexer temp allocations on
+ * the shell stack (same idea as expand.c expari).
+ */
+STATIC intmax_t
+arith_for_eval(const char *s)
+{
+	struct stackmark sm;
+	intmax_t r;
+
+	setstackmark(&sm);
+	r = arith(s);
+	popstackmark(&sm);
+	return r;
 }
 
 
@@ -1009,6 +1115,14 @@ cmddone:
 	freestdout();
 	commandname = savecmdname;
 	handler = savehandler;
+	/*
+	 * argv lives in memory released by popstackmark when the nested
+	 * evaltree for this simple command returns. Clear argptr/optptr so
+	 * nextopt and builtins cannot read a dangling pointer (e.g. after
+	 * builtin kill vs external /bin/kill timing differences).
+	 */
+	argptr = NULL;
+	optptr = NULL;
 
 	return i;
 }

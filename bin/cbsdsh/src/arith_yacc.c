@@ -34,6 +34,7 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
 #include "arith_yacc.h"
 #include "expand.h"
 #include "shell.h"
@@ -78,6 +79,16 @@ static const char prec[ARITH_BINOP_MAX - ARITH_BINOP_MIN] = {
 static void yyerror(const char *s) __attribute__ ((noreturn));
 static void yyerror(const char *s)
 {
+	if (getenv("CBSDSH_ARITH_DEBUG") != NULL) {
+		const unsigned char *p = (const unsigned char *)arith_startbuf;
+		size_t i;
+
+		outfmt(out2, "cbsdsh arith debug: %s expr[0..63]=", s);
+		for (i = 0; i < 64 && p[i] != '\0'; i++)
+			outfmt(out2, " %02x", p[i]);
+		outfmt(out2, " (len=%zu)\n", arith_startbuf ? strlen(arith_startbuf) : 0);
+		flushout(out2);
+	}
 	sh_error("arithmetic expression: %s: \"%s\"", s, arith_startbuf);
 	/* NOTREACHED */
 }
@@ -150,6 +161,15 @@ again:
 		last_token = op;
 		return val->val;
 	case ARITH_VAR:
+		if (op == ARITH_INC || op == ARITH_DEC) {
+			intmax_t old = noeval ? val->val : lookupvarint(val->name);
+			if (!noeval) {
+				setvarint(val->name,
+				    op == ARITH_INC ? old + 1 : old - 1, 0);
+			}
+			last_token = yylex();
+			return old;
+		}
 		last_token = op;
 		return noeval ? val->val : lookupvarint(val->name);
 	case ARITH_ADD:
@@ -166,6 +186,26 @@ again:
 	case ARITH_BNOT:
 		*val = yylval;
 		return ~primary(op, val, yylex(), noeval);
+	case ARITH_INC:
+	case ARITH_DEC: {
+		int is_inc = token == ARITH_INC;
+		token = op;
+		*val = yylval;
+		op = yylex();
+		if (token != ARITH_VAR)
+			yyerror("expecting primary");
+		/*
+		 * Prefix ++/--: return the new value.
+		 */
+		if (noeval) {
+			last_token = op;
+			return val->val;
+		}
+		intmax_t v = lookupvarint(val->name) + (is_inc ? 1 : -1);
+		setvarint(val->name, v, 0);
+		last_token = op;
+		return v;
+	}
 	default:
 		yyerror("expecting primary");
 	}
@@ -291,8 +331,15 @@ static intmax_t assignment(int var, int noeval)
 
 intmax_t arith(const char *s)
 {
+	const char *obuf = arith_buf;
+	const char *ostart = arith_startbuf;
 	intmax_t result;
 
+	/*
+	 * Reentrancy: a nested arith() (e.g. from $(( )) during expand,
+	 * trap eval, or a C extension) must not leave arith_buf pointing
+	 * into the inner expression when the outer parse resumes.
+	 */
 	arith_buf = arith_startbuf = s;
 
 	result = assignment(yylex(), 0);
@@ -300,5 +347,7 @@ intmax_t arith(const char *s)
 	if (last_token)
 		yyerror("expecting EOF");
 
+	arith_buf = obuf;
+	arith_startbuf = ostart;
 	return result;
 }

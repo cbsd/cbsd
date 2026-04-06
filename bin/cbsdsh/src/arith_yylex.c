@@ -138,6 +138,31 @@ yylex()
 			*(char *)mempcpy(yylval.name, p, buf - p) = 0;
 			value = ARITH_VAR;
 			goto out;
+		case '$':
+			buf++;
+			if (*buf == '{') {
+				p = ++buf;
+				if (!is_name(*buf))
+					return ARITH_BAD;
+				while (is_in_name(*buf))
+					buf++;
+				if (*buf != '}')
+					return ARITH_BAD;
+				yylval.name = stalloc(buf - p + 1);
+				*(char *)mempcpy(yylval.name, p, buf - p) = 0;
+				buf++; /* skip '}' */
+				value = ARITH_VAR;
+				goto out;
+			}
+			if (!is_name(*buf))
+				return ARITH_BAD;
+			p = buf;
+			while (is_in_name(*buf))
+				buf++;
+			yylval.name = stalloc(buf - p + 1);
+			*(char *)mempcpy(yylval.name, p, buf - p) = 0;
+			value = ARITH_VAR;
+			goto out;
 		case '=':
 			value += ARITH_ASS - '=';
 checkeq:
@@ -212,9 +237,19 @@ checkeqcur:
 			value += ARITH_REM - '%';
 			goto checkeq;
 		case '+':
+			if (buf[1] == '+') {
+				buf++;
+				value = ARITH_INC;
+				break;
+			}
 			value += ARITH_ADD - '+';
 			goto checkeq;
 		case '-':
+			if (buf[1] == '-') {
+				buf++;
+				value = ARITH_DEC;
+				break;
+			}
 			value += ARITH_SUB - '-';
 			goto checkeq;
 		case '~':

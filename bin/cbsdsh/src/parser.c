@@ -128,6 +128,8 @@ STATIC void synexpect(int) __attribute__((__noreturn__));
 STATIC void synerror(const char *) __attribute__((__noreturn__));
 STATIC void setprompt(int);
 
+STATIC void read_forarith(char **init, char **cond, char **update);
+
 
 int isassignment(const char *p)
 {
@@ -376,45 +378,72 @@ TRACE(("expecting DO got %s %s\n", tokname[got], got == TWORD ? wordtext : ""));
 		break;
 	}
 	case TFOR:
-		if (readtoken() != TWORD || quoteflag || ! goodname(wordtext))
-			synerror("Bad for loop variable");
-		n1 = (union node *)stalloc(sizeof (struct nfor));
-		n1->type = NFOR;
-		n1->nfor.linno = savelinno;
-		n1->nfor.var = wordtext;
-		checkkwd = CHKNL | CHKKWD | CHKALIAS;
-		if (readtoken() == TIN) {
-			app = &ap;
-			while (readtoken() == TWORD) {
+		/*
+		 * Support both:
+		 *   for var in ...; do ...; done
+		 * and (bash-style arithmetic for):
+		 *   for ((init;cond;update)); do ...; done
+		 */
+		if (readtoken() == TLP) {
+			if (readtoken() != TLP)
+				synerror("Bad arithmetic for loop");
+			n1 = (union node *)stalloc(sizeof (struct nforarith));
+			n1->type = NFORARITH;
+			n1->nforarith.linno = savelinno;
+			read_forarith(&n1->nforarith.init,
+			    &n1->nforarith.cond, &n1->nforarith.update);
+
+			/*
+			 * Newline or semicolon before 'do' is optional.
+			 */
+			checkkwd = CHKNL | CHKKWD | CHKALIAS;
+			if (readtoken() != TSEMI)
+				tokpushback++;
+		} else {
+			if (lasttoken != TWORD || quoteflag ||
+			    !goodname(wordtext))
+				synerror("Bad for loop variable");
+			n1 = (union node *)stalloc(sizeof (struct nfor));
+			n1->type = NFOR;
+			n1->nfor.linno = savelinno;
+			n1->nfor.var = wordtext;
+			checkkwd = CHKNL | CHKKWD | CHKALIAS;
+			if (readtoken() == TIN) {
+				app = &ap;
+				while (readtoken() == TWORD) {
+					n2 = (union node *)stalloc(sizeof (struct narg));
+					n2->type = NARG;
+					n2->narg.text = wordtext;
+					n2->narg.backquote = backquotelist;
+					*app = n2;
+					app = &n2->narg.next;
+				}
+				*app = NULL;
+				n1->nfor.args = ap;
+				if (lasttoken != TNL && lasttoken != TSEMI)
+					synexpect(-1);
+			} else {
 				n2 = (union node *)stalloc(sizeof (struct narg));
 				n2->type = NARG;
-				n2->narg.text = wordtext;
-				n2->narg.backquote = backquotelist;
-				*app = n2;
-				app = &n2->narg.next;
+				n2->narg.text = (char *)dolatstr;
+				n2->narg.backquote = NULL;
+				n2->narg.next = NULL;
+				n1->nfor.args = n2;
+				/*
+				 * Newline or semicolon here is optional (but note
+				 * that the original Bourne shell only allowed NL).
+				 */
+				if (lasttoken != TSEMI)
+					tokpushback++;
 			}
-			*app = NULL;
-			n1->nfor.args = ap;
-			if (lasttoken != TNL && lasttoken != TSEMI)
-				synexpect(-1);
-		} else {
-			n2 = (union node *)stalloc(sizeof (struct narg));
-			n2->type = NARG;
-			n2->narg.text = (char *)dolatstr;
-			n2->narg.backquote = NULL;
-			n2->narg.next = NULL;
-			n1->nfor.args = n2;
-			/*
-			 * Newline or semicolon here is optional (but note
-			 * that the original Bourne shell only allowed NL).
-			 */
-			if (lasttoken != TSEMI)
-				tokpushback++;
 		}
 		checkkwd = CHKNL | CHKKWD | CHKALIAS;
 		if (readtoken() != TDO)
 			synexpect(TDO);
-		n1->nfor.body = list(0);
+		if (n1->type == NFOR)
+			n1->nfor.body = list(0);
+		else
+			n1->nforarith.body = list(0);
 		t = TDONE;
 		break;
 	case TCASE:
@@ -874,6 +903,79 @@ static int pgetc_eatbnl(void)
 static int pgetc_top(struct synstack *stack)
 {
 	return stack->syntax == SQSYNTAX ? pgetc() : pgetc_eatbnl();
+}
+
+STATIC void
+read_forarith(char **init, char **cond, char **update)
+{
+	char *out;
+	char *s;
+	char *parts[3] = { NULL, NULL, NULL };
+	int nsep = 0;
+	int depth = 0;
+	int c;
+
+	STARTSTACKSTR(out);
+	parts[0] = out;
+
+	for (;;) {
+		c = pgetc_eatbnl();
+		if (c == PEOF)
+			synerror("Missing '))'");
+		if (c == '\n') {
+			USTPUTC(' ', out);
+			continue;
+		}
+
+		if (c == '(') {
+			depth++;
+			USTPUTC(c, out);
+			continue;
+		}
+
+		if (c == ')') {
+			if (depth > 0) {
+				depth--;
+				USTPUTC(c, out);
+				continue;
+			}
+			c = pgetc_eatbnl();
+			if (c == ')')
+				break;
+			pungetc();
+			USTPUTC(')', out);
+			continue;
+		}
+
+		if (c == ';' && depth == 0 && nsep < 2) {
+			USTPUTC('\0', out);
+			parts[++nsep] = out;
+			continue;
+		}
+
+		USTPUTC(c, out);
+	}
+
+	USTPUTC('\0', out);
+	grabstackblock((out - (char *)stackblock()) + 1);
+
+	if (nsep != 2)
+		synerror("Bad arithmetic for loop");
+
+	for (int i = 0; i < 3; i++) {
+		s = parts[i];
+		while (*s == ' ' || *s == '\t')
+			s++;
+		/* rtrim */
+		char *e = s + strlen(s);
+		while (e > s && (e[-1] == ' ' || e[-1] == '\t'))
+			*--e = '\0';
+		parts[i] = s;
+	}
+
+	*init = savestr(parts[0]);
+	*cond = savestr(parts[1]);
+	*update = savestr(parts[2]);
 }
 
 static void synstack_push(struct synstack **stack, struct synstack *next,

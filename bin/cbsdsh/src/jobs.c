@@ -1367,6 +1367,17 @@ dotail:
 		n = n->nfor.body;
 		p = "; done";
 		goto dodo;
+	case NFORARITH:
+		cmdputs("for ((");
+		cmdputs(n->nforarith.init);
+		cmdputs(";");
+		cmdputs(n->nforarith.cond);
+		cmdputs(";");
+		cmdputs(n->nforarith.update);
+		cmdputs("))");
+		n = n->nforarith.body;
+		p = "; done";
+		goto dodo;
 	case NDEFUN:
 		cmdputs(n->ndefun.text);
 		p = "() { ... }";

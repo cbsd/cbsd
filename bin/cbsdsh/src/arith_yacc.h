@@ -79,6 +79,10 @@
 #define ARITH_QMARK 37
 #define ARITH_COLON 38
 
+/* non-POSIX extensions used by cbsdsh */
+#define ARITH_INC 39	/* ++ */
+#define ARITH_DEC 40	/* -- */
+
 union yystype {
 	intmax_t val;
 	char *name;
