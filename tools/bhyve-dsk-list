@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.0.4
-MYARG=""
-MYOPTARG="alljails display header jname mode node shownode"
+CIXARG=""
+CIXOPTARG="alljails display header jname mode node shownode"
 MYDESC="Show bhyve disks"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
@@ -40,8 +40,9 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 . ${subrdir}/nc.subr
 . ${system}
-
-. ${cbsdinit}
+. ${tools}
+. ${strings}
+cixinit
 . ${subrdir}/bhyve.subr
 . ${subrdir}/virtual.subr
 . ${nodes}
@@ -86,7 +87,7 @@ show_header()
 # -u 1 - always show status as "Unregister"
 opopulate_output_data()
 {
-	local _i _val dsk_size
+	local _i= _val= dsk_size=
 
 	_status=
 
@@ -102,7 +103,7 @@ opopulate_output_data()
 				populate_dsk_size
 				_val="${dsk_size}"			# already in human
 				# update values in table
-				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE bhyvedsk SET dsk_size=\"${dsk_bsize}\" WHERE dsk_path=\"${dsk_path}\"
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_size='${dsk_bsize}' WHERE dsk_path='${dsk_path}'"
 			else
 				# not '0', convert ${dsk_bsize} for human
 				if conv2human "${dsk_bsize}"; then
@@ -127,8 +128,7 @@ opopulate_output_data()
 # -u 1 - always show status as "Unregister"
 populate_output_data()
 {
-	local _i _val
-	local unregister="0" _md5_node_name
+	local _i= _val= unregister="0" _md5_node_name=
 
 	while getopts "j:s:u:" opt; do
 		case "${opt}" in
@@ -141,7 +141,7 @@ populate_output_data()
 
 	[ -z "${sqlfile}" ] && sqlfile="local"
 
-	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid,dsk_iops_limit,dsk_mbps_limit,dsk_serial FROM bhyvedsk WHERE jname=\"${jname}\""
+	_sql="SELECT jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,bootable,dsk_zfs_guid,dsk_iops_limit,dsk_mbps_limit,dsk_serial FROM bhyvedsk WHERE jname='${jname}'"
 	cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite ${_sql} | while read jname dsk_controller dsk_path dsk_slot dsk_size dsk_sectorsize bootable dsk_zfs_guid dsk_iops_limit dsk_mbps_limit dsk_serial; do
 
 		if [ -n "${ojname}" ]; then
@@ -159,11 +159,11 @@ populate_output_data()
 			fi
 		else
 			# pop status variable from node_is_online()
-			_md5_node_name=$( ${miscdir}/cbsd_md5 "${sqlfile}" )
+			capture _md5_node_name ${miscdir}/cbsd_md5 "${sqlfile}"
 			eval _node_is_online=\$node_${_md5_node_name}_online
 			if [ "${_node_is_online}" = "1" ]; then
 				# retr from sql
-				jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+				cbsdsqlro_vars ${sqlfile} "SELECT jid FROM jails WHERE jname='${jname}'"
 				case ${jid} in
 					0)
 						printf "${N4_COLOR}"
@@ -201,7 +201,6 @@ populate_output_data()
 				fi
 			fi
 
-
 			printf "${_val} "
 		done
 		printf "${N0_COLOR}\n"
@@ -228,7 +227,7 @@ show_jaildata_from_sql()
 
 #	[ -n "${2}" ] && local jname="${2}"
 
-	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname; do
+	cbsdsqlro ${sqlfile} "SELECT jname FROM jails WHERE emulator='bhyve' ORDER BY jname ASC" | while read jname; do
 		_status=
 
 		if [ "${sqlfile}" = "local" ]; then
@@ -287,24 +286,34 @@ show_dsk()
 
 vm_list()
 {
+	local _res= _first=1 _i=
+
 	if [ -n "${jname}" ]; then
 		vms="${jname}"
 	else
-		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" | ${XARGS_CMD} )
+		cbsdsqlro_vars ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = 'bhyve' ORDER BY jname ASC" _res
+		vms=$( for _i in ${_res}; do
+			[ ${_first} -eq 0 ] && printf " "
+			_first=0
+			printf "${_i}"
+		done )
 	fi
 }
 
 rescan_dsk()
 {
-	local _dsk _res
+	local _dsk= _i= _res=
+
 	[ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify ${N2_COLOR}jname=${N0_COLOR}"
 	. ${subrdir}/rcconf.subr
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
-	for _dsk in $( ${FIND_CMD} ${data} -mindepth 1 -maxdepth 1 -name *.vhd -exec basename {} \; ); do
-		_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM bhyvedsk WHERE jname=\"${jname}\" AND dsk_path=\"${_dsk}\"" 2>/dev/null );
+	for _i in $( ${FIND_CMD} ${data} -mindepth 1 -maxdepth 1 -name *.vhd ); do
+		# basename
+		_dsk="${_i##*/}"
+		cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM bhyvedsk WHERE jname='${jname}' AND dsk_path='${_dsk}'" _res
 		if [ -z "${_res}" ]; then
 			${ECHO} "${N1_COLOR}Found new disk: ${N2_COLOR}${_dsk}${N1_COLOR} for ${N2_COLOR}${jname}${N0_COLOR}"
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( \"${jname}\",\"virtio-blk\",\"${_dsk}\","0" )"
+			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( '${jname}','virtio-blk','${_dsk}','0' )"
 		fi
 	done
 }
