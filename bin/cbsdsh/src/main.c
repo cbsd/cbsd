@@ -37,6 +37,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -62,6 +63,7 @@
 #include "mystring.h"
 #include "exec.h"
 #include "cd.h"
+#include "about.h"
 
 #define PROFILE 0
 
@@ -244,6 +246,57 @@ main(int argc, char **argv)
 	else
 		cix_function_time=0;
 //CIX
+	if (getenv("CIX_VERSION_CHECKED") == NULL) {
+		const char *appname = lookupvar("CIX_APP");
+
+		if (appname == NULL || *appname == '\0')
+			appname = progname ? progname : "cbsd";
+
+		if (workdir != NULL && *workdir != '\0') {
+			size_t env_path_len = strlen(workdir) + sizeof("/ver");
+			char *env_path = calloc(env_path_len, sizeof(char));
+
+			if (env_path != NULL) {
+				int fd;
+				ssize_t nread;
+				char inbuf[128];
+				char workdir_ver[64];
+				size_t i, j, used;
+
+				snprintf(env_path, env_path_len, "%s/ver", workdir);
+				fd = open(env_path, O_RDONLY);
+				if (fd >= 0) {
+					nread = read(fd, inbuf, sizeof(inbuf) - 1);
+					close(fd);
+					if (nread > 0) {
+						used = (size_t)nread;
+						inbuf[used] = '\0';
+
+						i = 0;
+						while (i < used && isspace((unsigned char)inbuf[i]))
+							i++;
+
+						j = 0;
+						while (i < used && !isspace((unsigned char)inbuf[i]) &&
+						    j < sizeof(workdir_ver) - 1) {
+							workdir_ver[j++] = inbuf[i++];
+						}
+						workdir_ver[j] = '\0';
+
+						if (j > 0 && strcmp(workdir_ver, VERSION) != 0) {
+							outfmt(out2,
+							    "Warning: %s is %s while workdir initialized for %s. Please re-run: env workdir=%s %s initenv\n",
+							    appname, VERSION, workdir_ver, workdir, appname);
+						}
+					}
+				}
+				free(env_path);
+			}
+		}
+		setvar("CIX_VERSION_CHECKED","1",VEXPORT);
+	}
+
+
 	login = procargs(argv);
 	if (login) {
 		state = 1;
