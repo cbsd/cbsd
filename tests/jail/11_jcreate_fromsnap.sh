@@ -16,8 +16,8 @@ CBSD_JAIL_ROOT="tank/jails"
 
 zfs list ${CBSD_JAIL_ROOT} > /dev/null 2>&1
 if [ $? -ne 0 ]; then
-	echo "no such ${CBSD_JAIL_ROOT}"
-	exit 1
+	echo "no such ZFS: ${CBSD_JAIL_ROOT}, SKIPP"
+	exit 0
 fi
 
 gold_jname="goldtestjail1"
