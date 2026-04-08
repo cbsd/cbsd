@@ -65,10 +65,23 @@ mv /usr/local/cbsd/bin/cbsd /usr/local/bin/
 
 1) Install dependencies:
 ```
-export PKG_PATH="https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/`uname -p`/`uname -r`/All/"
+export PKG_PATH="https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/`uname -p`/`uname -r`/All"
 pkg_add -v sqlite3 git curl gmake automake autoconf jq coreutils psmisc rsync sudo pkgconf dialog libssh2
 ```
 
+Create symlink from truncate to gtruncate:
+```
+ln -s /usr/pkg/bin/gtruncate /usr/pkg/bin/truncate
+```
+
+Install QEMU or Xen, depending on which hypervisor you intend to use:
+```
+pkg_add -v qemu
+```
+or:
+```
+pkg_add -v  xenkernel420 xentools420
+```
 
 2) CBSD hasn't been added to the pkgsrc repository yet. Install it from source code.
 ```
