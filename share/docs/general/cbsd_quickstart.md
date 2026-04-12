@@ -91,6 +91,13 @@ git clone https://github.com/cbsd/cbsd.git /usr/local/cbsd
 
 </details>
 
+<details>
+  <summary>Installation on XigmaNAS</summary>
+
+Please follow the relevant instructions on the extension page: [xigmajail](https://github.com/cbsd/xigmajail), [xigmabhyve](https://github.com/cbsd/xigmabhyve)
+
+</details>
+
 
 ## Initialization
 

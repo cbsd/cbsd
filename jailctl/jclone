@@ -1,7 +1,7 @@
 #!/usr/local/bin/cbsd
 #v12.1.6
-MYARG="old new host_hostname"
-MYOPTARG="ip4_addr checkstate verbose promote clone_method mac_reinit"
+CIXARG="old new host_hostname"
+CIXOPTARG="ip4_addr checkstate verbose promote clone_method mac_reinit"
 MYDESC="Jail cloning"
 CBSDMODULE="jail"
 ADDHELP="\
@@ -23,7 +23,8 @@ checkstate=1
 
 readconf jclone.conf		# read users promote and clone_method settings
 
-. ${cbsdinit}
+. ${tools}
+cixinit
 
 [ -z "${promote}" ] && promote=0
 [ -z "${clone_method}" ] && clone_method="auto"
@@ -33,19 +34,20 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
 fi
 
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${old}\" 2>/dev/null )
+cbsdsqlro_vars local "SELECT jid FROM jails WHERE jname='${old}'" myjid
 [ -z "${myjid}" ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${old}${N0_COLOR}"
 
 if [ ${checkstate} -eq 1 ]; then
 	[ ${myjid} -ne 0 ] && log_err 1 "${N1_COLOR}jail is online, please stop them: ${N2_COLOR}${old}${N1_COLOR} (or use ${N2_COLOR}checkstate=0${N1_COLOR})${N0_COLOR}"
 fi
 
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
+
+cbsdsqlro_vars local "SELECT jid FROM jails WHERE jname='${new}'" myjid
 [ -n "${myjid}" ] && err 1 "${N1_COLOR}Jail already exist: ${N2_COLOR}${new}${N0_COLOR}"
 
 jname="${old}"
 
-protected=$( cbsdsqlro local SELECT protected FROM jails WHERE jname=\"${old}\" )
+cbsdsqlro_vars local "SELECT protected FROM jails WHERE jname='${old}'" 
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -54,7 +56,7 @@ fi
 
 case "${ip4_addr}" in
 	[Dd][Hh][Cc][Pp])
-		dhcpip=$( dhcpd )
+		capture dhcpip dhcpd
 		if [ $? -eq 2 ]; then
 			cbsdlogger WARNING ${CIX_APP}: no free IPv4 address for DHCP in nodeippool
 			err 1 "${N1_COLOR}no free IPv4 address for DHCP in nodeippool${N0_COLOR}"
@@ -71,7 +73,7 @@ case "${ip4_addr}" in
 		fi
 		;;
 	[Dd][Hh][Cc][Pp][Vv][6])
-		dhcpip=$( dhcpdv6 )
+		capture dhcpip dhcpdv6
 		if [ $? -eq 2 ]; then
 			cbsdlogger WARNING ${CIX_APP}:no free IPv6 address for DHCP in nodeippool
 			err 1 "${N1_COLOR}no free IPv6 address for DHCP in nodeippool${N0_COLOR}"
@@ -87,7 +89,9 @@ case "${ip4_addr}" in
 		fi
 		;;
 	*)
-		[ -z "${ip4_addr}" ] && ip4_addr=$( cbsdsqlro local SELECT ip4_addr FROM jails WHERE jname=\"${old}\" )
+		if [ -z "${ip4_addr}" ]; then
+			cbsdsqlro_vars local "SELECT ip4_addr FROM jails WHERE jname='${old}'"
+		fi
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 			[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id="${new}" cmd=update ip4_addr="${ip4_addr}" status=1
 		fi
@@ -177,9 +181,8 @@ done
 printf "${N1_COLOR}Cloning.${N0_COLOR}"
 jmkrcconf jname=${old} > ${JAILRCCONF}
 
-${CIX_DISTDIR}/misc/cbsdsysrc -qf ${JAILRCCONF} jname="${new}" > /dev/null 2>&1
 # set status to offline if original jail was active
-${CIX_DISTDIR}/misc/cbsdsysrc -qf ${JAILRCCONF} status="0" > /dev/null 2>&1
+updateconf ${JAILRCCONF} jname="${new}" status="0"
 
 jregister jname=${new}
 
@@ -203,10 +206,10 @@ if [ -r "${JAIL_LOCAL_FSTAB_ORIG_LEGACY}" ]; then
 fi
 dot "fstab"
 
-cbsdsqlrw local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${JAIL_FSTAB_DIR_NEW}/fstab\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname}\" WHERE jname=\"${new}\"
+cbsdsqlrw local "UPDATE jails SET path='${jaildir}/${new}',mount_fstab='${JAIL_FSTAB_DIR_NEW}/fstab',data='${jaildatadir}/${new}-${jaildatapref}',rcconf='${jailrcconfdir}/rc.conf_${new}',host_hostname='${host_hostname}' WHERE jname='${new}'"
 
-[ -n "${ip4_addr_new}" ] && cbsdsqlrw local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
-[ -n "${host_hostname_new}" ] && cbsdsqlrw local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
+[ -n "${ip4_addr_new}" ] && cbsdsqlrw local "UPDATE jails SET ip4_addr='${ip4_addr_new}' WHERE jname='${new}'"
+[ -n "${host_hostname_new}" ] && cbsdsqlrw local "UPDATE jails SET host_hostname='${host_hostname_new}' WHERE jname='${new}'"
 
 jname=${new}
 
@@ -257,7 +260,7 @@ jmkrctlconf jname=${new} type=extra mode=tosql file=${LIMITS}.extra
 # Re-init all MAC address
 if [ ${mac_reinit} -eq 1 ]; then
 	cbsdlogger NOTICE ${CIX_APP}: re-init MAC address, set to 0: ${new}
-	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite "UPDATE jailnic SET nic_hwaddr=\"0\""
+	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite "UPDATE jailnic SET nic_hwaddr='0'"
 fi
 
 # CBSD QUEUE
@@ -267,10 +270,11 @@ fi
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 
 ${ECHO} "${N2_COLOR}ok${N0_COLOR}"
 
 cbsdlogger NOTICE ${CIX_APP}: jail ${old} has been cloned to ${new} in ${diff_time}
 ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+
 exit 0

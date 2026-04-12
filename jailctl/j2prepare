@@ -1,8 +1,8 @@
 #!/usr/local/bin/cbsd
 #v12.1.6
 CBSDMODULE="jail"
-MYARG="node jname mkdatadir"
-MYOPTARG="verbose scpdata sharedfs tryoffline"
+CIXARG="node jname mkdatadir"
+CIXOPTARG="verbose scpdata sharedfs tryoffline"
 MYDESC="Prepare remote node for accepting jail via j2slave"
 ADDHELP="
  mkdatadir - 0 or 1: create data directory. 1 - create, by default\n\
@@ -17,7 +17,7 @@ sharedfs=0
 mkdatadir=1
 tryoffline=0
 scpdata=0
-. ${cbsdinit}
+cixinit
 
 emulator="jail" # for jname_is_multiple
 jail_list=
@@ -30,7 +30,7 @@ gettime st_time
 # -o uniq_name_of_the_task (one world)
 j2prepare_multi_init()
 {
-	local _jname
+	local _jname=
 
 	while getopts "c:n:o:" opt; do
 		case "${opt}" in
@@ -50,7 +50,7 @@ j2prepare_multi_init()
 	task_owner="${task_owner}"
 	# spawn command for all jail
 	for _jname in ${jail_list}; do
-		task_id_cur=$( task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd j2prepare jname=${_jname} ${cmd} 2>/dev/null )
+		capture task_id_cur task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd j2prepare jname=${_jname} ${cmd} 2>/dev/null
 		sleep 0.1               # dont bruce taskdb
 		if ! is_number "${task_id_cur}"; then
 			task_id="${task_id} ${task_id_cur}"
@@ -76,7 +76,7 @@ if [ -n "${jail_list}" ]; then
 	# trim for jname= in "$*"
 	for i in $*; do
 		prefix=
-		prefix6=$( substr --pos=0 --len=6 --str="${i}" )
+		capture prefix6 substr --pos=0 --len=6 --str="${i}"
 		[ "${prefix6}" = "jname=" ] && continue
 		if [ -n "${_args}" ]; then
 			_args="${_args} ${i}"
@@ -126,7 +126,7 @@ not_sharedfs_action()
 
 	[ ! -f "${SECFILE}" ] && log_err 1 "${N1_COLOR}No such secrets${N0_COLOR}"
 
-	NODEDATA=$( cbsdsqlro nodes select ip,port,keyfile from nodelist where nodename=\"${node}\" )
+	cbsdsqlro_vars nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${node}'" NODEDATA
 
 	[ -z "${NODEDATA}" ] && log_err 1 "${N1_COLOR}: No such node. Please execute ${N2_COLOR}cbsd add node=${node} ${N1_COLOR}first${N0_COLOR}"
 	sqllist "${NODEDATA}" myip myport mykey
@@ -142,7 +142,7 @@ not_sharedfs_action()
 
 	# sysdata
 	imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz > ${DEBLOG} 2>&1
-	trap "${RM_CMD} -f ${tmpdir}/${jname}-sysdata.tgz" 0 1 2 3 4
+	trap "${RM_CMD} -f ${tmpdir}/${jname}-sysdata.tgz ${DEBLOG}" 0 1 2 3 4
 
 	if [ ! -r ${tmpdir}/${jname}-sysdata.tgz ]; then
 		err 1 "no such ${tmpdir}/${jname}-sysdata.tgz: cbsd imgpart mode=pack jname=${jname} part=sysdata out=${tmpdir}/${jname}-sysdata.tgz"
@@ -158,7 +158,7 @@ not_sharedfs_action()
 	if [ "${scpdata}" = "1" ]; then
 		# data
 		imgpart mode=pack jname=${jname} part=data out=${tmpdir}/${jname}-data.tgz > ${DEBLOG} 2>&1
-		trap "${RM_CMD} -f ${tmpdir}/${jname}-data.tgz" 0 1 2 3 4
+		trap "${RM_CMD} -f ${tmpdir}/${jname}-data.tgz ${DEBLOG}" 0 1 2 3 4
 
 		if [ ! -r ${tmpdir}/${jname}-data.tgz ]; then
 			err 1 "no such ${tmpdir}/${jname}-data.tgz: cbsd imgpart mode=pack jname=${jname} part=data out=${tmpdir}/${jname}-data.tgz"
@@ -240,6 +240,7 @@ not_sharedfs_action()
 	fi
 }
 
+capture DEBLOG ${MKTEMP_CMD}
 printf "   ${H5_COLOR}* ${N1_COLOR}check for remote CBSD version: ${N0_COLOR}"
 # todo: we can get this version from the nodes database (from retrinv task)
 d_cbsd_ver=$( rexe tryoffline=${tryoffline} node=${node} /usr/local/bin/cbsd version 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
@@ -276,5 +277,7 @@ if [ "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_REDIS_DISABLED}" ]; t
 	diff_time=$(( end_time - st_time ))
 	cbsdredis publish cbsd_events '{"cmd":"'${CIX_APP}'", "node":"'${nodename}'", "dest":"'${node}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
 fi
+
+[ -r "${DEBLOG}" ] && ${RM_CMD} -f ${DEBLOG}
 
 err 0 "${N2_COLOR}ok${N0_COLOR}"
