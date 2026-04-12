@@ -252,16 +252,13 @@ main(int argc, char *argv[])
 
 	switch (hammer) {
 	case 0:
-		err(1, "Start label not found");
-		break;
+		errx(1, "Start label not found: %s", st);
 	case 1:
-		err(1, "Start label found but end label absent");
-		break;
+		errx(1, "Start label found but end label absent: %s", end);
 	case 2:
 		break;
 	default:
-		err(1, "Unknown label found");
-		break;
+		errx(1, "Unknown label found: start=%s end=%s", st, end);
 	}
 
 	if (start_pos == stop_pos) {
