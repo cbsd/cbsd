@@ -58,6 +58,10 @@ wget https://convectix.com/DL/cbsd.tgz
 tar xfz cbsd.tgz
 mv /usr/local/cbsd/bin/cbsd /usr/local/bin/
 ```
+
+
+
+
 </details>
 
 <details>
@@ -94,7 +98,11 @@ git clone https://github.com/cbsd/cbsd.git /usr/local/cbsd
 <details>
   <summary>Installation on XigmaNAS</summary>
 
+<br>
+
 Please follow the relevant instructions on the extension page: [xigmajail](https://github.com/cbsd/xigmajail), [xigmabhyve](https://github.com/cbsd/xigmabhyve)
+
+<br>
 
 </details>
 
@@ -114,6 +122,28 @@ If initialization was successful, the following command should return the versio
 ```
 cbsd version
 ```
+
+:bangbang: | :information_source: For Linux users: When working with CBSD on Linux, you need to specify the workdir environment variable. 
+:---: | :---
+<details>
+  <summary>For example:</summary>
+
+```
+env workdir=/usr/jails cbsd summary
+```
+Alternatively, you can define it in /etc/rc.conf (similar to how it's done on FreeBSD):
+```
+cbsd_workdir="/usr/jails"
+```
+Another option is to use the global environment file, /etc/environment:
+```
+workdir="/usr/jails"
+```
+(Note: You will need to re-login for changes in this file to take effect.)
+
+</details>
+
+<br>
 
 If you want to change the `initenv` parameter after initialization, use `cbsd initenv-tui` command.
 
