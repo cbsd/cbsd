@@ -7,12 +7,12 @@ ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
 Script for mounting filesystem or files into jail by 'fstab' file.
-Use the normal fstab entry, except that the mountpoint (destination) is 
+Use the normal fstab entry, except that the mountpoint (destination) is
 relative to the rootfs container.
 
 For mount single file via nullfs you need https://reviews.freebsd.org/D37478.
 
-Unlike the original fstab syntax, you can use a custom script as a 'source' for 
+Unlike the original fstab syntax, you can use a custom script as a 'source' for
 custom (SMB, iSCSI, FUSEFS-based) mounts, e.g. example for NTFS mount:
 
 ${CIX_DISTDIR}/share/examples/jails-fstab/ntfs-3g.sh
@@ -61,20 +61,7 @@ SEQ=
 init_localmpt_fstab()
 {
 	[ ! -f "${fstab}.local" ] && return 0
-	local _ret=
-
 	local i=0
-
-	# check for CRLF at the end of file
-	capture _ret ${TAIL_CMD} -c1 "${fstab}.local"
-
-	if [ -n "${_ret}" ]; then
-		# append CRLF for proper while read loop
-		printf '\n' >> "${fstab}.local"
-	fi
-
-	# always rewrite CBSDROOT first
-	replacewdir file0="${fstab}.local" old="CBSDROOT"
 
 	eval $( ${CAT_CMD} ${fstab}.local | while read _device _mountpt _fs _mode _a _b; do
 
@@ -140,6 +127,16 @@ check_fstab_file()
 {
 	local _fstab="${1}"
 
+	# check for CRLF at the end of file
+	local _ret=
+	capture _ret ${TAIL_CMD} -c1 "${_fstab}"
+	if [ -n "${_ret}" ]; then
+		printf '\n' >> "${_fstab}"
+	fi
+
+	# always rewrite CBSDROOT first
+	replacewdir file0="${_fstab}" old="CBSDROOT"
+
 	# first pass: test for fstab is valid
 	${CAT_CMD} ${_fstab} | while read _device _mountpt _fs _mode _a _b; do
 		case ":${_device}" in
@@ -197,7 +194,7 @@ have_local=0
 
 if [ -z "${jname}" ]; then
 	[ -z "${jroot}" -a -z "${fstab}" ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N1_COLOR}mandatory params: ${N2_COLOR}fstab= jroot= ${N1_COLOR}or ${N2_COLOR}jname=${N0_COLOR}"
-	[ ! -f "${fstab}" ] && err 1 "${fstab} does not exist"
+	[ ! -r "${fstab}" ] && err 1 "${fstab} is not readable"
 	[ ! -d "${jroot}" ] && err 1 "${jroot} does not exist"
 	single_fstab=1
 else
@@ -223,21 +220,9 @@ fi
 # special sign for zfs attach
 with_zfs_attach="${jailsysdir}/${jname}/with_zfs_attach"
 
-# check for CRLF at the end of file
-[ ! -r ${fstab} ] && err 1 "${N1_COLOR}no such fstab file: ${N2_COLOR}${fstab}${N0_COLOR}"
-capture _res ${TAIL_CMD} -c1 "${fstab}"
-
-if [ -n "${_ret}" ]; then
-	# append CRLF for proper while read loop
-	printf '\n' >> "${fstab}"
+if [ -r "${fstab}" ]; then
+    check_fstab_file ${fstab}
 fi
-
-[ ${single_fstab} -eq 0 ] && init_localmpt_fstab
-
-# always rewrite CBSDROOT first
-replacewdir file0="${fstab}" old="CBSDROOT"
-
-check_fstab_file ${fstab}
 
 if [ ${have_local} -eq 1 ]; then
 	check_fstab_file ${fstab}.local
@@ -354,7 +339,9 @@ mount_fstab_file()
 	done
 }
 
-mount_fstab_file ${fstab} ${have_local}
+if [ -r "${fstab}" ]; then
+	mount_fstab_file ${fstab} ${have_local}
+fi
 
 if [ ${have_local} -eq 1 ]; then
 	mount_fstab_file ${fstab}.local 0
