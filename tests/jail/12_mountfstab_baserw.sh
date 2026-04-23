@@ -23,7 +23,7 @@ jname="jcreate1"
 oneTimeSetUp()
 {
 	${CIX_BIN} jstatus jname=${jname} 2>/dev/null || ${CIX_BIN} jremove jname="${jname}"
-	${CIX_BIN} jcreate runasap=0 jname="${jname}" pkg_bootstrap=0
+	${CIX_BIN} jcreate runasap=0 jname="${jname}" pkg_bootstrap=0 baserw=1
 }
 
 oneTimeTearDown()
@@ -50,7 +50,7 @@ EOF
 	_test=$( jexec "${jname}" realpath /var/TEST )
 	assertEquals "${_test}" "/var/TEST"
 
-	grep -q FreeBSD ${cbsd_workdir}/jails/${jname}/var/TEST
+	grep -q FreeBSD ${cbsd_workdir}/jails-data/${jname}-data/var/TEST
 	_ret=$?
 
 	# test: 0 - ok
