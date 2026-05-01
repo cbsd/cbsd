@@ -69,7 +69,7 @@ distclean:
 	$(RM) -f misc/mountpoint
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
-	$(RM) -f misc/popcnttest
+	$(RM) -f misc/x86-cpu-cap
 endif
 	$(RM) -f misc/cbsd_dot
 	$(RM) -f misc/daemon
@@ -139,7 +139,7 @@ cbsd: pkg-config-check
 	$(CC) misc/src/mountpoint.c -o misc/mountpoint && $(STRIP) misc/mountpoint
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
-	$(CC) misc/src/popcnttest.c -o misc/popcnttest -msse4.2 && $(STRIP) misc/popcnttest > /dev/null 2>&1 || /usr/bin/true
+	$(CC) misc/src/x86-cpu-cap.c -o misc/x86-cpu-cap -msse4.2 && $(STRIP) misc/x86-cpu-cap > /dev/null 2>&1 || /usr/bin/true
 endif
 	$(CC) misc/src/cbsd_dot.c -o misc/cbsd_dot && $(STRIP) misc/cbsd_dot
 	$(CC) misc/src/daemon.c -lutil -o misc/daemon && $(STRIP) misc/daemon
