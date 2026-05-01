@@ -1,6 +1,6 @@
 #!/usr/local/bin/cbsd
 #v11.1.4
-MYARG="jname"
+CIXARG="jname"
 CBSDMODULE="qemu"
 
 . ${subrdir}/nc.subr
@@ -9,7 +9,7 @@ CBSDMODULE="qemu"
 #concat for qemu arg
 JARG="${MYCOL} nice gid"
 
-MYOPTARG="jconf ${JARG}"
+CIXOPTARG="jconf ${JARG}"
 MYDESC="Modify parameters for qemu domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
@@ -41,23 +41,32 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 . ${tools}
 . ${strings}
-. ${cbsdinit}
+. ${tools}
+quiet=0
+oquiet=0
+cixinit
 
-emulator="qemu"	# for jname_is_multiple
+emulator="qemu"		# for jname_is_multiple
 jname_is_multiple
 
 if [ -n "${jail_list}" ]; then
+	first=1
 	new_arg=
 
-	for i in $*; do
-		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
-		[ "${_is_jname}" = "jname" ] && continue
-		new_arg="${new_arg} ${i}"
+	for i in ${@}; do
+		capture _is_jname substr --pos=0 --len=6 --str="${i}"
+		[ "${_is_jname}" = "jname=" ] && continue
+		if [ ${first} -eq 1 ]; then
+			new_arg="${i}"
+		else
+			new_arg="${new_arg} ${i}"
+		fi
+		first=0
+	done
+	for jname in ${jail_list}; do
+		bset jname=${jname} ${new_arg}
 	done
 
-	for jname in ${jail_list}; do
-		qset jname=${jname} ${new_arg}
-	done
 	exit 0
 fi
 
@@ -68,25 +77,24 @@ fi
 
 update_jails()
 {
+	[ -z "${i}" ] && return 0
 	eval TMPVAL="\$$i"
 
 	# restore spaces from '%' ( see todo in init func from nc.subr for val="one two" )
-	VAL=$( echo "${TMPVAL}" | ${TR_CMD} '%' ' ' )
+	#VAL=$( echo "${TMPVAL}" | ${TR_CMD} '%' ' ' )
 
 	case "${i}" in
 		vm_ram)
-			if is_number ${VAL}; then
-				if conv2bytes ${VAL}; then
-					VAL="${convval}"
+			if is_number ${TMPVAL}; then
+				if conv2bytes ${TMPVAL}; then
+					TMPVAL="${convval}"
 				fi
 			else
 				# Assume value in MB, convert it to bytes
-				VAL=$(( ${VAL} * 1024 * 1024 ))
+				TMPVAL=$(( ${VAL} * 1024 * 1024 ))
 			fi
 			;;
 	esac
-
-	[ -z "${i}" ] && return 0
 
 	case "${i}" in
 		nice)
@@ -95,36 +103,34 @@ update_jails()
 				${ECHO} "${N1_COLOR}No such rctl file: ${N2_COLOR}${_formfile}${N0_COLOR}"
 				return 1
 			fi
-			cbsdsqlrw ${_formfile} UPDATE forms set cur=\"${VAL}\" WHERE param=\"nice\"
-			brenice jname=${jname}
+			cbsdsqlrw ${_formfile} "UPDATE forms set cur='${TMPVAL}' WHERE param='nice'"
+			qrenice jname=${jname}
 			;;
 		ip4_addr)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE settings SET ${i}='${TMPVAL}'"
 			# back compatible
-			cbsdsqlrw local UPDATE jails SET ${i}=\"${VAL}\" WHERE jname=\"${jname}\"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE qemu SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE jails SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
 			if [ -f "${jailsysdir}/${jname}/rc.conf_${jname}" ]; then
-				# current setting used by cloud-init helper/blogin
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ${i}="${VAL}" > /dev/null 2>&1
+				# current setting used by cloud-init helper/qlogin
+				updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ${i}="${TMPVAL}"
 			fi
 			;;
 		*)
-			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET ${i}=\"${VAL}\"
+			SQL_VM_QUERY="${SQL_VM_QUERY}; UPDATE settings SET ${i}='${TMPVAL}'"
 			# back compatible
-			case "${i}" in
-				vm_cpus|vm_ram|nographic)
-					cbsdsqlrw local "UPDATE qemu SET ${i}='${VAL}' WHERE jname='${jname}'"
-					;;
-			esac
+			SQL_LOCAL_QUERY="${SQL_LOCAL_QUERY}; UPDATE qemu SET ${i}='${TMPVAL}' WHERE jname='${jname}'"
 			;;
 	esac
 
-	cbsdlogger NOTICE ${CIX_APP}: ${argpart}: ${VAL}
-	${ECHO} "${argpart}: ${N1_COLOR}changed${N0_COLOR}"
+	cbsdlogger NOTICE ${CIX_APP}: ${argpart}: ${TMPVAL}
+	[ ${quiet} -ne 1 ] && ${ECHO} "${argpart}: ${N1_COLOR}changed${N0_COLOR}"
+
+	return 0
 }
 
-## MAIN
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
-jid=$( jstatus jname=${jname} )
+capture jid jstatus jname=${jname}
 [ $? -eq 0 ] && err 1 "${N1_COLOR}No such qemu: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -n "${jconf}" ]; then
@@ -138,19 +144,27 @@ EOF
 fi
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	allstr="$@"
-	[ -n "${cbsd_qemu_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_qemu_queue_name} id="${jname}" emulator=${emulator} cmd=update ${allstr}
+	allstr="${@}"
+	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${jname}" emulator=${emulator} cmd=update ${allstr}
 fi
 
-for n in "$@"; do
+SQL_LOCAL_QUERY=
+SQL_VM_QUERY=
+
+for n in ${@}; do
 	argpart="${n%%=*}"
 
+	[ "${argpart}" = "jname" ] && continue
+
 	for i in ${JARG}; do
-		if [ "${argpart}" = "${i}" -a "${argpart}" != "jname" ]; then
+		if [ "${argpart}" = "${i}" ]; then
 			update_jails
 		fi
 	done
 done
+
+[ -n "${SQL_LOCAL_QUERY}" ] && cbsdsqlrw local ${SQL_LOCAL_QUERY}
+[ -n "${SQL_VM_QUERY}" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite ${SQL_VM_QUERY}
 
 # exit code 0 is nessesary for dot()
 exit 0

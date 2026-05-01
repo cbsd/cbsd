@@ -1,23 +1,44 @@
 #!/usr/local/bin/cbsd
 #v12.1.6
-MYARG="old new"
-MYOPTARG="verbose ip4_addr checkstate host_hostname promote mac_reinit"
+CIXARG="old new"
+CIXOPTARG="verbose ip4_addr checkstate host_hostname promote mac_reinit"
 MYDESC="bhyve cloning"
 CBSDMODULE="bhyve"
 ADDHELP="
-  promote - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote)
-  checkstate - 0 do not check for VM online. Default is 1 - check
-  clone_method - can be 'auto' or 'rsync'. Default is: auto
-  mac_reinit=0,1 (default 1). 0 - leave old MAC. 1 - set mac to 0 for re-generate new
+${H3_COLOR}Description${N0_COLOR}:
+
+Сreates file snapshots of data on filesystems that support it.
+Do not confuse with 'checkpoint'.
+
+On ZFS-based filesystems, the 'jsnapshot' script mark/labels the snapshots
+with 'cbsdsnap' PROPERTY:
+
+  zfs set cbsdsnap:jname=\${jname} \${snappath}
+  zfs set cbsdsnap:snapname=\${snapname} \${snappath}
+
+and ignores other snapshots that don't have 'cbsdsnap' attrubute.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}promote${N0_COLOR}      - Promotes clone to no longer be dependent from origin: 0 or 1. Default is 0 (not promote);
+ ${N2_COLOR}checkstate${N0_COLOR}   - 0 do not check for VM online. Default is 1 - check;
+ ${N2_COLOR}clone_method${N0_COLOR} - can be 'auto' or 'rsync'. Default is: auto;
+ ${N2_COLOR}mac_reinit=${N0_COLOR}  - 0,1 (default 1). 0 - leave old MAC. 1 - set mac to 0 for re-generate new;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bclone old=origvm1 new=newvm1
+
 "
+
 EXTHELP="wf_bclone"
 
 . ${subrdir}/nc.subr
 
 mac_reinit=1	# regenerate new MAC by default
 checkstate=1	# check online state
-
-. ${cbsdinit}
+. ${tools}
+cixinit
 . ${jfs}
 
 readconf bclone.conf		# read users promote and clone_method settings
@@ -42,104 +63,59 @@ if [ ${checkstate} -eq 1 ]; then
 	[ ${jid} -ne 0 ] && log_err 1 "${N1_COLOR}bhyve is online, please stop them: ${N2_COLOR}${old}${N1_COLOR} (or use ${N2_COLOR}checkstate=0${N1_COLOR})${N0_COLOR}"
 fi
 
-myjid=$( cbsdsqlro local SELECT jid FROM jails WHERE jname=\"${new}\" 2>/dev/null )
+cbsdsqlro_vars local "SELECT jid FROM jails WHERE jname='${new}'" myjid
 [ -n "${myjid}" ] && log_err 1 "${N1_COLOR}Bhyve already exist: ${N2_COLOR}${new}${N0_COLOR}"
 
-protected=$( cbsdsqlro local SELECT protected FROM bhyve WHERE jname=\"${old}\" )
-hidden=$( cbsdsqlro local SELECT hidden FROM bhyve WHERE jname=\"${old}\" )
+cbsdsqlro_vars local "SELECT protected,hidden FROM jails WHERE jname='${old}'"
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id="${new}" cmd=bclone status=1 vm_ram="${vm_ram}" vm_os_type="${vm_os_type}" vm_cpus="${vm_cpus}" hidden="${hidden}"
 fi
 
-DST="${jaildatadir}/${new}-${jaildatapref}"
+DST_BACK_COMPAT="${jaildatadir}/${new}-${jaildatapref}"
+DST="${workdir}/vm/${new}"
 SRC="${jaildatadir}/${old}-${jaildatapref}"
 JAIL_DIR="${jaildir}/${new}"
-JAIL_FSTAB_DIR_OLD="${jailfstabdir}/${old}"				# old jail fstab dir, CBSD > 12.1.5
-JAIL_FSTAB_DIR_NEW="${jailfstabdir}/${new}"				# new jail fstab dir, CBSD > 12.1.5
-
+JAIL_FSTAB_DIR_OLD="${jailfstabdir}/${old}"		# old jail fstab dir, CBSD > 12.1.5
+JAIL_FSTAB_DIR_NEW="${jailfstabdir}/${new}"		# new jail fstab dir, CBSD > 12.1.5
 JAIL_RCCONF="${tmpdir}/rc.conf_${new}"
-
 JAIL_RCCONF_ORIG="${jailrcconfdir}/rc.conf_${old}"
 SYS_DIR_OLD="${jailsysdir}/${old}"
 SYS_DIR_NEW="${jailsysdir}/${new}"
+
+#rename zfs fs source
+case ${zfsfeat} in
+	1)
+		capture _snaplist jsnapshot mode=list jname=${new} display=snapname header=0
+
+		if [ -n "${_snaplist}" ]; then
+			${ECHO} "${N1_COLOR}bclone error: snapshot for ${new} already exist, please check: ${N2_COLOR}${CIX_APP} jsnapshot mode=list jname=${new}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}Hint: If you’re sure all of these snapshots are no longer needed, delete them using: ${N2_COLOR}${CIX_APP} jsnapshot mode=destroyall jname=${new}${N0_COLOR}"
+			err 1 "${_snaplist}"
+		fi
+		. ${subrdir}/zfs.subr
+		zfsmnt ${SRC}
+		[ $? -eq 2  ] && ${ZFS_CMD} mount ${ZPOOL}
+		;;
+esac
+
+[ -d "${workdir}/vm/${new}" ] && err 1 "${N1_COLOR}bclone error: directory exist. Please check and remove them first: ${N2_COLOR}${workdir}/vm/${new}${N0_COLOR}"
+
+[ ! -d "${SRC}" ] && log_err 1 "${N1_COLOR}No jail data: ${N2_COLOR}${SRC}${N0_COLOR}"
 
 printf "${N1_COLOR}Cloning.${N0_COLOR}"
 cbsdlogger NOTICE ${CIX_APP}: start cloning ${old} to ${new}
 gettime st_time
 . ${subrdir}/time.subr
 
-#rename zfs fs source
-case ${zfsfeat} in
-	1)
-		. ${subrdir}/zfs.subr
-		zfsmnt ${SRC}
-		[ $? -eq 2  ] && ${ZFS_CMD} mount ${ZPOOL}
-	;;
-esac
-
-[ ! -d "${SRC}" ] && log_err 1 "${N1_COLOR}No jail data: ${N2_COLOR}${SRC}${N0_COLOR}"
-
-if [ ! -h ${SYS_DIR_OLD} ]; then
-	if [ -d "${SYS_DIR_OLD}" ]; then
-		[ -d "${SYS_DIR_NEW}" ] && ${RM_CMD} -rf ${SYS_DIR_NEW}
-		${CP_CMD} -a ${SYS_DIR_OLD} ${SYS_DIR_NEW}
-		dot "cp sysdir"
-	fi
-else
-	# temporary copy of local.sqlite
-	[ -d "${SYS_DIR_NEW}" ] && ${RM_CMD} -rf ${SYS_DIR_NEW}
-	${MKDIR_CMD} ${SYS_DIR_NEW}
-	OLD_VM_DB=$( ${REALPATH_CMD} ${SYS_DIR_OLD}/local.sqlite 2>/dev/null )
-	[ -z "${OLD_VM_DB}" -o ! -r "${OLD_VM_DB}"  ] && err 1 "${N1_COLOR}no database: ${N2_COLOR}${SYS_DIR_OLD}/local.sqlite${N0_COLOR}"
-	${CP_CMD} -a ${OLD_VM_DB} ${SYS_DIR_NEW}/local.sqlite
-fi
-
-if [ -d "${DST}" ]; then
-	${RMDIR_CMD} ${DST} >/dev/null 2>&1
-	[ -d "${DST}" ] && log_err 1 "${N1_COLOR}Jail data already exist and it not empty: ${N2_COLOR}${DST}${N0_COLOR}"
-fi
-
-for i in ${JAIL_DIR} ${jailfstab} ${jailrcconf}; do
+for i in ${JAIL_DIR} ${jailfstabdir} ${jailrcconfdir} ${workdir}/vm; do
 	[ ! -d "${i}" ] && ${MKDIR_CMD} -p ${i}
 done
 
 # rename rc.conf values if exist
-if [ -r ${jailsysdir}/${old}/rc.conf_${old} ]; then
-	jmkrcconf jname=${old} > ${JAIL_RCCONF}
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${JAIL_RCCONF} jname="${new}" > /dev/null 2>&1
-#	todo: merge
-#	${CP_CMD} -a ${jailsysdir}/${old}/rc.conf_${old} ${jailsysdir}/${new}/rc.conf_${new}
-#	is_cloud=0
-#	eval $( ${GREP_CMD} -E "^is_cloud" ${jailsysdir}/${new}/rc.conf_${new} )
-#	[ -z "${is_cloud}" ] && is_cloud=0
-#	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${new}/rc.conf_${new} \
-#		path=${jaildir}/${new} \
-#		jname="${new}" \
-#		rcconf=${jailsysdir}/${new}/rc.conf_${new} \
-#		data=\"${jaildatadir}/${new}-${jaildatapref} > /dev/null 2>&1
-
-#	if [ ${is_cloud} -eq 0 ]; then
-#		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${new}/rc.conf_${new} \
-#		ci_jname="${new}" > /dev/null 2>&1
-#	fi
-else
-	jmkrcconf jname=${old} > ${JAIL_RCCONF}
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${JAIL_RCCONF} jname="${new}" > /dev/null 2>&1
-fi
-
-if [ -d ${jailsysdir}/${old}/etc ]; then
-	${CP_CMD} -a ${jailsysdir}/${old}/etc ${jailsysdir}/${new}/
-fi
-
-# other files. Expose - flush/warning ?
-for i in BHYVE_UEFI_VARS.fd bhyve_pciid expose.sqlite jail.limits jail.limits.extra; do
-	[ -r ${jailsysdir}/${old}/${i} ] && ${CP_CMD} -a ${jailsysdir}/${old}/${i} ${jailsysdir}/${new}/
-done
-
-jregister rcfile=${JAIL_RCCONF} jname=${new}
-[ -f ${JAIL_RCCONF} ] && ${RM_CMD} -f ${JAIL_RCCONF}
+jmkrcconf jname=${old} > ${JAIL_RCCONF}
+updateconf ${JAIL_RCCONF} jname="${new}"
 
 # fstab dir unused for bhyve until p9fs support, leave this for compatible with jclone
 if [ -d ${JAIL_FSTAB_DIR_OLD} ]; then
@@ -150,28 +126,18 @@ else
 	[ ! -d ${JAIL_FSTAB_DIR_NEW} ] && ${MKDIR_CMD} -p ${JAIL_FSTAB_DIR_NEW}
 fi
 
-cbsdsqlrw local UPDATE jails SET path=\"${jaildir}/${new}\",mount_fstab=\"${JAIL_FSTAB_DIR_NEW}/fstab\",data=\"${jaildatadir}/${new}-${jaildatapref}\",rcconf=\"${jailrcconfdir}/rc.conf_${new}\",host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
-
-if [ -n "${ip4_addr_new}" ]; then
-	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite UPDATE settings SET ip4_addr=\"${ip4_addr_new}\"
-	# back compatible:
-	cbsdsqlrw local UPDATE jails SET ip4_addr=\"${ip4_addr_new}\" WHERE jname=\"${new}\"
-fi
-
-[ -n "${host_hostname_new}" ] && cbsdsqlrw local UPDATE jails SET host_hostname=\"${host_hostname_new}\" WHERE jname=\"${new}\"
-
-jname=${new}
-
+###
 if [ "${zfsfeat}" != "1" ]; then
 	clone_method="rsync"
 fi
 
 cbsdlogger NOTICE ${CIX_APP}: copying method will be used for cloning: ${clone_method}
+jname="${new}"
 
-case ${clone_method} in
+case "${clone_method}" in
 	auto)
-		src_realpath=$( ${REALPATH_CMD} ${SRC} )
-		clonedata -s ${src_realpath} -d ${DST} -m zfs -n ${new} -p ${promote}
+		capture src_realpath ${REALPATH_CMD} ${SRC}
+		clonedata -s ${src_realpath} -d ${DST} -m zfs -n ${new} -p ${promote} -o "${old}"
 		;;
 	*)
 		if [ "${verbose}" = "1" ]; then
@@ -180,42 +146,66 @@ case ${clone_method} in
 			clonedata -s ${SRC} -d ${DST} -m rsync > /dev/null 2>&1
 		fi
 esac
-dot "clone rsync"
+dot "clone ${clone_method}"
 [ -r ${data}/cbsd.img ] && ${RM_CMD} -f ${data}/cbsd.img
+
+${LN_CMD} -sf ${DST} ${SYS_DIR_NEW}
+# ZFS + backcompat
+${LN_CMD} -sf ${DST} ${DST_BACK_COMPAT}
+###
+
+jregister rcfile=${JAIL_RCCONF} jname=${new}
+
+[ -f ${JAIL_RCCONF} ] && ${RM_CMD} -f ${JAIL_RCCONF}
+
+cbsdsqlrw local "UPDATE jails SET path='${jaildir}/${new}',mount_fstab='${JAIL_FSTAB_DIR_NEW}/fstab',data='${jaildatadir}/${new}-${jaildatapref}',rcconf='${jailrcconfdir}/rc.conf_${new}',host_hostname='${host_hostname_new}' WHERE jname='${new}'"
+
+${MV_CMD} "${jailsysdir}/${new}/rc.conf_${old}" "${jailsysdir}/${new}/rc.conf_${new}"
+updateconf "${jailsysdir}/${new}/rc.conf_${new}" path="${jaildir}/${new}" jname="${new}" mount_fstab="${JAIL_FSTAB_DIR_NEW}/fstab" data="${jaildatadir}/${new}-${jaildatapref}" rcconf="${jailrcconfdir}/rc.conf_${new}" host_hostname="${host_hostname_new}"
+
+if [ -n "${ip4_addr_new}" ]; then
+	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite "UPDATE settings SET ip4_addr='${ip4_addr_new}'"
+	# back compatible:
+	cbsdsqlrw local "UPDATE jails SET ip4_addr='${ip4_addr_new}' WHERE jname='${new}'"
+fi
+[ -n "${host_hostname_new}" ] && cbsdsqlrw local "UPDATE jails SET host_hostname='${host_hostname_new}' WHERE jname='${new}'"
 
 # Re-init all MAC address
 if [ ${mac_reinit} -eq 1 ]; then
 	#${ECHO} "Re-init MAC address: ${N2_COLOR}${new}${N0_COLOR}"
 	cbsdlogger NOTICE ${CIX_APP}: re-init MAC address, set to 0: ${new}
-	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr=\"0\""
+	cbsdsqlrw ${jailsysdir}/${new}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr='0'"
 fi
 
 # update vm_zfs_guid if necessary
 if [ "${zfsfeat}" = "1" -a "${mnt_start}" = "0" ]; then
 	readconf zfs.conf
 	. ${subrdir}/zfs.subr
-	DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
+	capture DATA ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null
 
 	if [ -n "${DATA}" ]; then
-		vm_zfs_guid=$( ${ZFS_CMD} get -Ho value guid ${DATA}/${jname} 2>/dev/null )
+		capture vm_zfs_guid ${ZFS_CMD} get -Ho value guid ${DATA}/${jname} 2>/dev/null
 		[ -z "${vm_zfs_guid}" ] && vm_zfs_guid="0"
 	else
 		vm_zfs_guid="0"
 	fi
-
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET vm_zfs_guid=\"${vm_zfs_guid}\"
 else
 	vm_zfs_guid="0"
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET vm_zfs_guid=\"${vm_zfs_guid}\"
 fi
+
+# Reset EFIVARS. Todo? re-select item?
+bset jname=${jname} vm_vars_enable=0 quiet=1
+
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vm_zfs_guid='${vm_zfs_guid}'"
 
 # re-link system dir if necessary
-data=$( ${REALPATH_CMD} ${DST} )
+#capture data ${REALPATH_CMD} ${DST}
+#echo "LINK: ${SYS_DIR_NEW} -> ${DST}"
 
-if [ ! -d ${SYS_DIR_NEW} ]; then
-	echo "${LN_CMD} -sf ${data} ${SYS_DIR_NEW}"
-	${LN_CMD} -sf ${data} ${SYS_DIR_NEW}
-fi
+#if [ ! -d ${SYS_DIR_NEW} ]; then
+#	echo "${LN_CMD} -sf ${data} ${SYS_DIR_NEW}"
+#	${LN_CMD} -sf ${data} ${SYS_DIR_NEW}
+#fi
 
 # CBSD QUEUE
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -224,7 +214,7 @@ fi
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 
 ${ECHO} "${N2_COLOR}ok${N0_COLOR}"
 [ -z "${NOINTER}" -a "${vm_zfs_guid}" != "0" ] && ${ECHO} "${N1_COLOR}Global VM ZFS guid: ${N2_COLOR}${vm_zfs_guid}${N0_COLOR}"

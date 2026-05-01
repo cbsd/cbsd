@@ -66,6 +66,7 @@ mvdata()
 # -f - force (no check for dir exist)
 # -j - newjname
 # -m <mode> - mode: cp, rsync, rsyncforce, zfs, zfspromote
+# -o <oldjname> (for replace meta data)
 # -n <new_name> - name of the clone for zfs/zfspromote method, e.g: $newjname variable
 #		it was as cbsd-original-$new_name snapshot
 # -p ${promote} - promote ZFS 0,1: ( 0 - promote)
@@ -74,16 +75,17 @@ mvdata()
 clonedata()
 {
 	local _src= _dst= _mode= _go= _force= _zpool= _name=
-	local _dskname= _res= _jname= _orig_mode=
+	local _dskname= _res= _jname= _orig_mode= _old_jname= _orig_data=
 
 	_force=0
 
-	while getopts "d:fj:m:n:p:s:" opt; do
+	while getopts "d:fj:m:n:o:p:s:" opt; do
 		case "${opt}" in
 			d) _dst="${OPTARG}" ;;
 			f) force=1 ;;
 			m) _mode="${OPTARG}" ;;
 			n) _new_name="${OPTARG}" ;;
+			o) _old_jname="${OPTARG}" ;;
 			p) _promote="${OPTARG}" ;;
 			s) _src="${OPTARG}" ;;
 		esac
@@ -121,18 +123,29 @@ clonedata()
 					_mode="rsync"
 					;;
 				1|2)
-					local _origdata=$( ${ZFS_CMD} get -Ho value name ${_src} 2>/dev/null )
-					if [ -z "${_origdata}" ]; then
+					local _orig_data=$( ${ZFS_CMD} get -Ho value name ${_src} 2>/dev/null )
+					if [ -z "${_orig_data}" ]; then
 						${ECHO} "${N1_COLOR}${_src} is not ZFS dataset, force to rsync clone method${N0_COLOR}"
 						cbsdlogger NOTICE ${CIX_APP}: ${_src} is not ZFS dataset, force to rsync clone method
 						_mode="rsync"
 					else
+						if [ -n "${_old_jname}" ]; then
+							_new_data=$( echo "${_orig_data}" | ${SED_CMD} s:/${_old_jname}:/${_new_name}:g )
+						else
+							_new_data="${_orig_data}"
+						fi
 						local _createtime=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
-						cbsdlogger NOTICE ${CIX_APP}: clonedata: zfs snapshot ${_origdata}@cbsd-original-${_new_name}
-						${ZFS_CMD} snapshot ${_origdata}@cbsd-original-${_new_name}
-						${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${_origdata}@cbsd-original-${_new_name}
-						${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${_origdata}@cbsd-original-${_new_name}
-						create_zfs_fs -d "${_src}" -m "${_dst}" -n "${_new_name}" -p ${_promote} -z "${_origdata}@cbsd-original-${_new_name}"
+						cbsdlogger NOTICE ${CIX_APP}: clonedata: zfs snapshot ${_orig_data}@cbsd-original-${_new_name}
+						${ZFS_CMD} snapshot ${_orig_data}@cbsd-original-${_new_name}
+
+						#${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${_new_data}@cbsd-original-${_new_name}
+						#${ZFS_CMD} set cbsdsnap:snapname="${_new_data}" ${_new_data}@cbsd-original-${_new_name}
+						# ORIG
+						${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${_orig_data}@cbsd-original-${_new_name}
+						#${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${_orig_data}@cbsd-original-${_new_name}
+						${ZFS_CMD} set cbsdsnap:snapname="${_new_data}" ${_orig_data}@cbsd-original-${_new_name}
+
+						create_zfs_fs -d "${_src}" -m "${_dst}" -n "${_new_name}" -p ${_promote} -z "${_orig_data}@cbsd-original-${_new_name}"
 					fi
 					;;
 				*)
@@ -200,7 +213,9 @@ clonedata()
 						# this command produces ZFS WARNING: Unable to create ZVOL in syslog messages
 						${ZFS_CMD} snapshot ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
 						${ZFS_CMD} set cbsdsnap:jname=${_new_name} ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
-						${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						${ZFS_CMD} set cbsdsnap:snapname="${_new_data}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
+						# ORIG
+						#${ZFS_CMD} set cbsdsnap:snapname="${_origdata}" ${is_zvol}@cbsd-original-${_new_name}-${_dskname}
 						cbsdlogger NOTICE ${CIX_APP}: clonedata: clone zfs snapshot: ${is_zvol}@cbsd-original-${_new_name}-${_dskname} to ${new_zvol}
 						${ZFS_CMD} clone -o volmode=dev -p ${is_zvol}@cbsd-original-${_new_name}-${_dskname} ${new_zvol}
 #						create_zfs_fs -d "${_src}" -n "${_new_name}" -p ${_promote} -z "${is_zvol}@cbsd-original-${_new_name}-${_dskname}"
@@ -237,8 +252,11 @@ clonedata()
 		done
 	fi
 
-	for i in $( ${FIND_CMD} ${_dst}/ -mindepth 1 -maxdepth 1 -name dsk\* -type l -or -type f ); do
-		mydsk=$( ${BASENAME_CMD} ${i} );
+	capture _res ${FIND_CMD} ${_dst}/ -mindepth 1 -maxdepth 1 -name "dsk*.vhd" \( -type l -or -type f \)
+
+	for i in ${_res}; do
+		# basename
+		mydsk="${i##*/}"
 		[ -z "${mydsk}" ] && continue
 		media mode=register name="hdd-${mydsk}" path="${i}" type="hdd" jname="${jname}" 2>/dev/null
 	done
