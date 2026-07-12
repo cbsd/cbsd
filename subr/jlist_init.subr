@@ -1,0 +1,122 @@
+if [ ! "$_CBSD_JLIST_INIT_SUBR" ]; then
+_CBSD_JLIST_INIT_SUBR=1
+###
+
+init_jlist_args()
+{
+	local _select_jail_by_list_status_msg=
+
+	if [ -z "${jname}" -a -n "${ojname}" ]; then
+		# inherit jname env (e.g. from CBSDfile)
+		jname="${ojname}"
+	fi
+
+	cbsdfile_jail_list=
+	Makefile="${CIX_PWD}/CBSDfile"
+	if [ -r "${Makefile}" ]; then
+		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+		. ${Makefile}
+		#jail_list=$( ${GREP_CMD} -E '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+		jail_list=$( ${SED_CMD} -n 's/^jail_\([-a-zA-Z0-9_@%:]*\)()$/\1/p' "${Makefile}" )
+		[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CIX_APP}: no jail found${N0_COLOR}"
+		cbsdfile_jail_list="${jail_list}"
+
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			cbsd_api=1
+		else
+			cbsd_api=0
+		fi
+	else
+		cbsd_api=0
+	fi
+
+	# trim args from "$*"
+	if [ -n "${cbsdfile_jail_list}" ]; then
+		[ -n "${CIX_OTHER_ARGS}" -o -n "${CIXINIT_SQL_CONDITION}" ] && unset jail_list
+	fi
+
+	[ -z "${select_jail_by_list_status}" ] && select_jail_by_list_status="On"
+	if [ "${select_jail_by_list_status}" ]; then
+		_select_jail_by_list_status_msg="online"
+	else
+		_select_jail_by_list_status_msg="offline"
+	fi
+
+	for i in ${CIX_OTHER_ARGS}; do
+		strpos --str="${i}" --search="="
+		[ $? -ne 0 ] && continue
+
+		if [ -z "${jail_list}" ]; then
+			jail_list="${i}"
+		else
+			jail_list="${jail_list} ${i}"
+		fi
+	done
+
+	if [ -z "${jname}" -a -n "${CIXINIT_SQL_CONDITION}" ]; then
+		cbsdsqlro_vars local "SELECT jname FROM jails WHERE ${CIXINIT_SQL_CONDITION}" jail_list
+	fi
+
+	if [ -n "${ojname}" ]; then
+		jname="${ojname}"
+		unset jail_list
+	fi
+
+	if [ -z "${jail_list}" ]; then
+		if [ ${cbsd_api} -eq 0 ]; then
+			[ -z "${jname}" ] && select_jail_by_list -s "List of ${_select_jail_by_list_status_msg} jails" -a "${select_jail_by_list_status}" -e jls -r ${sqlreplica}
+			[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
+			#shift  # todo: jname and cmd may have reverse order
+		fi
+	fi
+
+	[ -z "${jname}" -a -z "${jail_list}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
+
+	emulator="jail" # for jname_is_multiple
+	# jail_list can be init in CBSDfile case
+	[ -z "${jail_list}" ] && jname_is_multiple
+
+	if [ -n "${jail_list}" ]; then
+		# multiple?
+		TMP_JLIST="${jail_list}"
+		_cnt=0
+		for i in ${jail_list}; do
+			_cnt=$(( _cnt + 1 ))
+		done
+		if [ ${_cnt} -eq 1 ]; then
+			# alone
+			TMP_JLIST="${jail_list}"
+			jname="${jail_list}"
+			unset jail_list
+		else
+			unset jname
+		fi
+	else
+		TMP_JLIST="${jname}"
+	fi
+
+	# lookup in CBSDfile scope
+	if [ -n "${cbsdfile_jail_list}" ]; then
+		. ${strings}
+		XTMP_JLIST=
+		for i in ${TMP_JLIST}; do
+			if show_match -a "${cbsdfile_jail_list}" -b "${i}" >/dev/null 2>&1; then
+				if [ -n "${XTMP_JLIST}" ]; then
+					XTMP_JLIST="${XTMP_JLIST} ${i}"
+				else
+					XTMP_JLIST="${i}"
+				fi
+			else
+				continue
+			fi
+		done
+		TMP_JLIST="${XTMP_JLIST}"
+		unset XTMP_JLIST
+	fi
+
+	JLIST=
+	[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+}
+
+###
+fi

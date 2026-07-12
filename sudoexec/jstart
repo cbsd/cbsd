@@ -44,7 +44,6 @@ EXTHELP="wf_jstop_jstart"
 . ${subrdir}/tools.subr		# for select_jail_by_list
 
 readconf buildworld.conf
-jname=
 
 # check for cloud function when CBSDfile exist
 Makefile="${CIX_PWD}/CBSDfile"
@@ -56,14 +55,6 @@ delay=0
 odelay=
 oenvironment=
 environment=
-cixinit
-[ -z "${cleanup}" ] && cleanup=1
-
-if [ -z "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
-	if [ -n "${default_ci_gw4}" -a "${default_ci_gw4}" != "0" ]; then
-		oci_gw4="${default_ci_gw4}"
-	fi
-fi
 
 readconf jail-freebsd-default.conf
 
@@ -75,139 +66,25 @@ readconf jail-freebsd-default.conf
 [ -z "${quiet}" ] && quiet=0
 
 xenvironment=
-# adjust jail_list by CBSDfile
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_jail_list=$( ${GREP_CMD} -E '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
-
-	# cbsd jstart <env1> <env2> route
-	jname_in_args=0
-
-	if [ -n "${ojname}" ]; then
-		jail_list="${ojname}"
-	else
-		# cbsd jstart <env1> <env2> route
-		for i in $*; do
-			strpos --str="${i}" --search="="
-			if [ $? -eq 0 ]; then
-				jname_in_args=1
-				# not param=value - jail?
-				jname_in_cbsdfile=0
-				for j in ${all_jail_list}; do
-					[ "${i}" != "${j}" ] && continue
-					jname_in_cbsdfile=1
-				done
-				if [ ${jname_in_cbsdfile} -eq 1 ]; then
-					if [ -z "${ojname}" ]; then
-						ojname="${i}"
-					else
-						ojname="${ojname} ${i}"
-					fi
-				else
-					${ECHO} "${N1_COLOR}${CIX_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
-				fi
-			fi
-		done
-		if [ ${jname_in_args} -eq 1 ]; then
-			jail_list="${ojname}"
-		else
-			jail_list="${all_jail_list}"
-		fi
-	fi
-
-	unset ojname jname
-
-	[ -z "${jail_list}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	# multiple?
-	strpos --str="${jail_list}" --search=" "
-	if [ $? -eq 0 ]; then
-		# alone
-		jname="${jail_list}"
-		unset jail_list
-	fi
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-
-	# trim args from "$*"
-	for i in ${CIX_OTHER_ARGS}; do
-		strpos --str="${i}" --search="="
-		_pos=$?
-
-		if [ ${_pos} -ne 0 ]; then
-			_arg_len=$( strlen ${i} )
-			_pref=$(( _arg_len - _pos ))
-			ARG=$( substr --pos=0 --len=${_pos} --str="${i}" )
-
-			case "${ARG}" in
-				environment)
-					VAL=$( substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${i}" | ${TR_CMD} -d '"' )
-					if [ -z "${xenvironment}" ]; then
-						xenvironment="${VAL}"
-					else
-						xenvironment="${xenvironment} ${VAL}"
-					fi
-					;;
-			esac
-			shift
-			continue
-		fi
-
-		if [ -z "${jail_list}" ]; then
-			jail_list="${i}"
-		else
-			jail_list="${jail_list} ${i}"
-		fi
-	done
-
-	if [ -n "${CIXINIT_SQL_CONDITION}" ]; then
-		jail_list=$( cbsdsqlro local "SELECT jname FROM jails WHERE emulator='jail' AND ${CIXINIT_SQL_CONDITION}" 2>/dev/null | ${XARGS_CMD} )
-	fi
-
-	[ -n "${ojname}" ] && jail_list="${ojname}"
-
-	# multiple?
-	strpos --str="${jail_list}" --search=" "
-	if [ $? -eq 0 ]; then
-		# alone
-		jname="${jail_list}"
-		unset jail_list
-	fi
-fi
-
-[ -z "${jname}" -a -z "${jail_list}" ] && err 1 "${N1_COLOR}No jail specified${N0_COLOR}"
 
 # for external_exec-related command
 . ${subrdir}/jcreate.subr
-
 . ${subrdir}/jstart.subr
 . ${subrdir}/time.subr
 
-# MAIN for multiple jails
-if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-	readconf cbsd_queue.conf
-	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+cixinit
+
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="Off"
+init_jlist_args
+
+[ -z "${cleanup}" ] && cleanup=1
+
+if [ -z "${ci_gw4}" -a "${ci_gw4}" != "0" ]; then
+	if [ -n "${default_ci_gw4}" -a "${default_ci_gw4}" != "0" ]; then
+		oci_gw4="${default_ci_gw4}"
+	fi
 fi
-
-TRAP=""
-emulator="jail"	# for jname_is_multiple
-# jail_list can be init in CBSDfile case
-[ -z "${jail_list}" ] && jname_is_multiple
-
-if [ -n "${jail_list}" ]; then
-	TMP_JLIST="${jail_list}"
-else
-	TMP_JLIST="${jname}"
-fi
-
-JLIST=
 
 if [ -z "${jname}" ]; then
 	# check for actual vm list in arg list
@@ -292,11 +169,15 @@ fi
 
 # MAIN
 # single jname
-[ -z "${jname}" ] && jname="${1}"
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Give me jail name${N0_COLOR}"
 
-. ${subrdir}/rcconf.subr
+# MAIN for multiple jails
+if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
+	readconf cbsd_queue.conf
+	[ -z "${cbsd_queue_backend}" ] && MOD_CBSD_QUEUE_DISABLED="1"
+fi
 
+. ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
 	# remote start
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
