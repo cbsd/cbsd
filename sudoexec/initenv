@@ -445,19 +445,27 @@ desc_question()
 # setup pkg if no other cfg
 phase0()
 {
-	local myversion= cbsdd_enable= cbsd_workdir=
+	local myversion= cbsdd_enable= cbsd_workdir= _user_homedir=
 
 	first_init=1
 
 	#. ${CIX_DISTDIR}/cbsd.conf
 	[ -z "${cbsd_workdir}" -a -r /etc/rc.conf ] && . /etc/rc.conf
 	[ -n "${oworkdir}" ] && cbsd_workdir="${oworkdir}"
-	[ -z "${cbsd_workdir}" ] && cbsd_workdir="/usr/jails"
+
+	if [ -z "${cbsd_workdir}" ]; then
+		if [ ${CIX_INIT_ID} = "0" ]; then
+			cbsd_workdir="/usr/jails"
+		else
+			_user_homedir=$( getent passwd "${CIX_INIT_ID}" | cut -d: -f6 )
+			cbsd_workdir="${_user_homedir}/jails"
+		fi
+	fi
 
 	if [ -r "${cbsd_workdir}/nc.inventory" ]; then
 		first_init=0
 	else
-		${ECHO} "${N1_COLOR}CBSD workdir first init: ${N2_COLOR}${cbsd_workdir}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}${product} workdir first init: ${N2_COLOR}${cbsd_workdir}${N0_COLOR}"
 	fi
 
 	cbsdver=
@@ -511,11 +519,8 @@ phaseX()
 	return 0
 }
 
-phase1()
+check_cbsd_user()
 {
-	local cbsd_home= _ret=
-
-	${ECHO} "${N1_COLOR}[Stage 1:${N2_COLOR} account & dir hier${N1_COLOR}]${N0_COLOR}"
 	id ${cbsduser} > /dev/null 2>&1
 	_ret=$?
 
@@ -535,8 +540,21 @@ phase1()
 		esac
 		exit 1
 	fi
+}
 
-	if [ "${initenv_modify_cbsd_homedir}" = "1" ]; then
+phase1()
+{
+	local cbsd_home= _ret=
+
+	${ECHO} "${N1_COLOR}[Stage 1:${N2_COLOR} account & dir hier${N1_COLOR}]${N0_COLOR}"
+
+	if [ ${CIX_GLOBAL_SYSTEM} -eq 1 ]; then
+		check_cbsd_user
+	else
+		echo "Installation for current user only: ${CIX_INIT_USER}"
+		export cbsduser="${CIX_INIT_USER}"
+	fi
+	if [ "${initenv_modify_cbsd_homedir}" = "1" -a ${CIX_GLOBAL_SYSTEM} -eq 1 ]; then
 		case "${platform}" in
 			Linux)
 				cbsd_home=$( echo ~${cbsd} > /dev/null 2>&1 )
@@ -564,27 +582,29 @@ phase1()
 		fi
 	fi
 
-	# workdir extra validation: https://github.com/cbsd/cbsd/issues/777
-	real_workdir=$( ${REALPATH_CMD} ${workdir} )
-	if [ "${real_workdir}" != "${workdir}" ]; then
-		echo "normalize workdir path: ${workdir} -> ${real_workdir}"
-		workdir="${real_workdir}"
-		cbsd_workdir="${real_workdir}"
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
-	fi
+	if [ ${CIX_GLOBAL_SYSTEM} -eq 1 ]; then
+		# workdir extra validation: https://github.com/cbsd/cbsd/issues/777
+		real_workdir=$( ${REALPATH_CMD} ${workdir} )
+		if [ "${real_workdir}" != "${workdir}" ]; then
+			echo "normalize workdir path: ${workdir} -> ${real_workdir}"
+			workdir="${real_workdir}"
+			cbsd_workdir="${real_workdir}"
+			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
+		fi
 
-	# check ZFS root dataset vs CBSD dataset
-	init_zfs_feat
-	case "${platform}" in
-		DragonFly)
-			init_hammer2_feat
-			;;
-	esac
+		# check ZFS root dataset vs CBSD dataset
+		init_zfs_feat
+		case "${platform}" in
+			DragonFly)
+				init_hammer2_feat
+				;;
+		esac
+	fi
 	printf "${myversion}" > ${workdir}/ver
 
 	$ECHO "${N1_COLOR} * Check hier and permission..."
 
-	${miscdir}/mtree ${workdir}
+	${miscdir}/mtree ${workdir} ${cbsduser}
 
 	if [ -n "${PRE_CBSD_CMD_PATH}" ]; then
 		pre_cbsd_cmd_path="${PRE_CBSD_CMD_PATH}"
@@ -1495,6 +1515,7 @@ start()
 
 	[ -z "${ECHO}" ] && ECHO="echo -e"
 
+
 	if [ -z "${workdir}" ]; then
 		if [ -n "${cbsd_workdir}" ]; then
 			export workdir="${cbsd_workdir}"
@@ -1829,18 +1850,34 @@ arch=$( ${UNAME_CMD} -p )
 
 [ "${platform}" = "NetBSD" ] && export PATH="${PATH}:/usr/pkg/bin"
 
+CIX_INIT_ID=$( id -u )
+CIX_INIT_USER=$( id -un )
+export CIX_INIT_USER
+
+if [ "${CIX_INIT_ID}" -eq 0 ]; then
+	export CIX_GLOBAL_SYSTEM=1
+else
+	export CIX_GLOBAL_SYSTEM=0
+fi
+
 init_lock
 
 if [ -z "${workdir}" ]; then
-	if [ -z "${cbsd_workdir}" ]; then
-		if [ -r /etc/rc.conf ]; then
-			. /etc/rc.conf
+	if [ ${CIX_INIT_ID} = "0" ]; then
+		if [ -z "${cbsd_workdir}" ]; then
+			if [ -r /etc/rc.conf ]; then
+				. /etc/rc.conf
+			fi
 		fi
-	fi
-	if [ -n "${cbsd_workdir}" ]; then
-		workdir="${cbsd_workdir}"
+		if [ -n "${cbsd_workdir}" ]; then
+			workdir="${cbsd_workdir}"
+		else
+			workdir="/usr/jails"
+		fi
 	else
-		workdir="/usr/jails"
+		_user_homedir=$( getent passwd "${CIX_INIT_ID}" | cut -d: -f6 )
+		workdir="${_user_homedir}/jails"
+		unset _user_homedir
 	fi
 fi
 
