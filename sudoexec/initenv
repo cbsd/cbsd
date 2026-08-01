@@ -3,7 +3,7 @@ pgm="${0##*/}"			# Program basename
 progdir="${0%/*}"		# Program directory
 
 export NOCOLOR=1
-REALPATH_CMD=$( which realpath 2>/dev/null )
+REALPATH_CMD=$(command -v realpath 2>/dev/null)
 if [ -z "${REALPATH_CMD}" ]; then
 	echo "no such realpath"
 	exit 1
@@ -106,7 +106,7 @@ init_zfs_feat()
 
 	zfsfeat=0
 
-	ZFS_CMD=$( ${WHICH_CMD} zfs 2>/dev/null )
+	ZFS_CMD=$(command -v zfs 2>/dev/null)
 	if [ -n "${ZFS_CMD}" ]; then
 		_tmpval=0
 		case "${platform}" in
@@ -172,7 +172,8 @@ init_hammer2_feat()
 
 	zfsfeat=0
 
-	HAMMER2_CMD=$( ${WHICH_CMD} hammer2 2>/dev/null )
+	HAMMER2_CMD=$(command -v hammer2 2>/dev/null)
+
 	if [ -n "${HAMMER2_CMD}" ]; then
 		# volume0  /dev/vbd0s1d 128.00GB
 		if [ -d "${workdir}" ]; then
@@ -445,7 +446,7 @@ desc_question()
 # setup pkg if no other cfg
 phase0()
 {
-	local myversion= cbsdd_enable= cbsd_workdir= _user_homedir=
+	local myversion= cbsdd_enable= cbsd_workdir=
 
 	first_init=1
 
@@ -457,8 +458,7 @@ phase0()
 		if [ ${CIX_INIT_ID} = "0" ]; then
 			cbsd_workdir="/usr/jails"
 		else
-			_user_homedir=$( getent passwd "${CIX_INIT_ID}" | cut -d: -f6 )
-			cbsd_workdir="${_user_homedir}/jails"
+			cbsd_workdir="${CIX_INIT_USER_HOMEDIR}/jails"
 		fi
 	fi
 
@@ -643,7 +643,8 @@ phase1()
 
 compile_cc()
 {
-	CC_CMD=$( ${WHICH_CMD} cc 2>/dev/null )
+	CC_CMD=$(command -v cc 2>/dev/null)
+
 	if [ -z "${CC_CMD}" ]; then
 		echo "error: non-binary distribution. You need the 'cc' compiler to finish preparing the cbsd"
 		echo "please install 'clang' or 'gcc'"
@@ -669,10 +670,10 @@ phase2()
 
 	case "${platform}" in
 		Linux)
-			MAKE_CMD=$( which make )
+			MAKE_CMD=$(command -v make 2>/dev/null)
 			;;
 		FreeBSD|DragonFly|NetBSD)
-			MAKE_CMD=$( which gmake )
+			MAKE_CMD=$(command -v gmake 2>/dev/null)
 			;;
 		*)
 			MAKE_CMD="make"
@@ -700,7 +701,7 @@ phase2()
 	[ ! -f "${CIX_DISTDIR}/misc/mountpoint" ] && compile_cc ${CIX_DISTDIR}/misc/src/mountpoint.c -o ${CIX_DISTDIR}/misc/mountpoint
 
 	if [ ! -f "${CIX_DISTDIR}/misc/sqlcli" ]; then
-		_pkgconf=$( ${WHICH_CMD} pkg-config )
+		_pkgconf=$(command -v pkg-config 2>/dev/null)
 		if [ $? -ne 0 -o -z "${_pkgconf}" ]; then
 			echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf";
 			exit 1
@@ -812,11 +813,20 @@ phase2()
 			;;
 	esac
 
-	[ -z "${CIX_BIN}" ] && CIX_BIN=$( which cbsd 2>/dev/null || which cix 2>/dev/null )
+	if [ -n "${CIX_INIT_USER_HOMEDIR}" ]; then
+		export PATH="${CIX_INIT_USER_HOMEDIR}/bin:${PATH}"
+	fi
+
+	[ -z "${CIX_BIN}" ] && CIX_BIN=$(command -v cbsd 2>/dev/null || command -v cix 2>/dev/null)
 
 	if [ -z "${CIX_BIN}" ]; then
-		[ ! -d /usr/local/bin ] && mkdir -p /usr/local/bin
-		CIX_BIN="/usr/local/bin/cbsd"
+		if [  ${CIX_GLOBAL_SYSTEM} -eq 0 -a -n "${CIX_INIT_USER_HOMEDIR}" ]; then
+			CIX_BIN_DIR="${CIX_INIT_USER_HOMEDIR}/bin"
+		else
+			CIX_BIN_DIR="/usr/local/bin"
+		fi
+		CIX_BIN="${CIX_BIN_DIR}/cbsd"
+		[ ! -d "${CIX_BIN_DIR}" ] && mkdir -p "${CIX_BIN_DIR}"
 		_build_options=""
 		[ "${mod_cbsd_redis_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_REDIS"
 		[ "${mod_cbsd_influx_enabled}" = "YES" ] && _build_options="${_build_options} -DWITH_INFLUX"
@@ -884,16 +894,19 @@ EOF
 			;;
 	esac
 
-	# 10_cbsd_sudoers for compatible with puppet sudo module
-	if [ ! -f "${_sudoers_dir}/cbsd_sudoers" -a ! -f "${_sudoers_dir}/10_cbsd_sudoers" ]; then
-		if getyesno "Shall I add the cbsd user into ${_sudoers_dir} sudo file to obtain root privileges for most of the cbsd commands?" ${initenv_modify_sudoers}; then
-			initenv_modify_sudoers=1
-			[ ! -d ${_sudoers_dir} ] && ${MKDIR_CMD} -p ${_sudoers_dir}
-			installne "-o root -g 0 -m 440" ${etcdir}/cbsd_sudoers ${_sudoers_dir}/10_cbsd_sudoers
+	if [ ${CIX_GLOBAL_SYSTEM} -eq 1 ]; then
+		# 10_cbsd_sudoers for compatible with puppet sudo module
+		if [ ! -f "${_sudoers_dir}/cbsd_sudoers" -a ! -f "${_sudoers_dir}/10_cbsd_sudoers" ]; then
+			if getyesno "Shall I add the cbsd user into ${_sudoers_dir} sudo file to obtain root privileges for most of the cbsd commands?" ${initenv_modify_sudoers}; then
+				initenv_modify_sudoers=1
+				[ ! -d ${_sudoers_dir} ] && ${MKDIR_CMD} -p ${_sudoers_dir}
+				installne "-o root -g 0 -m 440" ${etcdir}/cbsd_sudoers ${_sudoers_dir}/10_cbsd_sudoers
+			fi
+			initenv_modify_sudoers=0
 		fi
+	else
 		initenv_modify_sudoers=0
 	fi
-
 	#    [ -d ${sshdir} ] || ${MKDIR_CMD} -m 0700 ${sshdir}
 	#    [ -d "${sshdir}/sockets" ] || ${MKDIR_CMD} -m 0700 "${sshdir}/sockets"
 	[ -f "${sshdir}/config" ] || installne "-o ${cbsduser} -g ${cbsduser} -m 640" ${CIX_DISTDIR}/.ssh/config ${sshdir}/config
@@ -1101,8 +1114,7 @@ phase5()
 #	echo "node_ip4_active: ${node_ip4_active}"
 	#echo "node_ip6_active: ${node_ip6_active}"
 
-	CIX_BIN=$( which cbsd || which cix )
-
+	CIX_BIN=$(command -v cbsd || command -v cix)
 	[ -z "${CIX_BIN}" ] && err 1 "no such cbsd binaries"
 
 	[ ! -f "${nodenamefile}" ] && echo "${nodename}" > "${nodenamefile}"
@@ -1453,7 +1465,7 @@ post_message()
 	. ${subrdir}/ansiicolor.subr
 	case "${platform}" in
 		Linux)
-			ECHO=$( ${WHICH_CMD} echo )
+			ECHO=$(command -v echo 2>/dev/null)
 			ECHO="${ECHO} -e"
 			;;
 		*)
@@ -1626,7 +1638,7 @@ EOF
 	configure_rsync
 	configure_racct
 
-	SYSTEMCTL_CMD=$( ${WHICH_CMD} systemctl )
+	SYSTEMCTL_CMD=$(command -v systemctl 2>/dev/null)
 
 	if [ $( ${GREP_CMD} ^cbsdd_enable= /etc/rc.conf ${workdir}/rc.conf 2>/dev/null | ${WC_CMD} -l ) = 0 ]; then
 		case "${platform}" in
@@ -1814,12 +1826,12 @@ init_lock()
 	local _lock_cmd=
 	LOCK_CMD=
 
-	_lock_cmd=$( ${WHICH_CMD} lockf 2>/dev/null )
+	_lock_cmd=$(command -v lockf 2>/dev/null)
 
 	if [ -n "${_lock_cmd}" -a -x "${_lock_cmd}" ]; then
 		LOCK_CMD="${_lock_cmd} -t0 -s "
 	else
-		_lock_cmd=$( ${WHICH_CMD} flock 2>/dev/null )
+		_lock_cmd=$(command -v flock 2>/dev/null)
 		if [ -n "${_lock_cmd}" -a -x ${_lock_cmd} ]; then
 			LOCK_CMD="${_lock_cmd} -w0 -x "
 		fi
@@ -1834,13 +1846,10 @@ init_lock()
 ### MAIN ###
 export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 
-WHICH_CMD=$( which which 2>/dev/null )
-[ -z "${WHICH_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: which"
-
-TR_CMD=$( ${WHICH_CMD} tr 2>/dev/null )
+TR_CMD=$(command -v tr 2>/dev/null)
 [ -z "${TR_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: tr"
 
-UNAME_CMD=$( ${WHICH_CMD} uname 2>/dev/null )
+UNAME_CMD=$(command -v uname 2>/dev/null)
 [ -z "${UNAME_CMD}" ] && err 1 "initenv error: no such executable dependency/requirement: uname"
 
 # 'uname' before macros here
@@ -1857,6 +1866,27 @@ export CIX_INIT_USER
 if [ "${CIX_INIT_ID}" -eq 0 ]; then
 	export CIX_GLOBAL_SYSTEM=1
 else
+	if [ -z "${CIX_GLOBAL_SYSTEM}" ]; then
+
+		CIX_INIT_USER_HOMEDIR=$( getent passwd "${CIX_INIT_ID}" | cut -d: -f6 )
+		if [ ! -d "${CIX_INIT_USER_HOMEDIR}" ]; then
+			echo "no such homedir: ${CIX_INIT_USER_HOMEDIR}"
+			exit 1
+		else
+			export CIX_INIT_USER_HOMEDIR="${CIX_INIT_USER_HOMEDIR}"
+		fi
+
+		echo "Running in unprivileged mode. Ensure environment variables are set for this user:"
+		cat <<________________EOF
+
+homedir: ${CIX_INIT_USER_HOMEDIR}
+setenv cbsd_workdir ~/jails
+setenv CIX_DISTDIR ~/cbsd
+
+________________EOF
+	fi
+
+	export PATH="${PATH}:${CIX_INIT_USER_HOMEDIR}/bin"
 	export CIX_GLOBAL_SYSTEM=0
 fi
 
@@ -1877,6 +1907,7 @@ if [ -z "${workdir}" ]; then
 	else
 		_user_homedir=$( getent passwd "${CIX_INIT_ID}" | cut -d: -f6 )
 		workdir="${_user_homedir}/jails"
+		export CIX_INIT_USER_HOMEDIR="${_user_homedir}"
 		unset _user_homedir
 	fi
 fi
@@ -1963,7 +1994,7 @@ esac
 
 for i in ${MAIN_CMD} ${MAIN_EXTRA_CMD}; do
 	mycmd=
-	mycmd=$( ${WHICH_CMD} ${i} || true )            # true for 'set -e' case
+	mycmd=$(command -v "${i}" || true)
 	[ ! -x "${mycmd}" ] && err 1 "${pgm} error: no such executable dependency/requirement: ${i}"
 	MY_CMD=$( echo ${i} | ${TR_CMD} '\-[:lower:]' '_[:upper:]' )
 	MY_CMD="${MY_CMD}_CMD"
