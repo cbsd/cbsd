@@ -1,4 +1,4 @@
-#!/usr/local/bin/cbsd
+#!/usr/bin/env cbsd
 # Wrapper for creating environvent via 2 phases:
 # 1) Get distribution into skel dir from repo
 # 2) Get distribution into data dir from skel dir

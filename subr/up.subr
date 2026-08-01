@@ -61,7 +61,7 @@ bhyve_ssh_wait()
 	done
 	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
 
-	${ECHO} "${N1_COLOR}bhyve ssh available${N0_COLOR}"
+	${ECHO} "${N1_COLOR}bhyve ssh available${N0_COLOR}" 1>&2
 	# restore old settings
 	set ${_orig_options}
 
@@ -124,7 +124,7 @@ jail_ssh_wait()
 	done
 	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
 
-	${ECHO} "${N1_COLOR}jail ssh available${N0_COLOR}"
+	${ECHO} "${N1_COLOR}jail ssh available${N0_COLOR}" 1>&2
 	# restore old settings
 	set ${_orig_options}
 
@@ -187,8 +187,7 @@ qemu_ssh_wait()
 		fi
 	done
 	${ECHO} ": ${N2_COLOR}${_y}${N1_COLOR}/${_attempt_max}]${N0_COLOR}" 1>&1
-
-	${ECHO} "${N1_COLOR}qemu ssh available${N0_COLOR}"
+	${ECHO} "${N1_COLOR}qemu ssh available${N0_COLOR}" 1>&2
 	# restore old settings
 	set ${_orig_options}
 
@@ -245,6 +244,45 @@ EOF
 	if [ ${ret} -eq 0 ]; then
 		#jail_${jname}		# re-read variables
 
+		# global postcreate
+		if fn_exists postcreate 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export facts - cloud?
+			# . ${subrdir}/jcreate.subr               # for export_jail_data_for_external_hook
+			#export_jail_data_for_external_hook
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+			if [ -n "${oupfile_destroy_failed}" ]; then
+				UPFILE_DESTROY_FAILED="${oupfile_destroy_failed}"
+			fi
+			if [ -n "${UPFILE_DESTROY_FAILED}" ]; then
+				upfile_destroy_failed="${UPFILE_DESTROY_FAILED}"
+			fi
+
+			if [ "${upfile_destroy_failed}" = "1" ]; then
+				trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			else
+				trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : upfile_destroy_failed=0${N0_COLOR}\" 1>&2 ; " HUP INT ABRT BUS TERM EXIT
+			fi
+			set -o errexit
+			set -o xtrace
+
+			postcreate
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+			jname="${ojname}"
+		else
+			${ECHO} "${N1_COLOR}  == global postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 
@@ -278,14 +316,14 @@ EOF
 			unset H_CBSD_jname
 			trap "" HUP INT ABRT BUS TERM EXIT
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+			jname="${ojname}"
 		else
 			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		fi
 
-		jname="${ojname}"
 		# per-env postup func
 		if fn_exists postup_${jname} 2>/dev/null; then
-			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 			postup_${jname}
 			jname="${ojname}"		# for corrupted/changed jname in func
 		fi
@@ -384,7 +422,7 @@ run_jail()
 							_delpkglist=0
 						else
 							# 
-							${ECHO} "${N1_COLOR}${CIX_APP} warning: pkglist outside the CBSDfile directory?: ${N2_COLOR}[${_res}][${_tmp}]${N0_COLOR}"
+							${ECHO} "${N1_COLOR}${CIX_APP} warning: pkglist outside the CBSDfile directory?: ${N2_COLOR}[${_res}][${_tmp}]${N0_COLOR}" 1>&2
 						fi
 					else
 						true
@@ -428,12 +466,20 @@ run_jail()
 		JAIL_ARGS="${JAIL_ARGS} delpkglist=0"
 	fi
 
+	# global preup func
+	if fn_exists preup 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute global preup${N0_COLOR}" 1>&2
+		preup
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute global preup done${N0_COLOR}" 1>&2
+	fi
+
 	# per-env preup func
 	if fn_exists preup_${jname} 2>/dev/null; then
-		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}" 1>&2
 		preup_${jname}
 		jname="${ojname}"		# for corrupted/changed jname in func
-		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}" 1>&2
 	fi
 
 	if [ -d "${myworkdir}/skel" ]; then
@@ -456,14 +502,14 @@ run_jail()
 				# don't allow "..", "()", "|" in path
 				echo "${_device}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
 				if [ $? -eq 0 ]; then
-					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_device}${N0_COLOR}"
+					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_device}${N0_COLOR}" 1>&2
 					continue
 				fi
 
 				# don't allow "..", "()", "|" in path
 				echo "${_mountpt}" | ${GREP_CMD} -qE '(\.\.)|(\|)|(\()|(\))'
 				if [ $? -eq 0 ]; then
-					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_mountpt}${N0_COLOR}"
+					${ECHO} "${W1_COLOR}${CIX_APP} warning: .. not allowed: ${N2_COLOR}${_mountpt}${N0_COLOR}" 1>&2
 					continue
 				fi
 
@@ -487,9 +533,9 @@ run_jail()
 				_device="${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
 				printf "${N1_COLOR}${CIX_APP}: WORKDIR_VOLUMES: ${N2_COLOR}${_device} -> ${_volpath}: ${N0_COLOR}" 1>&2
 				if [ -d "${_device}" ]; then
-					${ECHO} "${N2_COLOR}exist${N0_COLOR}"
+					${ECHO} "${N2_COLOR}exist${N0_COLOR}" 1>&2
 				else
-					${ECHO} "${N2_COLOR}created${N0_COLOR}"
+					${ECHO} "${N2_COLOR}created${N0_COLOR}" 1>&2
 					if [ -d "${myworkdir}/VOLUMES/${_rvolpath}" ]; then
 						# copy from VOLUMES/<datadir>
 						${MKDIR_CMD} -p "${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
@@ -498,7 +544,7 @@ run_jail()
 						# create empty dir
 						${MKDIR_CMD} -p "${workdir}/VOLUMES/${jname}-data/${_rvolpath}"
 					fi
-					${ECHO} "${N2_COLOR}created${N0_COLOR}"
+					${ECHO} "${N2_COLOR}created${N0_COLOR}" 1>&2
 				fi
 			done
 		fi
@@ -555,6 +601,53 @@ EOF
 		ret=$?
 	fi
 
+	# global postcreate
+	if fn_exists postcreate 2>/dev/null; then
+		${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		# cleanup jail when postcreate action failed
+
+		# cleanup jail when postcreate action failed
+		if [ -n "${oupfile_destroy_failed}" ]; then
+			UPFILE_DESTROY_FAILED="${oupfile_destroy_failed}"
+		fi
+		if [ -n "${UPFILE_DESTROY_FAILED}" ]; then
+			upfile_destroy_failed="${UPFILE_DESTROY_FAILED}"
+		fi
+		if [ "${upfile_destroy_failed}" = "1" ]; then
+			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; jremove ${jname}" HUP INT ABRT BUS TERM EXIT
+		else
+			trap "set +o xtrace; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : upfile_destroy_failed=0${N0_COLOR}\" 1>&2 ; " HUP INT ABRT BUS TERM EXIT
+		fi
+
+		# export facts
+		. ${subrdir}/jcreate.subr               # for export_jail_data_for_external_hook
+		ip4_addr=$( jget jname=${jname} mode=quiet ip4_addr 2>/dev/null )
+		export_jail_data_for_external_hook
+
+		# export some variables via H_CBSD_ (for scp,expose, and so on...)
+		export H_CBSD_jname="${jname}"
+
+		trap "set +o xtrace; cd ${OBSD_PWD}" HUP INT ABRT BUS TERM EXIT
+
+		set -o errexit
+		set -o xtrace
+
+		postcreate
+
+		set +o xtrace
+		set +o errexit
+		trap "" HUP INT ABRT BUS TERM EXIT
+
+		# export some variables via H_CBSD_
+		unset H_CBSD_jname
+
+		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		jname="${ojname}"		# for corrupted/changed jname in func
+	else
+		${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+	fi
+
+	# per-env postcreate
 	if fn_exists postcreate_${jname} 2>/dev/null; then
 		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 		# cleanup jail when postcreate action failed
@@ -595,6 +688,7 @@ EOF
 		unset H_CBSD_jname
 
 		${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		jname="${ojname}"		# for corrupted/changed jname in func
 	else
 		${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 	fi
@@ -602,9 +696,10 @@ EOF
 	. ${subrdir}/rcconf.subr
 	# per-env postup func
 	if fn_exists postup_${jname} 2>/dev/null; then
-		${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+		${ ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 		postup_${jname}
-		${ECHO} "${N1_COLOR}execute postup_${jname} done${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute postup_${jname} done${N0_COLOR}" 1>&2
+		jname="${ojname}"		# for corrupted/changed jname in func
 	fi
 
 	# restore old workdir
@@ -616,7 +711,7 @@ run_bhyve_cloud()
 {
 	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	[ -z "${ssh_wait}" ] && ssh_wait=0
 
 	${CAT_CMD} > up-${jname}.json <<EOF
@@ -649,6 +744,32 @@ EOF
 	if [ ${ret} -eq 0 ]; then
 		#bhyve_${jname}		# re-read variables
 
+		# global postcreate
+		if fn_exists postcreate 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+
+			postcreate
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == postcreate global function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		export jname="${jname}"
+
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 
@@ -677,7 +798,7 @@ EOF
 
 		# per-env postup func
 		if fn_exists postup_${jname} 2>/dev/null; then
-			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 			postup_${jname}
 			jname="${ojname}"		# for corrupted/changed jname in func
 		fi
@@ -763,12 +884,20 @@ run_bhyve()
 
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
 
+	# global preup func
+	if fn_exists preup 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute global preup${N0_COLOR}" 1>&2
+		preup
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute global preup done${N0_COLOR}" 1>&2
+	fi
+
 	# per-env preup func
 	if fn_exists preup_${jname} 2>/dev/null; then
-		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}" 1>&2
 		preup_${jname}
 		jname="${ojname}"		# for corrupted/changed jname in func
-		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}" 1>&2
 	fi
 
 	if [ -d ${myworkdir}/jails-system ]; then
@@ -810,6 +939,34 @@ EOF
 	if [ ${ret} -eq 0 ]; then
 		#bhyve_${jname}		# re-read variables
 
+		# global postcreate
+		if fn_exists postcreate 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup bhyve when postcreate action failed
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; bremove ${jname}" HUP INT ABRT BUS TERM EXIT
+
+			set -o errexit
+			set -o xtrace
+
+			# change dir if necessary for internal command
+			#export CIX_PWD="${myworkdir}"
+			postcreate
+
+			set +o xtrace
+			set +o errexit
+			trap "" HUP INT ABRT BUS TERM EXIT
+			unset H_CBSD_jname
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == global postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 
@@ -838,7 +995,7 @@ EOF
 		jname="${ojname}"
 		# per-env postup func
 		if fn_exists postup_${jname} 2>/dev/null; then
-			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 			postup_${jname}
 			jname="${ojname}"		# for corrupted/changed jname in func
 		fi
@@ -855,7 +1012,7 @@ run_qemu_cloud()
 {
 	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+	${ECHO} "${N1_COLOR}run image via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	[ -z "${ssh_wait}" ] && ssh_wait=0
 
 	${CAT_CMD} > up-${jname}.json <<EOF
@@ -888,6 +1045,33 @@ EOF
 	if [ ${ret} -eq 0 ]; then
 		#qemu_${jname}		# re-read variables
 
+		# global postcreate
+		if fn_exists postcreate 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup jail when postcreate action failed
+
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; qremove ${jname}" HUP INT ABRT BUS TERM EXIT
+			set -o errexit
+			set -o xtrace
+
+			postcreate
+
+			set +o xtrace
+			set +o errexit
+			unset H_CBSD_jname
+			trap "" HUP INT ABRT BUS TERM EXIT
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+		else
+			${ECHO} "${N1_COLOR}  == global postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
+		jname="${ojname}"
+		export jname="${jname}"
+
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 
@@ -916,7 +1100,7 @@ EOF
 
 		# per-env postup func
 		if fn_exists postup_${jname} 2>/dev/null; then
-			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 			postup_${jname}
 			jname="${ojname}"		# for corrupted/changed jname in func
 		fi
@@ -1002,12 +1186,20 @@ run_qemu()
 
 	[ -z "${cbsd_workdir}" ] && cbsd_workdir="${ocbsd_workdir}"
 
+	# global preup func
+	if fn_exists preup 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute global preup${N0_COLOR}" 1>&2
+		preup
+		jname="${ojname}"		# for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute global preup done${N0_COLOR}" 1>&2
+	fi
+
 	# per-env preup func
 	if fn_exists preup_${jname} 2>/dev/null; then
-		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname}${N0_COLOR}" 1>&2
 		preup_${jname}
 		jname="${ojname}"		# for corrupted/changed jname in func
-		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}"
+		${ECHO} "${N1_COLOR}execute preup_${jname} done${N0_COLOR}" 1>&2
 	fi
 
 	if [ -d ${myworkdir}/jails-system ]; then
@@ -1049,6 +1241,33 @@ EOF
 	if [ ${ret} -eq 0 ]; then
 		#qemu_${jname}		# re-read variables
 
+		# global postcreate
+		if fn_exists postcreate 2>/dev/null; then
+			${ECHO} "${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+
+			# export some variables via H_CBSD_ (for scp,expose, and so on...)
+			export H_CBSD_jname="${jname}"
+
+			# cleanup qemu when postcreate action failed
+			trap "set +o xtrace; cd ${OBSD_PWD}; ${ECHO} \"${N1_COLOR}  == execute global postcreate function for: ${N2_COLOR}${jname}: ${W1_COLOR}failed${N1_COLOR} : cleanup${N0_COLOR}\" 1>&2  ; qremove ${jname}" HUP INT ABRT BUS TERM EXIT
+
+			set -o errexit
+			set -o xtrace
+
+			# change dir if necessary for internal command
+			#export CIX_PWD="${myworkdir}"
+			postcreate
+
+			set +o xtrace
+			set +o errexit
+			trap "" HUP INT ABRT BUS TERM EXIT
+			unset H_CBSD_jname
+			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}: ${H3_COLOR}success${N0_COLOR}" 1>&2
+			jname="${ojname}"
+		else
+			${ECHO} "${N1_COLOR}  == postcreate function not specified: postcreate_${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+		fi
+
 		if fn_exists postcreate_${jname} 2>/dev/null; then
 			${ECHO} "${N1_COLOR}  == execute postcreate function for: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 
@@ -1077,7 +1296,7 @@ EOF
 		jname="${ojname}"
 		# per-env postup func
 		if fn_exists postup_${jname} 2>/dev/null; then
-			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}execute postup_${jname}${N0_COLOR}" 1>&2
 			postup_${jname}
 			jname="${ojname}"		# for corrupted/changed jname in func
 		fi

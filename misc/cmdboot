@@ -9,6 +9,9 @@ err() {
 	exit ${exitval}
 }
 
+cleanup() {
+	rm -f "${CMD_FILE}.tmp"
+}
 
 [ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 # MAIN
@@ -21,7 +24,7 @@ fi
 [ ! -f "${CIX_DISTDIR}/cbsd.conf" ] && exit 0
 
 export CIX_INITENV=1
-. ${CIX_DISTDIR}/cbsd.conf
+. "${CIX_DISTDIR}/cbsd.conf"
 unset CIX_INITENV
 
 if [ -z "${workdir}" -o "${workdir}" = "(null)" ]; then
@@ -30,12 +33,11 @@ if [ -z "${workdir}" -o "${workdir}" = "(null)" ]; then
 	workdir="${cbsd_workdir}"
 fi
 
-CMD_FILE=${workdir}/cmd.subr
+CMD_FILE="${workdir}/cmd.subr"
 
 PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
 [ -z "${platform}" ] && platform=$( uname -s )
-[ "${platform}" = "NetBSD" ] && export PATH="${PATH}:/usr/pkg/bin"
-
+[ "${platform}" = "NetBSD" ] && PATH="${PATH}:/usr/pkg/bin"
 
 if [ -n "${PRE_CBSD_CMD_PATH}" ]; then
 	PATH="${PRE_CBSD_CMD_PATH}:${PATH}"
@@ -44,7 +46,114 @@ if [ -n "${POST_CBSD_CMD_PATH}" ]; then
 	PATH="${PATH}:${POST_CBSD_CMD_PATH}"
 fi
 
-export PATH="${PATH}"
+export PATH
+
+trap cleanup EXIT INT TERM
+
+# main cmd: generic command for all platform
+MAIN_CMD="\
+arp \
+awk \
+basename \
+bc \
+cat \
+chown \
+chmod \
+chroot \
+column \
+cp \
+cpio \
+cut \
+date \
+dd \
+df \
+du \
+dirname \
+env \
+find \
+file \
+grep \
+gzip \
+gunzip \
+head \
+hexdump \
+hostname \
+id \
+install \
+jq \
+kill \
+killall \
+ldd \
+ln \
+ls \
+make \
+mkdir \
+mktemp \
+mount \
+mv \
+nc \
+nice \
+pax \
+ps \
+ping \
+pwd \
+readlink \
+realpath \
+rm \
+rmdir \
+route \
+rsync \
+scp \
+sed \
+seq \
+sort \
+ssh \
+ssh-keygen \
+stat \
+strings \
+sudo \
+sync \
+sysctl \
+stty \
+sqlite3 \
+tail \
+tar \
+tee \
+timeout \
+touch \
+uname \
+tr \
+truncate \
+umount \
+uuidgen \
+whoami \
+xargs \
+xz \
+xzcat \
+wc \
+"
+
+#  optional/feature command
+OPTIONAL_CMD="\
+acpidump \
+bhyvectl \
+bhyve \
+buildah \
+cbsd \
+curl \
+git \
+jail \
+ocijail \
+ndp \
+nvmmctl \
+pfctl \
+swtpm \
+socat \
+tmux \
+qemu-system-x86_64 \
+zfs \
+zpool \
+xl"
 
 # Hardened/FreeBSD/DflyBSD-specific CMD
 add_freebsd_cmd()
@@ -158,116 +267,10 @@ sockstat \
 "
 }
 
-
-#  optional/feature command
-OPTIONAL_CMD="\
-acpidump \
-bhyvectl \
-bhyve \
-buildah \
-cbsd \
-curl \
-git \
-jail \
-ocijail \
-pfctl \
-ndp \
-nvmmctl \
-swtpm \
-socat \
-tmux \
-qemu-system-x86_64 \
-zfs \
-zpool \
-xl"
-
-# main cmd: generic command for all platform
-MAIN_CMD="\
-arp \
-awk \
-basename \
-bc \
-cat \
-chown \
-chmod \
-chroot \
-column \
-cp \
-cpio \
-cut \
-date \
-dd \
-df \
-du \
-dirname \
-env \
-find \
-file \
-grep \
-gzip \
-gunzip \
-head \
-hexdump \
-hostname \
-id \
-install \
-jq \
-kill \
-killall \
-ldd \
-ln \
-ls \
-make \
-mkdir \
-mktemp \
-mount \
-mv \
-nc \
-nice \
-pax \
-ps \
-ping \
-pwd \
-readlink \
-realpath \
-rm \
-rmdir \
-route \
-rsync \
-scp \
-sed \
-seq \
-sort \
-ssh \
-ssh-keygen \
-stat \
-strings \
-sudo \
-sync \
-sysctl \
-stty \
-sqlite3 \
-tail \
-tar \
-tee \
-timeout \
-touch \
-uname \
-tr \
-truncate \
-umount \
-uuidgen \
-whoami \
-xargs \
-xz \
-xzcat \
-wc \
-"
-
 # check by FreeBSD version, since the misc/elf_tables may be absent on first init
 case "${platform}" in
 	Linux)
-		_version=$( sysctl -n kernel.osrelease 2>/dev/null | cut -d "-" -f 1  | tr '.' '0' )
+		_version=$( sysctl -n kernel.osrelease 2>/dev/null | cut -d "-" -f 1 | tr '.' '0' )
 		;;
 	NetBSD)
 		_version=$( sysctl -n kern.osrevision 2>/dev/null )
@@ -301,48 +304,37 @@ case "${platform}" in
 		;;
 esac
 
-truncate -s0 ${CMD_FILE}.tmp
+MAIN_CMD=$( echo ${MAIN_CMD} | sort )
+OPTIONAL_CMD=$( echo ${OPTIONAL_CMD} | sort )
 
-cat > ${CMD_FILE}.tmp <<EOF
+# resolve command path and write _CMD= variable to .tmp
+resolve_cmd() {
+	_cmd="$1"
+	_path=$( command -v "${_cmd}" 2>/dev/null )
+	_varname=$( echo "${_cmd}" | tr '\-[:lower:]' '_[:upper:]' )
+	echo "${_varname}_CMD=\"${_path}\"" >> "${CMD_FILE}.tmp"
+}
+
+cat > "${CMD_FILE}.tmp" <<EOF || err 1 "cmdboot: write error: ${CMD_FILE}.tmp"
 if [ ! "\$_CBSD_CMD_SUBR" ]; then
 _CBSD_CMD_SUBR=1
 ###
 EOF
-	if [ $? -ne 0 ]; then
-		echo "cmdboot: append error: ${CMD_FILE}.tmp"
-		cat >> ${CMD_FILE}.tmp <<EOF
-###
-fi
-EOF
-		exit 1
-	fi
-
-MAIN_CMD=$( echo ${MAIN_CMD} | sort )
-OPTIONAL_CMD=$( echo ${OPTIONAL_CMD} | sort )
 
 for i in ${MAIN_CMD}; do
-	mycmd=
-	mycmd=$( which ${i} 2>/dev/null )
+	mycmd=$( command -v "${i}" 2>/dev/null )
 
-	if [ -z "${mycmd}" -a ! -x "${mycmd}" ]; then
+	if [ -z "${mycmd}" ]; then
 		echo "cmdboot: no such executable, CBSD dependency/requirement: ${i}"
-		cat >> ${CMD_FILE}.tmp <<EOF
-###
-fi
-EOF
 		exit 1
 	fi
-	MY_CMD=$( echo ${i} | tr '\-[:lower:]' '_[:upper:]' )
-	MY_CMD="${MY_CMD}_CMD"
-
-	echo "${MY_CMD}=\"${mycmd}\"" >> ${CMD_FILE}.tmp
+	resolve_cmd "${i}"
 done
 
 for i in ${OPTIONAL_CMD}; do
-	mycmd=
-	mycmd=$( which ${i} 2>/dev/null )
+	mycmd=$( command -v "${i}" 2>/dev/null )
 
-	if [ -z "${mycmd}" -a ! -x "${mycmd}" ]; then
+	if [ -z "${mycmd}" ]; then
 		feature=
 		case "${i}" in
 			bhyve*)
@@ -357,52 +349,48 @@ for i in ${OPTIONAL_CMD}; do
 		esac
 
 		if [ -n "${feature}" ]; then
-			if [ -h ${dbdir}/local.sqlite ]; then
+			if [ -h "${dbdir}/local.sqlite" ]; then
 				echo "    cmdboot: no such optional executable: ${i}, ${feature} disabled" 1>&2
 				if [ -z "${SQLITE3_CMD}" ]; then
-					SQLITE3_CMD=$( which sqlite3 )
+					SQLITE3_CMD=$( command -v sqlite3 )
 					if [ -z "${SQLITE3_CMD}" ]; then
 						echo "cmdboot: no such sqlite3 executable"
 						exit 1
 					fi
 				fi
-				${SQLITE3_CMD} ${dbdir}/local.sqlite "UPDATE local SET ${feature}='0'"
+				"${SQLITE3_CMD}" "${dbdir}/local.sqlite" "UPDATE local SET ${feature}='0'"
 			fi
 		fi
 	fi
 
-	MY_CMD=$( echo ${i} | tr '\-[:lower:]' '_[:upper:]' )
-	MY_CMD="${MY_CMD}_CMD"
-
-	echo "${MY_CMD}=\"${mycmd}\"" >> ${CMD_FILE}.tmp
+	resolve_cmd "${i}"
 done
 
-# whiptail = light dialog ?
-DIALOG_CMD=$( which cdialog || which dialog || which bsddialog )
+DIALOG_CMD=$( command -v cdialog || command -v dialog || command -v bsddialog )
 [ -z "${DIALOG_CMD}" ] && err 1 "no such dialog (cdialog/dialog/bsddialog)"
-echo "DIALOG_CMD=\"${DIALOG_CMD}\"" >> ${CMD_FILE}.tmp
+echo "DIALOG_CMD=\"${DIALOG_CMD}\"" >> "${CMD_FILE}.tmp"
 
-cat >> ${CMD_FILE}.tmp <<EOF
+cat >> "${CMD_FILE}.tmp" <<EOF
 ###
 fi
 EOF
 
 # test & compare & replace original file
-/bin/sh -n ${CMD_FILE}.tmp
-if [ $? -ne 0 ]; then
+if ! /bin/sh -n "${CMD_FILE}.tmp"; then
 	echo "cmdboot: sh -n error: ${CMD_FILE}.tmp"
 	exit 1
 fi
 
-if [ -r ${CMD_FILE} ]; then
-	is_diff=$( diff ${CMD_FILE} ${CMD_FILE}.tmp )
+if [ -r "${CMD_FILE}" ]; then
+	is_diff=$( diff "${CMD_FILE}" "${CMD_FILE}.tmp" )
 	if [ -n "${is_diff}" ]; then
-		mv ${CMD_FILE}.tmp ${CMD_FILE}
+		mv "${CMD_FILE}.tmp" "${CMD_FILE}"
 	else
-		rm -f ${CMD_FILE}.tmp
+		rm -f "${CMD_FILE}.tmp"
 	fi
 else
-	mv ${CMD_FILE}.tmp ${CMD_FILE}
+	mv "${CMD_FILE}.tmp" "${CMD_FILE}"
 fi
 
+trap - EXIT INT TERM
 exit 0

@@ -1,4 +1,4 @@
-#!/usr/local/bin/cbsd
+#!/usr/bin/env cbsd
 # Helper to set proper interface name for cloud-init network settings
 # this can be useful in distributions where interface names are 
 # dynamically dependent on PCI bus slot

@@ -1,4 +1,4 @@
-#!/usr/local/bin/cbsd
+#!/usr/bin/env cbsd
 # Helper for integration CBSD/bhyve and isc-dhcpd
 # We assume bhyve have correct 'ip4_addr' settings
 # To add dhcpf.conf extra-config (e.g. bootp-related) for
