@@ -7,7 +7,6 @@ Also please get next files from the bsdconfig distribution:
 /usr/libexec/bsdconfig/include/messages.subr
 /usr/share/bsdconfig/common.subr
 /usr/share/bsdconfig/dialog.subr
-/usr/share/bsdconfig/mustberoot.subr
 /usr/share/bsdconfig/strings.subr
 /usr/share/bsdconfig/struct.subr
 /usr/share/bsdconfig/variable.subr

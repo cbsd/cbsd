@@ -34,7 +34,7 @@ f_include $BSDCFG_SHARE/strings.subr
 f_include $BSDCFG_SHARE/variable.subr
 
 BSDCFG_LIBE="${CIX_DISTDIR}/share/libexec/bsdconfig"
-f_include_lang $BSDCFG_LIBE/include/messages.subr
+f_include $BSDCFG_LIBE/include/messages.subr
 
 ############################################################ CONFIGURATION
 
@@ -107,6 +107,7 @@ export BSDDIALOG_COMPATRC=".dialogrc"
 # default(s) for all widgets of a given variant)
 #
 : ${DIALOG_MIN_WIDTH:=24}
+: ${DIALOG_MENU_WITH_HELP_MIN_WIDTH:=40}
 : ${XDIALOG_MIN_WIDTH:=35}
 
 #
@@ -140,14 +141,12 @@ DIALOG_TIMEBOX_HEIGHT=6
 f_dialog_data_sanitize()
 {
 	if [ "$#" -eq 0 ]; then
-		f_dprintf "%s: called with zero arguments" \
-		          f_dialog_response_sanitize
+		f_dprintf "%s: called with zero arguments" f_dialog_data_sanitize
 		return $FAILURE
 	fi
 
 	local __var_to_edit
 	for __var_to_edit in $*; do
-		# Skip warnings and trim leading/trailing whitespace
 		setvar $__var_to_edit "$( f_getvar $__var_to_edit | ${AWK_CMD} '
 			BEGIN { data = 0 }
 			{
@@ -163,31 +162,15 @@ f_dialog_data_sanitize()
 	done
 }
 
-# f_dialog_line_sanitize $var_to_edit ...
-#
-# When using dialog(1) or Xdialog(1) sometimes unintended warnings or errors
-# are generated from underlying libraries. For example, if $LANG is set to an
-# invalid or unknown locale, the warnings from the Xdialog(1) libraries will
-# clutter the output. This function helps by providing a centralied function
-# that removes spurious warnings from the dialog(1) (or Xdialog(1)) response.
-#
-# Simply pass the name of one or more variables that need to be sanitized.
-# After execution, the variables will hold their newly-sanitized data.
-#
-# This function, unlike f_dialog_data_sanitize(), also removes leading/trailing
-# whitespace from each line.
-#
 f_dialog_line_sanitize()
 {
 	if [ "$#" -eq 0 ]; then
-		f_dprintf "%s: called with zero arguments" \
-		          f_dialog_response_sanitize
+		f_dprintf "%s: called with zero arguments" f_dialog_line_sanitize
 		return $FAILURE
 	fi
 
 	local __var_to_edit
 	for __var_to_edit in $*; do
-		# Skip warnings and trim leading/trailing whitespace
 		setvar $__var_to_edit "$( f_getvar $__var_to_edit | ${AWK_CMD} '
 			BEGIN { data = 0 }
 			{
@@ -326,8 +309,10 @@ f_dialog_max_size()
 		: ${__max_size:=$DEFAULT_TERMINAL_SIZE}
 	fi
 
+	local __height="${__max_size%% *}"
+	local __width_val="${__max_size##* }"
+
 	if [ "$__var_height" ]; then
-		local __height="${__max_size%%[$IFS]*}"
 		#
 		# If we're not using Xdialog(1), we should assume that $DIALOG
 		# will render --backtitle behind the widget. In such a case, we
@@ -351,7 +336,7 @@ f_dialog_max_size()
 		fi
 		setvar "$__var_height" "$__height"
 	fi
-	[ "$__var_width" ] && setvar "$__var_width" "${__max_size##*[$IFS]}"
+	[ "$__var_width" ] && setvar "$__var_width" "$__width_val"
 }
 
 # f_dialog_size_constrain $var_height $var_width [$min_height [$min_width]]
@@ -665,11 +650,6 @@ f_dialog_infobox_size()
 		setvar "$__var_width" $__width
 	fi
 
-#echo "$__constrain"
-	# Constrain values to sensible minimums/maximums unless `-n' was passed
-	# Return success if no-constrain, else return status from constrain
-#	[ ! "$__constrain" ] ||
-#		f_dialog_size_constrain "$__var_height" "$__var_width"
 }
 
 # f_dialog_buttonbox_size [-n] $var_height $var_width \
@@ -1053,13 +1033,16 @@ f_dialog_menu_with_help_size()
 		[ $__n -gt $__width_menu_with_help_size ] &&
 			__width_menu_with_help_size=$__n
 
-		# Update width for help text if using Xdialog(1)
+		# Update width for help text
+		# dialog(1) displays help text at the bottom with --item-help
 		if [ "$USE_XDIALOG" ]; then
 			__n=$(( $__longest_help + 10 ))
 			__n=$(( $__n + $__n / 6 )) # plus 16.6%
-			[ $__n -gt $__width_menu_with_help_size ] &&
-				__width_menu_with_help_size=$__n
+		else
+			__n=$(( $__longest_help + 10 ))
 		fi
+		[ $__n -gt $__width_menu_with_help_size ] &&
+			__width_menu_with_help_size=$__n
 
 		setvar "$__var_width" $__width_menu_with_help_size
 	fi
@@ -1070,7 +1053,8 @@ f_dialog_menu_with_help_size()
 	# Constrain height, width, and rows to sensible minimum/maximum values
 	# Return success if no-constrain, else return status from constrain
 	[ ! "$__constrain" ] || f_dialog_menu_constrain \
-		"$__var_height" "$__var_width" "$__var_rows" "$__prompt"
+		"$__var_height" "$__var_width" "$__var_rows" "$__prompt" \
+		0 ${DIALOG_MENU_WITH_HELP_MIN_WIDTH}
 }
 
 # f_dialog_radiolist_size [-n] $var_height $var_width $var_rows \
@@ -1161,12 +1145,13 @@ f_dialog_radiolist_size()
 	fi
 
 	# Store adjusted rows if desired
-	[ "$__var_rows" ] && setvar "$__var_rows" $__rows_rlist_size
+	[ "$__var_rows" ] && setvar "$__var_rows" $__rows
 
 	# Constrain height, width, and rows to sensible minimum/maximum values
 	# Return success if no-constrain, else return status from constrain
 	[ ! "$__constrain" ] || f_dialog_menu_constrain \
-		"$__var_height" "$__var_width" "$__var_rows" "$__prompt"
+		"$__var_height" "$__var_width" "$__var_rows" "$__prompt" \
+		0 ${DIALOG_MENU_WITH_HELP_MIN_WIDTH}
 }
 
 # f_dialog_checklist_size [-n] $var_height $var_width $var_rows \
@@ -1277,7 +1262,7 @@ f_dialog_radiolist_with_help_size()
 				$__rows_rlist_with_help_size + 4
 			))
 		fi
-		setvar "$__var_height" $__height
+		setvar "$__var_height" $__height_rlist_with_help_size
 	fi
 
 	# Adjust width if desired
@@ -1289,13 +1274,15 @@ f_dialog_radiolist_with_help_size()
 		[ $__n -gt $__width_rlist_with_help_size ] &&
 			__width_rlist_with_help_size=$__n
 
-		# Update width for help text if using Xdialog(1)
+		# Update width for help text
 		if [ "$USE_XDIALOG" ]; then
 			__n=$(( $__longest_help + 10 ))
 			__n=$(( $__n + $__n / 6 )) # plus 16.6%
-			[ $__n -gt $__width_rlist_with_help_size ] &&
-				__width_rlist_with_help_size=$__n
+		else
+			__n=$(( $__longest_help + 10 ))
 		fi
+		[ $__n -gt $__width_rlist_with_help_size ] &&
+			__width_rlist_with_help_size=$__n
 
 		setvar "$__var_width" $__width_rlist_with_help_size
 	fi
@@ -1306,7 +1293,8 @@ f_dialog_radiolist_with_help_size()
 	# Constrain height, width, and rows to sensible minimum/maximum values
 	# Return success if no-constrain, else return status from constrain
 	[ ! "$__constrain" ] || f_dialog_menu_constrain \
-		"$__var_height" "$__var_width" "$__var_rows" "$__prompt"
+		"$__var_height" "$__var_width" "$__var_rows" "$__prompt" \
+		0 ${DIALOG_MENU_WITH_HELP_MIN_WIDTH}
 }
 
 # f_dialog_checklist_with_help_size [-n] $var_height $var_width $var_rows \
@@ -1426,7 +1414,7 @@ f_dialog_calendar_size()
 				__width_cal_size=$__min_width
 			elif [ $__width_cal_size -gt $__max_width_cal_size ]
 			then
-				__width_cal_size=$__max_width_size
+				__width_cal_size=$__max_width_cal_size
 			fi
 		fi
 
@@ -2331,6 +2319,31 @@ f_dialog_init()
 	fi
 
 	f_dprintf "f_dialog_init: dialog(1) API initialized."
+}
+
+# f_dialog_check_terminal [$min_cols $min_rows]
+#
+# Check if the terminal is large enough for dialog widgets.
+# Returns success if terminal is adequate, failure otherwise.
+# On failure, prints an error message to stderr.
+# Default minimums: 40 columns, 12 rows.
+#
+f_dialog_check_terminal()
+{
+	local __min_cols="${1:-40}" __min_rows="${2:-12}"
+	local __max_height __max_width
+
+	f_dialog_max_size __max_height __max_width
+
+	if [ "${__max_width:-0}" -lt "$__min_cols" ] || \
+	   [ "${__max_height:-0}" -lt "$__min_rows" ]
+	then
+		f_err "Error: Terminal too small (%sx%s). Need at least %sx%s.\n" \
+			"${__max_width:-?}" "${__max_height:-?}" \
+			"$__min_cols" "$__min_rows"
+		return $FAILURE
+	fi
+	return $SUCCESS
 }
 
 ############################################################ MAIN
