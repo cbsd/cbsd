@@ -15,7 +15,7 @@ fi
 set -e
 . ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/tools.subr
-. ${subrdir}/nc.subr
+. ${subrdir}/nc-lite.subr
 set +e
 
 FORM_PATH="${workdir}/formfile"

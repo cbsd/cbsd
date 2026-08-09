@@ -183,7 +183,7 @@ fi
 
 . "${workdir}/cmd.subr"
 . ${CIX_DISTDIR}/cbsd.conf
-. ${subrdir}/nc.subr		# readconf
+. ${subrdir}/nc-lite.subr		# readconf
 # mod_cbsd_queue_enabled?
 . ${inventory}
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then

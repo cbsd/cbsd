@@ -81,6 +81,27 @@ _no_ansi()
 	${ECHO} "$*" | ${SED_CMD} "s,$(printf '\033')\\[[0-9;]*[a-zA-Z],,g"
 }
 
+# strip specific characters from string without subshell
+# usage: _strip_chars "string" "chars_to_remove"
+# result in $_strip_result
+_strip_chars()
+{
+	local _src="${1}" _chars="${2}" _i _ch _len
+	_strip_result=
+	_len=$( strlen "${_src}" )
+	for ((_i=1; _i<=${_len}; _i++)); do
+		_ch=$( substr --pos=${_i} --len=1 --str="${_src}" )
+		case "${_ch}" in
+			[${_chars}])
+				continue
+				;;
+			*)
+				_strip_result="${_strip_result}${_ch}"
+				;;
+		esac
+	done
+}
+
 # Log message to both stderr and log
 # log_msg INFO|NOTICE|WARNING|ERROR <message>
 log_msg() {
@@ -89,7 +110,7 @@ log_msg() {
 	shift
 	${ECHO} "$*" 1>&2
 	# remove ANSII
-	_msg=$(_no_ansi "$*")
+	capture _msg _no_ansi "$*"
 	cbsdlogger ${_level} ${CIX_APP}: "${_msg}"
 }
 
@@ -101,7 +122,7 @@ log_err() {
 	shift
 	${ECHO} "$*"
 	# remove ANSII
-	_msg=$(_no_ansi "$*")
+	capture _msg _no_ansi "$*"
 	cbsdlogger WARNING ${CIX_APP}: "${_msg}"
 	exit ${exitval}
 }
@@ -314,7 +335,8 @@ init() {
 		else
 			VAL=$( substr --pos=$(( 0 )) --len=${_arg_len} --str="${i}" )
 		fi
-		VAL=$( echo ${VAL} | ${TR_CMD} -d "\"''" )		# strip extra quotes
+		_strip_chars "${VAL}" "\"'"
+		VAL="${_strip_result}"
 #		VAL=$( echo ${VAL} | ${TR_CMD} -d "'" )		# strip extra quotes
 
 		if [ ${_opened} -eq 1 -o ${_closed} -eq 1 ]; then
@@ -545,7 +567,7 @@ geniplist()
 	HAVE_IPV6=0
 	multiips=$@
 
-	I=$( echo ${multiips} | ${TR_CMD} "," " " )
+	capture I ${TR_CMD} "," " " <<< "${multiips}"
 	IPS=""
 	ST=0
 
@@ -571,7 +593,7 @@ geniplist()
 				INNET=0	# count of coincidence in private network
 				if [ -z "${ipv4_first_private}" -o -z "${ip4_first_public}" ]; then
 					for pnet in ${private_net}; do
-						NC_RANGE=$( /bin/echo ${pnet} | ${TR_CMD} "/" " " )
+						capture NC_RANGE ${TR_CMD} "/" " " <<< "${pnet}"
 						netmask ${NC_RANGE} ${IWM} > /dev/null 2>&1
 						res=$?
 						if [ ${res} -eq 1 ]; then
@@ -637,7 +659,7 @@ makelock()
 	[ -z "${LOCKFILE}" ] && err 1 "${N1_COLOR}makelock: empty LOCKFILE vars${N0_COLOR}"
 	[ -f "${LOCKFILE}" -a "${3}" = "safe" ] && ${RM_CMD} -f ${LOCKFILE}
 	if [ -f "${LOCKFILE}"  ]; then
-		_pid=$( ${CAT_CMD} ${LOCKFILE} | ${AWK_CMD} '{printf $1}' )
+		read _pid _ < ${LOCKFILE}
 		[ -n "${_pid}" ] && _msg="by ${_pid}"
 		err 1 "locked ${_msg}: ${LOCKFILE}, try later"
 	fi
@@ -679,7 +701,7 @@ wait_for_fpid()
 	while [ 1 ]; do
 		A=$( ${FIND_CMD} ${ftmpdir} -mindepth 1 -maxdepth 1 -name ${myfile}\.\*\.\* -type f | ${HEAD_CMD} -n1 )
 		[ -z "${A}" ] && break
-		PID=$( ${CAT_CMD} ${A} )
+		read PID < ${A}
 		[ -z "${PID}" ] && break
 		${PS_CMD} -p ${PID} > /dev/null 2>&1
 		[ $? -ne 0 ] && break # No such pid here
@@ -732,8 +754,15 @@ storeconf()
 
 validate_jname()
 {
-	[ -z "$1" ] && return 0 # empty name is valid
-	echo -n "$1" | ${AWK_CMD} '!/^[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*$/{exit 1}' RS='^$'
+	[ -z "$1" ] && return 0
+	case "$1" in
+		[a-zA-Z0-9_@%:]*) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*[!-a-zA-Z0-9_@%:]*) return 1 ;;
+	esac
+	return 0
 }
 
 # echo ${_device} |grep -sq ^/

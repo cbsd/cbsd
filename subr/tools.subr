@@ -117,7 +117,7 @@ resolvhost()
 		proto="4"
 	fi
 
-	_host=$( ${miscdir}/resolv ${proto} ${1} )
+	capture _host ${miscdir}/resolv ${proto} ${1}
 
 	[ $? -eq 0 ] && echo ${_host}
 }
@@ -142,7 +142,7 @@ conv2bytes()
 		return 0
 	fi
 
-	convval=$( ${miscdir}/conv2human ${1} )
+	capture convval ${miscdir}/conv2human ${1}
 	[ -z "${convval}" ] && return 1
 	[ ${convval} -gt 0 ] || return 1
 }
@@ -156,7 +156,7 @@ conv2bytes()
 conv2human()
 {
 	[ -z "${1}" ] && return 1
-	convval=$( ${miscdir}/conv2human ${1} | ${TR_CMD} '[:upper:]' '[:lower:]' )
+	capture convval ${miscdir}/conv2human ${1} && capture convval ${TR_CMD} '[:upper:]' '[:lower:]' <<< "${convval}"
 	return $?
 }
 
@@ -204,7 +204,10 @@ cdr2mask()
 validate_hwaddr()
 {
 	[ -z "${1}" ] && return 1
-	echo "${1}" | ${GREP_CMD} -q -E "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+	case "${1}" in
+		[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]) return 0 ;;
+	esac
+	return 1
 }
 
 # for select_jail_by_list
@@ -219,7 +222,7 @@ node_state()
 
 	local ip
 
-	ip=$( cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${nodename}'" )
+	capture ip cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${nodename}'"
 	[ -z "${ip}" ] && return 0 # nothing to test
 
 	if ! check_locktime ${ftmpdir}/shmux_${ip}.lock >/dev/null 2>&1; then
@@ -406,7 +409,7 @@ select_jail_by_list()
 					#host_hostname=$( cbsdsqlro local "SELECT host_hostname FROM jails WHERE jname='${jname}'" )
 					cbsdsqlro_vars local "SELECT host_hostname FROM jails WHERE jname='${jname}'"
 					diff_time=$(( curr_time - state_time ))
-					if is_number ${diff_time}; then
+					if ! is_number ${diff_time}; then
 						diff_time=0
 					else
 						[ ${diff_time} -lt 0 ] && diff_time=0	# protection from wrong time
@@ -432,7 +435,7 @@ select_jail_by_list()
 					cbsdsqlro_vars ${_xen_local_sqlite} "SELECT ip4_addr,vm_cpus,vm_os_type,state_time FROM settings"
 					cbsdsqlro_vars local "SELECT host_hostname FROM jails WHERE jname='${jname}'"
 					diff_time=$(( curr_time - state_time ))
-					if is_number ${diff_time}; then
+					if ! is_number ${diff_time}; then
 						diff_time=0
 					else
 						[ ${diff_time} -lt 0 ] && diff_time=0	# protection from wrong time
@@ -538,9 +541,11 @@ mac_gen()
 # todo: initenv is shell-based script:
 # Syntax error: Bad for loop variable
 #	for ((i=1; i<=${num}; i++)); do
-	for i in $( ${SEQ_CMD} 1 ${num} ); do
+	i=1
+	while [ ${i} -le ${num} ]; do
 		echo -n ${OUI}; ${DD_CMD} bs=1 count=3 if=/dev/random 2>/dev/null | ${HEXDUMP_CMD} -v -e '/1 ":%02x"'
 		echo
+		i=$(( i + 1 ))
 	done
 }
 
@@ -560,7 +565,7 @@ random_password_gen()
 	_extra_len=$(( _length + 8 ))
 
 	# todo: what the best, /dev/random or "date +%s" ?
-	_pw=$( ${HEAD_CMD} -c ${_extra_len} /dev/random | ${UUENCODE_CMD} -m - | ${GREP_CMD} -E -v '(^begin-base)|^====$' | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x" )
+	capture _pw ${HEAD_CMD} -c ${_extra_len} /dev/random | ${UUENCODE_CMD} -m - | ${GREP_CMD} -E -v '(^begin-base)|^====$' | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x"
 	_pw=$(  substr --pos=0 --len=${_length} --str=${_pw} )
 	printf "${_pw}"
 }
@@ -587,7 +592,7 @@ jname_is_multiple()
 	fi
 
 	if [ ${_is_mask} -ne 0 ]; then
-		_jail_mask=$( echo "${jname}" | ${TR_CMD} "*" "%" )
+		capture _jail_mask ${TR_CMD} "*" "%" <<< "${jname}"
 		#jail_list=$( cbsdsqlro local "SELECT jname FROM jails WHERE emulator = '${emulator}' AND jname LIKE '${_jail_mask}'" | ${XARGS_CMD} )
 		cbsdsqlro_vars local "SELECT jname FROM jails WHERE emulator = '${emulator}' AND jname LIKE '${_jail_mask}'" jail_list
 	fi
@@ -631,12 +636,11 @@ rotate_lease_file()
 	if [ -r ${_lease_file} ]; then
 		${TRUNCATE_CMD} -s0 ${_lease_file}.swap
 		gettime cur_time
-		eval $( ${CAT_CMD} ${_lease_file} | while read items; do
+		while read items; do
 			p1=${items%%:*}
 			p2=${items##*:}
 			[ -z "${p1}" -o -z "${p2}" ] && continue
 			if [ ${p2} -gt ${cur_time} ]; then
-				# still valid
 				echo "${items}" >> ${_lease_file}.swap
 				if [ -z "${_leasefile_skiplist}" ]; then
 					_leasefile_skiplist="${p1}"
@@ -644,8 +648,7 @@ rotate_lease_file()
 					_leasefile_skiplist="${_leasefile_skiplist} ${p1}"
 				fi
 			fi
-		echo "_leasefile_skiplist=\"${_leasefile_skiplist}\""
-		done )
+		done < ${_lease_file}
 		${MV_CMD} ${_lease_file}.swap ${_lease_file}
 		sync
 		[ -n "${_leasefile_skiplist}" ] && printf "${_leasefile_skiplist}"

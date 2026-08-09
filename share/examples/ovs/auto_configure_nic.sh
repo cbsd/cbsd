@@ -2,7 +2,7 @@
 [ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 [ ! -r "${CIX_DISTDIR}/subr/cbsdbootstrap.subr" ] && exit 1
 . ${CIX_DISTDIR}/subr/cbsdbootstrap.subr || exit 1
-. ${CIX_DISTDIR}/subr/nc.subr
+. ${CIX_DISTDIR}/subr/nc-lite.subr
 . ${CIX_DISTDIR}/subr/tools.subr
 test_sql_stuff
 

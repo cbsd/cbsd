@@ -18,7 +18,7 @@ workdir="${cbsd_workdir}"
 
 set -e
 . ${CIX_DISTDIR}/cbsd.conf
-. ${subrdir}/nc.subr
+. ${subrdir}/nc-lite.subr
 set +e
 
 export NOCOLOR=1
