@@ -96,6 +96,8 @@ main(int argc, char *argv[])
 
 	if ((kq = kqueue()) == -1) {
 		printf("Cannot create kqueue\n");
+		close(fd);
+		free(watchfile);
 		exit(1);
 	}
 
@@ -106,7 +108,9 @@ main(int argc, char *argv[])
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
 		printf("kevent\n");
+		close(fd);
 		close(kq);
+		free(watchfile);
 		exit(1);
 	}
 

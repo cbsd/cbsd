@@ -104,9 +104,7 @@ main(int argc, char **argv)
 	int retry = 0;
 	int ret;
 	do {
-		sqlite3_exec(db, "BEGIN", 0, 0, 0);
 		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-		sqlite3_exec(db, "COMMIT", 0, 0, 0);
 		if (ret == SQLITE_OK) break;
 		if (ret == SQLITE_BUSY) {
 			usleep(BUSY_SLEEP_US);

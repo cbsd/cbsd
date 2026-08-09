@@ -12,13 +12,13 @@
 #define CONFIG_DEFAULT_VERBOSITY LL_NOTICE
 
 /* Logging */
-char *syslog_ident;  /* Syslog ident */
-int syslog_facility; /* Syslog facility */
+extern char *syslog_ident;  /* Syslog ident */
+extern int syslog_facility; /* Syslog facility */
 
-int verbosity = LL_NOTICE; /* Default Loglevel */
-int syslog_enabled = 1;	   /* Is syslog enabled? */
+extern int verbosity;       /* Default Loglevel */
+extern int syslog_enabled;  /* Is syslog enabled? */
 
-char *cbsd_logfile = NULL; /* CBSD logfile */
+extern char *cbsd_logfile;  /* CBSD logfile */
 
 int cbsdloggercmd(int, char **);
 void cbsdlog(int level, const char *fmt, ...);

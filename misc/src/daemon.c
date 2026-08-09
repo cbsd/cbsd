@@ -130,7 +130,7 @@ main(int argc, char *argv[])
 		exit(1);
 	}
 
-	dbpath = malloc(strlen(workdir) + strlen(dbfile));
+	dbpath = malloc(strlen(workdir) + strlen(dbfile) + 1);
 	sprintf(dbpath, "%s%s", workdir, dbfile);
 
 	ppidfile = pidfile = user = NULL;
@@ -155,7 +155,9 @@ main(int argc, char *argv[])
 	memset(buffer, 0, sizeof(buffer));
 
 	for (i = 0; i < argc; i++) {
-		strncat(buffer, argv[i], strlen(argv[i]));
+		size_t remaining = sizeof(buffer) - strlen(buffer) - 1;
+		if (remaining == 0) break;
+		strncat(buffer, argv[i], remaining);
 		strncat(buffer, " ", 1);
 	}
 

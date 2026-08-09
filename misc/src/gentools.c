@@ -21,7 +21,7 @@ debugmsg(int level, const char *format, ...)
 	done = vfprintf(stdout, format, arg);
 	va_end(arg);
 
-	return 0;
+	return done;
 }
 
 int
@@ -34,5 +34,5 @@ errmsg(const char *format, ...)
 	done = vfprintf(stderr, format, arg);
 	va_end(arg);
 
-	return 0;
+	return done;
 }

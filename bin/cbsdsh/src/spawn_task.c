@@ -39,12 +39,10 @@ set_output(int outfd[2])
 	case log_type_tty:
 		outfd[1] = open("/dev/tty", O_WRONLY | O_NOCTTY);
 		break;
+	}
 
-		if (outfd[1] < 0) {
-			//		syslog(LOG_ERR, "Couldn't set up job
-			// output file descriptors: %m");
-			_exit(1);
-		}
+	if (outfd[1] < 0) {
+		_exit(1);
 	}
 
 	return 0;
@@ -57,9 +55,13 @@ spawncmd(int argc, char **argv)
 	int child_status = 0, infd = -1, outfd[2] = { -1, -1 };
 	//	char ** env = NULL;
 	char *workdir = lookupvar("workdir");
-	char env_workdir[10 + strlen(workdir)];
-
-	sprintf(env_workdir, "workdir=%s", workdir);
+	if (!workdir)
+		workdir = "/tmp";
+	size_t ewlen = strlen("workdir=") + strlen(workdir) + 1;
+	char *env_workdir = malloc(ewlen);
+	if (!env_workdir)
+		return 1;
+	snprintf(env_workdir, ewlen, "workdir=%s", workdir);
 
 	char *env[] = {
 		"PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin",
@@ -94,7 +96,7 @@ spawncmd(int argc, char **argv)
 	}
 
 	logging_type = log_type_file_trunc;
-	strcpy(log_file_name, argv[2]);
+	snprintf(log_file_name, sizeof(log_file_name), "%s", argv[2]);
 	jobid = atoi(argv[1]);
 	out1fmt("spawn [job: %d, logfile: %s]: %s\n", jobid,log_file_name, command);
 
@@ -136,6 +138,7 @@ spawncmd(int argc, char **argv)
 	close(infd);
 	close(outfd[1]);
 	close(outfd[0]);
+	free(env_workdir);
 
 	/* we make sure the command process finished successfully here */
 	waitpid(pid, &child_status, 0);

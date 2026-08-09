@@ -119,6 +119,7 @@ cbsd_pwaitcmd(int argc, char **argv)
 	EV_SET(&change, (uintptr_t)pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 		out1fmt("kevent register pid %d", (int)pid);
+		close(kq);
 		return 1;
 	}
 	tv.tv_sec = timeout;

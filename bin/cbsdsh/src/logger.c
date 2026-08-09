@@ -12,6 +12,12 @@
 #include "input.h"
 #include "logger.h"
 
+char *syslog_ident = NULL;
+int syslog_facility = 0;
+int verbosity = LL_NOTICE;
+int syslog_enabled = 1;
+char *cbsd_logfile = NULL;
+
 /* Low level logging. To use only for very big messages, otherwise
  * serverLog() is to prefer.
  */

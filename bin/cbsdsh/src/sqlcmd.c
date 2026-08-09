@@ -793,24 +793,22 @@ sqlitecmdro_vars(int argc, char **argv)
 int
 update_idlecmd(int argc, char **argv)
 {
-	char *str = NULL;
-	char sql[] =
-	    "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename=''";
+	sqlite3 *db;
 
 	if (argc != 2) {
 		out1fmt("%d, usage: update_idle <nodename>\n", argc);
 		return 0;
 	}
-	str = calloc(strlen(sql) + strlen(argv[1]) + 1, sizeof(char *));
 
-	sprintf(str,
-	    "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename='%s'",
+	db = sql_open("nodes",
+	    SQLITE_OPEN_READWRITE | SQLITE_OPEN_SHAREDCACHE);
+	if (db == NULL)
+		return 1;
+
+	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+	sql_exec(db, "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename='%q'",
 	    argv[1]);
-
-	char *a[] = { NULL, "nodes", str };
-	sqlitecmdrw(3, a);
-
-	free(str);
+	sqlite3_close(db);
 
 	return 0;
 }

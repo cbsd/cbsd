@@ -188,20 +188,23 @@ add_param(const char *name, void *value, size_t valuelen,
 			return 1;
 		}
 	} else if (nparams >= paramlistsize) {
-		paramlistsize *= 2;
+		int newsize = paramlistsize * 2;
 		void *tmp_params = realloc(params,
-		    paramlistsize * sizeof(*params));
-		void *tmp_param_parent = realloc(param_parent,
-		    paramlistsize * sizeof(*param_parent));
-		if (tmp_params == NULL || tmp_param_parent == NULL) {
-			free(params);
-			free(param_parent);
+		    newsize * sizeof(*params));
+		if (tmp_params == NULL) {
 			out1fmt("realloc");
 			return 1;
-		} else {
-			params = tmp_params;
-			param_parent = tmp_param_parent;
 		}
+		void *tmp_param_parent = realloc(param_parent,
+		    newsize * sizeof(*param_parent));
+		if (tmp_param_parent == NULL) {
+			free(tmp_params);
+			out1fmt("realloc");
+			return 1;
+		}
+		paramlistsize = newsize;
+		params = tmp_params;
+		param_parent = tmp_param_parent;
 	}
 
 	/* Look up the parameter. */

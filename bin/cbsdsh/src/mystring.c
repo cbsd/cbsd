@@ -860,19 +860,19 @@ static void free_kv_args(kv_arg_t *args, int n) {
     free(args);
 }
 
-static int monotonic_ms(void) {
+static long long monotonic_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (int)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
 static int try_lock_with_timeout(int fd, int timeout_ms) {
-    int start = monotonic_ms();
+    long long start = monotonic_ms();
     for (;;) {
         if (flock(fd, LOCK_EX | LOCK_NB) == 0) return 0;
         if (errno != EWOULDBLOCK && errno != EAGAIN) return -1;
 
-        int now = monotonic_ms();
+        long long now = monotonic_ms();
         if (timeout_ms >= 0 && (now - start) >= timeout_ms) return 1; // timeout
 
         struct timespec req = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 }; // 100ms
