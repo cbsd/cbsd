@@ -37,6 +37,7 @@ clean:
 	$(MAKE) -C bin/cbsdsh clean
 	$(MAKE) -C misc/src/sipcalc clean
 	$(MAKE) -C misc/src/cbsd_md5 clean
+	$(MAKE) -C misc/src/bsddialog clean
 	$(RM) -f bin/cbsdsh/.depend* misc/src/*.o $(SIMPLEXMLOBJECT) $(DUMPCPUTOPOLOGYOBJECT) $(DUMPISCSIDISCOVERYOBJECT)
 
 distclean:
@@ -89,6 +90,7 @@ endif
 	$(RM) -f tools/select_jail
 	$(RM) -f misc/sipcalc
 	$(RM) -f misc/cbsd_md5
+	$(RM) -f misc/bsddialog
 	# clean object files
 	$(RM) -f misc/dump_cpu_topology
 	$(RM) -f misc/dump_iscsi_discovery
@@ -170,12 +172,14 @@ endif
 	bin/cbsdsh/build && $(STRIP) bin/cbsdsh/src/dash && mv bin/cbsdsh/src/dash bin/cbsdsh/cbsd
 	$(MAKE) -C misc/src/sipcalc && $(STRIP) misc/src/sipcalc/sipcalc
 	$(MAKE) -C misc/src/cbsd_md5 && $(STRIP) misc/src/cbsd_md5/cbsd_md5
+	$(MAKE) -C misc/src/bsddialog STATIC=1 && $(STRIP) misc/src/bsddialog/utility/bsddialog
 	$(MAKE) -C share/bsdconfig/cbsd
 
 install:
 	$(INSTALL) man/cbsd.8 $(DESTDIR)$(PREFIX)/man/man8/cbsd.8
 	$(INSTALL) -o cbsd -g cbsd -m 555 misc/src/sipcalc/sipcalc $(PREFIX)/cbsd/misc/sipcalc
 	$(INSTALL) -o cbsd -g cbsd -m 555 misc/src/cbsd_md5/cbsd_md5 $(PREFIX)/cbsd/misc/cbsd_md5
+	$(INSTALL) -o cbsd -g cbsd -m 555 misc/src/bsddialog/utility/bsddialog $(PREFIX)/cbsd/misc/bsddialog
 	$(ENV) BINDIR=$(PREFIX)/bin $(MAKE) -C bin/cbsdsh install
 	$(MAKE) -C share/bsdconfig/cbsd install
 
