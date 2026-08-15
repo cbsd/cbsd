@@ -923,40 +923,40 @@ read_forarith(char **init, char **cond, char **update)
 		if (c == PEOF)
 			synerror("Missing '))'");
 		if (c == '\n') {
-			USTPUTC(' ', out);
+			STPUTC(' ', out);
 			continue;
 		}
 
 		if (c == '(') {
 			depth++;
-			USTPUTC(c, out);
+			STPUTC(c, out);
 			continue;
 		}
 
 		if (c == ')') {
 			if (depth > 0) {
 				depth--;
-				USTPUTC(c, out);
+				STPUTC(c, out);
 				continue;
 			}
 			c = pgetc_eatbnl();
 			if (c == ')')
 				break;
 			pungetc();
-			USTPUTC(')', out);
+			STPUTC(')', out);
 			continue;
 		}
 
 		if (c == ';' && depth == 0 && nsep < 2) {
-			USTPUTC('\0', out);
+			STPUTC('\0', out);
 			parts[++nsep] = out;
 			continue;
 		}
 
-		USTPUTC(c, out);
+		STPUTC(c, out);
 	}
 
-	USTPUTC('\0', out);
+	STPUTC('\0', out);
 	grabstackblock((out - (char *)stackblock()) + 1);
 
 	if (nsep != 2)
