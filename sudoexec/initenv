@@ -452,6 +452,7 @@ phase0()
 
 	#. ${CIX_DISTDIR}/cbsd.conf
 	[ -z "${cbsd_workdir}" -a -r /etc/rc.conf ] && . /etc/rc.conf
+
 	[ -n "${oworkdir}" ] && cbsd_workdir="${oworkdir}"
 
 	if [ -z "${cbsd_workdir}" ]; then
@@ -474,12 +475,13 @@ phase0()
 	workdir="${cbsd_workdir}"
 	[ -r "${inventory}" ] && . ${inventory}
 
-	# can be empty in inventory, work-around
-	if [ -z "${workdir}" ]; then
-		workdir="${cbsd_workdir}"
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
-	fi
+	[ ! -f "${CIX_DISTDIR}/misc/updateconf" ] && compile_cc ${CIX_DISTDIR}/misc/src/updateconf.c -o ${CIX_DISTDIR}/misc/updateconf
 
+	# can be empty in inventory, work-around
+	if [ -z "${workdir}" -o "${workdir}" = "NULL" ]; then
+		workdir="${cbsd_workdir}"
+		${CIX_DISTDIR}/misc/updateconf ${inventory} workdir="${cbsd_workdir}"
+	fi
 	[ -z "${cbsdver}" ] && cbsdver="unknown"
 	[ -r "${workdir}"/ver ] && read -r oldver < "${workdir}"/ver
 	[ -z "${oldver}" ] && oldver="unknown"
@@ -557,8 +559,11 @@ phase1()
 	if [ "${initenv_modify_cbsd_homedir}" = "1" -a ${CIX_GLOBAL_SYSTEM} -eq 1 ]; then
 		case "${platform}" in
 			Linux)
-				cbsd_home=$( echo ~${cbsd} > /dev/null 2>&1 )
-				[ "${cbsd_home}" != "${workdir}" ] && ${USERMOD_CMD} -d ${workdir} cbsd
+				cbsd_home=$( eval echo ~${cbsduser} )
+				if [ "${cbsd_home}" != "${workdir}" ]; then
+					echo "* ${USERMOD_CMD} -d ${workdir} cbsd"
+					${USERMOD_CMD} -d ${workdir} cbsd
+				fi
 				;;
 			*)
 				# check for correct homedir
@@ -589,7 +594,7 @@ phase1()
 			echo "normalize workdir path: ${workdir} -> ${real_workdir}"
 			workdir="${real_workdir}"
 			cbsd_workdir="${real_workdir}"
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} workdir="${cbsd_workdir}" > /dev/null 2>&1
+			${CIX_DISTDIR}/misc/updateconf ${inventory} workdir="${cbsd_workdir}"
 		fi
 
 		# check ZFS root dataset vs CBSD dataset
@@ -700,8 +705,8 @@ phase2()
 	[ ! -f "${CIX_DISTDIR}/misc/getshell" ] && compile_cc ${CIX_DISTDIR}/misc/src/getshell.c -o ${CIX_DISTDIR}/misc/getshell
 	[ ! -f "${CIX_DISTDIR}/misc/mountpoint" ] && compile_cc ${CIX_DISTDIR}/misc/src/mountpoint.c -o ${CIX_DISTDIR}/misc/mountpoint
 
-	if [ ! -f "${CIX_DISTDIR}/misc/sqlcli" ]; then
-		_pkgconf=$(command -v pkg-config 2>/dev/null)
+	if [ ! -r "${CIX_DISTDIR}/misc/sqlcli" ]; then
+		_pkgconf=$( command -v pkg-config 2>/dev/null )
 		if [ $? -ne 0 -o -z "${_pkgconf}" ]; then
 			echo "pkg-config must be present on the system to build CBSD from the source. Please install it first: pkg install pkgconf";
 			exit 1
@@ -1013,7 +1018,7 @@ phase3()
 					echo "${p}" > /etc/hostname
 					;;
 				*)
-					${CIX_DISTDIR}/misc/cbsdsysrc -vf /etc/rc.conf hostname="${p}"
+					${CIX_DISTDIR}/misc/updateconf /etc/rc.conf hostname="${p}"
 					;;
 			esac
 		else
@@ -1079,7 +1084,6 @@ phase5()
 
 	[ "${nodename}" = "auto" ] && nodename=$( ${HOSTNAME_CMD} )
 	[ -z "${nodename}" ] && err 1 "nodename must be not empty"
-
 
 	if [ "${nodeip}" = "auto" ]; then
 		case "${node_ip4_active}" in
@@ -1298,7 +1302,7 @@ phase5()
 				fi
 
 				if [ -n "${INITCFG_PRESEED}" ]; then
-					${CIX_DISTDIR}/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${_checkme}="${answ}" > /dev/null
+					${CIX_DISTDIR}/misc/updateconf ${INITCFG_PRESEED} ${_checkme}="${answ}"
 				fi
 			fi
 		done
@@ -1341,7 +1345,7 @@ phase5()
 		for i in ipfw_enable nodename racct nodeip natip; do
 			T=
 			eval T="\$$i"
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
+			${CIX_DISTDIR}/misc/updateconf ${INITCFG_PRESEED} ${i}="${T}"
 		done
 	fi
 
@@ -1419,7 +1423,7 @@ phase8()
 		if [ $? -eq 1 ]; then
 			${ECHO} "${N1_COLOR}Removing module ${_modulename} cmd: ${N2_COLOR}${_dst}${N0_COLOR}"
 			${RM_CMD} -f ${_lnk}
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} mod_${_my_module}_enabled="NO" > /dev/null 2>&1
+			${CIX_DISTDIR}/misc/updateconf ${inventory} mod_${_my_module}_enabled="NO"
 		fi
 	done
 
@@ -1437,7 +1441,7 @@ phase8()
 		done
 
 		_my_module=$( echo ${_my_module} | ${TR_CMD} "-" "_" )	# cast '-' to '_'
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${inventory} mod_${_my_module}_enabled="YES" > /dev/null 2>&1
+		${CIX_DISTDIR}/misc/updateconf ${inventory} mod_${_my_module}_enabled="YES"
 	done
 }
 
@@ -1588,15 +1592,15 @@ EOF_HEADER
 	[ -z "${cbsd_workdir}" ] && err 1 "no such cbsd_workdir vars"
 	[ ! -r ${workdir}/rc.conf ] && ${TOUCH_CMD} ${workdir}/rc.conf
 
-	if [ "${platform}" != "Linux" -a -r /etc/rc.conf ]; then
+	if [ ${CIX_INIT_ID} = "0" ]; then
 		if [ "${cbsd_workdir}" != "${workdir}" ]; then
 			if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 				if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
 					initenv_modify_rcconf_cbsd_workdir=1
-					${CIX_DISTDIR}/misc/cbsdsysrc -vf /etc/rc.conf cbsd_workdir="${workdir}"
+					${CIX_DISTDIR}/misc/updateconf /etc/rc.conf cbsd_workdir="${workdir}"
 				else
 					initenv_modify_rcconf_cbsd_workdir=0
-					${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+					${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf cbsd_workdir="${workdir}"
 				fi
 			fi
 		fi
@@ -1604,10 +1608,10 @@ EOF_HEADER
 		if [ $( ${GREP_CMD} ^cbsd_workdir= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 			if getyesno "Shall i modify the /etc/rc.conf to sets cbsd_workdir=\"${workdir}\"?: ${p}" ${initenv_modify_rcconf_cbsd_workdir}; then
 				initenv_modify_rcconf_cbsd_workdir=1
-				${CIX_DISTDIR}/misc/cbsdsysrc -vf /etc/rc.conf cbsd_workdir="${workdir}"
+				${CIX_DISTDIR}/misc/updateconf /etc/rc.conf cbsd_workdir="${workdir}"
 			else
 				initenv_modify_rcconf_cbsd_workdir=0
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsd_workdir="${workdir}"
+				${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf cbsd_workdir="${workdir}"
 			fi
 		fi
 	else
@@ -1630,6 +1634,7 @@ EOF
 
 	phase4
 	phase5
+
 	# Inventory area
 	phase6
 
@@ -1683,12 +1688,12 @@ EOF
 						true
 						;;
 				esac
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsdd_enable=YES
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf cbsdd_enable="YES"
+				${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf cbsdd_enable=YES
+				${CIX_DISTDIR}/misc/updateconf /etc/rc.conf cbsdd_enable="YES"
 				;;
 			*)
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf cbsdd_enable="NO"
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf /etc/rc.conf cbsdd_enable="NO"
+				${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf cbsdd_enable="NO"
+				${CIX_DISTDIR}/misc/updateconf /etc/rc.conf cbsdd_enable="NO"
 				;;
 		esac
 	else
@@ -1724,11 +1729,11 @@ EOF
 	if [ $( ${GREP_CMD} ^rcshutdown_timeout= /etc/rc.conf ${workdir}/rc.conf | ${WC_CMD} -l ) = 0 ]; then
 		if getyesno "Shall i modify the /etc/rc.conf to sets rcshutdown_timeout=\"900\"?" ${initenv_modify_rcconf_rcshutdown_timeout}; then
 			initenv_modify_rcconf_rcshutdown_timeout=1
-			${CIX_DISTDIR}/misc/cbsdsysrc -vf /etc/rc.conf rcshutdown_timeout="900"
+			${CIX_DISTDIR}/misc/updateconf /etc/rc.conf rcshutdown_timeout="900"
 			rcshutdown_timeout="900"
 		else
 			initenv_modify_rcconf_rcshutdown_timeout=0
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf rcshutdown_timeout="900"
+			${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf rcshutdown_timeout="900"
 		fi
 	fi
 
@@ -1744,7 +1749,7 @@ EOF
 				${SYSCTL_CMD} -qw kern.init_shutdown_timeout="900"
 			else
 				initenv_modify_syctl_rcshutdown_timeout=0
-				${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
+				${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf kern_init_shutdown_timeout="900"
 			fi
 		fi
 	fi
@@ -1775,7 +1780,7 @@ EOF
 			workdir; do
 			T=
 			eval T="\$$i"
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${INITCFG_PRESEED} ${i}="${T}" >/dev/null
+			${CIX_DISTDIR}/misc/updateconf ${INITCFG_PRESEED} ${i}="${T}"
 		done
 
 		preseedinit_desc="Would you like a config for \"${CIX_BIN} init\" preseed to be printed?"
@@ -1794,7 +1799,7 @@ EOF
 		fi
 		${RM_CMD} -f ${INITCFG_PRESEED}
 
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${workdir}/rc.conf preseedinit="${answ}" > /dev/null 2>&1
+		${CIX_DISTDIR}/misc/updateconf ${workdir}/rc.conf preseedinit="${answ}"
 	fi
 
 	if [ ${first_init} -eq 1 ]; then

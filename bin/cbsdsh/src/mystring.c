@@ -320,7 +320,7 @@ int
 is_numbercmd(int argc, char **argv)
 {
 	if (argv[1])
-		return is_number(argv[1]);
+		return is_number(argv[1]) ? 0 : 1;
 	else
 		return 1;
 }

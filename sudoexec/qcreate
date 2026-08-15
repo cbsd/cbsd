@@ -178,6 +178,8 @@ oquiet=0
 progress_state_file=
 . ${cbsdinit}
 
+. ${tools}
+
 # if some of params specified via args, store them as temporary vars
 for i in ${QEMU_ARGS}; do
 	unset o${i}
@@ -192,10 +194,10 @@ readconf qemu-default-default.conf
 . ${jfs}
 
 if [ -z "${jconf}" ]; then
-	jconf=$( ${MKTEMP_CMD} )
+	capture jconf ${MKTEMP_CMD}
 	export CBSD_INIT_SAVE2FILE=${jconf}		# save args and generate jconf
 	[ -z "${removejconf}" ] && removejconf="0"	# do not delete jconf by default
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf} removejconf="${removejconf}" >/dev/null 2>&1
+	updateconf ${jconf} removejconf="${removejconf}"
 	. ${cbsdinit}
 	unset CBSD_INIT_SAVE2FILE
 fi
@@ -244,7 +246,7 @@ really_create_vm()
 	# do not create disk
 	[ "${imgtype}" = "none" ] && return 0
 
-	_res=$( substr --pos=0 --len=5 --str=${imgtype} )
+	capture _res substr --pos=0 --len=5 --str=${imgtype}
 	if [ "${_res}" = "/dev/" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: qcreate for ${jname}: imgtype = raw: ${imgtype}
 		 [ ! -c "${imgtype}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such character device: ${N2_COLOR}${imgtype}${N0_COLOR}"
@@ -283,10 +285,10 @@ really_create_vm()
 				;;
 		esac
 
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf} ver="${ver}" > /dev/null
+		updateconf ${jconf} ver="${ver}"
 		${MV_CMD} /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
-		_msg=$( virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} 2>&1 )
+		capture _msg virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype}
 		_res=$?
 		if [ ${_res} -ne 0 ]; then
 			qremove ${jname}
@@ -306,7 +308,7 @@ fi
 gettime st_time
 over="${ver}"
 oarch="${arch}"
-jconf=$( ${REALPATH_CMD} ${jconf} )
+capture jconf ${REALPATH_CMD} ${jconf}
 
 # several defaults
 [ -z "${mnt_start}" ] && mnt_start="0"
@@ -366,6 +368,7 @@ if [ -n "${flavor}" ]; then
 fi
 
 # if some of params specified via args, restore them from temporary vars
+SYSRC_TEMPRCCONF=
 for i in ${QEMU_ARGS}; do
 	eval _mytest=\$o$i
 	# Adjust some missed optional args
@@ -395,8 +398,11 @@ for i in ${QEMU_ARGS}; do
 				;;
 		esac
 	fi
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} ${i}="${_mytest}" > /dev/null 2>&1
+	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ${i}=${_mytest}"
 done
+
+[ -n "${SYSRC_TEMPRCCONF}" ] && updateconf ${temprcconf} ${SYSRC_TEMPRCCONF}
+SYSRC_TEMPRCCONF=
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	[ -n "${cbsd_bhyve_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_bhyve_queue_name} id=${jname} cmd=qcreate vm_ram=${vm_ram} vm_cpus=${vm_cpus} vm_os_type=${vm_os_type} astart=${astart} protected=${protected} emulator=${emulator} vnc_port='0' status=1
@@ -409,7 +415,7 @@ if [ $? -ne 0 ]; then
 fi
 
 vm_os_type=$( echo "${vm_os_type}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
-${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} vm_os_type="${vm_os_type}" > /dev/null 2>&1
+updateconf ${temprcconf} vm_os_type="${vm_os_type}"
 
 # profile
 if [ -z "${vm_os_profile}" ]; then
@@ -472,7 +478,7 @@ fi
 if [ "${zfsfeat}" = "1" -a "${mnt_start}" = "0" ]; then
 	readconf zfs.conf
 	. ${subrdir}/zfs.subr
-	DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
+	capture DATA ${ZFS_CMD} get -Ho value name ${jaildatadir}
 	_msg=$( ${ZFS_CMD} create -o mountpoint=${workdir}/vm/${jname} ${DATA}/${jname} )
 	_res=$?
 	if [ ${_res} -ne 0 ]; then
@@ -483,13 +489,13 @@ if [ "${zfsfeat}" = "1" -a "${mnt_start}" = "0" ]; then
 	${CHOWN_CMD} ${cbsduser}:${cbsduser} ${workdir}/vm/${jname}
 	${CHMOD_CMD} 0770 ${workdir}/vm/${jname}
 
-	vm_zfs_guid=$( ${ZFS_CMD} get -Ho value guid ${DATA}/${jname} 2>/dev/null )
+	capture vm_zfs_guid ${ZFS_CMD} get -Ho value guid ${DATA}/${jname}
 	[ -z "${vm_zfs_guid}" ] && vm_zfs_guid="0"
 
 	[ -z "${data}" ] && data="${jaildatadir}/${jname}-${jaildatapref}"
 	olddata="${data}"
 	data="${workdir}/vm/${jname}"
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${temprcconf} data="${data}" > /dev/null 2>&1
+	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} data=\"${data}\""
 	${LN_CMD} -sf ${data} ${olddata}
 	${LN_CMD} -sf ${data} ${jailsysdir}/${jname}
 else
@@ -506,12 +512,12 @@ fi
 
 case "${platform}" in
 	Linux)
-		conf_owner=$( ${STAT_CMD} -c "%u" ${jconf_tmp} )
-		conf_group=$( ${STAT_CMD} -c "%g" ${jconf_tmp} )
+		capture conf_owner ${STAT_CMD} -c "%u" ${jconf_tmp}
+		capture conf_group ${STAT_CMD} -c "%g" ${jconf_tmp}
 		;;
 	*)
-		conf_owner=$( ${STAT_CMD} -f "%u" ${jconf_tmp} )
-		conf_group=$( ${STAT_CMD} -f "%g" ${jconf_tmp} )
+		capture conf_owner ${STAT_CMD} -f "%u" ${jconf_tmp}
+		capture conf_group ${STAT_CMD} -f "%g" ${jconf_tmp}
 		;;
 esac
 
@@ -537,7 +543,7 @@ fi
 
 if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
 	# change emulator type for jcreate
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} emulator="jail" > /dev/null 2>&1
+	updateconf ${jconf_tmp} emulator="jail"
 
 	if [ -n "${jprofile}" ]; then
 		. ${subrdir}/settings-tui.subr
@@ -550,30 +556,33 @@ if [ "${vm_os_type}" = "freebsd" -a "${from_jail}" = "1" ]; then
 		fi
 	fi
 
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} emulator="qemu" > /dev/null 2>&1
+	updateconf ${jconf_tmp} emulator="qemu"
 fi
 
 # adjust some missed variabled
 readconf vnc.conf
 readconf spice.conf
-[ -z "${qemu_vnc_resolution}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} qemu_vnc_resolution="${default_vnc_width}x${default_vnc_height}"  > /dev/null 2>&1
-[ -z "${qemu_vnc_tcp_bind}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} qemu_vnc_tcp_bind="${default_vnc_tcp_bind}"  > /dev/null 2>&1
-[ -z "${qemu_vnc_resolution}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} qemu_spice_resolution="${default_spicy_width}x${default_spicy_height}"  > /dev/null 2>&1
-[ -z "${qemu_vnc_tcp_bind}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} qemu_spice_tcp_bind="${default_spicy_tcp_bind}"  > /dev/null 2>&1
+[ -z "${qemu_vnc_resolution}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} qemu_vnc_resolution=${default_vnc_width}x${default_vnc_height}"
+[ -z "${qemu_vnc_tcp_bind}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} qemu_vnc_tcp_bind=${default_vnc_tcp_bind}"
+[ -z "${qemu_spice_resolution}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} qemu_spice_resolution=${default_spicy_width}x${default_spicy_height}"
+[ -z "${qemu_spice_tcp_bind}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} qemu_spice_tcp_bind=${default_spicy_tcp_bind}"
 
 if [ -z "${cd_vnc_wait}" ]; then
 	case "${default_vnc_wait}" in
 		auto|1)
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} cd_vnc_wait="1"  > /dev/null 2>&1
+			SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} cd_vnc_wait=1"
 			;;
 		*)
-			${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} cd_vnc_wait="0"  > /dev/null 2>&1
+			SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} cd_vnc_wait=0"
 			;;
 	esac
 fi
 
-[ -z "${vnc_password}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} vnc_password="${default_vnc_password}" > /dev/null 2>&1
-[ -z "${spicy_password}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} spicy_password="${default_spicy_password}" > /dev/null 2>&1
+[ -z "${vnc_password}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} vnc_password=${default_vnc_password}"
+[ -z "${spicy_password}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} spicy_password=${default_spicy_password}"
+
+updateconf ${jconf_tmp} ${SYSRC_TEMPRCCONF}
+SYSRC_TEMPRCCONF=
 
 # re-read jail params and apply personal after profile
 . ${jconf_tmp}
@@ -589,7 +598,7 @@ fi
 [ -z "${interface2}" -a -n "${ci_interface2}" ] && interface2="${ci_interface2}"
 
 # apply pkglist from tpl_pkglist
-[ -n "${tpl_pkglist}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jconf_tmp} pkglist="${tpl_pkglist}" > /dev/null 2>&1
+[ -n "${tpl_pkglist}" ] && updateconf ${jconf_tmp} pkglist="${tpl_pkglist}"
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
@@ -604,22 +613,20 @@ fi
 # imgsize validate
 if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
 
-	if ! is_number "${imgsize_min}"; then
-		# imgsize_min is number. assume value in bytes
+	if is_number "${imgsize_min}"; then
 		imgsize_min_bytes="${imgsize_min}"
 	else
-		imgsize_min_bytes=$( get_bytes ${imgsize_min} )
+		capture imgsize_min_bytes ${miscdir}/conv2human "${imgsize_min}"
 	fi
 
 	[ -z "${imgsize_min_bytes}" -o "${imgsize_min_bytes}" = "0" ] && err 1 "${N1_COLOR}${CIX_APP}: unable to convert imgsize to bytes: ${N2_COLOR}${imgsize_min}${N0_COLOR}"
 
 	imgsize_min_human_mb=$(( imgsize_min_bytes / 1024 / 1024 ))
 
-	if ! is_number "${imgsize}"; then
-		# imgsize is number. assume value in bytes
+	if is_number "${imgsize}"; then
 		imgsize_bytes="${imgsize}"
 	else
-		imgsize_bytes=$( get_bytes ${imgsize} )
+		capture imgsize_bytes ${miscdir}/conv2human "${imgsize}"
 	fi
 
 	imgsize_human_mb=$(( imgsize_bytes / 1024 / 1024 ))
@@ -637,20 +644,18 @@ fi
 # vm_ram validate
 if [ -n "${vm_ram_min}" -a -n "${vm_ram}" ]; then
 
-	if ! is_number "${vm_ram_min}"; then
-		# vm_ram_min is number. assume value in bytes
+	if is_number "${vm_ram_min}"; then
 		vm_ram_min_bytes="${vm_ram_min}"
 	else
-		vm_ram_min_bytes=$( get_bytes ${vm_ram_min} )
+		capture vm_ram_min_bytes ${miscdir}/conv2human "${vm_ram_min}"
 	fi
 
 	vm_ram_min_human_mb=$(( vm_ram_min_bytes / 1024 / 1024 ))
 
-	if ! is_number "${vm_ram}"; then
-		# vm_ram is number. assume value in bytes
+	if is_number "${vm_ram}"; then
 		vm_ram_bytes="${vm_ram}"
 	else
-		vm_ram_bytes=$( get_bytes ${vm_ram} )
+		capture vm_ram_bytes ${miscdir}/conv2human "${vm_ram}"
 	fi
 
 	vm_ram_human_mb=$(( vm_ram_bytes / 1024 / 1024 ))
@@ -666,6 +671,13 @@ fi
 defdsk="dsk1.vhd"
 defnic="nic1.vhd"
 
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemudsk.schema qemudsk
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemunic.schema qemunic
+#/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-p9shares.schema p9shares
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-settings.schema settings
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus
+/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus_run
+
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
 	really_create_vm
@@ -679,13 +691,6 @@ fi
 
 [ ! -d "${data}" ] && log_err 1 "Can't create datadir ${data}"
 [ ! -d ${jailfstabdir}  ] && ${MKDIR_CMD} -m 0770 -p ${jailfstabdir}
-
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemudsk.schema qemudsk
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemunic.schema qemunic
-#/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-p9shares.schema p9shares
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-settings.schema settings
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus_run
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && ${CP_CMD} ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
@@ -725,10 +730,10 @@ if [ "${vm_zfs_guid}" != "0" ]; then
 fi
 
 if [ "${uuid}" = "0" -o -z "${uuid}" ]; then
-	uuid=$( ${UUIDGEN_CMD} )
+	capture uuid ${UUIDGEN_CMD}
 	#[ -z "${NOINTER}" -o ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Global VM UUID: ${N2_COLOR}${uuid}${N0_COLOR}"
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET uuid='${uuid}'"
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} uuid="${uuid}" > /dev/null
+	updateconf ${jailsysdir}/${jname}/rc.conf_${jname} uuid="${uuid}"
 fi
 
 if [ ${quiet} -ne 1 -o -z "${NOINTER}" ]; then
@@ -750,7 +755,7 @@ fi
 
 if [ ${zfsfeat} -eq 1 -a "${imgtype}" = "zvol" ]; then
 	. ${subrdir}/zfs.subr
-	dsk_zfs_guid=$( get_dsk_zfs_guid -p ${data}/${defdsk} 2>&1 )
+	capture dsk_zfs_guid get_dsk_zfs_guid -p ${data}/${defdsk}
 	_ret=$?
 	[ ${_ret} -ne 0 ] && dsk_zfs_guid="0"
 fi
@@ -759,40 +764,45 @@ fi
 
 dsk_bsize=0
 
-if is_number "${imgsize}"; then
-	if conv2bytes ${imgsize}; then
-		dsk_bsize="${convval}"
-	else
-		dsk_bsize=0
-	fi
+if ! is_number "${imgsize}"; then
+	capture dsk_bsize ${miscdir}/conv2human ${imgsize}
+	[ -z "${dsk_bsize}" ] && dsk_bsize=0
 else
-	# already on bytes ?
 	dsk_bsize="${imgsize}"
 fi
 
+# qemudsk/qemunic inserts + settings update — batch into SQLITE_LOCAL
+SQLITE_LOCAL=
+
 if [ -n "${qemu_virtio_type}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO qemudsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_zfs_guid ) VALUES ( '${jname}','${qemu_virtio_type}','${defdsk}','0','${dsk_bsize}','${dsk_zfs_guid}' )"
+	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO qemudsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_zfs_guid ) VALUES ( '${jname}','${qemu_virtio_type}','${defdsk}','0','${dsk_bsize}','${dsk_zfs_guid}' )"
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO qemudsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_zfs_guid ) VALUES ( '${jname}','${defdsk}','0','${dsk_bsize}','${dsk_zfs_guid}' )"
+	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO qemudsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_zfs_guid ) VALUES ( '${jname}','${defdsk}','0','${dsk_bsize}','${dsk_zfs_guid}' )"
 fi
 
 if [ -n "${nic_driver}" ]; then
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO qemunic ( jname,nic_driver,nic_parent ) VALUES ( '${jname}', '${nic_driver}', '${interface}' )"
+	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO qemunic ( jname,nic_driver,nic_parent ) VALUES ( '${jname}', '${nic_driver}', '${interface}' )"
 else
-	${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO qemunic ( jname,nic_parent ) VALUES ( '${jname}', '${interface}' )"
+	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO qemunic ( jname,nic_parent ) VALUES ( '${jname}', '${interface}' )"
 fi
 
 # update state_time
-cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET state_time="(strftime('%s','now'))"
-cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE settings SET created="(strftime('%s','now'))"
+SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET state_time=(strftime('%s','now')); UPDATE settings SET created=(strftime('%s','now'))"
 
-# Check if SIZE if valid: can't be smaller then template
-if is_number ${vm_ram}; then
-	# not number, try to convert
-	if conv2bytes "${vm_ram}"; then
-		vm_ram="${convval}"
+# check bootable + vnc_password
+SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE qemudsk SET bootable='true' WHERE dsk_path='${defdsk}'"
+[ "${vnc_password}" = "0" ] && SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET vnc_password=''"
+
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "${SQLITE_LOCAL}"
+SQLITE_LOCAL=
+
+# Check if SIZE is valid: convert to bytes if needed
+if ! is_number "${vm_ram}"; then
+	# not a number (e.g. "1g"), try to convert to bytes
+	if capture _vm_ram_bytes ${miscdir}/conv2human "${vm_ram}"; then
+		vm_ram="${_vm_ram_bytes}"
 	else
-		log_err 1 "${vm_ram} is not number and we can't convert int via conv2bytes"
+		log_err 1 "${vm_ram} is not a number and we can't convert via conv2human"
 	fi
 fi
 
@@ -800,11 +810,11 @@ if [ -n "${register_iso_as}" -a -n "${register_iso_name}" ]; then
 	cd_name="${register_iso_as}"
 	cd_path="${srcdir}/iso/${register_iso_name}"
 
-	cd_rec_num=$( cbsdsqlro storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" )
+	cbsdsqlro_vars storage_media "SELECT COUNT(path) FROM media WHERE name='${cd_name}' AND path='${cd_path}' AND type='iso' AND jname='-'" cd_rec_num
 
 	if [ "${cd_rec_num}" = "0" ]; then
 		# register new ISO with assignment to this VM
-		_res=$( media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname} 2>&1 )
+		capture _res media mode=register name="${register_iso_as}" path="${srcdir}/iso/${register_iso_name}" type=iso jname=${jname}
 		_ret=$?
 		[ ${_ret} -ne 0 ] && err 1 "${N1_COLOR}qcreate: media register error: ${_res}${N0_COLOR}"
 	else
@@ -853,12 +863,13 @@ done
 if [ ${is_cloud} -eq 1 ]; then
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}auto-generate cloud-init settings: ${N2_COLOR}${jailsysdir}/${jname}/cloud-init${N0_COLOR}" 1>&2
 	# auto adjust some missed settings
+	SYSRC_TEMPRCCONF=
 	if [ -z "${ci_interface}" ]; then
 		ci_interface="${interface}"
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface="${ci_interface}" > /dev/null 2>&1
+		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_interface=\"${ci_interface}\""
 	fi
-	[ -z "${ci_jname}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_jname="${jname}" > /dev/null 2>&1
-	[ -z "${ci_fqdn}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_fqdn="${host_hostname}" > /dev/null 2>&1
+	[ -z "${ci_jname}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_jname=\"${jname}\""
+	[ -z "${ci_fqdn}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_fqdn=\"${host_hostname}\""
 
 	if [ -z "${ci_ip4_addr}" ]; then
 		${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_ip4_addr not set. Force to: ${N2_COLOR}DHCP${N0_COLOR}" 2>&1
@@ -887,7 +898,7 @@ if [ ${is_cloud} -eq 1 ]; then
 
 		case "${_pureip}" in
 			[Dd][Hh][Cc][Pp])
-				_pureip=$( dhcpd 2>/dev/null )
+				capture _pureip dhcpd
 				if [ $? -eq 2 ]; then
 					cbsdlogger NOTICE ${CIX_APP}: no free IP address for DHCP in nodeippool
 					err 1 "${N1_COLOR}${CIX_APP}: no free IP address for DHCP in nodeippool${N0_COLOR}"
@@ -897,7 +908,7 @@ if [ ${is_cloud} -eq 1 ]; then
 				_mod=1
 				;;
 			[Dd][Hh][Cc][Pp][vV]6)
-				_pureip=$( dhcpdv6 2>/dev/null )
+				capture _pureip dhcpdv6
 				if [ $? -eq 2 ]; then
 					cbsdlogger NOTICE ${CIX_APP}: no free IP address for DHCPv6 in nodeip6pool
 					err 1 "${N1_COLOR}${CIX_APP}: no free IP address for DHCPv6 in nodeip6pool${N0_COLOR}"
@@ -928,41 +939,43 @@ if [ ${is_cloud} -eq 1 ]; then
 	IFS="${OIFS}"
 
 	ci_ip4_addr="${normalize_ci_ip4_addr}"
-	[ -n "${ci_gw42}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_gw42="${ci_gw42}" > /dev/null 2>&1
+	[ -n "${ci_gw42}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_gw42=\"${ci_gw42}\""
 
 	if [ -n "${ci_ip4_addr2}" ]; then
 		#todo: normalize
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr2="${ci_ip4_addr2}" > /dev/null 2>&1
+		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_ip4_addr2=\"${ci_ip4_addr2}\""
 		normalize_ip4_addr="${normalize_ip4_addr},${ci_ip4_addr2}"
 	fi
 
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr="${normalize_ci_ip4_addr}" > /dev/null 2>&1
+	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_ip4_addr=\"${normalize_ci_ip4_addr}\""
 	qset jname="${jname}" ip4_addr="${normalize_ip4_addr}" > /dev/null 2>&1
 
 	readconf cloud-init.conf
 
-	[ -z "${ci_nameserver_address}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_address="${default_ci_nameserver_address}" > /dev/null 2>&1
-	[ -z "${ci_nameserver_search}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_search="${default_ci_nameserver_search}" > /dev/null 2>&1
-	[ -z "${ci_interface_name}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface_name="${default_ci_interface_name}" > /dev/null 2>&1
-	[ -z "${ci_user_pw_user}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_user="${ci_user_pw_user}" > /dev/null 2>&1
-	[ -z "${ci_user_pw_root}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
-	[ -z "${ci_user_pw_root}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}" > /dev/null 2>&1
-	[ -z "${ci_user_pubkey}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pubkey="${ci_user_pubkey}" > /dev/null 2>&1
-	[ -z "${ci_interface2}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface2="${ci_interface2}" > /dev/null 2>&1
+	[ -z "${ci_nameserver_address}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nameserver_address=\"${default_ci_nameserver_address}\""
+	[ -z "${ci_nameserver_search}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nameserver_search=\"${default_ci_nameserver_search}\""
+	[ -z "${ci_interface_name}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_interface_name=\"${default_ci_interface_name}\""
+	[ -z "${ci_user_pw_user}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_user_pw_user=\"${ci_user_pw_user}\""
+	[ -z "${ci_user_pw_root}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_user_pw_root=\"${ci_user_pw_root}\""
+	[ -z "${ci_user_pubkey}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_user_pubkey=\"${ci_user_pubkey}\""
+	[ -z "${ci_interface2}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_interface2=\"${ci_interface2}\""
 
 	# GET MAC
-	nic_hwaddr0=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM qemunic LIMIT 1 )
+	capture nic_hwaddr0 cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM qemunic LIMIT 1
 
 	if [ "${nic_hwaddr0}" = "0" ]; then
 		# gen MAC
-		nic_hwaddr0=$( mac_gen 00:a0:98 )
+		capture nic_hwaddr0 mac_gen 00:a0:98
 		cbsdlogger NOTICE ${CIX_APP}: qcreate for ${jname}: MAC address randomized and updated for nic id 1: ${nic_hwaddr0}
 		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemunic SET nic_hwaddr='${nic_hwaddr0}' WHERE id='1'"
 	fi
 
-	[ -z "${ci_nic_hwaddr0}" ] && ${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nic_hwaddr0="${nic_hwaddr0}" > /dev/null 2>&1
+	[ -z "${ci_nic_hwaddr0}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nic_hwaddr0=\"${nic_hwaddr0}\""
 
 	#${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/rc.conf_${jname} ip4_addr="${ip4_addr}" > /dev/null 2>&1
+
+	updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ${SYSRC_TEMPRCCONF}
+	SYSRC_TEMPRCCONF=
 
 	case "${vm_os_type}" in
 		windows)
@@ -977,11 +990,11 @@ if [ ${is_cloud} -eq 1 ]; then
 	cloudinit mode=gen fromfile=${jailsysdir}/${jname}/rc.conf_${jname} jname=${jname} cloudengine="${cloudengine}"
 fi
 
-# mark the first disk bootable
-cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemudsk SET bootable='true' WHERE dsk_path='${defdsk}'"
-
-# unset vnc_password when vnc_password=0 (reserved)
-[ "${vnc_password}" = "0" ] && cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vnc_password=''"
+# mark the first disk bootable + vnc_password
+SQLITE_LOCAL="UPDATE qemudsk SET bootable='true' WHERE dsk_path='${defdsk}'"
+[ "${vnc_password}" = "0" ] && SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET vnc_password=''"
+cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "${SQLITE_LOCAL}"
+SQLITE_LOCAL=
 
 # set default nice from rctl_nice
 [ -n "${rctl_nice}" ] && nice="${rctl_nice}"
