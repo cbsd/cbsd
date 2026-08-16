@@ -516,6 +516,7 @@ static char *expari(char *start, int flag)
 	removerecordregions(begoff);
 
 	pushstackmark(&sm, endoff);
+
 	result = arith(start);
 	popstackmark(&sm);
 

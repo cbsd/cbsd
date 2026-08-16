@@ -957,7 +957,8 @@ read_forarith(char **init, char **cond, char **update)
 	}
 
 	STPUTC('\0', out);
-	grabstackblock((out - (char *)stackblock()) + 1);
+	parts[0] = (char *)stackblock();
+	grabstackblock((out - parts[0]) + 1);
 
 	if (nsep != 2)
 		synerror("Bad arithmetic for loop");
@@ -966,7 +967,6 @@ read_forarith(char **init, char **cond, char **update)
 		s = parts[i];
 		while (*s == ' ' || *s == '\t')
 			s++;
-		/* rtrim */
 		char *e = s + strlen(s);
 		while (e > s && (e[-1] == ' ' || e[-1] == '\t'))
 			*--e = '\0';

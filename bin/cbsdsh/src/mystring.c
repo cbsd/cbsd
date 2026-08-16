@@ -668,6 +668,83 @@ roundupcmd(int argc, char **argv)
 	return 0;
 }
 
+enum {
+	S_STR,
+	S_CHARS,
+};
+
+int
+strstrip_usage(void)
+{
+	out1fmt("Strip characters from string\n");
+	out1fmt("require: --str, --chars\n");
+	out1fmt("  sample: strstrip --str='\"hello\"' --chars='\"'\n");
+	return (EX_USAGE);
+}
+
+int
+strstripcmd(int argc, char **argv)
+{
+	int optcode = 0;
+	int option_index = 0;
+	char *str = NULL;
+	char *chars = NULL;
+	int have_str = 0;
+	int have_chars = 0;
+	char bitmap[256];
+
+	struct option long_options[] = {
+		{ "str", required_argument, 0, S_STR },
+		{ "chars", required_argument, 0, S_CHARS },
+		{ 0, 0, 0, 0 }
+	};
+
+	if (argc != 3)
+		return strstrip_usage();
+
+	optind = 1;
+	optopt = 0;
+	opterr = 0;
+	optreset = 1;
+
+	while (TRUE) {
+		optcode = getopt_long(argc, argv, "", long_options, &option_index);
+		if (optcode == -1)
+			break;
+		switch (optcode) {
+		case S_STR:
+			str = optarg;
+			have_str = 1;
+			break;
+		case S_CHARS:
+			chars = optarg;
+			have_chars = 1;
+			break;
+		}
+	}
+
+	optarg = NULL;
+	optind = 0;
+	optopt = 0;
+	opterr = 0;
+	optreset = 0;
+
+	if (!have_str || !have_chars)
+		return strstrip_usage();
+
+	memset(bitmap, 0, sizeof(bitmap));
+	for (const char *p = chars; *p; p++)
+		bitmap[(unsigned char)*p] = 1;
+
+	for (const char *p = str; *p; p++) {
+		if (!bitmap[(unsigned char)*p])
+			outc(*p, &output);
+	}
+	flushout(&output);
+
+	return 0;
+}
+
 
 typedef struct {
     const char *arg;   // source argv[i]
