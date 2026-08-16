@@ -1,38 +1,47 @@
 #!/usr/bin/env cbsd
 #v12.0.5
-MYARG=""
-MYOPTARG="cfg_only debug debug_engine delay inter jname lm quiet"
+CIXARG=""
+CIXOPTARG="cfg_only debug debug_engine delay inter jname lm quiet"
 MYDESC="Start QEMU domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Start the qemu domain. You can start the offline machine, or continue the work
-of the frozen machine from the checkpoint.
+ Start the qemu domain. When used in a directory with a CBSDfile,
+the qstart command only processes the environments described in the CBSDfile.
+
+* ${UNDERLINE}SQL conditions${N0_COLOR} supported:
+
+This script supports the reserved word ${UNDERLINE}WHERE${N0_COLOR}, which allows you to write SQL condition,
+please see '.schema qemu' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}cfg_only=${N0_COLOR}         - when set (e.g:'1'), find/create tap/vnc and
-                     generate qemu args but without run, e.g for debugging.
+ ${N2_COLOR}cfg_only=${N0_COLOR}         - when set, find/create tap/vnc and generate qemu args
+                     but without run, e.g for debugging.
  ${N2_COLOR}debug=${N0_COLOR}            - more debug messages.
  ${N2_COLOR}debug_engine=${N0_COLOR}     - overwrite debug_engine settings: use gdb or lldb
                      as debugger when launch qemu ( mostly for inherits debug
                      with live migration ).
- ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N secbefore start, mainly to smooth
+ ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N sec before start, mainly to smooth
                      the astart, default is: '0', no delay.
  ${N2_COLOR}inter=${N0_COLOR}            - set 1 to prevent any questions and to accept answers by default.
- ${N2_COLOR}jname=${N0_COLOR}            - Target VM. If jail='*' or jail='vm*' then start  all
+ ${N2_COLOR}jname=${N0_COLOR}            - target VM. If jname='*' or jname='vm*' then start all
                      qemu or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
  ${N2_COLOR}lm=${N0_COLOR}               - 0,1: when set to 1: prepare for acceptance of this
                      domain via live migration request ( used by 'bmigrate').
- ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration.
+ ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration
                      data exchange. Can be '0' for auto port, by default.
  ${N2_COLOR}lm_rnodename=${N0_COLOR}     - (optional) for live migration, remote/source
                      CBSD nodename.
- ${N2_COLOR}quiet=${N0_COLOR}             - 0,1: be quiet, dont output verbose message.
+ ${N2_COLOR}quiet=${N0_COLOR}            - 0,1: be quiet, dont output verbose message.
+
+Note: qemu supports aarch64 and riscv64 architectures via vm_arch parameter.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd qstart
+ # cbsd qstart jname='vm1'
+ # cbsd qstart WHERE astart=\\\'1\\\' AND bhyve_vnc_tcp_bind LIKE \\\'127%%\\\'
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -52,7 +61,7 @@ odebug_engine=
 cfg_only=		# create a configuration and run immediately
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 
 readconf buildworld.conf
 readconf jail-freebsd-default.conf
@@ -72,8 +81,12 @@ delay=0
 quiet=0
 oquiet=0
 
-. ${cbsdinit}
+cixinit
 ojname="${jname}"
+
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="Off"
+init_jlist_args -e qemu
 
 # live migration
 if [ "${lm}" = "1" ]; then
@@ -81,32 +94,10 @@ if [ "${lm}" = "1" ]; then
 	exit 0
 fi
 
-. ${system}
+. ${subrdir}/system.subr
 . ${subrdir}/universe.subr
 . ${subrdir}/qemu.subr
 . ${subrdir}/vnet.subr 		# get_vm_uplink_interface
-
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" -o ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_qemu_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
-	jname="${all_qemu_list}"
-
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	fi
-
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-fi
-
 # trim args from "$*"
 ARGS=
 for i in $*; do
@@ -260,6 +251,7 @@ start_qemu()
 						fi
 				fi
 				[ ${quiet} -ne 1 ] && echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				echo "media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} quiet=${quiet}"
 				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname} quiet=${quiet}
 			elif [ "${iso2img}" = "1" ]; then
 				# Copy ISO as disk ?
@@ -366,14 +358,15 @@ start_qemu()
 		fi
 	fi
 
-	case "${vm_boot}" in
-		"hdd")
-			boot_arg='-boot c'
-			;;
-		"cd")
-			boot_arg='-boot d'
-			;;
-	esac
+# LEGACY FORM, needs ,bootindex=1
+#	case "${vm_boot}" in
+#		"hdd")
+#			boot_arg='-boot c'
+#			;;
+#		"cd")
+#			boot_arg='-boot d'
+#			;;
+#	esac
 
 	# for vnet we can make another action
 	. ${subrdir}/vnet.subr
@@ -635,22 +628,23 @@ start_qemu()
 				else
 					case "${platform}" in
 						Linux)
-							GENISOIMAGE_CMD=$( which xorriso )
-							_log=$( ${MKTEMP_CMD} )
+							GENISOIMAGE_CMD="${XORRISO_CMD}"
+							capture _log ${MKTEMP_CMD}
 
 							case "${ci_template}" in
 								*)
-									_label="CIDATA"
+									#_label="CIDATA"
+									_label="cidata"
 									;;
 							esac
 
 							${GENISOIMAGE_CMD} \
 								-as mkisofs \
 								-iso-level 2 \
-								-volid ${_label} \
+								-volid "${_label}" \
 								-output "${jailsysdir}/${jname}/seed.iso" \
-								-joliet \
-								-rational-rock \
+								-untranslated-filenames \
+								-rock \
 								"${jailsysdir}/${jname}/cloud-init" > ${_log} 2>&1
 							ret=$?
 
@@ -662,7 +656,7 @@ start_qemu()
 							true
 							;;
 						*)
-							GENISOIMAGE_CMD=$( which makefs )
+							GENISOIMAGE_CMD="${MAKEFS_CMD}"
 							case "${ci_template}" in
 								*)
 									_label="cidata"
@@ -942,13 +936,13 @@ else
 		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}No such ${data}/${MDFILE} but mdsize flags is not null.${N0_COLOR}"
 
 		# if zfsfeat=1, try scan for zvol
-		[ "${zfsfeat}" != "1" ] && break
+		if [ "${zfsfeat}" = "1" ]; then
 
 		readconf zfs.conf
 		. ${subrdir}/zfs.subr
 		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
-		[ -z "${DATA}" ] && break
+		if [ -n "${DATA}" ]; then
 
 		for ((lunname=0; lunname<=10; lunname++)); do
 			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then
@@ -956,6 +950,8 @@ else
 				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
 		done
+		fi	# -n DATA
+		fi	# zfsfeat=1
 	fi
 fi
 

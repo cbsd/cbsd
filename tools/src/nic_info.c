@@ -1,10 +1,23 @@
 /* Part of CBSD Project
-Obtain info for NIC
+   Obtain info for NIC
 
   --mtu: return MTU size
   --phys: return 1, 0 (physical or virtual iface?)
   --media: return media
+
+  FreeBSD: media uses ifr.ifr_media (IFM_xxx encoding)
+  Linux: media returns link speed in Mbps via ethtool
 */
+
+#if defined(__FreeBSD__)
+#include <sys/sysctl.h>
+#endif
+
+#if defined(__linux__)
+#include <linux/ethtool.h>
+#include <linux/sockios.h>
+#include <sys/stat.h>
+#endif
 
 #include <sys/ioctl.h>
 #include <sys/types.h>
@@ -12,18 +25,12 @@ Obtain info for NIC
 #include <net/if.h>
 
 #include <err.h>
+#include <errno.h>
+#include <getopt.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <sys/sysctl.h>
-#include <sys/errno.h>
-
-#include <err.h>
-#include <getopt.h>
-
-#define FALSE 0
-#define TRUE 1
 
 /* List of all args */
 enum {
@@ -45,15 +52,72 @@ usage(void)
 	exit(1);
 }
 
+#if defined(__FreeBSD__)
+static int
+get_media_freebsd(int s, struct ifreq *ifr)
+{
+	if (ioctl(s, SIOCGIFMEDIA, (caddr_t)ifr) < 0)
+		return -1;
+
+	return (ifr->ifr_media);
+}
+
+static int
+is_physical_freebsd(const char *nic_family, int nic_id)
+{
+	char sysctl_name[256];
+	size_t len = 0;
+
+	snprintf(sysctl_name, sizeof(sysctl_name),
+	    "dev.%s.%d.%%parent", nic_family, nic_id);
+
+	if (sysctlbyname(sysctl_name, NULL, &len, NULL, 0) != 0)
+		return 0;
+
+	return 1;
+}
+#endif
+
+#if defined(__linux__)
+static int
+get_media_linux(int s, struct ifreq *ifr)
+{
+	struct ethtool_cmd ecmd;
+
+	memset(&ecmd, 0, sizeof(ecmd));
+	ecmd.cmd = ETHTOOL_GSET;
+	ifr->ifr_data = (char *)&ecmd;
+
+	if (ioctl(s, SIOCETHTOOL, ifr) < 0)
+		return -1;
+
+	return (int)ethtool_cmd_speed(&ecmd);
+}
+
+static int
+is_physical_linux(const char *nic)
+{
+	char path[256];
+	struct stat sb;
+
+	snprintf(path, sizeof(path), "/sys/class/net/%s/device", nic);
+	if (stat(path, &sb) == 0)
+		return 1;
+
+	return 0;
+}
+#endif
+
 int
 main(int argc, char *argv[])
 {
 	int s;
-	int af = AF_INET;
 	struct ifreq ifr;
 	char *nic = NULL;
+#if defined(__FreeBSD__)
 	char *nic_family = NULL;
-	char *tmpstr = NULL;
+	int nic_id = 0;
+#endif
 	int optcode = 0;
 	int option_index = 0;
 
@@ -62,31 +126,25 @@ main(int argc, char *argv[])
 	int show_phys = 0;
 	int quiet = 0;
 	int phys = 0;
-	int mtu = 0;
 	int media = 0;
-	int nic_id = 0;
-	int i = 0;
-	int x = 0;
-	int y = 0;
-	int error = 0;
-	size_t len = 0;
+	int mtu = 0;
 
-	static struct option long_options[] = { { "help", no_argument, 0,
-						    C_HELP },
+	static struct option long_options[] = {
+		{ "help", no_argument, 0, C_HELP },
 		{ "media", no_argument, 0, C_MEDIA },
 		{ "mtu", no_argument, 0, C_MTU },
 		{ "nic", required_argument, 0, C_NIC },
 		{ "phys", no_argument, 0, C_PHYS },
 		{ "quiet", no_argument, 0, C_QUIET },
-		/* End of options marker */
-		{ 0, 0, 0, 0 } };
+		{ 0, 0, 0, 0 }
+	};
 
-	while (TRUE) {
+	while (1) {
 		optcode = getopt_long(argc, argv, "", long_options,
 		    &option_index);
-		if (optcode == -1) {
+		if (optcode == -1)
 			break;
-		}
+
 		switch (optcode) {
 		case C_HELP:
 			usage();
@@ -98,27 +156,30 @@ main(int argc, char *argv[])
 			show_media = 1;
 			break;
 		case C_NIC:
-			i = strlen(optarg) + 1;
-			nic = malloc(i);
-			tmpstr = malloc(i);
-			nic_family = malloc(i);
-			memset(nic, 0, i);
-			memset(tmpstr, 0, i);
-			memset(nic_family, 0, i);
-			strcpy(nic, optarg);
-			x = 0;
-			y = 0;
-			for (i = 0; i < strlen(nic); i++) {
-				if ((nic[i] >= 48) && (nic[i] <= 57)) {
-					tmpstr[x] = nic[i];
-					x++;
-				} else {
-					nic_family[y] = nic[i];
-					y++;
+			nic = strdup(optarg);
+			if (nic == NULL)
+				err(1, "strdup");
+#if defined(__FreeBSD__)
+			{
+				int i, x = 0, y = 0;
+				char *tmpstr;
+				int len = strlen(nic) + 1;
+
+				nic_family = calloc(1, len);
+				tmpstr = calloc(1, len);
+				if (nic_family == NULL || tmpstr == NULL)
+					err(1, "calloc");
+
+				for (i = 0; i < (int)strlen(nic); i++) {
+					if (nic[i] >= '0' && nic[i] <= '9')
+						tmpstr[x++] = nic[i];
+					else
+						nic_family[y++] = nic[i];
 				}
+				nic_id = atoi(tmpstr);
+				free(tmpstr);
 			}
-			nic_id = atoi(tmpstr);
-			free(tmpstr);
+#endif
 			break;
 		case C_PHYS:
 			show_phys = 1;
@@ -129,66 +190,66 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (!nic) {
+	if (!nic)
 		usage();
-	}
 
-	if ((s = socket(af, SOCK_DGRAM, 0)) < 0) {
+	if ((s = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 		err(1, "socket");
-	}
 
+	memset(&ifr, 0, sizeof(ifr));
 	ifr.ifr_addr.sa_family = AF_INET;
-	strcpy(ifr.ifr_name, nic);
+	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", nic);
 
 	if (show_media == 1) {
-		if (ioctl(s, SIOCGIFMEDIA, (caddr_t)&ifr) < 0) {
+#if defined(__FreeBSD__)
+		media = get_media_freebsd(s, &ifr);
+#elif defined(__linux__)
+		media = get_media_linux(s, &ifr);
+#else
+		media = -1;
+#endif
+		if (media < 0)
 			err(1, "ioctl (get media)");
-		}
 	}
 
 	if (show_mtu == 1) {
-		if (ioctl(s, SIOCGIFMTU, (caddr_t)&ifr) < 0) {
+		if (ioctl(s, SIOCGIFMTU, (caddr_t)&ifr) < 0)
 			err(1, "ioctl (get mtu)");
-		}
+		mtu = ifr.ifr_mtu;
 	}
 
 	if (show_phys == 1) {
-		i = strlen(nic) + 30;
-		tmpstr = malloc(i); // extra dev.<nic>.0.%parent
-		memset(tmpstr, 0, i);
-		sprintf(tmpstr, "dev.%s.%d.%%parent", nic_family, nic_id);
-		error = sysctlbyname(tmpstr, NULL, &len, NULL, 0);
-		if (error != 0) {
-			phys = 0;
-		} else {
-			phys = 1;
-		}
-		free(tmpstr);
+#if defined(__FreeBSD__)
+		phys = is_physical_freebsd(nic_family, nic_id);
+#elif defined(__linux__)
+		phys = is_physical_linux(nic);
+#else
+		phys = 0;
+#endif
 	}
 
 	close(s);
 
 	if (quiet) {
-		if (show_media == 1) {
-			fprintf(stdout, "%d\n", ifr.ifr_media);
-		}
-		if (show_mtu == 1) {
-			fprintf(stdout, "%d\n", ifr.ifr_mtu);
-		}
-		if (show_phys == 1) {
+		if (show_media == 1)
+			fprintf(stdout, "%d\n", media);
+		if (show_mtu == 1)
+			fprintf(stdout, "%d\n", mtu);
+		if (show_phys == 1)
 			fprintf(stdout, "%d\n", phys);
-		}
 	} else {
-		if (show_media == 1) {
-			fprintf(stdout, "media:%d\n", ifr.ifr_media);
-		}
-		if (show_mtu == 1) {
-			fprintf(stdout, "mtu:%d\n", ifr.ifr_mtu);
-		}
-		if (show_phys == 1) {
+		if (show_media == 1)
+			fprintf(stdout, "media:%d\n", media);
+		if (show_mtu == 1)
+			fprintf(stdout, "mtu:%d\n", mtu);
+		if (show_phys == 1)
 			fprintf(stdout, "phys:%d\n", phys);
-		}
 	}
+
+	free(nic);
+#if defined(__FreeBSD__)
+	free(nic_family);
+#endif
 
 	return (0);
 }

@@ -1,16 +1,42 @@
 #!/usr/bin/env cbsd
 #v11.0.7
-MYARG="ip"
-MYOPTARG="mode skip"
+CIXARG="ip"
+CIXOPTARG="mode skip"
 MYDESC="Return network interface name by IP"
 ADDHELP="
-mode=route (default) - detect interface for routing\n\
-mode=strict - match IP on local interface only (check for ip existance)\n\
-skip= skip for interface(s), e.g: skip=\"bridge\"\n"
+
+${H3_COLOR}Description${N0_COLOR}:
+
+ Detect network interface name by IP address.
+ Supports both IPv4 and IPv6. Two detection strategies available.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}ip=${N0_COLOR}         - IP address to search for (required);
+ ${N2_COLOR}mode=route${N0_COLOR}   - detect interface via routing table (default);
+ ${N2_COLOR}mode=strict${N0_COLOR}  - match IP on local interfaces only (check for IP existence);
+ ${N2_COLOR}skip=${N0_COLOR}        - skip interface(s), e.g: skip=\"bridge\";
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd getnics-by-ip ip=10.0.0.1
+  # cbsd getnics-by-ip ip=10.0.0.1 mode=strict
+  # cbsd getnics-by-ip ip=192.168.1.1 skip=\"bridge tap\"
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd nics-list --help
+
+"
 
 . ${subrdir}/nc.subr
+
+mode=
 skip=
-. ${cbsdinit}
+
+. ${tools}
+cixinit
+
 [ -z "${mode}" ] && mode="route"
 
 ipwmask ${ip}
@@ -21,26 +47,52 @@ _inet=$?
 
 case "${ip}" in
 	127.*)
-		err 0 "lo0"
+		case ${platform} in
+			Linux)	err 0 "lo" ;;
+			*)	err 0 "lo0" ;;
+		esac
 		;;
 esac
 
 if [ -z "${skip}" ]; then
-	ifs=$( ${miscdir}/nics-list | ${XARGS_CMD} )
+	capture ifs ${miscdir}/nics-list
 else
-	ifs=$( ${miscdir}/nics-list -s "${skip}" | ${XARGS_CMD} )
+	capture ifs ${miscdir}/nics-list -s "${skip}"
 fi
 
 iface=
+
+case ${platform} in
+	Linux)
+		_check_ipv4()
+		{
+			${IP_CMD} -4 addr show ${1} 2>/dev/null | ${AWK_CMD} '/inet /{sub(/\/.*/, "", $2); print $2}' | ${GREP_CMD} ^${2}$ 2>/dev/null
+		}
+		_check_ipv6()
+		{
+			${IP_CMD} -6 addr show ${1} 2>/dev/null | ${AWK_CMD} '/inet6 /{sub(/\/.*/, "", $2); print $2}' | ${GREP_CMD} -v %${1}$ | ${GREP_CMD} ^${2}$ 2>/dev/null
+		}
+		;;
+	*)
+		_check_ipv4()
+		{
+			${IFCONFIG_CMD} ${1} | ${AWK_CMD} '/inet [0-9]+/{print $2}' | ${GREP_CMD} ^${2}$ 2>/dev/null
+		}
+		_check_ipv6()
+		{
+			${IFCONFIG_CMD} ${1} | ${AWK_CMD} '/inet6 *:*+/{print $2}' | ${GREP_CMD} -v %${1}$ | ${GREP_CMD} ^${2}$ 2>/dev/null
+		}
+		;;
+esac
 
 # search on local iface first
 for iface in ${ifs}; do
 	case "${_inet}" in
 		1)
-			A=$( ${IFCONFIG_CMD} ${iface} | ${AWK_CMD} '/inet [0-9]+/{print $2}' | ${GREP_CMD} ^${IWM}$ 2>/dev/null )
+			capture A _check_ipv4 ${iface} ${IWM}
 			;;
 		2)
-			A=$( ${IFCONFIG_CMD} ${iface} |  ${AWK_CMD} '/inet6 *:*+/{print $2}'| ${GREP_CMD} -v %${iface}$ | ${GREP_CMD} ^${IWM}$ 2>/dev/null )
+			capture A _check_ipv6 ${iface} ${IWM}
 			;;
 	esac
 	[ -n "${A}" ] && break
@@ -62,8 +114,31 @@ case ${_inet} in
 		;;
 esac
 
-IFACE=$( /sbin/route -n get ${MODIF} ${IWM} 2>/dev/null | ${AWK_CMD} '/interface:/{print $2}' )
+case ${platform} in
+	Linux)
+		_get_route_iface()
+		{
+			case ${1} in
+				-inet)	${IP_CMD} -4 route get ${2} 2>/dev/null | ${AWK_CMD} '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' ;;
+				-inet6)	${IP_CMD} -6 route get ${2} 2>/dev/null | ${AWK_CMD} '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' ;;
+			esac
+		}
+		;;
+	*)
+		_get_route_iface()
+		{
+			/sbin/route -n get ${1} ${2} 2>/dev/null | ${AWK_CMD} '/interface:/{print $2}'
+		}
+		;;
+esac
+
+capture IFACE _get_route_iface ${MODIF} ${IWM}
 
 # return default
-[ -z ${IFACE} ] && IFACE="lo0"
+case ${platform} in
+	Linux)	_lo="lo" ;;
+	*)	_lo="lo0" ;;
+esac
+[ -z ${IFACE} ] && IFACE="${_lo}"
+
 err 0 ${IFACE}

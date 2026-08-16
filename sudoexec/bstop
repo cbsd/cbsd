@@ -13,6 +13,12 @@ kill command) to bhyve process and expects completion during the timeout.
 If during this time the virtual machine did not respond to the signal, the script
 will terminate the bhyve process of forcibly.
 
+* ${UNDERLINE}SQL conditions${N0_COLOR} supported:
+
+This script supports the reserved word ${UNDERLINE}WHERE${N0_COLOR}, which allows you to write SQL condition,
+please see '.schema bhyve' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
+
+
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}checkpoint=${N0_COLOR}   - Set to '1' for 'bcheckpoint suspend=1' instead of bstop;
@@ -28,15 +34,17 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd bstop
  # cbsd bstop jname=diehard noacpi=1
+ # cbsd bstop WHERE astart=\\\'1\\\' AND bhyve_vnc_tcp_bind LIKE \\\'127%%\\\'
 
 ${H3_COLOR}See also${N0_COLOR}:
 
  cbsd bstart --help
+ cbsd bdestroy --help
 
 "
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 
 jname=
 
@@ -46,76 +54,21 @@ if [ ! -r "${Makefile}" ]; then
 	[ -z "${1}" ] && select_jail_by_list -s "List of online VMs" -a "On" -e bls -r ${sqlreplica}
 fi
 
+
 noacpi=0		# soft shutdown by default
 hard_timeout=30		# default soft timeout: 30 seconds
 
 readconf bstop.conf
 cixinit
 
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_bhyve_list=$( ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
-	jname="${all_bhyve_list}"
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="On"
+init_jlist_args -e bhyve
 
-	jname_in_args=0
-
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	else
-		# cbsd bstart <env1> <env2> route
-		for i in ${CIX_OTHER_ARGS}; do
-			strpos --str="${i}" --search="="
-			if [ $? -eq 0 ]; then
-				jname_in_args=1
-				# not param=value - jail?
-				jname_in_cbsdfile=0
-				for j in ${all_bhyve_list}; do
-					[ "${i}" != "${j}" ] && continue
-					jname_in_cbsdfile=1
-				done
-				if [ ${jname_in_cbsdfile} -eq 1 ]; then
-					if [ -z "${ojname}" ]; then
-						ojname="${i}"
-					else
-						ojname="${ojname} ${i}"
-					fi
-				else
-					${ECHO} "${N1_COLOR}${CIX_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
-				fi
-			fi
-		done
-		if [ ${jname_in_args} -eq 1 ]; then
-			jname="${ojname}"
-		else
-			jname="${all_bhyve_list}"
-		fi
-	fi
-
-	unset ojname
-
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	# multiple?
-	strpos --str="${jname}" --search=" "
-	if [ $? -ne 0 ]; then
-		jail_list="${jname}"
-	fi
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-fi
-
-[ -z "${jname}" -a -z "${CIX_OTHER_ARGS}" ] && err 1 "${N1_COLOR}No bhyve specified${N0_COLOR}"
 [ -z "${TMUX_CMD}" ] && capture TMUX_CMD which tmux
 [ -z "${TMUX_CMD}" ] && err 1 "${N1_COLOR}no such tmux${N0_COLOR}"
 
-. ${system}
+. ${subrdir}/system.subr
 . ${mdtools}
 . ${subrdir}/bhyve.subr
 

@@ -55,7 +55,7 @@ add_qemu_pci_id_busy()
 
 	# use $_buf_file as an intermediate buffer for share
 	# and exchange $qemu_pci_id_busy_list vars
-	${CIX_DISTDIR}/misc/cbsdsysrc -qf ${_buf_file} qemu_pci_id_busy_list="${qemu_pci_id_busy_list}" > /dev/null 2>&1
+	updateconf ${_buf_file} qemu_pci_id_busy_list="${qemu_pci_id_busy_list}"
 
 	return 0
 }
@@ -282,7 +282,7 @@ init_qemu()
 	esac
 
 	for _i in ${_required_kmods}; do
-		if ! ${KLDSTAT_CMD} -qm ${_i} >/dev/null 2>&1; then
+		if ! kernel_mod -q ${_i}; then
 			${ECHO} "${N1_COLOR}No kldloaded module: ${N2_COLOR}${_i}${N0_COLOR}"
 			case "${platform}" in
 				FreeBSD)
@@ -325,13 +325,10 @@ init_qemu()
 # fi
 compile_cd_args()
 {
-	local cd_id=0
+	local cd_id=0 _pcislot_args= _ext= _device= T= F=
 	local sqldelimer=" "
-	local _pcislot_args=
-	local _ext
-	local _device T F
 
-	eval $( cbsdsqlro storage_media SELECT idx,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" | while read idx path; do
+	eval $( cbsdsqlro storage_media "SELECT idx,path FROM media WHERE jname='${jname}' AND type='iso'" | while read idx path; do
 
 		# check for .fs$ extension: use ahci-hd for this (e.g OpenBSD image)
 		_ext=${path##*.}
@@ -380,7 +377,23 @@ compile_cd_args()
 			# no free pci bus
 			exit 0
 		fi
-		cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw"
+		# legacy cdrom drive:
+		#cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw"
+		# 
+#-device virtio-scsi-pci,id=scsi0 \
+#-drive file=/usr/jails/jails-system/freebsd1/seed.iso,media=cdrom,readonly=on,format=raw,if=none,id=cd0 \
+#-device scsi-cd,drive=cd0
+
+#-device virtio-scsi-pci,id=scsi0 \
+#-drive file=/usr/jails/jails-system/freebsd1/seed.iso,media=cdrom,readonly=on,format=raw,if=none,id=cd0 \
+#-device scsi-cd,drive=cd0
+
+cd_args="-device ahci,id=ahci0 \
+-drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw,if=none,id=cdrom0 \
+-device ide-cd,bus=ahci0.0,drive=cdrom0"
+
+		#cd_args="${cd_args} -drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw,if=ide,bus=0,unit=0"
+		#cd_args="${cd_args} -device virtio-scsi-pci,id=scsi0 -drive file=${jailsysdir}/${jname}/seed.iso,media=cdrom,readonly=on,format=raw,if=none,id=cd0 -device scsi-cd,drive=cd0"
 	fi
 
 # qemu-system-x86_64 -drive format=raw,media=cdrom,readonly,file=debian-8.2.0-amd64-DVD-1.iso 
@@ -423,7 +436,7 @@ compile_dsk_args()
 
 #	dsk_count=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite 'SELECT COUNT(dsk_path) FROM qemudsk' )
 
-	iso_img2=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1 )
+		capture iso_img2 cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" LIMIT 1
 
 	[ -r ${iso_img2} ] && iso_count=$(( iso_count + 1 ))
 
@@ -527,7 +540,8 @@ compile_nic_args()
 	local _parent_mtu=0
 	local _ret=
 	local _is_bridge
-	local autoconn_iface=$( ${CIX_DISTDIR}/misc/cbsdsysrc -n cbsd_autoconnect_bridge 2>&1 )
+	local autoconn_iface=''
+	#capture autoconn_iface ${CIX_DISTDIR}/misc/cbsdsysrc -n cbsd_autoconnect_bridge
 	local _pcislot_args= _pref
 	local IFS OIFS
 
@@ -1153,7 +1167,7 @@ compile_machine_args()
 									${ECHO} "${N2_COLOR}nvmm_module_auto_load${N1_COLOR} options is enabled via nvmm.conf, trying to load the module automatically via: ${N2_COLOR}kldload nvmm...${N0_COLOR}"
 									sync
 									sleep 1
-									${KLDLOAD_CMD} nvmm
+									kernel_mod -l nvmm
 									_ret=$?
 									;;
 							esac
@@ -1247,11 +1261,11 @@ compile_vnc_args()
 					;;
 			esac
 			# build skip list
-			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = 'qemu'" )
+			capture _vms cbsdsqlro ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = 'qemu'"
 			for i in ${_vms}; do
 				[ "${i}" = "${jname}" ] && continue		# its me
 				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
-				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
+				capture _tmpport cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1"
 				if [ -n "${_tmpport}" ]; then
 					if is_number ${_tmpport}; then
 						[ ${_tmpport} -eq 0 ] && continue
@@ -1290,7 +1304,7 @@ compile_vnc_args()
 	fi
 
 	# jailed?
-	_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	capture _jailed cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1"
 	[ -z "${_jailed}" ] && _jailed="0"
 
 	# this is jailed qemu, try to obtain jail IPs
@@ -1398,11 +1412,11 @@ compile_spice_args()
 					;;
 			esac
 			# build skip list
-			_vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"qemu\"" )
+			capture _vms cbsdsqlro ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"qemu\""
 			for i in ${_vms}; do
 				[ "${i}" = "${jname}" ] && continue             # its me
 				[ ! -r ${jailsysdir}/${i}/local.sqlite ] && continue
-				_tmpport=$( cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vm_spice_port FROM settings LIMIT 1" )
+				capture _tmpport cbsdsqlro ${jailsysdir}/${i}/local.sqlite "SELECT vm_spice_port FROM settings LIMIT 1"
 				if [ -n "${_tmpport}" ]; then
 					if is_number ${_tmpport}; then
 						[ ${_tmpport} -eq 0 ] && continue

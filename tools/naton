@@ -1,40 +1,43 @@
 #!/usr/bin/env cbsd
-#v10.1.0
-MYARG=""
-MYOPTARG="nat"
+#v11.2.0
+CIXARG=""
+CIXOPTARG="nat"
 MYDESC="Enable NAT service for RFC1918 Networks"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Enable/apply NAT framework configured via 'cbsd natcfg'
+ Enable/apply NAT framework previously configured via 'cbsd natcfg'.
+ Loads the appropriate firewall backend (nft, pf, ipfw, ipfilter),
+ enables IP forwarding and assigns the NAT address.
 
-pf firewall notes:
+ pf firewall notes:
 
- Also you can re-configure 'cbsd naton' function via ~cbsd/etc/cbsd-pf.conf and switch from
- internal CBSD 'enable' method to custom.
+  You can re-configure 'cbsd naton' function via ~cbsd/etc/cbsd-pf.conf and switch from
+  internal CBSD 'enable' method to custom function.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}nat${N0_COLOR}    - alternative NAT framework name.
+ ${N2_COLOR}nat${N0_COLOR}    - alternative NAT framework name (default: configured in natcfg).
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
- # cbsd naton
+  # cbsd naton
 
 ${H3_COLOR}See also${N0_COLOR}:
 
- cbsd natcfg --help
- cbsd natoff --help
- cbsd expose --help
+  cbsd natcfg --help
+  cbsd natoff --help
+  cbsd expose --help
 
 "
 
 . ${subrdir}/nc.subr
 
-. ${cbsdinit}
+. ${tools}
+cixinit
 
-. ${system}
 . ${initenv}
+. ${system}
 
 [ -n "${nat}" ] && nat_enable="${nat}"
 
@@ -58,13 +61,16 @@ check_nat_ip()
 ${ECHO} "${N1_COLOR}CBSD: Enable IP forwarding for NAT service${N0_COLOR}"
 case "${platform}" in
 	Linux)
-		${SYSCTL_CMD} net.ipv4.ip_forward=1 >/dev/null
-		${SYSCTL_CMD} net.ipv6.ip_forward=1 >/dev/null
+		${ECHO} "${N1_COLOR}CBSD: Enable IPv6 forwarding${N0_COLOR}"
+		${SYSCTL_CMD} net.ipv6.conf.all.forwarding=1>/dev/null 2>/dev/null
+		[ $? -ne 0 ] && cbsdlogger WARNING ${CIX_APP}: cannot enable IPv6 forwarding
+		${SYSCTL_CMD} net.ipv4.ip_forward=1>/dev/null 2>/dev/null
+		[ $? -ne 0 ] && cbsdlogger WARNING ${CIX_APP}: cannot enable IPv4 forwarding
 		;;
 	*)
-		_res=$( ${SYSCTL_CMD} -qn net.inet6.ip6.forwarding 2>/dev/null )
-		_ret=$?
-		if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}CBSD: Enable IPv6 forwarding${N0_COLOR}"
+		capture _res ${SYSCTL_CMD} -qn net.inet6.ip6.forwarding 2>/dev/null
+		if [ $? -ne 0 ]; then
 			cbsdlogger NOTICE ${CIX_APP}: net.inet6.ip6.forwarding not found, skip IPv6 forwarding
 		else
 			if [ "${_res}" != "1" ]; then
@@ -72,9 +78,9 @@ case "${platform}" in
 				${SYSCTL_CMD} net.inet6.ip6.forwarding=1 >/dev/null
 			fi
 		fi
-		_res=$( ${SYSCTL_CMD} -qn net.inet.ip.forwarding 2>/dev/null )
-		_ret=$?
-		if [ ${_ret} -ne 0 ]; then
+		${ECHO} "${N1_COLOR}CBSD: Enable IPv4 forwarding${N0_COLOR}"
+		capture _res ${SYSCTL_CMD} -qn net.inet.ip.forwarding 2>/dev/null
+		if [ $? -ne 0 ]; then
 			cbsdlogger NOTICE ${CIX_APP}: net.inet.ip.forwarding not found, skip IPv4 forwarding
 		else
 			if [ "${_res}" != "1" ]; then
@@ -101,7 +107,7 @@ case ${_ret} in
 		;;
 	*)
 		_extiface="${natip}"
-		natip=$( getip-by-nics nic=${_extiface} 2>/dev/null )
+		capture natip getip-by-nics nic=${_extiface} 2>/dev/null
 		if [ $? -ne 0 ]; then
 			${ECHO} "${N1_COLOR}Unable to determine first IP for nic: ${N2_COLOR}${_extiface}${N0_COLOR}"
 			return 1
@@ -118,7 +124,6 @@ case "${nat_enable}" in
 		/bin/sh ${etcdir}/nft.conf
 		;;
 	pf)
-		# copy default pf.conf
 		if [ ! -r ${workdir}/etc/pf.conf ]; then
 			cbsdlogger NOTICE ${CIX_APP}: first CBSD pf run: use ${workdir}/etc/defaults/pf.conf.tpl as template for: ${workdir}/etc/pf.conf
 			${ECHO} "${N1_COLOR}${CIX_APP}: first CBSD pf run: use ${workdir}/etc/defaults/pf.conf.tpl as template for: ${N2_COLOR}${workdir}/etc/pf.conf${N0_COLOR}"
@@ -139,14 +144,14 @@ case "${nat_enable}" in
 	;;
 	ipfw)
 		[ ! -f "${etcdir}/ipfw.conf" ] && err 1 "${N1_COLOR}No ipfw.conf. run ${N2_COLOR}cbsd natcfg${N1_COLOR} first${N0_COLOR}"
-		${KLDSTAT_CMD} -qm alias || ${KLDLOAD_CMD} libalias
-		${KLDSTAT_CMD} -qm ipfw_nat || ${KLDLOAD_CMD} ipfw_nat
+		kernel_mod -l libalias
+		kernel_mod -l ipfw_nat
 		check_nat_ip
 		/bin/sh ${etcdir}/ipfw.conf
 	;;
 	ipfilter)
 		[ ! -f "${etcdir}/ipfilter.conf" ] && err 1 "No ipfilter.conf. run cbsd natcfg first"
-		${KLDSTAT_CMD} -qm ipfilter || ${KLDLOAD_CMD} ipfilter
+		kernel_mod -l ipfilter
 		check_nat_ip
 		/sbin/ipnat -CF -f ${etcdir}/ipfilter.conf
 	;;

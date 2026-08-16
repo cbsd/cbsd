@@ -39,11 +39,11 @@ fi
 [ ! -r ${rootfs_dir}/bin/bash ] && err 1 "${N1_COLOR}no such basejail in ${rootfs_dir}, failed: ${N2_COLOR}repo action=get sources=base arch=${arch} ver=${VERSION_CODENAME} platform=Linux${N0_COLOR}"
 
 for module in linprocfs fdescfs tmpfs linsysfs; do
-	${KLDSTAT_CMD} -m "${module}" > /dev/null 2>&1 || ${KLDLOAD_CMD} ${module}
+	kernel_mod -l ${module}
 done
 
-${KLDSTAT_CMD} -m linux_common > /dev/null 2>&1 || ${KLDLOAD_CMD} linux_common
-${KLDSTAT_CMD} -m linux64elf > /dev/null 2>&1 || ${KLDLOAD_CMD} linux64
+kernel_mod -l linux_common
+kernel_mod -l linux64
 
 . ${subrdir}/rcconf.subr
 [ "${baserw}" = "1" ] && path=${data}

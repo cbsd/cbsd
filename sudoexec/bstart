@@ -1,34 +1,38 @@
 #!/usr/bin/env cbsd
 #v12.1.16
-MYARG=""
-MYOPTARG="bhyverun_wrapper cfg_only checkpoint debug debug_engine delay extra_profile_dir inter jname lm lm_dport lm_rnodename progress_state_file quiet"
+CIXARG=""
+CIXOPTARG="bhyverun_wrapper cfg_only checkpoint debug debug_engine delay extra_profile_dir inter jname lm lm_dport lm_rnodename progress_state_file quiet"
 MYDESC="Start bhyve domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Start the bhyve domain. You can start the offline machine, or continue the work
-of the frozen machine from the checkpoint.
+ Start the bhyve domain. When used in a directory with a CBSDfile,
+the bstart command only processes the environments described in the CBSDfile.
+
+* ${UNDERLINE}SQL conditions${N0_COLOR} supported:
+
+This script supports the reserved word ${UNDERLINE}WHERE${N0_COLOR}, which allows you to write SQL condition,
+please see '.schema bhyve' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}bhyverun_wrapper=${N0_COLOR} - <file_path>, alternative/custom bhyve run script.
- ${N2_COLOR}cfg_only=${N0_COLOR}         - <file_path>: when set, find/create tap/vnc and
-                     generate bhyve.conf into <file_path> but without
-                     run, e.g for debugging.
+ ${N2_COLOR}cfg_only=${N0_COLOR}         - when set, find/create tap/vnc and generate bhyve.conf
+                     but without run, e.g for debugging.
  ${N2_COLOR}checkpoint=${N0_COLOR}       - start from specified checkpoint name.
  ${N2_COLOR}debug=${N0_COLOR}            - more debug messages.
  ${N2_COLOR}debug_engine=${N0_COLOR}     - overwrite debug_engine settings: use gdb or lldb
                      as debugger when launch bhyve ( mostly for inherits debug
                      with live migration ).
- ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N secbefore start, mainly to smooth 
+ ${N2_COLOR}delay=${N0_COLOR}            - <sec>, delay N sec before start, mainly to smooth
                      the astart, default is: '0', no delay.
- ${N2_COLOR}extra_profile_dir${N0_COLOR}   - Extra directory to search VMs profiles.
+ ${N2_COLOR}extra_profile_dir${N0_COLOR} - extra directory to search VMs profiles.
  ${N2_COLOR}inter=${N0_COLOR}            - set 1 to prevent any questions and to accept answers by default.
- ${N2_COLOR}jname=${N0_COLOR}            - Target VM. If jail='*' or jail='vm*' then start  all
+ ${N2_COLOR}jname=${N0_COLOR}            - target VM. If jname='*' or jname='vm*' then start all
                      bhyve or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
  ${N2_COLOR}lm=${N0_COLOR}               - 0,1: when set to 1: prepare for acceptance of this
                      domain via live migration request ( used by 'bmigrate').
- ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration.
+ ${N2_COLOR}lm_dport=${N0_COLOR}         - (optional) for live migration, port for migration
                      data exchange. Can be '0' for auto port, by default.
  ${N2_COLOR}lm_rnodename=${N0_COLOR}     - (optional) for live migration, remote/source
                      CBSD nodename.
@@ -37,7 +41,9 @@ ${H3_COLOR}Options${N0_COLOR}:
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd bstart
- # cbsd bstart jname=myvm1 checkpoint=point1
+ # cbsd bstart jname='vm1'
+ # cbsd bstart jname='vm1' checkpoint=point1
+ # cbsd bstart WHERE astart=\\\'1\\\' AND bhyve_vnc_tcp_bind LIKE \\\'127%%\\\'
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -58,7 +64,7 @@ odebug_engine=
 cfg_only=		# create a configuration and run immediately
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 . ${subrdir}/ipfw.subr	# fwcounter
 
 readconf buildworld.conf
@@ -82,106 +88,26 @@ obhyverun_wrapper=	# reset bhyverun_wrapper
 bhyverun_wrapper=	# reset bhyverun_wrapper
 
 delay=0
-odelay=
 progress_state_file=
 quiet=0
 oquiet=0
-. ${cbsdinit}
+
+cixinit
+
 [ -n "${extra_profile_dir}" ] && oextra_profile_dir="${extra_profile_dir}"
 ojname="${jname}"
 [ -n "${delay}" ] && odelay="${delay}"
 
-. ${system}
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="Off"
+
+init_jlist_args -e bhyve
+bhyve_list="${jail_list}"
+
+. ${subrdir}/system.subr
 . ${subrdir}/universe.subr
 . ${subrdir}/bhyve.subr
 . ${subrdir}/vnet.subr		# for get_vm_uplink_interface
-
-# adjust bhyve_list by CBSDfile
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_bhyve_list=$( ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
-	jname="${all_bhyve_list}"
-
-	# cbsd jstart <env1> <env2> route
-	jname_in_args=0
-
-	if [ -n "${ojname}" ]; then
-		bhyve_list="${ojname}"
-	else
-		# cbsd bstart <env1> <env2> route
-		for i in $*; do
-			strpos --str="${i}" --search="="
-			if [ $? -eq 0 ]; then
-				jname_in_args=1
-				# not param=value - jail?
-				jname_in_cbsdfile=0
-				for j in ${all_bhyve_list}; do
-					[ "${i}" != "${j}" ] && continue
-					jname_in_cbsdfile=1
-				done
-				if [ ${jname_in_cbsdfile} -eq 1 ]; then
-					if [ -z "${ojname}" ]; then
-						ojname="${i}"
-					else
-						ojname="${ojname} ${i}"
-					fi
-				else
-					${ECHO} "${N1_COLOR}${CIX_APP}: env absent in CBSDfile: ${N2_COLOR}${i}${N0_COLOR}" 1>&2
-				fi
-			fi
-		done
-		if [ ${jname_in_args} -eq 1 ]; then
-			bhyve_list="${ojname}"
-		else
-			bhyve_list="${all_bhyve_list}"
-		fi
-	fi
-
-	unset ojname jname
-
-	[ -z "${bhyve_list}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	# multiple?
-	strpos --str="${jname}" --search=" "
-	if [ $? -ne 0 ]; then
-		# alone
-		jname="${bhyve_list}"
-		unset bhyve_list
-	fi
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-	# trim args from "$*"
-
-	if [ -n "${ojname}" ]; then
-		bhyve_list="${ojname}"
-	else
-		for i in $*; do
-			strpos --str="${i}" --search="="
-			[ $? -ne 0 ] && continue
-
-			if [ -z "${bhyve_list}" ]; then
-				bhyve_list="${i}"
-			else
-				bhyve_list="${bhyve_list} ${i}"
-			fi
-		done
-	fi
-
-	# multiple?
-	strpos --str="${bhyve_list}" --search=" "
-	if [ $? -eq 0 ]; then
-		# alone
-		jname="${bhyve_list}"
-		unset bhyve_list
-	fi
-fi
 
 [ -z "${jname}" -a -z "${bhyve_list}" ] && err 1 "${N1_COLOR}No vm specified${N0_COLOR}"
 [ -n "${debug_engine}" ] && odebug_engine="${debug_engine}"		# store overwrite debug_engine
@@ -838,20 +764,20 @@ EOF
 		# mytap_vale1:files3_members: name contains characters not allowed in shell
 		# cast ':' to '_' ?
 		i=$( echo ${i} | ${TR_CMD} ":" "_" )
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/bhyve.conf mytap_${i}_members="${T}" >/dev/null
+		updateconf ${jailsysdir}/${jname}/bhyve.conf mytap_${i}_members="${T}"
 	done
 
 	# export all dsk path as dsk_X_path
 	_dsk_id=0
 	for i in ${mydsk}; do
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/bhyve.conf dsk_${_dsk_id}_path="${i}" >/dev/null
+		updateconf ${jailsysdir}/${jname}/bhyve.conf dsk_${_dsk_id}_path="${i}"
 		_dsk_id=$(( _dsk_id + 1 ))
 	done
 
 	# export all cd path as cd_X_path
 	_dsk_id=0
 	for i in ${mycd}; do
-		${CIX_DISTDIR}/misc/cbsdsysrc -qf ${jailsysdir}/${jname}/bhyve.conf cd_${_dsk_id}_path="${i}" >/dev/null
+		updateconf ${jailsysdir}/${jname}/bhyve.conf cd_${_dsk_id}_path="${i}"
 		_dsk_id=$(( _dsk_id + 1 ))
 	done
 
@@ -1083,7 +1009,7 @@ JLIST=
 jail_num=0
 jname=
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local "SELECT jname FROM bhyve WHERE jname='${i}' LIMIT 1" )
+	cbsdsqlro_vars local "SELECT jname FROM bhyve WHERE jname='${i}' LIMIT 1" exist
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
 		if [ ${jail_num} -eq 0 ]; then
@@ -1359,13 +1285,13 @@ else
 		${ECHO} "${N1_COLOR}No such ${data}/${MDFILE} but mdsize flags is not null.${N0_COLOR}"
 
 		# if zfsfeat=1, try scan for zvol
-		[ "${zfsfeat}" != "1" ] && break
+		if [ "${zfsfeat}" = "1" ]; then
 
 		readconf zfs.conf
 		. ${subrdir}/zfs.subr
 		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
 
-		[ -z "${DATA}" ] && break
+		if [ -n "${DATA}" ]; then
 
 		for ((lunname=0; lunname<=16; lunname++)); do
 			if [ -r /dev/zvol/${DATA}/bcbsd-${jname}-dsk${lunname}.vhd ]; then				# back compatible for CBSD <= 12.0.14
@@ -1373,6 +1299,8 @@ else
 				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Found zvol and create symlink: ${data}/dsk${lunname}.vhd -> ${DATA}/bcbsd-${jname}-dsk${lunname}.vhd"
 			fi
 		done
+		fi	# -n DATA
+		fi	# zfsfeat=1
 	fi
 fi
 

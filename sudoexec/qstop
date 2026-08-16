@@ -1,7 +1,7 @@
 #!/usr/bin/env cbsd
 #v11.1.19
-MYARG=""
-MYOPTARG="hard_timeout jname inter noacpi"
+CIXARG=""
+CIXOPTARG="hard_timeout jname inter noacpi"
 MYDESC="Stop qemu domain"
 CBSDMODULE="qemu"
 EXTHELP="wf_jstop_jstart"
@@ -12,6 +12,12 @@ Stop the qemu domain. By default, the script sends the ACPI signal (through the
 system_powerdown QEMU monitor command) to qemu process and expects completion during the timeout.
 If during this time the virtual machine did not respond to the signal, the script
 will terminate the qemu process of forcibly.
+
+* ${UNDERLINE}SQL conditions${N0_COLOR} supported:
+
+This script supports the reserved word ${UNDERLINE}WHERE${N0_COLOR}, which allows you to write SQL condition,
+please see '.schema qemu' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
+
 
 ${H3_COLOR}Options${N0_COLOR}:
 
@@ -27,6 +33,7 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd qstop
  # cbsd qstop jname=diehard noacpi=1
+ # cbsd qstop WHERE astart=\\\'1\\\' AND qemu_vnc_tcp_bind LIKE \\\'127%%\\\'
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -35,7 +42,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 
 jname=
 
@@ -50,36 +57,16 @@ hard_timeout=30		# default soft timeout: 30 seconds
 
 readconf qstop.conf
 
-. ${cbsdinit}
-ojname="${jname}"
+cixinit
 
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_qemu_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
-	jname="${all_qemu_list}"
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="On"
+init_jlist_args -e qemu
 
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	fi
-
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-fi
-
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No qemu specified${N0_COLOR}"
-
-TMUX_CMD=$( which tmux )
+[ -z "${TMUX_CMD}" ] && capture TMUX_CMD which tmux
 [ -z "${TMUX_CMD}" ] && err 1 "${N1_COLOR}no such tmux${N0_COLOR}"
 
-. ${system}
+. ${subrdir}/system.subr
 . ${mdtools}
 . ${subrdir}/qemu.subr
 
@@ -106,7 +93,7 @@ JLIST=
 # check for actual vm list in arg list
 jail_num=0
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
 		jail_num=$(( jail_num + 1 ))
@@ -144,7 +131,7 @@ fi
 . ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
-	remotenode=$( qwhereis ${jname} )
+	capture remotenode qwhereis ${jname}
 	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 	for i in ${remotenode}; do
 		${ECHO} "${N1_COLOR}Remote qstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"
@@ -253,7 +240,7 @@ if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; t
 fi
 
 # jailed?
-_jailed=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" )
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1" _jailed
 [ -z "${_jailed}" ] && _jailed="0"
 
 if [ "${_jailed}" != "0" ]; then
@@ -263,7 +250,7 @@ if [ "${_jailed}" != "0" ]; then
 fi
 
 # chrooted?
-_chrooted=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" )
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT chrooted FROM settings LIMIT 1" _chrooted
 [ -z "${_chrooted}" ] && _chrooted="0"
 
 if [ "${_chrooted}" != "0" ]; then

@@ -108,17 +108,8 @@ init_zfs_feat()
 
 	ZFS_CMD=$(command -v zfs 2>/dev/null)
 	if [ -n "${ZFS_CMD}" ]; then
-		_tmpval=0
-		case "${platform}" in
-			Linux)
-				${GREP_CMD} -q "^zfs " /proc/modules > /dev/null 2>&1
-				_tmpval=$?
-				;;
-			*)
-				${KLDSTAT_CMD} -qm zfs >/dev/null 2>&1;
-				_tmpval=$?
-				;;
-		esac
+		kernel_mod -q zfs
+		_tmpval=$?
 
 		if [ ${_tmpval} -eq 0 ]; then
 			_pool=$( ${ZFS_CMD} get -Ho value name ${workdir} 2>/dev/null )
@@ -821,13 +812,16 @@ phase2()
 		compile_cc -o ${CIX_DISTDIR}/misc/ipv6range ${CIX_DISTDIR}/misc/src/ipv6range.c
 	fi
 	case "${platform}" in
-		DragonFly|Linux|NetBSD)
+		DragonFly|NetBSD)
 			true
+			;;
+		Linux)
+			[ ! -f "${CIX_DISTDIR}/tools/nic_info" ] && compile_cc ${CIX_DISTDIR}/tools/src/nic_info.c -o ${CIX_DISTDIR}/tools/nic_info
 			;;
 		*)
 			[ ! -f "${CIX_DISTDIR}/misc/next-vale-port" ] && compile_cc -o ${CIX_DISTDIR}/misc/next-vale-port ${CIX_DISTDIR}/misc/src/next-vale-port.c
-			[ ! -f "${CIX_DISTDIR}/tools/vale-ctl" ] && compile_cc ${CIX_DISTDIR}/tools/src/vale-ctl.c -o ${CIX_DISTDIR}/tools/vale-ctl
 			[ ! -f "${CIX_DISTDIR}/tools/nic_info" ] && compile_cc ${CIX_DISTDIR}/tools/src/nic_info.c -o ${CIX_DISTDIR}/tools/nic_info
+			[ ! -f "${CIX_DISTDIR}/tools/vale-ctl" ] && compile_cc ${CIX_DISTDIR}/tools/src/vale-ctl.c -o ${CIX_DISTDIR}/tools/vale-ctl
 			[ ! -f "${CIX_DISTDIR}/tools/bridge" ] && compile_cc ${CIX_DISTDIR}/tools/src/bridge.c -o ${CIX_DISTDIR}/tools/bridge
 			;;
 	esac
@@ -1188,6 +1182,8 @@ phase5()
 
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-bhyve.schema bhyve
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-bhyveppt.schema bhyveppt
+	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-qemuppt.schema qemuppt
+	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-xenppt.schema xenppt
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-virtualbox.schema virtualbox
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-xen.schema xen
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-qemu.schema qemu
@@ -1561,7 +1557,7 @@ start()
 
 	#. ${globalconf}
 	. ${subrdir}/nc-lite.subr
-#	. ${subrdir}/tools.subr
+	. ${subrdir}/tools-lite.subr
 	. ${subrdir}/initenv.subr
 #	. ${subrdir}/ansiicolor.subr
 
@@ -1680,14 +1676,12 @@ EOF
 					Linux)
 						if [ -z "${SYSTEMCTL_CMD}" ]; then
 							echo "no systemctl, skip"
-							break
-						fi
-						if [ ! -d "/lib/systemd/system" ]; then
+						elif [ ! -d "/lib/systemd/system" ]; then
 							echo "no /lib/systemd/system, skip"
-							break
+						else
+							[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} -e "s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g" -e "s:%%CIX_DISTDIR%%:${CIX_DISTDIR}:g" ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
+							${SYSTEMCTL_CMD} enable cbsdd.service
 						fi
-						[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} -e "s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g" -e "s:%%CIX_DISTDIR%%:${CIX_DISTDIR}:g" ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
-						${SYSTEMCTL_CMD} enable cbsdd.service
 						;;
 					*)
 						true
@@ -1705,7 +1699,6 @@ EOF
 		if [ "${platform}" = "Linux" ]; then
 			if [ -z "${SYSTEMCTL_CMD}" ]; then
 					echo "no systemctl, skip"
-					break
 			else
 				[ ! -r /lib/systemd/system/cbsdd.service ] && ${SED_CMD} -e "s:%%CBSD_WORKDIR%%:${cbsd_workdir}:g" -e "s:%%CIX_DISTDIR%%:${CIX_DISTDIR}:g" ${CIX_DISTDIR}/share/examples/systemd/cbsdd.service > /lib/systemd/system/cbsdd.service
 				if [ -n "${cbsdd_enable}" ]; then
@@ -1813,16 +1806,22 @@ EOF
 			printf "Starting service: cbsdd ... "
 			case "${platform}" in
 				Linux)
-					[ -z "${SYSTEMCTL_CMD}" ] && echo "no systemctl cmd" && break
-					${SYSTEMCTL_CMD} stop cbsdd.service > /dev/null 2>&1 || true
-					${SYSTEMCTL_CMD} start cbsdd.service > /dev/null 2>&1
-					_ret=$?
+					if [ -z "${SYSTEMCTL_CMD}" ]; then
+						echo "no systemctl cmd"
+					else
+						${SYSTEMCTL_CMD} stop cbsdd.service > /dev/null 2>&1 || true
+						${SYSTEMCTL_CMD} start cbsdd.service > /dev/null 2>&1
+						_ret=$?
+					fi
 					;;
 				*)
-					[ -z "${SERVICE_CMD}" ] && echo "no service cmd" && break
-					${SERVICE_CMD} cbsdd stop > /dev/null 2>&1 || true
-					${SERVICE_CMD} cbsdd start > /dev/null 2>&1
-					_ret=$?
+					if [ -z "${SERVICE_CMD}" ]; then
+						echo "no service cmd"
+					else
+						${SERVICE_CMD} cbsdd stop > /dev/null 2>&1 || true
+						${SERVICE_CMD} cbsdd start > /dev/null 2>&1
+						_ret=$?
+					fi
 					;;
 			esac
 			case "${_ret}" in

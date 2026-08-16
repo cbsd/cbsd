@@ -1,7 +1,7 @@
 #!/usr/bin/env cbsd
 #v12.0.14
-MYARG=""
-MYOPTARG="hard_timeout jname inter noacpi"
+CIXARG=""
+CIXOPTARG="hard_timeout jname inter noacpi"
 MYDESC="Stop XEN domain"
 CBSDMODULE="xen"
 EXTHELP="wf_jstop_jstart"
@@ -9,14 +9,20 @@ ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
 Stop the XEN domain. By default, the script sends the ACPI signal (through the
-kill command) to bhyve process and expects completion during the timeout.
+xl shutdown command) to XEN domain and expects completion during the timeout.
 If during this time the virtual machine did not respond to the signal, the script
-will terminate the bhyve process of forcibly.
+will terminate the XEN domain forcibly.
+
+* ${UNDERLINE}SQL conditions${N0_COLOR} supported:
+
+This script supports the reserved word ${UNDERLINE}WHERE${N0_COLOR}, which allows you to write SQL condition,
+please see '.schema xen' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
+
 
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}jname=${N0_COLOR}        - Target VM. If jail='*' or jail='vm*' then stop  all
-                 bhyve or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
+	xen or VM whose names begin with 'vm', e.g. 'vm1', 'vm2'...
  ${N2_COLOR}hard_timeout=${N0_COLOR} - Wait N seconds (30 by default) before hard reset.
                  The parameter can be overridden globally through the xstop.conf.
  ${N2_COLOR}noacpi=${N0_COLOR}       - 0,1. Set to 1 to prevent ACPI signal sending, just kill,
@@ -27,6 +33,9 @@ ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd xstop
  # cbsd xstop jname=diehard noacpi=1
+ # cbsd xstop WHERE astart=\\\'1\\\' AND xen_vnc_tcp_bind LIKE \\\'127%%\\\'
+
+
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -35,7 +44,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 . ${subrdir}/nc.subr
-. ${tools}		# for select_jail_by_list
+. ${subrdir}/tools.subr		# for select_jail_by_list
 
 jname=
 
@@ -50,33 +59,13 @@ hard_timeout=30		# default soft timeout: 30 seconds
 
 readconf xstop.conf
 
-. ${cbsdinit}
-ojname="${jname}"
+cixinit
 
-if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
-	. ${Makefile}
-	all_bhyve_list=$( ${GREP_CMD} -E '^xen_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#xen_##g )
-	jname="${all_bhyve_list}"
+. ${subrdir}/jlist_init.subr
+select_jail_by_list_status="On"
+init_jlist_args -e xen
 
-	if [ -n "${ojname}" ]; then
-		jname="${ojname}"
-	fi
-
-	[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-
-	if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
-		cbsd_api=1
-	else
-		cbsd_api=0
-	fi
-else
-	cbsd_api=0
-fi
-
-[ -z "${jname}" -a -z "$*" ] && err 1 "${N1_COLOR}No domain specified${N0_COLOR}"
-
-. ${system}
+. ${subrdir}/system.subr
 . ${mdtools}
 . ${subrdir}/xen.subr
 
@@ -102,7 +91,7 @@ JLIST=
 # check for actual vm list in arg list
 jail_num=0
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1" exist
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
 		jail_num=$(( jail_num + 1 ))
@@ -140,7 +129,7 @@ fi
 . ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
 	[ ${sqlreplica} -eq 0 ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
-	remotenode=$( xwhereis ${jname} )
+	capture remotenode xwhereis ${jname}
 	[ -z "${remotenode}" ] && err 1 "${N1_COLOR}No such domain: ${N2_COLOR}${jname}${N0_COLOR}"
 	for i in ${remotenode}; do
 		${ECHO} "${N1_COLOR}Remote xstop: ${N2_COLOR}${jname} ${N1_COLOR}on${N2_COLOR} ${i}${N0_COLOR}"

@@ -747,5 +747,99 @@ get_file_blocks()
 	return 0
 }
 
+# Platform-neutral kernel module check/load.
+#   -l  — load the module if not already loaded
+#   -q  — quiet mode (no diagnostic output to stderr)
+# Returns:
+#   0 — module is loaded (or was loaded successfully with -l)
+#   1 — module is not loaded (or failed to load, or no platform equivalent)
+# Module aliases (FreeBSD name → Linux name):
+#   if_bridge  → bridge
+#   if_tuntap  → tun
+#   if_tap     → tap
+#   fusefs     → fuse
+#   zfs        → zfs
+#   (modules without Linux equivalent return 1 on Linux)
+# Examples:
+#   kernel_mod zfs                  # check only
+#   kernel_mod -l if_bridge         # load if not present
+#   kernel_mod -lq carp             # load quietly
+#   kernel_mod -q fusefs            # check quietly
+kernel_mod()
+{
+	local _load=0 _quiet=0 _mod=
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			-l) _load=1 ;;
+			-q) _quiet=1 ;;
+			-*) ;; # unknown flag, skip
+			*)  _mod="${1}" ;;
+		esac
+		shift
+	done
+
+	[ -z "${_mod}" ] && return 1
+
+	# Resolve platform-specific module name
+	case "${platform}" in
+		Linux)
+			case "${_mod}" in
+				if_bridge)	_mod="bridge" ;;
+				if_tuntap)	_mod="tun" ;;
+				if_tap)		_mod="tap" ;;
+				fusefs)		_mod="fuse" ;;
+				alias|libalias)	return 1 ;;
+				ipfw_nat)	return 1 ;;
+				ipfilter)	return 1 ;;
+				nmdm)		return 1 ;;
+				carp)		return 1 ;;
+				vmm)		_mod="kvm_intel" ;;
+				nvmm)		return 1 ;;
+				linux_common)	return 1 ;;
+				linux64elf|linux64) return 1 ;;
+			esac
+			;;
+		*)
+			case "${_mod}" in
+				alias)	_mod="libalias" ;;
+			esac
+			;;
+	esac
+
+	# Check if module is loaded
+	case "${platform}" in
+		Linux)
+			if [ -r /proc/modules ]; then
+				${GREP_CMD} -q "^${_mod} " /proc/modules 2>/dev/null
+			else
+				return 1
+			fi
+			;;
+		*)
+			${KLDSTAT_CMD} -qm ${_mod} >/dev/null 2>&1
+			;;
+	esac
+
+	if [ $? -eq 0 ]; then
+		return 0
+	fi
+
+	# Not loaded — load if requested
+	if [ ${_load} -eq 1 ]; then
+		case "${platform}" in
+			Linux)
+				${MODPROBE_CMD} ${_mod} >/dev/null 2>&1
+				;;
+			*)
+				${KLDLOAD_CMD} ${_mod} >/dev/null 2>&1
+				;;
+		esac
+		return $?
+	fi
+
+	return 1
+}
+
 ###
 fi
