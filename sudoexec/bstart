@@ -195,7 +195,8 @@ start_bhyve()
 	if check_for_empty_hdd path=${data}/dsk1.vhd; then
 		if [ -n "${vm_iso_path}" ]; then
 			local prefix=
-			local prefix6=$( substr --pos=0 --len=6 --str="${vm_iso_path}" )
+			local prefix6
+			capture prefix6 substr --pos=0 --len=6 --str="${vm_iso_path}"
 
 			if [ "${prefix6}" = "cloud-" ]; then
 				local _orig_vm_iso_path="${vm_iso_path}"
@@ -634,7 +635,7 @@ start_bhyve()
 	passthr=""
 
 	# purge old/orphaned devices from pcibus table (which not modified by compile_args)
-	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT idx FROM pcibus WHERE modified=false" 2>/dev/null )
+	capture _res cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT idx FROM pcibus WHERE modified=false"
 	if [ -n "${_res}" ]; then
 		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pcislot_name,pcislot_desc FROM pcibus WHERE modified=false" 2>/dev/null | while read _name _desc; do
 			# debug: echo "Prune for: [${_name} ${_desc}]"
@@ -644,7 +645,7 @@ start_bhyve()
 	fi
 
 	# extra validate we have no collision in PCI bus
-	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1" 2>/dev/null )
+	capture _res cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pcislot_bus,COUNT(*) FROM pcibus_run GROUP BY pcislot_bus HAVING COUNT(*) > 1 LIMIT 1"
 
 	if [ -n "${_res}" ]; then
 		sqllistdelimer=" "
@@ -661,7 +662,7 @@ start_bhyve()
 	# for init external hook variables
 	geniplist ${ip4_addr}
 
-	vm_logfile=$( ${MKTEMP_CMD} )
+	capture vm_logfile ${MKTEMP_CMD}
 
 	# The parameters in local rc.conf file can overwrite the settings in the database
 	[ -r ${jailsysdir}/${jname}/etc/rc.conf ] && . ${jailsysdir}/${jname}/etc/rc.conf
@@ -840,7 +841,7 @@ EOF
 					zvol_dsk0_dev="/dev/${zvol_dsk0_dev}"
 				fi
 
-				mount_dir=$( ${MKTEMP_CMD} -d )
+				capture mount_dir ${MKTEMP_CMD} -d
 				${MOUNT_CMD} -t msdosfs -o rw ${zvol_dsk0_dev}p1 ${mount_dir}
 				_ret=$?
 				if [ ${_ret} -ne 0 ]; then
@@ -863,14 +864,14 @@ EOF
 			*)
 				${RM_CMD} -f ${jailsysdir}/${jname}/seed.iso
 				if [ "${vm_os_type}" = "windows" ]; then
-					GENISOIMAGE_CMD=$( which /usr/local/bin/genisoimage )
+					capture GENISOIMAGE_CMD which /usr/local/bin/genisoimage
 					[ -z "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}no such genisoimage tool. Windows cloud required it. Please install it first: ${N2_COLOR}pkg install -y sysutils/genisoimage${N0_COLOR}"
 					${GENISOIMAGE_CMD} -joliet-long -R -V config-2 -o ${jailsysdir}/${jname}/seed.iso ${jailsysdir}/${jname}/cloud-init
 				else
 					if [ -n "${MAKEFS_CMD}" ]; then
 						GENISOIMAGE_CMD="${MAKEFS_CMD}"
 					else
-						GENISOIMAGE_CMD=$( which makefs )
+						capture GENISOIMAGE_CMD which makefs
 					fi
 					[ ! -x "${GENISOIMAGE_CMD}" ] && err 1 "${N1_COLOR}${CIX_APP}: no such makefs${N0_COLOR}"
 
@@ -933,7 +934,7 @@ EOF
 	fi
 
 	search_cmd="bhyve: ${jname}"
-	strlen_search_cmd=$( strlen "${search_cmd}" )
+	capture strlen_search_cmd strlen "${search_cmd}"
 
 	[ -n "${dsk_bootable}" -a ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
 
@@ -1039,8 +1040,8 @@ if [ ${jail_num} -gt 1 ]; then
 		wait_pid_files=
 
 		for jname in ${JLIST}; do
-			_boot_delay=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT boot_delay FROM settings LIMIT 1" )
-			_pid_wait=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT pid_wait FROM settings LIMIT 1" )
+			cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT boot_delay FROM settings LIMIT 1" _boot_delay
+			cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite "SELECT pid_wait FROM settings LIMIT 1" _pid_wait
 			[ -z "${_pid_wait}" ] && _pid_wait=1
 
 			if [ -z "${_boot_delay}" ]; then
@@ -1078,7 +1079,7 @@ if [ ${jail_num} -gt 1 ]; then
 
 	gettime end_time
 	diff_time=$(( end_time - st_time ))
-	diff_time=$( displaytime ${diff_time} )
+	capture diff_time displaytime ${diff_time}
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 	cbsdlogger NOTICE ${CIX_APP}: executing for multiple done in ${diff_time}: ${JLIST}
 	err 0 "${N1_COLOR}Multiple bstart: ${N2_COLOR}done${N0_COLOR}"
@@ -1162,7 +1163,7 @@ else
 		RHST="${lm_rnodename}"
 	fi
 	# extra check
-	_tmp=$( cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${lm_rnodename}'" )
+	capture _tmp cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${lm_rnodename}'"
 	[ -z "${_tmp}" ] && err 1 "${N1_COLOR}No such node in the current CBSD cluster: ${N2_COLOR}${lm_rnodename}${N0_COLOR}"
 
 	# todo: check for node idle and online, rexe?
@@ -1277,7 +1278,7 @@ fi
 # hardcoded first disk path from SQL. Todo: mark bootable disk(s)
 # todo: NVMe
 # todo: Controller
-MDFILE=$( cbsdsqlro ${main_sqlite_local} "SELECT dsk_path FROM bhyvedsk WHERE jname='${jname}' AND dsk_type='vhd' LIMIT 1" 2>/dev/null )
+cbsdsqlro_vars ${main_sqlite_local} "SELECT dsk_path FROM bhyvedsk WHERE jname='${jname}' AND dsk_type='vhd' LIMIT 1" MDFILE
 if [ -z "${MDFILE}" ]; then
 	[ ${quiet} -ne 1 ] && ${ECHO} "${H5_COLOR}Notice: ${N1_COLOR}no any storage device found for this VM${N0_COLOR}"
 else
@@ -1318,7 +1319,7 @@ if [ "${lm}" = "0" ]; then
 	# test for incorrect state
 	if [ ${status} -eq 3 ]; then
 		cbsdsqlrw local "UPDATE jails SET maintenance='${comment}' WHERE jname='${jname}'"
-		comment=$( cbsdsqlro local "SELECT maintenance FROM jails WHERE jname='${jname}'" )
+		capture comment cbsdsqlro local "SELECT maintenance FROM jails WHERE jname='${jname}'"
 		if [ "${comment}" = "Stopping_VM" ]; then
 			jswmode jname=${jname} mode=master comment='0'
 		else
