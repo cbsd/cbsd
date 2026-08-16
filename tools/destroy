@@ -2,9 +2,9 @@
 #v12.1.11
 MYARG=""
 MYOPTARG="cbsdfile jname cwd multiple"
-MYDESC="destroy jail/bhyve env from CBSDfile, vagrant-like behavior"
-CBSDMODULE="bhyve,jail"
-ADDHELP="\
+MYDESC="destroy jail/bhyve/qemu env from CBSDfile, vagrant-like behavior"
+CBSDMODULE="bhyve,jail,qemu"
+ADDHELP="
 
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -26,6 +26,7 @@ ${H3_COLOR}See also${N0_COLOR}:
  cbsd up --help
  cbsd jdestroy --help
  cbsd bdestroy --help
+ cbsd qdestroy --help
 
 "
 EXTHELP="wf_cbsdfile"
@@ -56,12 +57,12 @@ destroy_jail_cloud()
 {
 	local _cid
 
-	local CURL_CMD=$( which curl )
+	capture CURL_CMD which curl
 
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	${ECHO} "${N1_COLOR}destroy ${jname} via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
 
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 	# via file for debug
 	${CAT_CMD} > destroy-${jname}.sh <<EOF
@@ -120,12 +121,12 @@ destroy_bhyve_cloud()
 {
 	local _cid
 
-	local CURL_CMD=$( which curl )
+	capture CURL_CMD which curl
 
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	${ECHO} "${N1_COLOR}destroy ${jname} via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
 
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 	# via file for debug
 	${CAT_CMD} > destroy-${jname}.sh <<EOF
@@ -175,6 +176,66 @@ destroy_bhyve()
 	cbsd_workdir="${ocbsd_workdir}"
 }
 
+# testing/wip...
+destroy_qemu_cloud()
+{
+	local _cid
+
+	capture CURL_CMD which curl
+
+	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+	${ECHO} "${N1_COLOR}destroy ${jname} via: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}"
+
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
+
+	# via file for debug
+	${CAT_CMD} > destroy-${jname}.sh <<EOF
+${SUDO_CMD} -u nobody ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/destroy/${jname}
+EOF
+	${CHMOD_CMD} +x destroy-${jname}.sh
+	./destroy-${jname}.sh
+	${RM_CMD} -f ./destroy-${jname}.sh
+	return 0
+}
+
+destroy_qemu()
+{
+	local ojname="${jname}"
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}run_jail: empty jname${N0_COLOR}"
+
+	if [ -n "${CLOUD_URL}" ]; then
+		destroy_qemu_cloud
+		_ret=$?
+		return ${_ret}
+	fi
+
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such environment: ${N2_COLOR}${jname}${N0_COLOR}"
+
+	# push old cbsd workdir
+	ocbsd_workdir="${cbsd_workdir}"
+
+	# per-env predestroy func
+	if fn_exists predestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute predestroy_${jname}${N0_COLOR}"
+		predestroy_${jname}
+		jname="${ojname}"               # for corrupted/changed jname in func
+		${ECHO} "${N1_COLOR}execute predestroy_${jname} done${N0_COLOR}"
+	fi
+
+	${ENV_CMD} cbsd_workdir="${cbsd_workdir}" qremove jname=${jname} quiet="${quiet}"
+
+	# per-env postdestroy func
+	if fn_exists postdestroy_${jname} 2>/dev/null; then
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname}${N0_COLOR}"
+		postdestroy_${jname}
+		${ECHO} "${N1_COLOR}execute postdestroy_${jname} done${N0_COLOR}"
+	fi
+
+	# restore old workdir
+	cbsd_workdir="${ocbsd_workdir}"
+}
+
 
 # MAIN
 if [ ${num_env} -eq 1 ]; then
@@ -194,6 +255,9 @@ if [ ${num_env} -eq 1 ]; then
 	elif [ ${bhyve_num} -eq 1 ]; then
 		jname="${bhyve_list}"
 		destroy_bhyve
+	elif [ ${qemu_num} -eq 1 ]; then
+		jname="${qemu_list}"
+		destroy_qemu
 	fi
 
 	# protection from multiple env
@@ -206,7 +270,7 @@ if [ ${num_env} -eq 1 ]; then
 
 	gettime end_time
 	diff_time=$(( end_time - st_time ))
-	diff_time=$( displaytime ${diff_time} )
+	capture diff_time displaytime ${diff_time}
 	${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}" 1>&2
 	exit 0
 fi
@@ -217,15 +281,18 @@ fi
 ${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
 task_owner="destroy_multiple"
 
-task_id=
 task_id_cur=
+multiple_task_id_all=
 
 # spawn command for all jail
-for jname in ${jail_list} ${bhyve_list}; do
+for jname in ${jail_list} ${bhyve_list} ${qemu_list}; do
 	# we must inherit CIX_PWD via cwd= for cbsd-related function in postcreate_ action
-	task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd destroy multiple=1 cbsdfile=${Makefile} jname=${jname} cwd=${CIX_PWD} )
-	task_id="${task_id} ${task_id_cur}"
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	capture task_id_cur task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=${NOCOLOR} /usr/local/bin/cbsd destroy multiple=1 cbsdfile=${Makefile} jname=${jname} cwd=${CIX_PWD}
+	if [ -z "${multiple_task_id_all}" ]; then
+		multiple_task_id_all="${task_id_cur}"
+	else
+		multiple_task_id_all="${multiple_task_id_all},${task_id_cur}"
+	fi
 	sleep 2
 done
 
@@ -242,7 +309,7 @@ fi
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 
 exit 0
