@@ -24,7 +24,7 @@ cixinit
 
 if [ -n "${jname}" ]; then
 
-	emulator="bhyve" # for jname_is_multiple
+	emulator="xen" # for jname_is_multiple
 	jname_is_multiple
 
 	if [ -n "${jail_list}" ]; then
@@ -99,7 +99,7 @@ for jname in ${JLIST}; do
 	fi
 
 	. ${subrdir}/jcreate.subr
-	export_bhyve_data_for_external_hook
+	export_xen_data_for_external_hook
 	external_exec_master_script "remove.d"
 
 	PARENT_SNAPSHOTS=
@@ -123,24 +123,41 @@ for jname in ${JLIST}; do
 		fi
 		# auto-promote if we have children
 		if [ ${zfsfeat} -eq 1 -a "${mnt_start}" = "0" ]; then
-			base_vm_disks=$( cbsdsqlro storage_media SELECT path FROM media WHERE jname=\"${jname}\" and type=\"hdd\" )
-			for vm_item in $( cbsdsqlro storage_media SELECT jname,path FROM media WHERE jname!=\"${jname}\" and type=\"hdd\" ); do
-				# detect for shared disk
-				vm=$( echo ${vm_item} | ${CUT_CMD} -f 1 -d '|' )
-				disk_path=$( echo ${vm_item} | ${CUT_CMD} -f 2 -d '|' )
-				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+			cbsdsqlro_vars storage_media "SELECT path FROM media WHERE jname='${jname}' and type='hdd'" obase_vm_disks
+			base_vm_disks=
+			for i in ${obase_vm_disks}; do
+				capture disk_path ${READLINK_CMD} -f ${i}
+				capture _res substr --pos=0 --len=10 --str="${disk_path}"
+				[ "${_res}" != "/dev/zvol/" ] && continue
+				disk_zvol=$( echo ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				if [ -z "${base_vm_disks}" ]; then
+					base_vm_disks="${disk_zvol}"
+				else
+					base_vm_disks="${base_vm_disks} ${disk_zvol}"
+				fi
+			done
+			unset obase_vm_disks
+
+			for vm_item in ${base_vm_disks}; do
+				capture disk_zvol ${READLINK_CMD} -f ${vm_item}
+				capture _res substr --pos=0 --len=10 --str="${disk_zvol}"
+				[ "${_res}" != "/dev/zvol/" ] && continue
+
+				disk_zvol=$( echo ${disk_zvol} | ${SED_CMD} 's;^/dev/zvol/;;' )
 
 				[ -z "${disk_zvol}" ] && continue
-				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				capture parent_snapshot ${ZFS_CMD} get -Ho value origin ${disk_zvol}
 				if [ "${parent_snapshot}" = "-" ]; then
 					continue
 				fi
 
-				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-${vm}-dsk.*\.vhd;;g" )
+				original_disk=$( echo ${parent_snapshot} | ${SED_CMD} "s;@cbsd-original-.*-dsk.*\.vhd;;g" )
+				# extract VM name from snapshot name (format: @cbsd-original-<vm>-dsk<N>.vhd)
+				_snapvm=$( echo ${parent_snapshot} | ${SED_CMD} "s;.*@cbsd-original-;;" | ${SED_CMD} "s;-dsk[0-9]*\.vhd;;" )
 				for _disk_path in ${base_vm_disks}; do
-					original_disk_path=$( ${READLINK_CMD} -f ${_disk_path} )
+					capture original_disk_path ${READLINK_CMD} -f ${_disk_path}
 					if [ "/dev/zvol/${original_disk}" = "${original_disk_path}" ]; then
-						DEPENDENT_VMS="${DEPENDENT_VMS}\n${vm}"
+						DEPENDENT_VMS="${DEPENDENT_VMS}\n${_snapvm}"
 					fi
 				done
 			done
@@ -151,16 +168,16 @@ for jname in ${JLIST}; do
 			fi
 			for disk_path in ${base_vm_disks}; do
 				[ ! -r ${disk_path} ] && continue
-				disk_zvol=$( ${READLINK_CMD} -f ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
+				disk_zvol=$( echo ${disk_path} | ${SED_CMD} 's;^/dev/zvol/;;' )
 				[ -z "${disk_zvol}" ] && continue
 				PARENT_ZVOL="${PARENT_ZVOL} ${disk_zvol}"
-				parent_snapshot=$( ${ZFS_CMD} get -Ho value origin ${disk_zvol} )
+				capture parent_snapshot ${ZFS_CMD} get -Ho value origin ${disk_zvol}
 				if [ "${parent_snapshot}" != "-" ]; then
 					PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${parent_snapshot}"
 				fi
 			done
 
-			path_parent=$( ${ZFS_CMD} get -Ho value origin ${DST} )
+			capture path_parent ${ZFS_CMD} get -Ho value origin ${DST}
 			if [ "${path_parent}" != "-" ]; then
 				PARENT_SNAPSHOTS="${PARENT_SNAPSHOTS} ${path_parent}"
 			fi
@@ -175,7 +192,7 @@ for jname in ${JLIST}; do
 		for i in $( ${FIND_CMD} ${data}/ -mindepth 1 -maxdepth 1 -type l ); do
 			if is_getzvol ${i}; then
 				if [ -n "${is_zvol}" ]; then
-					_parent=$( ${ZFS_CMD} get -Ho value origin ${is_zvol} )
+					capture _parent ${ZFS_CMD} get -Ho value origin ${is_zvol}
 					if [ -n "${_parent}" ]; then
 						_len=$( strlen ${_parent} )
 						strpos --str="${_parent}" --search="@"
@@ -223,10 +240,10 @@ for jname in ${JLIST}; do
 		zfsmnt "${vmdir}"
 		_ret=$?
 		if [ ${_ret} -eq 1 -o ${_ret} -eq 2 ]; then
-			_msg=$( ${ZFS_CMD} destroy ${ZPOOL} )
+			capture _msg ${ZFS_CMD} destroy ${ZPOOL}
 			_ret=$?
 			if [ ${_ret} -ne 0 ]; then
-				${ECHO} "${N1_COLOR}bremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"
+				${ECHO} "${N1_COLOR}xremove: zfs destroy error for: ${N2_COLOR}${ZPOOL}: ${N1_COLOR}${_msg}${N0_COLOR}"
 			fi
 		fi
 	fi
@@ -235,17 +252,12 @@ for jname in ${JLIST}; do
 
 	if [ "${emulator}" != "jail" ]; then
 		# TODO: cbsd media unregister mode=removeall jname=jname
-		cbsdsqlrw storage_media "DELETE FROM media WHERE jname=\"${jname}\" AND type = \"hdd\""
+		cbsdsqlrw storage_media "DELETE FROM media WHERE jname='${jname}' AND type='hdd'"
 
-		A=$( cbsdsqlro storage_media SELECT name,path FROM media WHERE jname=\"${jname}\" AND type=\"iso\" )
-		if [ -n "${A}" ]; then
-			cd_name=
-			cd_path=
-			IFS="|"
-			sqllist "${A}" cd_name cd_path
-			IFS=" "
-			media mode=unregister name="${cd_name}" path="${cd_path}" jname="${jname}" type="iso"
-		fi
+		_name=
+		_path=
+		cbsdsqlro_vars storage_media "SELECT name,path FROM media WHERE jname='${jname}' AND type='iso'" _name _path
+		[ -n "${_name}" -a -n "${_path}" ] && media mode=detach name="${_name}" path="${_path}" jname="${jname}" type="iso"
 	fi
 
 	if [ "${emulator}" = "virtualbox" ]; then
@@ -263,7 +275,7 @@ done
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
 cbsdlogger NOTICE ${CIX_APP}: xen domain ${JLIST} removed in ${diff_time}
 

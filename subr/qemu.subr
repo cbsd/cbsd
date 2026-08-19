@@ -205,7 +205,7 @@ get_pcislot_args()
 	local _pcislot_pcislot
 	local _pcislot_function
 	local _bhyve_pci_index
-	local _pcislot_args
+	local _pci_out
 
 	_pcislot_pcislot=0      # optional, 0 to 255. if not specified, the bus value defaults to 0
 	_pcislot_function=0     # optional, 0 to 7. if not specified, the function value defaults to 0
@@ -226,15 +226,15 @@ get_pcislot_args()
 	_pcislot_bus="${_qemu_pci_index}"      # 0 to 31
 
 	# always set pcislot
-	_pcislot_args="${_pcislot_bus}"
+	_pci_out="${_pcislot_bus}"
 
 	# skip defaults for bus and func
 	for _i in ${_pcislot_pcislot} ${_pcislot_function}; do
 		[ ${_i} -eq 0 ] && continue
-		_pcislot_args="${_pcislot_args}:${_i}"
+		_pci_out="${_pci_out}:${_i}"
 	done
 
-	printf "${_pcislot_args}"
+	printf "${_pci_out}"
 }
 
 init_qemu_usage()
@@ -256,7 +256,7 @@ init_qemu_usage()
 init_qemu()
 {
 	local _host_ready=1
-	local _i _res
+	local _i= _res=
 	local _required_kmods
 
 	[ "${skip_qemu_check_env}" = "1" ] && return 0		# all fine!
@@ -716,7 +716,7 @@ compile_nic_args()
 						# Get parent MTU size
 						case "${platform}" in
 							Linux)
-								_parent_mtu=$( ${CAT_CMD} /sys/class/net/${mybridge}/mtu 2>/dev/null )
+								read _parent_mtu < /sys/class/net/${mybridge}/mtu 2>/dev/null
 								_ret=$?
 								;;
 							*)
@@ -729,12 +729,12 @@ compile_nic_args()
 							if [ -n "${_parent_mtu}" ]; then
 								case "${platform}" in
 									Linux)
-										_ret=$( ${IP_CMD} link set dev ${mytap} mtu ${_parent_mtu} )
-										;;
-									*)
-										# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
-										# when MTU is same?
-										_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1 )
+									${IP_CMD} link set dev ${mytap} mtu ${_parent_mtu}; _ret=$?
+									;;
+								*)
+									# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
+									# when MTU is same?
+									${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1; _ret=$?
 										;;
 								esac
 							fi
@@ -750,12 +750,12 @@ compile_nic_args()
 						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
 						case "${platform}" in
 							Linux)
-								_ret=$( ${IP_CMD} link set dev ${mytap} mtu ${nic_mtu} )
-								;;
-							*)
-								# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
-								# when MTU is same?
-								_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1 )
+							${IP_CMD} link set dev ${mytap} mtu ${nic_mtu}; _ret=$?
+							;;
+						*)
+							# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
+							# when MTU is same?
+							${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1; _ret=$?
 								;;
 						esac
 						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
@@ -857,7 +857,7 @@ compile_nic_args()
 		fi	# << if [ ${nic_persistent} -eq 0 ]
 		# MAC MGMT
 		if [ "${nic_hwaddr}" = "0" ]; then
-			nic_hwaddr=$( mac_gen 00:a0:98 )
+			capture nic_hwaddr mac_gen 00:a0:98
 			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE qemunic SET nic_hwaddr='${nic_hwaddr}' WHERE id='${nic_id}'"
 		fi
@@ -876,7 +876,7 @@ compile_nic_args()
 			exit 0
 		fi
 
-		_pcislot_args=$( get_pcislot_args -i ${qemu_pci_index} )
+		capture _pcislot_args get_pcislot_args -i ${qemu_pci_index}
 
 		#-device virtio-net,netdev=net0 -netdev tap,id=net0,ifname=tap100,script=no,downscript=no \
 		myargs=""
@@ -905,7 +905,7 @@ compile_nic_args()
 		# append -device for mac
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
-			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+			capture mymac normalize_nic_hwaddr ${nic_hwaddr}
 			myargs="${myargs},mac=${mymac}"
 		fi
 #		if [ "${qemu_have_net_ratelimit}" = "1" ]; then
@@ -1298,7 +1298,7 @@ compile_vnc_args()
 				fi
 			done
 
-			vm_port=$( get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\" )
+			capture vm_port get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\"
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
 			;;
@@ -1448,7 +1448,7 @@ compile_spice_args()
 					fi
 				fi
 			done
-			vm_port=$( get-next-tcp-port address=${_spice_bind} start_port=6000 end_port=7000 skip=\"${_skip_ports}\" )
+			capture vm_port get-next-tcp-port address=${_spice_bind} start_port=6000 end_port=7000 skip=\"${_skip_ports}\"
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 6000-7000 range for ${_spice_bind}${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: auto-detected free Spice port [skip for: ${_skip_ports}]: ${vm_port} for ${_spice_bind}
 ##
@@ -1553,7 +1553,7 @@ check_for_qemu_process()
 	[ -z "${jname}" ] && return 0
 
 	if [ -r ${jailsysdir}/${jname}/qemu.pid ]; then
-		_test_pid=$( ${CAT_CMD} ${jailsysdir}/${jname}/qemu.pid 2>/dev/null )
+		read _test_pid < ${jailsysdir}/${jname}/qemu.pid 2>/dev/null
 		if [ -n "${_test_pid}" ]; then
 			${PS_CMD} -p ${_test_pid} > /dev/null 2>&1
 			_ret=$?

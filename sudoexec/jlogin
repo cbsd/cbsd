@@ -54,7 +54,8 @@ readconf jlogin.conf
 try_remote()
 {
 	[ "${remote}" = "1" ] && err 1 "${N1_COLOR}No such jail${N0_COLOR}"
-	RHST=$( jwhereis ${jname} | ${HEAD_CMD} -n1 )
+	capture _jwhereis_out jwhereis ${jname}
+	read -r RHST _ <<< "${_jwhereis_out}"
 	[ -z "${RHST}" ] && err 1 "No such jail for login"
 
 	# we don't need for interactive when come with remote=2 from select_jail_by_list
@@ -76,7 +77,7 @@ init_tmux()
 
 	[ -z "${TMUX_CMD}" ] && capture TMUX_CMD which tmux
 
-	src_session="$( ${WHOAMI_CMD} )-nodename"
+	src_session="${USER}-nodename"
 	session_name="${src_session}-${jname}"
 
 	if [ -n "${TMUX_CMD}" ]; then
@@ -98,7 +99,7 @@ login_internal()
 	. ${subrdir}/rctl.subr
 
 	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
-	[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param='nice'" )
+	[ -r "${_formfile}" ] && capture nice cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param='nice'"
 	[ -z "${nice}" ] && nice="0"
 
 	if [ ${exec_fib} -eq 0 ]; then
@@ -120,7 +121,6 @@ login_internal()
 	[ -n "${oshell}" ] && shell="${oshell}"
 	[ -n "${ouser}" ] && user="${ouser}"
 	[ -z "${user}" ] && user="root"
-	[ -n "${oshell}" ] && shell="${oshell}"
 	[ -z "${shell}" ] && shell="/bin/sh"
 
 	if [ "${shell}" = "auto" ]; then
@@ -307,10 +307,8 @@ else
 fi
 
 if [ ${cbsd_api} -eq 1 ]; then
-	CURL_CMD=$( which curl )
-	JQ_CMD=$( which jq )
+	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	[ -z "${JQ_CMD}" ] && err 1 "${N1_COLOR}cloud up requires jq, please install: ${N2_COLOR}pkg install -y textproc/jq${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
 
@@ -323,15 +321,16 @@ if [ ${cbsd_api} -eq 1 ]; then
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+		capture _jq_out jq '.ssh_string' <<< "${_ssh}"
+		capture _ssh_string strstrip --str="${_jq_out}" --chars='"'
+		capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
 		if [ "${_ssh_pref}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error2, no ssh_string:\n${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_len=$( strlen "${_ssh_string}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
+		capture _ssh_len strlen "${_ssh_string}"
+		capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
 		#echo "${SSH_CMD} ${_ssh_post}"
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then

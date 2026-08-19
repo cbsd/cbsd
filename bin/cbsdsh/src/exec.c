@@ -358,7 +358,7 @@ find_command(char *name, struct cmdentry *entry, int act, const char *path)
 	struct stat64 statb;
 	int e;
 	int updatetbl;
-	struct builtincmd *bcmd;
+	const struct builtincmd *bcmd;
 	int len;
 
 	/* If name contains a slash, don't use PATH or hash table */
@@ -529,10 +529,10 @@ success:
  * Search the table of builtin commands.
  */
 
-struct builtincmd *
+const struct builtincmd *
 find_builtin(const char *name)
 {
-	struct builtincmd *bp;
+	const struct builtincmd *bp;
 
 	bp = bsearch(
 		&name, builtincmd, NUMBUILTINS, sizeof(struct builtincmd),

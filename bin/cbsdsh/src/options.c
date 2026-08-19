@@ -218,12 +218,9 @@ procargs(char **xargv)
 			setinputfile(*xargv, 0);
 		}
 		else {
-			printf("'%s' not found in CIX_PATH.\n", xargv[0]);
-			FILE *fp=fopen("/tmp/exec_not_found","a");
-			fprintf(fp,"%s: [%s]\n",arg0,xargv[0]);
-			fclose(fp);
-			exit(1);
-//			return 0;
+			outfmt(out2, "'%s' not found in CIX_PATH.\n", xargv[0]);
+			flushall();
+			_exit(1);
 		}
 
 setarg0:

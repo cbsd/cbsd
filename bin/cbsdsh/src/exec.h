@@ -69,7 +69,7 @@ void shellexec(char **, const char *, int)
 int padvance_magic(const char **path, const char *name, int magic);
 int hashcmd(int, char **);
 void find_command(char *, struct cmdentry *, int, const char *);
-struct builtincmd *find_builtin(const char *);
+const struct builtincmd *find_builtin(const char *);
 void hashcd(void);
 void changepath(const char *);
 #ifdef notdef

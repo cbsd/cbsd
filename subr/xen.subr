@@ -244,7 +244,7 @@ compile_dsk_args()
 
 		# test for full path. If path not started from '/' - append $data dir
 		full_dsk_path=
-		prefix=$( substr --pos=0 --len=1 --str="${dsk_path}" )
+		capture prefix substr --pos=0 --len=1 --str="${dsk_path}"
 
 		if [ "${prefix}" != "/" ]; then
 			full_dsk_path="${data}/${dsk_path}"
@@ -323,10 +323,28 @@ compile_dsk_args()
 # print 5c:f9:dd:76:d5:c4 from 5cf9dd76d5c4
 normalize_nic_hwaddr()
 {
-	local _hwaddr
+	local _hwaddr _len _i _ch _result=
 	[ -z "${1}" ] && return 0
 
-	_hwaddr=$( echo "${1}" | ${TR_CMD} -d ":"| ${SED_CMD} -e 's/\([0-9A-Fa-f]\{2\}\)/\1:/g' -e 's/\(.*\):$/\1/' )
+	_hwaddr="${1}"
+	capture _len strlen "${_hwaddr}"
+	for ((_i=1; _i<=${_len}; _i++)); do
+		capture _ch substr --pos=${_i} --len=1 --str="${_hwaddr}"
+		[ "${_ch}" = ":" ] && continue
+		_result="${_result}${_ch}"
+	done
+
+	_hwaddr=
+	capture _len strlen "${_result}"
+	for ((_i=1; _i<=${_len}; _i+=2)); do
+		capture _ch substr --pos=${_i} --len=2 --str="${_result}"
+		if [ -z "${_hwaddr}" ]; then
+			_hwaddr="${_ch}"
+		else
+			_hwaddr="${_hwaddr}:${_ch}"
+		fi
+	done
+
 	printf ${_hwaddr}
 }
 
@@ -398,7 +416,7 @@ compile_nic_args()
 
 		# when nic_persistent=1 just put it to args
 		if [ ${nic_persistent} -eq 1 ]; then
-			_pref3=$( substr --pos=0 --len=3 --str=${nic_parent} )
+			capture _pref3 substr --pos=0 --len=3 --str=${nic_parent}
 			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
 			${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
 			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
@@ -433,8 +451,8 @@ compile_nic_args()
 					case "${nic_parent}" in
 						vpc-*)
 							VPC_ROOT_DIR="${dbdir}/vpc"
-							_arg_len=$( strlen ${nic_parent} )
-							vpc_name=$( substr --pos=5 --len=${_arg_len} --str="${nic_parent}" )
+							capture _arg_len strlen ${nic_parent}
+							capture vpc_name substr --pos=5 --len=${_arg_len} --str="${nic_parent}"
 							_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
 							[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
 							mybridge=
@@ -508,7 +526,7 @@ compile_nic_args()
 						if [ ${_ret} -eq 0 ]; then
 							# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
 							# when MTU is same?
-							[ -n "${_parent_mtu}" ] && _ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1 )
+							[ -n "${_parent_mtu}" ] && { ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1; _ret=$?; }
 						fi
 					else
 						# Get parent MTU size
@@ -521,7 +539,7 @@ compile_nic_args()
 						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
 						# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
 						# when MTU is same?
-						_ret=$( ${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1 )
+						${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1; _ret=$?
 						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
 
@@ -558,7 +576,7 @@ compile_nic_args()
 		fi	# << if [ ${nic_persistent} -eq 0 ]
 		# MAC MGMT
 		if [ "${nic_hwaddr}" = "0" ]; then
-			nic_hwaddr=$( mac_gen 00:a0:98 )
+			capture nic_hwaddr mac_gen 00:a0:98
 			cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MAC address randomized and updated for nic id ${nic_id}: ${nic_hwaddr}
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE xennic SET nic_hwaddr='${nic_hwaddr}' WHERE id='${nic_id}'"
 		fi
@@ -593,7 +611,7 @@ compile_nic_args()
 
 		if [ "${nic_hwaddr}" != "0" ]; then
 			unset mymac
-			mymac=$( normalize_nic_hwaddr ${nic_hwaddr} )
+			capture mymac normalize_nic_hwaddr ${nic_hwaddr}
 			myargs="${myargs},mac=${mymac}"
 
 			echo "export nic_hwaddr${_id}=\"${mymac}\""
@@ -762,7 +780,7 @@ compile_vnc_args()
 					fi
 				fi
 			done
-			vm_port=$( get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\" )
+			capture vm_port get-next-tcp-port address=${_vnc_bind} start_port=5900 end_port=6900 skip=\"${_skip_ports}\"
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 5900-6900 range for ${_vnc_bind}${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: auto-detected free VNC port [skip for: ${_skip_ports}]: ${vm_port} for ${_vnc_bind}
 ##
@@ -900,7 +918,7 @@ compile_spice_args()
 					fi
 				fi
 			done
-			vm_port=$( get-next-tcp-port address=${_spice_bind} start_port=6000 end_port=7000 skip=\"${_skip_ports}\" )
+			capture vm_port get-next-tcp-port address=${_spice_bind} start_port=6000 end_port=7000 skip=\"${_skip_ports}\"
 			[ $? -ne 0 ] && err 1 "${N1_COLOR}no free available port in 6000-7000 range for ${_spice_bind}${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: auto-detected free Spice port [skip for: ${_skip_ports}]: ${vm_port} for ${_spice_bind}
 ##
@@ -966,7 +984,7 @@ compile_spice_args()
 			fi
 			;;
 		*)
-			bhyve_spice_tcp_ipconnect="${vnc_bind}"
+			xen_spice_tcp_ipconnect="${vnc_bind}"
 			;;
 	esac
 
@@ -989,7 +1007,7 @@ compile_spice_args()
 # e.g: check_for_xen_process -j vm1
 check_for_xen_process()
 {
-	local jname b_jname _state _domid
+	local jname= b_jname= _state= _domid=
 	unset vm_pid vm_state
 
 	while getopts "j:" opt; do

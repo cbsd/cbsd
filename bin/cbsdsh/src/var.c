@@ -154,7 +154,7 @@ RESET {
 }
 #endif
 
-static char *varnull(const char *s)
+static const char *varnull(const char *s)
 {
 	return (strchr(s, '=') ?: nullstr - 1) + 1;
 }

@@ -589,7 +589,7 @@ simplecmd(void) {
 				args && app == &args->narg.next &&
 				!vars && !redir
 			) {
-				struct builtincmd *bcmd;
+				const struct builtincmd *bcmd;
 				const char *name;
 
 				/* We have a function */
@@ -1465,7 +1465,7 @@ parsesub: {
 	const char *newsyn = synstack->syntax;
 	static const char types[] = "}-+?=@";
 	int subtype;
-	char *p;
+	const char *p;
 
 	USTPUTC('$', out);
 

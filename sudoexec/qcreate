@@ -248,12 +248,12 @@ really_create_base()
 
 really_create_vm()
 {
-	local _res _msg
+	local _res= _msg=
 
 	# do not create disk
 	[ "${imgtype}" = "none" ] && return 0
 
-	capture _res substr --pos=0 --len=5 --str=${imgtype}
+	capture _res substr --pos=0 --len=5 --str="${imgtype}"
 	if [ "${_res}" = "/dev/" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: qcreate for ${jname}: imgtype = raw: ${imgtype}
 		 [ ! -c "${imgtype}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such character device: ${N2_COLOR}${imgtype}${N0_COLOR}"
@@ -347,7 +347,7 @@ ${CAT_CMD} ${jconf} | ${TR_CMD} -d \\r > ${temprcconf}
 [ -n "${oflavor}" ] && flavor="${oflavor}"
 if [ -n "${flavor}" ]; then
 	unset oimgsize imgsize ovm_ram vm_ram ovm_cpus vm_cpus
-	flavors_available=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages" | ${SORT_CMD} | ${XARGS_CMD} )
+	capture flavors_available cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages ORDER BY name"
 	flavor_exist=0
 	for i in ${flavors_available}; do
 		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
@@ -355,7 +355,7 @@ if [ -n "${flavor}" ]; then
 
 	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
 
-	_res=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name='${flavor}' LIMIT 1" 2>/dev/null )
+	capture _res cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name='${flavor}' LIMIT 1"
 
 	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
 	sqllistdelimer="|"
@@ -397,7 +397,7 @@ for i in ${QEMU_ARGS}; do
 				_mytest="${jailrcconfdir}/rc.conf_${jname}"
 				;;
 			vm_os_type)
-				_mytest=$( echo "${_mytest}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
+				capture _mytest ${TR_CMD} '[:upper:]' '[:lower:]' <<< "${_mytest}"
 				;;
 			*)
 				# skip unknown args
@@ -421,7 +421,7 @@ if [ $? -ne 0 ]; then
 	log_err 1 "${N1_COLOR}VM already exist: ${N2_COLOR}${jname}${N0_COLOR}"
 fi
 
-vm_os_type=$( echo "${vm_os_type}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
+capture vm_os_type ${TR_CMD} '[:upper:]' '[:lower:]' <<< "${vm_os_type}"
 updateconf ${temprcconf} vm_os_type="${vm_os_type}"
 
 # profile
@@ -540,7 +540,7 @@ eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/qemu-default-default
 
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
-if [ ${removejconf} = "1" ]; then
+if [ "${removejconf}" = "1" ]; then
 	trap "${RM_CMD} -f ${temprcconf} ${jconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
 else
 	trap "${RM_CMD} -f ${temprcconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
@@ -599,8 +599,8 @@ SYSRC_TEMPRCCONF=
 #  - interface2 required for ci_interface2
 #  - ci_interface2 required for ci_ip4_addr2
 # when ci_interface2 not empty - inherit interface2 settings
-[ -n "${oci_interface2}" ] && ci_interface2="${ci_interface2}"
-[ -n "${ointerface2}" ] && interface2="${ointerface2}"
+[ -n "${oci_interface2}" -a "${oci_interface2}" != "0" ] && ci_interface2="${ci_interface2}"
+[ -n "${ointerface2}" -a "${ointerface2}" != "0" ] && interface2="${ointerface2}"
 [ -n "${ci_ip4_addr2}" -a -z "${ci_interface2}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: ci_ip4_addr2 set, but ci_interface2 is empty${N0_COLOR}"
 [ -z "${interface2}" -a -n "${ci_interface2}" ] && interface2="${ci_interface2}"
 
@@ -678,12 +678,13 @@ fi
 defdsk="dsk1.vhd"
 defnic="nic1.vhd"
 
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemudsk.schema qemudsk
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemunic.schema qemunic
-#/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-p9shares.schema p9shares
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-settings.schema settings
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-qemu-pcibus.schema pcibus_run
+# cached sqlite3
+if [ ! -r "${tmpdir}/qemu-local.sqlite" ]; then
+	qsqlite-cache-create file=${tmpdir}/qemu-local.sqlite
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N2_COLOR}qsqlite-cache-create file=${tmpdir}/qemu-local.sqlite${N0_COLOR}"
+fi
+${CP_CMD} -a ${tmpdir}/qemu-local.sqlite ${jailsysdir}/${jname}/local.sqlite
 
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
@@ -968,7 +969,7 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ -z "${ci_interface2}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_interface2=\"${ci_interface2}\""
 
 	# GET MAC
-	capture nic_hwaddr0 cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_hwaddr FROM qemunic LIMIT 1
+	cbsdsqlro_vars "${jailsysdir}/${jname}/local.sqlite" "SELECT nic_hwaddr FROM qemunic LIMIT 1" nic_hwaddr0
 
 	if [ "${nic_hwaddr0}" = "0" ]; then
 		# gen MAC

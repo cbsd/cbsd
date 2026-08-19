@@ -14,7 +14,7 @@ interface2 ci_interface2 flavor"
 #vnc_password state_time on_poweroff on_reboot on_crash spice_default vm_spice_port xen_spice_tcp_bind xen_spice_resolution spice_password soundhw debug_engine \
 #is_cloud ci_jname ci_fqdn ci_template ci_interface ci_interface_name ci_ip4_addr ci_gw4 ci_nameserver_address ci_nameserver_searchci_adjust_inteface_helper ci_user_add \
 #ci_user_pw_user ci_user_pw_root ci_interface_mtu"
-MYOPTARG="${MYOPTARG} ${XEN_ARGS}"
+CIXOPTARG="${CIXOPTARG} ${XEN_ARGS}"
 MYDESC="Create XEN domain from config file or args"
 ADDHELP="
 
@@ -297,7 +297,7 @@ really_create_vm()
 apply_flavor()
 {
 	unset oimgsize imgsize ovm_ram vm_ram ovm_cpus vm_cpus
-	flavors_available=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages" | ${SORT_CMD} | ${XARGS_CMD} )
+	capture flavors_available cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages ORDER BY name"
 	flavor_exist=0
 	for i in ${flavors_available}; do
 		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
@@ -305,7 +305,7 @@ apply_flavor()
 
 	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
 
-	_res=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name='${flavor}' LIMIT 1" 2>/dev/null )
+	capture _res cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name='${flavor}' LIMIT 1"
 
 	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
 	sqllistdelimer="|"
@@ -458,7 +458,7 @@ for i in ${XEN_ARGS}; do
 				_mytest="${jailrcconfdir}/rc.conf_${jname}"
 				;;
 			vm_os_type)
-				_mytest=$( echo "${vm_os_type}" | ${TR_CMD} '[:upper:]' '[:lower:]' )
+				capture _mytest ${TR_CMD} '[:upper:]' '[:lower:]' <<< "${vm_os_type}"
 				;;
 			*)
 				# skip unknown args
@@ -590,9 +590,10 @@ case "${platform}" in
 		;;
 esac
 
-echo "${res}" | read -r conf_owner conf_group
+conf_owner="${res%% *}"
+conf_group="${res##* }"
 
-eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/xen-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/xen-default-default.conf ${users_template_profile} ${temprcconf} )
+eval $( ${miscdir}/merge -o ${jconf_tmp} ${etcdir}/defaults/xen-default-default.conf ${etcdir}/defaults/${template_profile} ${etcdir}/xen-default-default.conf ${users_template_profile} ${temprcconf} 2>/dev/null )
 
 # make permission for group write
 ${CHOWN_CMD} ${conf_owner}:${conf_group} ${jconf_tmp}
@@ -607,7 +608,7 @@ ${CHOWN_CMD} ${conf_owner}:${conf_group} ${jconf_tmp}
 
 [ -n "${oremovejconf}" ] && removejconf="${oremovejconf}"
 
-if [ ${removejconf} = "1" ]; then
+if [ "${removejconf}" = "1" ]; then
 	trap "${RM_CMD} -f ${temprcconf} ${jconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
 else
 	trap "${RM_CMD} -f ${temprcconf} ${jconf_tmp}" HUP INT ABRT BUS TERM  EXIT
@@ -677,6 +678,17 @@ SYSRC_TEMPRCCONF=
 defdsk="dsk1.vhd"
 defnic="nic1.vhd"
 
+[ ! -d ${jailfstabdir}  ] && ${MKDIR_CMD} -m 0770 -p ${jailfstabdir}
+[ ! -d ${jailsysdir}/${jname} ] && ${MKDIR_CMD} -m 0770 -p ${jailsysdir}/${jname}
+
+# cached sqlite3
+if [ ! -r "${tmpdir}/xen-local.sqlite" ]; then
+	xsqlite-cache-create file=${tmpdir}/xen-local.sqlite
+	_ret=$?
+	[ ${_ret} -ne 0 ] && err 1 "${W1_COLOR}${CIX_APP} error: ${N2_COLOR}xsqlite-cache-create file=${tmpdir}/xen-local.sqlite${N0_COLOR}"
+fi
+${CP_CMD} -a ${tmpdir}/xen-local.sqlite ${jailsysdir}/${jname}/local.sqlite
+
 if [ -z "${zfs_snapsrc}" ]; then
 	really_create_base
 	really_create_vm
@@ -689,16 +701,10 @@ else
 fi
 
 [ ! -d "${data}" ] && log_err 1 "Can't create datadir ${data}"
-[ ! -d ${jailfstabdir}  ] && ${MKDIR_CMD} -p ${jailfstabdir}
-
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-xendsk.schema xendsk
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-xennic.schema xennic
-#/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-xen-p9shares.schema p9shares
-/usr/local/bin/cbsd ${miscdir}/updatesql ${jailsysdir}/${jname}/local.sqlite ${CIX_DISTDIR}/share/local-xen-settings.schema settings
 
 [ -n "${fstablocal}" -a -f "${fstablocal}" ] && ${CP_CMD} ${fstablocal} ${jailfstabdir}/${jailfstabpref}${jname}.local
 
-${CP_CMD} ${jconf} ${rcconf}
+${CP_CMD} ${jconf_tmp} ${rcconf}
 . ${rcconf}
 
 # Finnaly export to SQLite
