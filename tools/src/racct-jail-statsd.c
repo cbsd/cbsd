@@ -22,6 +22,7 @@
 #include <libutil.h>
 #include <pwd.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <sys/time.h>
 #include <stddef.h>
@@ -72,6 +73,10 @@ int accept_busy=0;
 struct sockaddr_in cli_addr;
 int listenfd = 0;
 
+/* Published metrics are replaced atomically after each collection cycle. */
+static pthread_mutex_t prometheus_metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char *prometheus_metrics;
+
 //prom
 /* Client structure */
 typedef struct{
@@ -82,6 +87,159 @@ typedef struct{
 } client_t;
 
 int list_data();
+
+struct prometheus_jail_metric {
+	char name[MAXJNAME];
+	uint64_t memoryuse, maxproc, openfiles, readbps, writebps;
+	uint64_t readiops, writeiops, pcpu;
+	unsigned int samples;
+	struct prometheus_jail_metric *next;
+};
+
+static int
+append_metric(char **buffer, size_t *length, size_t *capacity,
+    const char *format, ...)
+{
+	va_list ap, copy;
+	int needed;
+	char *new_buffer;
+
+	va_start(ap, format);
+	va_copy(copy, ap);
+	needed = vsnprintf(NULL, 0, format, copy);
+	va_end(copy);
+	if (needed < 0) {
+		va_end(ap);
+		return -1;
+	}
+	if (*length + (size_t)needed + 1 > *capacity) {
+		size_t new_capacity = *capacity ? *capacity : 1024;
+		while (new_capacity < *length + (size_t)needed + 1)
+			new_capacity *= 2;
+		new_buffer = realloc(*buffer, new_capacity);
+		if (new_buffer == NULL) {
+			va_end(ap);
+			return -1;
+		}
+		*buffer = new_buffer;
+		*capacity = new_capacity;
+	}
+	vsnprintf(*buffer + *length, *capacity - *length, format, ap);
+	va_end(ap);
+	*length += (size_t)needed;
+	return 0;
+}
+
+static void
+prometheus_escape_label(const char *source, char *destination, size_t size)
+{
+	size_t used = 0;
+
+	while (*source != '\0' && used + 1 < size) {
+		if ((*source == '\\' || *source == '"' || *source == '\n') &&
+		    used + 2 < size) {
+			destination[used++] = '\\';
+			destination[used++] = *source == '\n' ? 'n' : *source;
+		} else {
+			destination[used++] = *source;
+		}
+		source++;
+	}
+	destination[used] = '\0';
+}
+
+static void
+refresh_prometheus_metrics(void)
+{
+	struct item_data *ch;
+	struct prometheus_jail_metric *metric = NULL, *metrics = NULL, *next;
+	char escaped_name[MAXJNAME * 2];
+	char *buffer = NULL;
+	size_t length = 0, capacity = 0;
+
+	for (ch = item_list; ch != NULL; ch = ch->next) {
+		if (ch->modified == 0 || ch->orig_name[0] == '\0')
+			continue;
+		for (metric = metrics; metric != NULL; metric = metric->next) {
+			if (strcmp(metric->name, ch->orig_name) == 0)
+				break;
+		}
+		if (metric == NULL) {
+			metric = calloc(1, sizeof(*metric));
+			if (metric == NULL)
+				goto fail;
+			strncpy(metric->name, ch->orig_name,
+			    sizeof(metric->name) - 1);
+			metric->next = metrics;
+			metrics = metric;
+		}
+		metric->memoryuse += ch->memoryuse;
+		metric->maxproc += ch->maxproc;
+		metric->openfiles += ch->openfiles;
+		metric->readbps += ch->readbps;
+		metric->writebps += ch->writebps;
+		metric->readiops += ch->readiops;
+		metric->writeiops += ch->writeiops;
+		metric->pcpu += ch->pcpu;
+		metric->samples++;
+	}
+
+	if (append_metric(&buffer, &length, &capacity, "jails_up %u\n",
+	    running_jails) != 0)
+		goto fail;
+	for (metric = metrics; metric != NULL; metric = metric->next) {
+		prometheus_escape_label(metric->name, escaped_name,
+		    sizeof(escaped_name));
+		if (append_metric(&buffer, &length, &capacity,
+		    "jail_openfiles{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_memoryuse{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_maxproc{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_readbps{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_writebps{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_readiops{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_writeiops{name=\"%s\"} %" PRIu64 "\n"
+		    "jail_pcpu{name=\"%s\"} %" PRIu64 "\n",
+		    escaped_name, metric->openfiles / metric->samples,
+		    escaped_name, metric->memoryuse / metric->samples,
+		    escaped_name, metric->maxproc / metric->samples,
+		    escaped_name, metric->readbps / metric->samples,
+		    escaped_name, metric->writebps / metric->samples,
+		    escaped_name, metric->readiops / metric->samples,
+		    escaped_name, metric->writeiops / metric->samples,
+		    escaped_name, metric->pcpu / metric->samples) != 0)
+			goto fail;
+	}
+
+	pthread_mutex_lock(&prometheus_metrics_mutex);
+	free(prometheus_metrics);
+	prometheus_metrics = buffer;
+	pthread_mutex_unlock(&prometheus_metrics_mutex);
+	buffer = NULL;
+
+fail:
+	free(buffer);
+	for (metric = metrics; metric != NULL; metric = next) {
+		next = metric->next;
+		free(metric);
+	}
+}
+
+static int
+write_all(int fd, const char *buffer, size_t length)
+{
+	ssize_t written;
+
+	while (length > 0) {
+		written = write(fd, buffer, length);
+		if (written < 0 && errno == EINTR)
+			continue;
+		if (written <= 0)
+			return -1;
+		buffer += written;
+		length -= (size_t)written;
+	}
+	return 0;
+}
 
 int
 sum_data()
@@ -451,147 +609,43 @@ update_racct_jail(char *jname, char *orig_jname, int jid)
 void *handle_client(void *arg) {
 	client_t *cli = (client_t *)arg;
 	char s[2048];
-	char json_str[20000];
-	const char *content_encoding = "";
+	char *metrics;
+	size_t metrics_length;
+
+	pthread_mutex_lock(&prometheus_metrics_mutex);
+	metrics = strdup(prometheus_metrics != NULL ? prometheus_metrics :
+	    "jails_up 0\n");
+	pthread_mutex_unlock(&prometheus_metrics_mutex);
+	if (metrics == NULL) {
+		close(cli->sockfd);
+		free(cli);
+		pthread_exit(NULL);
+	}
+	metrics_length = strlen(metrics);
 
 	/* Print HTTP header and metrics. */
 	memset(s, 0, sizeof(s));
 	snprintf(s, sizeof(s),
 		"HTTP/1.1 200 OK\r\n"
 		"Connection: close\r\n"
-		"%s"
 		"Content-Type: text/plain; version=0.0.4\r\n"
+		"Content-Length: %zu\r\n"
 		"\r\n",
-		content_encoding);
+		metrics_length);
 
-	if (write(cli->sockfd, s, strlen(s)) < 0) {
+	if (write_all(cli->sockfd, s, strlen(s)) < 0) {
 		perror("ERROR: write to descriptor failed");
 		close(cli->sockfd);
+		free(metrics);
 		free(cli);
 		pthread_exit(NULL);
 	}
 
-	struct item_data *target = NULL;
-	struct item_data *ch;
-	struct item_data *next_ch;
-	char sql[512];
-	char stats_file[1024];
-	const char *hostname = getenv("HOST");
-	int ret = 0;
-	FILE *fp;
-	int i;
-	struct timeval now_time;
-	int cur_time = 0;
-	int round_total = save_loop_count + 1;
-
-	struct sum_item_data *newd;
-	struct sum_item_data *temp;
-	struct sum_item_data *sumch;
-	struct sum_item_data *next_sumch;
-
-	// First, free existing sum_item_list
-	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
-		next_sumch = sumch->next;
-		free(sumch);
-	}
-	sum_item_list = NULL;
-
-	for (ch = item_list; ch; ch = ch->next) {
-		if (strlen(ch->orig_name) < 1) {
-			continue;
-		}
-		if (ch->modified == 0) {
-			continue;
-		}
-		i = sum_jname_exist(ch->orig_name);
-
-		if (i) {
-			for (sumch = sum_item_list; sumch; sumch = sumch->next) {
-				if (!strcmp(ch->orig_name, sumch->name)) {
-					sumch->modified += ch->modified;
-					sumch->pcpu += ch->pcpu;
-					sumch->memoryuse += ch->memoryuse;
-					sumch->maxproc += ch->maxproc;
-					sumch->openfiles += ch->openfiles;
-					sumch->readbps += ch->readbps;
-					sumch->writebps += ch->writebps;
-					sumch->readiops += ch->readiops;
-					sumch->writeiops += ch->writeiops;
-					sumch->pmem += ch->pmem;
-					break;
-				}
-			}
-		} else {
-			CREATE(newd, struct sum_item_data, 1);
-			if (!newd) {
-				tolog(log_level, "Failed to allocate memory for new sum_item_data\n");
-				close(cli->sockfd);
-				free(cli);
-				pthread_exit(NULL);
-			}
-			newd->modified = ch->modified;
-			newd->pcpu = ch->pcpu;
-			newd->memoryuse = ch->memoryuse;
-			newd->maxproc = ch->maxproc;
-			newd->openfiles = ch->openfiles;
-			newd->readbps = ch->readbps;
-			newd->writebps = ch->writebps;
-			newd->readiops = ch->readiops;
-			newd->writeiops = ch->writeiops;
-			newd->pmem = ch->pmem;
-			newd->next = sum_item_list;
-			sum_item_list = newd;
-			strncpy(newd->name, ch->orig_name, sizeof(newd->name) - 1);
-			tolog(log_level, "[AVGSUM] !! %s struct has been added\n", newd->name);
-		}
-	}
-
-	memset(json_str, 0, sizeof(json_str));
-
-	// Output jails_up metric
-	snprintf(json_str, sizeof(json_str), "jails_up: %d\n", running_jails);
-
-	// Output individual jail metrics
-	for (ch = item_list; ch; ch = ch->next) {
-		if (ch->modified == 0) {
-			continue;
-		}
-
-		// Format each metric in Prometheus format
-		snprintf(json_str + strlen(json_str), sizeof(json_str) - strlen(json_str),
-			"jail_openfiles{name=\"%s\"} %d\n"
-			"jail_memoryuse{name=\"%s\"} %lu\n"
-			"jail_maxproc{name=\"%s\"} %d\n"
-			"jail_readbps{name=\"%s\"} %d\n"
-			"jail_writebps{name=\"%s\"} %d\n"
-			"jail_readiops{name=\"%s\"} %d\n"
-			"jail_writeiops{name=\"%s\"} %d\n"
-			"jail_pcpu{name=\"%s\"} %d\n",
-			ch->orig_name, ch->openfiles,
-			ch->orig_name, ch->memoryuse,
-			ch->orig_name, ch->maxproc,
-			ch->orig_name, ch->readbps,
-			ch->orig_name, ch->writebps,
-			ch->orig_name, ch->readiops,
-			ch->orig_name, ch->writeiops,
-			ch->orig_name, ch->pcpu);
-	}
-
-	if (write(cli->sockfd, json_str, strlen(json_str)) < 0) {
+	if (write_all(cli->sockfd, metrics, metrics_length) < 0)
 		perror("ERROR: write to descriptor failed");
-		close(cli->sockfd);
-		free(cli);
-		pthread_exit(NULL);
-	}
-
-	// Free sum_item_list before exiting
-	for (sumch = sum_item_list; sumch; sumch = next_sumch) {
-		next_sumch = sumch->next;
-		free(sumch);
-	}
-	sum_item_list = NULL;
 
 	close(cli->sockfd);
+	free(metrics);
 	free(cli);
 	pthread_exit(NULL);
 }
@@ -1075,9 +1129,9 @@ if ( v6 == 0 ) {
 				}
 
 				i = jname_exist(cur_jname);
+				running_jails++;
 
 				if (i) {
-					running_jails++;
 					update_racct_jail(cur_jname, tmpjname,
 					    cur_jid);
 					continue;
@@ -1099,6 +1153,8 @@ if ( v6 == 0 ) {
 
 			c++;
 			list_data();
+			if (OUTPUT_PROMETHEUS & output_flags)
+				refresh_prometheus_metrics();
 
 			if (c > 5) {
 				prune_inactive_env();
