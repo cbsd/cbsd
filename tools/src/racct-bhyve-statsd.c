@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/rctl.h>
 #include <sys/sysctl.h>
 #include <assert.h>
@@ -28,6 +29,9 @@
 #include <libprocstat.h>
 #include <limits.h>
 #include <dirent.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
 
 #include <paths.h>
 
@@ -42,10 +46,167 @@
 #include "racct-generic-stats.c"
 
 unsigned int running_bhyves;
+static int prometheus_listen_fd = -1;
+static pthread_mutex_t prometheus_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char *prometheus_snapshot;
+
+struct prometheus_client {
+	int fd;
+};
+
+static int
+write_all(int fd, const char *buffer, size_t length)
+{
+	ssize_t written;
+	while (length > 0) {
+		written = write(fd, buffer, length);
+		if (written < 0 && errno == EINTR)
+			continue;
+		if (written <= 0)
+			return -1;
+		buffer += written;
+		length -= (size_t)written;
+	}
+	return 0;
+}
+
+static void
+escape_prometheus_label(const char *source, char *destination, size_t size)
+{
+	size_t used = 0;
+	while (*source != '\0' && used + 1 < size) {
+		if ((*source == '\\' || *source == '"' || *source == '\n') &&
+		    used + 2 < size) {
+			destination[used++] = '\\';
+			destination[used++] = *source == '\n' ? 'n' : *source;
+		} else {
+			destination[used++] = *source;
+		}
+		source++;
+	}
+	destination[used] = '\0';
+}
+
+static void *
+handle_prometheus_client(void *argument)
+{
+	struct prometheus_client *client = argument;
+	char header[256], *body;
+	size_t length;
+
+	pthread_mutex_lock(&prometheus_mutex);
+	body = strdup(prometheus_snapshot != NULL ? prometheus_snapshot :
+	    "bhyves_up 0\n");
+	pthread_mutex_unlock(&prometheus_mutex);
+	if (body != NULL) {
+		length = strlen(body);
+		snprintf(header, sizeof(header),
+		    "HTTP/1.1 200 OK\r\nConnection: close\r\n"
+		    "Content-Type: text/plain; version=0.0.4\r\n"
+		    "Content-Length: %zu\r\n\r\n", length);
+		if (write_all(client->fd, header, strlen(header)) == 0)
+			(void)write_all(client->fd, body, length);
+		free(body);
+	}
+	close(client->fd);
+	free(client);
+	return NULL;
+}
+
+static void *
+accept_prometheus_clients(void *unused)
+{
+	struct prometheus_client *client;
+	pthread_t thread;
+	pthread_attr_t attributes;
+	int fd;
+
+	(void)unused;
+	pthread_attr_init(&attributes);
+	pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+	for (;;) {
+		fd = accept(prometheus_listen_fd, NULL, NULL);
+		if (fd < 0) {
+			if (errno != EINTR)
+				perror("Prometheus accept failed");
+			continue;
+		}
+		client = malloc(sizeof(*client));
+		if (client == NULL) {
+			close(fd);
+			continue;
+		}
+		client->fd = fd;
+		if (pthread_create(&thread, &attributes, handle_prometheus_client,
+		    client) != 0) {
+			close(fd);
+			free(client);
+			continue;
+		}
+	}
+}
+
+static int
+start_prometheus_exporter(void)
+{
+	struct sockaddr_in address;
+	pthread_t thread;
+	pthread_attr_t attributes;
+	int option = 1;
+	const char *ip = prometheus_listen4 != NULL ? prometheus_listen4 :
+	    "127.0.0.1";
+
+	prometheus_listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (prometheus_listen_fd < 0)
+		return -1;
+	(void)setsockopt(prometheus_listen_fd, SOL_SOCKET, SO_REUSEADDR,
+	    &option, sizeof(option));
+	memset(&address, 0, sizeof(address));
+	address.sin_family = AF_INET;
+	address.sin_port = htons(prometheus_port);
+	if (inet_pton(AF_INET, ip, &address.sin_addr) != 1 ||
+	    bind(prometheus_listen_fd, (struct sockaddr *)&address,
+	    sizeof(address)) < 0 || listen(prometheus_listen_fd, 16) < 0) {
+		close(prometheus_listen_fd);
+		prometheus_listen_fd = -1;
+		return -1;
+	}
+	pthread_attr_init(&attributes);
+	pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+	if (pthread_create(&thread, &attributes, accept_prometheus_clients,
+	    NULL) != 0) {
+		pthread_attr_destroy(&attributes);
+		close(prometheus_listen_fd);
+		prometheus_listen_fd = -1;
+		return -1;
+	}
+	pthread_attr_destroy(&attributes);
+	return 0;
+}
 int update_racct_bhyve(char * /*vmname*/, char * /*orig_jname*/,
     char * /*vmpath*/);
 int sum_data_bhyve();
 int list_data();
+
+static void
+remove_bhyve_samples(const char *name)
+{
+	struct item_data *ch = item_list, *previous = NULL, *next;
+
+	while (ch != NULL) {
+		next = ch->next;
+		if (strcmp(ch->orig_name, name) == 0) {
+			if (previous == NULL)
+				item_list = next;
+			else
+				previous->next = next;
+			free(ch);
+		} else {
+			previous = ch;
+		}
+		ch = next;
+	}
+}
 
 pid_t
 dofiles(struct procstat *procstat, struct kinfo_proc *kp)
@@ -154,7 +315,7 @@ get_vm_pid(char *vmpath)
 	int what;
 	int i;
 	unsigned int cnt;
-	pid_t vmpid;
+	pid_t vmpid = 0;
 
 	arg = 0;
 	what = KERN_PROC_PROC;
@@ -210,12 +371,16 @@ sum_data_bhyve()
 	char stats_file[1024];
 	int ret = 0;
 	FILE *fp;
-	char json_str[20000]; // todo: dynamic from number of bhyve/jails
+	char *json_str = NULL;
+	size_t json_capacity = 64;
+	char *prometheus = NULL;
+	size_t prometheus_length = 0, prometheus_capacity = 64;
+	int prometheus_valid = 1;
+	char escaped_name[MAXJNAME * 2];
 	char json_buf[1024];  // todo: dynamic from number of bhyve/jails
 	int i;
 	struct timeval now_time;
 	int cur_time = 0;
-	int round_total = save_loop_count + 1;
 
 	struct sum_item_data *newd;
 	struct sum_item_data *temp;
@@ -259,6 +424,7 @@ sum_data_bhyve()
 			for (sumch = sum_item_list; sumch;
 			     sumch = sumch->next) {
 				if (!strcmp(ch->orig_name, sumch->name)) {
+					sumch->pid++;
 					sumch->modified += ch->modified;
 					sumch->pcpu += ch->pcpu;
 					sumch->memoryuse += ch->memoryuse;
@@ -279,6 +445,7 @@ sum_data_bhyve()
 				continue;
 			}
 			newd->modified = ch->modified;
+			newd->pid = 1; /* number of samples in this aggregate */
 			newd->pcpu = ch->pcpu;
 			newd->memoryuse = ch->memoryuse;
 			newd->maxproc = ch->maxproc;
@@ -298,68 +465,143 @@ sum_data_bhyve()
 		}
 	}
 
-	memset(json_str, 0, sizeof(json_str));
+	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
+		json_capacity += sizeof(json_buf) + 1;
+		prometheus_capacity += 2048;
+	}
+	json_str = calloc(1, json_capacity);
+	if (json_str == NULL)
+		return 1;
+	if (OUTPUT_PROMETHEUS & output_flags) {
+		prometheus = calloc(1, prometheus_capacity);
+		if (prometheus == NULL) {
+			free(json_str);
+			return 1;
+		}
+		prometheus_length = (size_t)snprintf(prometheus,
+		    prometheus_capacity, "bhyves_up %u\n", running_bhyves);
+	}
 	for (sumch = sum_item_list; sumch; sumch = sumch->next) {
 		if (strlen(sumch->name) < 1) {
 			continue;
 		}
 		tolog(log_level,
 		    " ***[%s]SUM|PCPU:%d,MEM:%ld,PROC:%d,OPENFILES:%d,RBPS:%d,WBPS:%d,RIOPS:%d,WIOPS:%d,PMEM:%d,TIME:%ld\n",
-		    sumch->name, sumch->pcpu / round_total,
-		    sumch->memoryuse / round_total,
-		    sumch->maxproc / round_total,
-		    sumch->openfiles / round_total,
-		    sumch->readbps / round_total, sumch->writebps / round_total,
-		    sumch->readiops / round_total,
-		    sumch->writeiops / round_total, sumch->pmem / round_total,
-		    sumch->modified / round_total);
+		    sumch->name, sumch->pcpu / sumch->pid,
+		    sumch->memoryuse / sumch->pid,
+		    sumch->maxproc / sumch->pid,
+		    sumch->openfiles / sumch->pid,
+		    sumch->readbps / sumch->pid, sumch->writebps / sumch->pid,
+		    sumch->readiops / sumch->pid,
+		    sumch->writeiops / sumch->pid, sumch->pmem / sumch->pid,
+		    sumch->modified / sumch->pid);
+
+		if (prometheus != NULL && prometheus_length < prometheus_capacity) {
+			escape_prometheus_label(sumch->name, escaped_name,
+			    sizeof(escaped_name));
+			int added = snprintf(prometheus + prometheus_length,
+			    prometheus_capacity - prometheus_length,
+			    "bhyve_openfiles{name=\"%s\"} %u\n"
+			    "bhyve_memoryuse{name=\"%s\"} %lu\n"
+			    "bhyve_maxproc{name=\"%s\"} %u\n"
+			    "bhyve_readbps{name=\"%s\"} %u\n"
+			    "bhyve_writebps{name=\"%s\"} %u\n"
+			    "bhyve_readiops{name=\"%s\"} %u\n"
+			    "bhyve_writeiops{name=\"%s\"} %u\n"
+			    "bhyve_pcpu{name=\"%s\"} %u\n",
+			    escaped_name, sumch->openfiles / sumch->pid,
+			    escaped_name, sumch->memoryuse / sumch->pid,
+			    escaped_name, sumch->maxproc / sumch->pid,
+			    escaped_name, sumch->readbps / sumch->pid,
+			    escaped_name, sumch->writebps / sumch->pid,
+			    escaped_name, sumch->readiops / sumch->pid,
+			    escaped_name, sumch->writeiops / sumch->pid,
+			    escaped_name, sumch->pcpu / sumch->pid);
+			if (added < 0 || (size_t)added >=
+			    prometheus_capacity - prometheus_length) {
+				prometheus_valid = 0;
+			} else {
+				prometheus_length += (size_t)added;
+			}
+		}
 
 		if (OUTPUT_BEANSTALKD & output_flags) {
-			memset(json_buf, 0, sizeof(json_buf));
-			snprintf(json_buf, sizeof(json_buf),
-			    "{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",
-			    sumch->name, cur_time, sumch->pcpu / round_total,
-			    sumch->pmem / round_total,
-			    sumch->readbps / round_total,
-			    sumch->writebps / round_total,
-			    sumch->readiops / round_total,
-			    sumch->writeiops / round_total);
+			int json_length;
 
-			if (strlen(json_str) > 2) {
-				if (strlen(json_str) + strlen(json_buf) + 2 < sizeof(json_str)) {
-					strncat(json_str, ",", sizeof(json_str) - strlen(json_str) - 1);
-					strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
-				} else {
-					tolog(log_level, "Buffer overflow in json_str\n");
-					break;
-				}
+			memset(json_buf, 0, sizeof(json_buf));
+			json_length = snprintf(json_buf, sizeof(json_buf),
+			    "{\"name\": \"%s\",\"time\": %d,\"pcpu\": %d,\"pmem\": %d,\"readbps\": %d,\"writebps\": %d,\"readiops\": %d,\"writeiops\": %d }",
+			    sumch->name, cur_time, sumch->pcpu / sumch->pid,
+			    sumch->pmem / sumch->pid,
+			    sumch->readbps / sumch->pid,
+			    sumch->writebps / sumch->pid,
+			    sumch->readiops / sumch->pid,
+			    sumch->writeiops / sumch->pid);
+			if (json_length < 0 ||
+			    (size_t)json_length >= sizeof(json_buf)) {
+				tolog(log_level, "Beanstalk metric is too long for %s\n",
+				    sumch->name);
+				json_buf[0] = '\0';
+			}
+
+			if (json_buf[0] == '\0') {
+				/* Other backends still need this metric. */
+			} else if (strlen(json_str) > 2) {
+				strncat(json_str, ",",
+				    json_capacity - strlen(json_str) - 1);
+				strncat(json_str, json_buf,
+				    json_capacity - strlen(json_str) - 1);
 			} else {
-				strncpy(json_str, "{ \"tube\":\"racct-bhyve\", \"data\":[", sizeof(json_str) - 1);
-				json_str[sizeof(json_str) - 1] = '\0';
-				strncat(json_str, json_buf, sizeof(json_str) - strlen(json_str) - 1);
+				strncpy(json_str, "{ \"tube\":\"racct-bhyve\", \"data\":[",
+				    json_capacity - 1);
+				strncat(json_str, json_buf,
+				    json_capacity - strlen(json_str) - 1);
 			}
 		}
 
 #ifdef WITH_INFLUX
 		if (OUTPUT_INFLUX & output_flags) {
-			snprintf(influx->buffer + strlen(influx->buffer),
-			    sizeof(influx->buffer) - strlen(influx->buffer),
+			char influx_line[2048];
+			int influx_length;
+
+			influx_length = snprintf(influx_line, sizeof(influx_line),
 			    "%s,node=%s,host=%s%s%s memoryuse=%lu,pcpu=%d,pmem=%d,readbps=%d,writebps=%d,readiops=%d,writeiops=%d,maxproc=%d,openfiles=%d %lu\n",
 			    influx->tables.bhyve, hostname, sumch->name,
 			    (influx->tags.bhyve == NULL ? "" : ","),
 			    (influx->tags.bhyve == NULL ? "" :
 								influx->tags.bhyve),
-			    sumch->memoryuse / round_total,
-			    sumch->pcpu / round_total,
-			    sumch->pmem / round_total,
-			    sumch->readbps / round_total,
-			    sumch->writebps / round_total,
-			    sumch->readiops / round_total,
-			    sumch->writeiops / round_total,
-			    sumch->maxproc / round_total,
-			    sumch->openfiles / round_total, nanoseconds());
-
-			influx->items++;
+			    sumch->memoryuse / sumch->pid,
+			    sumch->pcpu / sumch->pid,
+			    sumch->pmem / sumch->pid,
+			    sumch->readbps / sumch->pid,
+			    sumch->writebps / sumch->pid,
+			    sumch->readiops / sumch->pid,
+			    sumch->writeiops / sumch->pid,
+			    sumch->maxproc / sumch->pid,
+			    sumch->openfiles / sumch->pid, nanoseconds());
+			if (influx_length < 0 ||
+			    (size_t)influx_length >= sizeof(influx_line)) {
+				tolog(log_level, "Influx metric is too long for %s\n",
+				    sumch->name);
+			} else {
+				if (strlen(influx->buffer) + (size_t)influx_length >=
+				    sizeof(influx->buffer)) {
+					if (cbsd_influx_transmit_buffer() != 0) {
+						tolog(log_level,
+						    "RACCT to Influx failed\n");
+					} else {
+						strncat(influx->buffer, influx_line,
+						    sizeof(influx->buffer) -
+						    strlen(influx->buffer) - 1);
+						influx->items++;
+					}
+				} else {
+					strncat(influx->buffer, influx_line,
+					    sizeof(influx->buffer) -
+					    strlen(influx->buffer) - 1);
+					influx->items++;
+				}
+			}
 		}
 #endif
 
@@ -382,32 +624,33 @@ sum_data_bhyve()
 			    strstr(stats_file, "$") || strstr(stats_file, "`") || strstr(stats_file, "(") ||
 			    strstr(stats_file, ")") || strstr(stats_file, "<") || strstr(stats_file, ">")) {
 				tolog(log_level, "Dangerous characters detected in stats_file path, skipping\n");
-				continue;
+				goto finish_metric;
 			}
 			
 			snprintf(sql, sizeof(sql),
 			    "%s %s/misc/updatesql %s %s/share/racct.schema racct",
 			    cix_bin, cix_distdir, escaped_stats_file, cix_distdir);
 			system(sql);
-				continue;
+				goto finish_metric;
 			}
 			fclose(fp);
 
 			snprintf(sql, sizeof(sql),
 			    "INSERT INTO racct ( idx,memoryuse,maxproc,openfiles,pcpu,readbps,writebps,readiops,writeiops,pmem ) VALUES ( '%d', '%lu', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d' );\n",
-			    cur_time, sumch->memoryuse / round_total,
-			    sumch->maxproc / round_total,
-			    sumch->openfiles / round_total,
-			    sumch->pcpu / round_total,
-			    sumch->readbps / round_total,
-			    sumch->writebps / round_total,
-			    sumch->readiops / round_total,
-			    sumch->writeiops / round_total,
-			    sumch->pmem / round_total);
+			    cur_time, sumch->memoryuse / sumch->pid,
+			    sumch->maxproc / sumch->pid,
+			    sumch->openfiles / sumch->pid,
+			    sumch->pcpu / sumch->pid,
+			    sumch->readbps / sumch->pid,
+			    sumch->writebps / sumch->pid,
+			    sumch->readiops / sumch->pid,
+			    sumch->writeiops / sumch->pid,
+			    sumch->pmem / sumch->pid);
 			tolog(log_level, "Save to SQL: %s [%s]\n", stats_file,
 			    sql);
 			ret = sqlitecmd(stats_file, sql);
 		}
+	finish_metric:
 		sumch->modified = 0;
 		sumch->pcpu = 0;
 		sumch->memoryuse = 0;
@@ -419,12 +662,13 @@ sum_data_bhyve()
 		sumch->writeiops = 0;
 		sumch->pmem = 0;
 
-		remove_data_by_jname(sumch->name);
+		remove_bhyve_samples(sumch->name);
 	}
 
 	if (OUTPUT_BEANSTALKD & output_flags) {
-		if (strlen(json_str) + 2 < sizeof(json_str)) {
-			strncat(json_str, "]}", sizeof(json_str) - strlen(json_str) - 1);
+		if (strlen(json_str) + 2 < json_capacity) {
+			strncat(json_str, "]}",
+			    json_capacity - strlen(json_str) - 1);
 		} else {
 			tolog(log_level, "Buffer overflow in json_str\n");
 			skip_beanstalk = 1;
@@ -433,8 +677,17 @@ sum_data_bhyve()
 		skip_beanstalk = 1;
 	}
 	bs_tick = 0;
+	if (prometheus != NULL && prometheus_valid) {
+		pthread_mutex_lock(&prometheus_mutex);
+		free(prometheus_snapshot);
+		prometheus_snapshot = prometheus;
+		pthread_mutex_unlock(&prometheus_mutex);
+		prometheus = NULL;
+	}
 
 	if (cur_round != save_loop_count || skip_beanstalk == 1) {
+		free(json_str);
+		free(prometheus);
 		return (0);
 	}
 
@@ -448,23 +701,27 @@ sum_data_bhyve()
 			    "bs_put failed, trying to reconnect...\n");
 			bs_disconnect(bs_socket);
 			bs_connected = 0;
+			free(json_str);
+			free(prometheus);
 			return 1;
 		}
 	} else {
 		tolog(log_level, "skip_beanstalk = 1,skipp\n");
 	}
+	free(json_str);
+	free(prometheus);
 	return 0;
 }
 
 int
 get_bhyve_cpus(char *vmname)
 {
-	sqlite3 *db;
+	sqlite3 *db = NULL;
 	char query[40];
 	char *err = NULL;
 	int maxretry = 10;
 	int retry = 0;
-	sqlite3_stmt *stmt;
+	sqlite3_stmt *stmt = NULL;
 	int ret;
 	char dbfile[512];
 	int vm_cpus = 0;
@@ -482,6 +739,7 @@ get_bhyve_cpus(char *vmname)
 	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
 		    dbfile);
+		sqlite3_close(db);
 		return 1;
 	}
 
@@ -506,12 +764,12 @@ get_bhyve_cpus(char *vmname)
 unsigned long
 get_vm_pid_from_sql(char *vmname)
 {
-	sqlite3 *db;
+	sqlite3 *db = NULL;
 	char query[100];
 	char *err = NULL;
 	int maxretry = 10;
 	int retry = 0;
-	sqlite3_stmt *stmt;
+	sqlite3_stmt *stmt = NULL;
 	int ret;
 	char dbfile[512];
 	unsigned long jid = 0;
@@ -522,6 +780,7 @@ get_vm_pid_from_sql(char *vmname)
 	if (SQLITE_OK != (ret = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
 		    dbfile);
+		sqlite3_close(db);
 		return 1;
 	}
 
@@ -530,6 +789,7 @@ get_vm_pid_from_sql(char *vmname)
 	if (strlen(vmname) > 50 || strstr(vmname, "'") || strstr(vmname, "\"") || 
 	    strstr(vmname, ";") || strstr(vmname, "--") || strstr(vmname, "/*")) {
 		tolog(log_level, "Invalid vmname detected, skipping SQL query\n");
+		sqlite3_close(db);
 		return 1;
 	}
 	snprintf(query, sizeof(query), "SELECT jid FROM jails WHERE jname=\"%s\"", vmname);
@@ -554,14 +814,14 @@ get_vm_pid_from_sql(char *vmname)
 unsigned long
 get_bhyve_maxmem(char *vmname)
 {
-	sqlite3 *db;
+	sqlite3 *db = NULL;
 	int res;
 	int i;
 	char query[1024];
 	char *err = NULL;
 	int maxretry = 10;
 	int retry = 0;
-	sqlite3_stmt *stmt;
+	sqlite3_stmt *stmt = NULL;
 	int ret;
 	char dbfile[1024];
 	unsigned long maxmem = 0;
@@ -579,6 +839,7 @@ get_bhyve_maxmem(char *vmname)
 	if (SQLITE_OK != (res = sqlite3_open(dbfile, &db))) {
 		tolog(log_level, "%s: Can't open database file: %s\n", nm(),
 		    dbfile);
+		sqlite3_close(db);
 		return 1;
 	}
 
@@ -858,6 +1119,10 @@ main(int argc, char **argv)
 		{ "loop_interval", required_argument, 0, C_LOOP_INTERVAL },
 		{ "prometheus_exporter", required_argument, 0,
 		    C_PROMETHEUS_EXPORTER },
+		{ "prometheus_listen4", required_argument, 0,
+		    C_PROMETHEUS_LISTEN4 },
+		{ "prometheus_port", required_argument, 0,
+		    C_PROMETHEUS_PORT },
 		{ "save_loop_count", required_argument, 0, C_SAVE_LOOP_COUNT },
 		{ "save_beanstalkd", required_argument, 0, C_SAVE_BEANSTALKD },
 		{ "save_sqlite3", required_argument, 0, C_SAVE_SQLITE3 },
@@ -887,9 +1152,14 @@ main(int argc, char **argv)
 			loop_interval = atoi(optarg);
 			break;
 		case C_PROMETHEUS_EXPORTER:
-			if (atoi(optarg) != 0) {
+			if (atoi(optarg) != 0)
 				output_flags |= OUTPUT_PROMETHEUS;
-			}
+			break;
+		case C_PROMETHEUS_LISTEN4:
+			prometheus_listen4 = optarg;
+			break;
+		case C_PROMETHEUS_PORT:
+			prometheus_port = atoi(optarg);
 			break;
 		case C_SAVE_LOOP_COUNT:
 			save_loop_count = atoi(optarg);
@@ -936,10 +1206,10 @@ main(int argc, char **argv)
 	if (output_flags == 0) {
 #ifdef WITH_INFLUX
 		printf(
-		    "Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 --save_influx )\n");
+		    "Error: select at least one backend ( --save_beanstalkd | --save_sqlite3 | --save_influx )\n");
 #else
 		printf(
-		    "Error: select at least one backend ( --prometheus_exported | --save_beanstalkd | --save_sqlite3 )\n");
+		    "Error: select at least one backend ( --save_beanstalkd | --save_sqlite3 )\n");
 #endif
 		exit(-1);
 	}
@@ -1037,6 +1307,11 @@ main(int argc, char **argv)
 	cbsd_influx_init();
 	load_config();
 #endif
+	if (OUTPUT_PROMETHEUS & output_flags) {
+		signal(SIGPIPE, SIG_IGN);
+		if (start_prometheus_exporter() != 0)
+			err(1, "cannot start Prometheus exporter");
+	}
 
 	while (1) {
 		tolog(log_level, "main loop\n");
@@ -1108,9 +1383,7 @@ main(int argc, char **argv)
 					strncpy(vmname, dp->d_name, sizeof(vmname) - 1);
 					vmname[sizeof(vmname) - 1] = '\0';
 					cur_bid = 0;
-					// cur_bid = get_vm_pid(vmpath);
-					cur_bid = get_vm_pid_from_sql(
-					    dp->d_name);
+					cur_bid = get_vm_pid(vmpath);
 					if (cur_bid == 0) {
 						continue;
 					}
@@ -1129,8 +1402,8 @@ main(int argc, char **argv)
 						vmname[sizeof(vmname) - 1] = '\0';
 					}
 					i = jname_exist(vmname);
+					running_bhyves++;
 					if (i) {
-						running_bhyves++;
 						update_racct_bhyve(vmname,
 						    tmpjname, vmpath);
 						continue;
@@ -1150,6 +1423,7 @@ main(int argc, char **argv)
 					tolog(log_level,
 					    "[BHYVE] !! %d [%s (%s)] has beed added\n",
 					    cur_bid, vmname, tmpjname);
+					update_racct_bhyve(vmname, tmpjname, vmpath);
 				}
 				free(dp);
 			}
