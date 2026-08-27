@@ -11,18 +11,20 @@ load_dsk_info()
 
 	unset dsklist
 
-	for last_disk in $( /usr/bin/seq 1 16 ); do
-		unset dsk_controller${last_disk}
+	for ((_last_disk=1; _last_disk<=16; _last_disk++)); do
+		unset dsk_controller${_last_disk}
 	done
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_type,controller_id FROM xendsk WHERE jname=\"${jname}\" | while read dsk_controller dsk_path dsk_slot dsk_type controller_id; do
-		echo "export dsk_controller${dsk_last_id}=\"${dsk_controller}\""
-		echo "export dsk_path${dsk_last_id}=\"${dsk_path}\""
-		echo "export dsk_slot${dsk_last_id}=\"${dsk_slot}\""
-		echo "export dsk_type${dsk_last_id}=\"${dsk_type}\""
-		echo "export controller_id${dsk_last_id}=\"${controller_id}\""
+	capture _dsk_raw cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_controller,dsk_path,dsk_slot,dsk_type,controller_id FROM xendsk WHERE jname='${jname}'"
+
+	while read _dsk_controller _dsk_path _dsk_slot _dsk_type _controller_id; do
+		eval "export dsk_controller${dsk_last_id}='${_dsk_controller}'"
+		eval "export dsk_path${dsk_last_id}='${_dsk_path}'"
+		eval "export dsk_slot${dsk_last_id}='${_dsk_slot}'"
+		eval "export dsk_type${dsk_last_id}='${_dsk_type}'"
+		eval "export controller_id${dsk_last_id}='${_controller_id}'"
 		dsk_last_id=$(( dsk_last_id + 1 ))
-	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+	done <<< "${_dsk_raw}"
 }
 
 # form for $new_dsk_controller
@@ -40,15 +42,15 @@ get_dsk_controller()
 	fi
 
 	local menu_list="
-		'xvd'	'Xen virtual disk, direct'		'direct attached to motherboard'
-		'sd'	'SCSI virtual disk, direct'		'direct attached to motherboard'
-		'hd'	'IDE or AHCI virtual disk, direct'	'direct attached to motherboard'
+		'virtio-blk'	'VirtIO Block, direct'		'modern open standard driver'
+		'xen-pv'	'Xen PV Block, direct'		'native para-virtualized driver'
+		'ahci-hd'	'AHCI SATA, emulated'		'fallback for HVM only, legacy'
 	" # END-QUOTE
 
 	if [ -n "${jname}" ]; then
-		_dsk_controller_name=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT name FROM xen_dskcontroller WHERE name != "0" | ${XARGS_CMD} )
+		capture _dsk_controller_name cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM xen_dskcontroller WHERE name != '0'"
 		for i in ${_dsk_controller_name}; do
-			_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM xen_dskcontroller WHERE name=\"${_dsk_controller_name}\" )
+			capture _dsk_controller_type cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT type FROM xen_dskcontroller WHERE name='${i}'"
 			menu_list="${menu_list} '${i}'	'${_dsk_controller_type} controller'	'controller attached to arbitrary devices'"
 		done
 	fi
@@ -80,14 +82,14 @@ get_controller_id()
 	. $BSDCFG_LIBE/$APP_DIR/include/xen-dskcontroller.subr
 	load_ctr_info
 
-	for last_ctr in $( /usr/bin/seq 1 16 ); do
+	for ((_last_ctr=1; _last_ctr<=16; _last_ctr++)); do
 		unset id name type count cache
-		eval id="\$ctr_id$last_ctr"
+		eval id="\$ctr_id${_last_ctr}"
 		[ -z "${id}" ] && break
-		eval ctr_name="\$ctr_name$last_ctr"
-		eval ctr_type="\$ctr_type$last_ctr"
-		eval ctr_count="\$ctr_count$last_ctr"
-		eval ctr_cache="\$ctr_cache$last_ctr"
+		eval ctr_name="\$ctr_name${_last_ctr}"
+		eval ctr_type="\$ctr_type${_last_ctr}"
+		eval ctr_count="\$ctr_count${_last_ctr}"
+		eval ctr_cache="\$ctr_cache${_last_ctr}"
 
 		menu_list="${menu_list} '${ctr_name}'	'${ctr_type}'	'count=${ctr_count},cache=${ctr_cache}'"
 	done
@@ -157,7 +159,7 @@ add_dsk()
 	fi
 
 	# check for controller exist
-	_ctr_list=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM xen_dskcontroller WHERE name!=\"0\"" | ${XARGS_CMD} )
+	capture _ctr_list cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT name FROM xen_dskcontroller WHERE name != '0'"
 	for i in ${_ctr_list} xvd sd hd; do
 		if [ "${i}" = "${controller}" ]; then
 			_ctr_exist=1
@@ -171,7 +173,7 @@ add_dsk()
 	fi
 
 	# check for disk exist
-	_res=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM xendsk WHERE dsk_path LIKE \"${dsk}.%\" OR dsk_path=\"${dsk}\"" )
+	capture _res cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_path FROM xendsk WHERE dsk_path LIKE '${dsk}.%' OR dsk_path='${dsk}'"
 
 	if [ -n "${_res}" ]; then
 		${ECHO} "${N1_COLOR}disk already exist for ${jname}: ${N2_COLOR}${dsk}${N0_COLOR}"
@@ -206,9 +208,9 @@ add_dsk()
 	fi
 
 	if [ -n "${controller}" ]; then
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${controller}\",\"${newdsk}\","0",\"${sectorsize}\" )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( '${jname}','${controller}','${newdsk}','0','${sectorsize}' )"
 	else
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( \"${jname}\",\"${newdsk}\","0",\"${sectorsize}\" )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO xendsk ( jname,dsk_path,dsk_slot,dsk_sectorsize ) VALUES ( '${jname}','${newdsk}','0','${sectorsize}' )"
 	fi
 
 	return 0

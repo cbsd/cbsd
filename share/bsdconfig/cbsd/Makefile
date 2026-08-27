@@ -8,7 +8,7 @@ FILESDIR = $(LIBEXECDIR)/bsdconfig/cbsd
 FILES = INDEX USAGE
 
 SCRIPTSDIR = $(FILESDIR)
-SCRIPTS = basecfg bhyvecfg bhyvedsk bhyvenic cbsd jailcfg
+SCRIPTS = bhyvecfg bhyvedsk bhyvenic cbsd
 
 INSTALL ?= install
 INSTALL_DATA ?= $(INSTALL) -m 644

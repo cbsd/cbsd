@@ -1,0 +1,101 @@
+#!/usr/bin/env cbsd
+. ${subrdir}/nc.subr
+. ${dialog}
+. ${strings}
+. ${tools}
+
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+
+dialog_menu_main()
+{
+	local title="$DIALOG_TITLE"
+	local btitle="$DIALOG_BACKTITLE"
+	local prompt=""
+	local defaultitem=
+	local hline="$hline_arrows_tab_enter"
+	local menu_list="
+		'A $msg_add_new_jail_machine'	''	'jconstruct-tui'
+		'-'	'Local jails'	''
+	" # END-QUOTE
+
+	capture _jlist cbsdsqlro local "SELECT jname FROM jails WHERE emulator = 'jail' ORDER BY jname"
+
+	eval $( for jname in ${_jlist}; do
+		. ${subrdir}/rcconf.subr
+		conv_status
+		echo "${jname}_desc=\"hostname: ${host_hostname} ; ip4_addr: ${ip4_addr} ; path: ${path};\""
+		echo "${jname}_status=\"${status}\""
+	done )
+
+	local _n=1
+
+	for _jname in ${_jlist}; do
+		eval _desc="\$${_jname}_desc"
+		eval _status="\$${_jname}_status"
+		menu_list="${menu_list} '${_n} ${_jname}'	'(${_status})'	'${_desc}'"
+		_n=$(( _n + 1 ))
+	done
+
+	menu_list="$menu_list '-'	'Remote jails'	''"
+
+	cbsd_menubox_with_help
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return ${retval}
+}
+
+
+############################################################ MAIN
+export NOCOLOR=1
+
+. ${subrdir}/bsdconfig.subr
+f_include_lang $BSDCFG_LIBE/$APP_DIR/include/messages.subr
+
+# Incorporate rc-file if it exists
+[ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
+
+#
+# Process command-line arguments
+#
+while getopts h$GETOPTS_STDARGS flag; do
+	case "$flag" in
+	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "${pgm}" ;;
+	esac
+done
+shift $(( OPTIND - 1 ))
+
+#
+# Initialize
+#
+f_dialog_title " $msg_configure_cbsd "
+f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
+
+#
+# Loop over the main menu until we've accomplished what we came here to do
+#
+while :; do
+	dialog_menu_main || break
+	f_dialog_menutag_fetch _mtag
+
+	[ -z "${_mtag}" ] && exit $SUCCESS
+
+	case "$_mtag" in
+		?" $msg_exit") break ;;
+		?" $msg_add_new_jail_machine")
+			${CIX_BIN} jconstruct-tui
+			;;
+		-)
+			continue
+			;;
+		*)
+			_jname=${_mtag##* }
+			${CIX_BIN} jcontrol-tui jname=${_jname}
+			;;
+	esac
+done
+
+exit 0

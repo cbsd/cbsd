@@ -12,7 +12,7 @@ set +e
 profile_dir="/tmp/cbsd-profiles"
 jname="custprofvm"
 vm_os_type="freebsd"
-vm_os_profile="cloud-FreeBSD-15.0-ufs-x86_64"
+vm_os_profile="cloud-FreeBSD-15.1-ufs-x86_64"
 imgsize="1g"
 
 oneTimeSetUp()

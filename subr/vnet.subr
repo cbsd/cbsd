@@ -31,7 +31,9 @@ show_all_nic_by_name()
 	[ -z $1 ] && return 1
 	[ "${1}" = "epair" ] && _epair="a" # we check only one of pair
 
-	for _i in $( ${IFCONFIG_CMD} -l ); do
+	capture _niclist ${IFCONFIG_CMD} -l
+
+	for _i in ${_niclist}; do
 		case "${_i}" in
 			${1}*${_epair})
 				_niclist="${_niclist} ${_i}"
@@ -88,7 +90,7 @@ get_device_uplink()
 		return 0
 	fi
 
-	_is_bridge=$( substr --pos=0 --len=6 --str=${1} )
+	capture _is_bridge substr --pos=0 --len=6 --str=${1}
 
 	if [ "${_is_bridge}" != "bridge" ]; then
 		[ -n "${_desc1}" ] && printf "${_desc1}"
@@ -165,13 +167,7 @@ get_my_device()
 			done
 			;;
 		*)
-			for _i in $( ${IFCONFIG_CMD} -g ${_dev} ); do
-				if [ -z "${_niclist}" ]; then
-					_niclist="${_i}"
-				else
-					_niclist="${_niclist} ${_i}"
-				fi
-			done
+			capture _niclist ${IFCONFIG_CMD} -g ${_dev}
 			;;
 	esac
 
@@ -263,7 +259,7 @@ get_my_device()
 			1)
 				_dbpath="${VPC_ROOT_DIR}/${vpc_name}.sqlite"
 				[ ! -r ${_dbpath} ] && err 1 "${N1_COLOR}VPC not exist: ${N2_COLOR}${_dbpath}${N0_COLOR}"
-				_vxlan_list=$( cbsdsqlro ${_dbpath} "SELECT vxlan_id FROM vpc_peers WHERE src_node=\"${nodename}\"" | ${XARGS_CMD} )
+				capture _vxlan_list cbsdsqlro ${_dbpath} "SELECT vxlan_id FROM vpc_peers WHERE src_node='${nodename}'"
 				if [ -z "${_vxlan_list}" ]; then
 					echo "no vxlan_id in VPC database"
 					return 1
@@ -462,10 +458,18 @@ mac2ip() {
 
 	[ -z "${mac}" ] && return 0
 
-	ip_a=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 3` )
-	ip_b=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 4` )
-	ip_c=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 5` )
-	ip_d=$( let 0x`echo $mac | ${CUT_CMD} -d: -f 6` )
+	local IFS=":"
+	local _m _pos=1 ip_a ip_b ip_c ip_d
+
+	for _m in ${mac}; do
+		case ${_pos} in
+			3)	ip_a=$(( 0x${_m} )) ;;
+			4)	ip_b=$(( 0x${_m} )) ;;
+			5)	ip_c=$(( 0x${_m} )) ;;
+			6)	ip_d=$(( 0x${_m} )) ;;
+		esac
+		_pos=$(( _pos + 1 ))
+	done
 	echo "$ip_a.$ip_b.$ip_c.$ip_d"
 }
 
@@ -477,20 +481,17 @@ ip2mac() {
 	[ -z "${ip}" ] && return 0
 
 	local IFS="."
-	local macpart=4
+	local macpart=4 _m _len
 
-	eval $( for i in ${ip}; do
-		unset macval
-		unset len
-		macval=$( printf "%x" ${i} )
-		# append zero if len=1
-		len=$( strlen ${macval} )
-		[ "${len}" = "1" ] && macval="0${macval}"
-		echo "export mac_${macpart}=\"${macval}\""
+	printf "${MAC_PREFIX}"
+	for _m in ${ip}; do
+		capture _m printf "%x" ${_m}
+		capture _len strlen ${_m}
+		[ "${_len}" = "1" ] && _m="0${_m}"
+		printf ":${_m}"
 		macpart=$(( macpart + 1 ))
-	done )
-
-	echo "${MAC_PREFIX}:${mac_5}:${mac_6}:${mac_7}"
+	done
+	printf "\n"
 }
 
 # return $interface as parent interface and $mytap for vale
@@ -512,7 +513,7 @@ get_vm_uplink_interface()
 			r) _readonly="${OPTARG}" ;;
 			u) _update=1 ;;
 		esac
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	case "${tmp_nic_parent}" in
@@ -528,10 +529,10 @@ get_vm_uplink_interface()
 				_vale_arg=$( substr --pos=0 --len=${_pos} --str="${tmp_nic_parent}" )
 				_sw=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${tmp_nic_parent}" )
 			fi
-			capture _vale_id cbsdsqlro local SELECT idx FROM vale WHERE name=\"${_sw}\"
+			capture _vale_id cbsdsqlro local "SELECT idx FROM vale WHERE name='${_sw}'"
 			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${nic_parent}, please run: cbsd valecfg\""
 			if [ ${_readonly} -eq 1 ]; then
-				capture _vale_port cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1"
+				capture _vale_port cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname='${jname}' AND vale_id='${_vale_id}' LIMIT 1"
 				[ -z "${_vale_port}" ] && _vale_port="0"
 				mytap="vale${_vale_id}:${_vale_port}"
 				return 0
@@ -541,14 +542,14 @@ get_vm_uplink_interface()
 			# Determine next free VALE port, without any reference to id or name.
 			cbsdlogger NOTICE "${CIX_APP}: looking for next free vale port: get-next-vale-port valeid=${_vale_id}"
 
-			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			capture _vale_port_exclude cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id='${_vale_id}'"
 			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
 				log_err 1 "errmsg=\"compile_nic_args: can't next vale port: get-next-vale-port valeid=${_vale_id}\""
 			fi
 			if [ ${_update} -eq 1 ]; then
 				cbsdlogger NOTICE "${CIX_APP}: get_vm_uplink_interface: update/reservation next-vale-port for ${jname}, valeid: ${_vale_id}: port: ${_vale_port}"
-				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
+				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( '${jname}', ${_vale_id}, ${_vale_port} )"
 			fi
 			mytap="vale${_vale_id}:${_vale_port}"
 			net_emul="virtio-net"
@@ -563,12 +564,12 @@ get_vm_uplink_interface()
 			_vale_id=$( echo ${tmp_nic_parent} | ${TR_CMD} -d [:alpha:] )		# remove alpha, get ID only
 			[ -z "${_vale_id}" ] && log_err 1 "errmsg=\"compile_nic_args: can't determine vale nic for: ${tmp_nic_parent}, please run: cbsd valecfg\""
 			if [ ${_readonly} -eq 1 ]; then
-				capture _vale_port cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" LIMIT 1"
+				capture _vale_port cbsdsqlro local "SELECT port_id FROM vale_ports WHERE jname='${jname}' AND vale_id='${_vale_id}' LIMIT 1"
 				[ -z "${_vale_port}" ] && _vale_port="0"
 				mytap="vale${_vale_id}:${_vale_port}"
 				return 0
 			fi
-			_vale_port_exclude=$( cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id=\"${_vale_id}\"" | ${XARGS_CMD} )
+			capture _vale_port_exclude cbsdsqlro local "SELECT port_id FROM vale_ports WHERE vale_id='${_vale_id}'"
 			_vale_port=$( get-next-vale-port valeid=${_vale_id} skip="${_vale_port_exclude}" 2>/dev/null )
 
 			if [ $? -ne 0 -o -z "${_vale_port}" ]; then
@@ -576,12 +577,12 @@ get_vm_uplink_interface()
 			fi
 
 			# check for vale name existance to avoid ID collision
-			capture _vale_id_tmp cbsdsqlro local "SELECT idx FROM vale WHERE name=\"vale${_vale_id}\" LIMIT 1"
+			capture _vale_id_tmp cbsdsqlro local "SELECT idx FROM vale WHERE name='vale${_vale_id}' LIMIT 1"
 			[ -n "${_vale_id_tmp}" ] && _vale_id="${_vale_id_tmp}"
 			# avoid dup
-			capture _res cbsdsqlro local "SELECT idx FROM vale_ports WHERE jname=\"${jname}\" AND vale_id=\"${_vale_id}\" AND port_id=\"${_vale_port}\" LIMIT 1"
+			capture _res cbsdsqlro local "SELECT idx FROM vale_ports WHERE jname='${jname}' AND vale_id='${_vale_id}' AND port_id='${_vale_port}' LIMIT 1"
 			if [ -z "${_res}" ]; then
-				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( \"${jname}\", ${_vale_id}, ${_vale_port} )"
+				cbsdsqlrw local "INSERT INTO vale_ports ( jname,vale_id,port_id ) VALUES ( '${jname}', ${_vale_id}, ${_vale_port} )"
 			fi
 			mytap="${tmp_nic_parent}:${_vale_port}"
 			net_emul="virtio-net"
@@ -707,7 +708,7 @@ jail_remove_nic()
 	local id="${1}"; shift
 	[ -z "${jname}" -o -z "${id}" ] && return 0
 
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM jailnic WHERE id=\"${id}\"
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM jailnic WHERE id='${id}'"
 
 	return 0
 }
@@ -725,12 +726,12 @@ is_nic_exist()
 		case "${opt}" in
 			n) _nic="${OPTARG}" ;;
 		esac
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	[ -z "${_nic}" ] && return 1
 
-	_nic_list=$( ${miscdir}/nics-list | ${XARGS_CMD} )
+	capture _nic_list ${miscdir}/nics-list
 
 	local IFS=" "
 
@@ -752,7 +753,7 @@ get_nic_by_descr()
 {
 	local _iface _mytap _i _list=
 
-	_iface=$( ${miscdir}/nics-list | ${XARGS_CMD} )
+	capture _iface ${miscdir}/nics-list
 	_mytap=
 
 	for _i in ${_iface}; do

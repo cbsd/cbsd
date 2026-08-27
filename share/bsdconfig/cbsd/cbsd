@@ -1,110 +1,144 @@
 #!/usr/bin/env cbsd
-############################################################ INCLUDES
-
 . ${subrdir}/nc.subr
 . ${tools}
 . ${dialog}
-
 BSDCFG_LIBE="${CIX_DISTDIR}/share/libexec/bsdconfig" APP_DIR="cbsd"
 BSDCFG_SHARE="${CIX_DISTDIR}/share/bsdconfig"
-. ${BSDCFG_SHARE}/sysrc.subr
 . ${BSDCFG_SHARE}/${APP_DIR}/include/messages.subr
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
 
-############################################################ FUNCTIONS
-
-# dialog_menu_main
-#
-# Display the dialog(1)-based application main menu.
-#
 dialog_menu_main()
 {
 	local title="$DIALOG_TITLE"
 	local btitle="$DIALOG_BACKTITLE"
 	local prompt=
-	local menu_list= # Calculated below
-	local defaultitem= # Calculated below
+	local menu_list=
+	local defaultitem=
 	local hline="$hline_arrows_tab_enter"
 
 	[ -n "${cbsd_menu_defaultitem}" ] && defaultitem="${cbsd_menu_defaultitem}"
 
-	local enable profiles
-	enable=$( f_sysrc_get cbsdd_enable )
-	jail_profiles=$( jls display=jname header=0 )
-	bhyve_profiles=$( bls display=jname header=0 )
+	local _enable _jail_profiles _bhyve_profiles _qemu_profiles _xen_profiles _virtualbox_profiles
 
-	local j
-	j=$( set -- $jail_profiles; echo $# )
-	local b
-	b=$( set -- $bhyve_profiles; echo $# )
+#	capture _enable /bin/sh -c '. /etc/rc.conf 2>/dev/null; printf "%s" "${cbsdd_enable}"'
 
-	local menu_list="
-		'A ${msg_configure_jail_machines}'	'${j} ${msg_profiles}'
-		'B ${msg_configure_bhyve_machines}'	'${b} ${msg_profiles}'
-		'-'					'-'
-		'1 ${msg_configure_initenv}'		''
-		'2 ${msg_configure_nodes}'		''
-		'3 ${msg_browse_repository}'		''
+#	for i in bhyve jail qemu xen virtualbox; do
+
+	# jail
+	eval bool_status="\$emulator_jail_available"
+	eval jail_info="\$emulator_jail_info"
+	_j=0
+	if [ "${bool_status}" = "1" ]; then
+		capture _jail_profiles jls display=jname header=0
+		for _i in ${_jail_profiles}; do
+			_j=$(( _j + 1 ))
+		done
+		msg_configure_jail_notes="${_j} ${msg_profiles}"
+	else
+		msg_configure_jail_machines="jail unavailable"
+		eval info="\$emulator_jail_info"
+		msg_configure_jail_notes=";-("
+	fi
+
+	# bhyve
+	eval bool_status="\$emulator_bhyve_available"
+	eval bhyve_info="\$emulator_bhyve_info"
+	_b=0
+	if [ "${bool_status}" = "1" ]; then
+		capture _bhyve_profiles bls display=jname header=0
+		for _i in ${_bhyve_profiles}; do
+			_b=$(( _b + 1 ))
+		done
+		msg_configure_bhyve_notes="${_b} ${msg_profiles}"
+	else
+		msg_configure_bhyve_machines="BHYVE unavailable"
+		msg_configure_bhyve_notes=";-("
+	fi
+
+	# qemu
+	eval bool_status="\$emulator_qemu_available"
+	eval qemu_info="\$emulator_qemu_info"
+	_q=0
+	if [ "${bool_status}" = "1" ]; then
+		capture _qemu_profiles qls display=jname header=0
+		for _i in ${_qemu_profiles}; do
+			_q=$(( _q + 1 ))
+		done
+		msg_configure_qemu_notes="${_q} ${msg_profiles}"
+	else
+		msg_configure_qemu_machines="QEMU unavailable"
+		msg_configure_qemu_notes=";-("
+	fi
+
+	# xen
+	eval bool_status="\$emulator_xen_available"
+	eval xen_info="\$emulator_xen_info"
+	_x=0
+	if [ "${bool_status}" = "1" ]; then
+		capture _xen_profiles xls display=jname header=0
+		for _i in ${_xen_profiles}; do
+			_x=$(( _x + 1 ))
+		done
+		msg_configure_xen_notes="${_x} ${msg_profiles}"
+	else
+		msg_configure_xen_machines="XEN unavailable"
+		msg_configure_xen_notes=";-("
+	fi
+
+	menu_list="
+		'A ${msg_configure_jail_machines}'	'${msg_configure_jail_notes}'	'Details: ${jail_info}'
+		'B ${msg_configure_bhyve_machines}'	'${msg_configure_bhyve_notes}'	'Details: ${bhyve_info}'
+		'C ${msg_configure_qemu_machines}'	'${msg_configure_qemu_notes}'	'Details: ${qemu_info}'
+		'D ${msg_configure_xen_machines}'	'${msg_configure_xen_notes}'	'Details: ${xen_info}'
+		'-'					'-'	''
+		'1 ${msg_configure_initenv}'		''	''
+		'2 ${msg_configure_nodes}'		''	''
+		'3 ${msg_browse_repository}'		''	''
 	" # END-QUOTE
 
-	cbsd_menubox_simple
-	retval=$?
+	mtag=
+
+	cbsd_menubox
+	local _retval=$?
 
 	f_dialog_data_sanitize menu_choice
 	f_dialog_menutag_store "${menu_choice}"
 	f_dialog_default_store "${menu_choice}"
 
-	return ${retval}
+	return ${_retval}
 }
 
 ############################################################ MAIN
 export NOCOLOR=1
 
-#
-# Process command-line arguments
-#
-while getopts h$GETOPTS_STDARGS flag; do
-	case "${flag}" in
-	h|\?) f_usage ${BSDCFG_LIBE}/${APP_DIR}/USAGE "PROGRAM_NAME" "${pgm}" ;;
-	esac
-done
-shift $(( $OPTIND - 1 ))
-
-#
-# Initialize
-#
 f_dialog_title " ${msg_configure_cbsd} "
 f_dialog_backtitle "${ipgm:+bsdconfig }${pgm}"
 
-#
-# Loop over the main menu until we've accomplished what we came here to do
-#
+eval $( capabilities )
+
 while :; do
 	dialog_menu_main || break
-	f_dialog_menutag_fetch mtag
+	f_dialog_menutag_fetch _mtag
 
-	export cbsd_menu_defaultitem="${mtag}"
+	export cbsd_menu_defaultitem="${_mtag}"
 
-	command=
-	case "${mtag}" in
+	_command=
+	case "${_mtag}" in
 		?" ${msg_exit}") exit 0 ;;
 		?" ${msg_configure_initenv}")
-			/usr/local/bin/cbsd initenv-tui
+			${CIX_BIN} initenv-tui
 			;;
 		?" ${msg_configure_nodes}") command=node ;;
 		?" ${msg_browse_repository}") command=repo ;;
 		?" ${msg_configure_bhyve_machines}") command=bhyvecfg ;;
 		?" ${msg_configure_jail_machines}") command=jailcfg ;;
 		?" ${msg_configure_bhyve_machines}") command=bhyvecfg ;;
-		?" ${msg_base_n_kernel}") command=basecfg ;;
 	esac
 
 	if [ -n "${command}" ]; then
-		${BSDCFG_SHARE}/${APP_DIR}/${command} ${USE_XDIALOG:+-X}
+		#${BSDCFG_SHARE}/${APP_DIR}/${command}
+		${command}
 	fi
 done
 
 exit ${SUCCESS}
-
-################################################################################
-# END
-################################################################################

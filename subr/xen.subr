@@ -53,8 +53,8 @@ init_xen_usage_linux()
 	echo
 	${ECHO} "${N1_COLOR}Please follow ${H3_COLOR}https://wiki.debian.org/Xen:${N0_COLOR}"
 	echo
-	${ECHO} "${H1_COLOR}*${N0_COLOR}  apt install ${H3_COLOR}xen-system-amd64 xen-utils-common${N0_COLOR}"
-	${ECHO} "${H1_COLOR}*${N0_COLOR} Optional: edit /etc/default/grub.d/xen.cfg: GRUB_CMDLINE_XEN_DEFAULT=\"dom0_mem=${H3_COLOR}2048M${N0_COLOR},max:${H3_COLOR}2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR}\""
+	${ECHO} "${H1_COLOR}*${N0_COLOR} Run:        apt install ${H3_COLOR}xen-system-amd64 xen-utils-common${N0_COLOR}"
+	${ECHO} "${H1_COLOR}*${N0_COLOR} (optional): edit /etc/default/grub.d/xen.cfg: GRUB_CMDLINE_XEN_DEFAULT=\"dom0_mem=${H3_COLOR}2048M${N0_COLOR},max:${H3_COLOR}2048M${N0_COLOR} dom0_max_vcpus=${H3_COLOR}2${N0_COLOR}\""
 	${ECHO} "${H1_COLOR}*${N0_COLOR} update-grub${N0_COLOR}"
 	echo
 	${ECHO} "${N1_COLOR}To disable this warning, please set in ${workdir}/etc/xen-default-default.conf: ${N2_COLOR}skip_xen_init_warning=1${N0_COLOR}"
@@ -238,8 +238,6 @@ compile_dsk_args()
 	# open disk brackets
 	echo "disk = [" >> ${XENCFG}
 
-	# temporary workaroung for Alex (CBSD Telegram) issue with no disk (old SQL schema) - don't select dsk_conf
-	#	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_conf FROM xendsk WHERE jname=\"${jname}\" AND dsk_type=\"vhd\" |while read dsk_controller dsk_path dsk_slot dsk_conf; do
 	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_controller,dsk_path,dsk_slot FROM xendsk WHERE dsk_type='vhd'" | while read dsk_controller dsk_path dsk_slot; do
 
 		# test for full path. If path not started from '/' - append $data dir
@@ -255,43 +253,129 @@ compile_dsk_args()
 		# for zvol
 		# phy:${full_dsk_path} ?
 
-		# detect proper drive letter (abc..)
+		xen_pv_num=0
+		virtio_num=0
+		ahci_num=0
+
+#В Xen HVM тип фронтенда диска определяется именем vdev, а не отдельным параметром:
+#vdev	Как видит гость
+#hda, hdb	IDE (эмуляция)
+#sda, sdb	SCSI/AHCI (эмуляция)
+#vda, vdb	virtio-blk
+#xvda, xvdb	xen-blkfront (PV)
+
+#vdev	specification	Драйвер в госте	Валидный backendtype
+#xvda	xen	xen-blkfront	qdisk, blktap
+#hda	qemu	IDE/AHCI	— (QEMU DevModel)
+#sda	qemu	SCSI/AHCI	— (QEMU DevModel)
+#vda	virtio	virtio-blk	не qdisk!
+
+# vda без явного backendtype не распознаётся libxl как virtio — specification остаётся xen, backend падает на phy. В режиме specification=xen допустимы только имена xvd*. Отсюда ошибка.
+
+#Таблица соответствия
+#vdev	backendtype	specification	Гость FreeBSD	Работает
+#xvda	qdisk	xen	/dev/xbd0	✅
+#vda	(нет)	xen (ошибка)	—	❌
+#vda	virtio	virtio	/dev/vtbd0	✅ (если поддерживается)
+#через device_model_args	—	QEMU-native	/dev/vtbd0	✅
+
+#Прямые аргументы в QEMU, без XEN:
+#device_model_args = [
+#    '-drive', 'id=vdisk0,file=/usr/jails/jails-data/freebsd1-data/dsk1.vhd,format=raw,if=none,cache=none',
+#    '-device', 'virtio-blk-pci,drive=vdisk0'
+#]
+
+
+# Boot order с диска:
+#disk = [
+#    'format=raw, vdev=hda, access=ro, devtype=cdrom, target=/usr/jails/src/iso/cbsd-iso-FreeBSD-15.1-RELEASE-amd64-disc1.iso'
+#]
+
+#device_model_args = [
+#    '-drive', 'file=/usr/jails/jails-data/freebsd1-data/dsk1.vhd,format=raw,if=none,id=vdisk0,cache=none',
+#    '-device', 'virtio-blk-pci,drive=vdisk0,bootindex=2',
+#]
+
+#Если virtio принципиален — проверить командную строку QEMU
+#xl create /usr/jails/jails-system/freebsd1/xen.cfg &
+#sleep 2
+#cat /proc/$(pgrep xen-qemu)/cmdline | tr '\0' ' '
+#Нужно убедиться что нет -no-acpi и присутствует -accel xen.
+
+
+#disk = [
+#    'format=raw, vdev=hda, access=rw, devtype=disk, target=/usr/jails/jails-data/freebsd1-data/dsk1.vhd',
+#    'format=raw, vdev=hdc, access=ro, devtype=cdrom, target=/usr/jails/src/iso/cbsd-iso-FreeBSD-15.1-RELEASE-amd64-disc1.iso'
+#]
+
+
 		case "${dsk_controller}" in
-			xvd|hd)
-				_ascii=$(( 97 + xvd_num ))
-				xvd_num=$(( xvd_num + 1 ))
+			"xen-pv")
+				# Нативный Xen PV: xvda, xvdb, xvdc...
+				_ascii=$(( 97 + xen_pv_num ))
+				_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+				_dev="xvd${_dev_letter}"
+				_spec="specification=xen, "
+				xen_pv_num=$(( xen_pv_num + 1 ))
 				;;
-			sd)
-				_ascii=$(( 97 + sd_num ))
-				sd_num=$(( sd_num + 1 ))
+			"virtio-blk")
+				_ascii=$(( 97 + virtio_num ))
+				_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+				#_dev="xvd${_dev_letter}"
+				_dev="vd${_dev_letter}"
+
+				# Дополнительные параметры QEMU без лишних devtype
+				_spec="backendtype=qdisk,device_model=virtio-blk"
+				virtio_num=$(( virtio_num + 1 ))
+#                                _xen_type="type = \"hvm\""
+				;;
+			"ahci-hd")
+				# Эмулируемый AHCI: hda, hdc (Только для HVM!)
+				_ascii=$(( 97 + ahci_num ))
+				_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+				_dev="hd${_dev_letter}"
+				#_dev="xvd" - что это такое? Virtal block device но с каким -то странным 123423 номером
+				_spec=""
+				ahci_num=$(( ahci_num + 1 ))
 				;;
 		esac
 
-		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
-		_dev="${dsk_controller}${_dev_letter}"
+		# target ставится строго в самый конец спецификации диска!
+		_disk_entry="format=raw, vdev=${_dev}, access=rw, ${_spec}devtype=disk, target=${full_dsk_path}"
 
-		if [ ${first_count} -eq 0 ]; then
-			# first record
-			printf "'${full_dsk_path},raw,${_dev},rw'" >> ${XENCFG}
-		else
-			printf ", '${full_dsk_path},raw,${_dev},rw'" >> ${XENCFG}
-		fi
+#		if [ ${first_count} -eq 0 ]; then
+			printf "    '${_disk_entry}'," >> ${XENCFG}
+#		else
+#			printf "  '${_disk_entry}'" >> ${XENCFG}
+#		fi
+		echo >> ${XENCFG}
 		first_count=$(( first_count + 1 ))
 
-		echo "xvd_num=${xvd_num}"
-		echo "sd_num=${sd_num}"
+		# Отладочный вывод
+		echo "xen_pv_num=${xen_pv_num}"
+		echo "virtio_num=${virtio_num}"
+		echo "ahci_num=${ahci_num}"
 
 	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
 	if [ -n "${iso_img}" ]; then
 		# cdrom
 		dsk_controller="hd"		# always hd
-		_ascii=$(( 97 + xvd_num ))
-		xvd_num=$(( xvd_num + 1 ))
-		capture _octal printf %o ${_ascii}
-		capture _dev_letter printf "\\${_octal}"
-		_dev="${dsk_controller}${_dev_letter}"
-		printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+#		_ascii=$(( 97 + xvd_num ))
+#		xvd_num=$(( xvd_num + 1 ))
+#		capture _octal printf %o ${_ascii}
+#		capture _dev_letter printf "\\${_octal}"
+#		_dev="${dsk_controller}${_dev_letter}"
+		#printf ", '${iso_img},raw,${_dev}:cdrom,r'" >> ${XENCFG}
+
+		_ascii=$(( 97 + ahci_num ))
+		_dev_letter=$( printf "\\$(printf %o ${_ascii} )" )
+		_dev="hd${_dev_letter}"
+		_spec=""
+		ahci_num=$(( ahci_num + 1 ))
+
+
+		printf "    'format=raw, vdev=${_dev}, access=ro, devtype=cdrom, target=${iso_img}'" >> ${XENCFG}
 	fi
 	if [ -n "${iso_img2}" ]; then
 		# secondary cdrom
@@ -1028,7 +1112,8 @@ check_for_xen_process()
 
 	eval $( ${PS_CMD} axopid,state,ucomm,command -ww | while read pid state ucomm command; do
 		case ${ucomm} in
-			qemu-system-i386)
+			qemu-system-i386|xen-qemu-system)
+				true
 				;;
 			*)
 				continue

@@ -1,29 +1,112 @@
 #!/usr/bin/env cbsd
-#v12.1.9
-MYARG=""
-MYOPTARG="jname remote out"
-MYDESC="Manage NIC for jail"
+CIXARG=""
+CIXOPTARG="jname out"
+MYDESC="Jail NIC dialog"
+ADDHELP="out - generate config only (e.g. for non-existance new jail)"
 CBSDMODULE="jail"
-ADDHELP="out - generate config only (e.g. for non-existance new jail)\n"
-
-. ${subrdir}/nc.subr
 
 out=
-out_args=
 
-. ${cbsdinit}
+. ${subrdir}/nc.subr
+. ${dialog}
+. ${strings}
+. ${tools}
+. ${subrdir}/vnet.subr
+cixinit
 
-### MAIN ###
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+
+BSDCFG_LIBE="${CIX_DISTDIR}/share/bsdconfig/cbsd"
+. ${BSDCFG_LIBE}/include/messages-jailnic.subr
+
+export NOCOLOR=1
+
+dialog_menu_main()
+{
+	local title="jailnic-tui"
+	local btitle="jailnic-tui"
+	local prompt=" env: ${jname} "
+	local defaultitem=
+	local hline="$hline_arrows_tab_enter"
+	local menu_list="
+		'A ${msg_add_new_nic}'	'${msg_add_new_nic_desc}'	'Add and configure new virtual NIC'
+		'-'	'-'	''
+	" # END-QUOTE
+
+	local _n=1
+
+	for ((_last_nic=1; _last_nic<=16; _last_nic++)); do
+		unset nic_id nic_name nic_order nic_slot nic_parent nic_hwaddr nic_address
+		eval nic_id="\$nic_id${_last_nic}"
+		eval nic_name="\$nic_name${_last_nic}"
+
+		[ -z "${nic_id}" -o -z "${nic_name}" ] && break
+		eval nic_order="\$nic_order${_last_nic}"
+		eval nic_slot="\$nic_slot${_last_nic}"
+		eval nic_parent="\$nic_parent${_last_nic}"
+		eval nic_hwaddr="\$nic_hwaddr${_last_nic}"
+		eval nic_address="\$nic_address${_last_nic}"
+		menu_list="${menu_list} '${nic_id} nic${_n}'	'${nic_name}'	'${nic_slot},${nic_parent},${nic_hwaddr},${nic_address}'"
+		_n=$(( _n + 1 ))
+	done
+
+	cbsd_menubox_with_help
+
+	retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return ${retval}
+}
+
 if [ -z "${out}" ]; then
 	[ -z "${jname}" ] && jname="${1}"
 	[ -z "${jname}" ] && select_jail_by_list -s "List of local jails:" -r 0 -e jls
 	[ -z "${jname}" ] && err 1 "please specify jname"
-
 	. ${subrdir}/rcconf.subr
-	[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}for jail only${N0_COLOR}"
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such env: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}not in jail mode${N0_COLOR}"
+	mysqlite="${jailsysdir}/${jname}/local.sqlite"
 else
 	[ -z "${jname}" ] && err 1 "please specify jname"
-	out_args="out=${out}"
+	mysqlite="${out}"
+	if [ ! -r ${mysqlite} ]; then
+		${CIX_BIN} ${miscdir}/updatesql ${mysqlite} ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
+		cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','${nic_hwaddr}','${nic_address}','0','0','0','0' )"
+	fi
 fi
 
-exec bsdconfig jailnic jname="${jname}" ${out_args}
+. ${BSDCFG_LIBE}/include/jailnic.subr
+
+while :; do
+	load_nic_info
+	dialog_menu_main || break
+	f_dialog_menutag_fetch _mtag
+
+	[ -z "${_mtag}" ] && exit ${SUCCESS}
+
+	_command=
+
+	case "${_mtag}" in
+		?" ${msg_exit}") break ;;
+		?" ${msg_add_new_nic}")
+			capture _last_nic find_first_free_nic_id
+			_nic="eth${_last_nic}"
+			_command="jailnic-newnic jname=${jname} nic=${_nic} out=${mysqlite}"
+			;;
+		*)
+			[ "${_mtag}" = "-" ] && continue
+			_index=${_mtag%% *}
+			_command="jailnic-cfgnic jname=${jname} nic=${_index} out=${mysqlite}"
+			;;
+	esac
+
+	[ -z "${_command}" ] && continue
+
+	${_command}
+	ret=$?
+done
+
+exit ${SUCCESS}

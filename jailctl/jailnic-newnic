@@ -1,0 +1,162 @@
+#!/usr/bin/env cbsd
+CIXARG="jname nic"
+CIXOPTARG=""
+MYDESC="add/attach new vitual NIC to jail-vnet"
+MYOPTARG="out"
+ADDHELP="out - generate config only (e.g. for non-existance new jail)\n"
+CBSDMODULE="jail"
+
+export NOCOLOR=1
+
+. ${subrdir}/nc.subr
+. ${tools}
+. ${strings}
+. ${dialog}
+
+cixinit
+
+dialog_menu_main()
+{
+	local _input= _retval= hline=
+	local title="${jname} ${nic}: New NIC"
+	local btitle="${title}"
+
+	local prompt="${_desc}"
+
+	f_dialog_default_fetch defaultitem
+
+	[ -z "${nic_driver}" ] && nic_driver="vtnet"
+	[ -z "${nic_type}" ] && nic_type="0"
+	[ -z "${nic_parent}" ] && nic_parent="auto"
+	[ -z "${nic_hwaddr}" ] && nic_hwaddr="0"
+	[ -z "${nic_address}" ] && nic_address="0"
+	[ -z "${nic_mtu}" ] && nic_mtu="0"
+	[ -z "${nic_flags}" ] && nic_flags="0"
+	[ -z "${nic_vlan_untagged}" ] && nic_vlan_untagged="0"
+	[ -z "${nic_vlan_tagged}" ] && nic_vlan_tagged="0"
+
+	local menu_list="
+		'nic_name'		'${nic_name}'		'NIC name'
+		'nic_parent'		'${nic_parent}'		'NIC parent interface. 0 - auto'
+		'nic_hwaddr'		'${nic_hwaddr}'		'Mac address. 0 - auto'
+		'nic_address'		'${nic_address}'	'NIC epairA ip4_addr (host side). 0 - disabled'
+		'nic_mtu'		'${nic_mtu}'		'NIC MTU size. 0 - inherit from parent'
+		'nic_flags'		'${nic_flags}'		'NIC flags: private (bridge isolation)'
+		'nic_vlan_untagged'	'${nic_vlan_untagged}'	'Untagged VLAN ID. 0 - disabled'
+		'nic_vlan_tagged'	'${nic_vlan_tagged}'	'Tagged VLAN set (comma-sep). 0 - disabled'
+		'-'			'-'			''
+		'COMMIT'		'COMMIT'		'Create and attach new NIC'
+	" # END-QUOTE
+
+	cbsd_menubox_with_help
+	_retval=$?
+
+	f_dialog_data_sanitize menu_choice
+	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
+
+	return ${_retval}
+}
+
+if [ -z "${out}" ]; then
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such env: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${emulator}" != "jail" ] && err 1 "${N1_COLOR}not in jail mode${N0_COLOR}"
+	mysqlite="${jailsysdir}/${jname}/local.sqlite"
+else
+	mysqlite="${out}"
+
+	. ${subrdir}/rcconf.subr
+	if [ $? -eq 1 ]; then
+		# create new database when jail/db not exist
+		if [ ! -r ${mysqlite} ]; then
+			${CIX_BIN} ${miscdir}/updatesql ${mysqlite} ${CIX_DISTDIR}/share/local-jailnic.schema jailnic
+			cbsdsqlrw ${mysqlite} "INSERT INTO jailnic ( name,nic_order,nic_slot,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( 'eth0','0','0','auto','${nic_hwaddr}','${nic_address}','0','0','0','0' )"
+		fi
+	fi
+fi
+
+BSDCFG_LIBE="${CIX_DISTDIR}/share/bsdconfig/cbsd"
+[ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
+. ${BSDCFG_LIBE}/include/messages-jailnic.subr
+. ${BSDCFG_LIBE}/include/jailnic.subr
+. ${subrdir}/settings-tui-jail.subr
+. ${subrdir}/settings-tui.subr
+. ${subrdir}/vnet.subr
+
+capture _last_nic find_first_free_nic_id
+nic_name="eth${_last_nic}"
+
+while :; do
+	dialog_menu_main
+	_ret=$?
+	f_dialog_menutag_fetch _mtag
+
+	_command=
+	case ${_ret} in
+		${DIALOG_OK})
+			case "${_mtag}" in
+				?" $msg_exit")
+					break
+					;;
+				"-"|nic_name|slot|nic_type)
+					continue
+					;;
+				"nic_hwaddr")
+					get_construct_nic_hwaddr
+					;;
+				"nic_address")
+					get_construct_nic_address
+					;;
+				"nic_parent")
+					interface="${nic_parent}"
+					get_nic_parent && nic_parent="${interface}"
+					;;
+				"nic_mtu")
+					get_construct_nic_mtu
+					;;
+				"nic_flags")
+					get_construct_nic_flags
+					;;
+				"nic_vlan_untagged")
+					get_construct_nic_vlan_untagged
+					;;
+				"nic_vlan_tagged")
+					get_construct_nic_vlan_tagged
+					;;
+				"COMMIT")
+					for i in nic_name nic_hwaddr nic_parent nic_address; do
+						_val=
+						eval _val="\$$i"
+						if [ -z "${_val}" ]; then
+							f_dialog_msgbox "${i} is mandatory"
+							break
+						fi
+					done
+					echo "add_nic -h \"${nic_hwaddr}\" -n \"${nic_name}\" -p \"${nic_parent}\" -m \"${nic_mtu}\" -f \"${nic_flags}\" -u \"${nic_vlan_untagged}\" -t \"${nic_vlan_tagged}\""
+					read p
+					_res=$( add_nic -h "${nic_hwaddr}" -n "${nic_name}" -p "${nic_parent}" -m "${nic_mtu}" -f "${nic_flags}" -u "${nic_vlan_untagged}" -t "${nic_vlan_tagged}" )
+					if [ $? -ne 0 ]; then
+						err 1 "Error: ${_res}"
+					else
+						exit 0
+					fi
+					;;
+				*)
+					_index=${_mtag%% *}
+					_nic=${_mtag##* }
+					_command="jailnic-cfgnic jname=${jname} nic=${_nic}"
+					;;
+			esac
+			;;
+		${DIALOG_HELP})
+			get_help
+			continue
+			;;
+		*)
+			exit 0
+			;;
+	esac
+done
+
+exit 0

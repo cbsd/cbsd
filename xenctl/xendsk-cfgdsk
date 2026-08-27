@@ -19,27 +19,21 @@ readconf xen-default-default.conf		# xen_have_dsk_ratelimit?
 dialog_menu_main()
 {
 	local _input= _retval= _controller_desc= _dsk_controller_type=
-	local _checkbox="bootable" i= _mytest=
+	local _checkbox="bootable" _i= _mytest=
 
-	local btitle="${DIALOG_BACKTITLE}"
-
-	local title=" disk properties ${jname}:${dsk_path} "
+	btitle="${DIALOG_BACKTITLE}"
+	title=" disk properties ${jname}:${dsk_path} "
 	hline=
+	prompt="${_desc}"
 
-	local prompt="${_desc}"
-	local sqldelimer=" "
-
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_slot,dsk_type,bootable FROM xendsk WHERE dsk_path=\"${dsk_path}\" | while read dsk_controller dsk_slot dsk_type bootable; do
-		echo "export dsk_controller=\"${dsk_controller}\""
-		echo "export dsk_slot=\"${dsk_slot}\""
-		echo "export dsk_type=\"${dsk_type}\""
-		echo "export bootable=\"${bootable}\""
-	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+	cbsdsqlro_vars ${jailsysdir}/${jname}/local.sqlite \
+		"SELECT dsk_controller,dsk_slot,dsk_type,bootable FROM xendsk WHERE dsk_path='${dsk_path}'" \
+		dsk_controller dsk_slot dsk_type bootable
 
 	# get ${dsk_size}
 	populate_dsk_size
 
-	_dsk_controller_type=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT type FROM xen_dskcontroller WHERE name=\"${dsk_controller}\" )
+	capture _dsk_controller_type cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT type FROM xen_dskcontroller WHERE name='${dsk_controller}'"
 
 	# if no controller with specific name, than set controller type as controller name - probable direct connect via virtio-blk/ahci-hd
 	[ -z "${_dsk_controller_type}" ] && _dsk_controller_type="${dsk_controller}"
@@ -60,18 +54,16 @@ dialog_menu_main()
 	esac
 
 	# checkbox mark
-	for i in ${_checkbox}; do
-		#eval _new_mytest=\$new_$i
-		#[ -n "${_new_mytest}" ] && eval "${i}=${_new_mytest}"
-		eval _mytest=\$$i
+	for _i in ${_checkbox}; do
+		eval _mytest=\$$_i
 		if [ "${_mytest}" = "1" -o "${_mytest}" = "true" ]; then
-			export ${i}_mark="X"
+			export ${_i}_mark="X"
 		else
-			export ${i}_mark=" "
+			export ${_i}_mark=" "
 		fi
 	done
 
-	local menu_list="
+	menu_list="
 		'size'			'${dsk_size}'		'Current disk image size. Resize currently is not supported'
 		'controller'		'${dsk_controller}'	'Select controller. current: ${_controller_desc}'
 		'slot'			'${dsk_slot}'		'Bus slot. 0 - auto'
@@ -84,11 +76,10 @@ dialog_menu_main()
 	fi
 
 	#checkbox area
-	for i in ${_checkbox}; do
-		eval _mytest=\$${i}_mark
+	for _i in ${_checkbox}; do
+		eval _mytest=\$${_i}_mark
 		[ -z "${_mytest}" ] && _mytest=" "
-		#inc_menu_index item_let
-		menu_list="${menu_list}	'${i}'	'[${_mytest}]'	'${_mydesc}'"
+		menu_list="${menu_list}	'${_i}'	'[${_mytest}]'	'${_mydesc}'"
 	done
 
 	menu_list="${menu_list}
@@ -96,42 +87,15 @@ dialog_menu_main()
 		'remove'	'remove'		'Detach and remove image'
 	" # END-QUOTE
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		${menu_list}
-
-	height=$(( height + 1 ))
-
-	# Obtain default-item from previously stored selection
 	f_dialog_default_fetch defaultitem
 
-	local menu_choice
-	menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Exit\"                 \
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \" \$prompt \"                   \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
+	cbsd_menubox_with_help
 	local retval=$?
+
 	f_dialog_data_sanitize menu_choice
 	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
 
-	# Only update default-item on success
-	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
 	return $retval
 }
 
@@ -139,8 +103,8 @@ dialog_menu_main()
 ############################################################ MAIN
 export NOCOLOR=1
 
-MYARG="jname dsk"
-MYOPTARG=""
+CIXARG="jname dsk"
+CIXOPTARG=""
 MYDESC="Edit properties for vitual image of VM"
 CBSDMODULE="xen"
 
@@ -153,7 +117,7 @@ set +e
 . ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
-. ${cbsdinit}
+cixinit
 
 . ${dialog}
 
@@ -181,7 +145,7 @@ while getopts h$GETOPTS_STDARGS flag; do
 	h|\?) f_usage $BSDCFG_LIBE/$APP_DIR/USAGE "PROGRAM_NAME" "$pgm" ;;
 	esac
 done
-shift $(( $OPTIND - 1 ))
+shift $(( OPTIND - 1 ))
 
 #
 # Initialize
@@ -201,66 +165,51 @@ new_checkbox=
 # Loop over the main menu until we've accomplished what we came here to do
 #
 while :; do
-	dialog_menu_main
-	ret=$?
+	dialog_menu_main || break
 
-	#index=${mtag%% *}
-	#mychoice=${mtag##* }
+	[ -z "${mtag}" ] && break
 
-	command=
-	case ${ret} in
-		${DIALOG_OK})
-			f_dialog_menutag_fetch mtag
-			case "$mtag" in
-				?" $msg_exit")
-					break
-					;;
-				"-"|slot|dsk_type|size)
-					continue
-					;;
-				"controller")
-					get_dsk_controller
-					if [ -n "${new_dsk_controller}" ]; then
-						cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET dsk_controller=\"${new_dsk_controller}\" WHERE dsk_path=\"${dsk}.vhd\"
-					fi
-					;;
-				"remove")
-					if getyesno "Detach and remove ${dsk_path} from ${jname} VM?"; then
-						real_dsk_name="hdd-${dsk_path}"
-						real_dsk_path=$( cbsdsqlro storage_media SELECT path FROM media WHERE name=\"${real_dsk_name}\" AND type=\"hdd\" )
-						media mode=remove name=${real_dsk_name} path=${real_dsk_path} jname=${jname} type="hdd"
-						f_die
-					fi
-					;;
-				sectorsize)
-					f_dialog_title " set sectorsize "
-					f_dialog_input _input "Specify the logical and physical sector sized of the\n
+	_command=
+	case "${mtag}" in
+		?" $msg_exit")
+			break
+			;;
+		"-"|slot|dsk_type|size)
+			continue
+			;;
+		"controller")
+			get_dsk_controller
+			if [ -n "${new_dsk_controller}" ]; then
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE xendsk SET dsk_controller='${new_dsk_controller}' WHERE dsk_path='${dsk}.vhd'"
+			fi
+			;;
+		"remove")
+			if getyesno "Detach and remove ${dsk_path} from ${jname} VM?"; then
+				real_dsk_name="hdd-${dsk_path}"
+				capture real_dsk_path cbsdsqlro storage_media "SELECT path FROM media WHERE name='${real_dsk_name}' AND type='hdd'"
+				media mode=remove name=${real_dsk_name} path=${real_dsk_path} jname=${jname} type="hdd"
+				f_die
+			fi
+			;;
+		sectorsize)
+			f_dialog_title " set sectorsize "
+			f_dialog_input _input "Specify the logical and physical sector sized of the\n
 emulator disk: sectorsize=logical[/physical]\n\n\
 The physical sector size is optional and is equal to the \n\
 logical sector size if not explicitly specified. \n
 e.g: 512 or 4096 or 512/4096" "${dsk_sectorsize}" "${_message}" || return $?
-					if [ -n "${_input}" ]; then
-						dsk_sectorsize="${_input}"
-						new_dsk_sectorsize="${_input}"
-						cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite UPDATE xendsk SET dsk_sectorsize=\"${new_dsk_sectorsize}\" WHERE dsk_path=\"${dsk}.vhd\"
-					fi
-					;;
-				"bootable")
-					invert_checkbox ${mtag}
-					#new_bootable="${bootable}"
-					xen-dsk mode=modify bootable=${bootable} jname=${jname} controller="${dsk_controller}" dsk="${dsk}.vhd" > /dev/null 2>&1
-					continue
-					;;
-				*)
-					;;
-			esac
+			if [ -n "${_input}" ]; then
+				dsk_sectorsize="${_input}"
+				new_dsk_sectorsize="${_input}"
+				cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE xendsk SET dsk_sectorsize='${new_dsk_sectorsize}' WHERE dsk_path='${dsk}.vhd'"
+			fi
 			;;
-		${DIALOG_HELP})
-			get_help
+		"bootable")
+			invert_checkbox ${mtag}
+			xen-dsk mode=modify bootable=${bootable} jname=${jname} controller="${dsk_controller}" dsk="${dsk}.vhd" > /dev/null 2>&1
 			continue
 			;;
 		*)
-			f_die
 			;;
 	esac
 done
