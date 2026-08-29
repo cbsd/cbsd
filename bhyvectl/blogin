@@ -1,20 +1,50 @@
 #!/usr/bin/env cbsd
 #v13.0.1
-globalconf="${CIX_DISTDIR}/cbsd.conf";
-MYARG=""
-MYOPTARG="jname remote inter"
-MYDESC="Exec login into jail"
-ADDHELP="\
-  If you are in the CBSDfile directory, these environments will always have priority\n\
-"
-EXTHELP="wf_blogin"
+CIXARG=""
+CIXOPTARG="jname remote inter"
+MYDESC="Exec login into bhyve domain"
 CBSDMODULE="bhyve"
+EXTHELP="wf_blogin"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Login into bhyve domain console via tmux or custom login command.
+ The login method is configured via readconf blogin.conf.
+ If login_cmd is set to 'internal', the script attaches to the
+ bhyve tmux session. Otherwise, login_custom() is called with
+ the configured command.
+
+ If the bhyve domain has vm_efi set and VNC port file exists,
+ a notice about VNC mode is displayed before connecting.
+
+ If you are in the CBSDfile directory, these environments will
+ always have priority.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}    - target bhyve domain name;
+ ${N2_COLOR}remote=${N0_COLOR}  - '1' prevent searching in remote node base.
+                  For avoid the looping.
+ ${N2_COLOR}inter=${N0_COLOR}   - interactive mode flag;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd blogin
+ # cbsd blogin jname=myvm
+
+${H3_COLOR}See also${N0_COLOR}:
+
+   cbsd bjail --help
+   cbsd bset --help
+   cbsd bstart --help
+
+"
 
 . ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
 cbsd_api=0
-. ${cbsdinit}
+cixinit
 
 
 try_remote()
@@ -26,7 +56,8 @@ try_remote()
 	export_bhyve_data_for_external_hook
 
 	[ "${remote}" = "1" ] && err 1 "${N1_COLOR}No such domain${N0_COLOR}"
-	RHST=$( bwhereis ${jname} | ${HEAD_CMD} -n1 )
+	capture _bwhereis_out bwhereis ${jname}
+	read -r RHST _ <<< "${_bwhereis_out}"
 	[ -z "${RHST}" ] && err 1 "No such domain for login"
 
 	# we don't need for interactive when come with remote=2 from select_jail_by_list
@@ -57,7 +88,7 @@ login_internal()
 
 	# reset CBSD PATH
 	export PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
-	local TMUX_CMD=$( which tmux )
+	capture TMUX_CMD which tmux
 
 	[ -z "${TMUX_CMD}" ] && err 1 "${N1_COLOR}no such tmux${N0_COLOR}"
 
@@ -110,12 +141,12 @@ jname_blogin()
 
 	readconf blogin.conf
 
-	vm_efi=$( cbsdsqlro local "SELECT vm_efi FROM bhyve WHERE jname=\"${jname}\"" )
-	vnc_bind=$( cbsdsqlro local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname=\"${jname}\"" )
+	capture vm_efi cbsdsqlro local "SELECT vm_efi FROM bhyve WHERE jname='${jname}'"
+	capture vnc_bind cbsdsqlro local "SELECT bhyve_vnc_tcp_bind FROM bhyve WHERE jname='${jname}'"
 
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
-			vm_port=$( ${CAT_CMD} ${jailsysdir}/${jname}/vnc_port )
+			capture vm_port ${CAT_CMD} ${jailsysdir}/${jname}/vnc_port
 		else
 			vm_port="0"
 		fi
@@ -185,22 +216,23 @@ else
 fi
 
 if [ ${cbsd_api} -eq 1 ]; then
-	CURL_CMD=$( which curl )
+	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 	for jname in ${all_bhyve_list}; do
 		[ -z "${jname}" ] && return 1
-		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		capture _ssh ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+		capture _jq_out jq '.ssh_string' <<< "${_ssh}"
+		capture _ssh_string strstrip --str="${_jq_out}" --chars='"'
+		capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
 
 		if [ "${_ssh_pref}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error2: ${N2_COLOR}${_ssh}${N0_COLOR}"
@@ -208,11 +240,8 @@ if [ ${cbsd_api} -eq 1 ]; then
 			continue
 		fi
 
-		_ssh_len=$( strlen "${_ssh_string}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
-		#echo "${SSH_CMD} ${_ssh_post}"
-		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
-		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+		capture _ssh_len strlen "${_ssh_string}"
+		capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
 
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
@@ -225,7 +254,7 @@ if [ ${cbsd_api} -eq 1 ]; then
 			fi
 		fi
 		jexec_cmd="${SSH_CMD} -tt -oStrictHostKeyChecking=no -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
-		echo "[debug] exec: $jexec_cmd"
+		echo "[debug] exec: ${jexec_cmd}"
 		${jexec_cmd}
 	done
 	exit 0

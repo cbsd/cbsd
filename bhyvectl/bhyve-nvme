@@ -1,0 +1,93 @@
+#!/usr/bin/env cbsd
+#v12.0.4
+CIXARG="mode"
+CIXOPTARG="jname devpath ioslots maxq qsz ram sectsz ser"
+MYDESC="Manage bhyve NVMe storage controller"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Manage NVMe storage controller for bhyve VMs.
+ Supports attaching, detaching and listing NVMe devices.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode=${N0_COLOR}      - action: attach, detach or list. Required.
+ ${N2_COLOR}jname=${N0_COLOR}     - target virtual machine name. Required for attach/detach.
+ ${N2_COLOR}devpath=${N0_COLOR}   - path to the NVMe device or image file. Required for attach/detach.
+ ${N2_COLOR}ioslots=${N0_COLOR}   - max number of concurrent I/O requests. Default: 0 (inherits).
+ ${N2_COLOR}maxq=${N0_COLOR}      - max number of queues. Default: 0 (inherits).
+ ${N2_COLOR}qsz=${N0_COLOR}       - max elements in each queue. Default: 0 (inherits).
+ ${N2_COLOR}ram=${N0_COLOR}       - RAM size for the NVMe controller. Default: 0 (inherits).
+ ${N2_COLOR}sectsz=${N0_COLOR}    - sector size. Default: 0 (inherits blockif sector size).
+ ${N2_COLOR}ser=${N0_COLOR}       - serial number (max 20 characters). Default: bhyve-CBSD-NVMe.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-nvme mode=list
+ # cbsd bhyve-nvme mode=attach jname=myvm devpath=/dev/zvol/zroot/nvme0 ram=128
+ # cbsd bhyve-nvme mode=detach jname=myvm devpath=/dev/zvol/zroot/nvme0
+
+${H3_COLOR}See also${N0_COLOR}:
+
+   cbsd bhyve-nvme --help
+   cbsd bconfig --help
+   cbsd bset --help
+
+"
+
+. ${subrdir}/nc.subr
+
+cixinit
+. ${strings}
+. ${system}
+. ${subrdir}/bhyve.subr
+. ${subrdir}/virtual.subr
+. ${CIX_DISTDIR}/share/bhyve/bhyve-nvme.subr
+. ${CIX_DISTDIR}/share/bhyve/bhyve-dsk.subr
+
+nvme_attach()
+{
+	local _val
+	for i in jname devpath ioslots maxq qsz ram sectsz ser; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-nvme error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	local lunname=${devpath##*/}
+
+	add_nvme -d "${devpath}" -i "${ioslots}" -m "${maxq}" -q "${qsz}" -r "${ram}" -s "${sectsz}" -v "${ser}"
+	add_dsk -c "nvme" -d "${devpath}" -s "${ram}"
+	media mode=register name="hdd-${lunname}" path="${devpath}" type="hdd" jname="${jname}"
+}
+
+nvme_detach()
+{
+	local _val
+	for i in jname devpath; do
+		_val=
+		eval _val="\$$i"
+		[ -z "${_val}" ] && err 1 "${N1_COLOR}bhyve-nvme error: ${N2_COLOR}${i}= ${N1_COLOR}is mandatory${N0_COLOR}"
+	done
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM bhyve_nvme WHERE devpath='${devpath}'"
+}
+
+case "${mode}" in
+	attach)
+		nvme_attach
+		;;
+	detach)
+		nvme_detach
+		;;
+	list)
+		bhyve-nvme-list
+		;;
+	*)
+		err 1 "${N1_COLOR}Unknown mode: ${N2_COLOR}${mode}${N0_COLOR}"
+		;;
+esac
+
+exit 0

@@ -214,7 +214,7 @@ get_netmask()
 	_mask="${_net#*/}"
 
 	if ! is_number "${_mask}"; then
-		echo "NOT NUMBER: ${_mask}"
+		${ECHO} "NOT NUMBER: ${_mask}"
 		return 1
 	fi
 
@@ -579,31 +579,14 @@ ip_in_range()
 }
 
 
-LOCKFILE="${ftmpdir}/dhcpd.lock"
-LEASE_FILE="${tmpdir}/dhcpd.lease"
-# list of locked/skip IPS
-LOCKFILE_SKIPLIST=
+_build_cmd_args()
+{
+	local _pos= _arg_len= _pref= ARG= VAL=
 
-[ -n "${odhcpd_helper}" ] && dhcpd_helper="${odhcpd_helper}"
-
-if [ "${dhcpd_helper}" != "internal" ]; then
-	cbsdlogger NOTICE ${CIX_APP}: use external dhcpd_helper: ${dhcpd_helper}
-	[ ! -x "${dhcpd_helper}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: external helper not executable: ${N2_COLOR}${dhcpd_helper}${N0_COLOR}"
-
-	# rebuild arg list ( + add pass )
-	# Pass '"' as \" in cmd
-	INIT_IFS="${IFS}"
-	IFS="~"
-	cmd="$@"
-	IFS="${INIT_IFS}"
-	cmd=$( while [ -n "${1}" ]; do
-		IFS="~"
+	while [ -n "${1}" ]; do
 		strpos --str="${1}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
-			#printf "${1} "         # (printf handles -args (with dashes)
-			#echo -n "${1} "
 			shift
 			continue
 		fi
@@ -617,8 +600,21 @@ if [ "${dhcpd_helper}" != "internal" ]; then
 		fi
 		printf "${ARG}='${VAL}' "
 		shift
-	done )
+	done
+}
 
+LOCKFILE="${ftmpdir}/dhcpd.lock"
+LEASE_FILE="${tmpdir}/dhcpd.lease"
+# list of locked/skip IPS
+LOCKFILE_SKIPLIST=
+
+[ -n "${odhcpd_helper}" ] && dhcpd_helper="${odhcpd_helper}"
+
+if [ "${dhcpd_helper}" != "internal" ]; then
+	cbsdlogger NOTICE ${CIX_APP}: use external dhcpd_helper: ${dhcpd_helper}
+	[ ! -x "${dhcpd_helper}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: external helper not executable: ${N2_COLOR}${dhcpd_helper}${N0_COLOR}"
+
+	capture cmd _build_cmd_args "$@"
 	cbsd_lock 60 ${LOCKFILE} ${dhcpd_helper} ${cmd}
 	ret=$?
 	# should never happen
@@ -642,34 +638,7 @@ fi
 # <ip>:<end_lease_time>
 if [ -z "${pass}" ]; then
 	if [ "${lock}" = "1" ]; then
-		# rebuild arg list ( + add pass )
-		# Pass '"' as \" in cmd
-		INIT_IFS="${IFS}"
-		IFS="~"
-		cmd="$@"
-		IFS="${INIT_IFS}"
-		while [ -n "${1}" ]; do
-			IFS="~"
-			strpos --str="${1}" --search="="
-			_pos=$?
-			if [ ${_pos} -eq 0 ]; then
-				# not params=value form
-				#printf "${1} "         # (printf handles -args (with dashes)
-				#echo -n "${1} "
-				shift
-				continue
-			fi
-			capture _arg_len strlen "${1}"
-			_pref=$(( _arg_len - _pos ))
-			capture ARG substr --pos=0 --len=${_pos} --str="${1}"
-			capture VAL substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}"
-			if [ -z "${ARG}" -o -z "${VAL}" ]; then
-				shift
-				continue
-			fi
-			#printf "${ARG}='${VAL}' "
-			shift
-		done
+		capture cmd _build_cmd_args "$@"
 		cbsd_lock 60 ${LOCKFILE} /usr/local/bin/cbsd dhcpd ${cmd} pass=1
 		ret=$?
 		# should never happen
@@ -683,7 +652,8 @@ fi
 if [ -r ${LEASE_FILE} ]; then
 	${TRUNCATE_CMD} -s0 ${LEASE_FILE}.swap
 	gettime cur_time
-	eval $( ${CAT_CMD} ${LEASE_FILE} | while read items; do
+	LOCKFILE_SKIPLIST=
+	while read items; do
 		p1=${items%%|*}
 		p2=${items##*|}
 		[ -z "${p1}" -o -z "${p2}" ] && continue
@@ -699,8 +669,7 @@ if [ -r ${LEASE_FILE} ]; then
 				LOCKFILE_SKIPLIST="${LOCKFILE_SKIPLIST} ${p1}"
 			fi
 		fi
-	echo "LOCKFILE_SKIPLIST=\"${LOCKFILE_SKIPLIST}\""
-	done )
+	done < ${LEASE_FILE}
 	${MV_CMD} ${LEASE_FILE}.swap ${LEASE_FILE}
 fi
 
@@ -742,7 +711,7 @@ for tmpnet in ${nodeippool}; do
 	sqllistdelimer=
 
 	# bhyve doesn't have ip4_addr anymore, selectom from jails only
-	existing_ipjail=$( cbsdsqlro local "SELECT DISTINCT ip4_addr FROM jails WHERE ip4_addr != '0' AND ip4_addr != 'DHCP'" | ${TR_CMD} "," " " | ${XARGS_CMD} )
+	capture existing_ipjail cbsdsqlro local "SELECT DISTINCT GROUP_CONCAT(ip4_addr, ' ') FROM jails WHERE ip4_addr != '0' AND ip4_addr != 'DHCP'"
 #	cbsdsqlro_vars local "SELECT DISTINCT ip4_addr FROM jails WHERE ip4_addr != '0' AND ip4_addr != 'DHCP'"
 
 	skip_ip="${nodeip}"

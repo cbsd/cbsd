@@ -1,16 +1,40 @@
 #!/usr/bin/env cbsd
 #v10.1.2
-MYARG=""
-MYOPTARG="jname"
+CIXARG=""
+CIXOPTARG="jname"
 CBSDMODULE="bhyve"
 MYDESC="Ncurses based bhyve order editor"
 EXTHELP="wf_jorder"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Interactive boot order editor for bhyve domains.
+ Allows changing the boot priority of bhyve VMs.
+ Lower weight means higher priority (first to boot).
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR} - pre-select bhyve domain in the list;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd border-tui
+ # cbsd border-tui jname=myvm
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd border --help
+  cbsd bconfig --help
+  cbsd bsetup-tui --help
+
+"
 
 . ${subrdir}/nc.subr
 . ${tools}
 
-. ${cbsdinit}
+cixinit
 
+. ${strings}
 . ${subrdir}/settings-tui.subr
 . ${subrdir}/settings-tui-virtual.subr
 . ${subrdir}/settings-tui-bhyve.subr
@@ -18,14 +42,17 @@ EXTHELP="wf_jorder"
 
 load_table()
 {
-	local jnum=0
-	local sqldelimer=" "
+	local _q= _rows=
 
-	eval $( cbsdsqlro local "SELECT jname,b_order FROM jails WHERE status<2 AND emulator='bhyve' ORDER BY CAST(b_order AS int) ASC" | while read jname b_order; do
-		echo "export jails_${jnum}_jname=\"${jname}\""
-		echo "export jails_${jnum}_order=\"${b_order}\""
-		jnum=$(( jnum + 1 ))
-	done )
+	capture _rows cbsdsqlquery local "SELECT jname,b_order FROM jails WHERE status<2 AND emulator='bhyve' ORDER BY CAST(b_order AS int) ASC"
+	_jnum=0
+	while read _q; do
+		[ -z "${_q}" ] && continue
+		# shellcheck disable=SC2034
+		eval export jails_${_jnum}_jname=\"\${_q@.jname}\"
+		eval export jails_${_jnum}_order=\"\${_q@.b_order}\"
+		_jnum=$(( _jnum + 1 ))
+	done <<< "${_rows}"
 }
 
 
@@ -67,67 +94,44 @@ dialog_menu_main()
 	local prompt="Use menu to select bhyve domain"
 	local defaultitem=
 	local hline=
-	local i jnum order jname=
+	local _i _jnum _order _jname=
 
 	load_table
 
 	local menu_list=" \
-		'EXIT'		'' \
-		'-'		'' \
-	" # END-QUOTE
+		'EXIT'		'EXIT'		'Exit boot order editor' \
+		'-'		'-'		'' \
+	"
 
-	jnum=0
-	eval jname="\$jails_${jnum}_jname"
-	eval order="\$jails_${jnum}_order"
+	_jnum=0
+	eval _jname="\$jails_${_jnum}_jname"
+	eval _order="\$jails_${_jnum}_order"
 
-	while [ -n "${jname}" ]; do
-		eval order="\$jails_${jnum}_order"
-		menu_list="$menu_list '${order} ${jname}'	''"
+	while [ -n "${_jname}" ]; do
+		eval _order="\$jails_${_jnum}_order"
+		menu_list="${menu_list} '${_order} ${_jname}' '${_order} ${_jname}' 'Boot order ${_order}: ${_jname}'"
 
-		# if jname/selected passed, set's selector to this item
-		if [ "${selected}" = "${jname}" ]; then
-			defaultitem="${order} ${jname}"
+		if [ "${selected}" = "${_jname}" ]; then
+			defaultitem="${_order} ${_jname}"
 			f_dialog_default_store "${defaultitem}"
 		fi
 
-		jnum=$(( jnum + 1 ))
-		unset jname order
-		eval jname="\$jails_${jnum}_jname"
-		eval order="\$jails_${jnum}_order"
+		_jnum=$(( _jnum + 1 ))
+		unset _jname _order
+		eval _jname="\$jails_${_jnum}_jname"
+		eval _order="\$jails_${_jnum}_order"
 	done
 
-	local height width rows
-	eval f_dialog_menu_size height width rows \
-		\"\$DIALOG_TITLE\"     \
-		\"\$DIALOG_BACKTITLE\" \
-		\"\$prompt\"           \
-		\"\$hline\"            \
-		$menu_list
-
-	height=$(( height + 1 ))
-
-	# Obtain default-item from previously stored selection
 	f_dialog_default_fetch defaultitem
 
 	local menu_choice
-	menu_choice=$( eval $DIALOG \
-		--title \"\$DIALOG_TITLE\"         \
-		--backtitle \"\$DIALOG_BACKTITLE\" \
-		--hline \"\$hline\"                \
-		--ok-label \"\$msg_ok\"            \
-		--cancel-label \"\$msg_cancel\"    \
-		--default-item \"\$defaultitem\"   \
-		--menu \" \$prompt \"              \
-		$height $width $rows               \
-		$menu_list                         \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
-
+	cbsd_menubox_with_help
 	local retval=$?
+
 	f_dialog_data_sanitize menu_choice
 	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
 
-	# Only update default-item on success
 	if [ ${retval} -eq ${DIALOG_OK} ]; then
 		selected=${menu_choice##* }
 	fi
@@ -148,7 +152,6 @@ f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 
 while [ 1 ]; do
 	dialog_menu_main || f_die
-	retval=$?
 
 	f_dialog_menutag_fetch mtag
 

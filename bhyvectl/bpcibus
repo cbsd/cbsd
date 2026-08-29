@@ -1,22 +1,36 @@
 #!/usr/bin/env cbsd
 #v12.0.6
 CBSDMODULE="bhyve"
-MYARG="jname mode"
-MYOPTARG="display header select device_name"
+CIXARG="jname mode"
+CIXOPTARG="display header select device_name"
 MYDESC="Operate with bhyve PCI bus map"
 ADDHELP="
-  mode=[list|reset]
-  mode=get - get PCI bus for specified device (device_name= required, select= - optional)
-  mode=list - show current PCI bus map
-  mode=reset - reset and re-order devices
-select - change SQL query for get, e.g: select=\"pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc\"
-device_name - pciclot_name of device for select in mode=get, e.g: virtio-net
-header=0 don't print header
-display= list by comma for column. Default: pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc
+${H3_COLOR}Description${N0_COLOR}:
+
+ Manage bhyve PCI bus device map: list, get or reset PCI slot assignments.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}       - target bhyve domain;
+ ${N2_COLOR}mode=${N0_COLOR}        - operation mode:
+           * list  - show current PCI bus map (default);
+           * get   - get PCI bus for specified device (device_name= required);
+           * reset - truncate and re-order PCI bus table;
+ ${N2_COLOR}device_name=${N0_COLOR} - pcislot_name of device (mandatory for mode=get);
+ ${N2_COLOR}select=${N0_COLOR}      - SQL column for mode=get (default: pcislot_bus);
+ ${N2_COLOR}display=${N0_COLOR}     - columns to display (default: pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc);
+ ${N2_COLOR}header=${N0_COLOR}      - show header (1 by default);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bpcibus jname=vm1
+ # cbsd bpcibus jname=vm1 mode=get device_name=virtio-net
+ # cbsd bpcibus jname=vm1 mode=reset
 
 ${H3_COLOR}See also${N0_COLOR}:
 
- cbsd bhyve-ppt --help
+  cbsd bhyve-ppt --help
+  cbsd bconfig --help
 
 "
 
@@ -24,10 +38,10 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${tools}
 . ${strings}
 
-select="pcislot_bus"		# by default, select PCI bus
+select="pcislot_bus"
 device_name=
 
-. ${cbsdinit}
+cixinit
 
 . ${subrdir}/rcconf.subr
 case "${emulator}" in
@@ -41,11 +55,8 @@ esac
 
 [ -z "${display}" ] && display="pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc"
 
-#remove commas for loop action on header
-mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
-
-# upper for header
-myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+capture mydisplay ${TR_CMD} ',' '  ' <<< "${display}"
+capture myheader ${TR_CMD} '[:lower:]' '[:upper:]' <<< "${mydisplay}"
 
 show_header()
 {
@@ -53,17 +64,14 @@ show_header()
 	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
 }
 
-# if $1 = "Unregister" then overwrite status to "Unregister"
 populate_output_data()
 {
-	local _i _val src_size
+	local _i= _val=
 
 	_status=
-
-	#populate values for in output string
 	for _i in ${mydisplay}; do
 		_val=
-		eval _val=\$$_i
+		eval _val=\$${_i}
 		[ -z "${_val}" ] && _val="-"
 		if [ -z "${_status}" ]; then
 			_status="${N0_COLOR}${_val}"
@@ -73,52 +81,40 @@ populate_output_data()
 	done
 }
 
-
-# $1 - which file from. Eg: local
 show_basesdata_from_sql()
 {
-	local _i
+	local _sqlfile=
 
-	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
-		sqlfile="$1"
+		_sqlfile="$1"
 	else
-		sqlfile="local"
+		_sqlfile="local"
 	fi
 
-	_sql="SELECT pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc FROM pcibus"
-
-	OIFS="${IFS}"
-	IFS="|"
-	sqldelimer="|"
-
-	cbsdsqlro ${sqlfile} ${_sql} | while read pcislot_name pcislot_bus pcislot_pcislot pcislot_function pcislot_desc; do
-		IFS="${OIFS}"
+	cbsdsqlquery ${_sqlfile} "SELECT pcislot_name,pcislot_bus,pcislot_pcislot,pcislot_function,pcislot_desc FROM pcibus" | while read _q; do
+		pcislot_name=${_q@.pcislot_name}
+		pcislot_bus=${_q@.pcislot_bus}
+		pcislot_pcislot=${_q@.pcislot_pcislot}
+		pcislot_function=${_q@.pcislot_function}
+		pcislot_desc=${_q@.pcislot_desc}
 		populate_output_data
-		printf "${N2_COLOR}"
-		printf "${_status}"
-		printf "${N0_COLOR}\n"
-		IFS="|"
+		printf "${N2_COLOR}${_status}${N0_COLOR}\n"
 	done
-	IFS="${OIFS}"
 }
 
 show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$( node mode=list header=0 allinfo=0 )
+	[ -z "${node}" ] && capture node node mode=list header=0 allinfo=0
 
 	for _n in ${node}; do
-		nodename="${_n}"
 		show_basesdata_from_sql "inv.${_n}"
 	done
 }
 
 show_local()
 {
-	local _errcode _status
-
 	show_header
 	show_basesdata_from_sql ${jailsysdir}/${jname}/local.sqlite
 }
@@ -127,10 +123,9 @@ show_pcibus_map()
 {
 	if [ -n "${node}" ]; then
 		show_remote
-		exit
+	else
+		show_local
 	fi
-
-	show_local
 }
 
 #### MAIN
@@ -138,25 +133,16 @@ show_pcibus_map()
 
 case "${mode}" in
 	get)
-		[ -z "${device_name}" ] && err 1 "${N2_COLOR}device_name= ${N1_COLOR} is mandatory${N0_COLOR}"
-#		if [ "${device_name}" = "virtio-net" ]; then
-#			case "${platform}" in
-#				Linux)
-#					device_name="virtio-net-pci"
-#					;;
-#			esac
-#		fi
-		_sql="SELECT ${select} FROM pcibus WHERE pcislot_name='${device_name}' OR pcislot_name='virtio-net-pci'"
+		[ -z "${device_name}" ] && err 1 "${N1_COLOR}mandatory parameter: ${N2_COLOR}device_name=${N0_COLOR}"
 		sqllistdelimer=" "
-		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_sql}
+		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT ${select} FROM pcibus WHERE pcislot_name='${device_name}' OR pcislot_name='virtio-net-pci'"
 		;;
 	list)
 		sqllistdelimer=" "
 		show_pcibus_map | ${COLUMN_CMD} -t
 		;;
 	reset)
-		# truncate pcibus_run table
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "DELETE FROM pcibus"
 		${ECHO} "${N1_COLOR}Purge pcibus table for: ${N2_COLOR}${jname}${N0_COLOR}"
 		;;
 	*)

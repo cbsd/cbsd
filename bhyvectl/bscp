@@ -55,12 +55,12 @@ try_remote()
 {
 	# this is only wrapper for compile correct arguments for cbsd nodescp
 
-	node=$( jwhereis ${jname} )
+	capture node jwhereis ${jname}
 
 	[ -z "${node}" ] && log_err 1 "${CIX_APP}: node not found for jail ${jname}"
 
 	cbsdlogger NOTICE ${CIX_APP}: try to get remote jstatus for ${jname} on ${node}
-	status=$( rexe node=${node} cbsd jstatus ${jname} )
+	capture status rexe node=${node} cbsd jstatus ${jname}
 	[ "${status}" = "0" ] && log_err 1 "${CIX_APP}: jail ${jname} not running on ${node}"
 	sqlfile="${node}"
 	. ${subrdir}/rcconf.subr
@@ -109,7 +109,7 @@ bscp()
 	if [ -r "${Makefile}" ]; then
 		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 		. ${Makefile}
-		all_bhyve_list=$( ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g )
+		capture all_bhyve_list ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g
 		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
 			cbsd_api=1
 		else
@@ -120,10 +120,10 @@ bscp()
 	fi
 
 	if [ ${cbsd_api} -eq 1 ]; then
-		CURL_CMD=$( which curl )
+		capture CURL_CMD which curl
 		[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-		_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+		capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 		found=0
 		for i in ${all_bhyve_list}; do
@@ -135,7 +135,7 @@ bscp()
 		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such bhyve: ${N2_COLOR}${jname}${N0_COLOR}"
 
 		for _jname in ${all_bhyve_list}; do
-			_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1 )
+			capture _ssh ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname}
 			_ret=$?
 			if [ ${_ret} -ne 0 ]; then
 				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
@@ -143,8 +143,8 @@ bscp()
 				continue
 			fi
 
-			_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
-			_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+			capture _ssh_string echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"'
+			capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
 
 			if [ "${_ssh_pref}" != "ssh" ]; then
 				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
@@ -152,11 +152,14 @@ bscp()
 				continue
 			fi
 
-			_ssh_len=$( strlen "${_ssh_string}" )
-			_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
+			capture _ssh_len strlen "${_ssh_string}"
+			capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
 			#echo "${SSH_CMD} ${_ssh_post}"
-			_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
-			_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+			capture _ssh_ip ${AWK_CMD} '{printf $1}' <<< "${_ssh_post}"
+
+			# extract port: "ip -pNNNN" → "NNNN"
+			capture _ssh_port_field ${AWK_CMD} '{printf $2}' <<< "${_ssh_post}"
+			capture _ssh_port ${TR_CMD} -d '\-p' <<< "${_ssh_port_field}"
 
 			# rewrite
 			if [ -n "${SUDO_USER}" ]; then
@@ -170,7 +173,7 @@ bscp()
 			fi
 
 			if [ ${rarg} -eq 1 ]; then
-				DIR=$( ${DIRNAME_CMD} ${2} )
+				capture DIR ${DIRNAME_CMD} ${2}
 				[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
 				scp_exec="${SCP_CMD} ${quiet} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_ip}:${rfile} ${2}"
 				echo "[debug] ${scp_exec}"
@@ -220,15 +223,18 @@ bscp()
 
 		echo "${SCP_CMD} ${quiet} ${bscp_args} -i ${workdir}/.ssh/id_rsa ${ci_user_add}@${first_ip4_addr}:${rfile} ${2}"
 
-		prefix=$( substr --pos=0 --len=1 --str=${2} )
-		if [ "${prefix}" = "/" ]; then
-			# real/full path
-			dstfile="${2}"
-		else
-			# basename
-			_res="${2##*/}"
-			dstfile="${CIX_PWD}/${_res}"
-		fi
+		capture prefix substr --pos=0 --len=1 --str=${2}
+		case "${prefix}" in
+			/)
+				# real/full path
+				dstfile="${2}"
+				;;
+			*)
+				# basename
+				_res="${2##*/}"
+				dstfile="${CIX_PWD}/${_res}"
+				;;
+		esac
 
 		pass=0
 		ret=0
@@ -250,20 +256,23 @@ bscp()
 		unset first_ip4_addr
 	else
 		# to VM
-		DIR=$( ${DIRNAME_CMD} ${path}${dst} )
+		capture DIR ${DIRNAME_CMD} ${path}${dst}
 		readconf blogin.conf
 		ret=0
-		prefix=$( substr --pos=0 --len=1 --str="${1}" )
-		if [ "${prefix}" = "/" ]; then
-			# full_path?
-			_source=$( ${REALPATH_CMD} "${1}" 2>/dev/null )
-			ret=$?
-			[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${1}${N0_COLOR}"
-		else
-			_source=$( ${REALPATH_CMD} "${CIX_PWD}/${1}" 2>/dev/null )
-			ret=$?
-			[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${CIX_PWD}/${1}${N0_COLOR}"
-		fi
+		capture prefix substr --pos=0 --len=1 --str="${1}"
+		case "${prefix}" in
+			/)
+				# full_path?
+				capture _source ${REALPATH_CMD} "${1}"
+				ret=$?
+				[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${1}${N0_COLOR}"
+				;;
+			*)
+				capture _source ${REALPATH_CMD} "${CIX_PWD}/${1}"
+				ret=$?
+				[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${CIX_PWD}/${1}${N0_COLOR}"
+				;;
+		esac
 
 		# get first IP
 		# todo: where ipv4_first facts?

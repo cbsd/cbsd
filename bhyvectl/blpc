@@ -1,41 +1,48 @@
 #!/usr/bin/env cbsd
 #v15.0.0
 CBSDMODULE="bhyve"
-CIXMYARG="jname"
+CIXARG="jname"
 CIXOPTARG="bootrom com1 com2 com3 com4 display header lpcslot_name mode select tpm"
 MYDESC="Manage bhyve VM LPC devices: COM/TPM2/bootrom and so on"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Manage bhyve VM LPC devices: COM/TPM2/bootrom and so on.
+ Manage bhyve VM LPC devices: COM/TPM2/bootrom and so on.
 
-If the TPM path begins with the '/dev/' prefix, it means PASSTHRU mode. 
-If the 'swtpm' package is installed, you can set 'tpm=' as 'new' value for emulation.
+ If the TPM path begins with the '/dev/' prefix, it means PASSTHRU mode.
+ If the 'swtpm' package is installed, you can set 'tpm=' as 'new' value for emulation.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}jname=${N0_COLOR}  - target VM.
- ${N2_COLOR}mode=${N0_COLOR}   - mode (list by default when no other arguments):
-           * reset -   reset to default;
-           * get   -   get values;
-           * list  -   list of devices;
+ ${N2_COLOR}jname=${N0_COLOR}         - target VM;
+ ${N2_COLOR}mode=${N0_COLOR}          - mode of operation (list by default when no other arguments):
+           * list  - list of LPC devices;
+           * get   - get value for specified lpcslot_name;
+           * reset - reset LPC to defaults;
+ ${N2_COLOR}bootrom=${N0_COLOR}       - set bootrom firmware;
+ ${N2_COLOR}com1..com4=${N0_COLOR}    - set COM port device (e.g. tcp=127.0.0.1:9000 or serial);
+ ${N2_COLOR}tpm=${N0_COLOR}           - set TPM device ('new' for swtpm, '/dev/tpm0' for passthru);
+ ${N2_COLOR}lpcslot_name=${N0_COLOR}  - LPC slot name (mandatory for mode=get);
+ ${N2_COLOR}display=${N0_COLOR}       - columns to display;
+ ${N2_COLOR}select=${N0_COLOR}        - SQL SELECT column;
+ ${N2_COLOR}header=${N0_COLOR}        - show header (1 by default);
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
-  # cbsd blpc jname=vm1
-  # cbsd blpc jname=vm1 tpm=new				# emulate via swtpm
-  # cbsd blpc jname=vm1 tpm=/dev/tpm0			# passthru /dev/tpm*
-  # cbsd blpc jname=vm1 mode=get lpcslot_name=com1
-  # cbsd blpc jname=vm1 com1="tcp=127.0.0.1:9000"
-  # cbsd blpc jname=vm1 com2="serial"
-  # cbsd blpc jname=vm1 mode=reset
+ # cbsd blpc jname=vm1
+ # cbsd blpc jname=vm1 tpm=new                         # emulate via swtpm
+ # cbsd blpc jname=vm1 tpm=/dev/tpm0                   # passthru /dev/tpm*
+ # cbsd blpc jname=vm1 mode=get lpcslot_name=com1
+ # cbsd blpc jname=vm1 com1="tcp=127.0.0.1:9000"
+ # cbsd blpc jname=vm1 com2="serial"
+ # cbsd blpc jname=vm1 mode=reset
 
 ${H3_COLOR}See also${N0_COLOR}:
 
- cbsd blpc-tui --help
- cbsd bconfig --help
- cbsd bset --help
- cbsd bhyve-ppt --help
+  cbsd blpc-tui --help
+  cbsd bconfig --help
+  cbsd bset --help
+  cbsd bhyve-ppt --help
 
 "
 
@@ -43,8 +50,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 . ${tools}
 . ${strings}
 
-select="lpcslot_value"		# by default, select PCI bus
-device_name=
+select="lpcslot_value"
 
 bootrom=
 com1=
@@ -72,11 +78,8 @@ esac
 
 [ -z "${display}" ] && display="lpcslot_name,lpcslot_value"
 
-#remove commas for loop action on header
-mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
-
-# upper for header
-myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+capture mydisplay ${TR_CMD} ',' '  ' <<< "${display}"
+capture myheader ${TR_CMD} '[:lower:]' '[:upper:]' <<< "${mydisplay}"
 
 show_header()
 {
@@ -84,17 +87,14 @@ show_header()
 	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
 }
 
-# if $1 = "Unregister" then overwrite status to "Unregister"
 populate_output_data()
 {
-	local _i= _val= src_size=
+	local _i= _val=
 
 	_status=
-
-	#populate values for in output string
 	for _i in ${mydisplay}; do
 		_val=
-		eval _val=\$$_i
+		eval _val=\$${_i}
 		[ -z "${_val}" ] && _val="-"
 		if [ -z "${_status}" ]; then
 			_status="${N0_COLOR}${_val}"
@@ -104,52 +104,37 @@ populate_output_data()
 	done
 }
 
-
-# $1 - which file from. Eg: local
 show_basesdata_from_sql()
 {
-	local _i=
+	local _sqlfile=
 
-	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
-		sqlfile="$1"
+		_sqlfile="$1"
 	else
-		sqlfile="local"
+		_sqlfile="local"
 	fi
 
-	_sql="SELECT lpcslot_name,lpcslot_value FROM lpc"
-
-	OIFS="${IFS}"
-	IFS="|"
-	sqldelimer="|"
-
-	cbsdsqlro ${sqlfile} ${_sql} | while read lpcslot_name lpcslot_value; do
-		IFS="${OIFS}"
+	cbsdsqlquery ${_sqlfile} "SELECT lpcslot_name,lpcslot_value FROM lpc" | while read _q; do
+		lpcslot_name=${_q@.lpcslot_name}
+		lpcslot_value=${_q@.lpcslot_value}
 		populate_output_data
-		printf "${N2_COLOR}"
-		printf "${_status}"
-		printf "${N0_COLOR}\n"
-		IFS="|"
+		printf "${N2_COLOR}${_status}${N0_COLOR}\n"
 	done
-	IFS="${OIFS}"
 }
 
 show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$( node mode=list header=0 allinfo=0 )
+	[ -z "${node}" ] && capture node node mode=list header=0 allinfo=0
 
 	for _n in ${node}; do
-		nodename="${_n}"
 		show_basesdata_from_sql "inv.${_n}"
 	done
 }
 
 show_local()
 {
-	local _errcode= _status=
-
 	show_header
 	show_basesdata_from_sql ${jailsysdir}/${jname}/local.sqlite
 }
@@ -158,19 +143,17 @@ show_lpc()
 {
 	if [ -n "${node}" ]; then
 		show_remote
-		exit
+	else
+		show_local
 	fi
-
-	show_local
 }
 
 #### MAIN
 [ -z "${header}" ] && header=1
 _args=0
 
-# any oXXX params is set? When no mode set and no args = force to mode=list
 for i in bootrom com1 com2 com3 com4 tpm; do
-	eval _val=\$o$i
+	eval _val=\$o${i}
 	[ -n "${_val}" ] && _args=$(( _args + 1 ))
 done
 
@@ -178,10 +161,8 @@ done
 
 case "${mode}" in
 	get)
-		[ -z "${lpcslot_name}" ] && err 1 "${N2_COLOR}lpcslot_name= ${N1_COLOR} is mandatory${N0_COLOR}"
-		_sql="SELECT ${select} FROM lpc WHERE lpcslot_name='${lpcslot_name}'"
-		sqllistdelimer=" "
-		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite ${_sql}
+		[ -z "${lpcslot_name}" ] && err 1 "${N1_COLOR}mandatory parameter: ${N2_COLOR}lpcslot_name=${N0_COLOR}"
+		cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT ${select} FROM lpc WHERE lpcslot_name='${lpcslot_name}'"
 		exit 0
 		;;
 	list)
@@ -190,8 +171,6 @@ case "${mode}" in
 		exit 0
 		;;
 	reset)
-		# truncate pcibus_run table
-		#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite DELETE FROM pcibus
 		${ECHO} "${N1_COLOR}Reset lpc table for: ${N2_COLOR}${jname}${N0_COLOR}"
 		exit 0
 		;;
@@ -199,16 +178,10 @@ esac
 
 # SET MODE
 for i in bootrom com1 com2 com3 com4 tpm; do
-	eval _val=\$o$i
+	eval _val=\$o${i}
 	if [ -n "${_val}" ]; then
 		${ECHO} "${N0_COLOR}${CIX_APP}: set ${i}: ${N2_COLOR}${_val}${N0_COLOR}"
 		cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "UPDATE lpc SET lpcslot_value='${_val}' WHERE lpcslot_name='${i}'"
-		case "${_val}" in
-			tpm)
-				# dup to global
-				cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "UPDATE lpc SET lpcslot_value='${_val}' WHERE lpcslot_name='${i}'"
-				;;
-		esac
 	fi
 done
 

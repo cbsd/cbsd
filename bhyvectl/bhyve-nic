@@ -1,0 +1,151 @@
+#!/usr/bin/env cbsd
+#v12.0.4
+CIXARG=""
+CIXOPTARG="alljails shownode display node header mode jname"
+MYDESC="bhyve NIC list"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ List bhyve virtual network interface (NIC) configuration for VMs.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR}  - include remote nodes in the output. Default: local only.
+ ${N2_COLOR}shownode=${N0_COLOR}  - display node name in the output.
+ ${N2_COLOR}display=${N0_COLOR}   - comma-separated list of columns to show.
+             Default: jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu.
+ ${N2_COLOR}node=${N0_COLOR}      - query specific node(s) only.
+ ${N2_COLOR}header=${N0_COLOR}    - set to 0 to suppress the header line. Default: 1.
+ ${N2_COLOR}jname=${N0_COLOR}     - target virtual machine name.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-nic
+ # cbsd bhyve-nic jname=myvm
+ # cbsd bhyve-nic display=jname,nic_hwaddr,nic_parent header=0
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bhyve-nic-list --help
+  cbsd bconfig --help
+  cbsd bset --help
+
+"
+
+. ${subrdir}/nc.subr
+. ${system}
+
+cixinit
+. ${subrdir}/bhyve.subr
+. ${subrdir}/virtual.subr
+
+[ -z "${display}" ] && display="jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu"
+
+mydisplay=$( printf '%s' "${display}" | ${TR_CMD} ',' ' ' )
+myheader=$( printf '%s' "${mydisplay}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+populate_output_data()
+{
+	local _i _val
+
+	for _i in ${mydisplay}; do
+		_val=
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ -z "${_status}" ]; then
+			_status="${N0_COLOR}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+show_jaildata_from_sql()
+{
+	local _i
+
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	[ -n "${2}" ] && jname="${2}"
+
+	_status=
+	_sql="SELECT jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu FROM bhyvenic WHERE jname='${jname}'"
+	cbsdsqlro ${sqlfile} ${_sql} | while read jname nic_driver nic_parent nic_hwaddr nic_address nic_mtu; do
+		populate_output_data
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
+	done
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && capture node cbsd node mode=list header=0 allinfo=0
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode _status _vm _lvm
+
+	show_header
+
+	for _vm in ${vms}; do
+		_lvm="${jailsysdir}/${_vm}/local.sqlite"
+		[ -r "${_lvm}" ] && show_jaildata_from_sql "${_lvm}" "${_vm}"
+	done
+}
+
+show_nic()
+{
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	if [ -n "${alljails}" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+}
+
+vm_list()
+{
+	if [ -n "${jname}" ]; then
+		vms="${jname}"
+	else
+		capture vms cbsdsqlro local "SELECT jname FROM jails WHERE emulator = 'bhyve'"
+	fi
+}
+
+vms=
+vm_list
+
+#### MAIN
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_nic | ${COLUMN_CMD} -t
+
+exit 0

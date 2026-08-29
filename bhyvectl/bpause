@@ -1,60 +1,82 @@
 #!/usr/bin/env cbsd
 #v11.1.19
 CBSDMODULE="bhyve"
-MYARG="jname"
-MYOPTARG="mode"
-MYDESC="Pause and resume for bhyve domain (send STOP/CONT signal to bhyve vm process)"
-ADDHELP="mode=[auto|on|off]\n\
-  mode=auto (by default) triggering - e.g, if vm active then pause\n\
-  mode=on - pause, stop\n\
-  mode=off - unpause, continue\n"
+CIXARG="jname"
+CIXOPTARG="mode"
+MYDESC="Pause and resume bhyve domain (STOP/CONT signal)"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Send STOP or CONT signal to a bhyve domain process to pause or resume it.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR} - target bhyve domain name;
+ ${N2_COLOR}mode=${N0_COLOR}  - action mode:
+           * auto - toggle: if active then pause, if paused then resume (default);
+           * on   - pause (send STOP signal);
+           * off  - unpause/resume (send CONT signal);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bpause jname=vm1
+ # cbsd bpause jname=vm1 mode=on
+ # cbsd bpause jname=vm1 mode=off
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bstart --help
+  cbsd bstop --help
+  cbsd bset --help
+
+"
 
 . ${subrdir}/nc.subr
 . ${tools}
 . ${strings}
 
-. ${cbsdinit}
+cixinit
 
 [ -z "${mode}" ] && mode="auto"
 
 . ${subrdir}/rcconf.subr
 if [ $? -eq 1 ]; then
-	# try_remote
 	log_err 1 "${N1_COLOR}No such vm: ${N2_COLOR}${jname}${N0_COLOR}"
 fi
-[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}{NORMAL}"
+[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
 
-search_cmd="bhyve: ${jname}"
-strlen_search_cmd=$( strlen "${search_cmd}" )
+capture _search_cmd echo "bhyve: ${jname}"
 
 vm_pid=
+pid_count=
 
-eval $( /bin/ps axopid,state,ucomm,command -ww | while read pid state ucomm command; do
-	[ "${ucomm}" != "bhyve" ] && continue
-	cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+capture _ps_output ${PS_CMD} axopid,state,ucomm,command -ww
 
-	b_jname=$( echo "${command}" | ${AWK_CMD} '/bhyve: /{print $2}' )
-	[ "${b_jname}" != "${jname}" ] && continue
+while read _ps_line; do
+	[ -z "${_ps_line}" ] && continue
 
-	pid_count=$(( pid_count + 1 ))
+	# fast filter: skip lines without "bhyve"
+	case "${_ps_line}" in *bhyve*) ;; *) continue ;; esac
 
-	if $( echo "${state}" | ${GREP_CMD} -q "T" ); then
-		pid_count=$(( pid_count - 1 ))
+	# parse pid, state, ucomm, command in one awk call
+	capture _pf ${AWK_CMD} '{cmd=""; for(i=4;i<=NF;i++) cmd=cmd (i>4?" ":"") $i; print $1,$2,$3,cmd}' <<< "${_ps_line}"
+	read _ps_pid _ps_state _ps_ucomm _ps_cmd <<< "${_pf}"
+
+	[ "${_ps_ucomm}" != "bhyve" ] && continue
+
+	# check command prefix: "bhyve: ${jname}"
+	_cmd_prefix=$( substr --pos=0 --len=${#_search_cmd} --str="${_ps_cmd}" )
+	[ "${_cmd_prefix}" != "${_search_cmd}" ] && continue
+
+	# found matching bhyve process
+	vm_pid="${_ps_pid}"
+
+	if [ "${_ps_state}" != "T" ]; then
+		pid_count=$(( pid_count + 1 ))
 	fi
 
-	if [ "${cmd_pref}" = "${search_cmd}" ]; then
-		echo pid_count=\"${pid_count}\"
-		echo vm_pid=\"${pid}\"
-		break
-	fi
-
-	if echo "${command}" | ${GREP_CMD} -E -q -e " ${jname}"$ 2>/dev/null; then
-		echo pid_count=\"${pid_count}\"
-		echo vm_pid=\"${pid}\"
-		break
-	fi
-
-done )
+	break
+done <<< "${_ps_output}"
 
 if [ -z "${vm_pid}" -o "${vm_pid}" = "0" ]; then
 	cbsdlogger WARNING ${CIX_APP}: unable to determine pid for: ${jname}
@@ -87,4 +109,6 @@ case "${mode}" in
 esac
 
 cbsdlogger NOTICE ${CIX_APP}: send ${SIGNAL} signal to pid \(${jname}\): ${vm_pid}
-kill -${SIGNAL} ${vm_pid}
+${KILL_CMD} -${SIGNAL} ${vm_pid}
+
+exit 0

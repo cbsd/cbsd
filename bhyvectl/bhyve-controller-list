@@ -1,0 +1,185 @@
+#!/usr/bin/env cbsd
+#v12.0.4
+MYARG=""
+MYOPTARG="alljails shownode display node header mode jname"
+MYDESC="bhyve storage controller list"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ List and manage bhyve virtual machine storage controllers.
+
+ Each bhyve VM can have multiple disk controllers (e.g. virtio-blk, ahci).
+ This command displays information about configured controllers including
+ name, type, device count and cache mode.
+
+ Optionally, mode=rescan can be used to detect new VHD disks and register
+ them in the local database.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}alljails=${N0_COLOR}  - include remote nodes in the output. Default: local only.
+ ${N2_COLOR}shownode=${N0_COLOR}  - display node name in the output.
+ ${N2_COLOR}node=${N0_COLOR}      - query specific node(s) only.
+ ${N2_COLOR}header=${N0_COLOR}    - set to 0 to suppress the header line. Default: 1.
+ ${N2_COLOR}display=${N0_COLOR}   - comma-separated list of columns to show.
+             Default: jname,name,type,count,cache.
+ ${N2_COLOR}mode=${N0_COLOR}      - set to rescan to detect new VHD disks and synchronize
+             the database. Requires jname= to be specified.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyve-controller-list
+ # cbsd bhyve-controller-list jname=myvm
+ # cbsd bhyve-controller-list display=jname,name,type node=node1
+ # cbsd bhyve-controller-list mode=rescan jname=myvm
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bhyve-dsk --help
+  cbsd bstop --help
+
+"
+
+. ${subrdir}/nc.subr
+. ${cbsdinit}
+
+. ${system}
+. ${subrdir}/bhyve.subr
+. ${subrdir}/virtual.subr
+
+[ -z "${display}" ] && display="jname,name,type,count,cache"
+
+mydisplay=$( printf '%s' "${display}" | ${TR_CMD} ',' ' ' )
+myheader=$( printf '%s' "${mydisplay}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
+
+show_header()
+{
+	local _header="${H1_COLOR}${BOLD}${myheader}${N0_COLOR}"
+	[ ${header} -ne 0 ] && ${ECHO} "${_header}"
+}
+
+populate_output_data()
+{
+	local _i _val dsk_size
+
+	_status=
+
+	for _i in ${mydisplay}; do
+		_val=
+		eval _val=\$$_i
+		[ -z "${_val}" ] && _val="-"
+
+		if [ -z "${_status}" ]; then
+			_status="${N0_COLOR}${_val}"
+		else
+			_status="${_status} ${_val}"
+		fi
+	done
+}
+
+show_jaildata_from_sql()
+{
+	local _i
+
+	if [ -n "${1}" ]; then
+		sqlfile="$1"
+	else
+		sqlfile="local"
+	fi
+
+	[ -n "${2}" ] && jname="${2}"
+
+	_status=
+	_sql="SELECT name,type,count,cache FROM bhyve_dskcontroller WHERE name != '0'"
+	cbsdsqlro ${sqlfile} ${_sql} | while read name type count cache; do
+		populate_output_data
+		printf "${N2_COLOR}"
+		printf "${_status}"
+		printf "${N0_COLOR}\n"
+	done
+}
+
+show_remote()
+{
+	show_header
+
+	[ -z "${node}" ] && capture node cbsd node mode=list header=0 allinfo=0
+
+	for _n in $node; do
+		nodename="${_n}"
+		show_jaildata_from_sql "inv.${_n}"
+	done
+}
+
+show_local()
+{
+	local _errcode _status _vm _lvm
+
+	show_header
+
+	for _vm in ${vms}; do
+		_lvm="${jailsysdir}/${_vm}/local.sqlite"
+		[ -r "${_lvm}" ] && show_jaildata_from_sql "${_lvm}" "${_vm}"
+	done
+
+}
+
+show_dsk()
+{
+
+	if [ -n "${node}" ]; then
+		show_remote
+		exit
+	fi
+
+	if [ -n "${alljails}" ]; then
+		show_local
+		header=0
+		show_remote
+	else
+		show_local
+	fi
+
+}
+
+vm_list()
+{
+	if [ -n "${jname}" ]; then
+		vms="${jname}"
+	else
+		capture vms cbsdsqlro local "SELECT jname FROM jails WHERE emulator = 'bhyve'"
+	fi
+}
+
+
+rescan_dsk()
+{
+	local _dsk _res
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}Please specify ${N2_COLOR}jname=${N0_COLOR}"
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
+	for _dsk in $( ${FIND_CMD} ${data} -mindepth 1 -maxdepth 1 -name '*.vhd' -exec basename {} \; ); do
+		capture _res cbsdsqlro "${jailsysdir}/${jname}/local.sqlite" "SELECT dsk_path FROM bhyvedsk WHERE jname='${jname}' AND dsk_path='${_dsk}'"
+		if [ -z "${_res}" ]; then
+			${ECHO} "${N1_COLOR}Found new disk: ${N2_COLOR}${_dsk}${N1_COLOR} for ${N2_COLOR}${jname}${N0_COLOR}"
+			cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot ) VALUES ( '${jname}','virtio-blk','${_dsk}','0' )"
+		fi
+	done
+}
+
+vms=
+vm_list
+
+#### MAIN
+if [ "${mode}" = "rescan" ]; then
+	rescan_dsk
+	exit 0
+fi
+
+[ -z "${header}" ] && header=1
+sqldelimer=" "
+show_dsk | ${COLUMN_CMD} -t
+
+exit 0

@@ -5,7 +5,31 @@ CIXARG="node jname mkdatadir"
 CIXOPTARG="verbose scpdata sharedfs tryoffline"
 MYDESC="Prepare remote node for accepting jail via j2slave"
 ADDHELP="
- mkdatadir - 0 or 1: create data directory. 1 - create, by default\n\
+${H3_COLOR}Description${N0_COLOR}:
+
+ Prepare a remote node for accepting a jail migration via j2slave.
+ Generates and transfers jail secrets, packs and copies sysdata (and
+ optionally data) to the remote node, transfers fstab and rc.conf,
+ then synchronizes the jail configuration on the remote side.
+
+ When multiple jails are specified (jname= or wildcard), each is
+ processed sequentially and reported as a background task.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}node=${N0_COLOR}       - target CBSD node;
+ ${N2_COLOR}jname=${N0_COLOR}      - target jail name, or comma-separated list;
+ ${N2_COLOR}mkdatadir=${N0_COLOR}  - 1: create data directory on remote node (default), 0: skip;
+ ${N2_COLOR}scpdata=${N0_COLOR}    - 1: also pack and transfer jail data directory, 0: skip (default);
+ ${N2_COLOR}sharedfs=${N0_COLOR}   - 1: skip local data transfer (shared/cluster filesystem), 0: normal (default);
+ ${N2_COLOR}tryoffline=${N0_COLOR} - 1: try to proceed when node is offline, 0: skip (default);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd j2prepare node=node2 jname=myjail
+ # cbsd j2prepare node=node2 jname=myjail scpdata=1 mkdatadir=1
+ # cbsd j2prepare node=node2 jname='jail1,jail2,jail3'
+
 "
 
 . ${subrdir}/nc.subr
@@ -47,17 +71,19 @@ j2prepare_multi_init()
 	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
 	task_id=
 	task_id_cur=
+	task_id_sep=
 	task_owner="${task_owner}"
 	# spawn command for all jail
 	for _jname in ${jail_list}; do
 		capture task_id_cur task mode=new logfile=/tmp/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd j2prepare jname=${_jname} ${cmd} 2>/dev/null
 		sleep 0.1               # dont bruce taskdb
 		if ! is_number "${task_id_cur}"; then
-			task_id="${task_id} ${task_id_cur}"
+			task_id="${task_id}${task_id_sep}${task_id_cur}"
+			task_id_sep=","
 		fi
 	done
 
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	multiple_task_id_all="${task_id}"
 	sleep 0.5
 	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
 }
@@ -126,7 +152,7 @@ not_sharedfs_action()
 
 	[ ! -f "${SECFILE}" ] && log_err 1 "${N1_COLOR}No such secrets${N0_COLOR}"
 
-	cbsdsqlro_vars nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${node}'" NODEDATA
+	capture NODEDATA cbsdsqlro nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${node}'"
 
 	[ -z "${NODEDATA}" ] && log_err 1 "${N1_COLOR}: No such node. Please execute ${N2_COLOR}cbsd add node=${node} ${N1_COLOR}first${N0_COLOR}"
 	sqllist "${NODEDATA}" myip myport mykey

@@ -2,9 +2,33 @@
 #v12.1.0
 CIXARG="old new"
 CIXOPTARG="host_hostname restart"
-MYDESC="Rename bhyve"
+MYDESC="Rename bhyve domain"
 CBSDMODULE="bhyve"
-ADDHELP="restart=1 - for online jails. Force to stop if online, rename and start again\n"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Rename a bhyve domain from old name to new name.
+ Updates all references in jails, bhyve, rctl, storage and ZFS datasets.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}old=${N0_COLOR}             - current bhyve domain name;
+ ${N2_COLOR}new=${N0_COLOR}             - new bhyve domain name;
+ ${N2_COLOR}host_hostname=${N0_COLOR}  - new hostname (optional);
+ ${N2_COLOR}restart=${N0_COLOR}        - set to 1 to auto-stop/start VM during rename (default: 0);
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd brename old=vm1 new=vm2
+ # cbsd brename old=vm1 new=vm2 restart=1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bset --help
+  cbsd bconfig --help
+  cbsd bstart --help
+
+"
 EXTHELP="wf_jrename"
 
 . ${subrdir}/nc.subr
@@ -15,8 +39,8 @@ EXTHELP="wf_jrename"
 restart=0
 cixinit
 
-[ -z "${old}" ] && err 1 "${N1_COLOR}Give me old jname${N0_COLOR}"
-[ -z "${new}" ] && err 1 "${N1_COLOR}Give me new jname${N0_COLOR}"
+[ -z "${old}" ] && err 1 "${N1_COLOR}mandatory parameter: ${N2_COLOR}old=${N0_COLOR}"
+[ -z "${new}" ] && err 1 "${N1_COLOR}mandatory parameter: ${N2_COLOR}new=${N0_COLOR}"
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 	readconf cbsd_queue.conf
@@ -48,7 +72,7 @@ jname="${old}"
 gettime st_time
 
 
-cbsdsqlro_vars local "SELECT jname FROM jails WHERE jname='${new}'" myjid
+capture myjid cbsdsqlro local "SELECT jname FROM jails WHERE jname='${new}'"
 [ -n "${myjid}" ] && err 1 "${N1_COLOR}Jail already exist: ${N2_COLOR}${new}${N0_COLOR}"
 
 if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -102,7 +126,7 @@ cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET jname='${new}
 # rename rc.conf values if exist
 if [ -r ${jailsysdir}/${jname}/rc.conf_${old} ]; then
 	is_cloud=0
-	eval $( ${GREP_CMD} -E "^is_cloud" ${jailsysdir}/${jname}/rc.conf_${old} )
+	capture is_cloud ${AWK_CMD} -F'"' '/^is_cloud=/{print $2}' ${jailsysdir}/${jname}/rc.conf_${old} 2>/dev/null
 	[ -z "${is_cloud}" ] && is_cloud=0
 	updateconf ${jailsysdir}/${jname}/rc.conf_${old} path="${jaildir}/${new}" jname="${new}" rcconf="${jailsysdir}/${new}/rc.conf_${new}" data="${jaildatadir}/${new}-${jaildatapref}"
 
@@ -133,15 +157,18 @@ jname=${new}
 
 # Update in media table: vhd and ISO
 # Update records only for vhd + (/jails-data/|/vm/) location, don't touch/manage disks outside jails-data/vm dir or /dev/RAW devices
-for i in $( ${FIND_CMD} ${SRC}/ -mindepth 1 -maxdepth 1 -name dsk\* -type l -or -type f ); do
+capture _dsk_list ${FIND_CMD} ${SRC}/ -mindepth 1 -maxdepth 1 -name 'dsk*' -type l -or -type f
+
+for i in ${_dsk_list}; do
+	[ -z "${i}" ] && continue
 
 	# basename
 	dskname="${i##*/}"
-	idx=$( cbsdsqlro storage_media "SELECT idx FROM media WHERE path='${workdir}/jails-data/${old}-data/${dskname}' OR path='${workdir}/vm/${old}/${dskname}' AND jname='${old}'"
+	capture idx cbsdsqlro storage_media "SELECT idx FROM media WHERE path='${workdir}/jails-data/${old}-data/${dskname}' OR path='${workdir}/vm/${old}/${dskname}' AND jname='${old}'"
 	[ -z "${idx}" ] && continue
 
-	cbsdsqlro_vars storage_media "SELECT path FROM media WHERE idx='${idx}'"
-	_new_path=$( echo ${_old_path} | ${SED_CMD} -e s:${old}-data:${new}-data:g -e s:vm/${old}/:vm/${new}/:g )		# change datadir name, old and new style
+	cbsdsqlro_vars storage_media "SELECT path FROM media WHERE idx='${idx}'" _old_path
+	capture _new_path ${SED_CMD} -e "s:${old}-data:${new}-data:g" -e "s:vm/${old}/:vm/${new}/:g" <<< "${_old_path}"
 	cbsdlogger NOTICE ${CIX_APP}: update storage: path:${_new_path},jname=${new} for idx:${idx}
 	cbsdsqlrw storage_media "UPDATE media SET path='${_new_path}',jname='${new}' WHERE idx=${idx}"
 done
@@ -158,26 +185,27 @@ case ${zfsfeat} in
 		_ret=$?
 		if [ ${_ret} -eq 0 -a -n "${_old_mpt}" ]; then
 			# loop to check for symlink and zvol
-			for i in $( ${FIND_CMD} ${SRC}/ -mindepth 1 -maxdepth 1 -type l ); do
+			capture _symlinks ${FIND_CMD} ${SRC}/ -mindepth 1 -maxdepth 1 -type l
+			for i in ${_symlinks}; do
 				if is_getzvol ${i}; then
 					# back compatible for CBSD <= 12.1.0
-					_new_zvol_dsk_name=$( echo ${is_zvol} | ${SED_CMD} s:bcbsd-${old}-dsk:bcbsd-${new}-dsk:g )
+					capture _new_zvol_dsk_name ${SED_CMD} "s:bcbsd-${old}-dsk:bcbsd-${new}-dsk:g" <<< "${is_zvol}"
 					# replace "jails/OLDVM/dskX.vhd" path
-					_new_zvol_dsk_name=$( echo ${_new_zvol_dsk_name} | ${SED_CMD} s:/${old}/:/${new}/:g )		# valid name for symlink
-																	# (after renaming parent vol)
+					capture _new_zvol_dsk_name ${SED_CMD} "s:/${old}/:/${new}/:g" <<< "${_new_zvol_dsk_name}"
 					if [ -n "${_new_zvol_dsk_name}" -a "${_new_zvol_dsk_name}" != "${is_zvol}" ]; then
-						_ret=$( echo "${is_zvol}" | ${GREP_CMD} "bcbsd-" )
-						if [ $? -eq 0 ]; then
-							# back compatible for CBSD <= 12.1.0
-							# rename from bcbsd- to new form
-							cbsdlogger NOTICE ${CIX_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name}
-							${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} > /dev/null 2>&1
-							_ret=$?
-							if [ ${_ret} -ne 0 ]; then
-								${ECHO} "${LRED}Error: ${MAGENTA}${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} failed${NORMAL}"
-								cbsdlogger NOTICE ${CIX_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed
-							fi
-						fi
+						case "${is_zvol}" in
+							*bcbsd-*)
+								# back compatible for CBSD <= 12.1.0
+								# rename from bcbsd- to new form
+								cbsdlogger NOTICE ${CIX_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name}
+								${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} > /dev/null 2>&1
+								_ret=$?
+								if [ ${_ret} -ne 0 ]; then
+									${ECHO} "${LRED}Error: ${MAGENTA}${ZFS_CMD} rename ${is_zvol} ${_new_zvol_dsk_name} failed${NORMAL}"
+									cbsdlogger NOTICE ${CIX_APP}: zfs rename ${is_zvol} ${_new_zvol_dsk_name} failed
+								fi
+								;;
+						esac
 						# re-link
 						${LN_CMD} -sf /dev/zvol/${_new_zvol_dsk_name} ${i}
 					fi
@@ -200,59 +228,12 @@ case ${zfsfeat} in
 			mvdata ${SRC} ${DST}
 			dot "mvdata"
 		fi
-
-#		# additional loop to check for symlink and zvol
-#		for i in $( ${FIND_CMD} ${DST}/ -mindepth 1 -maxdepth 1 -type l ); do
-#			if is_getzvol ${i}; then
-#				old_zvol="${is_zvol}"
-#				new_zvol=$( echo ${is_zvol} | ${SED_CMD} s:${old}:${new}:g )
-#				${ZFS_CMD} get -Ho value name ${old_zvol} > /dev/null 2>&1
-#				_ret=$?
-#				[ ${_ret} -eq 0 ] && ${ZFS_CMD} rename ${old_zvol} ${new_zvol}
-#				${LN_CMD} -sf /dev/zvol/${new_zvol} ${i}
-#			fi
-#		done
 		;;
 	*)
 		mvdata ${SRC} ${DST}
 		dot "mvdata"
 		;;
 esac
-
-#rename zfs fs source
-#case ${zfsfeat} in
-#	1)
-#		zfsmnt ${DST}
-#		_err=$?
-#		if [ ${_err} -eq 2 -o ${_err} -eq 1 ]; then
-#			OLDPOOL=${ZPOOL}
-#			DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} )
-#			NEWPOOL="${DATA}/${new}"
-#			if [ ${_err} -eq 1 ]; then
-#				# we need unmount this first
-#				${ZFS_CMD} unmount -f ${DST}
-#				sleep 5  #Hack - sometimes we got "cannot rename: dataset is busy"
-#				${ZFS_CMD} unmount -f ${DST} >/dev/null 2>&1
-#			fi
-#			cbsdlogger NOTICE ${CIX_APP}: rename zfs from ${OLDPOOL} to ${NEWPOOL}
-#			${ZFS_CMD} rename ${OLDPOOL} ${NEWPOOL}
-#			if [ $? -eq 0 ]; then
-#				${ZFS_CMD} mount ${NEWPOOL}
-#				[ -d ${SRC} ] && ${RMDIR_CMD} ${SRC}
-#			fi
-#		fi
-#
-#		# additional loop to check for symlink and zvol
-#		for i in $( ${FIND_CMD} ${DST}/ -mindepth 1 -maxdepth 1 -type l ); do
-#			if is_getzvol ${i}; then
-#				old_zvol="${is_zvol}"
-#				new_zvol=$( echo ${is_zvol} |${SED_CMD} s:${old}:${new}:g )
-#				${ZFS_CMD} rename ${old_zvol} ${new_zvol}
-#				/bin/ln -sf /dev/zvol/${new_zvol} ${i}
-#			fi
-#		done
-#	;;
-#esac
 
 case ${zfsfeat} in
 	1)
@@ -290,7 +271,7 @@ fi
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 ${ECHO} " ${N2_COLOR}ok${N0_COLOR}"
 
 ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"

@@ -1,18 +1,38 @@
 #!/usr/bin/env cbsd
 #v11.2.1
 CBSDMODULE="bhyve"
-MYARG="jname"
-MYOPTARG="nice"
+CIXARG="jname"
+CIXOPTARG="nice"
 MYDESC="Re-nice bhyve processes on-the-fly"
-ADDHELP="nice=[new value]\n\
-  or skip nice= to apply values from RCTL databases\n\"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Set or reset the nice value for a running bhyve domain process.
+ If nice= is omitted, values are read from the RCTL database.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR} - target bhyve domain name;
+ ${N2_COLOR}nice=${N0_COLOR}  - new nice value (integer); skip to apply from RCTL database;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd brenice jname=vm1 nice=5
+ # cbsd brenice jname=vm1
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bstart --help
+  cbsd bstop --help
+  cbsd bset --help
+
 "
 
 . ${subrdir}/nc.subr
 . ${tools}
 . ${strings}
 
-. ${cbsdinit}
+cixinit
 
 emulator="bhyve" # for jname_is_multiple
 jname_is_multiple
@@ -28,7 +48,7 @@ JLIST=
 # check for actual vm list in arg list
 jail_num=0
 for i in ${TMP_JLIST}; do
-	exist=$( cbsdsqlro local SELECT jname FROM jails WHERE jname=\"${i}\" AND emulator=\"${emulator}\" LIMIT 1 )
+	capture exist cbsdsqlro local "SELECT jname FROM jails WHERE jname='${i}' AND emulator='${emulator}' LIMIT 1"
 	if [ -n "${exist}" ]; then
 		JLIST="${exist} ${JLIST}"
 		jail_num=$(( jail_num + 1 ))
@@ -41,7 +61,7 @@ if [ ${jail_num} -gt 1 ]; then
 	new_arg=
 
 	for i in $*; do
-		_is_jname=$( substr --pos=0 --len=5 --str=${i} )
+		capture _is_jname substr --pos=0 --len=5 --str=${i}
 		[ "${_is_jname}" = "jname" ] && continue
 		new_arg="${new_arg} ${i}"
 	done
@@ -52,7 +72,7 @@ if [ ${jail_num} -gt 1 ]; then
 	exit 0
 fi
 
-[ -z "${jname}" ] && jname=$( echo ${JLIST} | ${AWK_CMD} '{printf $1}' )
+[ -z "${jname}" ] && capture jname ${AWK_CMD} '{printf $1}' <<< "${JLIST}"
 [ -z "${jname}" ] && jname="${1}"
 [ -z "${jname}" ] && err 1 "${N1_COLOR}Give me domain name${N0_COLOR}"
 
@@ -76,47 +96,56 @@ if [ $? -eq 1 ]; then
 fi
 
 . ${subrdir}/rcconf.subr
-[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}${NORMAL}"
+[ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve emulator: ${N2_COLOR}${emulator}${N0_COLOR}"
 [ ${jid} -eq 0 ] && exit 0
 
 if [ -z "${nice}" ]; then
 	_formfile="${jailsysdir}/${jname}/helpers/brctl.sqlite"
-	[ -r "${_formfile}" ] && nice=$( cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param=\"nice\"" )
+	[ -r "${_formfile}" ] && capture nice cbsdsqlro "${_formfile}" "SELECT cur FROM forms WHERE param='nice'"
 	# just reset
 	[ -z "${nice}" ] && nice="0"
 fi
 
 search_cmd="bhyve: ${jname}"
-strlen_search_cmd=$( strlen "${search_cmd}" )
+capture strlen_search_cmd strlen "${search_cmd}"
 
 vm_pid=
+pid_count=
 
-eval $( /bin/ps axopid,state,ucomm,command -ww | while read pid state ucomm command; do
-	[ "${ucomm}" != "bhyve" ] && continue
-	cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${command}" )
+capture _ps_output /bin/ps axopid,state,ucomm,command -ww
 
-	b_jname=$( echo "${command}" | ${AWK_CMD} '/bhyve: /{print $2}' )
+while read _ps_line; do
+	[ -z "${_ps_line}" ] && continue
+
+	# fast filter: skip lines without "bhyve"
+	case "${_ps_line}" in *bhyve*) ;; *) continue ;; esac
+
+	# parse pid, state, ucomm, command
+	# awk: $1=pid, $2=state, $3=ucomm, $4..$NF=command
+	capture _pf ${AWK_CMD} '{cmd=""; for(i=4;i<=NF;i++) cmd=cmd (i>4?" ":"") $i; print $1,$2,$3,cmd}' <<< "${_ps_line}"
+	read _ps_pid _ps_state _ps_ucomm _ps_cmd <<< "${_pf}"
+
+	[ "${_ps_ucomm}" != "bhyve" ] && continue
+
+	b_jname=$( echo "${_ps_cmd}" | ${AWK_CMD} '/bhyve: /{print $2}' )
+
 	[ "${b_jname}" != "${jname}" ] && continue
 
 	pid_count=$(( pid_count + 1 ))
 
-	if $( echo "${state}" | ${GREP_CMD} -q "T" ); then
-		pid_count=$(( pid_count - 1 ))
-	fi
+	# skip stopped (T) processes
+	case "${_ps_state}" in *T*) pid_count=$(( pid_count - 1 )) ;; esac
+
+	cmd_pref=$( substr --pos=0 --len=${strlen_search_cmd} --str="${_ps_cmd}" )
 
 	if [ "${cmd_pref}" = "${search_cmd}" ]; then
-		echo pid_count=\"${pid_count}\"
-		echo vm_pid=\"${pid}\"
+		vm_pid="${_ps_pid}"
 		break
 	fi
 
-	if echo "${command}" | ${GREP_CMD} -E -q -e " ${jname}"$ 2>/dev/null; then
-		echo pid_count=\"${pid_count}\"
-		echo vm_pid=\"${pid}\"
-		break
-	fi
+	case "${_ps_cmd}" in *" ${jname}"*) vm_pid="${_ps_pid}"; break ;; esac
 
-done )
+done <<< "${_ps_output}"
 
 if [ -z "${vm_pid}" -o "${vm_pid}" = "0" ]; then
 	cbsdlogger WARNING ${CIX_APP}: unable to determine pid for: ${jname}

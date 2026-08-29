@@ -57,27 +57,22 @@ ocmd=
 [ -n "${cmd}" ] && ocmd="${cmd}"		# store original cmd, it may be useful later
 
 # exclude system params from args string
-if [ ${cast_args} -eq 1 ]; then
-	# Pass '"' as ' in cmd
-	INIT_IFS="${IFS}"
-	IFS="~"
-	cmd="$@"
-	IFS="${INIT_IFS}"
-	cmd=$( while [ -n "${1}" ]; do
+_build_cmd()
+{
+	while [ -n "${1}" ]; do
 		IFS="~"
 		strpos --str="${1}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
 			echo -n "${1} "
 			shift
 			continue
 		fi
 
-		_arg_len=$( strlen ${1} )
+		capture _arg_len strlen --str="${1}"
 		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( ${_pos} +2 )) --len=${_pref} --str="${1}" )
+		capture ARG substr --pos=0 --len=${_pos} --str="${1}"
+		capture VAL substr --pos=$(( ${_pos} + 2 )) --len=${_pref} --str="${1}"
 
 		case "${ARG}" in
 			node|nodelist|cmdfile|netgroup|quiet|tty|tryoffline|connect_timeout|cast_args)
@@ -90,7 +85,15 @@ if [ ${cast_args} -eq 1 ]; then
 				;;
 		esac
 		shift
-	done )
+	done
+}
+
+if [ ${cast_args} -eq 1 ]; then
+	INIT_IFS="${IFS}"
+	IFS="~"
+	cmd="$@"
+	IFS="${INIT_IFS}"
+	capture cmd _build_cmd "$@"
 else
 	cmd="$@"
 fi
@@ -115,10 +118,16 @@ if [ -n "${node_list}" ]; then
 	# spawn command for all node
 	for node in ${node_list}; do
 		task_id_cur=$( task mode=new jname=${node} logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} /usr/bin/env NOCOLOR=1 /usr/local/bin/cbsd rexe node=${node} "${cmd}" 2>/dev/null )
-		task_id="${task_id} ${task_id_cur}"
+		if [ -n "${task_id_cur}" ]; then
+			if [ -n "${task_id}" ]; then
+				task_id="${task_id},${task_id_cur}"
+			else
+				task_id="${task_id_cur}"
+			fi
+		fi
 	done
 
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	multiple_task_id_all="${task_id}"
 	sleep 1
 	multiple_processing_spawn -o ${task_owner} -n "rexe"
 	echo
@@ -221,7 +230,7 @@ run_child()
 		${RM_CMD} -f "$TEMP_DIR/$CHILDNUM.active"
 		echo "$HOST" > "$TEMP_DIR/$CHILDNUM.active"
 		#	cbsdsqlro nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\"
-		NODEDATA=$( cbsdsqlro nodes select ip,port,keyfile from nodelist where nodename=\"${HOST}\" )
+		capture NODEDATA cbsdsqlro nodes "select ip,port,keyfile from nodelist where nodename='${HOST}'"
 
 		if [ -z "${NODEDATA}" ]; then
 			echo "${HOST}: No such node in base"
@@ -251,7 +260,7 @@ run_child()
 
 create_temp()
 {
-	TEMP_DIR=$( ${MKTEMP_CMD} -d ${TEMP_BASE}/$(basename $0).XXXXXX) || err 1 "Error mktemp"
+	TEMP_DIR=$( ${MKTEMP_CMD} -d ${TEMP_BASE}/${0##*/}.XXXXXX) || err 1 "Error mktemp"
 }
 
 destroy_temp()
@@ -304,12 +313,14 @@ EOF
 		return ${_ret}
 	fi
 
-	cbsdsqlro_vars nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${_host}'" myip myport mykey
+	capture NODEDATA cbsdsqlro nodes "SELECT ip,port,keyfile FROM nodelist WHERE nodename='${_host}'"
 
-	if [ -z "${myip}" ]; then
+	if [ -z "${NODEDATA}" ]; then
 		${ECHO} "${N1_COLOR}no such node in DB: ${N2_COLOR}${_host}${N0_COLOR}" 1>&2
 		return 1
 	fi
+
+	sqllist "${NODEDATA}" myip myport mykey
 
 	if [ ${tryoffline} -ne 1 ]; then
 		if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
@@ -341,7 +352,7 @@ if [ -n "${quiet}" ]; then
 fi
 
 [ -n "${debug}" ] && DEBUG="${debug}" && shift
-[ -n "${node}" ] && HOSTLIST=$( echo ${node} | ${TR_CMD} ',' ' ' ) && shift
+[ -n "${node}" ] && HOSTLIST=$( ${ECHO} ${node} | ${TR_CMD} ',' ' ' ) && shift
 [ -n "${cmd}" ] && THESCRIPT="${cmd}" && shift
 [ -n "${tty}" ] && TTY=${tty} && shift
 
@@ -374,7 +385,7 @@ if [ -n "${cmdfile}" ]; then
 	shift
 fi
 
-HOSTLIST=$( echo "${HOSTLIST}" | ${TR_CMD} "," " " )
+HOSTLIST=$( ${ECHO} "${HOSTLIST}" | ${TR_CMD} "," " " )
 if [ -z "${HOSTLIST}" ]; then
 	${ECHO} "${N1_COLOR}host list is empty${N0_COLOR}"
 	${ECHO} "${N1_COLOR}Available nodes:${N0_COLOR}"
@@ -382,7 +393,7 @@ if [ -z "${HOSTLIST}" ]; then
 	exit 1
 fi
 
-COUNT_HOSTS=$( echo "${HOSTLIST}" | ${WC_CMD} -w | ${AWK_CMD} '{printf $1}' )
+COUNT_HOSTS=$( set -- ${HOSTLIST}; echo $# )
 CONCURRENT=${COUNT_HOSTS}
 [ "$COUNT_HOSTS" = "1" ] && MULTIHOST=0
 [ -z "${cmd}" -a -z "${cmdfile}" ] && THESCRIPT="$@"

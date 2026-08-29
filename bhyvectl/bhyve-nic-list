@@ -1,56 +1,59 @@
 #!/usr/bin/env cbsd
 #v12.0.4
-MYARG=""
-MYOPTARG="alljails display header jname node shownode"
-MYDESC="Shows bhyve NICs"
+CIXARG=""
+CIXOPTARG="alljails display header jname node shownode"
+MYDESC="bhyve NIC list"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-This command will show a list of virtual network interfaces for bhyve VMs.
+ List virtual network interface (NIC) configuration for bhyve VMs.
+ Shows driver, parent interface, MAC address, IP address, MTU and
+ other NIC parameters per VM or across all VMs.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}alljails=${N0_COLOR}  - (0 or 1): force to display foreign/remote resources;
- ${N2_COLOR}display=${N0_COLOR}   - comma separated list of columns to display,
-              default value:
-                jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit
-              when sqlrepica and node available:
-                nodename,jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit
- ${N2_COLOR}header=${N0_COLOR}    - don't print header info;
- ${N2_COLOR}jname=${N0_COLOR}     - for XXX bhyve only;
- ${N2_COLOR}node=${N0_COLOR}      - for XXX node only;
- ${N2_COLOR}shownode=${N0_COLOR}  - when '1' - show node name(s) for listed VMs;
+ ${N2_COLOR}alljails=${N0_COLOR}  - set to 1 to include remote nodes in the output. Default: local only.
+ ${N2_COLOR}display=${N0_COLOR}   - comma-separated list of columns to show.
+             Default: jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit.
+             When cluster mode is active and shownode=1:
+               nodename,jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit.
+ ${N2_COLOR}header=${N0_COLOR}    - set to 0 to suppress the header line. Default: 1.
+ ${N2_COLOR}jname=${N0_COLOR}     - target virtual machine name.
+ ${N2_COLOR}node=${N0_COLOR}      - query specific node(s) only.
+ ${N2_COLOR}shownode=${N0_COLOR}  - set to 1 to display node name(s) for listed VMs.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd bhyve-nic-list
+ # cbsd bhyve-nic-list jname=myvm
  # cbsd bhyve-nic-list header=0 display=nic_hwaddr,jname
 
 ${H3_COLOR}See also${N0_COLOR}:
 
- cbsd bconfig --help
- cbsd bhyve-dsk-list --help
- cbsd bpcibus --help
+  cbsd bhyve-nic --help
+  cbsd bconfig --help
+  cbsd bset --help
 
 "
 
 . ${subrdir}/nc.subr
 . ${system}
 
-. ${cbsdinit}
+cixinit
+. ${strings}
 . ${subrdir}/bhyve.subr
 . ${subrdir}/virtual.subr
 . ${nodes}
 
-[ -n "${display}" ] && odisplay="${display}"	# store original display settings
-oalljails="${alljails}"				# store original settings, they have more weight vs auto
-oshownode="${shownode}"				# store original settings, they have more weight vs auto
-ojname="${jname}"				# store original jname setting
+[ -n "${display}" ] && odisplay="${display}"
+oalljails="${alljails}"
+oshownode="${shownode}"
+ojname="${jname}"
 
 is_cluster_mode
-cluster_mode=$?		# cluster_mode=0 when we have any node
+cluster_mode=$?
 
 if [ ${cluster_mode} -eq 0 ]; then
 	if [ "${oshownode}" != "0" ]; then
@@ -61,17 +64,14 @@ fi
 
 # restore manual settings
 [ -n "${oalljails}" ] && alljails="${oalljails}"
-[ -n "${oshownode}" ] && alljails="${oshownode}"
+[ -n "${oshownode}" ] && shownode="${oshownode}"
 
 # defaults
 [ -z "${display}" -a -z "${odisplay}" ] && display="jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit"
 [ "${shownode}" = "1" -a -z "${odisplay}" ] && display="nodename,${display}"
 
-#remove commas for loop action on header
-mydisplay=$( echo ${display} | ${TR_CMD} ',' '  ' )
-
-# upper for header
-myheader=$( echo ${mydisplay} | ${TR_CMD} '[:lower:]' '[:upper:]' )
+mydisplay=$( printf '%s' "${display}" | ${TR_CMD} ',' ' ' )
+myheader=$( printf '%s' "${mydisplay}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
 
 show_header()
 {
@@ -105,22 +105,19 @@ populate_output_data()
 			[ "${ojname}" != "${jname}" ] && continue
 		fi
 
-		printf "${N0_COLOR}" # for column sort
+		printf "${N0_COLOR}"
 
 		if [ "${sqlfile}" = "local" ]; then
 			if [ -e "/dev/vmm/${jname}" ]; then
-				# bhyve is active
 				printf "${N2_COLOR}"
 			else
 				printf "${N4_COLOR}"
 			fi
 		else
-			# pop status variable from node_is_online()
-			_md5_node_name=$( ${miscdir}/cbsd_md5 "${sqlfile}" )
+			capture _md5_node_name ${miscdir}/cbsd_md5 "${sqlfile}"
 			eval _node_is_online=\$node_${_md5_node_name}_online
 			if [ "${_node_is_online}" = "1" ]; then
-				# retr from sql
-				jid=$( cbsdsqlro ${sqlfile} SELECT jid FROM jails WHERE jname=\"${jname}\" 2>/dev/null )
+				capture jid cbsdsqlro ${sqlfile} "SELECT jid FROM jails WHERE jname='${jname}'"
 				case ${jid} in
 					0)
 						printf "${N4_COLOR}"
@@ -134,7 +131,6 @@ populate_output_data()
 			fi
 		fi
 
-		#populate values for in output string
 		for _i in ${mydisplay}; do
 			_val=
 			eval _val=\$$_i
@@ -151,7 +147,6 @@ show_jaildata_from_sql()
 {
 	local _i
 
-	#   set sqlfile for ". rcconf" including
 	if [ -n "${1}" ]; then
 		sqlfile="$1"
 	else
@@ -164,9 +159,7 @@ show_jaildata_from_sql()
 		sqlfile_sysdir="${tmpdir}/${1}"
 	fi
 
-#	[ -n "${2}" ] && local jname="${2}"
-
-	cbsdsqlro ${sqlfile} SELECT jname FROM jails WHERE emulator=\"bhyve\" ORDER BY jname ASC | while read jname; do
+	cbsdsqlro ${sqlfile} "SELECT jname FROM jails WHERE emulator='bhyve' ORDER BY jname ASC" | while read jname; do
 		_status=
 
 		if [ "${sqlfile}" = "local" ]; then
@@ -177,7 +170,6 @@ show_jaildata_from_sql()
 		fi
 
 		if [ ! -r ${sqlfile_sysdir}/${jname}/local.sqlite ]; then
-			# skip invalid vms
 			${ECHO} "${N1_COLOR}${jname}: can't open database file for ${jname}: ${N2_COLOR}${sqlfile_sysdir}/${jname}/local.sqlite${N0_COLOR}"  >> ${my_err_file}
 			continue
 		fi
@@ -191,11 +183,10 @@ show_remote()
 {
 	show_header
 
-	[ -z "${node}" ] && node=$( cbsdsqlro nodes SELECT nodename FROM nodelist 2>/dev/null | ${XARGS_CMD} )
+	[ -z "${node}" ] && capture node cbsdsqlro nodes "SELECT nodename FROM nodelist"
 
 	for _n in ${node}; do
 		nodename="${_n}"
-		# init and export into $node_${md5_node_name}_online node status
 		node_is_online -n ${nodename} -e 1
 		show_jaildata_from_sql ${_n}
 	done
@@ -228,7 +219,7 @@ vm_list()
 	if [ -n "${jname}" ]; then
 		vms="${jname}"
 	else
-		vms=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT jname FROM jails WHERE emulator = \"bhyve\"" | ${XARGS_CMD} )
+		capture vms cbsdsqlro local "SELECT jname FROM jails WHERE emulator = 'bhyve'"
 	fi
 }
 

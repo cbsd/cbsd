@@ -1,25 +1,71 @@
 #!/usr/bin/env cbsd
+CIXARG=""
+CIXOPTARG="jname"
+MYDESC="CARP VHID passthrough TUI manager"
+CBSDMODULE="bhyve"
+EXTHELP="wf_bhyve"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Text user interface for managing CARP VHID passthrough devices.
+ Allows selecting VHIDs to attach/detach from a bhyve VM.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}     - target virtual machine name.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bhyvecfg-passhtu-tui
+ # cbsd bhyvecfg-passhtu-tui jname=myvm
+
+${H3_COLOR}See also${N0_COLOR}:
+
+   cbsd bhyve-ppt --help
+   cbsd bconfig --help
+   cbsd bset --help
+
+"
+
 . ${subrdir}/nc.subr
 
 ############################################################ FUNCTIONS
 
-# dialog_menu_main
-#
-# Display the dialog(1)-based application main menu.
-#
+vhid_add()
+{
+	:
+}
+
+vhid_remove()
+{
+	local _i _vhids=
+
+	for ((_i=1; _i<=128; _i++)); do
+		eval mark=\$vhid_selected_${_i}
+		[ "${mark}" = "1" ] && _vhids="${_vhids} ${_i}"
+	done
+
+	if [ -z "${_vhids}" ]; then
+		f_dialog_msgbox "No VHID entries selected for removal" "Info"
+		return 0
+	fi
+
+	f_dialog_yesno "Remove marked VHIDs:${_vhids}?" "Confirm removal"
+	[ $? -ne ${DIALOG_OK} ] && return 0
+
+	for _i in ${_vhids}; do
+		eval "vhid_selected_${_i}=\"0\""
+	done
+}
+
+# Display the VHID selection menu using cbsd_menubox_with_help
 dialog_menu_main()
 {
-	local _input _retval
-
-	local btitle="$DIALOG_BACKTITLE"
-
 	local title=" VHID list "
-	hline=
-
+	local btitle="$DIALOG_BACKTITLE"
 	local prompt="${_desc}"
 	local sqldelimer=" "
-
-	local mark
+	local defaultitem= hline= mark=
 
 	local menu_list=$( cbsdsqlro local "SELECT id,vhid,advskew,pass,interface,state FROM carp" | while read id vhid advskew pass interface state; do
 		eval mark=\$vhid_selected_${id}
@@ -28,85 +74,29 @@ dialog_menu_main()
 		else
 			mark=" "
 		fi
-		echo "'${id}'	'[${mark}] vhid=${vhid} advskew=${advskew}'	'iface=${interface};pass=${pass};state=${pass}'"
+		echo "'${id}'	'[${mark}] vhid=${vhid} advskew=${advskew}'	'iface=${interface};pass=${pass};state=${state}'"
 	done ) || err 1 "${N1_COLOR}Error while create vhid map${N0_COLOR}"
 
-	menu_list="${menu_list} '-'	'-'	''"
+	menu_list="${menu_list} '-' '-' ''"
+	menu_list="${menu_list} 'ADD' 'Add new VHID' 'Add a new VHID to the passthrough list'"
+	menu_list="${menu_list} 'REMOVE' 'Remove marked VHIDs' 'Remove all marked (X) VHIDs from the list'"
+	menu_list="${menu_list} 'EXIT' 'Exit' 'Exit VHID manager'"
 
-	local height width rows
-	eval f_dialog_menu_with_help_size height width rows \
-		\"\$title\"  \
-		\"\$btitle\" \
-		\"\$prompt\" \
-		\"\$hline\"  \
-		$menu_list
-
-	height=$(( height + 1 ))
-
-	# Obtain default-item from previously stored selection
 	f_dialog_default_fetch defaultitem
 
-	local menu_choice
-	menu_choice=$( eval $DIALOG \
-		--clear                                 \
-		--title \"\$title\"                     \
-		--backtitle \"\$btitle\"                \
-		--hline \"\$hline\"                     \
-		--item-help                             \
-		--ok-label \"\$msg_ok\"                 \
-		--cancel-label \"Remove\"               \
-		--extra-button                          \
-		--extra-label \"Add\"                   \
-		--help-button				\
-		--help-label \"Exit\"			\
-		${USE_XDIALOG:+--help \"\"}             \
-		--default-item \"\$defaultitem\"        \
-		--menu \" \$prompt \"                   \
-		$height $width $rows                    \
-		$menu_list                              \
-		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
-	)
+	cbsd_menubox_with_help
+	retval=$?
 
-	local retval=$?
 	f_dialog_data_sanitize menu_choice
 	f_dialog_menutag_store "$menu_choice"
+	f_dialog_default_store "$menu_choice"
 
-	# Only update default-item on success
-	[ $retval -eq $DIALOG_OK ] && f_dialog_default_store "$menu_choice"
 	return $retval
-}
-
-vhid_add()
-{
-
-
-
-
-
-}
-
-
-vhid_remove()
-{
-	local vhids=
-
-	for i in $( /usr/bin/seq 1 128 ); do
-		eval mark=\$vhid_selected_${i}
-		[ "${mark}" = "1" ] && vhids="${vhids} ${i}"
-	done
-
-	echo "REMOE VHIDS: ${vhids}"
-	read p
 }
 
 
 ############################################################ MAIN
 export NOCOLOR=1
-
-MYARG=""
-MYOPTARG=""
-MYDESC="Edit properties for vitual image of VM"
-CBSDMODULE="bhyve"
 
 globalconf="${CIX_DISTDIR}/cbsd.conf";
 
@@ -117,9 +107,11 @@ set +e
 . ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
-. ${cbsdinit}
+cixinit
 
 . ${subrdir}/bsdconfig.subr
+. ${subrdir}/settings-tui.subr
+. ${dialog}
 
 # Incorporate rc-file if it exists
 [ -f "$HOME/.bsdconfigrc" ] && f_include "$HOME/.bsdconfigrc"
@@ -144,46 +136,38 @@ f_dialog_backtitle "${ipgm:+bsdconfig }$pgm"
 # Loop over the main menu until we've accomplished what we came here to do
 #
 while :; do
-	dialog_menu_main
-	ret=$?
+	dialog_menu_main || f_die
 
-	case $ret in
-		${DIALOG_OK})
-			f_dialog_menutag_fetch mtag
-			case "$mtag" in
-				?" $msg_exit")
-					break
-					;;
-				"-")
-					continue
-					;;
-				*)
-					vhid=${mtag%% *}
-					# val=${mtag##* }
-					eval mark=\$vhid_selected_${vhid}
-					if [ "${mark}" = "1" ];then
-						eval "vhid_selected_${vhid}=\"0\""
-					else
-						eval "vhid_selected_${vhid}=\"1\""
-					fi
-					;;
-			esac
+	f_dialog_menutag_fetch mtag
+
+	case "$mtag" in
+		EXIT)
+			break
 			;;
-		${DIALOG_CANCEL})
+		"-")
+			continue
+			;;
+		REMOVE)
 			vhid_remove
 			continue
 			;;
-		${DIALOG_EXTRA})
+		ADD)
 			vhid_add
 			continue
 			;;
 		*)
-			f_die
+			vhid=${mtag%% *}
+			eval mark=\$vhid_selected_${vhid}
+			if [ "${mark}" = "1" ]; then
+				eval "vhid_selected_${vhid}=\"0\""
+			else
+				eval "vhid_selected_${vhid}=\"1\""
+			fi
 			;;
 	esac
 done
 
-return $SUCCESS
+exit 0
 
 ################################################################################
 # END

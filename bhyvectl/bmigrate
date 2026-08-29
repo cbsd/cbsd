@@ -1,49 +1,79 @@
 #!/usr/bin/env cbsd
 #v12.0.9
-MYARG="jname node"
-MYOPTARG=""
+CIXARG="jname node"
+CIXOPTARG=""
 MYDESC="bhyve live migration"
 CBSDMODULE="bhyve"
-ADDHELP=""
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Perform live migration of a running bhyve domain from the current node
+ to a remote node. Both nodes must share the same storage backend for
+ jails-data, jails-rcconf and jails-system directories.
+
+ The source bhyve domain must be running. The remote node must be
+ accessible and configured in the CBSD cluster.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR} - source bhyve domain name;
+ ${N2_COLOR}node=${N0_COLOR}  - target node for migration;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd bmigrate jname=myvm node=node2
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd bstart --help
+  cbsd bstop --help
+  cbsd bhyve --help
+
+"
 
 . ${subrdir}/nc.subr
 . ${tools}
 . ${strings}
 . ${nodes}
 
-. ${cbsdinit}
+cixinit
 
 . ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}No such domains: ${N2_COLOR}${jname}${N0_COLOR}"
 [ "${emulator}" != "bhyve" ] && log_err 1 "${N1_COLOR}Not in bhyve mode${N0_COLOR}"
 [ ${jid} -eq 0 ] && err 1 "Not running"
 
-remote_node_rip=$( cbsdsqlro nodes SELECT ip FROM nodelist WHERE nodename=\"${node}\" )
+_remote_cmd()
+{
+	rexe "$@" 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}'
+}
+
+capture remote_node_rip cbsdsqlro nodes "SELECT ip FROM nodelist WHERE nodename='${node}'"
 [ -z "${remote_node_rip}" ] && log_err 1 "${N1_COLOR}bmigrate: no such node ${node}. Please add node via: ${N2_COLOR}cbsd add node=${node}${N0_COLOR}"
 
-remote_node_ip=$( getinfo quiet=1 nodeip )
+capture remote_node_ip getinfo quiet=1 nodeip
 
 ${ECHO} "  ${N2_COLOR}Data gathering for live migration${N0_COLOR}"
 printf "   ${H5_COLOR}* ${N1_COLOR}check for remote CBSD version: ${N0_COLOR}"
-d_cbsd_ver=$( rexe node=${node} /usr/local/bin/cbsd version 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
-[ $? -ne 0 ] && err 1 "${N1_COLOR}bmigrate: failed: rexe node=${node}${N0_COLOR}"
+capture d_cbsd_ver _remote_cmd node=${node} /usr/local/bin/cbsd version
+[ -z "${d_cbsd_ver}" ] && err 1 "${N1_COLOR}bmigrate: failed: rexe node=${node}${N0_COLOR}"
 printf "${H3_COLOR}ok${N0_COLOR}"
 echo
-s_cbsd_ver=$( version | ${AWK_CMD} '/./{print $1}' )
+capture s_cbsd_ver version
 
-# Check for compiatible 
-# - todo: CPU features/modesl check
+# Check for compatible
+# - todo: CPU features/models check
 # - todo: Memory/free amount check
-remote_process_status=$( rexe tryoffline=1 node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname} | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+capture remote_process_status _remote_cmd tryoffline=1 node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname}
 [ -n "${remote_process_status}" ] && err 1 "${N1_COLOR}bmigrate error: node ${N2_COLOR}${jname}${N1_COLOR} already has the running bhyve process with jname: ${N2_COLOR}${jname}, pid: ${remote_process_status}${N0_COLOR}"
 
 shared_dir="jails-data jails-rcconf jails-system"
 
 ${ECHO} "   ${H5_COLOR}* ${N1_COLOR}check for shared storage: ${N0_COLOR}"
 
-for i in ${shared_dir}; do
-	printf "      ${H5_COLOR}* ${N2_COLOR}${i}: ${N0_COLOR}"
-	check_for_shared_dir -d ${i} -n ${node} || err 1 "${N1_COLOR}directory id do not match, dir not shared: ${N2_COLOR}${i}${N1_COLOR} ?${N0_COLOR}"
+for _i in ${shared_dir}; do
+	printf "      ${H5_COLOR}* ${N2_COLOR}${_i}: ${N0_COLOR}"
+	check_for_shared_dir -d ${_i} -n ${node} || err 1 "${N1_COLOR}directory id do not match, dir not shared: ${N2_COLOR}${_i}${N1_COLOR} ?${N0_COLOR}"
 	printf "${H3_COLOR}ok${N0_COLOR}"
 	echo
 done
@@ -56,7 +86,7 @@ REMOTE_FS="local,shared"
 s_migrator_ver="0.1"
 d_migrator_ver="0.1"
 
-my_nodename=$( ${CAT_CMD} ~cbsd/nodename | ${AWK_CMD} '{printf $1}' )
+capture my_nodename ${CAT_CMD} ~cbsd/nodename
 remote_node_name="${node}"
 
 DC_NAME="local"
@@ -68,37 +98,31 @@ fi
 
 echo
 ${ECHO} "  ${N2_COLOR}Data gathering complete!${N0_COLOR}"
-srcpad=" "
-destpad=" "
 
-${CAT_CMD} <<XxX1387784305xXx
+echo
+echo "We will be migrating:"
+echo "     INSTANCE:"
+echo "               jname:  ${jname}"
+echo "                fqdn:  ${host_hostname}"
+echo "          IP Addr(s):  ${ip4_addr}"
+echo "          datacenter:  ${DC_NAME}"
+echo "      instance state:  ${jail_status}"
+echo "                type:  ${emulator}"
+echo "               owner:  root"
+echo "           create at:  -"
+echo "          base image:  -"
+echo "  total dataset size:  ${SZMDS} ${rise} across ${dsCNT} datasets"
+echo "        migration id:  $$"
 
-We will be migrating:
-     INSTANCE:
-               jname:  ${jname}
-                fqdn:  ${host_hostname}
-          IP Addr(s):  ${ip4_addr}
-          datacenter:  ${DC_NAME}
-      instance state:  ${jail_status}
-                type:  ${emulator}
-               owner:  root
-           create at:  -
-          base image:  -
-  total dataset size:  ${SZMDS} ${rise} across ${dsCNT} datasets
-        migration id:  $$
-XxX1387784305xXx
-
-${CAT_CMD} <<XxX1394397713xXx
-
-                    Source                                        Destination
-----------------------------------------------  ----------------------------------------------
-XxX1394397713xXx
-printf "Host:     %-36s  Host:     %-36s\n" ${my_nodename} ${remote_node_name}
-printf "JNAME:    %-36s  JNAME:    %-36s\n" ${source_vm_name} ${dest_vm_name}
-printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" ${s_cbsd_ver} ${d_cbsd_ver}
-printf "IP Addr:  %-36s  IP Addr:  %-36s\n" ${remote_node_ip} ${remote_node_rip}
-printf "RemoteFS: %-36s  RemoteFS: %-36s\n" ${LOCAL_FS} ${REMOTE_FS}
-printf "API ver:  %-36s  API ver:  %-36s\n" ${s_migrator_ver} ${d_migrator_ver}
+echo
+echo "                    Source                                        Destination"
+echo "----------------------------------------------  ----------------------------------------------"
+printf "Host:     %-36s  Host:     %-36s\n" "${my_nodename}" "${remote_node_name}"
+printf "JNAME:    %-36s  JNAME:    %-36s\n" "${source_vm_name}" "${dest_vm_name}"
+printf "SDC Ver:  %-36s  SDC Ver:  %-36s\n" "${s_cbsd_ver}" "${d_cbsd_ver}"
+printf "IP Addr:  %-36s  IP Addr:  %-36s\n" "${remote_node_ip}" "${remote_node_rip}"
+printf "RemoteFS: %-36s  RemoteFS: %-36s\n" "${LOCAL_FS}" "${REMOTE_FS}"
+printf "API ver:  %-36s  API ver:  %-36s\n" "${s_migrator_ver}" "${d_migrator_ver}"
 
 echo
 
@@ -117,9 +141,9 @@ ${ECHO} ${N1_COLOR} "  ${N2_COLOR}Preparing destination node...${N0_COLOR}"
 printf "   ${H5_COLOR}* ${N1_COLOR}Phase1: launch ${jname} domain on remote node ... ${N0_COLOR}"
 
 # remove old live migration config
-/bin/rm -f ${jailsysdir}/${jname}/live_migration.conf
+${RM_CMD} -f ${jailsysdir}/${jname}/live_migration.conf
 
-r_task_id=$( rexe tryoffline=1 node=${node} /usr/local/bin/cbsd task mode=new owner=migration.$$ /usr/local/bin/cbsd bstart jname=${jname} lm=1 debug_engine="${debug_engine}" | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+capture r_task_id _remote_cmd tryoffline=1 node=${node} /usr/local/bin/cbsd task mode=new owner=migration.$$ /usr/local/bin/cbsd bstart jname=${jname} lm=1 debug_engine="${debug_engine}"
 [ -z "${r_task_id}" ] && err 1 "${N1_COLOR}cbsd task on ${node} failed: no task id${N0_COLOR}"
 
 sleep 1
@@ -129,29 +153,28 @@ printf "${H3_COLOR}ok${N0_COLOR}"
 echo
 printf "   ${H5_COLOR}* ${N1_COLOR}Phase2 (1/3): waiting for bhyve instance ready by task id ${N2_COLOR}${r_task_id}${N1_COLOR}...${N0_COLOR}"
 max_attempt=10		# ( sleep 2 x 10 = 20 seconds for run: this should be enough )
-cur_attempt=0
+_task_ok=0
 
-for i in $( /usr/bin/seq 1 ${max_attempt} ); do
-	cur_attempt=$(( cur_attempt + 1 ))
+for ((_mi=1; _mi<=${max_attempt}; _mi++)); do
 	if [ ! -r ${jailsysdir}/${jname}/live_migration.conf ]; then
 		sleep 2
 		continue
 	fi
-	r_job_status=$( rexe tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}" 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+	capture r_job_status _remote_cmd tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}"
 	[ -z "${r_job_status}" ] && err 1 "${N1_COLOR}unable to determine job status for ${N2_COLOR}${r_task_id}${N1_COLOR} on remote host, empty val${N0_COLOR}"
 	if [ "${r_job_status}" != "2" ]; then
 		printf "${N1_COLOR}.[${r_job_status}].${N0_COLOR}"
 		sleep 2
 	else
 		printf "${H3_COLOR} ok${N0_COLOR}"
+		_task_ok=1
 		break
 	fi
 done
 
-[ ${cur_attempt} -eq ${max_attempt} ] && err 1 "${N1_COLOR}unable to determine job status for ${N2_COLOR}$r_task_id${N1_COLOR} on remote host${N0_COLOR}"
+[ ${_task_ok} -eq 0 ] && err 1 "${N1_COLOR}unable to determine job status for ${N2_COLOR}${r_task_id}${N1_COLOR} on remote host, max attempts exceeded${N0_COLOR}"
 
 echo
-[ ${cur_attempt} -gt ${max_attempt} ] && err 1 "${N1_COLOR}Taskd timeout, max attempt exceeded: ${N2_COLOR}${cur_attempt}${N1_COLOR}. Please check on node ${N2_COLOR}${node}${N1_COLOR}: ${N2_COLOR}cbsd taskls${N0_COLOR}"
 
 ### test 2: check config
 echo
@@ -168,11 +191,11 @@ live_migration_dst_nodename_ip=
 # trap for cleanup
 trap "cbsd rexe tryoffline=1 node=${node} /usr/local/bin/cbsd task mode=new owner=migration.$$ /usr/local/bin/cbsd bstop jname=${jname} lm=1" HUP INT ABRT BUS TERM EXIT
 
-[ -z "${live_migration_src_nodename}" ] && err 1 "${N1_COLOR}Empty ${live_migration_src_nodename}${N0_COLOR}"
-[ -z "${live_migration_dst_nodename}" ] && err 1 "${N1_COLOR}Empty ${live_migration_dst_nodename}${N0_COLOR}"
-[ -z "${live_migration_dst_port}" ] && err 1 "${N1_COLOR}Empty ${live_migration_dst_port}${N0_COLOR}"
-[ -z "${live_migration_src_nodename_ip}" ] && err 1 "${N1_COLOR}Empty ${live_migration_src_nodename_ip}${N0_COLOR}"
-[ -z "${live_migration_dst_nodename_ip}" ] && err 1 "${N1_COLOR}Empty ${live_migration_dst_nodename_ip}${N0_COLOR}"
+[ -z "${live_migration_src_nodename}" ] && err 1 "${N1_COLOR}Empty live_migration_src_nodename${N0_COLOR}"
+[ -z "${live_migration_dst_nodename}" ] && err 1 "${N1_COLOR}Empty live_migration_dst_nodename${N0_COLOR}"
+[ -z "${live_migration_dst_port}" ] && err 1 "${N1_COLOR}Empty live_migration_dst_port${N0_COLOR}"
+[ -z "${live_migration_src_nodename_ip}" ] && err 1 "${N1_COLOR}Empty live_migration_src_nodename_ip${N0_COLOR}"
+[ -z "${live_migration_dst_nodename_ip}" ] && err 1 "${N1_COLOR}Empty live_migration_dst_nodename_ip${N0_COLOR}"
 
 echo
 ${ECHO} "    ${H5_COLOR}- (cfg) ${N1_COLOR}live_migration_src_nodename: ${N2_COLOR}${live_migration_src_nodename}${N0_COLOR}"
@@ -186,26 +209,25 @@ echo
 printf "   ${H5_COLOR}* ${N1_COLOR}Phase2 (3/3): check for remote host bind/socket's open, task id ${N2_COLOR}${r_task_id}${N1_COLOR}...${N0_COLOR}"
 # waiting for remote bhyve is running
 max_attempt=3		# sleep 2 x 3 = 6 seconds for run: this should be enough
-cur_attempt=0
+_task_ok=0
 
-for i in $( /usr/bin/seq 1 ${max_attempt} ); do
-	cur_attempt=$(( cur_attempt + 1 ))
-
+for ((_mi=1; _mi<=${max_attempt}; _mi++)); do
 	# scan by next_tcp_port
-	_tmp=$( get-next-tcp-port address=${live_migration_src_nodename_ip} end_port=${live_migration_dst_port} start_port=${live_migration_dst_port} )
+	capture _tmp get-next-tcp-port address=${live_migration_src_nodename_ip} end_port=${live_migration_dst_port} start_port=${live_migration_dst_port}
 	if [ "${_tmp}" != "0" ]; then
 		printf "${N1_COLOR}.${N0_COLOR}"
 		sleep 2
 	else
 		printf "${H3_COLOR} ok${N0_COLOR}"
+		_task_ok=1
 		break
 	fi
 done
 
 echo
-[ ${cur_attempt} -gt ${max_attempt} ] && err 1 "${N1_COLOR}Taskd timeout, max attempt exceeded: ${N2_COLOR}${cur_attempt}${N1_COLOR}. Please check on node ${N2_COLOR}${node}${N1_COLOR}: ${N2_COLOR}cbsd taskls${N0_COLOR}"
+[ ${_task_ok} -eq 0 ] && err 1 "${N1_COLOR}Timeout waiting for socket bind: ${N2_COLOR}${max_attempt}${N1_COLOR} attempts exceeded. Please check on node ${N2_COLOR}${node}${N1_COLOR}: ${N2_COLOR}cbsd taskls${N0_COLOR}"
 
-r_job_logfile=$( cbsd rexe tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT logfile FROM taskd WHERE id=${r_task_id}" 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+capture r_job_logfile _remote_cmd tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT logfile FROM taskd WHERE id=${r_task_id}"
 sleep 1
 ${ECHO} "   ${H5_COLOR}* ${N1_COLOR}Phase3: migration, please wait...${N0_COLOR}"
 ${ECHO} "${N4_COLOR}     [debug]remote cmd: bhyvectl --migrate=${live_migration_dst_nodename_ip},${live_migration_dst_port} --vm=${jname}${N0_COLOR}"
@@ -218,33 +240,33 @@ trap "date > /dev/null" HUP INT ABRT BUS TERM EXIT
 bhyve_migrate_ret=$?
 bhyve_remote_task_complete=0
 
-# Well, at this point, we no longer know in what state everything is 
+# Well, at this point, we no longer know in what state everything is
 # and we need to monitor both systems to draw some conclusions.
 # First: let's wait for the completion of the remote task
 # Second: find bhyve process with ${jname} on both host
 
 # waiting for task finished
 max_attempt=5
-cur_attempt=0
+_task_ok=0
 
 printf "   ${H5_COLOR}* ${N1_COLOR}Phase4: Waiting for task finished: ${N2_COLOR}${r_task_id}...${N0_COLOR}"
 
-for i in $( /usr/bin/seq 1 ${max_attempt} ); do
-	cur_attempt=$(( cur_attempt + 1 ))
-	r_job_status=$( cbsd rexe tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}" 2>/dev/null | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+for ((_mi=1; _mi<=${max_attempt}; _mi++)); do
+	capture r_job_status _remote_cmd tryoffline=1 node=${node} ${miscdir}/sqlcli var/db/cbsdtaskd.sqlite "SELECT status FROM taskd WHERE id=${r_task_id}"
 	if [ "${r_job_status}" != "2" ]; then
 		printf "${N1_COLOR}.${N0_COLOR}"
 		sleep 1
 	else
 		printf "${H3_COLOR} ok${N0_COLOR}"
+		_task_ok=1
 		break
 	fi
 done
 
 echo
-if [ ${cur_attempt} -gt ${max_attempt} ]; then
-	bhyve_remote_task_complete=1
-	${ECHO} "${W1_COLOR}bmigrate error: ${N1_COLOR}Taskd timeout, max attempt exceeded: ${N2_COLOR}${cur_attempt}${N1_COLOR}. Please check on node ${N2_COLOR}${node}${N1_COLOR}: ${N2_COLOR}cbsd taskls${N0_COLOR}"
+if [ ${_task_ok} -eq 0 ]; then
+	bhyve_remote_task_complete=0
+	${ECHO} "${W1_COLOR}bmigrate error: ${N1_COLOR}Taskd timeout, max attempt exceeded: ${N2_COLOR}${max_attempt}${N1_COLOR}. Please check on node ${N2_COLOR}${node}${N1_COLOR}: ${N2_COLOR}cbsd taskls${N0_COLOR}"
 else
 	bhyve_remote_task_complete=1
 fi
@@ -260,22 +282,22 @@ printf "   ${H5_COLOR}* ${N1_COLOR}Phase5: waiting for the bhyve process to go a
 
 # waiting for config
 max_attempt=20
-cur_attempt=0
+_task_ok=0
 
-for i in $( /usr/bin/seq 1 ${max_attempt} ); do
-	cur_attempt=$(( cur_attempt + 1 ))
+for ((_mi=1; _mi<=${max_attempt}; _mi++)); do
 	if [ -e "/dev/vmm/${jname}" ]; then
 		printf "${N1_COLOR}.${N0_COLOR}"
 		sleep 3
 	else
 		printf "${H3_COLOR} ok${N0_COLOR}"
+		_task_ok=1
 		break
 	fi
 done
 
 echo
-remote_process_status=$( rexe tryoffline=1 node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname} | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
-local_process_status=$( bhyve-exist jname=${jname} | ${TR_CMD} -d \\r | ${AWK_CMD} '/./{print $1}' )
+capture remote_process_status _remote_cmd tryoffline=1 node=${node} /usr/local/bin/cbsd bhyve-exist jname=${jname}
+capture local_process_status bhyve-exist jname=${jname}
 
 if [ -n "${remote_process_status}" ]; then
 	printf "     ${H5_COLOR}* ${N1_COLOR}Phase5: remote bhyve process: ${H3_COLOR}registered${N0_COLOR}"
@@ -294,7 +316,7 @@ if [ "${bhyve_remote_task_complete}" = "1" -a -z "${remote_process_status}" ]; t
 fi
 
 ${ECHO} "${N4_COLOR}     [debug]error handler: test 2${N0_COLOR}"
-# Scenatio 2: remote task log still waiting but no bhyve process: migration failed
+# Scenario 2: remote task log still waiting but no bhyve process: migration failed
 if [ "${bhyve_remote_task_complete}" = "0" -a -z "${remote_process_status}" ]; then
 	${ECHO} "${N1_COLOR}bmigrate: migration failed: task still in progress (id:${N2_COLOR}${r_task_id}${N1_COLOR}) but bhyve process is absent. Force to kill. Please check log${N0_COLOR}"
 	[ -z "${local_process_status}" ] && err 1 "${W1_COLOR}Warning: ${N1_COLOR}No such bhyve process on current host, bhyve was crashed???${N0_COLOR}"
@@ -332,26 +354,24 @@ fi
 JAILRCCONF="${jailsysdir}/${jname}/rc.conf_${jname}"
 
 # lets wait for rc-conf file saved
-# waiting for config
 printf "   ${H5_COLOR}* ${N1_COLOR}Phase7: waiting for rc.conf: ${N0_COLOR}"
 max_attempt=10
-cur_attempt=0
+_task_ok=0
 
-for i in $( /usr/bin/seq 1 ${max_attempt} ); do
-	cur_attempt=$(( cur_attempt + 1 ))
+for ((_mi=1; _mi<=${max_attempt}; _mi++)); do
 	if [ ! -r "${JAILRCCONF}" ]; then
 		printf "${N1_COLOR}.${N0_COLOR}"
 		sleep 3
 	else
 		printf "${H3_COLOR} ok${N0_COLOR}"
+		_task_ok=1
 		break
 	fi
 done
 
 echo
-if [ ${cur_attempt} -gt ${max_attempt} ]; then
-	${ECHO} "${N1_COLOR}No rcconf saved. bregister on remode node is failed${N0_COLOR}"
-	# Restore backup from SQLite3? No RC Conf here?
+if [ ${_task_ok} -eq 0 ]; then
+	${ECHO} "${N1_COLOR}No rcconf saved. bregister on remote node failed${N0_COLOR}"
 fi
 
 ${ECHO} "   ${H5_COLOR}* ${N1_COLOR}Phase7: register ${jname} on ${remote_node_name}${N0_COLOR}"
@@ -362,5 +382,7 @@ rexe tryoffline=1 node=${node} /usr/local/bin/cbsd retrinv node=${my_nodename} >
 
 gettime end_time
 diff_time=$(( end_time - st_time ))
-diff_time=$( displaytime ${diff_time} )
+capture diff_time displaytime ${diff_time}
 ${ECHO} "${N1_COLOR}${CIX_APP} done ${N2_COLOR}in ${diff_time}${N0_COLOR}"
+
+exit 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env cbsd
 #v12.1.5
 CBSDMODULE="bhyve"
-MYARG="jname"
+CIXARG="jname"
 ojname=
 jname=
 . ${subrdir}/nc.subr
@@ -10,21 +10,22 @@ jname=
 [ ! -r ${distsharedir}/bhyve_settings.conf ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${distsharedir}/bhyve_settings.conf${N0_COLOR}";
 . ${distsharedir}/bhyve_settings.conf
 
-MYCOL="${MYCOL} gid"		# gid located in global SQLite3
-ALL_ARGS="${MYCOL}"
+CIXCOL="${CIXCOL} gid"		# gid located in global SQLite3
+ALL_ARGS="${CIXCOL}"
 
-MYOPTARG="${MYCOL} mode"
+CIXOPTARG="${CIXCOL} mode"
 MYDESC="Get info related to bhyve domain"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Retrieve bhyve VM parameters value. If no arguments are specified,
-all parameters will be displayed.
+ Retrieve bhyve VM parameter values. If no arguments are specified,
+ all parameters will be displayed.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}mode=${N0_COLOR}    - when set to 'quiet' - return value only.
- ${N2_COLOR}<params>${N0_COLOR}  - return value for <params>.
+ ${N2_COLOR}jname=${N0_COLOR}    - target bhyve domain name;
+ ${N2_COLOR}mode=${N0_COLOR}     - set to 'quiet' to return value only (without parameter name);
+ ${N2_COLOR}<params>${N0_COLOR}  - specific parameter(s) to return (e.g. vm_cpus vm_ram).
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
@@ -40,7 +41,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 "
 
 cloud_api=0
-. ${cbsdinit}
+cixinit
 
 if [ -n "${jname}" ]; then
 	# inherit jname env
@@ -89,17 +90,20 @@ if [ ${cbsd_api} -eq 1 ]; then
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
-		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
-			continue
-		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
-		_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' | ${TR_CMD} "@" " " | ${AWK_CMD} '{printf $2}' )
+		case "${_ssh}" in
+			ssh*)
+				;;
+			*)
+				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+				;;
+		esac
+		_ssh_data="${_ssh#ssh }"
+		_ssh_first_word="${_ssh_data%% *}"
+		_ip="${_ssh_first_word#*@}"
 		[ -z "${_ip}" ] && exit 1
-		echo "${_ip}"
+		${ECHO} "${_ip}"
 	done
 	exit 0
 fi
@@ -107,8 +111,8 @@ fi
 [ -n "${ojname}" ] && jname="${ojname}"
 [ -z "${jname}" ] && err 1 "Give me jname"
 
-# push orig MYCOL
-OMYCOL="${MYCOL}"
+# push orig CIXCOL
+OCIXCOL="${CIXCOL}"
 
 . ${subrdir}/rcconf.subr
 
@@ -127,20 +131,19 @@ else
 	QUIET=0
 fi
 
-ARGS=				# known args ( MYCOL)
+ARGS=				# known args ( CIXCOL)
 UNKNOWN_ARGS=			# unknown args ( external/custom ? )
 
 # exclude jname= and mode= params from args str
 for i in $*; do
-	prefix3=$( substr --pos=0 --len=3 --str=${i} )
-	prefix5=$( substr --pos=0 --len=5 --str=${i} )
-	prefix6=$( substr --pos=0 --len=6 --str=${i} )
-	[ "${prefix5}" = "mode=" ] && continue
-	[ "${prefix6}" = "jname=" ] && continue
+	case "${i}" in
+		mode=*) continue ;;
+		jname=*) continue ;;
+	esac
 
 	is_known_args=0
 
-	for _jarg in ${OMYCOL}; do
+	for _jarg in ${OCIXCOL}; do
 		if [ "${_jarg}" = "${i}" ]; then
 			ARGS="${ARGS} ${i}"
 			is_known_args=1
@@ -159,25 +162,28 @@ done
 for OID in ${ARGS}; do
 	case "${OID}" in
 		vnc)
-			_vnc_port=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
-			_bhyve_vnc_tcp_bind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT bhyve_vnc_tcp_bind FROM settings LIMIT 1" )
-			val="${_bhyve_vnc_tcp_bind}:${_vnc_port}"
+			capture _vnc_data cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port,bhyve_vnc_tcp_bind FROM settings LIMIT 1"
+			if [ -n "${_vnc_data}" ]; then
+				sqllist "${_vnc_data}" _vnc_port _bhyve_vnc_tcp_bind
+				val="${_bhyve_vnc_tcp_bind}:${_vnc_port}"
+			else
+				val=0
+			fi
 			;;
 		gid)
-			# gid is global env ID, located in global/index database
-			val=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT gid FROM jails WHERE jname=\"${jname}\"" )
+			capture val cbsdsqlro ${dbdir}/local.sqlite "SELECT gid FROM jails WHERE jname='${jname}'"
 			;;
 		*)
-			val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ${OID} FROM settings LIMIT 1" )
+			capture val cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ${OID} FROM settings LIMIT 1"
 			;;
 	esac
 
 	[ "${val}" = "(null)" -o -z "${val}" ] && val=0
 
 	if [ ${QUIET} -eq 1 ]; then
-		echo "${val}"
+		${ECHO} "${val}"
 	else
-		echo "${OID}: ${val}"
+		${ECHO} "${OID}: ${val}"
 	fi
 done
 
@@ -189,9 +195,9 @@ for OID in ${UNKNOWN_ARGS}; do
 	export_jail_data_for_external_hook
 	val=$( ${jailsysdir}/${jname}/facts.d/${OID} | ${HEAD_CMD} -1 | ${AWK_CMD} '{printf $1}' )
 	if [ ${QUIET} -eq 1 ]; then
-		echo "${val}"
+		${ECHO} "${val}"
 	else
-		echo "${OID}: ${val}"
+		${ECHO} "${OID}: ${val}"
 	fi
 done
 
