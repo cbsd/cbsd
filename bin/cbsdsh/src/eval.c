@@ -90,6 +90,17 @@ MKINIT int inps4;
 
 MKINIT int tpip[2] = { -1 };
 
+/*
+ * Deferred variable assignment for capture.
+ *
+ * evalcommand() calls unwindlocalvars() after evalbltin/capturecmd returns,
+ * which reverts any setvar() done inside capturecmd.  To make the captured
+ * variable survive, capturecmd stores (name, value) here and evalcommand
+ * applies them after the unwind.
+ */
+const char *capture_defer_name;
+char       *capture_defer_val;
+
 #if !defined(__alpha__) || (defined(__GNUC__) && __GNUC__ >= 3)
 STATIC
 #endif
@@ -1075,6 +1086,20 @@ out:
 	unwindredir(redir_stop);
 	unwindfiles(file_stop);
 	unwindlocalvars(localvar_stop);
+
+	/*
+	 * Apply deferred capture variable assignment (set by capturecmd).
+	 * Must happen AFTER unwindlocalvars to survive the localvar
+	 * restoration that would otherwise undo the value.
+	 */
+	if (capture_defer_name) {
+		setvar(capture_defer_name, capture_defer_val ? capture_defer_val : "", 0);
+		if (capture_defer_val)
+			free(capture_defer_val);
+		capture_defer_name = NULL;
+		capture_defer_val = NULL;
+	}
+
 	if (lastarg)
 		/* dsl: I think this is intended to be used to support
 		 * '_' in 'vi' command mode during line editing...
@@ -1342,6 +1367,14 @@ capturecmd(int argc, char **argv)
 		if (evalfun(cmdentry.u.func, cmdc, cmdv, 0))
 			longjmp(handler->loc, 1);
 		status = exitstatus;
+		/*
+		 * evalfun() restores shellparam (including optind) but the
+		 * OPTIND shell variable was updated via setvarint() by getopts
+		 * during the function execution and is now stale. Re-sync it
+		 * with the restored shellparam.optind so that callers using
+		 * $OPTIND after capture get the correct value.
+		 */
+		setvarint("OPTIND", shellparam.optind, VNOFUNC);
 		break;
 	case CMDNORMAL: {
 		struct job *jp;
@@ -1374,14 +1407,23 @@ capturecmd(int argc, char **argv)
 
 	capture_strip_trailing_newlines(buf, &len);
 
+	/*
+	 * Defer the setvar call.  evalcommand()'s unwindlocalvars() will
+	 * revert any setvar() done here because the capture target variable
+	 * may coincide with a local variable created by the captured function
+	 * (e.g. `local idx=` inside get_baseidx when capture target is idx).
+	 * We store the result in capture_defer_{name,val} and evalcommand()
+	 * applies it after the unwind.
+	 */
 	if (status != 0) {
-		setvar(varname, "", 0);
+		capture_defer_name = varname;
+		capture_defer_val = NULL;	/* empty */
 		free(buf);
 		return 1;
 	}
 
-	setvar(varname, buf, 0);
-	free(buf);
+	capture_defer_name = varname;
+	capture_defer_val = buf;		/* transfer ownership */
 	return 0;
 
 fail:
@@ -1393,8 +1435,10 @@ fail:
 	}
 	if (capfd >= 0)
 		close(capfd);
-	if (varname && *varname)
-		setvar(varname, "", 0);
+	if (varname && *varname) {
+		capture_defer_name = varname;
+		capture_defer_val = NULL;
+	}
 	return 1;
 }
 
