@@ -1,30 +1,8 @@
 #!/usr/bin/env cbsd
-#v12.1.5
+#v12.1.6
 CBSDMODULE="qemu"
-MYARG="jname"
-ADDHELP="
-${H3_COLOR}Description${N0_COLOR}:
-
-Retrieve QEMU VM parameters value. If no arguments are specified,
-all parameters will be displayed.
-
-${H3_COLOR}Options${N0_COLOR}:
-
- ${N2_COLOR}mode=${N0_COLOR}    - when set to 'quiet' - return value only.
- ${N2_COLOR}<params>${N0_COLOR}  - return value for <params>.
-
-${H3_COLOR}Examples${N0_COLOR}:
-
- # cbsd qget jname=vm1
- # cbsd qget jname=vm1 mode=quiet vm_cpus vm_ram vm_os_profile
-
-${H3_COLOR}See also${N0_COLOR}:
-
-  cbsd qset --help
-  cbsd qconfig --help
-  https://github.com/cbsd/cbsd/blob/develop/share/docs/general/tag_n_facts.md
-
-"
+CIXARG=""
+MYDESC="Get info related to qemu domain"
 
 jname=
 ojname=
@@ -38,8 +16,8 @@ ojname=
 MYCOL="${MYCOL} gid"		# gid located in global SQLite3
 ALL_ARGS="${MYCOL}"
 
-MYOPTARG="${MYCOL} mode"
-MYDESC="Get info related to qemu domain"
+CIXOPTARG="jname ${MYCOL} mode"
+
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
@@ -63,8 +41,7 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 "
 
-cloud_api=0
-. ${cbsdinit}
+cixinit
 
 if [ -n "${jname}" ]; then
 	# inherit jname env
@@ -74,7 +51,7 @@ fi
 # check for cloud function when CBSDfile exist
 Makefile="${CIX_PWD}/CBSDfile"
 if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}" 1>&2
 	. ${Makefile}
 	all_qemu_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
 
@@ -101,26 +78,28 @@ fi
 
 # only ip4_addr value supported
 if [ ${cbsd_api} -eq 1 ]; then
-	CURL_CMD=$( which curl )
+	capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 	for _jname in ${all_qemu_list}; do
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl status error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+			echo "${N1_COLOR}${CIX_APP} error: curl status error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
-		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
-			continue
-		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
+		case "${_ssh}" in
+			ssh\ *)
+				_ssh_post=${_ssh#ssh }
+				;;
+			*)
+				echo "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+				;;
+		esac
 		_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' | ${TR_CMD} "@" " " | ${AWK_CMD} '{printf $2}' )
 		[ -z "${_ip}" ] && exit 1
 		echo "${_ip}"
@@ -131,14 +110,11 @@ fi
 [ -n "${ojname}" ] && jname="${ojname}"
 [ -z "${jname}" ] && err 1 "Give me jname"
 
-# push orig MYCOL
 OMYCOL="${MYCOL}"
 
 . ${subrdir}/rcconf.subr
 
 if [ $? -eq 1 ]; then
-	#
-	# try_remote, todo
 	sqlfile_sysdir="${tmpdir}/${1}"
 	err 1 "${N1_COLOR}No such qemu: ${N2_COLOR}${jname}${N0_COLOR}"
 else
@@ -151,16 +127,13 @@ else
 	QUIET=0
 fi
 
-ARGS=				# known args ( MYCOL)
-UNKNOWN_ARGS=			# unknown args ( external/custom ? )
+ARGS=
+UNKNOWN_ARGS=
 
-# exclude jname= and mode= params from args str
 for i in $*; do
-	prefix3=$( substr --pos=0 --len=3 --str=${i} )
-	prefix5=$( substr --pos=0 --len=5 --str=${i} )
-	prefix6=$( substr --pos=0 --len=6 --str=${i} )
-	[ "${prefix5}" = "mode=" ] && continue
-	[ "${prefix6}" = "jname=" ] && continue
+	case "${i%%=*}" in
+		mode|jname) continue ;;
+	esac
 
 	is_known_args=0
 
@@ -183,16 +156,15 @@ done
 for OID in ${ARGS}; do
 	case "${OID}" in
 		vnc)
-			_vnc_port=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1" )
-			_qemu_vnc_tcp_bind=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings LIMIT 1" )
+			capture _vnc_port cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT vnc_port FROM settings LIMIT 1"
+			capture _qemu_vnc_tcp_bind cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT qemu_vnc_tcp_bind FROM settings LIMIT 1"
 			val="${_qemu_vnc_tcp_bind}:${_vnc_port}"
 			;;
 		gid)
-			# gid is global env ID, located in global/index database
-			val=$( cbsdsqlro ${dbdir}/local.sqlite "SELECT gid FROM jails WHERE jname=\"${jname}\"" )
+			capture val cbsdsqlro ${dbdir}/local.sqlite "SELECT gid FROM jails WHERE jname=\"${jname}\""
 			;;
 		*)
-			val=$( cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ${OID} FROM settings LIMIT 1" )
+			capture val cbsdsqlro ${sqlfile_sysdir}/${jname}/local.sqlite "SELECT ${OID} FROM settings LIMIT 1"
 			;;
 	esac
 

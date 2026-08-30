@@ -1,18 +1,29 @@
 #!/usr/bin/env cbsd
 #v11.1.19
 CBSDMODULE="jail"
-MYARG="jname"
-MYOPTARG="nice"
+CIXARG="jname"
+CIXOPTARG="nice"
 MYDESC="Pause and resume for jail (send STOP/CONT signal to jail processes)"
-ADDHELP="mode=[auto|on|off]\n\
-  mode=auto (by default) triggering - e.g, if jail active then pause\n\
-  mode=on - pause, stop\n\
-  mode=off - unpause, continue\n"
+ADDHELP="${H3_COLOR}Description${N0_COLOR}:
+  Pause or resume a jail by sending STOP/CONT signals to its processes.
+
+${H3_COLOR}Options${N0_COLOR}:
+  mode=auto|on|off  ; mode=auto (default) - trigger on current state; mode=on - pause; mode=off - unpause
+  nice=<value>      ; renice processes to <value>
+
+${H3_COLOR}Example${N0_COLOR}:
+  cbsd jpause jname=jail1                    ; auto-trigger (pause if active, resume if stopped)
+  cbsd jpause jname=jail1 mode=on            ; pause
+  cbsd jpause jname=jail1 nice=10            ; auto-trigger + renice to 10
+
+${H3_COLOR}See also${N0_COLOR}:
+  bpause - equivalent for bhyve VMs
+"
 
 . ${subrdir}/nc.subr
 . ${strings}
 
-. ${cbsdinit}
+cixinit
 
 [ -z "${mode}" ] && mode="auto"
 
@@ -26,29 +37,27 @@ fi
 
 
 pid_count=0
-jpid=
 jpid_list=
 
-eval $( /bin/ps -axfw -w -o pid,jid,state | while read _pid _jid _state; do
+capture _ps_out /usr/bin/ps -axfw -w -o pid,jid,state
+while read _pid _jid _state; do
 	[ "${jid}" != "${_jid}" ] && continue
 	pid_count=$(( pid_count + 1 ))
-	if $( echo "${_state}" |${GREP_CMD} -q "T" ); then
-		pid_count=$(( pid_count - 1 ))
-	fi
+	case "${_state}" in
+		*T*) pid_count=$(( pid_count - 1 )) ;;
+	esac
 	jpid_list="${jpid_list} ${_pid}"
-	echo jpid_list=\"${jpid_list}\"
-	echo jpid_count=\"${pid_count}\"
-done )
+done <<< "${_ps_out}"
 
 case "${mode}" in
 	auto)
-		if [ ${jpid_count} -gt 0 ]; then
+		if [ ${pid_count} -gt 0 ]; then
 			cbsdlogger NOTICE ${CIX_APP}: jail is active, triggering to sleep: ${jname}
-			${ECHO} "${N1_COLOR}jail is active, triggering to sleep${N0_COLOR}"
+			echo "${N1_COLOR}jail is active, triggering to sleep${N0_COLOR}"
 			SIGNAL="STOP"
 		else
 			cbsdlogger NOTICE ${CIX_APP}: jail is sleeping, triggering to continue: ${jname}
-			${ECHO} "${N1_COLOR}jail is sleeping, triggering to continue${N0_COLOR}"
+			echo "${N1_COLOR}jail is sleeping, triggering to continue${N0_COLOR}"
 			SIGNAL="CONT"
 		fi
 		;;

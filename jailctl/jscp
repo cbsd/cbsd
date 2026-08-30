@@ -1,11 +1,23 @@
 #!/usr/bin/env cbsd
 #v13.0.2
 CBSDMODULE="jail"
-MYARG=""
-MYOPTARG="verbose"
+CIXARG=""
+CIXOPTARG="verbose"
 MYDESC="Get put file to remove nodes"
-ADDHELP="[verbose=1] jail1:remotefile1 localfile1 [ localfile2 jail2@:remotefile2 ]\n\
-verbose=1 for debug information\n"
+ADDHELP="${H3_COLOR}Description${N0_COLOR}:
+  Copy files to/from remote jail via network.
+
+${H3_COLOR}Options${N0_COLOR}:
+  verbose=1         ; enable debug output
+
+${H3_COLOR}Usage${N0_COLOR}:
+  cbsd jscp verbose=1 jail1:remotefile1 localfile1 [ localfile2 jail2@:remotefile2 ]
+
+${H3_COLOR}Examples${N0_COLOR}:
+  cbsd jscp jail1:/etc/hosts /tmp/hosts
+  cbsd jscp /tmp/file jail1:/tmp/file
+"
+
 EXTHELP="wf_jscp"
 
 # ToDo:
@@ -20,16 +32,15 @@ EXTHELP="wf_jscp"
 
 verbose=0
 cloud_api=0
-. ${cbsdinit}
+cixinit
 
 
 getjname()
 {
-	local _t
-
-	_t=$( echo ${1} | ${GREP_CMD} ":")
-
-	[ $? -ne 0 ] && return 1
+	case "${1}" in
+		*:*) ;;
+		*) return 1 ;;
+	esac
 
 	jname=${1%%:*}
 	rfile=${1##*:}
@@ -39,12 +50,12 @@ try_remote()
 {
 	# this is only wrapper for compile correct arguments for cbsd nodescp
 
-	node=$( jwhereis ${jname} )
+	capture node jwhereis ${jname}
 
 	[ -z "${node}" ] && log_err 1 "Node not found for jail ${jname}"
 
 	cbsdlogger NOTICE ${CIX_APP}: try to get remote jstatus for ${jname} on ${node}
-	status=$( rexe node=${node} cbsd jstatus ${jname} )
+	capture status rexe node=${node} cbsd jstatus ${jname}
 	[ "${status}" = "0" ] && log_err 1 "jail ${jname} not running on ${node}"
 	sqlfile="${node}"
 	. ${subrdir}/rcconf.subr
@@ -77,9 +88,12 @@ scp()
 
 	Makefile="${CIX_PWD}/CBSDfile"
 	if [ -r "${Makefile}" ]; then
-		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+		[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 		. ${Makefile}
-		all_jail_list=$( ${GREP_CMD} -E '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
+		capture _grep_out ${GREP_CMD} -E '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile}
+		capture _xargs_out ${XARGS_CMD} <<< "${_grep_out}"
+		capture _tr_out ${TR_CMD} -d "()" <<< "${_xargs_out}"
+		capture all_jail_list ${SED_CMD} s#jail_##g <<< "${_tr_out}"
 
 		# limit by single jail
 		[ -n "${jname}" ] && all_jail_list="${jname}"
@@ -94,10 +108,10 @@ scp()
 	fi
 
 	if [ ${cbsd_api} -eq 1 ]; then
-		CURL_CMD=$( which curl )
+		capture CURL_CMD which curl
 		[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-		_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+		[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+		capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 		found=0
 		for i in ${all_jail_list}; do
@@ -109,26 +123,27 @@ scp()
 		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 		for _jname in ${all_jail_list}; do
-			_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1 )
+			capture _ssh ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1
 			_ret=$?
 			if [ ${_ret} -ne 0 ]; then
-				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error1: ${N2_COLOR}${_ssh}${N0_COLOR}"
-				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				echo "${N1_COLOR}${CIX_APP} error: curl error1: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
 				continue
 			fi
-			_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
-			_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
+			capture _jq_out ${JQ_CMD} '.ssh_string' <<< "${_ssh}"
+			capture _ssh_string ${TR_CMD} -d '"' <<< "${_jq_out}"
+			capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
 
 			if [ "${_ssh_pref}" != "ssh" ]; then
-				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error2, no ssh_string:\n${N2_COLOR}${_ssh}${N0_COLOR}"
-				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				echo "${N1_COLOR}${CIX_APP} error: curl error2, no ssh_string:\n${N2_COLOR}${_ssh}${N0_COLOR}"
+				echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
 				continue
 			fi
-			_ssh_len=$( strlen "${_ssh_string}" )
-			_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
-			#echo "${SSH_CMD} ${_ssh_post}"
-			_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
-			_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
+			capture _ssh_len strlen "${_ssh_string}"
+			capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
+			capture _ssh_ip ${AWK_CMD} '{printf $1}' <<< "${_ssh_post}"
+			capture _awk_port ${AWK_CMD} '{printf $2}' <<< "${_ssh_post}"
+			capture _ssh_port ${TR_CMD} -d '\-p' <<< "${_awk_port}"
 			# rewrite
 			if [ -n "${SUDO_USER}" ]; then
 				if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
@@ -153,7 +168,7 @@ scp()
 			fi
 
 			if [ ${rarg} -eq 1 ]; then
-				DIR=$( ${DIRNAME_CMD} ${2} )
+				capture DIR ${DIRNAME_CMD} ${2}
 				[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
 				scp_exec="${SCP_CMD} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_ip}:${rfile} ${2}"
 				echo "[debug1] ${scp_exec}"
@@ -183,7 +198,7 @@ scp()
 			${_cmd}
 			_ret=$?
 		fi
-		[ ${_ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
+		[ ${_ret} -ne 0 ] && echo "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
 		return ${_ret}
 	fi
 
@@ -192,7 +207,7 @@ scp()
 	[ ${baserw} -eq 1 ] && path="${data}"
 
 	if [ ${rarg} -eq 1 ]; then
-		DIR=$( ${DIRNAME_CMD} ${2} )
+		capture DIR ${DIRNAME_CMD} ${2}
 		[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
 
 		if [ -n "${RSYNC_CMD}" ]; then
@@ -221,7 +236,7 @@ scp()
 			[ ${verbose} -eq 1 ] && set +o xtrace
 		fi
 	else
-		DIR=$( ${DIRNAME_CMD} ${path}${rfile} )
+		capture DIR ${DIRNAME_CMD} ${path}${rfile}
 		[ ${verbose} -eq 1 ] && set -o xtrace
 		[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p "${DIR}"
 		[ ${verbose} -eq 1 ] && set +o xtrace
@@ -252,7 +267,7 @@ scp()
 		fi
 	fi
 
-	[ ${_ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
+	[ ${_ret} -ne 0 ] && echo "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
 	return ${_ret}
 }
 
@@ -264,7 +279,7 @@ ARGS=
 
 # exclude jname= and mode= params from args str
 for i in $*; do
-	prefix8=$( substr --pos=0 --len=7 --str="${i}" )
+	capture prefix8 substr --pos=0 --len=7 --str="${i}"
 	[ "${prefix8}" = "verbose=" ] && continue
 	if [ -z "${ARGS}" ]; then
 		ARGS="${i}"
@@ -281,6 +296,6 @@ fi
 
 scp ${ARGS}
 ret=$?
-[ ${ret} -ne 0 ] && ${ECHO} "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
+[ ${ret} -ne 0 ] && echo "${N1_COLOR}jscp cmd failed: ${N2_COLOR}${_cmd}${N0_COLOR}"
 
 exit ${ret}

@@ -1,42 +1,36 @@
 #!/usr/bin/env cbsd
-#v12.1.10
+#v12.1.11
 CBSDMODULE="node"
-MYARG=""
-MYOPTARG="root rsync tryoffline verbose"
+CIXARG=""
+CIXOPTARG="root rsync tryoffline verbose"
 EXTHELP="wf_nodescp"
-MYDESC="Get put file to remove nodes"
+MYDESC="Get/put file from/to remote nodes"
 
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
-Get/put file from/to remove nodes via SSH
-Usage:
+ ${N2_COLOR}nodescp${N0_COLOR} - get/put file from/to remote nodes via SSH
 
-[verbose=1] node1:remotefile1 localfile1 [ localfile2 node2@:remotefile2 ]
-
+ [verbose=1] cbsd nodescp node1:remotefile1 localfile1 [ localfile2 node2:remotefile2 ]
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}verbose=${N0_COLOR}    - when 0 - add '-q' for scp. 1 - by default.
- ${N2_COLOR}tryoffline=${N0_COLOR} - when 1 - try to fetch inventory when node is offline.
- ${N2_COLOR}rsync=${N0_COLOR}      - when 1 - force to use rsync instead of scp.
+ ${N2_COLOR}verbose=${N0_COLOR}      - when 0, add '-q' for scp. 1 by default.
+ ${N2_COLOR}tryoffline=${N0_COLOR} - when 1, try to fetch inventory when node is offline.
+ ${N2_COLOR}rsync=${N0_COLOR}       - when 1, force to use rsync instead of scp.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
- # cbsd node mode=add node=10.0.0.7
+ # cbsd nodescp node1:file1 localfile1
+ # cbsd nodescp rsync=1 node1:/etc/host.conf /tmp/
 
 ${H3_COLOR}See also${N0_COLOR}:
 
+ cbsd nlogin --help
  cbsd rexe --help
 
 "
 
-
-# ToDo:
-# Instead of this need one nodescp daemon/services with one lock and which will work on AMQP queue
-# where executing
-#     % cbsd nodescp XXX YYY
-# just add job to queue
 
 verbose=1
 root=0
@@ -45,19 +39,20 @@ rsync=0
 tryoffline=0
 
 . ${subrdir}/nc.subr
-. ${cbsdinit}
 . ${nodes}
+cixinit
 
 getnode()
 {
-	local _t
-
-	_t=$( echo ${1} | ${GREP_CMD} ":" )
-
-	[ $? -ne 0 ] && return 1
-
-	node=${1%%:*}
-	rfile=${1##*:}
+	case "${1}" in
+		*:*)
+			node=${1%%:*}
+			rfile=${1##*:}
+			;;
+		*)
+			return 1
+			;;
+	esac
 }
 
 node_scp()
@@ -79,14 +74,16 @@ node_scp()
 
 	[ -z "${node}" -o -z "${rfile}" ] && err 1 "${N1_COLOR}specify dst/src node via: ${N2_COLOR}node:path${N0_COLOR}"
 
-	NODEDATA=$( cbsdsqlro nodes "SELECT ip,port,keyfile,rootkeyfile FROM nodelist where nodename='${node}'" )
-	if [ -z "${NODEDATA}" ]; then
-		${ECHO} "${N1_COLOR}No such node in base: ${N2_COLOR}${node}${N0_COLOR}"
-		_all_nodes=$( cbsdsqlro nodes "SELECT nodename FROM nodelist" | ${XARGS_CMD} | ${TR_CMD} " " "," )
+	cbsdsqlro_vars nodes "SELECT ip,port,keyfile,rootkeyfile FROM nodelist where nodename='${node}'"
+	myip=${ip}
+	myport=${port}
+	rootkey=${rootkeyfile}
+
+	if [ -z "${myip}" ]; then
+		echo "${N1_COLOR}No such node in base: ${N2_COLOR}${node}${N0_COLOR}"
+		capture _all_nodes cbsdsqlro nodes "SELECT nodename FROM nodelist"
 		err 1 "${N1_COLOR}available nodes: ${N2_COLOR}${_all_nodes}${N0_COLOR}"
 	fi
-
-	sqllist "${NODEDATA}" myip myport keyfile rootkey
 
 	if [ ${tryoffline} -ne 1 ]; then
 		if ! check_locktime ${ftmpdir}/shmux_${myip}.lock >/dev/null 2>&1; then
@@ -94,9 +91,8 @@ node_scp()
 		fi
 	fi
 
-	# optional flags for disable needed
 	if [ ${root} -eq 1 -a -r "${rootkey}" ]; then
-		[ ${verbose} -eq 1 ] && ${ECHO} "${N1_COLOR}Root key specified and exist, preferred: ${N2_COLOR}${rootkey}${N0_COLOR}"
+		[ ${verbose} -eq 1 ] && echo "${N1_COLOR}Root key specified and exist, preferred: ${N2_COLOR}${rootkey}${N0_COLOR}"
 		key="${rootkey}"
 		sshkey_opt="-i ${rootkey}"
 		cbsduser="root"
@@ -123,38 +119,34 @@ node_scp()
 		;;
 	esac
 
-	SSHOP="${proto} -C -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p ${quiet} -oPort=${myport} ${sshkey_opt} ${myip}"
+	SSHOPT="${proto} -C -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p ${quiet} -oPort=${myport} ${sshkey_opt} ${myip}"
 	SCPOP="${proto} -C -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -oControlPath=${sshdir}/sockets/%r@%h:%p ${quiet} -oPort=${myport} ${sshkey_opt}"
 
 	[ -z "${SCPOP}" -o -z "${myip}" ] && err 1 "${N1_COLOR}No such node ${N2_COLOR}${node}${N1_COLOR} in database or have no ip/scpopt${N0_COLOR}"
 
-	lockname=$( ${miscdir}/cbsd_md5 "${myip}${rfile}" )
+	capture lockname ${miscdir}/cbsd_md5 "${myip}${rfile}"
 
 	if [ ${rarg} -eq 1 ]; then
-		DIR=$( ${DIRNAME_CMD} ${2} )
+		capture DIR ${DIRNAME_CMD} ${2}
 		[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
 
 		if [ "${rsync}" = "1" ]; then
-			#we have rsync for that
 			${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${RSYNC_CMD} -azzlH -e "${SSH_CMD} ${SCPOP}" ${cbsduser}@${myip}:${rfile} ${2} >${DEBLOG} 2>&1
 			err=$?
 		else
-			#no rsync, just scp
 			${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${SCP_CMD} ${SCPOP} -r ${cbsduser}@${myip}:${rfile} ${2} >${DEBLOG} 2>&1
 			err=$?
 		fi
 	else
-		DIR=$( ${DIRNAME_CMD} ${rfile})
-		${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${SSH_CMD} ${SSHOP} -l ${cbsduser} <<EOF
+		capture DIR ${DIRNAME_CMD} ${rfile}
+		${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${SSH_CMD} ${SSHOPT} -l ${cbsduser} <<EOF
 [ ! -d "${DIR}" ] && ${MKDIR_CMD} -p "${DIR}"
 EOF
 		if [ "${rsync}" = "1" ]; then
-			#we have rsync for that
 			${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${RSYNC_CMD} -azzlH -e "${SSH_CMD} ${SCPOP}" ${1} ${cbsduser}@${myip}:${rfile} >${DEBLOG} 2>&1
 			err=$?
 		else
-			#no rsync, just scp
-			${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock scp ${SCPOP} -r ${1} ${cbsduser}@${myip}:${rfile} >${DEBLOG} 2>&1
+			${LOCKF_CMD} -s -t0 ${ftmpdir}/${lockname}.lock ${SCP_CMD} ${SCPOP} -r ${1} ${cbsduser}@${myip}:${rfile} >${DEBLOG} 2>&1
 			err=$?
 		fi
 	fi
@@ -165,17 +157,11 @@ EOF
 ### MAIN ###
 _args=
 
-# trim special args from "$*"
 for i in $*; do
-	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
-	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
-	prefix8=$( substr --pos=0 --len=8 --str="${i}" )
-	prefix11=$( substr --pos=0 --len=11 --str="${i}" )
-
-	[ "${prefix5}" = "root=" ] && continue
-	[ "${prefix6}" = "rsync=" ] && continue
-	[ "${prefix8}" = "verbose=" ] && continue
-	[ "${prefix11}" = "tryoffline=" ] && continue
+	# cixinit already set root/rsync/verbose/tryoffline from CIXOPTARG; skip them from positional args
+	case "${i}" in
+		root=*|rsync=*|verbose=*|tryoffline=*) continue ;;
+	esac
 
 	if [ -n "${_args}" ]; then
 		_args="${_args} ${i}"
@@ -198,8 +184,8 @@ case ${_ret} in
 	*)
 		case ${err} in
 			255)
-				${ECHO} "${N1_COLOR}${CIX_APP}: make sure you have ${N2_COLOR}~cbsd/.ssh/authorized_keys${N1_COLOR} (copy of ~cbsd/.ssh/id_rsa.pub) on: ${N2_COLOR}${myip}${N0_COLOR}:"
-				${ECHO} "cp -a ~cbsd/.ssh/id_rsa.pub ~cbsd/.ssh/authorized_keys"
+				echo "${N1_COLOR}${CIX_APP}: make sure you have ${N2_COLOR}~cbsd/.ssh/authorized_keys${N1_COLOR} (copy of ~cbsd/.ssh/id_rsa.pub) on: ${N2_COLOR}${myip}${N0_COLOR}:"
+				echo "cp -a ~cbsd/.ssh/id_rsa.pub ~cbsd/.ssh/authorized_keys"
 				;;
 		esac
 		[ -r "${DEBLOG}" ] && ${CAT_CMD} ${DEBLOG}

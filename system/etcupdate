@@ -119,7 +119,6 @@ etcupdate_base_extract()
 				_index_file="${distsharedir}/etcupdate_${_index_ver}.txt.xz"
 			fi
 			[ ! -r "${_index_file}" ] && err 1 "${N1_COLOR}${CIX_APP}: no index for default_obtain_etcupdate_method=index method: ${N2_COLOR}${_index_file}${N0_COLOR}"
-			over="${ver}"
 			. ${subrdir}/build.subr
 			init_target_arch
 			init_basedir
@@ -213,7 +212,7 @@ etcupdate_base_build()
 
 etcupdate_update()
 {
-	local _exclude_args= i= _ret= _etcupdate_to_current_dir=
+	local _exclude_args= _i= _ret= _etcupdate_to_current_dir=
 	local _files= _etcupdate_to_dir= _etcupdate_from_dir=
 	local _to_remove= _file_num= _file_list=
 
@@ -267,11 +266,11 @@ etcupdate_update()
 	# we need RW place for log? redefine log path and use nullfs in RO?
 	[ ! -d ${etcupdate_jail_root}/current ] && ${CP_CMD} -a ${_etcupdate_from_dir}/current ${etcupdate_jail_root}
 
-	for i in ${etcupdate_exclude_path}; do
+	for _i in ${etcupdate_exclude_path}; do
 		if [ -z "${_exclude_args}" ]; then
-			_exclude_args="-I ${i}"
+			_exclude_args="-I ${_i}"
 		else
-			_exclude_args="${_exclude_args} -I ${i}"
+			_exclude_args="${_exclude_args} -I ${_i}"
 		fi
 	done
 
@@ -279,32 +278,32 @@ etcupdate_update()
 	if [ -n "${etcupdate_create_backup}" -a "${etcupdate_create_backup}" != "0" ]; then
 		_etcupdate_from_dir="${srcdir}/src_${ver}/etcupdate"
 		# create backup by index file
-		_back_time=$( ${DATE_CMD} "+%Y%m%d%H%M%S" )
+		capture _back_time ${DATE_CMD} "+%Y%m%d%H%M%S"
 		_back_dir="${etcupdate_jail_root}/backup/${_back_time}"
 		[ ! -d ${_back_dir} ] && ${MKDIR_CMD} -p ${_back_dir}
 		# generate index file for copy-binlib
-		_tmp_filelist=$( ${MKTEMP_CMD} )
-		${FIND_CMD} ${_etcupdate_to_current_dir} -mindepth 1 -type f | while read line; do
-			[ -z "${line}" ] && continue
-			p2=${line##*${_etcupdate_to_current_dir}}
-			[ -z "${p2}" ] && continue
-			echo "${p2}" >> ${_tmp_filelist}
+		capture _tmp_filelist ${MKTEMP_CMD}
+		${FIND_CMD} ${_etcupdate_to_current_dir} -mindepth 1 -type f | while read _line; do
+			[ -z "${_line}" ] && continue
+			_p2=${_line##*${_etcupdate_to_current_dir}}
+			[ -z "${_p2}" ] && continue
+			${ECHO} "${_p2}" >> ${_tmp_filelist}
 		done
 		${XZ_CMD} ${_tmp_filelist}
 		copy-binlib filelist=${_tmp_filelist}.xz dstdir=${_back_dir} basedir=${path} 2>/dev/null
 		${RM_CMD} ${_tmp_filelist}.xz
 		cd ${etcupdate_jail_root}/backup
-		nice -n 19 ${IDLE_IONICE} ${TAR_CMD} cfz ${_back_time}.tgz ${_back_time}
+		${NICE_CMD} -n 19 ${IDLE_IONICE} ${TAR_CMD} cfz ${_back_time}.tgz ${_back_time}
 		${ECHO} "${N1_COLOR}${CIX_APP}: created backup: ${N2_COLOR}${_back_dir}.tgz${N0_COLOR}"
 		# rotate
-		_file_list=$( ${FIND_CMD} ${etcupdate_jail_root}/backup -mindepth 1 -maxdepth 1 -name \*.tgz -type f -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} -n | ${XARGS_CMD} )
-		_file_num=$( echo ${_file_list} | ${WC_CMD} -w | ${AWK_CMD} '{printf $1}' )
-
+		_file_list=$( ${FIND_CMD} ${etcupdate_jail_root}/backup -mindepth 1 -maxdepth 1 -name \*.tgz -type f -exec ${BASENAME_CMD} {} \; | ${SORT_CMD} -n )
+		_file_num=0
+		for _i in ${_file_list}; do _file_num=$(( _file_num + 1 )); done
 		if [ ${_file_num} -gt ${etcupdate_create_backup} ]; then
 			_to_remove=$(( _file_num - etcupdate_create_backup ))
-			for i in ${_file_list}; do
-				${ECHO} "  ${N1_COLOR}${CIX_APP}: prune old backup (max ${etcupdate_create_backup}): ${N2_COLOR}${i}${N0_COLOR}"
-				${RM_CMD} ${etcupdate_jail_root}/backup/${i}
+			for _i in ${_file_list}; do
+				${ECHO} "  ${N1_COLOR}${CIX_APP}: prune old backup (max ${etcupdate_create_backup}): ${N2_COLOR}${_i}${N0_COLOR}"
+				${RM_CMD} ${etcupdate_jail_root}/backup/${_i}
 				_to_remove=$(( _to_remove - 1 ))
 				[ ${_to_remove} -eq 0 ] && break
 			done
@@ -313,21 +312,18 @@ etcupdate_update()
 
 	[ ${baserw} -eq 1 ] && path="${data}"		# baserw has a different root
 
-	echo "[debug]: ${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}" 1>&2
-	/bin/sh <<EOF
-${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
-EOF
+	${ETCUPDATE_CMD} -d ${etcupdate_jail_root} -t ${_etcupdate_to_dir}/etcupdate.tgz -D ${path} ${_exclude_args} ${extra_etcupdate_flags}
 	_ret=$?
 
 	if [ ${_ret} -ne 0 ]; then
 		if [ -d ${etcupdate_jail_root}/conflicts ]; then
-			_files=$( ${FIND_CMD} ${etcupdate_jail_root}/conflicts -mindepth 1 -type f | while read a; do
-				p2=${a##*${etcupdate_jail_root}/conflicts}
-				[ -z "${p2}" ] && continue
-				echo "  * ${p2}"
+			_files=$( ${FIND_CMD} ${etcupdate_jail_root}/conflicts -mindepth 1 -type f | while read _a; do
+				_p2=${_a##*${etcupdate_jail_root}/conflicts}
+				[ -z "${_p2}" ] && continue
+				${ECHO} "  * ${_p2}"
 			done )
 			${ECHO} "${W1_COLOR}${CIX_APP} warning${N1_COLOR}: confict files:${N0_COLOR}"
-			echo "${_files}"
+			${ECHO} "${_files}"
 			${ECHO} "${N1_COLOR}${CIX_APP} please run: ${N2_COLOR}cbsd etcupdate mode=resolve jname=${jname}${N1_COLOR} to run etcupdate resolve${N0_COLOR}"
 			${ECHO} "${N1_COLOR}${CIX_APP}: use ${N2_COLOR}EDITOR=${N1_COLOR} environment variable to use favorite editor${N0_COLOR}"
 		fi
@@ -338,7 +334,7 @@ EOF
 
 etcupdate_diff()
 {
-	local _ret=
+	local _ret= _etcupdate_from_dir=
 
 	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}Please set jset: ${N2_COLOR}jname${N0_COLOR}"
 
@@ -355,7 +351,7 @@ etcupdate_diff()
 
 etcupdate_resolve()
 {
-	local _ret=
+	local _ret= _etcupdate_from_dir=
 
 	[ -z "${jname}" ] && log_err 1 "${N1_COLOR}Please set jset: ${N2_COLOR}jname${N0_COLOR}"
 

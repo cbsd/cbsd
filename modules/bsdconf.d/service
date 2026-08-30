@@ -1,8 +1,8 @@
 #!/usr/bin/env cbsd
 #v12.0.4
 CBSDMODULE="jail,sys"
-MYARG="mode"
-MYOPTARG="arch baseonly jname service ver"
+CIXARG="mode"
+CIXOPTARG="arch baseonly jname service ver"
 MYDESC="CBSD service wrapper"
 ADDHELP="\
 
@@ -13,13 +13,13 @@ ${H3_COLOR}Description${N0_COLOR}:
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}jname=${N0_COLOR}     - work in with jail. Also can be path to basejail.
- ${N2_COLOR}mode=${N0_COLOR}      - work mode, "list" or "action":
+ ${N2_COLOR}mode=${N0_COLOR}      - work mode, 'list' or 'action':
               - list   - to show service list but apply IGNORE_SERVICES list
                          from srvbrowser.conf file;
               - action - passthru command to service, e.g:
                 'stop', 'start', 'onestop', 'onestart', 'status', 'enable', 'disable';
- ${N2_COLOR}baseonly=${N0_COLOR}  - when 1, show services only from FreeBSD 
-                    distribition (use basejail dir).
+ ${N2_COLOR}baseonly=${N0_COLOR}  - when 1, show services only from FreeBSD
+                    distribution (use basejail dir).
  ${N2_COLOR}service=${N0_COLOR}   - specify service name for mode=action.
 
 ${H3_COLOR}Examples${N0_COLOR}:
@@ -35,14 +35,13 @@ ${H3_COLOR}See also${N0_COLOR}:
 
 "
 
-EXTHELP="modules/bsdconf.d"
-
 . ${subrdir}/nc.subr
 unset jname baseonly arch ver service
 cbsd_api=0
 jname=
 ojname=
 . ${cbsdinit}
+cixinit
 
 [ -n "${jname}" ] && ojname="${jname}"
 
@@ -68,8 +67,6 @@ srv_list()
 	done
 }
 
-# -n "name of the tools" - show <name> in Info string, e.g: -n jexec, -n "pkg install" ...
-# -o uniq_name_of_the_task (one world)
 service_multi_init()
 {
 	local _jname
@@ -90,10 +87,9 @@ service_multi_init()
 	task_id=
 	task_id_cur=
 	task_owner="${task_owner}"
-	# spawn command for all jail
 	for _jname in ${jail_list}; do
 		task_id_cur=$( task mode=new logfile=${tmpdir}/${task_owner}.${_jname}.log.$$ client_id=${_jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd service jname=${_jname} ${cmd} 2>/dev/null )
-		sleep 0.1               # dont brute taskdb
+		sleep 0.1
 		if is_number "${task_id_cur}"; then
 			task_id="${task_id} ${task_id_cur}"
 		fi
@@ -104,21 +100,15 @@ service_multi_init()
 	multiple_processing_spawn -o ${task_owner} -n "${_multiple_consumer_name}"
 }
 
-#defines
-_MYDIR=$( ${DIRNAME_CMD} `${REALPATH_CMD} $0` )
-SERVICE="service"
-
 # MAIN
-emulator="jail" # for jname_is_multiple
+emulator="jail"
 
 if [ -n "${ojname}" ]; then
-	# inherit jname env
 	jname="${ojname}"
 fi
 
 # jname can be as path, detect it:
-prefix=$( substr --pos=0 --len=1 --str=${jname} )
-if [ "${prefix}" = "/" ]; then
+if [ "${jname%"${jname#?}"}" = "/" ]; then
 	[ ! -r ${jname}/bin/sh ] && err 1 "${N1_COLOR}${CIX_APP}: file hier not found: ${N2_COLOR}${jname}${N0_COLOR}"
 	jname_as_path=1
 else
@@ -175,19 +165,12 @@ fi
 
 # MAIN for multiple jails
 if [ -n "${jail_list}" ]; then
-	# multiple
-	if [ -n "${jail_list}" ]; then
-		JLIST="${jail_list}"
-	fi
-
+	JLIST="${jail_list}"
 	task_owner="service_multiple_query"
 	_args=
 
-	# trim for jname= in "$*"
 	for i in $*; do
-		prefix=
-		prefix=$( substr --pos=0 --len=6 --str="${i}" )
-		[ "${prefix}" = "jname=" ] && continue
+		[ "${i%%=*}" = "jname" ] && continue
 		if [ -n "${_args}" ]; then
 			_args="${_args} ${i}"
 		else
@@ -211,24 +194,11 @@ fi
 
 cmd=
 
-# trim for jname=, service=, mode= and action= in "$*"
 for i in $*; do
-	prefix5=
-	prefix6=
-	prefix8=
-	prefix9=
-
-	prefix5=$( substr --pos=0 --len=5 --str="${i}" )
-	[ "${prefix5}" = "mode=" ] && continue
-
-	prefix6=$( substr --pos=0 --len=6 --str="${i}" )
-	[ "${prefix6}" = "jname=" ] && continue
-
-	prefix8=$( substr --pos=0 --len=8 --str="${i}" )
-	[ "${prefix8}" = "service=" ] && continue
-
-	prefix9=$( substr --pos=0 --len=9 --str="${i}" )
-	[ "${prefix9}" = "baseonly=" ] && continue
+	[ "${i%%=*}" = "mode" ] && continue
+	[ "${i%%=*}" = "jname" ] && continue
+	[ "${i%%=*}" = "service" ] && continue
+	[ "${i%%=*}" = "baseonly" ] && continue
 
 	if [ -n "${cmd}" ]; then
 		cmd="${cmd} ${i}"
@@ -238,7 +208,7 @@ for i in $*; do
 done
 
 if [ ${cbsd_api} -eq 1 ]; then
-	CURL_CMD=$( which curl )
+	capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
@@ -252,16 +222,12 @@ if [ ${cbsd_api} -eq 1 ]; then
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
-		if [ "${_ssh_pref}" != "ssh" ]; then
+		if [ "${_ssh%"${_ssh#???}"}" != "ssh" ]; then
 			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
-		#echo "${SSH_CMD} ${_ssh_post}"
-		# rewrite
+		_ssh_post=${_ssh#?????}
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
@@ -298,7 +264,6 @@ else
 	[ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && err 1 "Jail is offline"
 	[ ! -d "${data}/etc" ] && err 1 "${N1_COLOR}No such etc dir: ${N2_COLOR}${data}/etc${N0_COLOR}"
-#	permit any action, e.g: configtest ?
 	[ ${baserw} -eq 1 ] && path=${data}
 	exec_cmd="jexec jname=${jname} ${SERVICE_CMD}"
 fi

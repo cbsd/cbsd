@@ -93,7 +93,6 @@ if [ -z "${jail_list}" ]; then
 	if [ ${cbsd_api} -eq 0 ]; then
 		# todo: multiple bexec via all_bhyve_list?
 		[ -z "${jname}" ] && err 1 "${N1_COLOR}${CIX_APP}: give me jname${N0_COLOR}"
-		#shift  # todo: jname and cmd may have reverse order
 	fi
 fi
 
@@ -165,7 +164,7 @@ _global_ret=0
 
 [ -n "${odir}" ] && dir="${odir}"
 if [ -z "${cmd}" ]; then
-	batchfile=$( ${MKTEMP_CMD} )
+	capture batchfile ${MKTEMP_CMD}
 	# todo: test/chec for stdin/blocked
 	# shellcheck disable=2162
 	while read _line; do
@@ -224,7 +223,7 @@ if [ -n "${jail_list}" ]; then
 		task_id="${task_id} ${task_id_cur}"
 	done
 
-	multiple_task_id_all=$( echo ${task_id} | ${TR_CMD} " " "," )
+	capture multiple_task_id_all ${TR_CMD} " " "," <<< "${task_id}"
 	sleep 1
 	multiple_processing_spawn -o ${task_owner} -n "jexec"
 	echo
@@ -235,13 +234,13 @@ if [ ${cbsd_api} -eq 1 ]; then
 	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 	# restore scope in jname=XXX specified
 	[ -n "${ojname}" ] && all_jail_list="${ojname}"
 
 	for jname in ${all_jail_list}; do
-		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
+		capture _ssh ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
 			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error1: ${N2_COLOR}${_ssh}${N0_COLOR}"
@@ -261,20 +260,16 @@ if [ ${cbsd_api} -eq 1 ]; then
 		fi
 		capture _ssh_len strlen "${_ssh_string}"
 		capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
-		#echo "${SSH_CMD} ${_ssh_post}"
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
 			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
-			else
-				date
 			fi
 		fi
 		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-		echo "[jexec debug]: ${jexec_cmd}"
 		${jexec_cmd} <<CBSD_EOF
 ${cmd}
 CBSD_EOF
@@ -290,7 +285,7 @@ else
 	. ${subrdir}/rctl.subr
 	[ -z "${nice}" ] && nice="0"
 
-	 _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
+	_formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
 	[ -r "${_formfile}" ] && capture nice cbsdsqlro ${_formfile} "SELECT cur FROM forms WHERE param='nice'"
 	[ -z "${nice}" ] && nice="0"
 
@@ -310,13 +305,13 @@ else
 
 	# is linux?
 	if [ -f "${path}/bin/bash" ]; then
-		OSNAME=$( ${miscdir}/elf_tables --osname ${path}/bin/bash )
+		capture OSNAME ${miscdir}/elf_tables --osname ${path}/bin/bash
 		LOGIN_STR="/bin/bash"
 	elif [ -f "${path}/bin/sh" ]; then
-		OSNAME=$( ${miscdir}/elf_tables --osname ${path}/bin/sh )
+		capture OSNAME ${miscdir}/elf_tables --osname ${path}/bin/sh
 		LOGIN_STR="/bin/sh"
 	elif [ -f ${path}/bin/busybox ]; then
-		OSNAME=$( ${miscdir}/elf_tables --osname ${path}/bin/busybox )
+		capture OSNAME ${miscdir}/elf_tables --osname ${path}/bin/busybox
 		LOGIN_STR="/bin/sh"
 	else
 		err 1 "${N1_COLOR}Unknown environment, unable to jexec: ${path}${N0_COLOR}"
@@ -348,7 +343,6 @@ else
 	if [ -x "${jailsysdir}/${jname}/cmd/${first_cmd}" ]; then
 		. ${subrdir}/jcreate.subr		# for export_jail_data_for_external_hook
 		export_jail_data_for_external_hook
-		echo "[debug] external command: ${first_cmd}" 1>&2
 		exec ${jailsysdir}/${jname}/cmd/${cmd}
 	fi
 
@@ -369,9 +363,6 @@ else
 			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} /bin/sh -c "${cmd}"
 			ret=$?
 		else
-			# old behavior
-			#exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} /bin/sh -c "${cmd}"
-			# with exec
 			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env ${jname} ${user} ${dir} ${shell} "${cmd}"
 			ret=$?
 		fi

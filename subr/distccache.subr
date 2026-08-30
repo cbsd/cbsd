@@ -12,14 +12,14 @@ _CBSD_DISTCCACHE_SUBR=1
 distcc_check() {
 	local _res
 
-	_res=$( which distcc )
+	capture _res which distcc
 	if [ $? -ne 0 ]; then
-		echo "no distcc in system"
+		${ECHO} "no distcc in system"
 		return 1
 	fi
 
 	if [ -z "${CBSD_DISTCCHOST}" ]; then
-		echo "no CBSD_DISTCCHOST environment"
+		${ECHO} "no CBSD_DISTCCHOST environment"
 		return 2
 	fi
 
@@ -34,7 +34,7 @@ distcc_check() {
 ccache_check() {
 	local _res
 
-	_res=$( which ccache )
+	capture _res which ccache
 	if [ $? -ne 0 ]; then
 		${ECHO} "${N1_COLOR}No ccache in system, ccache disabled${N0_COLOR}"
 		return 1
@@ -46,23 +46,25 @@ ccache_check() {
 
 # export in maxjobs summary num of cores
 distcc_detect_cpu() {
-	local i
+	local _i _NUM
 
 	case "${platform}" in
 			Linux)
-				maxjobs=$(  ${GREP_CMD} -E "^vendor_id" /proc/cpuinfo | ${WC_CMD} -l )
+				maxjobs=$( ${GREP_CMD} -E "^vendor_id" /proc/cpuinfo | ${WC_CMD} -l )
 				;;
 			*)
-				maxjobs=$( ${SYSCTL_CMD} -n hw.ncpu )
+				capture maxjobs ${SYSCTL_CMD} -n hw.ncpu
 				;;
 	esac
 
-	for i in $CBSD_DISTCCHOST; do
-		if [ $( echo $i |grep "/" ) ]; then
-			NUM=$( echo $i | ${TR_CMD} "/," " "| ${AWK_CMD} '{printf $2}' )
-			[ -z "${NUM}" ] && NUM="${maxjobs}"
-		fi
-		maxjobs=$((maxjobs + NUM))
+	for _i in ${CBSD_DISTCCHOST}; do
+		case "${_i}" in
+			*/*)
+				_NUM=$( ${ECHO} "${_i}" | ${TR_CMD} "/," " " | ${AWK_CMD} '{printf $2}' )
+				[ -z "${_NUM}" ] && _NUM="${maxjobs}"
+				;;
+		esac
+		maxjobs=$((maxjobs + _NUM))
 	done
 
 	export maxjobs
@@ -73,15 +75,15 @@ distcc_detect_cpu() {
 #when get only one arg, generate file from empty
 prepare_make_conf()
 {
-	local    src=$1
+	local _src=$1
 	shift
-	local    dst=$1
+	local _dst=$1
 
-	[ -z "${src}" ] && return 0
-	[ -z "${dst}" ] && dst=${src}
+	[ -z "${_src}" ] && return 0
+	[ -z "${_dst}" ] && _dst=${_src}
 
-	${TRUNCATE_CMD} -s0 ${dst}
-	[ -r "${src}" ] && /bin/cp -a ${src} ${dst}
+	${TRUNCATE_CMD} -s0 "${_dst}"
+	[ -r "${_src}" ] && ${CP_CMD} -a "${_src}" "${_dst}"
 
 	[ "${ccache}" = "0" -a "${distcc}" = "0" ] && return 0
 
@@ -89,31 +91,31 @@ prepare_make_conf()
 
 	#set +o errexit
 	: ${CC="cc"}
-	COMPILER_VERSION=$( ${CC} --version )
-	echo $COMPILER_VERSION |grep gcc > /dev/null 2>&1
-	[ $? -eq 0 ] && COMPILER_TYPE="gcc"
+	capture COMPILER_VERSION ${CC} --version
+	case "${COMPILER_VERSION}" in
+		*gcc*) COMPILER_TYPE="gcc" ;;
+	esac
+	case "${COMPILER_VERSION}" in
+		*clang*) COMPILER_TYPE="clang" ;;
+	esac
 
-	echo $COMPILER_VERSION |grep clang > /dev/null 2>&1
-	[ $? -eq 0 ] && COMPILER_TYPE="clang"
-	set -o errexit
-
-	if [ $distcc -eq 1 ]; then
+	if [ "${distcc}" -eq 1 ]; then
 		PKGSRC_COMPILER="distcc"
 		distcc_detect_cpu
 
-		cat >> $dst <<EOF
+		${CAT_CMD} >> "${_dst}" <<EOF
 .if !defined(NO_DISTCC)
 DISTCC_HOSTS="${CBSD_DISTCCHOST}"
 PATH="/sbin:/bin:/usr/sbin:/usr/bin:/usr/games:/usr/local/sbin:/usr/local/bin"
 CCACHE_PREFIX="/usr/local/bin/distcc"
 EOF
 
-		[ $ccache -eq 0 ] && ${CAT_CMD} >> $dst << EOF
+		[ "${ccache}" -eq 0 ] && ${CAT_CMD} >> "${_dst}" << EOF
 CC:=/usr/local/bin/distcc
 CXX:=/usr/local/bin/distcc
 EOF
 
-		cat >> $dst <<EOF
+		${CAT_CMD} >> "${_dst}" <<EOF
 MAKE_JOBS_NUMBER=${maxjobs}
 MAKE_ARGS+=-j${maxjobs}
 #.MAKEFLAGS+= -j${maxjobs}
@@ -122,9 +124,9 @@ MFLAGS+= -j${maxjobs}
 EOF
 	fi
 
-	if [ $ccache -eq 1 ]; then
+	if [ "${ccache}" -eq 1 ]; then
 		PKGSRC_COMPILER="ccache"
-		cat >> $dst <<EOF
+		${CAT_CMD} >> "${_dst}" <<EOF
 WITH_CCACHE_BUILD=yes
 .if (!empty(.CURDIR:M/usr/src*) || !empty(.CURDIR:M/usr/obj*))
 .if !defined(NOCCACHE) && exists(/usr/local/libexec/ccache/world/cc)
@@ -143,22 +145,22 @@ CFLAGS+=        -Qunused-arguments
 EOF
 	fi
 
-	[ -n "${PKGSRC_COMPILER}" ] && ${CAT_CMD} >> $dst <<EOF
+	[ -n "${PKGSRC_COMPILER}" ] && ${CAT_CMD} >> "${_dst}" <<EOF
 PKGSRC_COMPILER="${PKGSRC_COMPILER}"
 EOF
 
-	cat >> $dst << EOF
+	${CAT_CMD} >> "${_dst}" << EOF
 COMPILER_TYPE=$COMPILER_TYPE
 EOF
 
 
-	if [ $distcc -eq 1 -a $ccache -eq 1 ]; then
+	if [ "${distcc}" -eq 1 -a "${ccache}" -eq 1 ]; then
 		export CCACHE_PREFIX="distcc"
 		export DISTCC_HOSTS="${CBSD_DISTCCHOST}"
 	fi
 
 	## append for override from template conf if src is set
-	[ "$dst" != "$src" ] && ${CAT_CMD} $src >> $dst
+	[ "${_dst}" != "${_src}" ] && ${CAT_CMD} "${_src}" >> "${_dst}"
 
 	return 0
 }
@@ -168,7 +170,7 @@ init_ccache_dir()
 	[ -z "${ccache_dir_prefix}" ] && ccache_dir_prefix="ccache"
 	ccache_dir_source="${dbdir}/ccache/${ccache_dir_prefix}-${arch}-${ver}-${stable}"
 	${ECHO} "${N1_COLOR}Init ccache directory: ${N2_COLOR}${ccache_dir_source}${N1_COLOR}...${N0_COLOR}"
-	[ ! -d "${ccache_dir_source}" ] && /bin/mkdir -p ${ccache_dir_source}
+	[ ! -d "${ccache_dir_source}" ] && ${MKDIR_CMD} -p "${ccache_dir_source}"
 
 	export ccache_dir_source="${ccache_dir_source}"
 }

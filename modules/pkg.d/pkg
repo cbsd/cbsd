@@ -1,5 +1,5 @@
 #!/usr/bin/env cbsd
-#v11.2.0
+#v11.2.1
 CBSDMODULE="jail"
 CIXARG="mode"
 CIXOPTARG="jname pkglist name repodir pkgconf chroot nomount cbsd_pkg_verbose cbsd_pkg_retry cbsd_pkg_interrupt_on_error cbsd_pkg_bootstrap_interrupt_on_error"
@@ -48,14 +48,13 @@ EXTHELP="modules/pkg.d"
 
 . ${subrdir}/nc.subr
 . ${tools}
-cloud_api=0
 cixinit
 
 # store values from args to overwrite config
 [ -n "${cbsd_pkg_retry}" ] && ocbsd_pkg_retry="${cbsd_pkg_retry}"
 [ -n "${cbsd_pkg_interrupt_on_error}" ] && ocbsd_pkg_interrupt_on_error="${cbsd_pkg_interrupt_on_error}"
 [ -n "${cbsd_pkg_bootstrap_interrupt_on_error}" ] && ocbsd_pkg_bootstrap_interrupt_on_error="${cbsd_pkg_bootstrap_interrupt_on_error}"
-[ -n "${cbsd_pkg_verbose}" ] && ocbsd_pkg_verbose="${cbsd_pkg_verbose=0}"
+[ -n "${cbsd_pkg_verbose}" ] && ocbsd_pkg_verbose="${cbsd_pkg_verbose}"
 
 . ${system}
 #defines
@@ -73,7 +72,7 @@ readconf pkg.conf
 [ -z "${PKG_SUFX}" ] && export PKG_SUFX=pkg
 
 # init defaults when pkg.conf is absent
-# see: ${CIX_DISTDIR}/modules/pkg.d/etc-sample/pkg.conf for detauls
+# see: ${CIX_DISTDIR}/modules/pkg.d/etc-sample/pkg.conf for details
 [ -z "${cbsd_pkg_retry}" ] && cbsd_pkg_retry=2
 [ -z "${cbsd_pkg_interrupt_on_error}" ] && cbsd_pkg_interrupt_on_error=1
 [ -z "${cbsd_pkg_bootstrap_interrupt_on_error}" ] && cbsd_pkg_bootstrap_interrupt_on_error=0
@@ -83,14 +82,9 @@ readconf pkg.conf
 [ -n "${ocbsd_pkg_retry}" ] && cbsd_pkg_retry="${ocbsd_pkg_retry}"
 [ -n "${ocbsd_pkg_interrupt_on_error}" ] && cbsd_pkg_interrupt_on_error="${ocbsd_pkg_interrupt_on_error}"
 [ -n "${ocbsd_pkg_bootstrap_interrupt_on_error}" ] && cbsd_pkg_bootstrap_interrupt_on_error="${ocbsd_pkg_bootstrap_interrupt_on_error}"
-[ -n "${ocbsd_pkg_verbose}" ] && cbsd_pkg_verbose="${ocbsd_pkg_verbose=0}"
+[ -n "${ocbsd_pkg_verbose}" ] && cbsd_pkg_verbose="${ocbsd_pkg_verbose}"
 
-if [ -n "${nomount}" ]; then
-	shift
-	nomount=${nomount}
-else
-	nomount=0
-fi
+nomount=${nomount:-0}
 
 PKGARGS=""
 TRAP=""
@@ -105,7 +99,7 @@ fi
 # check for cloud function when CBSDfile exist
 Makefile="${CIX_PWD}/CBSDfile"
 if [ -r "${Makefile}" -a "${CBSDFILE_RECURSIVE}" != "1" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 	. ${Makefile}
 	all_jail_list=$( ${GREP_CMD} -E '^jail_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#jail_##g )
 
@@ -132,49 +126,38 @@ fi
 if [ ${cbsd_api} -eq 1 ]; then
 	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
 	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 	for _jname in ${all_jail_list}; do
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl status error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+			echo "${N1_COLOR}${CIX_APP} error: curl status error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
 			continue
 		fi
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh}" )
-		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
-			continue
-		fi
-		_ssh_len=$( strlen "${_ssh}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh}" )
-		#echo "${SSH_CMD} ${_ssh_post}"
+		case "${_ssh}" in
+			ssh\ *)
+				_ssh_post=${_ssh#ssh }
+				;;
+			*)
+				echo "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+				;;
+		esac
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
 			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
-			else
-				date
 			fi
 		fi
 
-		_args=
-
-		# trim for jname= in "$*"
-		for i in ${CIX_OTHER_ARGS}; do
-			if [ -n "${_args}" ]; then
-				_args="${_args} ${i}"
-			else
-				_args="${i}"
-			fi
-		done
+		_args="${CIX_OTHER_ARGS}"
 
 		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
-		echo "[debug] ${jexec_cmd}"
 
 		case "${mode}" in
 			clean)
@@ -198,7 +181,7 @@ EOF
 					fi
 				;;
 			install)
-					${ECHO} "${N1_COLOR}pkg install, attempt: ${N2_COLOR}${_i}/${cbsd_pkg_retry}${N0_COLOR}"
+					echo "${N1_COLOR}pkg install, attempt: ${N2_COLOR}${_i}/${cbsd_pkg_retry}${N0_COLOR}"
 					${jexec_cmd} /bin/sh <<EOF
 ${ENV_CMD} SIGNATURE_TYPE=none ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -g -U -y ${_args}
 EOF
@@ -217,11 +200,6 @@ EOF
 				echo "CBSDfile/API unsupported yet: ${mode}"
 				;;
 		esac
-
-
-#	${jexec_cmd} <<CBSD_EOF
-#${cmd}
-#CBSD_EOF
 	done
 	exit 0
 fi
@@ -261,7 +239,7 @@ pkg_multi_init()
 	[ -z "${task_owner}" ] && err 1 "${N1_COLOR}multiple_processing_spawn: empty -o multiple_task_owner${N0_COLOR}"
 
 	. ${subrdir}/multiple.subr
-	${ECHO} "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
+	echo "${N1_COLOR}Hint: Press ${N2_COLOR}'Ctrl+t'${N1_COLOR} to see last logfile line for active task${N0_COLOR}" 1>&2
 	task_id=
 	task_id_cur=
 	# spawn command for all jail
@@ -279,21 +257,12 @@ pkg_multi_init()
 
 # MAIN for multiple jails
 if [ -n "${jail_list}" ]; then
-	# multiple jailsastart always non interactive
+	# multiple jails always non interactive
 	if [ -n "${jail_list}" ]; then
 		JLIST="${jail_list}"
 	fi
 
-	_args=
-
-	# trim for jname= in "$*"
-	for i in ${CIX_OTHER_ARGS}; do
-		if [ -n "${_args}" ]; then
-			_args="${_args} ${i}"
-		else
-			_args="${i}"
-		fi
-	done
+	_args="${CIX_OTHER_ARGS}"
 
 	case "${mode}" in
 		clean)
@@ -377,20 +346,11 @@ if [ -n "${jname}" ]; then
 	fi
 
 	PKG_PRE="${CHROOT_EXEC}"
-	shift
 else
 	path=
 fi
 
-# trim special args
-_args=
-for i in ${CIX_OTHER_ARGS}; do
-	if [ -n "${_args}" ]; then
-		_args="${_args} ${i}"
-	else
-		_args="${i}"
-	fi
-done
+_args="${CIX_OTHER_ARGS}"
 
 if [ -n "${pkglist}" ]; then
 	[ ! -s "${pkglist}" ] && err 1 "${N1_COLOR}No such file or file is empty: ${N2_COLOR}${pkglist}${N0_COLOR}"

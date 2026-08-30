@@ -173,7 +173,7 @@ start_xen()
 				. ${subrdir}/zfs.subr
 
 				if is_getzvol ${_myfile}; then
-					_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					capture _ebytes ${ZFS_CMD} get -Hp -o value volsize ${is_zvol}
 					_cloud_source_is_zvol=1
 					_cloud_source_zvol="${is_zvol}"
 				else
@@ -182,27 +182,27 @@ start_xen()
 
 					case "${platform}" in
 						Linux)
-							_ebytes=$( ${STAT_CMD} --printf="%s" ${_myfile} 2>/dev/null )
+							capture _ebytes ${STAT_CMD} --printf="%s" ${_myfile}
 							;;
 						*)
-							_ebytes=$( ${STAT_CMD} -f "%z" ${_myfile} 2>/dev/null )
+							capture _ebytes ${STAT_CMD} -f "%z" ${_myfile}
 							;;
 					esac
 				fi
 
 				# store original disk size to restore them after replace by cloud image
 				if is_getzvol ${data}/dsk1.vhd; then
-					_dsk_ebytes=$( ${ZFS_CMD} get -Hp -o value volsize ${is_zvol} )
+					capture _dsk_ebytes ${ZFS_CMD} get -Hp -o value volsize ${is_zvol}
 					_dsk_source_zvol="${is_zvol}"
 					_cloud_truncate=0
 				else
 
 					case "${platform}" in
 						Linux)
-							_dsk_ebytes=$( ${STAT_CMD} --printf="%s" ${data}/dsk1.vhd 2>/dev/null )
+							capture _dsk_ebytes ${STAT_CMD} --printf="%s" ${data}/dsk1.vhd
 							;;
 						*)
-							_dsk_ebytes=$( ${STAT_CMD} -f "%z" ${data}/dsk1.vhd 2>/dev/null )
+							capture _dsk_ebytes ${STAT_CMD} -f "%z" ${data}/dsk1.vhd
 							;;
 					esac
 
@@ -235,7 +235,6 @@ start_xen()
 					${ECHO} "${N1_COLOR}Clone cloud image into first/system vm disk (zfs clone method)${N0_COLOR}"
 					# to generic clonedata ?
 						_cloud_snapshot_name="${_cloud_source_zvol}@boot-${jname}"
-						echo "${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name}"
 						${ZFS_CMD} get -Ht snapshot userrefs ${_cloud_snapshot_name} > /dev/null 2>&1
 						_ret=$?
 						if [ ${_ret} -eq 1 ]; then
@@ -256,7 +255,7 @@ start_xen()
 							err 1 "${N1_COLOR}snapshot already exist ${_cloud_snapshot_name}${N0_COLOR}"
 						fi
 				fi
-				echo "Eject cloud source: media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}"
+				[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}Eject cloud source: ${N2_COLOR}media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}${N0_COLOR}"
 				media mode=detach name=${_orig_vm_iso_path} path=${_myfile} type=iso jname=${jname}
 			else
 				manage_boot_by_empty_hdd
@@ -501,91 +500,18 @@ EOF
 		xl_cmd="${XL_CMD} -vvv create -c ${XENCFG}"
 	fi
 
-	${XL_CMD} create -n -p /usr/jails/jails-system/freebsd1/xen.cfg > /var/log/xen/qemu-dm-${jname}.log 2>&1
+	${XL_CMD} create -n -p ${XENCFG} > /var/log/xen/qemu-dm-${jname}.log 2>&1
 	_ret=$?
 	if [ ${_ret} -ne 0 ]; then
-		${ECHO} "syntax check failed: ${XL_CMD} create -n -p /usr/jails/jails-system/freebsd1/xen.cfg"
+		${ECHO} "syntax check failed: ${XL_CMD} create -n -p ${XENCFG}"
 		err ${_ret} "see: /var/log/xen/qemu-dm-${jname}.log"
 	fi
 
-	echo "[debug]: $xl_cmd"
 	${TMUX_CMD} -2 new -d -s "cbsd-${jname}" "eval ${xl_cmd}"
 
 	if [ -d /var/log/xen ]; then
 		[ -r /var/log/xen/qemu-dm-${jname}.log ] && ${RM_CMD} /var/log/xen/qemu-dm-${jname}.log
 	fi
-
-	exit 0
-
-	case "${debug_engine}" in
-		gdb)
-			if [ -x /usr/local/bin/gdb ]; then
-				gdb_cmd="/usr/local/bin/gdb"
-			elif [ -x /usr/libexec/gdb ]; then
-				gdb_cmd="/usr/libexec/gdb"
-			elif [ -x /usr/bin/gdb ]; then
-				gdb_cmd="/usr/bin/gdb"
-			fi
-			# break while loop
-			echo
-			echo "Warning"
-			echo "Run xl throuch GDB. Please execute 'run' to launch XEN instance"
-			echo
-			echo "${gdb_cmd} -batch --args ${xl_cmd}"
-			env cbsd_workdir="${workdir}" ${gdb_cmd} -ex run --args ${xl_cmd}
-			;;
-		lldb)
-			echo
-			echo "Warning"
-			echo "Run xl throuch LLDB. Please execute 'run' to launch XEN instance"
-			echo
-			echo "/usr/bin/lldb -- ${xl_cmd}"
-			env cbsd_workdir="${workdir}" /usr/bin/lldb -- ${xl_cmd}
-			bhyve_exit=$?
-			${RM_CMD} -f ${tmpdir}/cmds.$$
-			;;
-		*)
-			env cbsd_workdir="${workdir}" ${TMUX_CMD} -2 -u new -d -s "cbsd-${jname}" "${xl_cmd}"
-			;;
-	esac
-
-	[ -n "${dsk_bootable}" ] && ${ECHO} "${N1_COLOR}Boot device: ${N2_COLOR}${dsk_bootable}${N0_COLOR}"
-	printf "${N1_COLOR}Waiting for PID"
-	sync
-	sleep 2
-
-	for ((i=1; i<=10; i++)); do
-		_state=$( ${XL_CMD} list ${jname} > /dev/null 2>&1 )
-		if [ $? -eq 0 ]; then
-				sleep 1
-				printf "."
-		else
-				if [ -r /var/log/xen/qemu-dm-${jname}.log ]; then
-					echo
-					${ECHO} "${N1_COLOR}content of ${N2_COLOR}/var/log/xen/qemu-dm-${jname}.log${N1_COLOR}:${N0_COLOR}"
-					${CAT_CMD} /var/log/xen/qemu-dm-${jname}.log
-				fi
-				break
-		fi
-	done
-
-	[ -z "${vm_pid}" ] && vm_pid="0"
-
-	echo
-
-	external_exec_master_script "master_poststart.d"
-
-	# CBSD QUEUE
-	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
-		[ -n "${cbsd_xen_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_xen_queue_name} id=${jname} cmd=bstart status=2 data_status=1 workdir="${workdir}" emulator=${emulator}
-	fi
-
-	${ECHO} "${N1_COLOR}PID: ${N2_COLOR}${vm_pid}${N0_COLOR}"
-	# update state_time
-	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET state_time=(strftime('%s','now'))"
-
-	# update state_time, local SQLite for back compatible
-	cbsdsqlrw local "UPDATE jails SET state_time=(strftime('%s','now')) WHERE jname='${jname}'; UPDATE jails SET jid='${vm_pid}' WHERE jname='${jname}'"
 
 	exit 0
 }
@@ -607,19 +533,19 @@ if [ $# -gt 1 -a -z "${jname}" -o -n "${jail_list}" ]; then
 	export inter=0
 	# recursive
 	if [ -n "${jail_list}" ]; then
-		JLIST="${jail_list}"
+		jlist="${jail_list}"
 	else
-		JLIST=$*
+		jlist=$*
 	fi
 
-	for jname in ${JLIST}; do
+	for jname in ${jlist}; do
 		[ "${jname}" = "inter=0" ] && continue
 		TRAP="${TRAP} ${RM_CMD} -f ${ftmpdir}/xstart.${jname}.$$;"
 		trap "${TRAP}" HUP INT ABRT BUS TERM EXIT
 		env NOINTER=1 /usr/local/bin/cbsd xstart inter=${inter} jname=${jname}
 		#lets save .pid file
 		sleep 1
-		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && cbsd_pwait --pid=$( ${CAT_CMD} ${ftmpdir}/xstart.${jname}.$$ ) --timeout=${parallel}
+		[ -f "${ftmpdir}/xstart.${jname}.$$" ] && { capture _cat_pid ${CAT_CMD} ${ftmpdir}/xstart.${jname}.$$; cbsd_pwait --pid=${_cat_pid} --timeout=${parallel}; }
 		trap "" HUP INT ABRT BUS TERM EXIT
 		# Artificial delay to create a sequence (for order compliance)
 		# todo: determine VM complete starting
@@ -637,7 +563,6 @@ fi
 init_xen
 init_systap
 
-gettime st_time
 . ${subrdir}/time.subr
 gettime st_time
 [ -z "${jname}" ] && jname=${1}
@@ -701,7 +626,7 @@ else
 
 		readconf zfs.conf
 		. ${subrdir}/zfs.subr
-		DATA=$( ${ZFS_CMD} get -Ho value name ${jaildatadir} 2>/dev/null )
+		capture DATA ${ZFS_CMD} get -Ho value name ${jaildatadir}
 
 		if [ -n "${DATA}" ]; then
 

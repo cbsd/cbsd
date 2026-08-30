@@ -1,7 +1,7 @@
 #!/usr/bin/env cbsd
 #v10.0.4
 CBSDMODULE="jail"
-MYARG="jname"
+CIXARG="jname"
 
 . ${subrdir}/nc.subr
 
@@ -10,11 +10,30 @@ MYARG="jname"
 
 MYOPTARG="$JARG mode"
 MYDESC="Create ascii rc.conf for jail"
-ADDHELP="mode=force for modification on the running jail\n"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+Create ascii rc.conf for jail.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}mode=${N0_COLOR} - set 'force' for modification on the running jail;
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd jmkrcconf jname=myjail
+ # cbsd jmkrcconf jname=myjail mode=force
+
+${H3_COLOR}See also${N0_COLOR}:
+
+  cbsd jconfig --help
+  cbsd jset --help
+
+"
 
 . ${tools}
 . ${strings}
-. ${cbsdinit}
+cixinit
 
 . ${subrdir}/rcconf.subr
 [ $? -eq 1 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
@@ -27,7 +46,7 @@ relative_path="1";
 EOF
 
 for i in ${JARG}; do
-	VAL=$( cbsdsqlro local "SELECT ${i} FROM jails WHERE jname='${jname}'" )
+	capture VAL cbsdsqlro local "SELECT ${i} FROM jails WHERE jname='${jname}'"
 	[ -z "${VAL}" ] && continue
 	[ "${VAL}" = "(null)" -o -z "${VAL}" ] && VAL=""
 	echo "${i}=\"${VAL}\";"
@@ -38,7 +57,7 @@ if [ "${emulator}" = "bhyve" ]; then
 	. ${distsharedir}/bhyve.conf
 	for i in ${MYCOL}; do
 		[ "${i}" = "jname" ] && continue
-		VAL=$( cbsdsqlro local "SELECT ${i} FROM bhyve WHERE jname='${jname}'" )
+		capture VAL cbsdsqlro local "SELECT ${i} FROM bhyve WHERE jname='${jname}'"
 		[ "${VAL}" = "(null)" -o -z "${VAL}" ] && VAL=""
 		echo "${i}=\"${VAL}\";"
 	done
@@ -46,29 +65,31 @@ if [ "${emulator}" = "bhyve" ]; then
 	sqldelimer=" "
 
 	# DSK area
-	for last_disk in $( seq 1 16 ); do
+	capture _dsk_list ${SEQ_CMD} 1 16
+	for last_disk in ${_dsk_list}; do
 		unset dsk_controller${last_disk}
 	done
 
 	dsk_id=1
-
-	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT dsk_controller,dsk_path,dsk_slot,dsk_type FROM bhyvedsk WHERE jname=\"${jname}\" | while read dsk_controller dsk_path dsk_slot dsk_type; do
+	capture _dsk_rows cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT dsk_controller,dsk_path,dsk_slot,dsk_type FROM bhyvedsk WHERE jname='${jname}'"
+	while read dsk_controller dsk_path dsk_slot dsk_type; do
 		[ -z "${dsk_type}" ] && continue
 		echo "dsk_controller${dsk_id}=\"${dsk_controller}\";"
 		echo "dsk_path${dsk_id}=\"${dsk_path}\";"
 		echo "dsk_slot${dsk_id}=\"${dsk_slot}\";"
 		echo "dsk_type${dsk_id}=\"${dsk_type}\";"
 		dsk_id=$(( dsk_id + 1 ))
-	done || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+	done <<< "${_dsk_rows}" || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
 
 	# NIC area
-	for last_nic in $( seq 1 16 ); do
-		unset nic_driver${last_disk}
+	capture _nic_list ${SEQ_CMD} 1 16
+	for last_nic in ${_nic_list}; do
+		unset nic_driver${last_nic}
 	done
 
 	nic_id=1
-
-	cbsdsqlro ${jailsysdir}/${jname}/local.sqlite SELECT nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname=\"${jname}\" | while read nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
+	capture _nic_rows cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr FROM bhyvenic WHERE jname='${jname}'"
+	while read nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr; do
 		[ -z "${nic_hwaddr}" ] && continue
 		echo "nic_order${nic_id}=\"${nic_order}\";"
 		echo "nic_driver${nic_id}=\"${nic_driver}\";"
@@ -77,7 +98,7 @@ if [ "${emulator}" = "bhyve" ]; then
 		echo "nic_parent${nic_id}=\"${nic_parent}\";"
 		echo "nic_hwaddr${nic_id}=\"${nic_hwaddr}\";"
 		nic_id=$(( nic_id + 1 ))
-	done || err 1 "${N1_COLOR}Error while create nic map${N0_COLOR}"
+	done <<< "${_nic_rows}" || err 1 "${N1_COLOR}Error while create nic map${N0_COLOR}"
 fi
 
 #finally set jname

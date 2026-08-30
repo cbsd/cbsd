@@ -1,13 +1,33 @@
 #!/usr/bin/env cbsd
 #v11.0.0
 CBSDMODULE="node"
-MYARG=""
-MYOPTARG="node remote tryroot"
+CIXARG=""
+CIXOPTARG="node remote tryroot"
 MYDESC="Login to remote node and/or exec command"
-ADDHELP="remote=1 - prevent to searching in remote node base. For the avoid the looping\n\
-use: cbsd node <node> date - to execute date cmd on <node> host\n\
-tryroot=1 - user rootkey and root user instead of cbsd\n"
 EXTHELP="wf_nlogin"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Login to a remote CBSD node and/or execute a command on it.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}node=${N0_COLOR}     - target node. If omitted, interactive selection.
+ ${N2_COLOR}remote=${N0_COLOR}   - set to 1 to skip remote node base search (prevent looping).
+ ${N2_COLOR}tryroot=${N0_COLOR}  - set to 1 to use root key and root user instead of cbsd.
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd nlogin node=mynode
+ # cbsd nlogin node=mynode tryroot=1
+ # cbsd nlogin node=mynode date
+ # cbsd nlogin node=mynode 'df -h'
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd nodeaddkey --help
+
+"
 
 . ${subrdir}/nc.subr
 
@@ -16,12 +36,12 @@ _tryroot="${tryroot}"
 unset tryroot
 
 . ${cbsdinit}
+cixinit
 
 . ${strings}
 . ${nodes}
 
-# must be first
-[ -n "${tryroot}" ] && _tryroot="${tryroot}" && shift
+[ -n "${tryroot}" ] && _tryroot="${tryroot}"
 [ -n "${_tryroot}" ] && tryroot="${_tryroot}"
 [ -z "${tryroot}" ] && tryroot=0
 
@@ -29,16 +49,15 @@ unset tryroot
 [ -z "${node}" ] && select_node_by_list -s "List of online nodes:" -a "0"
 [ -z "${node}" ] && err 1 "${N1_COLOR}Empty node${N0_COLOR}"
 
-shift
-CMD="$@"
+CMD="${@}"
 
-NODEDATA=$( cbsdsqlro nodes SELECT ip,port,keyfile,rootkeyfile FROM nodelist WHERE nodename=\"${node}\" )
+capture NODEDATA cbsdsqlro nodes "SELECT ip,port,keyfile,rootkeyfile FROM nodelist WHERE nodename=\"${node}\""
 
 [ -z "${NODEDATA}" ] && err 1 "${node}: No such node in base"
 
 sqllist "${NODEDATA}" myip myport mykey rootkeyfile
 
-if [ ${tryroot} -eq 1 -a -f ${rootkeyfile} ]; then
+if [ ${tryroot} -eq 1 -a -f "${rootkeyfile}" ]; then
 	mykey="${rootkeyfile}"
 	cbsduser="root"
 fi
@@ -55,23 +74,25 @@ case ${_ret} in
 		;;
 	*)
 		err 1 "${N1_COLOR}nodeaddkey: unknown IP type: ${N2_COLOR}${myip}${N0_COLOR}"
-	;;
+		;;
 esac
 
-SSHOP="${proto} -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${cbsduser}@${myip}"
+SSHOPT="${proto} -oBatchMode=yes -oStrictHostKeyChecking=no -oConnectTimeout=5 -q -oPort=${myport} -i ${mykey} ${cbsduser}@${myip}"
 
-[ -z "$SSHOP" -o -z "${myip}" ] && err 1 "${N1_COLOR}No such node ${N2_COLOR}${node}${N1_COLOR} in database or have no ip/scpopt${N0_COLOR}"
+[ -z "${SSHOPT}" -o -z "${myip}" ] && err 1 "${N1_COLOR}No such node ${N2_COLOR}${node}${N1_COLOR} in database or have no ip/scpopt${N0_COLOR}"
 
 if [ -n "${CMD}" ]; then
 	if [ ${tryroot} -eq 1 ]; then
-		${SSH_CMD} ${SSHOP} -C \"${CMD}\"
+		${SSH_CMD} ${SSHOPT} -C \"${CMD}\"
 	else
-		${SUDO_CMD} -u ${cbsduser} ${SSH_CMD} ${SSHOP} -C "${CMD}"
+		${SUDO_CMD} -u ${cbsduser} ${SSH_CMD} ${SSHOPT} -C "${CMD}"
 	fi
 else
 	if [ ${tryroot} -eq 1 ]; then
-		${SSH_CMD} ${SSHOP}
+		${SSH_CMD} ${SSHOPT}
 	else
-		${SUDO_CMD} -u ${cbsduser} ${SSH_CMD} ${SSHOP}
+		${SUDO_CMD} -u ${cbsduser} ${SSH_CMD} ${SSHOPT}
 	fi
 fi
+
+exit 0

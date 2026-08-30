@@ -247,7 +247,6 @@ really_create_vm()
 
 	# do not create disk
 	[ "${imgtype}" = "none" ] && return 0
-	#_res=$( substr --pos=0 --len=5 --str=${imgtype} )
 	capture _res substr --pos=0 --len=5 --str="${imgtype}"
 	if [ "${_res}" = "/dev/" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: imgtype = raw: ${imgtype}
@@ -284,14 +283,14 @@ really_create_vm()
 			1)
 				. ${subrdir}/zfs.subr
 				zfsmnt ${data}
-				[ $? -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
+				_ret=$?
+				[ ${_ret} -eq 2 ] && ${ZFS_CMD} mount "${ZPOOL}"
 				;;
 		esac
 
 		updateconf ${jconf_tmp} ver="${ver}"
 		${MV_CMD} /tmp/${jname}.$$.img ${data}/${defdsk}
 	else
-		#_msg=$( virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype} 2>&1 )
 		capture _msg virtual_create_dsk -p ${data}/${defdsk} -s ${imgsize} -f 1 -t ${imgtype}
 		_res=$?
 		if [ ${_res} -ne 0 ]; then
@@ -303,63 +302,59 @@ really_create_vm()
 
 apply_flavor()
 {
-	unset oimgsize imgsize ovm_ram vm_ram ovm_cpus vm_cpus
-	capture flavors_available cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages ORDER BY name"
-	flavor_exist=0
-	for i in ${flavors_available}; do
-		[ "${flavor}" = "${i}" ] && flavor_exist=1 && break
+	local _flavors_available= _flavor_exist= _i _res= _ovm_cpus= _ovm_ram= _oimgsize=
+
+	unset imgsize vm_ram vm_cpus
+	capture _flavors_available cbsdsqlro ${dbdir}/local.sqlite "SELECT name FROM vmpackages ORDER BY name"
+	_flavor_exist=0
+	for _i in ${_flavors_available}; do
+		[ "${flavor}" = "${_i}" ] && _flavor_exist=1 && break
 	done
 
-	[ ${flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${flavors_available}${N0_COLOR}"
+	[ ${_flavor_exist} -eq 0 ] && log_err 1 "${N1_COLOR}${CIX_APP}: no such flavor [${flavor}], available flavors: ${N2_COLOR}${_flavors_available}${N0_COLOR}"
 
 	capture _res cbsdsqlro ${dbdir}/local.sqlite "SELECT pkg_vm_cpus,pkg_vm_ram,pkg_vm_disk FROM vmpackages WHERE name='${flavor}' LIMIT 1"
- 
+
 	[ -z "${_res}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get vm_cpus/vm_ram/imgsize for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
 	sqllistdelimer="|"
-	sqllist "${_res}" ovm_cpus ovm_ram oimgsize
+	sqllist "${_res}" _ovm_cpus _ovm_ram _oimgsize
 	unset sqllistdelimer
 	${ECHO} "${N1_COLOR}${CIX_APP}: flavor ${flavor} -> vm_cpus/vm_ram/imgsize: ${N2_COLOR}[${_res}]${N0_COLOR}"
 
-	[ -z "${ovm_ram}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'vm_ram' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
-	[ -z "${oimgsize}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'imgsize' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
-	[ -z "${ovm_cpus}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'vm_cpus' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${_ovm_ram}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'vm_ram' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${_oimgsize}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'imgsize' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
+	[ -z "${_ovm_cpus}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: unable to get 'vm_cpus' for flavor: ${N2_COLOR}${flavor}${N0_COLOR}"
 
-	vm_ram="${ovm_ram}"
-	imgsize="${oimgsize}"
-	vm_cpus="${ovm_cpus}"
-
-	unset flavor oflavor flavor_exist flavors_available _res
+	vm_ram="${_ovm_ram}"
+	imgsize="${_oimgsize}"
+	vm_cpus="${_ovm_cpus}"
 }
 
 imgsize_validate()
 {
-	# imgsize validate
+	local _imgsize_min_bytes= _imgsize_min_human_mb= _imgsize_bytes= _imgsize_human_mb=
+
 	if [ -n "${imgsize_min}" -a -n "${imgsize}" ]; then
 		if is_number "${imgsize_min}"; then
-			imgsize_min_bytes="${imgsize_min}"
+			_imgsize_min_bytes="${imgsize_min}"
 		else
-			capture imgsize_min_bytes ${miscdir}/conv2human "${imgsize_min}"
+			capture _imgsize_min_bytes ${miscdir}/conv2human "${imgsize_min}"
 		fi
 
-		[ -z "${imgsize_min_bytes}" -o "${imgsize_min_bytes}" = "0" ] && err 1 "${N1_COLOR}${CIX_APP}: unable to convert imgsize to bytes: ${N2_COLOR}${imgsize_min}${N0_COLOR}"
+		[ -z "${_imgsize_min_bytes}" -o "${_imgsize_min_bytes}" = "0" ] && err 1 "${N1_COLOR}${CIX_APP}: unable to convert imgsize to bytes: ${N2_COLOR}${imgsize_min}${N0_COLOR}"
 
-		imgsize_min_human_mb=$(( imgsize_min_bytes / 1024 / 1024 ))
+		_imgsize_min_human_mb=$(( _imgsize_min_bytes / 1024 / 1024 ))
 
 		if is_number "${imgsize}"; then
-			imgsize_bytes="${imgsize}"
+			_imgsize_bytes="${imgsize}"
 		else
-			capture imgsize_bytes ${miscdir}/conv2human "${imgsize}"
+			capture _imgsize_bytes ${miscdir}/conv2human "${imgsize}"
 		fi
 
-		imgsize_human_mb=$(( imgsize_bytes / 1024 / 1024 ))
+		_imgsize_human_mb=$(( _imgsize_bytes / 1024 / 1024 ))
 
-		if [ ${imgsize_bytes} -lt ${imgsize_min_bytes} ]; then
-			# not fatal?
-	#		if [ "${zfsfeat}" = "1" ]; then
-	#			${ZFS_CMD} destroy ${DATA}/${jname}
-	#		fi
-	#		err 1 "${N1_COLOR}imgsize too small: ${N2_COLOR}${imgsize_bytes} ( ${imgsize_human_mb}mb ) < ${imgsize_min_bytes} ( ${imgsize_min_human_mb}mb )${N0_COLOR}"
-			${ECHO} "${W1_COLOR}imgsize too small: ${N2_COLOR}${imgsize_bytes} ( ${imgsize_human_mb}mb ) < ${imgsize_min_bytes} ( ${imgsize_min_human_mb}mb )${N0_COLOR}"
+		if [ ${_imgsize_bytes} -lt ${_imgsize_min_bytes} ]; then
+			${ECHO} "${W1_COLOR}imgsize too small: ${N2_COLOR}${_imgsize_bytes} ( ${_imgsize_human_mb}mb ) < ${_imgsize_min_bytes} ( ${_imgsize_min_human_mb}mb )${N0_COLOR}"
 		fi
 	fi
 }
@@ -367,28 +362,30 @@ imgsize_validate()
 # vm_ram validate
 vm_ram_validate()
 {
+	local _vm_ram_min_bytes= _vm_ram_min_human_mb= _vm_ram_bytes= _vm_ram_human_mb=
+
 	if [ -n "${vm_ram_min}" -a -n "${vm_ram}" ]; then
 		if is_number "${vm_ram_min}"; then
-			vm_ram_min_bytes="${vm_ram_min}"
+			_vm_ram_min_bytes="${vm_ram_min}"
 		else
-			capture vm_ram_min_bytes ${miscdir}/conv2human "${vm_ram_min}"
+			capture _vm_ram_min_bytes ${miscdir}/conv2human "${vm_ram_min}"
 		fi
 
-		vm_ram_min_human_mb=$(( vm_ram_min_bytes / 1024 / 1024 ))
+		_vm_ram_min_human_mb=$(( _vm_ram_min_bytes / 1024 / 1024 ))
 
 		if is_number "${vm_ram}"; then
-			vm_ram_bytes="${vm_ram}"
+			_vm_ram_bytes="${vm_ram}"
 		else
-			capture vm_ram_bytes ${miscdir}/conv2human "${vm_ram}"
+			capture _vm_ram_bytes ${miscdir}/conv2human "${vm_ram}"
 		fi
 
-		vm_ram_human_mb=$(( vm_ram_bytes / 1024 / 1024 ))
+		_vm_ram_human_mb=$(( _vm_ram_bytes / 1024 / 1024 ))
 
-		if [ ${vm_ram_bytes} -lt ${vm_ram_min_bytes} ]; then
+		if [ ${_vm_ram_bytes} -lt ${_vm_ram_min_bytes} ]; then
 			if [ "${zfsfeat}" = "1" ]; then
 				${ZFS_CMD} destroy ${DATA}/${jname}
 			fi
-			err 1 "${N1_COLOR}vm_ram too small: ${N2_COLOR}${vm_ram_bytes} ( ${vm_ram_human_mb}mb ) < ${vm_ram_min_bytes} ( ${vm_ram_min_human_mb}mb )${N0_COLOR}"
+			err 1 "${N1_COLOR}vm_ram too small: ${N2_COLOR}${_vm_ram_bytes} ( ${_vm_ram_human_mb}mb ) < ${_vm_ram_min_bytes} ( ${_vm_ram_min_human_mb}mb )${N0_COLOR}"
 		fi
 	fi
 }
@@ -411,14 +408,13 @@ copy_vars()
 
 set_rctl()
 {
-	# RCTL
+	local _val= _i=
 	. ${distsharedir}/rctl.conf
-	for i in ${RCTL} ${RCTL_EXTRA}; do
-	        _val=
-		eval _val="\$rctl_${i}"
+	for _i in ${RCTL} ${RCTL_EXTRA}; do
+		_val=
+		eval _val="\$rctl_${_i}"
 		[ -z "${_val}" ] && continue
-		#echo "INIT RCTL: jrctl jname=${jname} mode=set ${i}=${_val}"
-		${miscdir}/daemonize ${jailctldir}/jrctl jname=${jname} mode=set ${i}=${_val} > /dev/null 2>&1
+		${miscdir}/daemonize ${jailctldir}/jrctl jname=${jname} mode=set ${_i}=${_val} > /dev/null 2>&1
 	done
 }
 
@@ -597,7 +593,6 @@ if [ "${zfsfeat}" = "1" -a "${mnt_start}" = "0" ]; then
 	[ -z "${data}" ] && data="${jaildatadir}/${jname}-${jaildatapref}"
 	olddata="${data}"
 	data="${workdir}/vm/${jname}"
-	#updateconf ${temprcconf} data="${data}"
 	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} data=\"${data}\""
 	${LN_CMD} -sf ${data} ${olddata}
 	${LN_CMD} -sf ${data} ${jailsysdir}/${jname}
@@ -744,7 +739,6 @@ if [ -n "${lpc_temp_sql}" ]; then
 	# dump and import lpc table
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}${CIX_APP}: import lpc data from: ${N2_COLOR}${lpc_temp_sql} ${N1_COLOR}via${N2_COLOR} ${_tmp_table_file}${N1_COLOR} dump${N0_COLOR}"
 	# skip CREATE TABLE lpc: lpc already exist
-	#${SQLITE_CMD} "${lpc_temp_sql}" .dump | ${SQLITE_CMD} "${jailsysdir}/${jname}/local.sqlite"
 	cbsdsqlrw "${jailsysdir}/${jname}/local.sqlite" "DELETE FROM lpc"
 	${SQLITE3_CMD} "${lpc_temp_sql}" ".mode insert lpc" "SELECT * FROM lpc;" | ${SQLITE3_CMD} "${jailsysdir}/${jname}/local.sqlite"
 	${RM_CMD} -f ${lpc_temp_sql} ${lpc_temp_sql}-shm ${lpc_temp_sql}-wal
@@ -779,15 +773,11 @@ SYSRC_TEMPRCCONF=
 echo 1>&2
 if [ "${vm_zfs_guid}" != "0" ]; then
 	[ -z "${NOINTER}" ] && ${ECHO} "${N1_COLOR}Global VM ZFS guid: ${N2_COLOR}${vm_zfs_guid}${N0_COLOR}" 1>&2
-	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET vm_zfs_guid='${vm_zfs_guid}'"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET vm_zfs_guid='${vm_zfs_guid}'"
 fi
 if [ "${uuid}" = "0" ]; then
 	capture uuid ${UUIDGEN_CMD}
-	#[ -z "${NOINTER}" ] && ${ECHO} "${N1_COLOR}Global VM UUID: ${N2_COLOR}${uuid}${N0_COLOR}"
-	#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE settings SET uuid='${uuid}'"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET uuid='${uuid}'"
-	#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} uuid="${uuid}"
 	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} uuid=\"${uuid}\""
 fi
 
@@ -850,73 +840,39 @@ case "${imgtype}" in
 			#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( '${jname}','${virtio_type}','${defdsk}','0','${dsk_bsize}','${sectorsize}', '${dsk_zfs_guid}' )"
 			SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO bhyvedsk ( jname,dsk_controller,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( '${jname}','${virtio_type}','${defdsk}','0','${dsk_bsize}','${sectorsize}', '${dsk_zfs_guid}' )"
 		else
-			#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( '${jname}','${defdsk}','0','${dsk_bsize}','${sectorsize}','${dsk_zfs_guid}' )"
 			SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO bhyvedsk ( jname,dsk_path,dsk_slot,dsk_size,dsk_sectorsize,dsk_zfs_guid ) VALUES ( '${jname}','${defdsk}','0','${dsk_bsize}','${sectorsize}','${dsk_zfs_guid}' )"
 		fi
 
 		# mark the first disk bootable
-		#cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET bootable='true' WHERE dsk_path='${defdsk}'"
 		SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE bhyvedsk SET bootable='true' WHERE dsk_path='${defdsk}'"
 		;;
 esac
 
 if [ -n "${nic_driver}" ]; then
-	#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_driver,nic_parent ) VALUES ( '${jname}', '${nic_driver}', '${interface}' )"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO bhyvenic ( jname,nic_driver,nic_parent ) VALUES ( '${jname}', '${nic_driver}', '${interface}' )"
 else
-	#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( '${jname}', '${interface}' )"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( '${jname}', '${interface}' )"
 fi
 
 if [ -n "${nic_flags}" ]; then
-	#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_flags='${nic_flags}' WHERE nic_parent='${interface}'"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE bhyvenic SET nic_flags='${nic_flags}' WHERE nic_parent='${interface}'"
-	#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} nic_flags="${nic_flags}"
 	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} nic_flags=\"${nic_flags}\""
 fi
 
 if [ -n "${interface2}" -a "${interface2}" != "0" ]; then
-	#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( '${jname}', '${interface2}' )"
 	SQLITE_LOCAL="${SQLITE_LOCAL}; INSERT INTO bhyvenic ( jname,nic_parent ) VALUES ( '${jname}', '${interface2}' )"
 	if [ -n "${ci_interface_mtu2}" ]; then
-		#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_mtu='${ci_interface_mtu2}' WHERE nic_parent='${interface2}'"
 		SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE bhyvenic SET nic_mtu='${ci_interface_mtu2}' WHERE nic_parent='${interface2}'"
 	fi
-	#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} interface2="${interface2}"
 	SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} interface2=\"${interface2}\""
 	if [ -n "${nic2_flags}" ]; then
-		#${miscdir}/sqlcli ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_flags='${nic2_flags}' WHERE nic_parent='${interface2}'"
 		SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE bhyvenic SET nic_flags='${nic2_flags}' WHERE nic_parent='${interface2}'"
-		#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} nic_flags="${nic2_flags}"
 		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} nic_flags=\"${nic2_flags}\""
 	fi
 fi
 
 : "${nic_ratelimit:=0}"
 
-#if [ "${bhyve_have_net_ratelimit}" = "1" ]; then
-#	if [ "${nic_ratelimit}" != "0" ]; then
-#		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: nic_ratelimit for nic id 1: ${nic_ratelimit}
-#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_ratelimit='${nic_ratelimit}' WHERE id='1'"
-#		updateconf ${jailsysdir}/${jname}/rc.conf_${jname} nic_ratelimit="${nic_ratelimit}"
-#	fi
-#fi
-
-#[ -z "${dsk_iops_limit}" ] && dsk_iops_limit="0"
-#[ -z "${dsk_mbps_limit}" ] && dsk_mbps_limit="0"
-
-#if [ "${bhyve_have_dsk_ratelimit}" = "1" ]; then
-#	if [ "${dsk_iops_limit}" != "0" ]; then
-#		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: dsk_iops_limit for dsk ${defdsk}: ${dsk_iops_limit}
-#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_iops_limit='${dsk_iops_limit}' WHERE dsk_path='${defdsk}'"
-#		updateconf ${jailsysdir}/${jname}/rc.conf_${jname} dsk_iops_limit="${dsk_iops_limit}"
-#	fi
-#	if [ "${dsk_mbps_limit}" != "0" ]; then
-#		cbsdlogger NOTICE ${CIX_APP}: bcreate for ${jname}: dsk_mbps_limit for dsk ${defdsk}: ${dsk_mbps_limit}
-#		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvedsk SET dsk_mbps_limit='${dsk_mbps_limit}' WHERE dsk_path='${defdsk}'"
-#		updateconf ${jailsysdir}/${jname}/rc.conf_${jname} dsk_mbps_limit="${dsk_mbps_limit}"
-#	fi
-#fi
 
 # update state_time
 SQLITE_LOCAL="${SQLITE_LOCAL}; UPDATE settings SET state_time=(strftime('%s','now')); UPDATE settings SET created=(strftime('%s','now'))"
@@ -1013,14 +969,12 @@ if [ ${is_cloud} -eq 1 ]; then
 		ci_interface="${interface}"
 		updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface="${ci_interface}"
 	fi
-#	[ -z "${ci_jname}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_jname="${jname}"
-#	[ -z "${ci_fqdn}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_fqdn="${host_hostname}"
 
 	[ -z "${ci_jname}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_jname=\"${jname}\""
 	[ -z "${ci_fqdn}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_fqdn=\"${host_hostname}\""
 
 	if [ -z "${ci_ip4_addr}" ]; then
-		${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_ip4_addr not set. Force to: ${N2_COLOR}DHCP${N0_COLOR}" 2>&1
+		${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_ip4_addr not set. Force to: ${N2_COLOR}DHCP${N0_COLOR}" 1>&2
 		ci_ip4_addr="DHCP"
 	fi
 	if [ -z "${ci_gw4}" ]; then
@@ -1029,7 +983,7 @@ if [ ${is_cloud} -eq 1 ]; then
 				true
 				;;
 			*)
-				${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_gw4 not set. VM without gateway?${N0_COLOR}" 2>&1
+				${ECHO} "${W1_COLOR}warning: ${N1_COLOR}cloud-init based profile but ci_gw4 not set. VM without gateway?${N0_COLOR}" 1>&2
 				;;
 		esac
 	fi
@@ -1056,7 +1010,7 @@ if [ ${is_cloud} -eq 1 ]; then
 				_mod=1
 				;;
 			[Dd][Hh][Cc][Pp][vV]6)
-				capture dhcpdv6
+				capture _pureip dhcpdv6
 				if [ $? -eq 2 ]; then
 					cbsdlogger NOTICE ${CIX_APP}: no free IP address for DHCPv6 in nodeip6pool
 					err 1 "${N1_COLOR}${CIX_APP}: no free IP address for DHCPv6 in nodeip6pool${N0_COLOR}"
@@ -1160,13 +1114,10 @@ if [ ${is_cloud} -eq 1 ]; then
 		ip4_addr="${_ip4_addr}"
 		ci_ip4_addr="${normalize_ci_ip4_addr}"
 
-		#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ip4_addr="${ip4_addr}" ci_ip4_addr="${normalize_ci_ip4_addr}"
 		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ip4_addr=\"${ip4_addr}\" ci_ip4_addr=\"${normalize_ci_ip4_addr}\""
 		bset jname="${jname}" ip4_addr="${_ip4_addr}" ci_ip4_addr="${normalize_ci_ip4_addr}" quiet=1
-		# > /dev/null 2>&1
 	fi
 
-	#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_gw42="${ci_gw42}"
 	[ -n "${ci_gw42}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_gw42=\"${ci_gw42}\""
 
 	if [ -n "${ci_ip4_addr2}" ]; then
@@ -1190,10 +1141,8 @@ if [ ${is_cloud} -eq 1 ]; then
 
 		ip4_addr="${ip4_addr},${_ip4_addr}"
 
-		#updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ip4_addr="${ip4_addr}" ci_ip4_addr2="${ci_ip4_addr2}"
 		SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ip4_addr=\"${ip4_addr}\" ci_ip4_addr2=\"${ci_ip4_addr2}\""
 		bset jname="${jname}" ip4_addr="${ip4_addr}" quiet=1
-		# > /dev/null 2>&1
 		normalize_ip4_addr="${normalize_ip4_addr},${ci_ip4_addr2}"
 	fi
 
@@ -1202,19 +1151,6 @@ if [ ${is_cloud} -eq 1 ]; then
 	[ "${ci_interface2}" = "0" ] && unset ci_interface2
 	[ "${ci_ip4_addr2}" = "0" ] && unset ci_ip4_addr2
 	[ "${ci_gw4}" = "0" ] && unset ci_gw4
-
-	# loop + one shot sysrc
-#	[ -z "${ci_nameserver_address}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_address="${default_ci_nameserver_address}"
-#	[ -z "${ci_nameserver_search}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nameserver_search="${default_ci_nameserver_search}"
-#	[ -z "${ci_interface_name}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface_name="${default_ci_interface_name}"
-#	[ -z "${ci_user_pw_user}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_user="${ci_user_pw_user}"
-#	[ -z "${ci_user_pw_root}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}"
-#	[ -z "${ci_user_pw_root}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pw_root="${ci_user_pw_root}"
-#	[ -z "${ci_user_pubkey}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pubkey="${ci_user_pubkey}"
-#	[ -z "${ci_user_pubkey2}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_user_pubkey2="${ci_user_pubkey2}"
-#	[ -z "${ci_interface2}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_interface2="${ci_interface2}"
-#	[ -z "${ci_ip4_addr2}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_ip4_addr2="${ci_ip4_addr2}"
-#	[ -z "${ci_gw4}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_gw4=\"${ci_gw4}\""
 
 	[ -z "${ci_nameserver_address}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nameserver_address=\"${default_ci_nameserver_address}\""
 	[ -z "${ci_nameserver_search}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nameserver_search=\"${default_ci_nameserver_search}\""
@@ -1237,7 +1173,6 @@ if [ ${is_cloud} -eq 1 ]; then
 		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_hwaddr='${nic_hwaddr0}' WHERE id='1'"
 	fi
 
-#	[ -z "${ci_nic_hwaddr0}" ] && updateconf ${jailsysdir}/${jname}/rc.conf_${jname} ci_nic_hwaddr0="${nic_hwaddr0}"
 	[ -z "${ci_nic_hwaddr0}" ] && SYSRC_TEMPRCCONF="${SYSRC_TEMPRCCONF} ci_nic_hwaddr0=\"${nic_hwaddr0}\""
 
 	case "${vm_os_type}" in

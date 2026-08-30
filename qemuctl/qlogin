@@ -1,9 +1,8 @@
 #!/usr/bin/env cbsd
-#v13.0.1
-globalconf="${CIX_DISTDIR}/cbsd.conf";
-MYARG=""
-MYOPTARG="jname remote inter"
-MYDESC="Exec login into jail"
+#v13.0.2
+CIXARG=""
+CIXOPTARG="jname remote inter"
+MYDESC="Exec login into QEMU domain"
 ADDHELP="\
   If you are in the CBSDfile directory, these environments will always have priority\n\
 "
@@ -13,8 +12,7 @@ CBSDMODULE="qemu"
 . ${subrdir}/nc.subr
 . ${strings}
 . ${tools}
-cbsd_api=0
-. ${cbsdinit}
+cixinit
 
 try_remote()
 {
@@ -36,7 +34,7 @@ try_remote()
 
 	case "${login_cmd}" in
 		internal)
-			${ECHO} "${N1_COLOR}Exec qlogin internal on remote node: ${N2_COLOR}${RHST}${N0_COLOR}"
+			echo "${N1_COLOR}Exec qlogin internal on remote node: ${N2_COLOR}${RHST}${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: executing internal qlogin: rexe node=${RHST} /usr/local/bin/cbsd qlogin src_session=${nodename} jname=${jname} remote=1
 			rexe node=${RHST} /usr/local/bin/cbsd qlogin src_session=${nodename} jname=${jname} remote=1
 			;;
@@ -63,7 +61,7 @@ login_internal()
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -f "${jailsysdir}/${jname}/vnc_port" ]; then
 			echo " *** VM booted in VNC mode. ***"
-			${ECHO} "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
+			echo "${N1_COLOR}For attach VM console, use: ${N2_COLOR}vncviewer ${qemu_vnc_tcp_ipconnect}:${vm_port}${N0_COLOR}"
 			if ! getyesno "Do you want to attach into UEFI console anyway?"; then
 				exit 0
 			fi
@@ -91,7 +89,7 @@ login_custom()
 	# re-read custom
 	readconf qlogin.conf > /dev/null 2>&1
 
-	${ECHO} "${N1_COLOR}Custom login command: ${N2_COLOR}${login_cmd}${N0_COLOR}"
+	echo "${N1_COLOR}Custom login command: ${N2_COLOR}${login_cmd}${N0_COLOR}"
 	exec /bin/sh -c "${login_cmd}"
 	# restore CBSD PATH
 	export PATH="${CBSDPATH}"
@@ -136,7 +134,7 @@ jname_qlogin()
 # check for cloud function when CBSDfile exist
 Makefile="${CIX_PWD}/CBSDfile"
 if [ -r "${Makefile}" ]; then
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
 	. ${Makefile}
 
 	all_qemu_list=$( ${GREP_CMD} -E '^qemu_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#qemu_##g )
@@ -169,12 +167,12 @@ if [ -r "${Makefile}" ]; then
 			jname=
 			select_jail_by_list -s "List of online jails limited by CBSDfile scope [${all_qemu_list}]:" -l "${all_qemu_list}" -r 0 -e qls
 			if [ -n "${jname}" ]; then
-				${ECHO} "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+				echo "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 				jname_qlogin
 			fi
 		else
 			jname="${all_qemu_list}"
-			${ECHO} "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
+			echo "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}" 1>&2
 			jname_qlogin
 		fi
 		exit 0
@@ -184,59 +182,54 @@ else
 fi
 
 if [ ${cbsd_api} -eq 1 ]; then
-	CURL_CMD=$( which curl )
+	capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
-	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
-	_cid=$( ${miscdir}/cbsd_md5 "${CLOUD_KEY}" )
+	[ -z "${CBSDFILE_RECURSIVE}" ] && echo "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+	capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
 
 	for jname in ${all_qemu_list}; do
-		[ -z "${jname}" ] && return 1
+		[ -z "${jname}" ] && continue
 		_ssh=$( ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${jname} 2>&1 )
 		_ret=$?
 		if [ ${_ret} -ne 0 ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+			echo "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			continue
 		fi
 		_ssh_string=$( echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"' )
-		_ssh_pref=$( substr --pos=0 --len=3 --str="${_ssh_string}" )
-
-		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error2: ${N2_COLOR}${_ssh}${N0_COLOR}"
-			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
-			continue
-		fi
-
-		_ssh_len=$( strlen "${_ssh_string}" )
-		_ssh_post=$( substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}" )
-		#echo "${SSH_CMD} ${_ssh_post}"
+		case "${_ssh_string}" in
+			ssh\ *)
+				_ssh_post=${_ssh_string#ssh }
+				;;
+			*)
+				echo "${N1_COLOR}${CIX_APP} error: curl error2: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				echo "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
+				continue
+				;;
+		esac
 		_ssh_ip=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $1}' )
 		_ssh_port=$( echo ${_ssh_post} | ${AWK_CMD} '{printf $2}' | ${TR_CMD} -d '\-p' )
 
-		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
 			if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
 			elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
-			else
-				date
 			fi
 		fi
 		jexec_cmd="${SSH_CMD} -tt -oStrictHostKeyChecking=no -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
-		echo "[debug] exec: $jexec_cmd"
 		${jexec_cmd}
 	done
 	exit 0
 fi
 
-emulator="qemu"	# for jname_is_multiple
-jname_is_multiple	# import jail_list if jname is mask
+emulator="qemu"
+jname_is_multiple
 
 if [ -n "${jail_list}" ]; then
-	${ECHO} "${N1_COLOR}Found domains by mask: ${N2_COLOR}${jail_list}${N0_COLOR}"
+	echo "${N1_COLOR}Found domains by mask: ${N2_COLOR}${jail_list}${N0_COLOR}"
 	for jname in ${jail_list}; do
-		${ECHO} "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}"
+		echo "${N1_COLOR}exec qlogin to: ${N2_COLOR}${jname}${N0_COLOR}"
 		qlogin jname=${jname}
 	done
 	exit 0

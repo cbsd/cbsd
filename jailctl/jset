@@ -101,19 +101,20 @@ validate_ipaddr()
 
 	_i=0
 
-	eval $( cbsdsqlquery local "SELECT jname,ip4_addr FROM jails WHERE ip4_addr!='0' ${_vnet_clause}" | while read q; do
-		echo "jname${_i}=\"${q@.jname}\""
-		echo "ips${_i}=\"${q@.ip4_addr}\""
-		echo "_rec=\"${_i}\""
+	capture _ip_rows cbsdsqlquery local "SELECT jname,ip4_addr FROM jails WHERE ip4_addr!='0' ${_vnet_clause}"
+	while read q; do
+		eval "jname${_i}=\"${q@.jname}\""
+		eval "ips${_i}=\"${q@.ip4_addr}\""
+		_rec="${_i}"
 		_i=$(( _i + 1 ))
-	done )
+	done <<< "${_ip_rows}"
 
 	# Yes, we wrote in the example that the valid separator between NIC and address
 	# is '#' and not '|' as experienced jail.conf users can get used to.
 	# But we will still try to convert the input with '|' to correct form
 	strpos --str="${ip4_addr}" --search="|"
 	_pos=$?
-	 [ ${_pos} -ne 0 ] && ip4_addr=$( echo ${ip4_addr} | ${TR_CMD} '|' '#' )
+	 [ ${_pos} -ne 0 ] && capture ip4_addr ${TR_CMD} '|' '#' <<< "${ip4_addr}"
 
 	. ${subrdir}/vnet.subr	# for is_nic_exist
 	OIFS="${IFS}"
@@ -123,7 +124,7 @@ validate_ipaddr()
 		ipwmask ${_i}
 		[ -z "${IWM}" -o "${_i}" = "0" ] && continue
 
-		special_ips=$( is_special_ip ${_i} )
+		capture special_ips is_special_ip ${_i}
 		is_special=$?
 
 		if [ ${is_special} -eq 0 ]; then
@@ -158,7 +159,7 @@ validate_ipaddr()
 		eval _existing_ipjail="\$ips$_i"
 		[ -z "${_existing_ipjail}" ] && break
 
-		_existing_ipjail=$( echo ${_existing_ipjail} | ${TR_CMD} "," " " )
+		capture _existing_ipjail ${TR_CMD} "," " " <<< "${_existing_ipjail}"
 
 		for _x in ${_existing_ipjail}; do
 			case "${_x}" in
@@ -182,7 +183,7 @@ validate_ipaddr()
 		done
 
 		if [ ${_ok} -eq 0 ]; then
-			${ECHO} "${W1_COLOR}jset warning: ${N1_COLOR}IP address ${N2_COLOR}${_j}${N1_COLOR} already assigned to jail: ${N2_COLOR}${_jname}${N0_COLOR}"
+			echo "${W1_COLOR}jset warning: ${N1_COLOR}IP address ${N2_COLOR}${_j}${N1_COLOR} already assigned to jail: ${N2_COLOR}${_jname}${N0_COLOR}"
 		fi
 	done # check for local jail end
 }
@@ -194,7 +195,7 @@ modify_ipaddr()
 	local _A= _ip4_addr_old= _pureip= _inet= _face= _interface= _IP4= _IP6=
 	local _MODIF= _nIPs= IFS= _dhcp= _is_freebsd= _elftest=
 
-	_A=$( cbsdsqlro local "SELECT interface,ip4_addr,applytpl,vnet,baserw,data,host_hostname FROM jails WHERE jname='${jname}'" )
+	capture _A cbsdsqlro local "SELECT interface,ip4_addr,applytpl,vnet,baserw,data,host_hostname FROM jails WHERE jname='${jname}'"
 	sqllist "${_A}" _interface _ip4_addr_old applytpl vnet baserw data host_hostname
 
 	_is_freebsd=1
@@ -212,13 +213,13 @@ modify_ipaddr()
 	[ ${_is_freebsd} -ne 1 ] && empty=1
 
 	if [ "${_interface}" = "0" ]; then
-		${ECHO} "${argpart}: ${N1_COLOR}on-the-fly currently disabled because option interface is "0"${N0_COLOR}"
+		echo "${argpart}: ${N1_COLOR}on-the-fly currently disabled because option interface is "0"${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: modify_ipaddr: on-the-fly currently disabled because option interface is 0
 		return 0
 	fi
 
 	if [ "${empty}" = "1" ]; then
-		${ECHO} "${argpart}: ${N1_COLOR}on-the-fly disabled because jail option empty is "1"${N0_COLOR}"
+		echo "${argpart}: ${N1_COLOR}on-the-fly disabled because jail option empty is "1"${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: modify_ipaddr: on-the-fly disabled because jail option empty is 1
 		return 0
 	fi
@@ -237,7 +238,7 @@ modify_ipaddr()
 		if [ ${vnet} -eq 1 ]; then
 			_iface="eth0"
 		else
-			_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+			capture _iface getnics-by-ip ip=${_pureip} skip=bridge
 		fi
 		ipwmask ${_pureip}
 		if [ -n "${IWM}" -a "${IWM}" != "0" ]; then
@@ -250,7 +251,7 @@ modify_ipaddr()
 					;;
 			esac
 			IFS=" "
-			${ECHO} "${N1_COLOR}Remove old IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias${N0_COLOR}"
+			echo "${N1_COLOR}Remove old IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias${N0_COLOR}"
 			cbsdlogger NOTICE ${CIX_APP}: modify_ipaddr: remove old IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias
 			if [ ${vnet} -eq 1 ]; then
 				jexec jname=${jname} ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${IWM} -alias >/dev/null 2>/dev/null
@@ -275,7 +276,7 @@ modify_ipaddr()
 
 		case "${_pureip}" in
 			[Dd][Hh][Cc][Pp])
-				_dhcp=$( dhcpd )
+				capture _dhcp dhcpd
 				if [ $? -eq 2 ]; then
 					cbsdlogger WARNING ${CIX_APP}: modify_ipaddr: No free IP address for DHCP in nodeippool
 					err 1 "${N1_COLOR}No free IP address for DHCP in nodeippool${N0_COLOR}"
@@ -283,13 +284,14 @@ modify_ipaddr()
 				_pureip="${_dhcp}"
 				;;
 			[Dd][Hh][Cc][Pp][Vv][6])
-				_dhcp=$( dhcpdv6 )
+				capture _dhcp dhcpdv6
 				if [ $? -eq 2 ]; then
 					cbsdlogger WARNING ${CIX_APP}: modify_ipaddr: No free IPv6 address for DHCP in nodeippool
 					err 1 "${N1_COLOR}No free IPv6 address for DHCP in nodeippool${N0_COLOR}"
 				fi
 				# normalize IPv6 to compressed form
-				eval $( ${miscdir}/sipcalc ${_dhcp} )
+				capture _sipcalc_out ${miscdir}/sipcalc ${_dhcp}
+				eval "${_sipcalc_out}"
 				_dhcp="${_compressed_ipv6_address}"
 				_pureip="${_dhcp}"
 				;;
@@ -299,7 +301,7 @@ modify_ipaddr()
 		if [ ${vnet} -eq 1 ]; then
 			_iface="eth0"
 		else
-			_iface=$( getnics-by-ip ip=${_pureip} skip=bridge )
+			capture _iface getnics-by-ip ip=${_pureip} skip=bridge
 		fi
 
 		nomask=0
@@ -351,7 +353,7 @@ modify_ipaddr()
 			[ "${IWM}" != "0" ] && mkjhosts ips="${IWM}" file="${data}/etc/hosts" hosts="${host_hostname}"
 		fi
 		IFS=" "
-		${ECHO} "${N1_COLOR}Setup new IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias${N0_COLOR}"
+		echo "${N1_COLOR}Setup new IP: ${N2_COLOR}${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: modify_ipaddr: setup new IP: ${IFCONFIG_CMD} ${_iface} ${_MODIF} ${_pureip} alias
 		if [ ${vnet} -eq 1 ]; then
 
@@ -361,9 +363,11 @@ modify_ipaddr()
 				new_ifconfig_eth0="${_pureip}"
 			fi
 
-			eval $( ${GREP_CMD} ^${find_ifconfig}= ${data}/etc/rc.conf 2>/dev/null | ${HEAD_CMD} -n1 )
+			capture _grep_out ${GREP_CMD} ^${find_ifconfig}= ${data}/etc/rc.conf 2>/dev/null
+			capture _head_out ${HEAD_CMD} -n1 <<< "${_grep_out}"
+			eval "${_head_out}"
 			if [ -n "${ifconfig_eth0}" ]; then
-				${ECHO} "${N1_COLOR}adjust IP address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
+				echo "${N1_COLOR}adjust IP address for eth0: ${N2_COLOR}${ip4_addr}${N0_COLOR}" 1>&2
 				for _part in ${ifconfig_eth0}; do
 					[ "${_part}" = "inet" ] && continue
 					[ "${_part}" = "inet6" ] && continue
@@ -392,7 +396,7 @@ modify_ipaddr()
 
 	# replace old value by IP
 	if [ -n "${_dhcp}" ]; then
-		ip4_addr=$( echo ${ip4_addr} | ${SED_CMD} -e "s#DHCPv6#${_dhcp}#g" -e "s#DHCP#${_dhcp}#g" )
+		capture ip4_addr ${SED_CMD} -e "s#DHCPv6#${_dhcp}#g" -e "s#DHCP#${_dhcp}#g" <<< "${ip4_addr}"
 	fi
 
 	#construct ipX.addr string
@@ -410,7 +414,7 @@ modify_ipaddr()
 	fi
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${ip4_addr}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${ip4_addr}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${ip4_addr}${N0_COLOR}"
 
 	if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 		[ -n "${cbsd_jail_queue_name}" ] && ${cbsd_queue_backend} cbsd_queue_name=${cbsd_jail_queue_name} id="${jname}" cmd=update ip4_addr="${ip4_addr}" status=1
@@ -422,7 +426,7 @@ modify_allow_mount()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_mount}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount=${allow_mount} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_mount}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_mount}${N0_COLOR}"
 }
 
 # jid must be set
@@ -430,7 +434,7 @@ modify_allow_raw_sockets()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_raw_sockets}' WHERE jname='{jname}'"
 	${JAIL_CMD} -m allow.raw_sockets=${allow_raw_sockets} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_raw_sockets}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_raw_sockets}${N0_COLOR}"
 }
 
 # jid must be set
@@ -438,7 +442,7 @@ modify_allow_read_msgbuf()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_read_msgbuf}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.read_msgbuf=${allow_read_msgbuf} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_read_msgbuf}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_read_msgbuf}${N0_COLOR}"
 }
 
 # jid must be set
@@ -446,7 +450,7 @@ modify_allow_vmm()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_vmm}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.vmm=${allow_vmm} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_vmm}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_vmm}${N0_COLOR}"
 }
 
 # jid must be set
@@ -454,7 +458,7 @@ modify_allow_mlock()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_mlock}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mlock=${allow_mlock} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_mlock}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_mlock}${N0_COLOR}"
 }
 
 # jid must be set
@@ -462,7 +466,7 @@ modify_allow_nfsd()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_nfsd}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_nfsd=${allow_nfsd} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_nfsd}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_nfsd}${N0_COLOR}"
 }
 
 # jid must be set
@@ -470,49 +474,49 @@ modify_allow_reserved_ports()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_reserved_ports}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_reserved_ports=${allow_reserved_ports} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_reserved_ports}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_reserved_ports}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_unprivileged_proc_debug()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_unprivileged_proc_debug}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_unprivileged_proc_debug=${allow_unprivileged_proc_debug} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_unprivileged_proc_debug}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_unprivileged_proc_debug}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_suser()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_suser}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_suser=${allow_suser} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_suser}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_suser}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_extattr()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_extattr}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_extattr=${allow_extattr} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_extattr}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_extattr}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_adjtime()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_adjtime}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_adjtime=${allow_adjtime} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_adjtime}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_adjtime}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_settime()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_settime}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_settime=${allow_settime} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_settime}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_settime}${N0_COLOR}"
 }
 # jid must be set
 modify_allow_chflags()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_chflags}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow_chflags=${allow_chflags} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_chflags}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_chflags}${N0_COLOR}"
 }
 
 # jid must be set
@@ -520,7 +524,7 @@ modify_host_hostname()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${host_hostname}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m host.hostname=${host_hostname} jid=${jid}
-	${ECHO} "${argpart}: ${N1_COLOR}${host_hostname}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${host_hostname}${N0_COLOR}"
 	[ -r ${data}/etc/rc.d/hostname ] && jexec jname=${jname} /etc/rc.d/hostname restart
 }
 
@@ -528,7 +532,7 @@ modify_host_hostname()
 modify_jnameserver()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${jnameserver}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${jnameserver}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${jnameserver}${N0_COLOR}"
 	makeresolv jname=${jname} nameserver="${jnameserver}"
 }
 
@@ -541,15 +545,15 @@ modify_allow_nullfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_nullfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.nullfs=${allow_nullfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_nullfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_nullfs}${N0_COLOR}"
 	[ ${allow_nullfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -561,15 +565,15 @@ modify_allow_fusefs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_fusefs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.fusefs=${allow_fusefs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_fusefs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_fusefs}${N0_COLOR}"
 	[ ${allow_fusefs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -581,15 +585,15 @@ modify_allow_linprocfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_linprocfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.linprocfs=${allow_linprocfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_linprocfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_linprocfs}${N0_COLOR}"
 	[ ${allow_linprocfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_linprocfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -601,15 +605,15 @@ modify_allow_linsysfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_linsysfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.linsysfs=${allow_linsysfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_linsysfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_linsysfs}${N0_COLOR}"
 	[ ${allow_linsysfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_linsysfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -621,15 +625,15 @@ modify_allow_procfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_procfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.procfs=${allow_procfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_procfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_procfs}${N0_COLOR}"
 	[ ${allow_procfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -639,15 +643,15 @@ modify_allow_tmpfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_tmpfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.tmpfs=${allow_tmpfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_tmpfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_tmpfs}${N0_COLOR}"
 	[ ${allow_tmpfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_tmpfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -657,15 +661,15 @@ modify_allow_fdescfs()
 	cbsdsqlrw local "UPDATE jails SET ${i}='${allow_fdescfs}' WHERE jname='${jname}'"
 	${JAIL_CMD} -m allow.mount.fdescfs=${allow_fdescfs} jid=${jid}
 
-	${ECHO} "${argpart}: ${N1_COLOR}${allow_fdescfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${allow_fdescfs}${N0_COLOR}"
 	[ ${allow_fdescfs} -eq 0 ] && return 0
 
 	# we need to force allow_mount too when allow_fdescfs sets to 1 and allow_mount is zero
-	allow_mount=$( cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'" )
+	capture allow_mount cbsdsqlro local "SELECT allow_mount FROM jails WHERE jname='${jname}'"
 	if [ "${allow_mount}" = "0" ]; then
 		cbsdsqlrw local "UPDATE jails SET allow_mount='1' WHERE jname='${jname}'"
 		${JAIL_CMD} -m allow.mount=1 jid=${jid}
-		${ECHO} "allow_mount: ${N1_COLOR}1${N0_COLOR}"
+		echo "allow_mount: ${N1_COLOR}1${N0_COLOR}"
 	fi
 }
 
@@ -675,7 +679,7 @@ modify_nice()
 	local _formfile="${jailsysdir}/${jname}/helpers/jrctl.sqlite"
 
 	if [ ! -r ${_formfile} ]; then
-		${ECHO} "${N1_COLOR}No such rctl file: ${N2_COLOR}${_formfile}${N0_COLOR}"
+		echo "${N1_COLOR}No such rctl file: ${N2_COLOR}${_formfile}${N0_COLOR}"
 		return 1
 	fi
 
@@ -688,7 +692,7 @@ modify_nice()
 modify_cpuset()
 {
 	cbsdsqlrw local "UPDATE jails SET ${i}='${cpuset}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${cpuset}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${cpuset}${N0_COLOR}"
 	${CPUSET_CMD} -c -l ${cpuset} -j ${jid}
 }
 
@@ -707,13 +711,13 @@ modify_mount_src()
 	mount_src="${_mount_src}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_src}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_src}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_src}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	. ${subrdir}/universe.subr
 
 	init_srcdir
-	[ ! -d "${SRC_DIR}" ] && ${ECHO} "${N1_COLOR}No such src dir: ${N2_COLOR}${SRC_DIR}${N0_COLOR}"
+	[ ! -d "${SRC_DIR}" ] && echo "${N1_COLOR}No such src dir: ${N2_COLOR}${SRC_DIR}${N0_COLOR}"
 
 	[ ${baserw} -eq 1 ] && path="${data}"
 	_dst="${path}/usr/src"
@@ -746,7 +750,7 @@ modify_mount_ports()
 	mount_ports="${_mount_ports}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_ports}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_ports}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_ports}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -783,7 +787,7 @@ modify_mount_kernel()
 	mount_kernel="${_mount_kernel}"
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_kernel}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_kernel}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_kernel}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	. ${subrdir}/universe.subr
@@ -823,7 +827,7 @@ modify_mount_fdescfs()
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_fdescfs}' WHERE jname='${jname}'"
 
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_fdescfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_fdescfs}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -856,7 +860,7 @@ modify_mount_procfs()
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_procfs}' WHERE jname='${jname}'"
 
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_procfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_procfs}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -889,7 +893,7 @@ modify_mount_linsysfs()
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_linsysfs}' WHERE jname='${jname}'"
 
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_linsysfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_linsysfs}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -925,7 +929,7 @@ modify_mount_linprocfs()
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${mount_linprocfs}' WHERE jname='${jname}'"
 
-	${ECHO} "${argpart}: ${N1_COLOR}${mount_linprocfs}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${mount_linprocfs}${N0_COLOR}"
 	[ ${jid} -eq 0 ] && return 0
 
 	[ ${baserw} -eq 1 ] && path="${data}"
@@ -967,16 +971,16 @@ modify_sysdir_volume()
 		0)
 			# move from VOLUMES to default location
 			if [ ! -r "${_volsysdir}/local.sqlite" ]; then
-				${ECHO} "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to default location: no source dir: ${N2_COLOR}${_volsysdir}${N0_COLOR}" 1>&2
+				echo "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to default location: no source dir: ${N2_COLOR}${_volsysdir}${N0_COLOR}" 1>&2
 				return 1
 			fi
 			[ -h "${_sysdir}" ] && ${RM_CMD} "${_sysdir}"
 			[ ! -d "${_sysdir}" ] && ${MKDIR_CMD} -p "${_sysdir}"
-			${ECHO} "${N1_COLOR}${CIX_APP}: switch to default location: ${N2_COLOR}${_volsysdir} -> ${_sysdir}${N0_COLOR}" 1>&2
+			echo "${N1_COLOR}${CIX_APP}: switch to default location: ${N2_COLOR}${_volsysdir} -> ${_sysdir}${N0_COLOR}" 1>&2
 			${RSYNC_CMD} -avz ${_volsysdir}/ ${_sysdir}/
 			# re-check
 			if [ ! -r ${_sysdir}/local.sqlite ]; then
-				${ECHO} "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to default location: no local.sqlite: ${N2_COLOR}${_sysdir}/local.sqlite${N0_COLOR}" 1>&2
+				echo "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to default location: no local.sqlite: ${N2_COLOR}${_sysdir}/local.sqlite${N0_COLOR}" 1>&2
 				return 1
 			fi
 
@@ -985,16 +989,16 @@ modify_sysdir_volume()
 		1)
 			# move from default location to VOLUMES
 			if [ ! -r "${_sysdir}/local.sqlite" ]; then
-				${ECHO} "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to VOLUME location: no source dir: ${N2_COLOR}${_sysdir}${N0_COLOR}" 1>&2
+				echo "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to VOLUME location: no source dir: ${N2_COLOR}${_sysdir}${N0_COLOR}" 1>&2
 				return 1
 			fi
 			[ ! -d "${_volsysdir}" ] && ${MKDIR_CMD} -p ${_volsysdir}
-			${ECHO} "${N1_COLOR}${CIX_APP}: switch to VOLUME location: ${N2_COLOR}${_sysdir} -> ${_volsysdir}${N0_COLOR}" 1>&2
+			echo "${N1_COLOR}${CIX_APP}: switch to VOLUME location: ${N2_COLOR}${_sysdir} -> ${_volsysdir}${N0_COLOR}" 1>&2
 			${RSYNC_CMD} -avz ${_sysdir}/ ${_volsysdir}/
 
 			# re-check
 			if [ ! -r ${_volsysdir}/local.sqlite ]; then
-				${ECHO} "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to VOLUME location: no local.sqlite: ${N2_COLOR}${_volsysdir}/local.sqlite${N0_COLOR}" 1>&2
+				echo "${W1_COLOR}${CIX_APP} error${N1_COLOR}: switch to VOLUME location: no local.sqlite: ${N2_COLOR}${_volsysdir}/local.sqlite${N0_COLOR}" 1>&2
 				return 1
 			fi
 
@@ -1002,13 +1006,13 @@ modify_sysdir_volume()
 			${LN_CMD} -sf ${_volsysdir} ${_sysdir}
 			;;
 		*)
-			${ECHO} "${W1_COLOR}${CIX_APP} error${N1_COLOR}: sysdir_volume valid value: 0,1: ${N2_COLOR}${sysdir_volume}${N0_COLOR}" 1>&2
+			echo "${W1_COLOR}${CIX_APP} error${N1_COLOR}: sysdir_volume valid value: 0,1: ${N2_COLOR}${sysdir_volume}${N0_COLOR}" 1>&2
 			return 1
 			;;
 	esac
 
 	cbsdsqlrw local "UPDATE jails SET ${i}='${sysdir_volume}' WHERE jname='${jname}'"
-	${ECHO} "${argpart}: ${N1_COLOR}${sysdir_volume}${N0_COLOR}"
+	echo "${argpart}: ${N1_COLOR}${sysdir_volume}${N0_COLOR}"
 }
 
 need_action()
@@ -1019,16 +1023,16 @@ need_action()
 	case "${i}" in
 		nic_address)
 			# TODO: multiple 
-			oldval=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_address FROM jailnic LIMIT 1" )
+			capture oldval cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_address FROM jailnic LIMIT 1"
 			[ -z "${oldval}" ] && oldval="0"
 			;;
 		nic_hwaddr)
 			# TODO: multiple
-			oldval=$( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr FROM jailnic LIMIT 1" )
+			capture oldval cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT nic_hwaddr FROM jailnic LIMIT 1"
 			[ -z "${oldval}" ] && oldval="0"
 			;;
 		*)
-			oldval=$( cbsdsqlro local "SELECT ${i} FROM jails WHERE jname='${jname}' LIMIT 1" 2>/dev/null )
+			capture oldval cbsdsqlro local "SELECT ${i} FROM jails WHERE jname='${jname}' LIMIT 1" 2>/dev/null
 			;;
 	esac
 
@@ -1047,14 +1051,14 @@ update_jails()
 	case "${i}" in
 		arch)
 			if [ "${VAL}" = "native" ]; then
-				VAL=$( ${UNAME_CMD} -m )
+				capture VAL ${UNAME_CMD} -m
 				[ "${VAL}" = "x86_64" ] && VAL="amd64"
 				export $i="${VAL}"
 			fi
 			;;
 		ver)
 			if [ "${VAL}" = "native" ]; then
-				tmpver=$( ${UNAME_CMD} -r )
+				capture tmpver ${UNAME_CMD} -r
 				VAL=${tmpver%%-*}
 				[ "${stable}" = "1" ] && VAL=${VAL%%.*}
 				export $i="${VAL}"
@@ -1063,13 +1067,13 @@ update_jails()
 		nic_address)
 			#  TODO: multi NIC
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_address='${VAL}' WHERE name='epairb'"
-			${ECHO} "${argpart}: ${N1_COLOR}${nic_address}${N0_COLOR}"
+			echo "${argpart}: ${N1_COLOR}${nic_address}${N0_COLOR}"
 			return 0
 			;;
 		nic_hwaddr)
 			# TODO: multi NIC
 			cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE jailnic SET nic_hwaddr='${VAL}' WHERE name='epairb'"
-			${ECHO} "${argpart}: ${N1_COLOR}${nic_hwaddr}${N0_COLOR}"
+			echo "${argpart}: ${N1_COLOR}${nic_hwaddr}${N0_COLOR}"
 			return 0
 			;;
 		ip4_addr)
@@ -1086,7 +1090,7 @@ update_jails()
 	if ! need_action; then
 		cbsdsqlrw local "UPDATE jails SET ${i}='${VAL}' WHERE jname='${jname}'"
 		cbsdlogger NOTICE ${CIX_APP}: ${argpart}: ${VAL}
-		${ECHO} "${argpart}: ${N1_COLOR}${VAL}${N0_COLOR}"
+		echo "${argpart}: ${N1_COLOR}${VAL}${N0_COLOR}"
 
 		# Update realtime info
 		if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
@@ -1103,15 +1107,19 @@ update_jails()
 
 # MAIN
 # here we get status from jstatus, not via jrcconf for non-overwriting params in args
-jid=$( jstatus jname="${jname}" )
+capture jid jstatus jname="${jname}"
 _ret=$?
 [ ${_ret} -eq 0 ] && err 1 "${N1_COLOR}No such jail: ${N2_COLOR}${jname}${N0_COLOR}"
 
 if [ -n "${jconf}" ]; then
 	[ ! -r "${jconf}" ] && err 1 "${N1_COLOR}No such jconf file: ${N2_COLOR}${jconf}${N0_COLOR}"
 	#jset jname=${jname} `${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} .| ${TR_CMD} -d ";"`
-	jset_tmp=$( ${MKTEMP_CMD} )
-	${GREP_CMD} -v '#' ${jconf} | ${GREP_CMD} . | ${TR_CMD} -d ";" | ${SED_CMD} 's/"/\\"/g' | while read _line; do
+	capture jset_tmp ${MKTEMP_CMD}
+	capture _grep1 ${GREP_CMD} -v '#' ${jconf}
+	capture _grep2 ${GREP_CMD} . <<< "${_grep1}"
+	capture _tr_out ${TR_CMD} -d ";" <<< "${_grep2}"
+	capture _sed_out ${SED_CMD} 's/"/\\"/g' <<< "${_tr_out}"
+	while read _line; do
 		strpos --str="${_line}" --search="="
 		pos=$?
 		if [ ${pos} -eq 0 ]; then
@@ -1119,7 +1127,7 @@ if [ -n "${jconf}" ]; then
 			continue
 		fi
 		eval "${_line}"
-		check_param=$( substr --pos=0 --len=${pos} --str="${_line}" )
+		capture check_param substr --pos=0 --len=${pos} --str="${_line}"
 		case "${check_param}" in
 			# unchangeble
 			relative_path|jname|path|data|rcconf|jailskeldir|jail_profile|zfs_snapsrc|zfs_encryption|runasap|mount_fstab|mount_fstab_old|mdsize|with_img_helpers|persist|jailnic_temp_sql|etcupdate_init|emulator|rctl_nice)
@@ -1129,7 +1137,7 @@ if [ -n "${jconf}" ]; then
 		var_name="${check_param}"
 		eval check_value="\$$var_name"
 		[ -z "${check_value}" ] && check_value="0"
-		oldval=$( cbsdsqlro local "SELECT ${check_param} FROM jails WHERE jname='${jname}'" 2>/dev/null )
+		capture oldval cbsdsqlro local "SELECT ${check_param} FROM jails WHERE jname='${jname}'" 2>/dev/null
 		[ -z "${oldval}" ] && oldval="0"
 		[ "${check_value}" = "${oldval}" ] && continue #	no change
 		# check for dynamic ( native/DHCP/..)
@@ -1158,14 +1166,14 @@ if [ -n "${jconf}" ]; then
 		esac
 		echo "/usr/local/bin/cbsd jset jname=${jname} ${_line}" >> ${jset_tmp}
 		#echo ">> [${check_param}][${_line}][${check_value}] - [${oldval}]"
-	done
-	jset_tmp_size=$( ${STAT_CMD} -f %z ${jset_tmp} )
+	done <<< "${_sed_out}"
+	capture jset_tmp_size ${STAT_CMD} -f %z ${jset_tmp}
 	if [ "${jset_tmp_size}" != "0" ]; then
 		# change
-		${ECHO} "${N1_COLOR}${CIX_APP}: change detected ( autorestart=${autorestart} ) via jconf:${N0_COLOR}" 2>&1
+		echo "${N1_COLOR}${CIX_APP}: change detected ( autorestart=${autorestart} ) via jconf:${N0_COLOR}" 2>&1
 		${CAT_CMD} ${jset_tmp} 2>&1
 		if [ "${autorestart}" = "1" ]; then
-			jid=$( jstatus jname=${jname} )
+			capture jid jstatus jname=${jname}
 			[ "${jid}" != "0" ] && jstop jname="${jname}"
 			/bin/sh ${jset_tmp}
 			[ "${jid}" != "0" ] && jstart jname="${jname}"
@@ -1312,7 +1320,7 @@ for n in ${my_arg}; do
 					*)
 						if [ ${autorestart} -eq 0 ]; then
 							cbsdlogger NOTICE ${CIX_APP}: on-the-fly currently unimplemented for ${argpart} for ${jname}
-							${ECHO} "${argpart}: ${N1_COLOR}on-the-fly currently unimplemented${N0_COLOR}"
+							echo "${argpart}: ${N1_COLOR}on-the-fly currently unimplemented${N0_COLOR}"
 						else
 							update_jails
 						fi
