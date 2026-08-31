@@ -910,13 +910,13 @@ read_forarith(char **init, char **cond, char **update)
 {
 	char *out;
 	char *s;
-	char *parts[3] = { NULL, NULL, NULL };
+	char *buf;
+	char *parts[3];
 	int nsep = 0;
 	int depth = 0;
 	int c;
 
 	STARTSTACKSTR(out);
-	parts[0] = out;
 
 	for (;;) {
 		c = pgetc_eatbnl();
@@ -949,7 +949,7 @@ read_forarith(char **init, char **cond, char **update)
 
 		if (c == ';' && depth == 0 && nsep < 2) {
 			STPUTC('\0', out);
-			parts[++nsep] = out;
+			nsep++;
 			continue;
 		}
 
@@ -957,11 +957,17 @@ read_forarith(char **init, char **cond, char **update)
 	}
 
 	STPUTC('\0', out);
-	parts[0] = (char *)stackblock();
-	grabstackblock((out - parts[0]) + 1);
+	buf = (char *)stackblock();
+	grabstackblock((out - buf) + 1);
 
 	if (nsep != 2)
 		synerror("Bad arithmetic for loop");
+
+	parts[0] = buf;
+	s = buf + strlen(buf) + 1;
+	parts[1] = s;
+	s = s + strlen(s) + 1;
+	parts[2] = s;
 
 	for (int i = 0; i < 3; i++) {
 		s = parts[i];
