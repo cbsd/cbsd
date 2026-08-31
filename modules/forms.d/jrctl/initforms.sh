@@ -15,7 +15,7 @@ fi
 
 set -e
 . ${CIX_DISTDIR}/cbsd.conf
-. ${subrdir}/tools.subr
+. ${subrdir}/tools-lite.subr
 . ${subrdir}/nc-lite.subr
 set +e
 
