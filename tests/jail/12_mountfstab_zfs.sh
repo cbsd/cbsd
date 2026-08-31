@@ -57,4 +57,9 @@ EOF
 	assertEquals "${_test}" "/usr/local/mnt"
 }
 
+zfsfeat=
+. ${cbsd_workdir}/nc.inventory
+echo "ZFS FEAT: $zfsfeat"
+[ "${zfsfeat}" = "0" ] && exit 0
+
 . ${progdir}/../shunit2

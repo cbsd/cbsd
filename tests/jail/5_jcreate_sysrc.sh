@@ -33,9 +33,10 @@ oneTimeTearDown()
 # check for sysrc
 test_sysrc()
 {
+	set -o xtrace
 	${CIX_BIN} jcreate jname="${jname}" vnet=1 ip4_addr="212.212.212.214/30" sysrc="\"ifconfig_eth0+='mtu 1450' p=1\"" runasap=1 pkg_bootstrap=0 etcupdate_init=0 quiet=1
+	set +o xtrace
 	. ~cbsd/jails-data/"${jname}"-data/etc/rc.conf
-
 	# get last world in ifconfig, should be 1450
 	last=$( echo "${ifconfig_eth0}" | grep -o '[^ ]\+$' )
 	echo "last = [${last}]"
