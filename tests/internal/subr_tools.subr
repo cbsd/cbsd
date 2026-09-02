@@ -22,28 +22,15 @@ set --
 # ============================================================
 
 # Stub templates - not yet implemented, return 0 (pass) silently
-test_is_special_ip() { return 0; }
-test_iptype() { return 0; }
 test_resolvhost() { return 0; }
-test_conv2bytes() { return 0; }
-test_conv2human() { return 0; }
-test_first_ips_w_mask() { return 0; }
-test_mask2cdr() { return 0; }
-test_cdr2mask() { return 0; }
-test_validate_hwaddr() { return 0; }
 test_node_state() { return 0; }
-test_conv_time() { return 0; }
 test_select_jail_by_list() { return 0; }
 test_prepare_offline_jail() { return 0; }
 test__randompw_pipeline() { return 0; }
-test_random_password_gen() { return 0; }
 test_jname_is_multiple() { return 0; }
-test_get_bytes() { return 0; }
 test_rotate_lease_file() { return 0; }
 test_fn_exists() { return 0; }
 test_cbsd_lock() { return 0; }
-test_get_file_bytes() { return 0; }
-test_get_file_blocks() { return 0; }
 test_kernel_mod() { return 0; }
 
 # ---- MAC address generation ----
@@ -89,6 +76,510 @@ test_mac_gen()
 	_mac_list=$( mac_gen 02:ff:f0 3 )
 	_dupe_count=$( echo "${_mac_list}" | sort | uniq -d | wc -l )
 	assertEquals "3 generated MACs are all unique" "0" "${_dupe_count}"
+}
+
+# ---- is_special_ip ----
+# Detects CARP/interface binding (presence of '#' in IP).
+# Returns: 0 when no '#' found; non-0 when '#' found.
+# Prints: host-part after '#' (when found), or full input.
+
+test_is_special_ip()
+{
+	local _result= _rc=
+
+	# Empty input → returns 0, prints nothing
+	capture _result is_special_ip ""
+	assertTrue "empty returns 0" $?
+	assertNull "empty prints nothing" "${_result}"
+
+	# Plain IP (no '#') → returns 0, prints input unchanged
+	capture _result is_special_ip "10.0.0.1"
+	assertTrue "plain IP returns 0" $?
+	assertEquals "plain IP prints input unchanged" "10.0.0.1" "${_result}"
+
+	# IP with interface binding (iface#ip) → returns non-0, prints host part
+	# NOTE: must use subshell $( ) instead of capture — capture empties
+	# the variable on non-zero exit code.
+	_result=$( is_special_ip "em0#10.0.0.1" )
+	is_special_ip "em0#10.0.0.1" >/dev/null 2>&1
+	_rc=$?
+	assertTrue "iface#ip returns non-0" "[ ${_rc} -gt 0 ]"
+	assertEquals "iface#ip prints host part" "10.0.0.1" "${_result}"
+
+	# CARP vhid format (vhid_N#ip/mask)
+	_result=$( is_special_ip "vhid_1#10.0.0.1/24" )
+	is_special_ip "vhid_1#10.0.0.1/24" >/dev/null 2>&1
+	_rc=$?
+	assertTrue "vhid#ip returns non-0" "[ ${_rc} -ne 0 ]"
+	assertEquals "vhid#ip prints host part" "10.0.0.1/24" "${_result}"
+
+	# Comma-separated: plain + special → extracts host parts
+	_result=$( is_special_ip "10.0.0.1,em0#10.0.0.2" )
+	assertEquals "mixed comma extracts host part" "10.0.0.2" "${_result}"
+
+	# Negative: plain IPs in comma list → returns 0, prints input
+	capture _result is_special_ip "10.0.0.1,10.0.0.2"
+	assertTrue "plain comma list returns 0" $?
+	assertEquals "plain comma list prints input unchanged" "10.0.0.1,10.0.0.2" "${_result}"
+}
+
+# ---- iptype ----
+# Identifies IP address type: 0=undefined, 1=ipv4, 2=ipv6
+
+test_iptype()
+{
+	local _rc=
+
+	# IPv4 address → returns 1
+	iptype "192.168.1.100"
+	assertEquals "IPv4 returns 1" "1" $?
+
+	# IPv4 with CIDR mask → still returns 1
+	iptype "10.0.0.1/24"
+	assertEquals "IPv4/CIDR returns 1" "1" $?
+
+	# IPv6 address → returns 2
+	iptype "fe80::1"
+	assertEquals "IPv6 returns 2" "2" $?
+
+	# IPv6 full address → returns 2
+	iptype "2001:db8::1"
+	assertEquals "IPv6 full returns 2" "2" $?
+
+	# Empty input → returns 0 (undefined)
+	iptype ""
+	assertEquals "empty returns 0" "0" $?
+
+	# Non-IP string → returns 0 (undefined)
+	iptype "hello"
+	assertEquals "non-ip string returns 0" "0" $?
+
+	# Negative: IPv4 must NOT return 0 or 2
+	iptype "10.0.0.1"
+	_rc=$?
+	assertTrue "IPv4 not zero" "[ ${_rc} -ne 0 ]"
+	assertTrue "IPv4 not two" "[ ${_rc} -ne 2 ]"
+
+	# Negative: IPv6 must NOT return 0 or 1
+	iptype "2001:db8::1"
+	_rc=$?
+	assertTrue "IPv6 not zero" "[ ${_rc} -ne 0 ]"
+	assertTrue "IPv6 not one" "[ ${_rc} -ne 1 ]"
+}
+
+# ---- conv2bytes ----
+# Converts size string to bytes. Sets $convval. Returns 0 on success, 1 on error.
+
+test_conv2bytes()
+{
+	local _rc=
+
+	# Empty input → returns 1
+	conv2bytes ""
+	assertTrue "empty returns error" "[ $? -ne 0 ]"
+
+	# Pure number → sets convval, returns 0
+	convval=
+	conv2bytes "1024"
+	assertTrue "numeric returns 0" $?
+	assertEquals "numeric sets convval" "1024" "${convval}"
+
+	# Zero is a valid number
+	convval=
+	conv2bytes "0"
+	assertTrue "zero returns 0" $?
+	assertEquals "zero sets convval" "0" "${convval}"
+
+	# Non-numeric garbage → returns error
+	conv2bytes "xyz"
+	assertTrue "invalid string returns error" "[ $? -ne 0 ]"
+
+	# Negative: result of valid number is NOT "0"
+	convval=
+	conv2bytes "4096"
+	assertTrue "4096 convval not zero" "[ \"${convval}\" != \"0\" ]"
+	assertEquals "4096 convval is 4096" "4096" "${convval}"
+}
+
+# ---- conv2human ----
+# Converts bytes to human-readable form. Sets $convval.
+# Returns 0 on success, 1 on empty input.
+
+test_conv2human()
+{
+	local _rc=
+
+	# Empty input → returns 1
+	conv2human ""
+	assertTrue "empty returns error" "[ $? -ne 0 ]"
+
+	# Large byte value (1 GiB) → success, convval not empty
+	convval=
+	conv2human "1073741824"
+	assertTrue "1GiB returns 0" $?
+	assertNotNull "1GiB sets convval" "${convval}"
+	# convval should be lowercase, contain digits and unit
+	echo "${convval}" | grep -qE '^[0-9.]+[kmgt]?b?$'
+	assertTrue "1GiB result has size unit" $?
+
+	# Small byte value → success
+	convval=
+	conv2human "512"
+	assertTrue "512 bytes returns 0" $?
+	assertNotNull "512 bytes sets convval" "${convval}"
+
+	# Negative: human-readable result must differ from raw input for large values
+	convval=
+	conv2human "1000000000"
+	assertTrue "1B result differs from raw bytes" "[ \"${convval}\" != \"1000000000\" ]"
+}
+
+# ---- first_ips_w_mask ----
+# Calculates first usable IP in subnet: (IP AND mask) + 1 in last octet.
+# Args: $1-$4 IP octets, $5-$8 mask octets. Pure shell arithmetic.
+
+test_first_ips_w_mask()
+{
+	local _result=
+
+	# 192.168.1.55 / 255.255.255.248 → AND: 192.168.1.48 → +1 → .49
+	_result=$( first_ips_w_mask 192 168 1 55 255 255 255 248 )
+	assertEquals "192.168.1.55 mask .248" "192.168.1.49" "${_result}"
+
+	# 10.0.0.1 / 255.255.255.0 → AND: 10.0.0.0 → +1 → .1
+	_result=$( first_ips_w_mask 10 0 0 1 255 255 255 0 )
+	assertEquals "10.0.0.1 mask /24" "10.0.0.1" "${_result}"
+
+	# 10.0.0.0 / 255.255.255.0 → network addr → +1 → .1
+	_result=$( first_ips_w_mask 10 0 0 0 255 255 255 0 )
+	assertEquals "10.0.0.0 mask /24 first usable" "10.0.0.1" "${_result}"
+
+	# 172.16.0.0 / 255.255.0.0 → AND: 172.16.0.0 → +1 → .0.1
+	_result=$( first_ips_w_mask 172 16 0 0 255 255 0 0 )
+	assertEquals "172.16.0.0 mask /16" "172.16.0.1" "${_result}"
+
+	# /30 subnet: 10.0.0.5 / 255.255.255.252 → AND: .4 → +1 → .5
+	_result=$( first_ips_w_mask 10 0 0 5 255 255 255 252 )
+	assertEquals "10.0.0.5 mask /30" "10.0.0.5" "${_result}"
+
+	# Negative: result is never the raw last octet when mask truncates
+	_result=$( first_ips_w_mask 192 168 1 200 255 255 255 0 )
+	assertTrue "200 AND 0 + 1 equals 1" "[ \"${_result##*.}\" = \"1\" ]"
+}
+
+# ---- mask2cdr ----
+# Converts dotted subnet mask to CIDR prefix length.
+# Pure shell arithmetic (no external deps).
+
+test_mask2cdr()
+{
+	local _result=
+
+	_result=$( mask2cdr 255.255.255.0 )
+	assertEquals "255.255.255.0 → /24" "24" "${_result}"
+
+	_result=$( mask2cdr 255.255.0.0 )
+	assertEquals "255.255.0.0 → /16" "16" "${_result}"
+
+	_result=$( mask2cdr 255.0.0.0 )
+	assertEquals "255.0.0.0 → /8" "8" "${_result}"
+
+	_result=$( mask2cdr 255.255.255.252 )
+	assertEquals "255.255.255.252 → /30" "30" "${_result}"
+
+	_result=$( mask2cdr 255.255.255.128 )
+	assertEquals "255.255.255.128 → /25" "25" "${_result}"
+
+	_result=$( mask2cdr 255.255.255.248 )
+	assertEquals "255.255.255.248 → /29" "29" "${_result}"
+
+	# Negative: result not zero for any valid mask
+	_result=$( mask2cdr 255.255.255.0 )
+	assertTrue "/24 not zero" "[ ${_result} -ne 0 ]"
+
+	# /32 host mask
+	_result=$( mask2cdr 255.255.255.255 )
+	assertEquals "255.255.255.255 → /32" "32" "${_result}"
+
+	# /1 mask
+	_result=$( mask2cdr 128.0.0.0 )
+	assertEquals "128.0.0.0 → /1" "1" "${_result}"
+}
+
+# ---- cdr2mask ----
+# Converts CIDR prefix to dotted subnet mask.
+# Pure shell arithmetic (no external deps).
+
+test_cdr2mask()
+{
+	local _result=
+
+	_result=$( cdr2mask 24 )
+	assertEquals "/24 → 255.255.255.0" "255.255.255.0" "${_result}"
+
+	_result=$( cdr2mask 16 )
+	assertEquals "/16 → 255.255.0.0" "255.255.0.0" "${_result}"
+
+	_result=$( cdr2mask 8 )
+	assertEquals "/8 → 255.0.0.0" "255.0.0.0" "${_result}"
+
+	_result=$( cdr2mask 30 )
+	assertEquals "/30 → 255.255.255.252" "255.255.255.252" "${_result}"
+
+	_result=$( cdr2mask 25 )
+	assertEquals "/25 → 255.255.255.128" "255.255.255.128" "${_result}"
+
+	_result=$( cdr2mask 29 )
+	assertEquals "/29 → 255.255.255.248" "255.255.255.248" "${_result}"
+
+	_result=$( cdr2mask 32 )
+	assertEquals "/32 → 255.255.255.255" "255.255.255.255" "${_result}"
+
+	_result=$( cdr2mask 1 )
+	assertEquals "/1 → 128.0.0.0" "128.0.0.0" "${_result}"
+
+	_result=$( cdr2mask 0 )
+	assertEquals "/0 → 0.0.0.0" "0.0.0.0" "${_result}"
+
+	# Cross-validation: cdr2mask then mask2cdr must round-trip
+	_result=$( mask2cdr $( cdr2mask 24 ) )
+	assertEquals "round-trip /24" "24" "${_result}"
+
+	_result=$( mask2cdr $( cdr2mask 17 ) )
+	assertEquals "round-trip /17" "17" "${_result}"
+}
+
+# ---- validate_hwaddr ----
+# Validates MAC address format: xx:xx:xx:xx:xx:xx (hex, case insensitive).
+# Returns 0 for valid, 1 for invalid.
+
+test_validate_hwaddr()
+{
+	# Valid lowercase MAC
+	validate_hwaddr "5c:f9:dd:76:d5:c4"
+	assertTrue "valid lowercase MAC" $?
+
+	# Valid uppercase MAC
+	validate_hwaddr "5C:F9:DD:76:D5:C4"
+	assertTrue "valid uppercase MAC" $?
+
+	# Valid mixed-case MAC
+	validate_hwaddr "5c:F9:dd:76:D5:c4"
+	assertTrue "valid mixed-case MAC" $?
+
+	# MAC generated by mac_gen (goes through validate_hwaddr)
+	local _mac=
+	capture _mac mac_gen 02:ff:f0
+	assertNotNull "mac_gen produced MAC" "${_mac}"
+	validate_hwaddr "${_mac}"
+	assertTrue "generated MAC is valid" $?
+
+	# Negative: empty string → invalid
+	validate_hwaddr "" 2>/dev/null
+	assertFalse "empty string invalid" $?
+
+	# Negative: IP address → invalid
+	validate_hwaddr "192.168.0.1" 2>/dev/null
+	assertFalse "IP address invalid" $?
+
+	# Negative: missing octets → invalid
+	validate_hwaddr "5c:f9:dd:76:d5" 2>/dev/null
+	assertFalse "5 octets invalid" $?
+
+	# Negative: extra octets → invalid
+	validate_hwaddr "5c:f9:dd:76:d5:c4:aa" 2>/dev/null
+	assertFalse "7 octets invalid" $?
+
+	# Negative: wrong separator → invalid
+	validate_hwaddr "5c-f9-dd-76-d5-c4" 2>/dev/null
+	assertFalse "dash-separated invalid" $?
+
+	# Negative: non-hex chars → invalid
+	validate_hwaddr "zz:zz:zz:zz:zz:zz" 2>/dev/null
+	assertFalse "non-hex chars invalid" $?
+
+	# Negative: dots instead of colons → invalid
+	validate_hwaddr "5c.f9.dd.76.d5.c4" 2>/dev/null
+	assertFalse "dot-separated invalid" $?
+}
+
+# ---- conv_time ----
+# Converts seconds to human-readable time. Prints formatted string.
+# Pure shell arithmetic.
+
+test_conv_time()
+{
+	local _result=
+
+	# < 300s → displayed as seconds
+	_result=$( conv_time 60 )
+	assertEquals "60 sec." "60 sec." "${_result}"
+
+	_result=$( conv_time 1 )
+	assertEquals "1 sec." "1 sec." "${_result}"
+
+	_result=$( conv_time 299 )
+	assertEquals "299 sec." "299 sec." "${_result}"
+
+	# 300..17999s → minutes (300/60=5 min .. 17999/60=299 min)
+	_result=$( conv_time 300 )
+	assertEquals "300s → 5 min." "5 min." "${_result}"
+
+	_result=$( conv_time 600 )
+	assertEquals "600s → 10 min." "10 min." "${_result}"
+
+	# 18000s (5 hours) → hours (18000/60=300 min → 300/60=5 hours)
+	# Wait: 18000/60=300 in minutes. 300 is NOT < 300 → 300/60=5 hours. 5 < 73 → "5 hours."
+	_result=$( conv_time 18000 )
+	assertEquals "18000s → 5 hours." "5 hours." "${_result}"
+
+	# Days: 7*24*3600=604800 → 604800/60=10080 min → 10080/60=168 hours → 168 not < 73 → 168/24=7 days. 7 < 14 → "7 days."
+	_result=$( conv_time 604800 )
+	assertEquals "7 days" "7 days." "${_result}"
+
+	# Weeks → month output: 21 days = 1814400s → /60 → /60 → /24=21 → /7=3 → "3 month"
+	_result=$( conv_time 1814400 )
+	assertEquals "21 days displays as 3 month" "3 month" "${_result}"
+
+	# Negative: conv_time with 0 seconds
+	_result=$( conv_time 0 )
+	assertEquals "0 sec." "0 sec." "${_result}"
+
+	# Negative: result must differ from raw number for large values
+	_result=$( conv_time 3600 )
+	assertTrue "1h result differs from raw seconds" "[ \"${_result}\" != \"3600\" ]"
+}
+
+# ---- random_password_gen ----
+# Generates random password of specified length.
+# Uses _randompw_pipeline internally. Prints password to stdout.
+
+test_random_password_gen()
+{
+	local _pw= _pw2= _len=
+
+	# Generate password with default length (30)
+	capture _pw random_password_gen
+	assertNotNull "default password not empty" "${_pw}"
+	_len=$( echo -n "${_pw}" | wc -c )
+	assertEquals "default password length is 30" "30" "${_len}"
+
+	# Generate password with custom length
+	capture _pw random_password_gen -l 20
+	assertNotNull "custom length password not empty" "${_pw}"
+	_len=$( echo -n "${_pw}" | wc -c )
+	assertEquals "custom password length is 20" "20" "${_len}"
+
+	# Generate with -l 10
+	capture _pw random_password_gen -l 10
+	assertNotNull "10-char password not empty" "${_pw}"
+	_len=$( echo -n "${_pw}" | wc -c )
+	assertEquals "10-char password length is 10" "10" "${_len}"
+
+	# Two passwords should differ (randomness check)
+	local _pw_a= _pw_b=
+	capture _pw_a random_password_gen -l 20
+	capture _pw_b random_password_gen -l 20
+	assertTrue "two random passwords are different" "[ \"${_pw_a}\" != \"${_pw_b}\" ]"
+}
+
+# ---- get_bytes ----
+# Prints byte value for input. Numeric passthrough or conversion via conv2human.
+# Returns 0 on success, 1 on empty input.
+
+test_get_bytes()
+{
+	local _result= _rc=
+
+	# Empty input → returns 1
+	get_bytes "" >/dev/null 2>&1
+	assertTrue "empty returns error" "[ $? -ne 0 ]"
+
+	# Numeric input → passthrough
+	capture _result get_bytes "1024"
+	assertTrue "numeric returns 0" $?
+	assertEquals "numeric passthrough" "1024" "${_result}"
+
+	# Zero is valid number
+	capture _result get_bytes "0"
+	assertTrue "zero returns 0" $?
+	assertEquals "zero passthrough" "0" "${_result}"
+
+	# Non-numeric → conversion via conv2human
+	capture _result get_bytes "1g"
+	assertTrue "1g returns 0" $?
+	assertNotNull "1g produces value" "${_result}"
+	assertTrue "1g result is positive number" "[ ${_result} -gt 0 ]"
+
+	# Negative: numeric result matches input exactly
+	capture _result get_bytes "4096"
+	assertTrue "4096 not empty" "[ -n '${_result}' ]"
+	assertEquals "4096 exact match" "4096" "${_result}"
+}
+
+# ---- get_file_bytes ----
+# Returns file size in bytes using stat. Returns 1 for unreadable files.
+
+test_get_file_bytes()
+{
+	local _result= _rc= _file_size=
+
+	# Existing file (/bin/date) → positive size, returns 0
+	capture _result get_file_bytes /bin/date
+	assertTrue "existing file returns 0" $?
+	assertNotNull "existing file size not empty" "${_result}"
+	assertTrue "file size is positive number" "[ ${_result} -gt 0 ]"
+	# save for later check (capture overwrites on next call)
+	_file_size="${_result}"
+
+	# Negative: non-existent file → returns 1, outputs "0"
+	# Must use subshell — capture empties variable on non-zero exit.
+	_result=$( get_file_bytes /nonexistent/file/path_$$ )
+	get_file_bytes /nonexistent/file/path_$$ >/dev/null 2>&1
+	assertTrue "missing file returns error" "[ $? -ne 0 ]"
+	assertEquals "missing file outputs 0" "0" "${_result}"
+
+	# Second valid file to verify pattern holds
+	local _result2=
+	capture _result2 get_file_bytes /bin/ls
+	assertTrue "ls file returns 0" $?
+	assertTrue "ls file size positive" "[ ${_result2} -gt 0 ]"
+
+	# /bin/date size should be a reasonable number (>1KB on any modern system)
+	assertTrue "date file size > 1024" "[ ${_file_size} -gt 1024 ]"
+}
+
+# ---- get_file_blocks ----
+# Returns allocated blocks for file using stat. Returns 1 for unreadable files.
+
+test_get_file_blocks()
+{
+	local _result= _rc= _file_blocks= _bytes=
+
+	# Existing file → positive blocks, returns 0
+	capture _result get_file_blocks /bin/date
+	assertTrue "existing file returns 0" $?
+	assertNotNull "file blocks not empty" "${_result}"
+	assertTrue "blocks is positive" "[ ${_result} -gt 0 ]"
+	# save for later check (capture overwrites on next call)
+	_file_blocks="${_result}"
+
+	# Negative: non-existent file → returns 1, outputs "0"
+	# Must use subshell — capture empties variable on non-zero exit.
+	_result=$( get_file_blocks /nonexistent/file/path_$$ )
+	get_file_blocks /nonexistent/file/path_$$ >/dev/null 2>&1
+	assertTrue "missing file returns error" "[ $? -ne 0 ]"
+	assertEquals "missing file outputs 0" "0" "${_result}"
+
+	# Second valid file
+	local _result2=
+	capture _result2 get_file_blocks /bin/ls
+	assertTrue "ls file returns 0" $?
+	assertTrue "ls blocks positive" "[ ${_result2} -gt 0 ]"
+
+	# Blocks should be less than or equal to file bytes (512-byte block units)
+	capture _bytes get_file_bytes /bin/date
+	assertTrue "blocks <= bytes" "[ ${_file_blocks} -le ${_bytes} ]"
 }
 
 # ---- shunit2 integration ----
