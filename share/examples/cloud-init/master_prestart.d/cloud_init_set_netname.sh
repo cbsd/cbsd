@@ -7,7 +7,7 @@
 set -e
 . ${CIX_DISTDIR}/cbsd.conf
 . ${subrdir}/nc.subr
-. ${cbsdinit}
+cixinit
 set +e
 
 export NOCOLOR=1

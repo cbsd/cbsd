@@ -2,7 +2,10 @@ if [ ! "$_CBSD_TOOLS_SUBR" ]; then
 _CBSD_TOOLS_SUBR=1
 ###
 
-# auto-detect if $1 has vhid or iface (for ip4_addr normalization)
+### Detect CARP/interface binding in IP addresses.
+### Checks for '#' separator in comma-separated IP list (e.g. "em0#10.0.0.1" or "vhid_1#10.0.0.1/24").
+### Prints: host-part after '#' when found, or full input when no '#' present.
+### Returns: 0 when no '#' found; non-zero (position) when '#' found.
 is_special_ip()
 {
 	local _pos= _p1= _p2= _ip= _i= _res=
@@ -38,15 +41,9 @@ is_special_ip()
 }
 
 
-#v11.0.12
-#return 0 errcode for undefined type
-#return 1 errcode for ipv4
-#return 2 errcode for ipv6
-# fill VHID args when CARP-specific records
-# export IWM global variables
-# fill V_INTERFACE and V_IP by iface/ip_addr when:
-#   <iface>#<ip>
-# form received.
+### Identify IP address type.
+### Returns: 0=undefined, 1=IPv4, 2=IPv6.
+### Sets globals: IWM, VHID, IPWVHID, V_INTERFACE, V_IP for CARP/iface entries.
 iptype()
 {
 	local prefix= p1= p2= ip= _special=0
@@ -104,6 +101,8 @@ iptype()
 	esac
 }
 
+### Resolve hostname to IP address using configured protocol (IPv4/IPv6).
+### Prints resolved address on success.
 resolvhost()
 {
 	local _host= proto=
@@ -119,13 +118,9 @@ resolvhost()
 	[ $? -eq 0 ] && echo ${_host}
 }
 
-# convert string in Xm (mbytes) or Xg (gbytes) to bytes
-# example: 
-# if conv2bytes "1g"; then
-#    echo $convval
-# fi
-# return bytes in $convval var
-# errcode 1 when error
+### Convert size string (e.g. "1g", "512m") to bytes.
+### Numeric-only input is passed through as-is.
+### Returns: 0 on success, 1 on error. Result stored in $convval.
 conv2bytes()
 {
 	local _testsize= _value= _num= _postfix=
@@ -142,12 +137,8 @@ conv2bytes()
 	[ ${convval} -gt 0 ] || return 1
 }
 
-# convert bytes to human readable form
-# example:
-# if conv2human "10000"; then
-#   echo $convval
-# fi
-# errcode 1 when not number
+### Convert bytes to human-readable form (e.g. "1g", "512k").
+### Returns: 0 on success, 1 on empty input. Result stored in $convval (lowercase).
 conv2human()
 {
 	[ -z "${1}" ] && return 1
@@ -155,20 +146,15 @@ conv2human()
 	return $?
 }
 
-# $1 - $4 - ip
-# $5 - $8 - mask
-# example:
-# IFS="."
-# ip="192.168.1.55"
-# mask="255.255.255.248"
-# first_ips_w_mask 192.168.1.55 255.255.255.248
+### Calculate first usable IP in subnet: (IP AND mask) + 1 in last octet.
+### Args: $1-$4 = IP octets, $5-$8 = mask octets. Pure shell arithmetic.
 first_ips_w_mask()
 {
 	printf "%d.%d.%d.%d\n" "$(($1 & $5))" "$(($2 & $6))" "$(($3 & $7))" "$(( ($4 & $8) + 1 ))"
 }
 
-# print prefix from mask
-# example: cdr=$( mask2cdr 255.255.255.248 )
+### Convert dotted subnet mask to CIDR prefix length.
+### Example: mask2cdr 255.255.255.248 → 29. Pure shell arithmetic.
 mask2cdr()
 {
 	# Assumes there's no "255." after a non-255 byte in the mask
@@ -178,8 +164,8 @@ mask2cdr()
 	echo $(( $2 + (${#x}/4) ))
 }
 
-# print mask from prefix
-# example: mask=$( cdr2mask 24 )
+### Convert CIDR prefix length to dotted subnet mask.
+### Example: cdr2mask 24 → 255.255.255.0. Pure shell arithmetic.
 cdr2mask()
 {
 	# Number of args to shift, 255..255, first non-255 byte, zeroes
@@ -188,13 +174,8 @@ cdr2mask()
 	echo ${1-0}.${2-0}.${3-0}.${4-0}
 }
 
-# ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$
-# if validate_hwaddr "5c:f9:dd:76:d5:c4"; then
-#   echo "valid"
-# fi
-#if ! validate_hwaddr "192.168.0.3"; then
-#	echo "INVALID"
-#fi
+### Validate MAC address format (xx:xx:xx:xx:xx:xx, hex case-insensitive).
+### Returns: 0=valid, 1=invalid. Works with mac_gen output.
 validate_hwaddr()
 {
 	[ -z "${1}" ] && return 1
@@ -204,10 +185,8 @@ validate_hwaddr()
 	return 1
 }
 
-# for select_jail_by_list
-# return 1 when node online
-# return 0 when only_local=0 and node is offline
-# or only_online=1 or only_local=1
+### Check if a remote node is online via lock file.
+### Returns: 0=online (or skip check), 1=offline. Used by select_jail_by_list.
 node_state()
 {
 	[ -z "${nodename}" ] && return 0 # nothing to test
@@ -226,11 +205,9 @@ node_state()
 	fi
 }
 
-# $1 in seconds
-# show human-readable converted diff time, e.g:
-# 10 min
-# 22h
-# 3 weeks
+### Convert seconds to human-readable time string.
+### Prints: "N sec.", "N min.", "N hours.", "N days.", or "N month".
+### Pure shell arithmetic. Returns 0 (always).
 conv_time()
 {
 	local _i=0 in="${1}"
@@ -288,13 +265,9 @@ conv_time()
 }
 
 
-# return $jname as selected jail by id
-# -a [0|1] show only active (status=on jail): 0, or all: 1
-# -e emulator ( jls for jail and bls for bhyve ): jls
-# -l "jail1 jail3 " - limit scope by 'jail1 jaiil2' jname only
-# -o [0|1] for remove node - show only when node online: 0 (default), or any state: 1
-# -s "is subject for list"
-# -r [0|1] select jname from remote node too (1), or only local: 0
+### Interactive jail selection dialog from a list of jails.
+### Options: -a (active filter), -e (emulator), -l (limit scope), -o (online-only),
+###          -r (remote nodes), -s (subject text). Sets $jname on success.
 select_jail_by_list()
 {
 	local _tmpdir= _tmpfile= _ret= _id= i=1 curr_time= rtime=
@@ -407,8 +380,6 @@ select_jail_by_list()
 					_xen_local_sqlite="${tmpdir}/${nodename}/${jname}/local.sqlite"
 				fi
 				if [ -r ${_xen_local_sqlite} ]; then
-					#info=$( cbsdsqlro ${_xen_local_sqlite} SELECT ip4_addr,vm_cpus,vm_os_type,state_time FROM settings )
-					#sqllist "${info}" ip4_addr vm_cpus vm_os_type state_time
 					cbsdsqlro_vars ${_xen_local_sqlite} "SELECT ip4_addr,vm_cpus,vm_os_type,state_time FROM settings"
 					cbsdsqlro_vars local "SELECT host_hostname FROM jails WHERE jname='${jname}'"
 					diff_time=$(( curr_time - state_time ))
@@ -451,10 +422,8 @@ select_jail_by_list()
 
 }
 
-# prepare jail hier for executing command inside jail 
-# when jail is not running
-# e.g for offline modification (pkg, helpers and so on... )
-# $jname, $path variable must be initialized
+### Prepare jail filesystem hierarchy for offline command execution.
+### Mounts devfs and fstab. Requires $jname and $path to be set.
 prepare_offline_jail()
 {
 	mountbase -o "" -p "" -d "" -c "" -s ""
@@ -468,14 +437,9 @@ prepare_offline_jail()
 	makeresolv jname=${jname}
 }
 
-# MAC random generator
-# $1 - OUI (Organizationally Unique Identifier) or MFG (Manufacturing/vendor's code), e.g: "02:ff:f0"
-# $2 - how many mac generated, by default - 1
-# mac=$( mac_gen 02:ff:f0 2 )
-#
-# TODO
-# make possible to OUI dynamically size: 02:ff or 02:ff:f0:01 or 02:ff:f0:01:01
-#   and generate only missing parts
+### Generate random MAC address with given OUI prefix.
+### Args: $1 = OUI (e.g. "02:ff:f0"), $2 = count (default 1).
+### Prints MAC(s) in xx:xx:xx:xx:xx:xx format. Returns 1 if OUI empty.
 mac_gen()
 {
 	local OUI="${1}"
@@ -489,12 +453,17 @@ mac_gen()
 	done
 }
 
-# -l <length>, 30 default
+### Internal pipeline for random password generation.
+### Args: $1 = byte length to read from /dev/random.
+### Runs: head → uuencode → grep → tr chain. Must be called from a function wrapper.
 _randompw_pipeline()
 {
 	${HEAD_CMD} -c ${1} /dev/random | ${UUENCODE_CMD} -m - | ${GREP_CMD} -E -v '(^begin-base)|^====$' | ${TR_CMD} -d '\r\n=' | ${TR_CMD} "/" "x"
 }
 
+### Generate random password of specified length.
+### Options: -l LENGTH (default 30). Uses _randompw_pipeline internally.
+### Prints password to stdout.
 random_password_gen()
 {
 	local _length= _extra_len= _pw=
@@ -514,8 +483,9 @@ random_password_gen()
 	printf "${_pw}"
 }
 
-# return $jail_list variable if jname is mask for multiple jail's
-# $emulator must be filled
+### Check if $jname is a wildcard mask (contains '*').
+### If so, queries DB for matching jail names into $jail_list.
+### Requires $jname and $emulator globals to be set.
 jname_is_multiple()
 {
 	jail_list=
@@ -527,7 +497,6 @@ jname_is_multiple()
 	local _jail_pref=
 
 	capture _jail_pref substr --pos=0 --len=1 --str="${jname}"
-	#_jail_pref=$( substr --pos=0 --len=1 --str="${jname}" )
 
 	if [ "${_jail_pref}" = "*" ]; then
 		_is_mask=1
@@ -537,12 +506,12 @@ jname_is_multiple()
 
 	if [ ${_is_mask} -ne 0 ]; then
 		capture _jail_mask ${TR_CMD} "*" "%" <<< "${jname}"
-		#jail_list=$( cbsdsqlro local "SELECT jname FROM jails WHERE emulator = '${emulator}' AND jname LIKE '${_jail_mask}'" | ${XARGS_CMD} )
 		cbsdsqlro_vars local "SELECT jname FROM jails WHERE emulator = '${emulator}' AND jname LIKE '${_jail_mask}'" jail_list
 	fi
 }
 
-# print bytes for $1 value
+### Print byte value for $1. Numeric passthrough, or convert via conv2human (e.g. "1g" → 1073741824).
+### Returns: 0 on success, 1 on empty/invalid input.
 get_bytes()
 {
 	local _val="0"
@@ -559,11 +528,9 @@ get_bytes()
 	return 0
 }
 
-# rotate/prine/purge old records in
-# file-based lease records:
-# <item>:<expiretime>
-# and load/return valid
-# should work under lock due to non-atomic file operations
+### Rotate file-based lease records (<item>:<expiretime>).
+### Removes expired entries, prints surviving keys as space-separated list.
+### Options: -l LEASE_FILE. Must run under lock.
 rotate_lease_file()
 {
 	local _lease_file= _leasefile_skiplist=
@@ -599,13 +566,16 @@ rotate_lease_file()
 	return 0
 }
 
-# check for function existance
+### Check if a shell function with the given name is defined.
+### Returns: 0 if exists, 1 if not.
 fn_exists()
 {
 	LC_ALL=C type ${1} | ${GREP_CMD} -q 'shell function'
 }
 
-# cbsd_lock <timeout> <lockfile> $*
+### Execute a command under a file lock with timeout.
+### Args: $1=timeout(s), $2=lockfile, $*=command. Uses flock(1) on Linux/NetBSD, lockf(1) on others.
+### WARNING: uses 'exec' — replaces current process.
 cbsd_lock()
 {
 	local _timeout="${1}"
@@ -623,8 +593,8 @@ cbsd_lock()
 
 }
 
-# return size of file in bytes:
-# BYTES=$( get_file_bytes /bin/date )
+### Return file size in bytes using stat(1). Prints "0" and returns 1 for unreadable files.
+### Auto-detects platform (Linux vs BSD) via uname -s independent of $platform variable.
 get_file_bytes()
 {
 	local _file="${1}"
@@ -659,12 +629,13 @@ get_file_bytes()
 	return 0
 }
 
-# return blocks size allocated by file:
-# BYTES=$( get_file_blocks /bin/date )
+### Return allocated blocks for file using stat(1). Prints "0" and returns 1 for unreadable files.
+### Auto-detects platform (Linux vs BSD) via uname -s independent of $platform variable.
 get_file_blocks()
 {
 	local _file="${1}"
 	local _val=0
+	local _platform=
 
 	if [ ! -r "${_file}" ]; then
 		echo -n "0"
@@ -674,7 +645,7 @@ get_file_blocks()
 	# don't look at $platform, get original
 	capture _platform ${UNAME_CMD} -s
 
-	case "${platform}" in
+	case "${_platform}" in
 		Linux)
 			capture _val ${STAT_CMD} --printf="%b" "${_file}"
 			;;

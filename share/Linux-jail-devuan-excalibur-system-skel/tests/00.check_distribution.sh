@@ -5,7 +5,7 @@
 VERSION_CODENAME="excalibur"
 
 . ${subrdir}/nc.subr
-. ${cbsdinit}
+cixinit
 [ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 unset workdir
 

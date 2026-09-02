@@ -2,125 +2,98 @@ if [ ! "$_CBSD_ZFS_SUBR" ]; then
 _CBSD_ZFS_SUBR=1
 ###
 
-# return 0 if $1 is not valid ZFS mountpoint
-# return 1 if $1 is valid ZFS mountpoint and mounted
-# return 2 if $1 is valid ZFS mountpoint and not mounted
-# if  zfsmnt /mnt; then
-#    echo " not zfs (mounted or not) mountpoint"
-# fi
-# export ZPOOL for name ZFS for $1 mountpoint
+# Check if $1 is a ZFS mountpoint.
+# Sets global ZPOOL to the matching dataset name.
+# Returns: 0=not ZFS, 1=ZFS and mounted, 2=ZFS and unmounted.
 zfsmnt()
 {
-	local _A=
+	local _name= _mnt= _A= _zfs_list=
+	ZPOOL=
 
-	ZPOOL=$( ${ZFS_CMD} list -Ho name,mountpoint | while read _name _mnt; do
-		[ "${_mnt}" = "${1}" ] && echo ${_name} && exit 2
-	done )
+	capture _zfs_list ${ZFS_CMD} list -Ho name,mountpoint
+	while read _name _mnt; do
+		if [ "${_mnt}" = "${1}" ]; then
+			ZPOOL="${_name}"
+			break
+		fi
+	done <<< "${_zfs_list}"
 
-	if [ $? -eq 2 ]; then
-		#    Check for mounted
-		_A=$( ${ZFS_CMD} get -Ho value mounted ${ZPOOL} )
+	if [ -n "${ZPOOL}" ]; then
+		capture _A ${ZFS_CMD} get -Ho value mounted "${ZPOOL}"
 		[ "${_A}" = "yes" ] && return 1
 		return 2
-	else
-		return 0
 	fi
+	return 0
 }
 
-# return 0 if $1 is not valid ZFS filesystem
-# return 1 if $1 is valid ZFS mountpoint and mounted
-# return 2 if $1 is valid ZFS mountpoint and not mounted
-# if  zfsfs /mnt; then
-#    echo " not zfs (mounted or not) mounted"
-# fi
+# Check if $1 is a valid ZFS dataset name.
+# Returns: 0=not ZFS, 1=ZFS and mounted, 2=ZFS and unmounted.
 zfsfs() {
 	local _A=
 
-	_A=$( ${ZFS_CMD} list -Ho name | while read _name; do
-		[ "${_name}" = "${1}" ] && exit 2
-	done )
-
-	if [ $? -eq 2 ]; then
-		#    Check for mounted
-		_A=$( ${ZFS_CMD} get -Ho value mounted ${1} )
-		[ "${_A}" = "yes" ] && return 1
-		return 2
-	else
+	if ! ${ZFS_CMD} list -Ho name "${1}" >/dev/null 2>&1; then
 		return 0
 	fi
+
+	capture _A ${ZFS_CMD} get -Ho value mounted "${1}"
+	[ "${_A}" = "yes" ] && return 1
+	return 2
 }
 
-# export zmnt if $zroot exist, return 1
+# Set global zmnt to mountpoint of dataset $1.
+# Returns zfs get exit code, or 1 if $1 is empty.
 getmnt() {
-	local _res=
-
 	[ -z "${1}" ] && return 1
-	zmnt=$( ${ZFS_CMD} get -Ho value mountpoint "${1}" )
+	capture zmnt ${ZFS_CMD} get -Ho value mountpoint "${1}"
 	return $?
 }
 
-# return 0 if ${ZPOOL}/$1 zfs source exist
-# if zfsroot jail1; then
-# echo "zroot/$jail1 exist
-# fi
+# Check if ${ZPOOL}/$1 ZFS dataset exists.
+# Returns 0 if exists, 1 if not.
 zfsroot() {
 	[ -z "${1}" ] && return 0
 
-	if ${ZFS_CMD} list "${ZPOOL}/${1}" >/dev/null 2>&1; then
-		return 0
-	else
-		return 1
-	fi
+	${ZFS_CMD} list "${ZPOOL}/${1}" >/dev/null 2>&1
+	return $?
 }
 
-# $1 - oldjname
-# $2 - newjname
+# Rename cbsdsnap:jname metadata from $1 to $2 on all snapshots in ZPOOL.
 zfs_snapshot_rename()
 {
-	local _fs= _jname= _mod= _snapname= _oldjname= _newjname=
+	local _fs= _jname= _oldjname= _newjname=
 
 	_oldjname="$1"
 	_newjname="$2"
 
-	[ -z "${_oldjname}" -o -z "${_newjname}" ] && return 0
+	[ -z "${_oldjname}" ] || [ -z "${_newjname}" ] && return 0
 
-	# [ -n "${_oldjname}" ] && _mod="${ZPOOL}/${_oldjname}"
-	_mod="${ZPOOL}"
-
-	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${_mod} 2>/dev/null ); do
-		_jname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null )
+	for _fs in $( ${ZFS_CMD} list -H -r -t snapshot -o name ${ZPOOL} 2>/dev/null ); do
+		capture _jname ${ZFS_CMD} get -H -o value -s local cbsdsnap:jname "${_fs}" 2>/dev/null
 		[ -z "${_jname}" ] && continue
-		[ -n "${_oldjname}" -a "${_oldjname}" != "${_jname}" ] && continue
-		_snapname=$( ${ZFS_CMD} get -H -o value -s local cbsdsnap:snapname "${_fs}" 2>/dev/null )
-		[ -z "${_snapname}" ] && continue
-		${ZFS_CMD} set "cbsdsnap:jname=${_newjname}" "${ZPOOL}@${_snapname}"
-		# ${ECHO} "${N1_COLOR}ZFS snapshot renamed: ${N2_COLOR}${_snapname}${N0_COLOR}"
+		[ "${_oldjname}" != "${_jname}" ] && continue
+		${ZFS_CMD} set "cbsdsnap:jname=${_newjname}" "${_fs}"
 	done
 }
 
-
-# test if symlink point to zvol
-# extract and return 0 with is_zvol params as zvol
-# $1 - path to symlink
+# Check if $1 symlink points to a ZVOL.
+# Returns 0 and sets global is_zvol (without /dev/zvol/ prefix) on success.
 is_getzvol()
 {
-	is_zvol=
-	local _zvol_pref=
-	local _res=1
+	local _zvol_pref= _ret=1
 	local tmp_zvol=
+	is_zvol=
 
 	[ -z "${1}" ] && return 1
 	[ ! -h "${1}" ] && return 1
 
-	tmp_zvol=$( ${READLINK_CMD} "${1}" 2>/dev/null )
+	capture tmp_zvol ${READLINK_CMD} "${1}"
 
 	if [ -n "${tmp_zvol}" ]; then
-		_zvol_pref=$( substr --pos=0 --len=10 --str="${tmp_zvol}" )
+		capture _zvol_pref substr --pos=0 --len=10 --str="${tmp_zvol}"
 		if [ "${_zvol_pref}" = "/dev/zvol/" ]; then
+			capture is_zvol substr --pos=11 --len=0 --str="${tmp_zvol}"
 			_ret=0
-			is_zvol=$( echo "${tmp_zvol}" | ${SED_CMD} "s:/dev/zvol/::g" )
 		else
-			_ret=1
 			is_zvol=
 		fi
 	else
@@ -130,22 +103,18 @@ is_getzvol()
 	return ${_ret}
 }
 
-# create ZVOL from file
-# -b 0,1 - show progressbar (1 - by default), via cbsdtee
-# -f full path to file
-# -p alternative parent ZPOOL name (datadir zpool by default)
-# -n ZVOL name (by default: basename of ${_file}
-# if ! zfs_create_zvol_from_file -f /boot/kernel/kernel -n kernelvolume; then
-#    echo ";=("
-# fi
-# return 0 when on success
-# return 1 when error
-# return 2 when zvol already exist
+# Create ZVOL from a file using dd.
+# -b 0,1 - show progressbar (1 by default, via cbsdtee)
+# -f full path to source file
+# -o custom zfs create options
+# -p alternative parent ZPOOL name (default: jaildatadir pool)
+# -n ZVOL name (default: basename of file)
+# Returns: 0=success, 1=error, 2=zvol already exists.
 zfs_create_zvol_from_file()
 {
 	local _file= _pool= _zvol_name= DATA= _human_bytes= _res= _bar=1 _zvol_rec_size=0
-	local _ebytes= _ebytes_data= _ebytes_data_orig= _human_data_bytes=
-	local _i= _def_val= _zvol_opts_merged= _zvol_opts= zfs_custom_opt=
+	local _ebytes= _ebytes_data= _human_data_bytes= _msg= _ret=
+	local _i= _def_val= _zvol_opts_merged= _zvol_opts= zfs_custom_opt= _dd_bs=
 
 	while getopts "b:f:o:p:n:" opt; do
 		case "${opt}" in
@@ -155,60 +124,58 @@ zfs_create_zvol_from_file()
 			p) _pool="${OPTARG}" ;;
 			n) _zvol_name="${OPTARG}" ;;
 		esac
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	if [ "${fsfeat}" = "0" ]; then
 		${ECHO} "zfs_create_zvol_from_file: zfsfeat = 0"
-		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: zfs feature off, skipp"
+		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: zfs feature off, skip
 		return 1
 	fi
 
 	if [ ! -r "${_file}" ]; then
 		${ECHO} "zfs_create_zvol_from_file: no such file: ${_file}"
-		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file no such file: ${_file}"
+		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: no such file: ${_file}
 		return 1
 	fi
 
 	_ebytes=$( get_file_bytes "${_file}" 2>/dev/null )
 	_ebytes_data=$( get_file_blocks "${_file}" 2>/dev/null )
-	_ebytes_data=$(( _ebytes_data * 512 ))			# real referenced size/data
+	_ebytes_data=$(( _ebytes_data * 512 ))
 
 	if [ ${_ebytes} -lt 128 ]; then
-			${ECHO} "zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes"
-			cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes
-			return 1
+		${ECHO} "zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes"
+		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: file size too small: ${_ebytes} bytes
+		return 1
 	fi
 
-	[ -z "${_zvol_name}" ] && _zvol_name=$( ${BASENAME_CMD} "${_file}" )
+	[ -z "${_zvol_name}" ] && capture _zvol_name ${BASENAME_CMD} "${_file}"
 
 	if conv2human "${_ebytes}"; then
-			_human_bytes=${convval}
+		_human_bytes=${convval}
 	else
-			_human_bytes="${_ebytes}"
+		_human_bytes="${_ebytes}"
 	fi
 
 	if conv2human "${_ebytes_data}"; then
-			_human_data_bytes=${convval}
+		_human_data_bytes=${convval}
 	else
-			_human_data_bytes="${_ebytes_data}"
+		_human_data_bytes="${_ebytes_data}"
 	fi
 
-	. "${subrdir}/zfs.subr"
-
 	if [ -z "${_pool}" ]; then
-		DATA=$( ${ZFS_CMD} get -Ho value name "${jaildatadir}" )
+		capture DATA ${ZFS_CMD} get -Ho value name "${jaildatadir}"
 	else
 		DATA="${_pool}"
 	fi
 
 	if [ -r "/dev/zvol/${DATA}/${_zvol_name}" ]; then
-			${ECHO} "zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}"
-			cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}
-			return 2
+		${ECHO} "zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}"
+		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: zvol already exist: ${_zvol_name}
+		return 2
 	fi
 
-	_zvol_rec_size=$( ${ZFS_CMD} get -Hp -o value recordsize "${DATA}" )
+	capture _zvol_rec_size ${ZFS_CMD} get -Hp -o value recordsize "${DATA}"
 	# volume size must be a multiple of volume block size
 	_ebytes=$( roundup --num=${_ebytes} --multiple=${_zvol_rec_size} 2>/dev/null )
 
@@ -225,7 +192,6 @@ zfs_create_zvol_from_file()
 		return 1
 	fi
 
-	# default_vm_zvol_volblocksize etc...
 	readconf zfs.conf
 
 	_zvol_opts=
@@ -245,10 +211,8 @@ zfs_create_zvol_from_file()
 	done
 
 	if [ -z "${zfs_custom_opt}" ]; then
-		# no merge with custom zvol_opts=
 		_zvol_opts_merged="${_zvol_opts}"
 	else
-		#_zvol_opts_merged=$( zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}" 2>/dev/null )
 		capture _zvol_opts_merged zfs_merge_opts -d "${zfs_custom_opt}" -s "${_zvol_opts}"
 	fi
 
@@ -258,202 +222,163 @@ zfs_create_zvol_from_file()
 	_res=$?
 
 	if [ ${_res} -ne 0 ]; then
-		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: zfs_create_zvol_from_file: ${ZFS_CMD} create -V ${_ebytes} ${_zvol_opts_merged} ${DATA}/${_zvol_name}: ${_msg}
+		cbsdlogger NOTICE ${CIX_APP}: zfs_create_zvol_from_file: ${ZFS_CMD} create failed: ${_msg}
 		return 1
 	fi
 
-	# waiting for udev
+	# wait for udev to create /dev/zvol device
 	for ((_i=1; _i<=5; _i++)); do
-		test -e "/dev/zvol/${DATA}/${_zvol_name}" > /dev/null 2>&1
-		_ret=$?
-		[ ${_ret} -eq 0 ] && break
+		test -e "/dev/zvol/${DATA}/${_zvol_name}" && break
 		cbsdlogger NOTICE ${CIX_APP}: waiting udev ${_i}/5: /dev/zvol/${DATA}/${_zvol_name}
 		sleep 1
 	done
 
-	test -e /dev/zvol/${DATA}/${_zvol_name} > /dev/null 2>&1
-	_ret=$?
+	if ! test -e "/dev/zvol/${DATA}/${_zvol_name}"; then
+		err 1 "zfs_create_zvol_from_file: no such /dev/zvol/${DATA}/${_zvol_name}"
+	fi
 
-	[ ${_ret} -ne 0 ] && err 1 "zfs_create_zvol_from_file error: no such /dev/zvol/${DATA}/${_zvol_name}, zvol created? ${DATA}/${_zvol_name}"
+	case "${platform}" in
+		Linux) _dd_bs=4000000 ;;
+		*) _dd_bs=4m ;;
+	esac
 
 	if [ ${_bar} -eq 1 ]; then
 		${ECHO} "${N1_COLOR}Original size: ${_human_bytes}, real referenced size/data: ${_human_data_bytes}${N0_COLOR}"
 		${ECHO} "${N1_COLOR}Converting ${N2_COLOR}${_file}${N1_COLOR} -> ${N2_COLOR}/dev/zvol/${DATA}/${_zvol_name}${N1_COLOR}: ${N2_COLOR}${_human_bytes}${N1_COLOR}...${N0_COLOR}"
-		# Linux does not support postfix in bs=, e.g. bs=4m
-		case "${platform}" in
-			Linux)
-				${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" bs=4000000 | "${miscdir}/cbsdtee" -e "${_ebytes}" > "/dev/zvol/${DATA}/${_zvol_name}"
-				;;
-			*)
-				${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" bs=4m | "${miscdir}/cbsdtee" -e "${_ebytes}" > "/dev/zvol/${DATA}/${_zvol_name}"
-				;;
-		esac
-		${ECHO}
+		${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" bs=${_dd_bs} | "${miscdir}/cbsdtee" -e "${_ebytes}" > "/dev/zvol/${DATA}/${_zvol_name}"
 	else
-		# Linux does not support postfix in bs=, e.g. bs=4m
-		${ECHO} "${NICE_CMD} -n 20 ${DD_CMD} if=${_file} of=${_res} bs=4000000"
-		case "${platform}" in
-			Linux)
-				${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" of="${_res}" bs=4000000
-				;;
-			*)
-				${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" of="${_res}" bs=4m
-				;;
-		esac
-		${ECHO}
+		${NICE_CMD} -n 20 ${DD_CMD} if="${_file}" of="/dev/zvol/${DATA}/${_zvol_name}" bs=${_dd_bs}
 	fi
+	${ECHO}
 
-	sync
+	${SYNC_CMD} > /dev/null 2>&1 || true
 	# set readonly for gold volume
 	${ZFS_CMD} set "readonly=on" "${DATA}/${_zvol_name}"
 
 	return 0
 }
 
-# -n _zvol_name - destination zvol name in ${_zvol_dst} ( when
-#     not specified, use basename from ${_source} file )
-# -s source file, _source
-# -z zvol_dst (when not specified, get parent from ${jaildatadir}
+# Convert source image file to ZVOL and re-create symlink.
+# -n zvol name (default: basename of source)
+# -s source file path
+# -z zvol destination pool (default: jaildatadir pool)
 convert_source_image_to_zvol()
 {
-	local _source= _orig_source= DATA= _zvol_dst= _zvol_name=
+	local _orig_source= _zvol_dst= _zvol_name=
 
 	[ ${zfsfeat} -ne 1 ] && return 0
 
 	while getopts "n:s:z:" opt; do
 		case "${opt}" in
-			n)
-				_zvol_name="${OPTARG}"
-				;;
-			s)
-				_orig_source="${OPTARG}"
-				;;
-			z)
-				_zvol_dst="${OPTARG}"
-				;;
+			n) _zvol_name="${OPTARG}" ;;
+			s) _orig_source="${OPTARG}" ;;
+			z) _zvol_dst="${OPTARG}" ;;
 		esac
-
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	if [ -z "${_zvol_dst}" ]; then
-		_zvol_dst=$( ${ZFS_CMD} get -Ho value name "${jaildatadir}" )
+		capture _zvol_dst ${ZFS_CMD} get -Ho value name "${jaildatadir}"
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: auto zvol_dst selected: ${_zvol_dst}
 	fi
 
 	if [ -z "${_zvol_dst}" ]; then
-		${ECHO} "${N1_COLOR}convert_source_image_zvol: empty _zvol_dst${N0_COLOR}"
+		${ECHO} "${N1_COLOR}convert_source_image_to_zvol: empty _zvol_dst${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: empty _zvol_dst
 		return 0
 	fi
 	if [ -z "${_orig_source}" ]; then
-		${ECHO} "${N1_COLOR}convert_source_image_zvol: empty _source, use -s <file>${N0_COLOR}"
+		${ECHO} "${N1_COLOR}convert_source_image_to_zvol: empty _source, use -s <file>${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: empty _orig_source
 		return 0
 	fi
 	if [ ! -r "${_orig_source}" ]; then
-		${ECHO} "${N1_COLOR}convert_source_image_zvol: file not readable: ${N2_COLOR}${_orig_source}${N0_COLOR}"
+		${ECHO} "${N1_COLOR}convert_source_image_to_zvol: file not readable: ${N2_COLOR}${_orig_source}${N0_COLOR}"
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: file not readable: ${_orig_source}
 		return 0
 	fi
 
-	[ -z "${_zvol_name}" ] && _zvol_name=$( ${BASENAME_CMD} "${_orig_source}" )
+	[ -z "${_zvol_name}" ] && capture _zvol_name ${BASENAME_CMD} "${_orig_source}"
 	if [ -r "/dev/zvol/${_zvol_dst}/${_zvol_name}" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: already exist: /dev/zvol/${_zvol_dst}/${_zvol_name}, nothing to do
-		return 0		# already exist
+		return 0
 	fi
 
 	zfs_create_zvol_from_file -f "${_orig_source}" -n "${_zvol_name}" -p "${_zvol_dst}"
 
 	if [ -r "/dev/zvol/${_zvol_dst}/${_zvol_name}" ]; then
 		cbsdlogger NOTICE ${CIX_APP}: convert_source_image_to_zvol: re-create symlink ${_orig_source}:/dev/zvol/${_zvol_dst}/${_zvol_name}
-		# re-create symlink
 		${RM_CMD} -f "${_orig_source}"
 		${LN_CMD} -s "/dev/zvol/${_zvol_dst}/${_zvol_name}" "${_orig_source}"
 	fi
 }
 
-# -p - by full path to symlink/zvol
-# -v - by zvol
-# return 0 on success, 1 on fail
-# e.g: _res=$( get_dsk_zfs_guid -p ${_dsk_fullpath} )
-#   if [ $? -eq 0 ]; then
-#     echo "guid: ${_res}"
-#   fi
+# Get ZFS GUID of a zvol by symlink path or zvol name.
+# -p - symlink path to zvol (must be under /dev/zvol/)
+# -v - zvol name directly
+# Returns 0 on success and prints GUID to stdout.
 get_dsk_zfs_guid()
 {
 	local _dsk_fullpath= _is_zvol= _res=
-	local tmp_zvol= _zvol_pref= _is_zvol=
+	local tmp_zvol= _zvol_pref=
 
 	while getopts "p:v:" opt; do
 		case "${opt}" in
-			p)
-				_dsk_fullpath="${OPTARG}"
-				;;
-			v)
-				_is_zvol="${OPTARG}"
-				;;
+			p) _dsk_fullpath="${OPTARG}" ;;
+			v) _is_zvol="${OPTARG}" ;;
 		esac
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	if [ -z "${_is_zvol}" ]; then
 		if [ -z "${_dsk_fullpath}" ]; then
-			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: empty fullpath via -p${N0_COLOR}" 1>&2		# to stderr
+			${ECHO} "${N1_COLOR}skip get_dsk_zfs_guid: empty fullpath via -p${N0_COLOR}" 1>&2
 			return 1
 		fi
 		if [ ! -h "${_dsk_fullpath}" ]; then
-			${ECHO} "${N1_COLOR}skipp get_dsk_zfs_guid: not symlink to zvol: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}" 1>&2		# to stderr
+			${ECHO} "${N1_COLOR}skip get_dsk_zfs_guid: not symlink to zvol: ${N2_COLOR}${_dsk_fullpath}${N0_COLOR}" 1>&2
 			return 1
 		fi
 
-		#tmp_zvol=$( ${READLINK_CMD} ${_dsk_fullpath} 2>/dev/null )
 		capture tmp_zvol ${READLINK_CMD} "${_dsk_fullpath}"
 		capture _zvol_pref substr --pos=0 --len=10 --str="${tmp_zvol}"
 
-		# not started with /dev/zvol ?
 		if [ "${_zvol_pref}" != "/dev/zvol/" ]; then
-			${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: no /dev/zvol/ prefix (${_zvol_pref}): ${N2_COLOR}${_zvol_pref}${N0_COLOR}" 1>&2		# to stderr
+			${ECHO} "${N1_COLOR}skip get_dsk_zfs_guid: no /dev/zvol/ prefix (${_zvol_pref}): ${N2_COLOR}${tmp_zvol}${N0_COLOR}" 1>&2
 			return 1
 		fi
 
-		_is_zvol=$( echo "${tmp_zvol}" | ${SED_CMD} "s:/dev/zvol/::g" )
+		capture _is_zvol substr --pos=11 --len=0 --str="${tmp_zvol}"
 	fi
-	#_res=$( ${ZFS_CMD} get -Hp -o value guid ${_is_zvol} 2>/dev/null )
+
 	capture _res ${ZFS_CMD} get -Hp -o value guid "${_is_zvol}"
 	if [ -z "${_res}" ]; then
-		${ECHO} "${N1_COLOR}skipp dsk_modify_dsk_zfs_guid error: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}" 1>&2		# to stderr
+		${ECHO} "${N1_COLOR}skip get_dsk_zfs_guid: unable to determine guid for: ${N2_COLOR}${_is_zvol}${N0_COLOR}" 1>&2
 		return 1
 	fi
-	printf "${_res}"
+	printf "%s" "${_res}"
 	return 0
 }
 
-# merge two (source and destination) args string "-o arg1=x arg2=y"
-# into one with duplicate removal ( destination args/val win )
+# Merge two "-o key=val" option strings, removing duplicates.
+# Destination args (-d) win over source args (-s).
 zfs_merge_opts()
 {
-	local _source= _source2= _dest= _i= _j= _s1= _s2= _sfeat= _pos= _exist=
+	local _source= _source2= _dest= _i= _j= _sfeat= _pos= _exist= _dfeat=
 
 	while getopts "d:s:" opt; do
 		case "${opt}" in
-			d)
-				_dest="${OPTARG}"
-				;;
-			s)
-				_source="${OPTARG}"
-				;;
+			d) _dest="${OPTARG}" ;;
+			s) _source="${OPTARG}" ;;
 		esac
-		shift $(($OPTIND - 1))
+		shift $(( OPTIND - 1 ))
 	done
 
 	for _i in ${_source}; do
 		if [ "${_i}" != "-o" ]; then
 			strpos --str="${_i}" --search="="
 			_pos=$?
-			[ ${_pos} -eq 0 ] && continue				# not param=val args?!
-			#_sfeat=$( substr --pos=0 --len=${_pos} --str=${_i} )	# now we have source param
-			# source param:
+			[ ${_pos} -eq 0 ] && continue
 			capture _sfeat substr --pos=0 --len=${_pos} --str="${_i}"
 
 			_exist=0
@@ -461,9 +386,7 @@ zfs_merge_opts()
 				[ "${_j}" = "-o" ] && continue
 				strpos --str="${_j}" --search="="
 				_pos=$?
-				[ ${_pos} -eq 0 ] && continue				# not param=val args?!
-				#_dfeat=$( substr --pos=0 --len=${_pos} --str=${_j} )	# now we have dest param
-				# dest param
+				[ ${_pos} -eq 0 ] && continue
 				capture _dfeat substr --pos=0 --len=${_pos} --str="${_j}"
 				if [ "${_sfeat}" = "${_dfeat}" ]; then
 					_exist=1
