@@ -1,0 +1,41 @@
+#!/bin/sh
+#v15.0.9
+# Preserve legacy VNET NIC names after jailnic.name became the actual
+# interface name inside the jail.  Older CBSD versions stored additional
+# interfaces as nic1, nic2, ... but always exposed them as eth1, eth2, ... .
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ ! -r "${CIX_DISTDIR}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${CIX_DISTDIR}/subr/cbsdbootstrap.subr || exit 1
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit 0
+
+mydb="${dbdir}/local.sqlite"
+
+_count=$( ${miscdir}/sqlcli ${mydb} "SELECT COUNT(jname) FROM jails WHERE emulator='jail'" )
+[ "${_count}" = "0" ] && exit 0
+
+jls=$( ${miscdir}/sqlcli ${mydb} "SELECT jname FROM jails WHERE emulator='jail'" )
+
+for jname in ${jls}; do
+	jaildb="${jailsysdir}/${jname}/local.sqlite"
+	[ ! -r "${jaildb}" ] && continue
+
+	_table_exists=$( ${miscdir}/sqlcli ${jaildb} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jailnic';" )
+	[ "${_table_exists}" = "0" ] && continue
+
+	# Only migrate legacy nic<number> names.  Leave custom names and rows
+	# whose target eth<number> name is already occupied untouched.
+	_legacy_nics=$( ${miscdir}/sqlcli ${jaildb} "SELECT name FROM jailnic WHERE name GLOB 'nic[0-9]*' AND substr(name, 4) NOT GLOB '*[^0-9]*' AND substr(name, 4) != '';" )
+	for old_name in ${_legacy_nics}; do
+		nic_number=${old_name#nic}
+		new_name="eth${nic_number}"
+		_target_exists=$( ${miscdir}/sqlcli ${jaildb} "SELECT COUNT(*) FROM jailnic WHERE name='${new_name}';" )
+		[ "${_target_exists}" != "0" ] && continue
+
+		${ECHO} "  * ${N1_COLOR}Update ${jname} jailnic: rename ${old_name} -> ${new_name}${N0_COLOR}"
+		${miscdir}/sqlcli ${jaildb} "UPDATE jailnic SET name='${new_name}' WHERE name='${old_name}'"
+	done
+done
+
+exit 0
