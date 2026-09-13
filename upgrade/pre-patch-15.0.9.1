@@ -20,6 +20,10 @@ jls=$( ${miscdir}/sqlcli ${mydb} "SELECT jname FROM jails WHERE emulator='jail'"
 for jname in ${jls}; do
 	jaildb="${jailsysdir}/${jname}/local.sqlite"
 	[ ! -r "${jaildb}" ] && continue
+	jail_data=$( ${miscdir}/sqlcli ${mydb} "SELECT data FROM jails WHERE jname='${jname}'" )
+	[ -z "${jail_data}" -o "${jail_data}" = "0" ] && jail_data="${jaildatadir}/${jname}-data"
+	jail_rcconf="${jail_data}/etc/rc.conf"
+	[ ! -r "${jail_rcconf}" ] && continue
 
 	_table_exists=$( ${miscdir}/sqlcli ${jaildb} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='jailnic';" )
 	[ "${_table_exists}" = "0" ] && continue
@@ -30,6 +34,14 @@ for jname in ${jls}; do
 	for old_name in ${_legacy_nics}; do
 		nic_number=${old_name#nic}
 		new_name="eth${nic_number}"
+
+		# A legacy nic<number> entry is ambiguous: it may be a custom name
+		# rather than the historical CBSD name for eth<number>.  Rename it
+		# only when the jail's rc.conf confirms the corresponding eth name.
+		if ! ${GREP_CMD} -Eq "^[[:space:]]*ifconfig_${new_name}([_+]|=)" "${jail_rcconf}"; then
+			continue
+		fi
+
 		_target_exists=$( ${miscdir}/sqlcli ${jaildb} "SELECT COUNT(*) FROM jailnic WHERE name='${new_name}';" )
 		[ "${_target_exists}" != "0" ] && continue
 
