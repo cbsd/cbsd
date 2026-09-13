@@ -1,30 +1,52 @@
 #!/usr/bin/env cbsd
 #v12.0.4
 CIXARG=""
-CIXOPTARG="alljails shownode display node header mode jname"
-MYDESC="bhyve NIC list"
+CIXOPTARG="address alljails display driver flags header hwaddr id interface jname mode mtu node order persistent ratelimit shownode slot tagged type untagged vlan_tagged vlan_untagged"
+MYDESC="Manage bhyve virtual NICs"
 CBSDMODULE="bhyve"
 EXTHELP="wf_bhyve"
 ADDHELP="
 ${H3_COLOR}Description${N0_COLOR}:
 
- List bhyve virtual network interface (NIC) configuration for VMs.
+ List, add, update and delete bhyve virtual network interfaces.
+
+${H3_COLOR}Usage${N0_COLOR}:
+
+ cbsd bhyve-nic [mode=list] [jname=<vm>]
+ cbsd bhyve-nic mode=add jname=<vm> [interface=auto] ...
+ cbsd bhyve-nic mode=update jname=<vm> id=<id> [interface=...] ...
+ cbsd bhyve-nic mode=delete jname=<vm> id=<id>
 
 ${H3_COLOR}Options${N0_COLOR}:
 
  ${N2_COLOR}alljails=${N0_COLOR}  - include remote nodes in the output. Default: local only.
  ${N2_COLOR}shownode=${N0_COLOR}  - display node name in the output.
  ${N2_COLOR}display=${N0_COLOR}   - comma-separated list of columns to show.
-             Default: jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_vlan_untagged,nic_vlan_tagged.
+             Default: id,jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_vlan_untagged,nic_vlan_tagged.
  ${N2_COLOR}node=${N0_COLOR}      - query specific node(s) only.
  ${N2_COLOR}header=${N0_COLOR}    - set to 0 to suppress the header line. Default: 1.
  ${N2_COLOR}jname=${N0_COLOR}     - target virtual machine name.
+ ${N2_COLOR}mode=${N0_COLOR}      - list, add, update or delete. Default: list.
+ ${N2_COLOR}id=${N0_COLOR}        - NIC database ID, required by update and delete.
+ ${N2_COLOR}driver=${N0_COLOR}    - bhyve NIC driver: vtnet or e1000.
+ ${N2_COLOR}interface=${N0_COLOR} - parent interface or bridge. Default: auto.
+ ${N2_COLOR}hwaddr=${N0_COLOR}    - MAC address. Default: 0 (auto-generate).
+ ${N2_COLOR}address=${N0_COLOR}   - IP address on the host side. Default: 0.
+ ${N2_COLOR}mtu=${N0_COLOR}       - MTU. Default: 0 (inherit from parent).
+ ${N2_COLOR}persistent=${N0_COLOR} - persistent tap interface flag: 0 or 1.
+ ${N2_COLOR}ratelimit=${N0_COLOR} - NIC bandwidth limit. Default: 0.
+ ${N2_COLOR}flags=${N0_COLOR}     - comma-separated bridge flags, e.g. private.
+ ${N2_COLOR}vlan_untagged=${N0_COLOR} - untagged VLAN ID. Default: 0.
+ ${N2_COLOR}vlan_tagged=${N0_COLOR}   - tagged VLAN set, comma-separated. Default: 0.
 
 ${H3_COLOR}Examples${N0_COLOR}:
 
  # cbsd bhyve-nic
  # cbsd bhyve-nic jname=myvm
  # cbsd bhyve-nic display=jname,nic_hwaddr,nic_parent header=0
+ # cbsd bhyve-nic add myvm interface=bridge0 vlan_untagged=100
+ # cbsd bhyve-nic update myvm 1 vlan_tagged=200,300
+ # cbsd bhyve-nic delete myvm 2
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -41,7 +63,48 @@ cixinit
 . ${subrdir}/bhyve.subr
 . ${subrdir}/virtual.subr
 
-[ -z "${display}" ] && display="jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_vlan_untagged,nic_vlan_tagged"
+normalize_argv()
+{
+	local _arg _args= _space=
+
+	for _arg in ${CIX_OTHER_ARGS}; do
+		case "${_arg}" in
+			*=*) ;;
+			*)
+				_args="${_args}${_space}${_arg}"
+				_space=" "
+				;;
+		esac
+	done
+
+	${ECHO} "${_args}"
+}
+
+# Accept both "bhyve-nic add vm [id]" and "bhyve-nic vm add [id]".
+set -- $( normalize_argv )
+case "${1}" in
+	list|add|update|delete|del)
+		[ -z "${mode}" ] && mode="${1}"
+		shift
+		[ -z "${jname}" -a -n "${1}" ] && jname="${1}" && shift
+		;;
+	*)
+		[ -z "${jname}" -a -n "${1}" ] && jname="${1}" && shift
+		[ -z "${mode}" -a -n "${1}" ] && mode="${1}" && shift
+		;;
+esac
+[ -z "${id}" -a -n "${1}" ] && id="${1}" && shift
+[ -n "${1}" ] && err 1 "${N1_COLOR}bhyve-nic: too many arguments: ${N2_COLOR}${1}${N0_COLOR}"
+
+case "${mode}" in
+	""|list) mode="list" ;;
+	del) mode="delete" ;;
+esac
+
+[ -z "${vlan_tagged}" -a -n "${tagged}" ] && vlan_tagged="${tagged}"
+[ -z "${vlan_untagged}" -a -n "${untagged}" ] && vlan_untagged="${untagged}"
+
+[ -z "${display}" ] && display="id,jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_vlan_untagged,nic_vlan_tagged"
 
 mydisplay=$( printf '%s' "${display}" | ${TR_CMD} ',' ' ' )
 myheader=$( printf '%s' "${mydisplay}" | ${TR_CMD} '[:lower:]' '[:upper:]' )
@@ -82,13 +145,104 @@ show_jaildata_from_sql()
 	[ -n "${2}" ] && jname="${2}"
 
 	_status=
-	_sql="SELECT jname,nic_driver,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_vlan_untagged,nic_vlan_tagged FROM bhyvenic WHERE jname='${jname}'"
-	cbsdsqlro ${sqlfile} ${_sql} | while read jname nic_driver nic_parent nic_hwaddr nic_address nic_mtu nic_vlan_untagged nic_vlan_tagged; do
+	_sql="SELECT id,jname,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM bhyvenic WHERE jname='${jname}'"
+	cbsdsqlro ${sqlfile} ${_sql} | while read id jname nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_address nic_mtu nic_persistent nic_ratelimit nic_flags nic_vlan_untagged nic_vlan_tagged; do
 		populate_output_data
 		printf "${N2_COLOR}"
 		printf "${_status}"
 		printf "${N0_COLOR}\n"
 	done
+}
+
+validate_local_vm()
+{
+	[ -z "${jname}" ] && err 1 "${N1_COLOR}bhyve-nic: ${N2_COLOR}jname=${N1_COLOR} is required${N0_COLOR}"
+	cbsdsqlro_vars local "SELECT emulator,jid FROM jails WHERE jname='${jname}'" _emulator _jid
+	[ -z "${_emulator}" ] && err 1 "${N1_COLOR}bhyve-nic: no such local VM: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ "${_emulator}" != "bhyve" ] && err 1 "${N1_COLOR}bhyve-nic: ${N2_COLOR}${jname}${N1_COLOR} is not a bhyve VM${N0_COLOR}"
+	mysqlite="${jailsysdir}/${jname}/local.sqlite"
+	[ ! -r "${mysqlite}" ] && err 1 "${N1_COLOR}bhyve-nic: database is not readable: ${N2_COLOR}${mysqlite}${N0_COLOR}"
+}
+
+validate_nic_id()
+{
+	case "${id}" in
+		""|*[!0-9]*) err 1 "${N1_COLOR}bhyve-nic: numeric ${N2_COLOR}id=${N1_COLOR} is required${N0_COLOR}" ;;
+	esac
+	cbsdsqlro_vars "${mysqlite}" "SELECT COUNT(*) FROM bhyvenic WHERE id='${id}' AND jname='${jname}'" _exists
+	[ "${_exists}" = "0" ] && err 1 "${N1_COLOR}bhyve-nic: NIC id ${N2_COLOR}${id}${N1_COLOR} not found for ${N2_COLOR}${jname}${N0_COLOR}"
+}
+
+warn_running_vm()
+{
+	[ -n "${_jid}" -a "${_jid}" != "0" ] && \
+		${ECHO} "${N1_COLOR}Note: VM is running, ${N2_COLOR}cbsd brestart ${jname}${N1_COLOR} is required to apply changes${N0_COLOR}"
+}
+
+bhyvenic_add()
+{
+	local _new_id=
+
+	[ -z "${order}" ] && order="0"
+	[ -z "${driver}" ] && driver="vtnet"
+	[ -z "${slot}" ] && slot="0"
+	[ -z "${type}" ] && type="0"
+	[ -z "${interface}" ] && interface="auto"
+	[ -z "${hwaddr}" ] && hwaddr="0"
+	[ -z "${address}" ] && address="0"
+	[ -z "${mtu}" ] && mtu="0"
+	[ -z "${persistent}" ] && persistent="0"
+	[ -z "${ratelimit}" ] && ratelimit="0"
+	[ -z "${flags}" ] && flags="0"
+	[ -z "${vlan_untagged}" ] && vlan_untagged="0"
+	[ -z "${vlan_tagged}" ] && vlan_tagged="0"
+
+	cbsdsqlrw "${mysqlite}" "INSERT INTO bhyvenic (jname,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_address,nic_mtu,nic_persistent,nic_ratelimit,nic_flags,nic_vlan_untagged,nic_vlan_tagged) VALUES ('${jname}','${order}','${driver}','${slot}','${type}','${interface}','${hwaddr}','${address}','${mtu}','${persistent}','${ratelimit}','${flags}','${vlan_untagged}','${vlan_tagged}')"
+	cbsdsqlro_vars "${mysqlite}" "SELECT MAX(id) FROM bhyvenic WHERE jname='${jname}'" _new_id
+	${ECHO} "${N1_COLOR}NIC id ${N2_COLOR}${_new_id}${N1_COLOR} added to ${N2_COLOR}${jname}${N0_COLOR}"
+	warn_running_vm
+}
+
+bhyvenic_update()
+{
+	local _column= _field= _sql= _updated= _value=
+
+	for _field in order driver slot type interface hwaddr address mtu persistent ratelimit flags vlan_untagged vlan_tagged; do
+		eval _value=\$${_field}
+		[ -z "${_value}" ] && continue
+		case "${_field}" in
+			order) _column="nic_order" ;;
+			driver) _column="nic_driver" ;;
+			slot) _column="nic_slot" ;;
+			type) _column="nic_type" ;;
+			interface) _column="nic_parent" ;;
+			hwaddr) _column="nic_hwaddr" ;;
+			address) _column="nic_address" ;;
+			mtu) _column="nic_mtu" ;;
+			persistent) _column="nic_persistent" ;;
+			ratelimit) _column="nic_ratelimit" ;;
+			flags) _column="nic_flags" ;;
+			vlan_untagged) _column="nic_vlan_untagged" ;;
+			vlan_tagged) _column="nic_vlan_tagged" ;;
+		esac
+		_sql="${_sql}; UPDATE bhyvenic SET ${_column}='${_value}' WHERE id='${id}' AND jname='${jname}'"
+		_updated="${_updated} ${_field}=${_value}"
+	done
+
+	if [ -n "${_sql}" ]; then
+		cbsdsqlrw "${mysqlite}" "${_sql}"
+		${ECHO} "${N1_COLOR}NIC id ${N2_COLOR}${id}${N1_COLOR} updated:${N2_COLOR}${_updated}${N0_COLOR}"
+		warn_running_vm
+	else
+		${ECHO} "${N1_COLOR}No parameters specified to update${N0_COLOR}"
+	fi
+}
+
+bhyvenic_delete()
+{
+	cbsdsqlrw "${mysqlite}" "DELETE FROM bhyvenic WHERE id='${id}' AND jname='${jname}'"
+	${ECHO} "${N1_COLOR}NIC id ${N2_COLOR}${id}${N1_COLOR} deleted from ${N2_COLOR}${jname}${N0_COLOR}"
+	warn_running_vm
 }
 
 show_remote()
@@ -141,11 +295,32 @@ vm_list()
 }
 
 vms=
-vm_list
-
-#### MAIN
 [ -z "${header}" ] && header=1
 sqldelimer=" "
-show_nic | ${COLUMN_CMD} -t
+
+#### MAIN
+case "${mode}" in
+	list)
+		vm_list
+		show_nic | ${COLUMN_CMD} -t
+		;;
+	add)
+		validate_local_vm
+		bhyvenic_add
+		;;
+	update)
+		validate_local_vm
+		validate_nic_id
+		bhyvenic_update
+		;;
+	delete)
+		validate_local_vm
+		validate_nic_id
+		bhyvenic_delete
+		;;
+	*)
+		err 1 "${N1_COLOR}bhyve-nic: unknown mode: ${N2_COLOR}${mode}${N1_COLOR}. Use: list, add, update, delete${N0_COLOR}"
+		;;
+esac
 
 exit 0
