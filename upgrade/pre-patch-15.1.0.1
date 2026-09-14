@@ -1,0 +1,33 @@
+#!/bin/sh
+# Add VLAN settings to bhyvenic tables
+[ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
+[ ! -r "${CIX_DISTDIR}/subr/cbsdbootstrap.subr" ] && exit 1
+. ${CIX_DISTDIR}/subr/cbsdbootstrap.subr || exit 1
+test_sql_stuff
+
+[ ! -h "${dbdir}/local.sqlite" ] && exit 0
+
+mydb="${dbdir}/local.sqlite"
+vms=$( ${miscdir}/sqlcli ${mydb} "SELECT jname FROM jails WHERE emulator='bhyve'" )
+
+for jname in ${vms}; do
+	vstdb="${jailsysdir}/${jname}/local.sqlite"
+	[ ! -r "${vstdb}" ] && continue
+
+	_table_exists=$( ${miscdir}/sqlcli ${vstdb} "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bhyvenic';" )
+	[ "${_table_exists}" = "0" ] && continue
+
+	_test=$( ${miscdir}/sqlcli ${vstdb} "SELECT COUNT(*) FROM pragma_table_info('bhyvenic') WHERE name='nic_vlan_untagged';" )
+	if [ "${_test}" != "1" ]; then
+		${ECHO} "  * ${N1_COLOR}Update ${jname} bhyvenic: add nic_vlan_untagged${N0_COLOR}"
+		${miscdir}/sqlcli ${vstdb} "ALTER TABLE bhyvenic ADD COLUMN nic_vlan_untagged TEXT DEFAULT '0'"
+	fi
+
+	_test=$( ${miscdir}/sqlcli ${vstdb} "SELECT COUNT(*) FROM pragma_table_info('bhyvenic') WHERE name='nic_vlan_tagged';" )
+	if [ "${_test}" != "1" ]; then
+		${ECHO} "  * ${N1_COLOR}Update ${jname} bhyvenic: add nic_vlan_tagged${N0_COLOR}"
+		${miscdir}/sqlcli ${vstdb} "ALTER TABLE bhyvenic ADD COLUMN nic_vlan_tagged TEXT DEFAULT '0'"
+	fi
+done
+
+exit 0

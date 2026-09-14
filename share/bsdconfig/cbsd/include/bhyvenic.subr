@@ -15,9 +15,11 @@ load_nic_info()
 		unset nic_parent${last_nic}
 		unset nic_hwaddr${last_nic}
 		unset nic_flags${last_nic}
+		unset nic_vlan_untagged${last_nic}
+		unset nic_vlan_tagged${last_nic}
 	done
 
-	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_flags FROM bhyvenic WHERE jname='${jname}'" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_flags; do
+	eval $( cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT id,nic_order,nic_driver,nic_slot,nic_type,nic_parent,nic_hwaddr,nic_flags,nic_vlan_untagged,nic_vlan_tagged FROM bhyvenic WHERE jname='${jname}'" | while read nic_id nic_order nic_driver nic_slot nic_type nic_parent nic_hwaddr nic_flags nic_vlan_untagged nic_vlan_tagged; do
 		echo "export nic_id${nic_last_id}='${nic_id}'"
 		echo "export nic_order${nic_last_id}='${nic_order}'"
 		echo "export nic_driver${nic_last_id}='${nic_driver}'"
@@ -26,8 +28,32 @@ load_nic_info()
 		echo "export nic_parent${nic_last_id}='${nic_parent}'"
 		echo "export nic_hwaddr${nic_last_id}='${nic_hwaddr}'"
 		echo "export nic_flags${nic_last_id}='${nic_flags}'"
+		echo "export nic_vlan_untagged${nic_last_id}='${nic_vlan_untagged}'"
+		echo "export nic_vlan_tagged${nic_last_id}='${nic_vlan_tagged}'"
 		nic_last_id=$(( nic_last_id + 1 ))
 	done ) || err 1 "${N1_COLOR}Error while create disk map${N0_COLOR}"
+}
+
+# form for $nic_vlan_untagged
+get_construct_nic_vlan_untagged()
+{
+	local _input= _message="Untagged VLAN ID for bridge member (ifconfig bridge addm interface untagged <vlan-id>). Set 0 to disable."
+
+	f_dialog_input _input "Input untagged VLAN ID (0 - disabled)" "${nic_vlan_untagged}" \
+		"$_message" || return 1
+
+	[ -n "${_input}" ] && nic_vlan_untagged="${_input}"
+}
+
+# form for $nic_vlan_tagged
+get_construct_nic_vlan_tagged()
+{
+	local _input= _message="Tagged VLAN set for bridge member (ifconfig bridge addm interface tagged <vlan-set>). Comma-separated list, e.g: 100,200,300. Set 0 to disable."
+
+	f_dialog_input _input "Input tagged VLAN set (comma-separated, 0 - disabled)" "${nic_vlan_tagged}" \
+		"$_message" || return 1
+
+	[ -n "${_input}" ] && nic_vlan_tagged="${_input}"
 }
 
 # form for $nic_driver
@@ -119,7 +145,7 @@ get_vale_switch()
 }
 
 # form for new nic
-# -d driver -f flags -r ratelimit -t type -h hwaddr -a address -p nic_parent -z nic_persistent
+# -d driver -f flags -r ratelimit -t type -h hwaddr -a address -p nic_parent -z nic_persistent -u nic_vlan_untagged -T nic_vlan_tagged
 add_nic()
 {
 	local controller=
@@ -129,7 +155,7 @@ add_nic()
 	local nic_persistent=
 	local ratelimit=
 
-	while getopts "a:d:f:r:t:h:p:z:" opt; do
+	while getopts "a:d:f:r:t:h:p:z:u:T:" opt; do
 		case "${opt}" in
 			a) nic_address="${OPTARG}" ;;
 			d) nic_driver="${OPTARG}" ;;
@@ -139,6 +165,8 @@ add_nic()
 			h) nic_hwaddr="${OPTARG}" ;;
 			p) nic_parent="${OPTARG}" ;;
 			z) nic_persistent="${OPTARG}" ;;
+			u) nic_vlan_untagged="${OPTARG}" ;;
+			T) nic_vlan_tagged="${OPTARG}" ;;
 		esac
 		shift $(($OPTIND - 1))
 	done
@@ -151,11 +179,13 @@ add_nic()
 	[ -z "${nic_hwaddr}" ] && err 1 "${N1_COLOR}Empty nic_hwaddr${N0_COLOR}"
 	[ -z "${nic_persistent}" ] && nic_parent="0"
 	[ -z "${nic_flags}" ] && nic_flags="0"
+	[ -z "${nic_vlan_untagged}" ] && nic_vlan_untagged="0"
+	[ -z "${nic_vlan_tagged}" ] && nic_vlan_tagged="0"
 
 	if [ -n "${driver}" ]; then
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address,nic_persistent,nic_ratelimit,nic_flags ) VALUES ( '${jname}','${nic_driver}','${nic_type}','${nic_parent}', '${nic_hwaddr}', '${nic_address}', '${nic_persistent}', '${nic_ratelimit}', '${nic_flags}' )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_driver,nic_type,nic_parent,nic_hwaddr,nic_address,nic_persistent,nic_ratelimit,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${jname}','${nic_driver}','${nic_type}','${nic_parent}', '${nic_hwaddr}', '${nic_address}', '${nic_persistent}', '${nic_ratelimit}', '${nic_flags}', '${nic_vlan_untagged}', '${nic_vlan_tagged}' )"
 	else
-		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_type,nic_parent,nic_hwaddr,nic_address,nic_persistent,nic_ratelimit,nic_flags ) VALUES ( '${jname}','${nic_type}','${nic_parent}', '${nic_hwaddr}', '${nic_address}', '${nic_persistent}', '${nic_ratelimit}', '${nic_flags}' )"
+		cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "INSERT INTO bhyvenic ( jname,nic_type,nic_parent,nic_hwaddr,nic_address,nic_persistent,nic_ratelimit,nic_flags,nic_vlan_untagged,nic_vlan_tagged ) VALUES ( '${jname}','${nic_type}','${nic_parent}', '${nic_hwaddr}', '${nic_address}', '${nic_persistent}', '${nic_ratelimit}', '${nic_flags}', '${nic_vlan_untagged}', '${nic_vlan_tagged}' )"
 	fi
 
 	return 0
@@ -263,6 +293,28 @@ update_nic_flags()
 	[ -z "${jname}" -o -z "${nic}" ] && return 0
 
 	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_flags='${nic_flags}' WHERE id='${nic}' AND jname='${jname}'"
+
+	return 0
+}
+
+update_nic_vlan_untagged()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_vlan_untagged}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_vlan_untagged='${nic_vlan_untagged}' WHERE id='${nic}' AND jname='${jname}'"
+
+	return 0
+}
+
+update_nic_vlan_tagged()
+{
+	local nic="${1}"; shift
+	[ -z "${nic_vlan_tagged}" ] && return 0
+	[ -z "${jname}" -o -z "${nic}" ] && return 0
+
+	cbsdsqlrw ${jailsysdir}/${jname}/local.sqlite "UPDATE bhyvenic SET nic_vlan_tagged='${nic_vlan_tagged}' WHERE id='${nic}' AND jname='${jname}'"
 
 	return 0
 }
