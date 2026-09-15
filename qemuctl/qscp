@@ -1,0 +1,345 @@
+#!/usr/bin/env cbsd
+#v12.1.3
+CBSDMODULE="bhyve"
+CIXARG=""
+CIXOPTARG="scp_max_retry:int verbose:int"
+MYDESC="Copy files from/to VM via scp(1)"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Copy files from/to VM via scp(1), mainly used for cloud VMs.
+ When target VM is cloud-init based, used ci_user_add params to determine
+ target ssh user and users homedir ( centos,ubuntu,freebsd,...)
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}scp_max_retry=${N0_COLOR} - overwrite qscp.conf default for num of retry, default: 10
+ ${N2_COLOR}verbose=${N0_COLOR}       - set to '1' for jscp quiet mode
+
+${H3_COLOR}Examples${N0_COLOR}:
+
+  # cbsd qscp install.sh vm1:install.sh scp_max_retry=1
+  # cbsd qscp vm1:install.sh /tmp/install.sh
+
+"
+
+# ToDo:
+# Instead of this need one jailscp daemon/services with one lock and which will work on AMQP queue
+# where executing
+#     % cbsd jailscp XXX YYY
+# just add job to queue
+
+. ${subrdir}/nc.subr
+. ${tools}
+. ${strings}
+cloud_api=0
+scp_max_retry=
+oscp_max_retry=
+cixinit
+
+[ -n "${scp_max_retry}" ] && oscp_max_retry="${scp_max_retry}"
+
+readconf qscp.conf
+[ -n "${oscp_max_retry}" ] && scp_max_retry="${oscp_max_retry}"
+
+getjname()
+{
+	strpos --str="${1}" --search=":"
+	[ $? -eq 0 ] && return 1
+
+	jname=${1%%:*}
+	rfile=${1##*:}
+}
+
+try_remote()
+{
+	# this is only wrapper for compile correct arguments for cbsd nodescp
+
+	capture node jwhereis ${jname}
+
+	[ -z "${node}" ] && log_err 1 "${CIX_APP}: node not found for jail ${jname}"
+
+	cbsdlogger NOTICE ${CIX_APP}: try to get remote jstatus for ${jname} on ${node}
+	capture status rexe node=${node} cbsd jstatus ${jname}
+	[ "${status}" = "0" ] && log_err 1 "${CIX_APP}: jail ${jname} not running on ${node}"
+	sqlfile="${node}"
+	. ${subrdir}/rcconf.subr
+	[ "${baserw}" = "1" ] && path=${data}
+	[ -z "${path}" ] && log_err 1 "${CIX_APP}: path not found"
+}
+
+qscp()
+{
+	[ $# -ne 2 ] && err 1 "${N1_COLOR}${CIX_APP}: $0 bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ] ( $ARGS) ${N0_COLOR}"
+
+	jname=
+	rfile=
+	rarg=0
+	dst=
+
+	if getjname ${1}; then
+		if getjname ${2}; then
+			log_err 1 "${N1_COLOR}${CIX_APP}: only one remote path${N0_COLOR}"
+		fi
+		if [ -n "${rfile}" ]; then
+			# basename
+			dst="${rfile##*/}"
+		else
+			# basename
+			dst="${2##*/}"
+		fi
+		rarg=1
+	else
+		if getjname ${2}; then
+			rarg=2
+			if [ -n "${rfile}" ]; then
+				dst="${rfile##*/}"
+			else
+				# basename
+				dst="${1##*/}"
+			fi
+		fi
+	fi
+
+	[ -z "${jname}" -o -z "${dst}" ] && log_err 1 "${N1_COLOR}${CIX_APP}: jail path via jail: path records not determine${N0_COLOR}"
+
+	validate_jname "${jname}" || log_err 1 "${N1_COLOR}${CIX_APP}: bad jname: ${jname}${N0_COLOR}"
+
+	Makefile="${CIX_PWD}/CBSDfile"
+	if [ -r "${Makefile}" ]; then
+		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}found CBSDfile: ${N2_COLOR}${Makefile}${N0_COLOR}"
+		. ${Makefile}
+		capture all_bhyve_list ${GREP_CMD} -E '^bhyve_[a-zA-Z0-9_@%:][-a-zA-Z0-9_@%:]*\(\)$' ${Makefile} | ${XARGS_CMD} | ${TR_CMD} -d "()" | ${SED_CMD} s#bhyve_##g
+		if [ -n "${CLOUD_URL}" -a -n "${CLOUD_KEY}" ]; then
+			cbsd_api=1
+		else
+			cbsd_api=0
+		fi
+	else
+		cbsd_api=0
+	fi
+
+	if [ ${cbsd_api} -eq 1 ]; then
+		capture CURL_CMD which curl
+		[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
+		[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
+		capture _cid ${miscdir}/cbsd_md5 "${CLOUD_KEY}"
+
+		found=0
+		for i in ${all_bhyve_list}; do
+			if [ "${i}" = "${jname}" ]; then
+				found=1
+				break
+			fi
+		done
+		[ ${found} -eq 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such bhyve: ${N2_COLOR}${jname}${N0_COLOR}"
+
+		for _jname in ${all_bhyve_list}; do
+			capture _ssh ${CURL_CMD} --no-progress-meter -H "cid:${_cid}" ${CLOUD_URL}/api/v1/status/${_jname}
+			_ret=$?
+			if [ ${_ret} -ne 0 ]; then
+				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+			fi
+
+			capture _ssh_string echo "${_ssh}" | ${JQ_CMD} '.ssh_string' | ${TR_CMD} -d '"'
+			capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
+
+			if [ "${_ssh_pref}" != "ssh" ]; then
+				${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+				${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${_jname}"
+				continue
+			fi
+
+			capture _ssh_len strlen "${_ssh_string}"
+			capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
+			#echo "${SSH_CMD} ${_ssh_post}"
+			capture _ssh_ip ${AWK_CMD} '{printf $1}' <<< "${_ssh_post}"
+
+			# extract port: "ip -pNNNN" → "NNNN"
+			capture _ssh_port_field ${AWK_CMD} '{printf $2}' <<< "${_ssh_post}"
+			capture _ssh_port ${TR_CMD} -d '\-p' <<< "${_ssh_port_field}"
+
+			# rewrite
+			if [ -n "${SUDO_USER}" ]; then
+				if [ -r /home/${SUDO_USER}/.ssh/id_ed25519 ]; then
+					_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
+				elif [ -r /home/${SUDO_USER}/.ssh/id_rsa ]; then
+					_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
+				else
+					date
+				fi
+			fi
+
+			if [ ${rarg} -eq 1 ]; then
+				capture DIR ${DIRNAME_CMD} ${2}
+				[ ! -d "${DIR}" ] && ${MKDIR_CMD} -p ${DIR}
+				scp_exec="${SCP_CMD} ${quiet} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_ip}:${rfile} ${2}"
+				echo "[debug] ${scp_exec}"
+			else
+				scp_exec="${SCP_CMD} ${quiet} -oPort=${_ssh_port} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${1} ${_ssh_ip}:${rfile}"
+				echo "[debug] ${scp_exec}"
+		fi
+
+			_pass=0
+			_ret=0
+			_retry=0
+			[ -z "${scp_max_retry}" ] && scp_max_retry="5"
+			while [ ${_pass} -ne 1 ]; do
+				${scp_exec}
+				_ret=$?
+				if [ ${_ret} -eq 0 ]; then
+					_pass=1
+					break
+				else
+					_retry=$(( _retry + 1 ))
+					[ ${_retry} -gt ${scp_max_retry} ] && break
+					echo "[debug] error code: ${_ret}, retry ${_retry}/${scp_max_retry}: ${scp_exec}" 1>&2
+					sleep 1
+				fi
+			done
+		done
+		exit 0
+	fi
+
+	. ${subrdir}/rcconf.subr
+	[ $? -eq 1 ] && err 1 "${N1_COLOR}${CIX_APP}: no such env: ${N2_COLOR}${jname}${N0_COLOR}"
+	[ ${jid} -eq 0 ] && log_err 1 "${N1_COLOR}${CIX_APP}: bhyve not active: ${jname}${N0_COLOR}"
+
+	if [ ${rarg} -eq 1 ]; then
+		# from VM
+		readconf qlogin.conf
+		# get first IP
+		# todo: where ipv4_first facts?
+		# todo: v6 ssh/ip
+		OIFS="${IFS}"
+		IFS=","
+		for i in ${ip4_addr}; do
+			first_ip4_addr="${i}"
+			break
+		done
+		IFS="${OIFS}"
+
+		echo "${SCP_CMD} ${quiet} ${qscp_args} -i ${workdir}/.ssh/id_rsa ${ci_user_add}@${first_ip4_addr}:${rfile} ${2}"
+
+		capture prefix substr --pos=0 --len=1 --str=${2}
+		case "${prefix}" in
+			/)
+				# real/full path
+				dstfile="${2}"
+				;;
+			*)
+				# basename
+				_res="${2##*/}"
+				dstfile="${CIX_PWD}/${_res}"
+				;;
+		esac
+
+		pass=0
+		ret=0
+		retry=0
+		[ -z "${scp_max_retry}" ] && scp_max_retry="5"
+		while [ ${pass} -ne 1 ]; do
+			${SCP_CMD} ${quiet} ${qscp_args} -i ${workdir}/.ssh/id_rsa ${ci_user_add}@${first_ip4_addr}:${rfile} ${dstfile}
+			ret=$?
+			if [ ${ret} -eq 0 ]; then
+				pass=1
+				break
+			else
+				retry=$(( retry + 1 ))
+				[ ${retry} -gt ${scp_max_retry} ] && break
+				echo "[debug] error code: ${ret}, retry ${retry}/${scp_max_retry}: ${scp_exec}" 1>&2
+				sleep 1
+			fi
+		done
+		unset first_ip4_addr
+	else
+		# to VM
+		capture DIR ${DIRNAME_CMD} ${path}${dst}
+		readconf qlogin.conf
+		ret=0
+		capture prefix substr --pos=0 --len=1 --str="${1}"
+		case "${prefix}" in
+			/)
+				# full_path?
+				capture _source ${REALPATH_CMD} "${1}"
+				ret=$?
+				[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${1}${N0_COLOR}"
+				;;
+			*)
+				capture _source ${REALPATH_CMD} "${CIX_PWD}/${1}"
+				ret=$?
+				[ ${ret} -ne 0 ] && err 1 "${N1_COLOR}${CIX_APP}: no such file: ${N2_COLOR}${CIX_PWD}/${1}${N0_COLOR}"
+				;;
+		esac
+
+		# get first IP
+		# todo: where ipv4_first facts?
+		# todo: v6 ssh/ip
+		OIFS="${IFS}"
+		IFS=","
+		for i in ${ip4_addr}; do
+			first_ip4_addr="${i}"
+			break
+		done
+		IFS="${OIFS}"
+
+		if [ -f ${_source} ]; then
+			echo "${SCP_CMD} ${quiet} ${qscp_args} -i ${workdir}/.ssh/id_rsa ${_source} ${ci_user_add}@${first_ip4_addr}:${dst}"
+			pass=0
+			ret=0
+			retry=0
+			[ -z "${scp_max_retry}" ] && scp_max_retry="5"
+			while [ ${pass} -ne 1 ]; do
+				${SCP_CMD} ${quiet} ${qscp_args}  -i ${workdir}/.ssh/id_rsa ${_source} ${ci_user_add}@${first_ip4_addr}:${dst}
+				ret=$?
+				if [ ${ret} -eq 0 ]; then
+					pass=1
+					break
+				else
+					retry=$(( retry + 1 ))
+					[ ${retry} -gt ${scp_max_retry} ] && break
+					echo "[debug] error code: ${ret}, retry ${retry}/${scp_max_retry}: ${scp_exec}" 1>&2
+					sleep 1
+				fi
+			done
+			ret=$?
+		elif [ -d "${_source}" ]; then
+			echo "DIR"
+		fi
+
+		unset first_ip4_addr
+	fi
+
+	exit ${ret}
+}
+
+### MAIN ###
+# change current dir
+cd ${CIX_PWD}
+
+if [ "${verbose}" = "0" ]; then
+	quiet="-q"
+else
+	quiet=
+fi
+
+[ -z "${*}" ] && err 1 "${N1_COLOR}${CIX_APP}: $0 bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ]${N0_COLOR}"
+
+ARGS=
+for i in ${CIX_OTHER_ARGS}; do
+	if [ -z "${ARGS}" ]; then
+		ARGS="${i}"
+	else
+		ARGS="${ARGS} ${i}"
+	fi
+
+	args_num=$(( args_num + 1 ))
+done
+
+[ ${args_num} -ne 2 ] && err 1 "${N1_COLOR}${CIX_APP}: $0 bhyve1:remotefile1 localfile1 [ localfile2 bhyve2@:remotefile2 ] ( $ARGS) ${N0_COLOR}"
+
+qscp ${ARGS}
+
+exit $?

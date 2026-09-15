@@ -3,9 +3,8 @@
 #v12.1.2
 CIXARG=""
 CIXOPTARG="cmd jname script"
-MYDESC="Execute command inside cloud-based vm"
+MYDESC="Execute command inside bhyve domain"
 ADDHELP="
-
 ${H3_COLOR}Description${N0_COLOR}:
 
  Run the command in the cloud-init-based bhyve VM from the master environment.
@@ -15,9 +14,9 @@ ${H3_COLOR}Description${N0_COLOR}:
 
 ${H3_COLOR}Options${N0_COLOR}:
 
+ ${N2_COLOR}jname=${N0_COLOR}  - target environment. If '*' or 'vm*' then execute on all
+              bhyve VM or whose names begin with 'vm';
  ${N2_COLOR}cmd=${N0_COLOR}    - command to execute inside VM, e.g. \"pwd\".
- ${N2_COLOR}jname=${N0_COLOR}  - target bhyve. If bhyve='*' or bhyve='vm*' then execute command on all
-              bhyve VM or in VM whose names begin with 'vm', e.g. 'vm1', 'vmX'...
  ${N2_COLOR}script=${N0_COLOR} - path to script instead of command.
 
 ${H3_COLOR}Examples${N0_COLOR}:
@@ -29,6 +28,11 @@ hostname
 ls -la
 sudo whoami
 EOF
+
+${H3_COLOR}See also${N0_COLOR}:
+
+ cbsd blogin --help
+ cbsd bset --help
 
 "
 
@@ -91,35 +95,31 @@ fi
 #######################################
 
 if [ -z "${cmd}" ] && [ -z "${script}" ]; then
-	# Pass '"' as ' in cmd
 	INIT_IFS="${IFS}"
 	IFS="~"
 #	cmd="$@"
 	IFS="${INIT_IFS}"
 	cmd=$( while [ -n "${1}" ]; do
-		#IFS="~"
 		strpos --str="${1}" --search="="
 		_pos=$?
 		if [ ${_pos} -eq 0 ]; then
 			# not params=value form
-			#printf "${1} "		# -x args trouble
 			# shellcheck disable=3037
 			echo -n "${1} "
 			shift
 			continue
 		fi
 
-		_arg_len=$( strlen "${1}" )
+		capture _arg_len strlen "${1}"
 		_pref=$(( _arg_len - _pos ))
-		ARG=$( substr --pos=0 --len=${_pos} --str="${1}" )
-		VAL=$( substr --pos=$(( _pos +2 )) --len=${_pref} --str="${1}" )
+		capture ARG substr --pos=0 --len=${_pos} --str="${1}"
 
 		if [ "${ARG}" = "jname" ]; then
 			shift
 			continue
 		fi
 
-		#printf "${ARG}=\"${VAL}\" "
+		capture VAL substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${1}"
 		# shellcheck disable=3037
 		echo -n "${ARG}=\"${VAL}\" "
 		shift
@@ -134,7 +134,7 @@ fi
 if [ -z "${cmd}" ] && [ -z "${script}" ]; then
 	capture batchfile ${MKTEMP_CMD}
 	capture script_name ${BASENAME_CMD} "${batchfile}"
-	# todo: test/chec for stdin/blocked
+	# todo: test/check for stdin/blocked
 	while read -r _line; do
 		echo "${_line}" >> "${batchfile}"
 	done
@@ -142,7 +142,6 @@ if [ -z "${cmd}" ] && [ -z "${script}" ]; then
 	bexec jname="${jname}" /bin/sh ./"${script_name}"
 	ret=$?
 	${RM_CMD} -f "${batchfile}"
-	#err 1 "${N1_COLOR}${CIX_APP}: empty command${N0_COLOR}"
 	exit ${ret}
 fi
 
@@ -214,17 +213,19 @@ else # we use API
 			continue
 		fi
 
-		capture _ssh_string jq -r '.ssh_string' <<< "${_ssh}"
+		capture _jq_out jq '.ssh_string' <<< "${_ssh}"
+		capture _ssh_string strstrip --str="${_jq_out}" --chars='"'
 		capture _ssh_pref substr --pos=0 --len=3 --str="${_ssh_string}"
 
 		if [ "${_ssh_pref}" != "ssh" ]; then
-			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error: ${N2_COLOR}${_ssh}${N0_COLOR}"
+			${ECHO} "${N1_COLOR}${CIX_APP} error: curl error2, no ssh_string: ${N2_COLOR}${_ssh}${N0_COLOR}"
 			${ECHO} "${CURL_CMD} --no-progress-meter -H \"cid:XXXXX\" ${CLOUD_URL}/api/v1/status/${jname}"
 			_global_ret=$(( _global_ret + 1 ))
 			continue
 		fi
 
-		_ssh_post="${_ssh_string#?????}"
+		capture _ssh_len strlen "${_ssh_string}"
+		capture _ssh_post substr --pos=5 --len=${_ssh_len} --str="${_ssh_string}"
 
 		# rewrite
 		if [ -n "${SUDO_USER}" ]; then
@@ -232,13 +233,11 @@ else # we use API
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_ed25519"
 			elif [ -r /home/"${SUDO_USER}"/.ssh/id_rsa ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
-			else
-				date
 			fi
 		fi
 		bexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-		echo "[debug]: ${bexec_cmd}" 1>&2
+		${ECHO} "[debug]: ${bexec_cmd}" 1>&2
 		${bexec_cmd} <<CBSD_EOF
 ${cmd}
 CBSD_EOF
@@ -260,7 +259,7 @@ elif [ -n "${script}" ]; then # script
 	capture scr_name ${BASENAME_CMD} "${script}"
 	capture orig_path ${REALPATH_CMD} "${script}"
 	[ ! -x "${orig_path}" ] && err 1 "${N1_COLOR}not executable: ${N2_COLOR}${orig_path}${N0_COLOR}"
-	echo "bscp ${orig_path} ${jname}:${scr_name}"
+	${ECHO} "bscp ${orig_path} ${jname}:${scr_name}"
 	bscp "${orig_path}" "${jname}":"${scr_name}"
 	bexec jname="${jname}" ./"${scr_name}"
 fi
