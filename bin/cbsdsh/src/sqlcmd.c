@@ -406,6 +406,7 @@ sqlitecmdro(int argc, char **argv)
 			_exit(1);
 
 		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
 
 		query = build_query(argc, argv, 2);
 		if (!query) {
@@ -495,6 +496,7 @@ sqlitecmdquery(int argc, char **argv)
 			_exit(1);
 
 		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
 
 		do {
 			ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
@@ -644,6 +646,7 @@ sqlitecmdro_vars(int argc, char **argv)
 			_exit(1);
 
 		sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+		sql_exec(db, "PRAGMA mmap_size = 209715200;");
 
 		do {
 			ret = sqlite3_prepare_v2(db, argv[2], -1, &stmt, NULL);
@@ -806,6 +809,9 @@ update_idlecmd(int argc, char **argv)
 		return 1;
 
 	sqlite3_busy_timeout(db, CBSD_SQLITE_BUSY_TIMEOUT);
+	sql_exec(db, "PRAGMA mmap_size = 209715200;");
+	sql_exec(db, "PRAGMA journal_mode = WAL;");
+	sql_exec(db, "PRAGMA synchronous = NORMAL;");
 	sql_exec(db, "UPDATE nodelist SET idle=datetime('now','localtime') WHERE nodename='%q'",
 	    argv[1]);
 	sqlite3_close(db);

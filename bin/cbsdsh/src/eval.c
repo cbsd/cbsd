@@ -1415,16 +1415,18 @@ capturecmd(int argc, char **argv)
 	 * We store the result in capture_defer_{name,val} and evalcommand()
 	 * applies it after the unwind.
 	 */
-	if (status != 0) {
-		capture_defer_name = varname;
-		capture_defer_val = NULL;	/* empty */
-		free(buf);
-		return 1;
-	}
-
 	capture_defer_name = varname;
-	capture_defer_val = buf;		/* transfer ownership */
-	return 0;
+	if (buf) {
+		capture_defer_val = buf;	/* transfer ownership */
+	} else {
+		capture_defer_val = NULL;	/* empty fallback */
+	}
+	/*
+	 * Return the command's exit status truncated to 0/1 so callers
+	 * can branch (e.g., "capture x jstatus …; [ $? -ne 0 ] && …"),
+	 * but always preserve captured output in the variable regardless.
+	 */
+	return status ? 1 : 0;
 
 fail:
 	/* Best-effort restore stdout and cleanup. */

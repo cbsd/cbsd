@@ -79,6 +79,8 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	// Set PRAGMAs
+	sqlite3_busy_timeout(db, 25000);
+	sqlite3_exec(db, "PRAGMA mmap_size = 209715200;", NULL, 0, 0);
 	sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, 0, 0);
 	sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", NULL, 0, 0);
 	sqlite3_db_config(db, SQLITE_DBCONFIG_DQS_DDL, 1, (void*)0);
