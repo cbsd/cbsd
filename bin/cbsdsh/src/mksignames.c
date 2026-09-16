@@ -43,11 +43,14 @@ char *progname;
 /* AIX 4.3 defines SIGRTMIN and SIGRTMAX as 888 and 999 respectively.
    I don't want to allocate so much unused space for the intervening signal
    numbers, so we just punt if SIGRTMAX is past the bounds of the
-   signal_names array (handled in configure). */
-#if defined (SIGRTMAX) && !defined (UNUSABLE_RT_SIGNALS) && (SIGRTMAX >= 2 * NSIG + 3)
-#  define UNUSABLE_RT_SIGNALS
-#endif
-
+   signal_names array (handled in configure). On FreeBSD (NSIG=32) the
+   array has 67 slots but SIGRTMAX=126, causing an out-of-bounds write that
+   crashes on big-endian (powerpc64). On Linux glibc, SIGRTMAX is a
+   function-like macro (__libc_current_sigrtmax()) and cannot be evaluated
+   by the preprocessor, so a compile-time #if check would break the build.
+   Define UNUSABLE_RT_SIGNALS to drop RT names at compile time when needed;
+   otherwise runtime bounds checks in initialize_signames() prevent
+   out-of-bounds writes on any platform. */
 #if defined (SIGRTMAX) && defined (UNUSABLE_RT_SIGNALS)
 #  undef SIGRTMAX
 #  undef SIGRTMIN
@@ -64,6 +67,7 @@ initialize_signames ()
   register int i;
 #if defined (SIGRTMAX) || defined (SIGRTMIN)
   int rtmin, rtmax, rtcnt;
+  int rt_usable = 1;
 #endif
 
   for (i = 1; i < signal_names_size; i++)
@@ -88,16 +92,22 @@ initialize_signames ()
 
 #if defined (SIGRTMIN)
   rtmin = SIGRTMIN;
-  signal_names[rtmin] = "RTMIN";
+  if (rtmin < 0 || rtmin >= (int)signal_names_size)
+    rt_usable = 0;
+  else
+    signal_names[rtmin] = "RTMIN";
 #endif
 
 #if defined (SIGRTMAX)
   rtmax = SIGRTMAX;
-  signal_names[rtmax] = "RTMAX";
+  if (rtmax < 0 || rtmax >= (int)signal_names_size)
+    rt_usable = 0;
+  else
+    signal_names[rtmax] = "RTMAX";
 #endif
 
 #if defined (SIGRTMAX) && defined (SIGRTMIN)
-  if (rtmax > rtmin)
+  if (rt_usable && rtmax > rtmin)
     {
       rtcnt = (rtmax - rtmin - 1) / 2;
       /* croak if there are too many RT signals */
