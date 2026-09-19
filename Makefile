@@ -1,3 +1,8 @@
+# Experimetal cbsdd C-reimplementation ( persistent SQL connection support )
+# Makefile:
+#gmake WITH_EXPERIMENTAL_CBSDD=1
+## initenv (автоматически при initenv):
+#env WITH_EXPERIMENTAL_CBSDD=1 cbsd initenv
 PREFIX ?= /usr/local
 CC ?= /usr/bin/cc
 OSTYPE ?= $(shell uname -s)
@@ -88,6 +93,7 @@ endif
 	$(RM) -f tools/racct-bhyve-statsd
 	$(RM) -f tools/racct-hoster-statsd
 	$(RM) -f tools/select_jail
+	$(RM) -f tools/cbsdd-ng
 	$(RM) -f misc/sipcalc
 	$(RM) -f misc/cbsd_md5
 	$(RM) -f misc/bsddialog
@@ -169,6 +175,9 @@ ifdef WITH_REDIS
 	EXTRAC += ../../bin/cbsdsh/cbsdredis.c ../../bin/cbsdsh/contrib/credis.c -DWITH_REDIS
 endif
 	$(CC) tools/src/select_jail.c -o tools/select_jail && $(STRIP) tools/select_jail
+ifdef WITH_EXPERIMENTAL_CBSDD
+	$(CC) -I/usr/local/include -L/usr/local/lib tools/src/cbsdd.c -lsqlite3 -lpthread -o tools/cbsdd-ng && $(STRIP) tools/cbsdd-ng
+endif
 	bin/cbsdsh/build && $(STRIP) bin/cbsdsh/src/dash && mv bin/cbsdsh/src/dash bin/cbsdsh/cbsd
 	$(MAKE) -C misc/src/sipcalc && $(STRIP) misc/src/sipcalc/sipcalc
 	$(MAKE) -C misc/src/cbsd_md5 && $(STRIP) misc/src/cbsd_md5/cbsd_md5

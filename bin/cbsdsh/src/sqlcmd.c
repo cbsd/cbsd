@@ -28,6 +28,8 @@
 #include "sqlcmd.h"
 
 #include <jv.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #define CBSD_SQLITE_BUSY_TIMEOUT 25000
 
@@ -278,6 +280,123 @@ static char *build_query(int argc, char **argv, int start) {
 	return query;
 }
 
+/*
+ * resolve_db_path: resolve $dbarg to absolute sqlite file path
+ * using the same logic as sql_open().
+ * Caller must free() the returned buffer.
+ * Returns NULL on error.
+ */
+static char *resolve_db_path(const char *dbarg)
+{
+	char *dbdir;
+	char *fullpath;
+
+	if (dbarg == NULL)
+		return NULL;
+
+	if (dbarg[0] == '/') {
+		size_t len = strlen(dbarg) + 1;
+		fullpath = malloc(len);
+		if (!fullpath) return NULL;
+		memcpy(fullpath, dbarg, len);
+		return fullpath;
+	}
+
+	dbdir = lookupvar("dbdir");
+	if (!dbdir) {
+		out1fmt("dbdir not set!\n");
+		return NULL;
+	}
+
+	size_t len = strlen(dbdir) + strlen(dbarg) + strlen(DBPOSTFIX) + 2;
+	fullpath = malloc(len);
+	if (!fullpath) {
+		out1fmt("Out of memory!\n");
+		return NULL;
+	}
+
+	snprintf(fullpath, len, "%s/%s%s", dbdir, dbarg, DBPOSTFIX);
+	return fullpath;
+}
+
+/*
+ * daemon_is_available: check if $workdir/var/run/cbsdd.sock exists.
+ * Returns 1 if socket file exists, 0 otherwise.
+ */
+static int daemon_is_available(void)
+{
+	char *workdir = lookupvar("workdir");
+	char sockpath[1024];
+
+	if (!workdir || !*workdir)
+		workdir = "/usr/jails";
+
+	snprintf(sockpath, sizeof(sockpath), "%s/var/run/cbsdd.sock", workdir);
+	return (access(sockpath, F_OK) == 0);
+}
+
+/*
+ * daemon_connect: connect to daemon Unix socket.
+ * Returns connected fd >= 0, or -1 on error.
+ * On stale socket (connect fails), prints warning message.
+ *
+ * Does NOT take any locks or affect shell state; the caller
+ * must close the returned fd when done.
+ */
+static int daemon_connect(void)
+{
+	char *workdir = lookupvar("workdir");
+	char sockpath[1024];
+	int fd;
+	struct sockaddr_un addr;
+
+	if (!workdir || !*workdir)
+		workdir = "/usr/jails";
+
+	snprintf(sockpath, sizeof(sockpath), "%s/var/run/cbsdd.sock", workdir);
+
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0)
+		return -1;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockpath);
+
+	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		close(fd);
+		fprintf(stderr,
+		    "cbsdsql: socket %s exists but daemon not running? "
+		    "Please remove socket or run daemon.\n", sockpath);
+		return -1;
+	}
+
+	return fd;
+}
+
+/*
+ * daemon_read_line: read one line (terminated by \n) from fd.
+ * NUL-terminates buf. Returns length on success, -1 on error/timeout.
+ */
+static int daemon_read_line(int fd, char *buf, size_t maxlen)
+{
+	size_t pos = 0;
+
+	while (pos < maxlen - 1) {
+		char c;
+		ssize_t n = read(fd, &c, 1);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return -1;
+		if (c == '\n')
+			break;
+		buf[pos++] = c;
+	}
+	buf[pos] = '\0';
+	return (int)pos;
+}
+
 int
 sqlitecmdrw(int argc, char **argv)
 {
@@ -286,12 +405,63 @@ sqlitecmdrw(int argc, char **argv)
 	int st;
 	char buf[8192];
 	ssize_t n;
+	char *dbpath;
+	char *query;
+	int dfd;
+	char line[8192];
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
 		return 1;
 	}
 
+	/* Daemon path: persistent connection through cbsdd */
+	if (daemon_is_available()) {
+		dbpath = resolve_db_path(argv[1]);
+		if (!dbpath)
+			return 1;
+
+		query = build_query(argc, argv, 2);
+		if (!query) {
+			free(dbpath);
+			out1fmt("Failed to build query string!\n");
+			return 1;
+		}
+
+		dfd = daemon_connect();
+		if (dfd < 0) {
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		write_full(dfd, "W", 1);
+		write_full(dfd, dbpath, strlen(dbpath));
+		write_full(dfd, "\n", 1);
+		write_full(dfd, query, strlen(query));
+		write_full(dfd, "\n", 1);
+
+		st = 0;
+		for (;;) {
+			if (daemon_read_line(dfd, line, sizeof(line)) < 0) {
+				st = 1;
+				break;
+			}
+			if (strcmp(line, "END") == 0)
+				break;
+			if (strncmp(line, "ERR ", 4) == 0) {
+				fprintf(stderr, "%s\n", line + 4);
+				st = 1;
+			}
+		}
+
+		close(dfd);
+		free(dbpath);
+		free(query);
+		return st;
+	}
+
+	/* Legacy path: fork-per-query */
 	cpid = fork_sql_child_stdout(&outfd);
 	if (cpid < 0)
 		return 1;
@@ -373,12 +543,67 @@ sqlitecmdro(int argc, char **argv)
 	int st;
 	char buf[8192];
 	ssize_t n;
+	char *dbpath;
+	char *query;
+	int dfd;
+	char line[8192];
 
 	if (argc < 3) {
 		out1fmt("%s: format: %s <dbfile> <query>\n", nm(), nm());
 		return 0;
 	}
 
+	/* Daemon path: persistent connection through cbsdd */
+	if (daemon_is_available()) {
+		dbpath = resolve_db_path(argv[1]);
+		if (!dbpath)
+			return 1;
+
+		query = build_query(argc, argv, 2);
+		if (!query) {
+			free(dbpath);
+			out1fmt("Failed to build query string!\n");
+			return 1;
+		}
+
+		dfd = daemon_connect();
+		if (dfd < 0) {
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		write_full(dfd, "R", 1);
+		write_full(dfd, dbpath, strlen(dbpath));
+		write_full(dfd, "\n", 1);
+		write_full(dfd, query, strlen(query));
+		write_full(dfd, "\n", 1);
+
+		st = 0;
+		for (;;) {
+			if (daemon_read_line(dfd, line, sizeof(line)) < 0) {
+				st = 1;
+				break;
+			}
+			if (strcmp(line, "END") == 0)
+				break;
+			if (strncmp(line, "ERR ", 4) == 0) {
+				fprintf(stderr, "%s\n", line + 4);
+				st = 1;
+				break;
+			}
+			out1mem(line, strlen(line));
+			out1mem("\n", 1);
+		}
+
+		close(dfd);
+		free(dbpath);
+		free(query);
+		flushout(&output);
+		return st;
+	}
+
+	/* Legacy path: fork-per-query */
 	cpid = fork_sql_child_stdout(&outfd);
 	if (cpid < 0)
 		return 1;
@@ -470,12 +695,68 @@ sqlitecmdquery(int argc, char **argv)
 	int st;
 	char buf[8192];
 	ssize_t n;
+	char *dbpath;
+	char *query;
+	int dfd;
+	char line[8192];
 
 	if (argc != 3) {
 		out1fmt("usage: cbsdsqlquery <dbfile> <query>\n");
 		return 1;
 	}
 
+	/* Daemon path: persistent connection through cbsdd */
+	if (daemon_is_available()) {
+		dbpath = resolve_db_path(argv[1]);
+		if (!dbpath)
+			return 1;
+
+		query = malloc(strlen(argv[2]) + 1);
+		if (!query) {
+			free(dbpath);
+			out1fmt("Out of memory!\n");
+			return 1;
+		}
+		strcpy(query, argv[2]);
+
+		dfd = daemon_connect();
+		if (dfd < 0) {
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		write_full(dfd, "J", 1);
+		write_full(dfd, dbpath, strlen(dbpath));
+		write_full(dfd, "\n", 1);
+		write_full(dfd, query, strlen(query));
+		write_full(dfd, "\n", 1);
+
+		st = 0;
+		for (;;) {
+			if (daemon_read_line(dfd, line, sizeof(line)) < 0) {
+				st = 1;
+				break;
+			}
+			if (strcmp(line, "END") == 0)
+				break;
+			if (strncmp(line, "ERR ", 4) == 0) {
+				fprintf(stderr, "%s\n", line + 4);
+				st = 1;
+				break;
+			}
+			out1mem(line, strlen(line));
+			out1mem("\n", 1);
+		}
+
+		close(dfd);
+		free(dbpath);
+		free(query);
+		flushout(&output);
+		return st;
+	}
+
+	/* Legacy path: fork-per-query */
 	cpid = fork_sql_child_stdout(&outfd);
 	if (cpid < 0)
 		return 1;
@@ -607,6 +888,9 @@ sqlitecmdro_vars(int argc, char **argv)
 	int st;
 	int nvars;
 	int i;
+	char *dbpath;
+	char *query;
+	int dfd;
 
 	/* Need at least: dbfile query var1 */
 	if (argc < 3) {
@@ -615,6 +899,157 @@ sqlitecmdro_vars(int argc, char **argv)
 	}
 
 	nvars = argc - 3;
+
+	/* Daemon path: persistent connection through cbsdd */
+	if (daemon_is_available()) {
+		int ncols = 0;
+		char colnames[64][128];
+		char **colvals = NULL;   /* per-column accumulated values */
+		size_t *collens = NULL;
+		int got_row = 0;
+
+		dbpath = resolve_db_path(argv[1]);
+		if (!dbpath)
+			return 1;
+
+		query = malloc(strlen(argv[2]) + 1);
+		if (!query) {
+			free(dbpath);
+			return 1;
+		}
+		strcpy(query, argv[2]);
+
+		dfd = daemon_connect();
+		if (dfd < 0) {
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		write_full(dfd, "V", 1);
+		write_full(dfd, dbpath, strlen(dbpath));
+		write_full(dfd, "\n", 1);
+		write_full(dfd, query, strlen(query));
+		write_full(dfd, "\n", 1);
+
+		/* First line: C:col1,col2,col3 */
+		char line[8192];
+		int n = daemon_read_line(dfd, line, sizeof(line));
+		if (n < 0 || strncmp(line, "C:", 2) != 0 || strncmp(line, "ERR ", 4) == 0) {
+			fprintf(stderr, "%s\n", line);
+			close(dfd);
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		/* Parse column names */
+		char *p = line + 2;
+		while (ncols < 64 && *p) {
+			char *comma = strchr(p, ',');
+			if (comma) {
+				size_t len = (size_t)(comma - p);
+				if (len >= sizeof(colnames[0])) len = sizeof(colnames[0]) - 1;
+				memcpy(colnames[ncols], p, len);
+				colnames[ncols][len] = '\0';
+				p = comma + 1;
+			} else {
+				snprintf(colnames[ncols], sizeof(colnames[ncols]), "%s", p);
+				p += strlen(p);
+			}
+			ncols++;
+		}
+
+		if (ncols == 0) {
+			close(dfd);
+			free(dbpath);
+			free(query);
+			return 1;
+		}
+
+		/* Allocate column value buffers */
+		colvals = calloc((size_t)ncols, sizeof(char *));
+		collens = calloc((size_t)ncols, sizeof(size_t));
+		if (!colvals || !collens) {
+			close(dfd);
+			free(dbpath);
+			free(query);
+			free(colvals);
+			free(collens);
+			return 1;
+		}
+
+		/* Read rows until END */
+		for (;;) {
+			n = daemon_read_line(dfd, line, sizeof(line));
+			if (n < 0)
+				break;
+			if (strcmp(line, "END") == 0)
+				break;
+			if (strncmp(line, "ERR ", 4) == 0)
+				break;
+
+			got_row = 1;
+
+			/* Parse pipe-delimited values */
+			char *pos = line;
+			for (int j = 0; j < ncols; j++) {
+				char *pipe = strchr(pos, '|');
+				char val[4096];
+				if (pipe) {
+					size_t vlen = (size_t)(pipe - pos);
+					if (vlen >= sizeof(val)) vlen = sizeof(val) - 1;
+					memcpy(val, pos, vlen);
+					val[vlen] = '\0';
+					pos = pipe + 1;
+				} else {
+					snprintf(val, sizeof(val), "%s", pos);
+					pos += strlen(pos);
+				}
+
+				size_t vlen = strlen(val);
+				size_t need = collens[j] + vlen + (collens[j] ? 1 : 0);
+				char *nv = realloc(colvals[j], need + 1);
+				if (!nv) continue;
+				colvals[j] = nv;
+				if (collens[j]) {
+					colvals[j][collens[j]] = '\n';
+					memcpy(colvals[j] + collens[j] + 1, val, vlen);
+					collens[j] = need;
+				} else {
+					memcpy(colvals[j], val, vlen);
+					collens[j] = vlen;
+				}
+				colvals[j][collens[j]] = '\0';
+			}
+		}
+
+		close(dfd);
+		free(dbpath);
+		free(query);
+
+		if (!got_row) {
+			for (i = 0; i < nvars; i++)
+				setvar(argv[3 + i], "", 0);
+			free(colvals);
+			free(collens);
+			return 1;
+		}
+
+		/* Set shell variables */
+		for (int j = 0; j < ncols; j++) {
+			const char *varname = (j < nvars) ? argv[3 + j] : colnames[j];
+			setvar(varname, colvals[j] ? colvals[j] : "", 0);
+		}
+
+		for (int j = 0; j < ncols; j++)
+			free(colvals[j]);
+		free(colvals);
+		free(collens);
+		return 0;
+	}
+
+	/* Legacy path: fork-per-query */
 
 	if (pipe(pfd) != 0)
 		return 1;
