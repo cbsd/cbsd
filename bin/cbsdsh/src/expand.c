@@ -2049,7 +2049,7 @@ static int pmatch(char *pattern, const char *string)
 	const char *q;
 	unsigned mb;
 	char *p;
-	char c;
+	signed char c; /* CTLESC is negative, including on unsigned-char targets. */
 
 	if (FNMATCH_IS_ENABLED)
 		return !fnmatch(pattern, string, 0);
