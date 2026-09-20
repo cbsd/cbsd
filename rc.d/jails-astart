@@ -58,6 +58,7 @@ jails_start()
 	local blist=
 	local qlist=
 	local xlist=
+	local _entry= _ret= _emulator= _astart=
 	local localjails= localbhyves= localxens= localqemus=
 
 	localjails="$( jorder order=ASC )"
@@ -71,15 +72,31 @@ jails_start()
 	[ -n "${localxens}" ] && cbsdlogger NOTICE ${CIX_APP}: XEN vm start order: ${localxens}
 
 	for jname in ${localjails} ${localbhyves} ${localxens} ${localqemus}; do
-		${toolsdir}/save-jail-info jname=${jname}
-		. ${subrdir}/rcconf.subr
-		if [ ${astart} -ne 1 ]; then
+		# rcconf.subr uses "err", which exits the current shell on malformed
+		# environment data.  Keep each environment in a subshell so one broken
+		# jail/VM cannot abort autostart processing for all the others.
+		_entry="$(
+			${toolsdir}/save-jail-info jname=${jname} >&2 &&
+			. ${subrdir}/rcconf.subr &&
+			printf '%s|%s' "${emulator}" "${astart}"
+		)"
+		_ret=$?
+
+		if [ ${_ret} -ne 0 ] || [ -z "${_entry}" ]; then
+			cbsdlogger WARNING ${CIX_APP}: unable to load environment data, skip autostart: ${jname}
+			continue
+		fi
+
+		_emulator="${_entry%%|*}"
+		_astart="${_entry#*|}"
+
+		if [ "${_astart}" != "1" ]; then
 			cbsdlogger NOTICE ${CIX_APP}: astart=0, skip: ${jname}
 			continue
-		else
-			cbsdlogger NOTICE ${CIX_APP}: astart=1, start scheduled: ${jname}
 		fi
-		case "${emulator}" in
+
+		cbsdlogger NOTICE ${CIX_APP}: astart=1, start scheduled: ${jname}
+		case "${_emulator}" in
 			bhyve)
 				blist="${blist} ${jname}"
 				;;
