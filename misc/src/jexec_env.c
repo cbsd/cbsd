@@ -1,5 +1,9 @@
 // Part of the CBSD Project
 // Exec cmd via jexec with clean environment
+//
+// When JEXEC_IS_NOT_SHELL is set in the environment, the "-c" flag is omitted
+// when passing cmd to the executable. Use this for binary emulators (e.g. QEMU
+// user-mode) that do not follow shell-style "-c <cmd>" argument convention.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,7 +75,7 @@ get_freebsd_ver(const char *cix_distdir)
 static void
 build_jexec_argv(char **jexec_argv, int max_args,
     char *jname, char *user, char *homedir,
-    char *shell, char *cmd, int use_user, int use_homedir)
+    char *shell, char *cmd, int use_user, int use_homedir, int no_shell)
 {
 	int i = 0;
 
@@ -95,7 +99,8 @@ build_jexec_argv(char **jexec_argv, int max_args,
 			fprintf(stderr, "jexec_env: too many jexec arguments\n");
 			_exit(1);
 		}
-		jexec_argv[i++] = "-c";
+		if (!no_shell)
+			jexec_argv[i++] = "-c";
 		jexec_argv[i++] = cmd;
 	}
 
@@ -128,6 +133,7 @@ execute_cmd(char *jname, char **argv)
 
 	const char *term = getenv("TERM");
 	const char *blocksize = getenv("BLOCKSIZE");
+	int no_shell = (getenv("JEXEC_IS_NOT_SHELL") != NULL);
 	char *user = argv[2];
 	char *homedir = argv[3];
 	char *shell = argv[4];
@@ -170,7 +176,7 @@ execute_cmd(char *jname, char **argv)
 		char *jexec_argv[MAX_JEXEC_ARGS];
 		build_jexec_argv(jexec_argv, MAX_JEXEC_ARGS,
 		    jname, user, homedir, shell, cmd,
-		    use_user, home_set);
+		    use_user, home_set, no_shell);
 
 		execv("/usr/sbin/jexec", jexec_argv);
 		perror("jexec_env: execv failed");
