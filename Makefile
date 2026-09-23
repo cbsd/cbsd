@@ -73,6 +73,7 @@ distclean:
 	$(RM) -f misc/cbsd_fwatch
 	$(RM) -f misc/merge
 	$(RM) -f misc/mountpoint
+	$(RM) -f misc/updateconf
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
 	$(RM) -f misc/x86-cpu-cap
@@ -145,6 +146,7 @@ cbsd: pkg-config-check
 	$(CC) misc/src/cbsd_fwatch.c -o misc/cbsd_fwatch && $(STRIP) misc/cbsd_fwatch
 	$(CC) misc/src/daemonize/daemonize.c misc/src/daemonize/getopt.c -Imisc/src/daemonize -O2 -o misc/daemonize && $(STRIP) misc/daemonize
 	$(CC) misc/src/mountpoint.c -o misc/mountpoint && $(STRIP) misc/mountpoint
+	$(CC) misc/src/updateconf.c -o misc/updateconf && $(STRIP) misc/updateconf
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
 	$(CC) misc/src/x86-cpu-cap.c -o misc/x86-cpu-cap -msse4.2 && $(STRIP) misc/x86-cpu-cap > /dev/null 2>&1 || /usr/bin/true
