@@ -183,7 +183,7 @@ endif
 	bin/cbsdsh/build && $(STRIP) bin/cbsdsh/src/dash && mv bin/cbsdsh/src/dash bin/cbsdsh/cbsd
 	$(MAKE) -C misc/src/sipcalc && $(STRIP) misc/src/sipcalc/sipcalc
 	$(MAKE) -C misc/src/cbsd_md5 && $(STRIP) misc/src/cbsd_md5/cbsd_md5
-	$(MAKE) -C misc/src/bsddialog STATIC=1 && $(STRIP) misc/src/bsddialog/utility/bsddialog
+	$(MAKE) -C misc/src/bsddialog STATIC=1 && $(STRIP) misc/src/bsddialog/utility/bsddialog && mv misc/src/bsddialog/utility/bsddialog misc/bsddialog
 	$(MAKE) -C share/bsdconfig/cbsd
 
 install:
