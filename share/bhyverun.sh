@@ -2,6 +2,29 @@
 [ -z "${CIX_DISTDIR}" ] && CIX_DISTDIR="/usr/local/cbsd"
 [ -z "${CIX_BIN}" ] && CIX_BIN="/usr/local/bin/cbsd"
 
+init_lock()
+{
+	local _lock_cmd=
+	LOCK_CMD=
+
+	_lock_cmd=$(command -v lockf 2>/dev/null)
+
+	if [ -n "${_lock_cmd}" -a -x "${_lock_cmd}" ]; then
+		LOCK_CMD="${_lock_cmd} -t0 -s "
+	else
+		_lock_cmd=$(command -v flock 2>/dev/null)
+		if [ -n "${_lock_cmd}" -a -x ${_lock_cmd} ]; then
+			LOCK_CMD="${_lock_cmd} -w0 -x "
+		fi
+	fi
+
+	if [ -z "${LOCK_CMD}" ]; then
+		echo "No such lock management stuff (lockf, flock)"
+		exit 0
+	fi
+}
+
+
 on_crash_status()
 {
 	local _ret=0
@@ -136,6 +159,8 @@ while getopts "c:d:e:g:hl:r:w:" opt; do
 	esac
 	shift $(($OPTIND - 1))
 done
+
+init_lock
 
 [ -z "${debug_engine}" ] && debug_engine="none"
 [ -z "${xhci}" ] && xhci=0
@@ -369,8 +394,8 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch GDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -batch --args ${debug_bhyve_cmd_run}"
-			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -ex run --args ${debug_bhyve_cmd_run}
+			echo "{LOCK_CMD} ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -batch --args ${debug_bhyve_cmd_run}"
+			{LOCK_CMD} ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -ex run --args ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		lldb)
@@ -393,12 +418,12 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 			echo "Warning"
 			echo "Run bhyve throuch LLDB. Please execute 'run' to launch bhyve instance"
 			echo
-			echo "${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}"
-			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}
+			echo "${LOCK_CMD} ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}"
+			${LOCK_CMD} ${tmpdir}/bhyveload.${jname}.lock ${debug_bin} -- ${debug_bhyve_cmd_run}
 			bhyve_exit=$?
 			;;
 		*)
-			${LOCKF_CMD} -s -t0 ${tmpdir}/bhyveload.${jname}.lock ${bhyve_cmd_run} > ${vm_logfile}.tmp 2>&1
+			${LOCK_CMD} ${tmpdir}/bhyveload.${jname}.lock ${bhyve_cmd_run} > ${vm_logfile}.tmp 2>&1
 			bhyve_exit=$?
 			# remove special char used by bhyve output via tr
 			#cp -a ${vm_logfile}.tmp ${vm_logfile}.tmp1

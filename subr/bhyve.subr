@@ -11,18 +11,23 @@ _CBSD_BHYVE_SUBR=1
 # test environment for bhyve
 init_bhyve()
 {
-	local _i= _res=
+	local _i= _res= _required_kmods=
 
 	[ "${skip_bhyve_check_env}" = "1" ] && return 0			# all fine!
 
-	if [ ${freebsdhostversion} -lt 1201499 ]; then
-		local _required_kmods="vmm if_tap if_bridge nmdm"
-	else
-		local _required_kmods="vmm if_tuntap if_bridge nmdm"
-	fi
+	case "${platform}" in
+		Linux)
+			_required_kmods="vmm tun bridge"
+			;;
+		*)
+			if [ ${freebsdhostversion} -lt 1201499 ]; then
+				_required_kmods="vmm if_tap if_bridge nmdm"
+			else
+				_required_kmods="vmm if_tuntap if_bridge nmdm"
+			fi
+	esac
 
 	if [ "${skip_bhyve_init_warning}" != "1" ]; then
-
 		case "${arch}" in
 			amd64|i386)
 				${miscdir}/x86-cpu-cap > ${ftmpdir}/x86-cpu-cap.log
@@ -57,9 +62,29 @@ init_bhyve()
 		for _i in ${_required_kmods}; do
 			if ! kernel_mod -q ${_i}; then
 				${ECHO} "${N1_COLOR}No kldloaded module: ${N2_COLOR}${_i}${N0_COLOR}"
-				${ECHO} "${N1_COLOR}Please add ${N2_COLOR}vmm_load=\"YES\"${N1_COLOR} to /boot/loader.conf and${N1_COLOR}"
-				${ECHO} "${N1_COLOR}put ${N2_COLOR}kld_list=\"${_required_kmods}\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host. Or, for example, run:${N0_COLOR}"
-				${ECHO} "${N2_COLOR} sysrc kld_list+=\"vmm if_tuntap if_bridge nmdm\" && service kld restart${N0_COLOR}"
+
+				case "${platform}" in
+					Linux)
+						${ECHO} "printf \'vmm\\\ntun\\\nbridge\\\n\' | tee /etc/modules-load.d/vmm.conf"
+						echo
+						${ECHO} "Also please disable other VT-x/VMX-based hypervisors via /etc/modprobe.d/blacklist-hypervisors.conf:"
+						echo
+						${ECHO} "blacklist kvm"
+						${ECHO} "blacklist kvm_intel"
+						${ECHO} "blacklist kvm_amd"
+						${ECHO} "blacklist kvm_irqbypass"
+						${ECHO} "blacklist vboxdrv"
+						${ECHO} "blacklist vboxnetflt"
+						${ECHO} "blacklist vboxnetadp"
+						${ECHO} "blacklist xen_blkfront"
+						${ECHO} "blacklist xen_netfront"
+						;;
+					*)
+						${ECHO} "${N1_COLOR}Please add ${N2_COLOR}vmm_load=\"YES\"${N1_COLOR} to /boot/loader.conf and${N1_COLOR}"
+						${ECHO} "${N1_COLOR}put ${N2_COLOR}kld_list=\"${_required_kmods}\"${N1_COLOR} into your ${N2_COLOR}/etc/rc.conf${N1_COLOR} then reboot the host. Or, for example, run:${N0_COLOR}"
+						${ECHO} "${N2_COLOR} sysrc kld_list+=\"vmm if_tuntap if_bridge nmdm\" && service kld restart${N0_COLOR}"
+						;;
+				esac
 
 				if [ "${mod_cbsd_queue_enabled}" = "YES" -a -z "${MOD_CBSD_QUEUE_DISABLED}" ]; then
 					readconf cbsd_queue.conf
