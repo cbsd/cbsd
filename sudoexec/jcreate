@@ -387,7 +387,42 @@ for i in ${CIX_OTHER_ARGS}; do
 	fi
 done
 
-# todo: when 'from' exist: use temprcconf settings to jset fromfile to re-configure default image options
+# Nested jcreate for from=. Image invariants stay on the command line.
+# jprofile and an explicit customskel/jailsysskeldir go with them so the
+# skel is copied onto the image root inside that jcreate.
+from_image_jcreate()
+{
+	local _extra=
+
+	[ -n "${ojprofile}" ] && _extra="${_extra} jprofile=${ojprofile}"
+	[ -n "${ocustomskel}" ] && _extra="${_extra} customskel=${ocustomskel}"
+	[ -n "${ojailsysskeldir}" ] && _extra="${_extra} jailsysskeldir=${ojailsysskeldir}"
+
+	echo "jcreate jname=${jname} ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0${_extra} $*"
+	# shellcheck disable=SC2086
+	jcreate jname="${jname}" ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0 platform="${platform}" emulator="${emulator}" ${_extra} "$@"
+}
+
+# from= without ZFS rsyncs the image after jcreate, which deletes files
+# customskel just copied. Read the path jcreate stored and apply it again.
+apply_saved_customskel()
+{
+	local _rc="${jailrcconfdir}/rc.conf_${jname}"
+	local _line=
+
+	[ -r "${_rc}" ] || return 0
+	_line=$(${GREP_CMD} '^customskel=' "${_rc}" 2>/dev/null | ${SED_CMD} -n '$p')
+	[ -z "${_line}" ] && return 0
+	eval "${_line}"
+	customskel
+}
+
+# cixinit copies the argument list to MYOPTARG and unsets CIXOPTARG.
+# o* keeps the values passed on the command line.
+# jprofile/customskel/jailsysskeldir are applied by the nested jcreate,
+# because that is when the image root exists and the skel is copied.
+# Everything else is replayed with jset afterwards, so a profile value
+# does not override an explicit command-line argument.
 
 [ -n "${ofrom}" ] && from="${ofrom}"
 
@@ -457,14 +492,13 @@ if [ -n "${from}" ]; then
 		fi
 
 		[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}create jail from image snapshot: ${N2_COLOR}${_zfssrc_snap}${N0_COLOR}" 1>&2
-		echo "jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}" ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0"
 		[ -n "${oplatform}" ] && platform="${oplatform}"
-		jcreate jname="${jname}" zfs_snapsrc="${_zfssrc_snap}" ver=empty baserw=1 pkg_bootstrap=0 floatresolv=0 applytpl=0 etcupdate_init=0 platform="${platform}" emulator="${emulator}"
+		from_image_jcreate zfs_snapsrc="${_zfssrc_snap}"
 		jail_created=1
 	else
 		[ ! -d "${workdir}/basejail/${from_md5}" ] && err 1 "${N1_COLOR}${CIX_APP}: no such resources: ${from_md5}: ${N2_COLOR}${workdir}/basejail/${from_md5}${N0_COLOR}"
 		[ -n "${oplatform}" ] && platform="${oplatform}"
-		jcreate jname="${jname}" baserw=1 pkg_bootstrap=0 ver=empty etcupdate_init=0 floatresolv=0 applytpl=0 platform="${platform}" emulator="${emulator}"
+		from_image_jcreate
 		. ${subrdir}/rcconf.subr
 		[ $? -eq 1 ] && err 1 "${N1_COLOR}${CIX_APP}: unable to create jail ${jname} from: ${N2_COLOR}${from}${N0_COLOR}"
 		if [ ! "${data}" ]; then
@@ -472,6 +506,8 @@ if [ -n "${from}" ]; then
 			err 1 "${N1_COLOR}${CIX_APP}: no such data directory: ${N2_COLOR}${data}${N0_COLOR}"
 		fi
 		${RSYNC_CMD} -a --hard-links --links --acls --xattrs --numeric-ids --recursive --partial --delete ${workdir}/basejail/${from_md5}/ ${data}/
+		# rsync --delete replaced the data directory after customskel ran
+		apply_saved_customskel
 	fi
 
 	#check for jail exist
@@ -503,11 +539,11 @@ if [ -n "${from}" ]; then
 		done
 	fi
 
-	for i in ${CIXOPTARG}; do
+	for i in ${MYOPTARG}; do
 		eval T="\$o${i}"
 
 		case "${i}" in
-			jname|from|removejconf)
+			jname|from|removejconf|jprofile|customskel|jailsysskeldir)
 				continue
 				;;
 			interface)
@@ -554,12 +590,25 @@ if [ -n "${jprofile}" ]; then
 	elif [ -r "${etcdir}/defaults/jail-freebsd-${jprofile}.conf" ]; then
 		${ECHO} "${N1_COLOR}Use profile: ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
 		${CAT_CMD} ${etcdir}/defaults/jail-freebsd-${jprofile}.conf >> ${temprcconf}
+	else
+		${ECHO} "${W1_COLOR}Warning: ${N1_COLOR}jprofile ${N2_COLOR}${jprofile}${N1_COLOR} not found: ${N2_COLOR}${etcdir}/jail-freebsd-${jprofile}.conf${N1_COLOR} or ${N2_COLOR}${etcdir}/defaults/jail-freebsd-${jprofile}.conf${N0_COLOR}"
 	fi
 fi
 
 . ${temprcconf}
 
+# Values passed on this jcreate command win over the profile.
+# from= relies on this: the nested call passes ver=empty, baserw=1,
+# pkg_bootstrap=0, applytpl=0 and etcupdate_init=0 so the image is not
+# turned into a base install. customskel is restored the same way when
+# it was passed explicitly.
 [ -n "${over}" ] && ver="${over}"
+[ -n "${obaserw}" ] && baserw="${obaserw}"
+[ -n "${opkg_bootstrap}" ] && pkg_bootstrap="${opkg_bootstrap}"
+[ -n "${oapplytpl}" ] && applytpl="${oapplytpl}"
+[ -n "${oetcupdate_init}" ] && etcupdate_init="${oetcupdate_init}"
+[ -n "${ocustomskel}" ] && customskel="${ocustomskel}"
+[ -n "${ojailsysskeldir}" ] && jailsysskeldir="${ojailsysskeldir}"
 [ -n "${ojnameserver}" -a "${ojnameserver}" != "0" ] && jnameserver="${ojnameserver}"
 
 # map 'native' to ver/arch

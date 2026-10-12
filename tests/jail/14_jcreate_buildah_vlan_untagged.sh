@@ -37,12 +37,20 @@ testLinuxVlanUntagged()
 		exec_start="/bin/true" \
 		runasap=1
 
-	# TODO: how to test ?
-	# ifconfig ${DEFAULT_FREEBSD_JAIL_INTERFACE} | grep 'untagged 20$'
-	# e.g.:
-#        member: epair2a flags=143<LEARNING,DISCOVER,AUTOEDGE,AUTOPTP>
-#                port 10 priority 128 path cost 2000 vlan protocol 802.1q untagged 20
+	_vnet=$( ${CIX_BIN} jget jname="${jname}" mode=quiet vnet )
+	assertEquals "vnet" "1" "${_vnet}"
 
+	_iface=$( ${CIX_BIN} jget jname="${jname}" mode=quiet interface )
+	assertEquals "interface" "${DEFAULT_FREEBSD_JAIL_INTERFACE}" "${_iface}"
+
+	_ip=$( ${CIX_BIN} jget jname="${jname}" mode=quiet ip4_addr )
+	assertEquals "ip4_addr" "192.168.20.117/24" "${_ip}"
+
+	_gw=$( ${CIX_BIN} jget jname="${jname}" mode=quiet ci_gw4 )
+	assertEquals "ci_gw4" "192.168.20.1" "${_gw}"
+
+	_nic=$( ${CIX_BIN} jailnic jname="${jname}" mode=list header=0 display=nic_parent,nic_vlan_untagged | awk '{print $1, $2}' )
+	assertEquals "jailnic" "${DEFAULT_FREEBSD_JAIL_INTERFACE} 20" "${_nic}"
 }
 
 . ${progdir}/../shunit2
