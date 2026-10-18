@@ -274,8 +274,6 @@ while [ ! -f ${tmpdir}/bhyvestop.${jname}.lock  ]; do
 		echo "CHROOTED"
 	fi
 
-	[ ${freebsdhostversion} -lt 1100120 ] && vm_vnc_port=1 # Disable xhci on FreeBSD < 11
-
 	if [ "${vm_efi}" != "none" ]; then
 		if [ -n "${vm_vnc_port}" -a "${vm_vnc_port}" != "1" ]; then
 			if [ ${xhci} -eq 1 ]; then
