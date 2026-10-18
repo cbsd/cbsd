@@ -989,7 +989,16 @@ compile_nic_args()
 
 									if [ "${interface}" != "disable" ]; then
 										# always up parent device
-										[ "${interface}" != "auto" ] && ${IFCONFIG_CMD} ${interface} up
+										if [ "${interface}" != "auto" ]; then
+											case "${platform}" in
+												Linux)
+													${IP_CMD} link set ${interface} up
+													;;
+												*)
+													${IFCONFIG_CMD} ${interface} up
+													;;
+											esac
+										fi
 										cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: try to get bridge for interface: ${interface}
 										if ! mybridge=$( get_my_device bridge ${interface} ); then
 											err 1 "errmsg=\"Error:get_my_device_bridge_for_${interface}: ${mybridge}\""
@@ -1023,7 +1032,6 @@ compile_nic_args()
 						capture _parent_mtu ${toolsdir}/nic_info --nic=${mybridge} --mtu --quiet 2>/dev/null
 						_ret=$?
 						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: mtu set to auto, parent ${mybridge} MTU: ${_parent_mtu}
-
 						if [ ${_ret} -eq 0 ]; then
 							# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
 							# when MTU is same?
@@ -1044,7 +1052,8 @@ compile_nic_args()
 						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
 
-					${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
+					echo "${jname}-nic${_id}" > ${workdir}/tmp/nic-${mytap}.desc
+					[ "${platform}" = "FreeBSD" ] && ${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
 
 					if [ "${mybridge}" != "disable" ]; then
 						if [ "${autoconn_iface}" = "NO" ]; then
@@ -1834,13 +1843,9 @@ bhyve_remove_nic()
 
 compile_vnc_args()
 {
-	local vm_port
-	local vnc_bind
-	local _jailed _jip _ret
-	local width height
-	local _pcislot_args=
-	local _vnc_bind=127.0.0.1
-	local _skip_ports _i _vms _tmpport
+	local vm_port= vnc_bind= _jailed= _jip= _ret=
+	local width= height= _pcislot_args= _vnc_bind=127.0.0.1
+	local _skip_ports= _i= _vms= _tmpport=
 
 	[ -z "${quiet}" ] && quiet=0
 
@@ -1850,12 +1855,6 @@ compile_vnc_args()
 	fi
 
 	vnc_args=
-
-	if [ ${freebsdhostversion} -lt 1100120 ]; then
-		${ECHO} "${N1_COLOR}VNC is only available on FreeBSD 11.0+. Disabling VNC${N1_COLOR}"
-		sleep 2
-		return 0
-	fi
 
 	case "${vm_vnc_port}" in
 		0)
@@ -1919,7 +1918,6 @@ compile_vnc_args()
 	else
 		vnc_bind="${default_vnc_tcp_bind}"
 	fi
-
 
 	# jailed?
 	capture _jailed cbsdsqlro ${jailsysdir}/${jname}/local.sqlite "SELECT jailed FROM settings LIMIT 1"
