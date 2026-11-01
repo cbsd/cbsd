@@ -605,6 +605,77 @@ ocijail_config_jq()
 	_config_json=$(echo "${_config_json}" | ${JQ_CMD} "$@")
 }
 
+# Resolve an OCI user or group token to a numeric id.
+# A number is returned as-is. A name is looked up in $2 (passwd or group).
+ocijail_resolve_id()
+{
+	local _token="${1}" _file="${2}" _id=
+
+	case "${_token}" in
+		*[!0-9]*)
+			[ -r "${_file}" ] || return 1
+			capture _id ${AWK_CMD} -F: -v name="${_token}" '$1 == name { print $3; exit }' "${_file}"
+			[ -n "${_id}" ] || return 1
+			printf '%s' "${_id}"
+			;;
+		*)
+			printf '%s' "${_token}"
+			;;
+	esac
+}
+
+# Primary gid of a numeric uid in passwd. Empty when the uid has no entry.
+ocijail_passwd_gid()
+{
+	local _uid="${1}" _file="${2}" _gid=
+
+	[ -r "${_file}" ] || return 0
+	capture _gid ${AWK_CMD} -F: -v uid="${_uid}" '$3 == uid { print $4; exit }' "${_file}"
+	printf '%s' "${_gid}"
+}
+
+# Copy OCI image User and WorkingDir into the runtime process config.
+# ocijail requires process.user.uid and process.user.gid to be numbers.
+ocijail_apply_image_process()
+{
+	local _root _passwd _group _spec _usr _grp _uid _gid _cwd
+
+	capture _cwd ${JQ_CMD} -r '.WorkingDir // ""' "${_oci_v1_cfg}"
+	[ -n "${_cwd}" ] && ocijail_config_jq --arg cwd "${_cwd}" '.process.cwd = $cwd'
+
+	capture _spec ${JQ_CMD} -r '.User // ""' "${_oci_v1_cfg}"
+	[ -z "${_spec}" ] && return 0
+
+	_usr="${_spec%%:*}"
+	if [ "${_spec#*:}" = "${_spec}" ]; then
+		_grp=
+	else
+		_grp="${_spec#*:}"
+	fi
+
+	_root="${workdir}/jails-data/${jname}-data"
+	_passwd="${_root}/etc/passwd"
+	_group="${_root}/etc/group"
+
+	if [ -n "${_usr}" ]; then
+		capture _uid ocijail_resolve_id "${_usr}" "${_passwd}" || \
+			stderr 1 "${N1_COLOR}${CIX_APP}: unable to find user ${N2_COLOR}${_usr}${N0_COLOR}"
+	else
+		_uid=0
+	fi
+
+	if [ -n "${_grp}" ]; then
+		capture _gid ocijail_resolve_id "${_grp}" "${_group}" || \
+			stderr 1 "${N1_COLOR}${CIX_APP}: unable to find group ${N2_COLOR}${_grp}${N0_COLOR}"
+	else
+		capture _gid ocijail_passwd_gid "${_uid}" "${_passwd}"
+		[ -z "${_gid}" ] && _gid=0
+	fi
+
+	ocijail_config_jq --arg uid "${_uid}" --arg gid "${_gid}" \
+		'.process.user = {"uid": ($uid | tonumber), "gid": ($gid | tonumber)}'
+}
+
 # create OCI bundle (config file in directory)
 ocijail_bundle()
 {
@@ -635,6 +706,8 @@ EOF
 	[ "${exec_start}" != "0" ] &&
 		ocijail_config_jq  --slurpfile v1 ${_oci_v1_cfg} --arg exec_start "${exec_start}" \
 		'.process.args = ([($v1[0].Entrypoint // []), ($exec_start | split(" "))] | add)'
+
+	ocijail_apply_image_process
 
 	# ocijail maps this to jail host.hostname and host=new
 	[ -n "${host_hostname}" ] && [ "${host_hostname}" != "0" ] && \
