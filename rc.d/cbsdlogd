@@ -1,0 +1,152 @@
+#!/bin/sh
+#
+# PROVIDE: cbsdlogd
+# REQUIRE: FILESYSTEMS LOGIN cleanvar
+# BEFORE: cbsdd
+# KEYWORD: shutdown
+#
+# cbsdlogd_enable="YES"
+#
+
+. /etc/rc.subr
+
+name=cbsdlogd
+rcvar=cbsdlogd_enable
+load_rc_config ${name}
+
+: ${cbsdlogd_enable:="NO"}
+: ${CIX_DISTDIR:="/usr/local/cbsd"}
+
+start_cmd=cbsdlogd_start
+stop_cmd=cbsdlogd_stop
+status_cmd=cbsdlogd_status
+
+# SIGTERM, then SIGKILL if it is still alive. The pid file stays until the
+# process is gone, so a failed kill does not drop the only record of it.
+_cbsdlogd_signal_pid()
+{
+	local _pid="$1" _i
+
+	[ -n "${_pid}" ] || return 0
+	kill -0 "${_pid}" 2>/dev/null || return 0
+	kill -TERM "${_pid}" 2>/dev/null || true
+	_i=0
+	while kill -0 "${_pid}" 2>/dev/null; do
+		if [ ${_i} -ge 50 ]; then
+			kill -KILL "${_pid}" 2>/dev/null || true
+			break
+		fi
+		sleep 0.1
+		_i=$((_i + 1))
+	done
+}
+
+_cbsdlogd_kill()
+{
+	local _file="$1" _pid
+
+	[ -s "${_file}" ] || return 0
+	read -r _pid < "${_file}" || return 0
+	_cbsdlogd_signal_pid "${_pid}"
+	rm -f "${_file}"
+}
+
+# The dedicated syslogd, even when its pid file was already removed.
+_cbsdlogd_kill_syslogd()
+{
+	local _pid _cmd _conf
+
+	_conf="${cbsd_workdir}/etc/cbsdlog.conf"
+	ps -ax -o pid= -o command= | while read -r _pid _cmd; do
+		case "${_cmd}" in
+		"/usr/sbin/syslogd "*"-f ${_conf}"*)
+			_cbsdlogd_signal_pid "${_pid}"
+			;;
+		esac
+	done
+}
+
+_cbsdlogd_alive()
+{
+	local _file="$1" _pid
+
+	[ -s "${_file}" ] || return 1
+	read -r _pid < "${_file}" || return 1
+	[ -n "${_pid}" ] || return 1
+	kill -0 "${_pid}" 2>/dev/null
+}
+
+cbsdlogd_start()
+{
+	local _logd _conf _run
+
+	if [ -z "${cbsd_workdir}" ]; then
+		echo "cbsdlogd: cbsd_workdir is not set" >&2
+		return 1
+	fi
+	_logd="${CIX_DISTDIR}/misc/cbsdlogd"
+	_conf="${cbsd_workdir}/etc/cbsdlog.conf"
+	_run="${cbsd_workdir}/var/run"
+	if [ ! -x "${_logd}" ]; then
+		echo "cbsdlogd: no ${_logd}" >&2
+		return 1
+	fi
+	mkdir -p "${_run}" "${cbsd_workdir}/var/log/jails" "${cbsd_workdir}/etc/cbsdlog.d"
+	if _cbsdlogd_alive "${_run}/jail-syslog.pid"; then
+		:
+	elif [ -r "${_conf}" ]; then
+		# -p/-P/-S keep this syslogd off the host sockets.
+		# -ss: no network. -H: keep the jail name from the datagram.
+		/usr/sbin/syslogd -ss -H \
+			-f "${_conf}" \
+			-p "${_run}/jail-syslog.sock" \
+			-P "${_run}/jail-syslog.pid" \
+			-S "${_run}/jail-syslog.priv" || return 1
+	else
+		echo "cbsdlogd: no ${_conf}, dedicated syslogd not started" >&2
+	fi
+	# cbsdlogd daemonizes itself and writes var/run/cbsdlogd.pid.
+	if ! _cbsdlogd_alive "${_run}/cbsdlogd.pid"; then
+		/usr/bin/env workdir="${cbsd_workdir}" "${_logd}" || return 1
+	fi
+}
+
+cbsdlogd_stop()
+{
+	if [ -z "${cbsd_workdir}" ]; then
+		echo "cbsdlogd: cbsd_workdir is not set" >&2
+		return 1
+	fi
+	_cbsdlogd_kill "${cbsd_workdir}/var/run/cbsdlogd.pid"
+	_cbsdlogd_kill "${cbsd_workdir}/var/run/jail-syslog.pid"
+	_cbsdlogd_kill_syslogd
+	rm -f "${cbsd_workdir}/var/run/jail-syslog.sock" \
+		"${cbsd_workdir}/var/run/jail-syslog.priv"
+}
+
+cbsdlogd_status()
+{
+	local _run _n
+
+	if [ -z "${cbsd_workdir}" ]; then
+		echo "cbsdlogd: cbsd_workdir is not set" >&2
+		return 1
+	fi
+	_run="${cbsd_workdir}/var/run"
+	_n=0
+	if _cbsdlogd_alive "${_run}/cbsdlogd.pid"; then
+		echo "cbsdlogd is running as pid $(cat "${_run}/cbsdlogd.pid")."
+		_n=$((_n + 1))
+	else
+		echo "cbsdlogd is not running."
+	fi
+	if _cbsdlogd_alive "${_run}/jail-syslog.pid"; then
+		echo "jail syslogd is running as pid $(cat "${_run}/jail-syslog.pid")."
+		_n=$((_n + 1))
+	else
+		echo "jail syslogd is not running."
+	fi
+	[ ${_n} -eq 2 ]
+}
+
+run_rc_command "$1"
