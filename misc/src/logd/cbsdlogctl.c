@@ -4,7 +4,7 @@
  *   create <jail>
  *   destroy <jail>
  *   exec <jail> -- <command> [args...]
- *   console [-t seconds] [--wait [seconds]] <jail>
+ *   console [--color auto|yes|no] [-t seconds] [--wait [seconds]] <jail>
  */
 
 #include <sys/socket.h>
@@ -363,6 +363,62 @@ cmd_exec(const char *jail, char **argv)
 	err(127, "exec %s", argv[0]);
 }
 
+#define COLOR_AUTO	0
+#define COLOR_YES	1
+#define COLOR_NO	2
+
+static const char col_green[] = "\033[0;32m";
+static const char col_red[] = "\033[0;31m";
+static const char col_reset[] = "\033[0m";
+
+/* A record is <tag><text>\n. The tag selects stdout or stderr and is not written. */
+static int
+console_write(const char *buf, size_t n, int *in_line, int *to_err, int *painted,
+    int color_out, int color_err)
+{
+	size_t i = 0;
+
+	while (i < n) {
+		const char *nl;
+		const char *color;
+		int fd;
+		size_t chunk;
+
+		if (!*in_line) {
+			*to_err = ((unsigned char)buf[i] == (unsigned char)CBSDLOG_CONS_ERR);
+			*in_line = 1;
+			*painted = 0;
+			i++;
+			fd = *to_err ? STDERR_FILENO : STDOUT_FILENO;
+			if (*to_err ? color_err : color_out) {
+				color = *to_err ? col_red : col_green;
+				if (write_all(fd, color, strlen(color)) < 0)
+					return (-1);
+				*painted = 1;
+			}
+			continue;
+		}
+		nl = memchr(buf + i, '\n', n - i);
+		fd = *to_err ? STDERR_FILENO : STDOUT_FILENO;
+		if (nl == NULL) {
+			if (n > i && write_all(fd, buf + i, n - i) < 0)
+				return (-1);
+			return (0);
+		}
+		chunk = (size_t)(nl - (buf + i));
+		if (chunk > 0 && write_all(fd, buf + i, chunk) < 0)
+			return (-1);
+		if (write_all(fd, "\n", 1) < 0)
+			return (-1);
+		if (*painted && write_all(fd, col_reset, strlen(col_reset)) < 0)
+			return (-1);
+		i += chunk + 1;
+		*in_line = 0;
+		*painted = 0;
+	}
+	return (0);
+}
+
 /*
  * timeout_sec 0 follows until the console closes.
  * wait_mode asks the daemon to stay if the console is not open yet.
@@ -370,7 +426,7 @@ cmd_exec(const char *jail, char **argv)
  * After it opens, timeout_sec applies. Returns 2 if the open wait expires.
  */
 static int
-cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec)
+cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int color_mode)
 {
 	struct timespec deadline, open_deadline;
 	char line[CBSDLOG_NAME_MAX + 32];
@@ -380,6 +436,20 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec)
 	int limited = timeout_sec > 0;
 	int open_wait = 0;
 	int strip_mark = 0;
+	int in_line = 0;
+	int to_err = 0;
+	int painted = 0;
+	int color_out;
+	int color_err;
+
+	if (color_mode == COLOR_YES) {
+		color_out = color_err = 1;
+	} else if (color_mode == COLOR_NO) {
+		color_out = color_err = 0;
+	} else {
+		color_out = isatty(STDOUT_FILENO);
+		color_err = isatty(STDERR_FILENO);
+	}
 
 	if (!cbsdlog_valid_jail(jail))
 		errx(1, "bad jail name");
@@ -468,15 +538,23 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec)
 		}
 		if (got == 0)
 			break;
-		if (strip_mark && (unsigned char)buf[0] == 1) {
-			memmove(buf, buf + 1, (size_t)got - 1);
-			got--;
+		if (strip_mark) {
+			if (buf[0] == CBSDLOG_CONS_WAKE) {
+				memmove(buf, buf + 1, (size_t)got - 1);
+				got--;
+			}
 			strip_mark = 0;
 		}
 		if (got > 0)
 			open_wait = 0;
-		if (got > 0 && write_all(STDOUT_FILENO, buf, (size_t)got) < 0)
+		if (console_write(buf, (size_t)got, &in_line, &to_err, &painted,
+		    color_out, color_err) < 0)
 			err(1, "write");
+	}
+	if (painted) {
+		int out = to_err ? STDERR_FILENO : STDOUT_FILENO;
+
+		write_all(out, col_reset, strlen(col_reset));
 	}
 	close(fd);
 	return (0);
@@ -484,13 +562,26 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec)
 
 static void usage(void);
 
-/* console [-t seconds|--timeout seconds] [--wait [seconds]] <jail> */
+static int
+parse_color(const char *s)
+{
+	if (strcmp(s, "auto") == 0)
+		return (COLOR_AUTO);
+	if (strcmp(s, "yes") == 0)
+		return (COLOR_YES);
+	if (strcmp(s, "no") == 0)
+		return (COLOR_NO);
+	errx(1, "bad color");
+}
+
+/* console [--color auto|yes|no] [-t seconds|--timeout seconds] [--wait [seconds]] <jail> */
 static int
 cmd_console_args(int argc, char **argv)
 {
 	int timeout_sec = 0;
 	int wait_mode = 0;
 	int wait_sec = 0;
+	int color_mode = COLOR_AUTO;
 	int i = 0;
 
 	while (i < argc && argv[i][0] == '-') {
@@ -508,6 +599,23 @@ cmd_console_args(int argc, char **argv)
 				errx(1, "bad timeout");
 			timeout_sec = (int)val;
 			i += 2;
+			continue;
+		}
+		if (strcmp(argv[i], "--color") == 0 ||
+		    strncmp(argv[i], "--color=", 8) == 0) {
+			const char *val;
+
+			if (argv[i][7] == '=')
+				val = argv[i] + 8;
+			else {
+				if (i + 1 >= argc)
+					usage();
+				val = argv[++i];
+			}
+			if (val[0] == '\0')
+				usage();
+			color_mode = parse_color(val);
+			i++;
 			continue;
 		}
 		if (strcmp(argv[i], "--wait") == 0) {
@@ -528,20 +636,29 @@ cmd_console_args(int argc, char **argv)
 	}
 	if (argc - i != 1)
 		usage();
-	return (cmd_console(argv[i], timeout_sec, wait_mode, wait_sec));
+	return (cmd_console(argv[i], timeout_sec, wait_mode, wait_sec, color_mode));
 }
 
 static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: cbsdlogctl [-w workdir] [-s sock] enable <jail> <sockdir>\n"
-	    "       cbsdlogctl [-w workdir] [-s sock] disable <jail>\n"
-	    "       cbsdlogctl [-w workdir] [-p pidfile] [-D dir] [-l logdir]\n"
-	    "                  create <jail>\n"
-	    "       cbsdlogctl [-w workdir] [-p pidfile] [-D dir] destroy <jail>\n"
-	    "       cbsdlogctl [-w workdir] [-s sock] exec <jail> -- <command> [args...]\n"
-	    "       cbsdlogctl [-w workdir] [-s sock] console [-t seconds] [--wait [seconds]] <jail>\n");
+	    "usage: cbsdlogctl [options] <command> [args]\n"
+	    "\n"
+	    "options:\n"
+	    "       -w workdir\n"
+	    "       -s sock\n"
+	    "       -p pidfile\n"
+	    "       -D dir\n"
+	    "       -l logdir\n"
+	    "\n"
+	    "commands:\n"
+	    "       enable <jail> <sockdir>\n"
+	    "       disable <jail>\n"
+	    "       create <jail>\n"
+	    "       destroy <jail>\n"
+	    "       exec <jail> -- <command> [args...]\n"
+	    "       console [--color auto|yes|no] [-t seconds] [--wait [seconds]] <jail>\n");
 	exit(1);
 }
 

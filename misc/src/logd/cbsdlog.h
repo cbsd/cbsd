@@ -33,6 +33,12 @@
 #define CBSDLOG_NAME_MAX	64
 #define CBSDLOG_RC_CONF		"/etc/rc.conf"
 
+/* Console records in the buffer and on FOLLOW: tag, text, newline. */
+#define CBSDLOG_CONS_OUT	'\001'
+#define CBSDLOG_CONS_ERR	'\002'
+/* One byte sent to a FOLLOW-wait client when the console opens. Not a line. */
+#define CBSDLOG_CONS_WAKE	'\0'
+
 /*
  * One assignment of key= on an rc.conf line. Returns 1 and writes the value,
  * 0 if this line is not that key, -1 if the value does not fit.
