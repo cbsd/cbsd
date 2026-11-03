@@ -582,7 +582,12 @@ if [ ${is_freebsd} -eq 1 -a ${baserw} -eq 1 ]; then
 fi
 
 if [ "${emulator_flags}" = "ocijail" ]; then
+	. ${subrdir}/cbsdlog.subr
+	cbsdlog_enable
+	cbsdlog_logset
 	ocijail_create
+	_ret=$?
+	[ ${_ret} -ne 0 ] && cbsdlog_disable
 	exit 0
 fi
 
@@ -623,28 +628,43 @@ capture CPUSET get_cpuset_cmd
 
 [ -r ${ftmpdir}/jstart.${jname}.err ] && ${RM_CMD} -f ${ftmpdir}/jstart.${jname}.err
 
+. ${subrdir}/cbsdlog.subr
+cbsdlog_enable
+cbsdlog_logset
+
+# Follow while jail -c runs, so /etc/rc is printed as it is written.
+# vnet and zfs-attach run rc later; that session is followed at late_start.
+_console_pid=
+_console_rc=1
+_console_shown=0
+if cbsdlog_active && [ "${quiet}" != "1" ]; then
+	printf "${N2_COLOR}"
+	${miscdir}/cbsdlogctl console --wait ${parallel} "${jname}" &
+	_console_pid=$!
+fi
+
 case "${platform}" in
 	DragonFly)
 		# legacy jail tools only
 		#cat ${ftmpdir}/${jname}.conf
 		${miscdir}/mountpoint ${path}/dev || ${MOUNT_CMD} -t devfs devfs ${path}/dev
 		echo "[debug] ${JAIL_CMD} ${path} ${host_hostname} ${ip4_addr} ${exec_start}"
-		${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} ${path} ${host_hostname} ${ip4_addr} ${exec_start}
+		${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${LOGSET} ${JAIL_CMD} ${path} ${host_hostname} ${ip4_addr} ${exec_start}
 		ret=$?
 		;;
 	*)
 		#cbsdlogger NOTICE ${CIX_APP}: ${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}
-		cbsdlogger NOTICE ${CIX_APP}: ${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf
+		cbsdlogger NOTICE ${CIX_APP}: ${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${LOGSET} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf
 		#echo "${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}"
 
 		case "${quiet}" in
 			0)
 				#_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname}"
-				_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf"
+				_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${LOGSET} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf"
 				;;
 			1)
 				#_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${JAIL_CMD} -f ${ftmpdir}/${jname}.conf -c ${jname} > /dev/null"
-				_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf > /dev/null"
+				_cmd="${CPUSET} ${miscdir}/daemonize -e ${ftmpdir}/jstart.${jname}.err -p ${ftmpdir}/jstart.${jname}.$$ ${NICE_CMD} -n ${nice} ${LOGSET} ${miscdir}/jail_env ${jname} ${ftmpdir}/${jname}.conf > /dev/null"
 				;;
 		esac
 
@@ -654,12 +674,29 @@ case "${platform}" in
 	esac
 
 if [ ${ret} -ne 0 ]; then
-	if [ -r ${ftmpdir}/jstart.${jname}.err ]; then
-		${CAT_CMD} ${ftmpdir}/jstart.${jname}.err
-		${RM_CMD} ${ftmpdir}/jstart.${jname}.err
+	if [ -n "${_console_pid}" ]; then
+		kill ${_console_pid} 2>/dev/null || true
+		wait ${_console_pid} 2>/dev/null || true
+		_console_pid=
+		printf "${N0_COLOR}"
 	fi
+	if cbsdlog_active; then
+		${miscdir}/cbsdlogctl console "${jname}" || true
+	elif [ -r ${ftmpdir}/jstart.${jname}.err ]; then
+		${CAT_CMD} ${ftmpdir}/jstart.${jname}.err
+	fi
+	[ -r ${ftmpdir}/jstart.${jname}.err ] && ${RM_CMD} ${ftmpdir}/jstart.${jname}.err
+	. ${subrdir}/cbsdlog.subr
+	cbsdlog_disable
 	jcleanup jname=${jname}
 	log_err 1 "${N1_COLOR}${CIX_APP}: daemonize error${N0_COLOR}"
+fi
+
+if [ -n "${_console_pid}" ]; then
+	wait ${_console_pid}
+	_console_rc=$?
+	_console_pid=
+	printf "${N0_COLOR}"
 fi
 
 trap "" HUP INT ABRT BUS TERM EXIT
@@ -688,10 +725,12 @@ done
 
 if [ ${ret} -eq 0 ]; then
 	[ "${quiet}" != "1" ] && ${ECHO} "${W1_COLOR}ERROR${N0_COLOR}"
-	if [ -r ${ftmpdir}/jstart.${jname}.err ]; then
+	if cbsdlog_active && [ ${_console_rc} -ne 0 ]; then
+		${miscdir}/cbsdlogctl console "${jname}" || true
+	elif [ -r ${ftmpdir}/jstart.${jname}.err ]; then
 		${CAT_CMD} ${ftmpdir}/jstart.${jname}.err
-		${RM_CMD} ${ftmpdir}/jstart.${jname}.err
 	fi
+	[ -r ${ftmpdir}/jstart.${jname}.err ] && ${RM_CMD} ${ftmpdir}/jstart.${jname}.err
 	jcleanup jname=${jname}
 	log_err 1 "${N1_COLOR}${CIX_APP}: jail failed${N0_COLOR}"
 fi
@@ -726,11 +765,24 @@ fi
 if [ -n "${late_start}" ]; then
 	[ ${quiet} -ne 1 ] && ${ECHO} "${N1_COLOR}late_start in progress...${N2_COLOR}"
 	# todo: FIB? NICE?
+	_console_pid=
+	if cbsdlog_active && [ "${quiet}" != "1" ]; then
+		${miscdir}/cbsdlogctl console --wait ${parallel} "${jname}" &
+		_console_pid=$!
+	fi
 	(
 		# Do not pass ignored startup signals to jail services.
 		trap : HUP INT ABRT BUS TERM
-		exec ${CPUSET} ${JEXEC_CMD} ${jname} ${late_start}
+		exec ${CPUSET} ${LOGSET} ${JEXEC_CMD} ${jname} ${late_start}
 	)
+	if [ -n "${_console_pid}" ]; then
+		wait ${_console_pid}
+		[ $? -eq 0 ] && _console_shown=1
+		_console_pid=
+		printf "${N0_COLOR}"
+	fi
+else
+	[ ${_console_rc} -eq 0 ] && _console_shown=1
 fi
 ### /late start ###
 
@@ -829,6 +881,13 @@ if [ ${myjid} -gt 0 -a "${mod_cbsd_redis_enabled}" = "YES" -a -z "${MOD_CBSD_RED
 	cbsdredis publish cbsd_events '{"cmd":"jstart", "node":"'${nodename}'", "jail":"'${jname}'", "status":0, "duration":'${diff_time}'}'
 fi
 capture diff_time displaytime ${diff_time}
+
+# --wait already printed /etc/rc. This is only the missed session.
+if cbsdlog_active && [ ${quiet} -ne 1 ] && [ ${myjid} -gt 0 ] && [ ${_console_shown} -eq 0 ]; then
+	printf "${N2_COLOR}"
+	${miscdir}/cbsdlogctl console "${jname}" || true
+	printf "${N0_COLOR}"
+fi
 
 if [ -f "${jailsysdir}/${jname}/jail-message" -a ${quiet} -ne 1 ]; then
 	${ECHO} "${N1_COLOR}---- ${N2_COLOR}jail messages ${N1_COLOR}----${N0_COLOR}" 1>&2
