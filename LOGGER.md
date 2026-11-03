@@ -51,11 +51,13 @@ the version and the timestamp. In every case the hostname written onward is the 
 inside one datagram becomes a space, so one datagram stays one line. The daemon then sends that datagram to the
 dedicated `syslogd`. Console lines are not syslog datagrams: for those the daemon writes an RFC 3164 header itself.
 
-The daemon keeps each jail's console in one 32 KiB buffer. Lines are written one after another, separated by `\n`.
-`start` is the oldest byte and `end` is the next free byte. When `end` is before `start`, the bytes wrap: `start` to
-the end of the buffer, then the beginning up to `end`. A new line drops whole lines from `start` until it fits. That
-buffer is what `cbsdlogctl console` reads. It is not the log file: an admin may later drop `console.info` from the
-jail's syslog block, and stdout would then be absent from `${workdir}/var/log/jails/<jail>.log`.
+The daemon keeps each jail's console in one 32 KiB buffer. A line is a tag byte, the text, and `\n`. The tag is
+`0x01` for stdout and `0x02` for stderr. `start` is the oldest byte and `end` is the next free byte. When `end` is
+before `start`, the bytes wrap: `start` to the end of the buffer, then the beginning up to `end`. A new line drops
+whole lines from `start` until it fits. `cbsdlogctl console` reads that buffer and writes each line to its own stdout
+or stderr. The tag is not printed and is not part of the syslog message. The buffer is not the log file: an admin
+may later drop `console.info` from the jail's syslog block, and stdout would then be absent from
+`${workdir}/var/log/jails/<jail>.log`.
 
 ## Control tool
 
@@ -70,7 +72,9 @@ inside the jail. When `syslog` is off the inserted command is empty. A vnet or z
 inside `jail -c`; there the same prefix is placed between `cpuset` and `jexec`.
 
 `cbsdlogctl console <jail>` sends `FOLLOW`. After `OK` it prints the buffered console lines and then follows new
-ones. It exits when no process still has that jail's console open: both stdout and stderr have reached EOF. That is
+ones. Stdout lines go to its stdout and stderr lines go to its stderr. `--color auto` (the default) paints stdout
+green and stderr red when that stream is a terminal. `yes` always paints, `no` never does. It exits when no process still has that
+jail's console open: both stdout and stderr have reached EOF. That is
 the output of `/etc/rc` or the entrypoint while the process is writing it. `-t` / `--timeout` seconds stops the
 follow even if the command is still running. An OCI jail's entrypoint does not exit, so a non-quiet start shows
 `console -t 2`.
@@ -78,7 +82,7 @@ follow even if the command is still running. An OCI jail's entrypoint does not e
 `console --wait [seconds]` sends `FOLLOW <jail> wait`. If the console is not open, the client stays until the next
 session opens and then closes. `seconds` limits only that open wait; omitted or `0` waits without a limit. Once the
 console is open there is no open timeout, and `-t` still limits the follow. The daemon marks the open with a single
-`0x01` byte, which `cbsdlogctl` does not print. A non-quiet `jstart` starts `--wait` with the parallel timeout before
+NUL, which `cbsdlogctl` does not print. A non-quiet `jstart` starts `--wait` with the parallel timeout before
 `jail -c`, so `/etc/rc` is printed while it runs. A vnet or zfs-attach jail runs `rc` from `jexec`, so `jstart`
 follows that session with a second `--wait` beside `jexec`. If the console does not open in time, `--wait` exits
 `2` and `jstart` falls back to `console` without `--wait`, which replays the buffer.

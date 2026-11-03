@@ -393,10 +393,11 @@ console_put(struct jent *j, const char *s, size_t n)
 	}
 }
 
-/* Append one physical line. Oldest lines are dropped until it fits. */
+/* Append one physical line. A tag byte marks stdout or stderr. */
 static void
-console_add(struct jent *j, const char *line)
+console_add(struct jent *j, int is_err, const char *line)
 {
+	char tag = is_err ? CBSDLOG_CONS_ERR : CBSDLOG_CONS_OUT;
 	size_t n = strlen(line);
 	size_t need;
 
@@ -406,17 +407,18 @@ console_add(struct jent *j, const char *line)
 			return;
 		j->start = j->end = j->buf;
 	}
-	if (n + 1 > CONSOLE_BUF - 1) {
-		line += (n + 1) - (CONSOLE_BUF - 1);
-		n = CONSOLE_BUF - 2;
+	if (n + 2 > CONSOLE_BUF - 1) {
+		line += n - (CONSOLE_BUF - 3);
+		n = CONSOLE_BUF - 3;
 	}
-	need = n + 1;
+	need = n + 2;
 	while (CONSOLE_BUF - 1 - console_used(j) < need) {
 		if (!console_drop_line(j)) {
 			j->start = j->end = j->buf;
 			break;
 		}
 	}
+	console_put(j, &tag, 1);
 	console_put(j, line, n);
 	console_put(j, "\n", 1);
 }
@@ -435,19 +437,19 @@ console_replay(struct jent *j, int fd)
 }
 
 static int
-write_console_line(int fd, const char *line)
+write_console_line(int fd, int is_err, const char *line)
 {
-	char buf[CONSOLE_LINE + 2];
-	int n;
+	char tag = is_err ? CBSDLOG_CONS_ERR : CBSDLOG_CONS_OUT;
 
-	n = snprintf(buf, sizeof(buf), "%s\n", line);
-	if (n < 0 || (size_t)n >= sizeof(buf))
+	if (write_all(fd, &tag, 1) < 0)
 		return (-1);
-	return (write_all(fd, buf, (size_t)n));
+	if (line[0] != '\0' && write_all(fd, line, strlen(line)) < 0)
+		return (-1);
+	return (write_all(fd, "\n", 1));
 }
 
 static void
-fanout(struct jent *j, const char *line)
+fanout(struct jent *j, int is_err, const char *line)
 {
 	int idx = (int)(j - jails);
 	int i;
@@ -455,7 +457,7 @@ fanout(struct jent *j, const char *line)
 	for (i = 0; i < MAX_CLIENTS; i++) {
 		if (!clients[i].used || clients[i].follow != idx)
 			continue;
-		if (write_console_line(clients[i].fd, line) < 0)
+		if (write_console_line(clients[i].fd, is_err, line) < 0)
 			client_close(&clients[i]);
 	}
 }
@@ -471,8 +473,8 @@ emit_console(struct jent *j, int is_err, const char *line)
 	fmt_3164(ts, sizeof(ts));
 	snprintf(msg, sizeof(msg), "<%d>%s %s console: %s", pri, ts, j->name, line);
 	syslog_send(msg);
-	console_add(j, line);
-	fanout(j, line);
+	console_add(j, is_err, line);
+	fanout(j, is_err, line);
 }
 
 static void
@@ -837,7 +839,7 @@ cmd_close(struct client *c, const char *name)
 static void
 console_wake_waiters(struct jent *j)
 {
-	char mark = 1;
+	char mark = CBSDLOG_CONS_WAKE;
 	int idx = (int)(j - jails);
 	int i;
 
