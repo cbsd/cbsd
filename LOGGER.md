@@ -87,9 +87,7 @@ NUL, which `cbsdlogctl` does not print. A non-quiet `jstart` starts `--wait` wit
 follows that session with a second `--wait` beside `jexec`. If the console does not open in time, `--wait` exits
 `2` and `jstart` falls back to `console` without `--wait`, which replays the buffer.
 
-A jail property `syslog` (default `0`) turns this on. `jcreate` runs `cbsdlogctl create`. `jset` runs it when `syslog` changes to `1`. `jstart` runs
-`cbsdlogctl enable` with the socket directory `${data}/var/run`, then puts `cbsdlogctl exec` in
-front of `jail_env` or `jexec`. `jstop` runs `cbsdlogctl disable`. `jdestroy` runs `cbsdlogctl destroy`.
+A jail property `syslog` (default `0`) turns this on. `jcreate` runs `cbsdlogctl create`. `jset` runs it when `syslog` changes to `1`. If `${data}/etc/rc.conf` exists, both also set `syslogd_enable="NO"` there. The jail's own `syslogd` would otherwise unlink `/var/run/log` and `/var/run/logpriv` and bind them itself. Linux and empty jails have no such file and are left alone. `jstart` runs `cbsdlogctl enable` with the socket directory `${data}/var/run`, then puts `cbsdlogctl exec` in front of `jail_env` or `jexec`. `jstop` runs `cbsdlogctl disable`. `jdestroy` runs `cbsdlogctl destroy`.
 
 `enable` asks the daemon to bind the jail's sockets. `disable` closes them and drops the console buffer.
 
@@ -111,12 +109,13 @@ jail blocks.
 ## Recreating a removed socket
 
 `OPEN` binds `${data}/var/run/log` and `${data}/var/run/logpriv` before the jail's `/etc/rc` runs. Inside the jail
-those names are `/var/run/log` and `/var/run/logpriv`. `cleanvar` deletes the contents of `/var/run`, so it removes
-the socket names. The daemon's file descriptor stays open, but `syslog()` looks up the path and does not find it.
+those names are `/var/run/log` and `/var/run/logpriv`. `cleanvar` keeps sockets with those names. With
+`syslogd_enable="NO"` the jail's `syslogd` does not unlink them either. If the name still disappears, the
+daemon's file descriptor stays open, but `syslog()` looks up the path and does not find it.
 
 After each successful bind, `cbsdlogd` watches that descriptor with `kqueue` (`EVFILT_VNODE`, `NOTE_DELETE` and
 `NOTE_REVOKE`). When the name disappears, the daemon closes the old descriptor and binds the same path again at the
-same mode. `cleanvar` runs before the services that open syslog, so the name is back before they connect. A process
+same mode. The name is back before services that open syslog connect. A process
 that had already connected keeps the old inode until `send` fails and libc opens the path again. A failed rebind is
 reported to the host `syslogd` as `cbsdlogd`.
 
