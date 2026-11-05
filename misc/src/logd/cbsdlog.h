@@ -36,7 +36,7 @@
 /* Console records in the buffer and on FOLLOW: tag, text, newline. */
 #define CBSDLOG_CONS_OUT	'\001'
 #define CBSDLOG_CONS_ERR	'\002'
-/* One byte sent to a FOLLOW-wait client when the console opens. Not a line. */
+/* One byte on FOLLOW when a closed console opens. Not a line. */
 #define CBSDLOG_CONS_WAKE	'\0'
 
 /*
