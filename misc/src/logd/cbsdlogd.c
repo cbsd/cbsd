@@ -1183,6 +1183,9 @@ sockets_rebind(void)
 			if (errno == EINTR)
 				continue;
 			syslog(LOG_WARNING, "kevent: %s", strerror(errno));
+			/* A dead queue is always readable to poll. Drop it. */
+			if (errno == EBADF)
+				kq_fd = -1;
 			return;
 		}
 		if (n == 0)
@@ -1296,7 +1299,17 @@ loop(void)
 			if (pfd[i].revents == 0)
 				continue;
 			if (slot_aux[i] == -3) {
-				kq_ready = 1;
+				if ((pfd[i].revents & POLLIN) != 0)
+					kq_ready = 1;
+				/*
+				 * fork(2) leaves this index closed. poll
+				 * reports POLLNVAL and returns at once.
+				 */
+				if ((pfd[i].revents & (POLLERR | POLLNVAL)) != 0) {
+					syslog(LOG_WARNING,
+					    "kqueue fd %d is not usable", kq_fd);
+					kq_fd = -1;
+				}
 				continue;
 			}
 			if (slot_client[i] >= 0) {
@@ -1505,9 +1518,6 @@ main(int argc, char **argv)
 
 	set_signals();
 	openlog("cbsdlogd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	kq_fd = kqueue();
-	if (kq_fd < 0)
-		err(1, "kqueue");
 	lock_pid();
 	listen_ctl();
 	if (!foreground) {
@@ -1517,6 +1527,13 @@ main(int argc, char **argv)
 		fprintf(stderr, "cbsdlogd: listening on %s, syslog %s\n",
 		    ctl_path, syslog_path);
 	}
+	/*
+	 * FreeBSD does not copy a kqueue into the child. The index stays
+	 * closed, poll() returns POLLNVAL immediately, and kevent() is EBADF.
+	 */
+	kq_fd = kqueue();
+	if (kq_fd < 0)
+		err(1, "kqueue");
 	write_pid();
 	loop();
 	shutdown_all();
