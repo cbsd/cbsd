@@ -1,0 +1,110 @@
+#!/usr/bin/env cbsd
+CIXARG=""
+CIXOPTARG="jname"
+MYDESC="Show the jail log"
+CBSDMODULE="jail"
+ADDHELP="
+${H3_COLOR}Description${N0_COLOR}:
+
+ Show ${N2_COLOR}\${workdir}/var/log/jails/<jail>.log${N0_COLOR}.
+ The jail name is the first argument, or ${N2_COLOR}jname=<jail>${N0_COLOR}.
+ Without ${N2_COLOR}--tail${N0_COLOR} the whole file is printed.
+ ${N2_COLOR}--tail N${N0_COLOR} prints the last N lines. ${N2_COLOR}all${N0_COLOR} and ${N2_COLOR}-1${N0_COLOR} mean the whole file.
+ ${N2_COLOR}-f${N0_COLOR} keeps reading after that, including across rotation.
+
+${H3_COLOR}Options${N0_COLOR}:
+
+ ${N2_COLOR}jname=${N0_COLOR}              jail name, instead of the first argument
+ ${N2_COLOR}-f${N0_COLOR}, ${N2_COLOR}--follow${N0_COLOR}        keep reading the log
+ ${N2_COLOR}-n N${N0_COLOR}, ${N2_COLOR}--tail N${N0_COLOR}      last N lines (${N2_COLOR}all${N0_COLOR} or ${N2_COLOR}-1${N0_COLOR}: the whole file)
+ 
+${H3_COLOR}Examples${N0_COLOR}:
+
+ # cbsd logs myjail
+ # cbsd logs jname=myjail
+ # cbsd logs myjail --tail 100
+ # cbsd logs myjail -n 100 -f
+
+"
+unset jname
+. ${subrdir}/nc.subr
+cixinit
+
+usage()
+{
+	err 1 "${N1_COLOR}usage: ${N2_COLOR}cbsd logs <jail> [-f|--follow] [--tail N]${N0_COLOR}"
+}
+
+# jname= is already in $jname. What remains is the positional name and the flags.
+set -f
+set -- ${CIX_OTHER_ARGS}
+set +f
+if [ -z "${jname}" ]; then
+	[ $# -ge 1 ] || usage
+	jname=$1
+	shift
+fi
+[ -n "${jname}" ] || usage
+case "${jname}" in
+	-*)
+		usage
+		;;
+esac
+case "${jname}" in
+	.|..|*[!A-Za-z0-9._-]*)
+		err 1 "${N1_COLOR}bad jail name: ${N2_COLOR}${jname}${N0_COLOR}"
+		;;
+esac
+
+_follow=0
+_tail=
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-f|--follow)
+			_follow=1
+			shift
+			;;
+		--tail)
+			[ $# -ge 2 ] || usage
+			_tail=$2
+			shift 2
+			;;
+		--tail=*)
+			_tail=${1#--tail=}
+			[ -n "${_tail}" ] || usage
+			shift
+			;;
+		-n)
+			[ $# -ge 2 ] || usage
+			_tail=$2
+			shift 2
+			;;
+		*)
+			usage
+			;;
+	esac
+done
+
+# +1 is the whole file: the same as kubectl --tail=-1 and docker --tail all.
+_lines="+1"
+case "${_tail}" in
+	""|all|-1)
+		;;
+	*[!0-9]*)
+		err 1 "${N1_COLOR}bad tail: ${N2_COLOR}${_tail}${N0_COLOR}"
+		;;
+	*)
+		_lines="${_tail}"
+		;;
+esac
+
+_log="${workdir}/var/log/jails/${jname}.log"
+[ -f "${_log}" ] || err 1 "${N1_COLOR}no log for ${N2_COLOR}${jname}${N0_COLOR}: ${_log}"
+
+if [ ${_follow} -eq 1 ]; then
+	exec ${TAIL_CMD} -n "${_lines}" -F "${_log}"
+fi
+if [ "${_lines}" = "+1" ]; then
+	exec ${CAT_CMD} "${_log}"
+fi
+exec ${TAIL_CMD} -n "${_lines}" "${_log}"

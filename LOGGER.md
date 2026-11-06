@@ -71,25 +71,36 @@ replaces stdout and stderr before `jail_env` runs. `exec.start` inherits them, s
 inside the jail. When `syslog` is off the inserted command is empty. A vnet or zfs-attach jail does not run `rc`
 inside `jail -c`; there the same prefix is placed between `cpuset` and `jexec`.
 
-`cbsdlogctl console <jail>` sends `FOLLOW`. After `OK` it prints the buffered console lines and then follows new
-ones. Stdout lines go to its stdout and stderr lines go to its stderr. `--color auto` (the default) paints stdout
-green and stderr red when that stream is a terminal. `yes` always paints, `no` never does. It exits when no process still has that
-jail's console open: both stdout and stderr have reached EOF. That is
-the output of `/etc/rc` or the entrypoint while the process is writing it. `-t` / `--timeout` seconds stops the
-follow even if the command is still running. An OCI jail's entrypoint does not exit, so a non-quiet start shows
-`console -t 2`.
+`FOLLOW <jail>` is answered `OK <nbytes>` when a process holds the console, or `OK <nbytes> closed` when it does
+not, and then exactly those bytes of the buffer. The count separates that snapshot from lines written later. An
+open console keeps sending until both stdout and stderr reach EOF. A closed one stays on the same connection and
+sends one NUL when it opens, before any new line. The daemon does not time the reader.
 
-`console --wait [seconds]` sends `FOLLOW <jail> wait`. If the console is not open, the client stays until the next
-session opens and then closes. `seconds` limits only that open wait; omitted or `0` waits without a limit. Once the
-console is open there is no open timeout, and `-t` still limits the follow. The daemon marks the open with a single
-NUL, which `cbsdlogctl` does not print. A non-quiet `jstart` starts `--wait` with the parallel timeout before
-`jail -c`, so `/etc/rc` is printed while it runs. A vnet or zfs-attach jail runs `rc` from `jexec`, so `jstart`
-follows that session with a second `--wait` beside `jexec`. If the console does not open in time, `--wait` exits
-`2` and `jstart` falls back to `console` without `--wait`, which replays the buffer.
+`cbsd console <jail> [-f|--follow] [...]` is the same console. The jail name is the first argument, or `jname=<jail>`. Flags after it are passed to `cbsdlogctl console`: `-f`/`--follow`, `-t`/`--timeout`, `-W`/`--wait`, `-C`/`--color`. `cbsd logs <jail> [-f|--follow] [--tail N]` prints `${workdir}/var/log/jails/<jail>.log`. The jail name is the first argument, or `jname=<jail>`. `--tail N` (or `--tail=N`, or `-n N`) is the last N lines; `all` and `-1` are the whole file, which is also the default. `-f` keeps reading after that, across rotation.
 
-A jail property `syslog` (default `0`) turns this on. `jcreate` runs `cbsdlogctl create`. `jset` runs it when `syslog` changes to `1`. `jstart` runs
-`cbsdlogctl enable` with the socket directory `${data}/var/run`, then puts `cbsdlogctl exec` in
-front of `jail_env` or `jexec`. `jstop` runs `cbsdlogctl disable`. `jdestroy` runs `cbsdlogctl destroy`.
+`cbsdlogctl console <jail>` prints those buffered bytes and exits. It does not read the live tail. Stdout lines go
+to its stdout and stderr lines go to its stderr. `-C`/`--color auto` (the default) paints stdout green and stderr red
+when that stream is a terminal. `yes` always paints, `no` never does.
+
+`--follow` / `-f` keeps reading after the buffer until the daemon closes the connection. That is the output of
+`/etc/rc` or the entrypoint while the process is writing it. When the console is already closed, the daemon has
+closed after the buffer, so the tool returns.
+
+`--wait` / `-W` seconds runs first, on that one connection. If the reply is not `closed`, the console is already
+open and the wait is over, even when the buffer is empty. If it is `closed`, the tool blocks up to `<w>` for the
+NUL that marks the open. It does not reconnect and it does not wait for output. On expiry it exits `2`. The
+timeout clock does not run during this wait.
+
+`--timeout` / `-t` seconds starts once the console is open and limits the read that follows. The tool exits when
+`<t>` seconds have passed, even if the console is still writing. `--follow` / `-f` without `--timeout` keeps
+reading until the daemon closes the connection instead. With both, the timeout ends the read. An OCI jail's
+entrypoint does not exit, so a non-quiet start shows `console -f -t 2`. A non-quiet `jstart` runs
+`console --follow --wait <parallel>` before `jail -c`, so `/etc/rc` is printed while it runs and the follow ends
+when that console closes. A vnet or zfs-attach jail runs `rc` from `jexec`, so `jstart` follows that session the
+same way. If that follow does not finish, `jstart` runs `console --follow --timeout <parallel>` once the jail is
+up.
+
+A jail property `syslog` (default `0`) turns this on. `jcreate` runs `cbsdlogctl create`. `jset` runs it when `syslog` changes to `1`. If `${data}/etc/rc.conf` exists, both also set `syslogd_enable="NO"` there. The jail's own `syslogd` would otherwise unlink `/var/run/log` and `/var/run/logpriv` and bind them itself. Linux and empty jails have no such file and are left alone. `jstart` runs `cbsdlogctl enable` with the socket directory `${data}/var/run`, then puts `cbsdlogctl exec` in front of `jail_env` or `jexec`. `jstop` runs `cbsdlogctl disable`. `jdestroy` runs `cbsdlogctl destroy`.
 
 `enable` asks the daemon to bind the jail's sockets. `disable` closes them and drops the console buffer.
 
@@ -111,12 +122,13 @@ jail blocks.
 ## Recreating a removed socket
 
 `OPEN` binds `${data}/var/run/log` and `${data}/var/run/logpriv` before the jail's `/etc/rc` runs. Inside the jail
-those names are `/var/run/log` and `/var/run/logpriv`. `cleanvar` deletes the contents of `/var/run`, so it removes
-the socket names. The daemon's file descriptor stays open, but `syslog()` looks up the path and does not find it.
+those names are `/var/run/log` and `/var/run/logpriv`. `cleanvar` keeps sockets with those names. With
+`syslogd_enable="NO"` the jail's `syslogd` does not unlink them either. If the name still disappears, the
+daemon's file descriptor stays open, but `syslog()` looks up the path and does not find it.
 
 After each successful bind, `cbsdlogd` watches that descriptor with `kqueue` (`EVFILT_VNODE`, `NOTE_DELETE` and
 `NOTE_REVOKE`). When the name disappears, the daemon closes the old descriptor and binds the same path again at the
-same mode. `cleanvar` runs before the services that open syslog, so the name is back before they connect. A process
+same mode. The name is back before services that open syslog connect. A process
 that had already connected keeps the old inode until `send` fails and libc opens the path again. A failed rebind is
 reported to the host `syslogd` as `cbsdlogd`.
 

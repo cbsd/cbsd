@@ -3,7 +3,7 @@
  *   OPEN <jail> <path> <mode>
  *   CLOSE <jail>
  *   CONSOLE <jail>     SCM_RIGHTS: stdout read fd, stderr read fd
- *   FOLLOW <jail> [wait]
+ *   FOLLOW <jail>
  */
 
 #include <sys/event.h>
@@ -67,7 +67,7 @@ struct client {
 	int used;
 	int fd;
 	int follow;
-	int wait;
+	int wake; /* console was closed; tell this client when it opens */
 	int nfds;
 	int fds[2];
 	char buf[CMD_MAX];
@@ -98,7 +98,7 @@ _Static_assert(sizeof(((struct jsock *)0)->path) <=
 static void client_close(struct client *);
 static int console_held(const struct jent *);
 static void console_end_followers(struct jent *);
-static void console_wake_waiters(struct jent *);
+static void console_wake(struct jent *);
 
 static void
 on_signal(int sig)
@@ -835,23 +835,6 @@ cmd_close(struct client *c, const char *name)
 	client_close(c);
 }
 
-/* Tell FOLLOW-wait clients that a console session has opened. */
-static void
-console_wake_waiters(struct jent *j)
-{
-	char mark = CBSDLOG_CONS_WAKE;
-	int idx = (int)(j - jails);
-	int i;
-
-	for (i = 0; i < MAX_CLIENTS; i++) {
-		if (!clients[i].used || clients[i].follow != idx || !clients[i].wait)
-			continue;
-		clients[i].wait = 0;
-		if (write_all(clients[i].fd, &mark, 1) < 0)
-			client_close(&clients[i]);
-	}
-}
-
 static void
 cmd_console(struct client *c, const char *name)
 {
@@ -885,16 +868,36 @@ cmd_console(struct client *c, const char *name)
 	j->outlen = j->errlen = 0;
 	c->fds[0] = c->fds[1] = -1;
 	c->nfds = 0;
-	console_wake_waiters(j);
+	console_wake(j);
 	replyf(c->fd, "OK");
 	client_close(c);
 }
 
+/* Console was closed at FOLLOW. One byte when it opens, before any new line. */
 static void
-cmd_follow(struct client *c, const char *name, int wait)
+console_wake(struct jent *j)
+{
+	char mark = CBSDLOG_CONS_WAKE;
+	int idx = (int)(j - jails);
+	int i;
+
+	for (i = 0; i < MAX_CLIENTS; i++) {
+		if (!clients[i].used || clients[i].follow != idx || !clients[i].wake)
+			continue;
+		clients[i].wake = 0;
+		if (write_all(clients[i].fd, &mark, 1) < 0)
+			client_close(&clients[i]);
+	}
+}
+
+/* Replay the buffer and stay. A closed console is reported, not a timer. */
+static void
+cmd_follow(struct client *c, const char *name)
 {
 	struct jent *j;
 	int fl;
+	size_t n;
+	int held;
 
 	drop_fds(c);
 	if (!cbsdlog_valid_jail(name)) {
@@ -908,34 +911,21 @@ cmd_follow(struct client *c, const char *name, int wait)
 		client_close(c);
 		return;
 	}
-	if (wait && console_held(j))
-		replyf(c->fd, "OK held");
-	else if (wait)
-		replyf(c->fd, "OK wait");
+	held = console_held(j);
+	n = console_used(j);
+	if (held)
+		replyf(c->fd, "OK %zu", n);
 	else
-		replyf(c->fd, "OK");
+		replyf(c->fd, "OK %zu closed", n);
+	if (n > 0 && console_replay(j, c->fd) < 0) {
+		client_close(c);
+		return;
+	}
 	fl = fcntl(c->fd, F_GETFL);
 	if (fl >= 0)
 		fcntl(c->fd, F_SETFL, fl | O_NONBLOCK);
 	c->follow = (int)(j - jails);
-	/*
-	 * A waiter that arrived before the session opens must not replay the
-	 * previous one. Once the console is already held, the buffer is that
-	 * session and the client still needs it.
-	 */
-	if (!wait || console_held(j)) {
-		if (console_replay(j, c->fd) < 0) {
-			client_close(c);
-			return;
-		}
-	}
-	if (console_held(j))
-		return;
-	if (wait) {
-		c->wait = 1;
-		return;
-	}
-	client_close(c);
+	c->wake = !held;
 }
 
 static void
@@ -966,20 +956,11 @@ handle_line(struct client *c)
 		cmd_console(c, name);
 		return;
 	}
-	if (strncmp(c->buf, "FOLLOW ", 7) == 0) {
-		char extra[16];
-		int n;
-
-		extra[0] = '\0';
-		n = sscanf(c->buf, "FOLLOW %63s %15s", name, extra);
-		if (n == 1) {
-			cmd_follow(c, name, 0);
-			return;
-		}
-		if (n == 2 && strcmp(extra, "wait") == 0) {
-			cmd_follow(c, name, 1);
-			return;
-		}
+	if (sscanf(c->buf, "FOLLOW %63s", name) == 1 &&
+	    strncmp(c->buf, "FOLLOW ", 7) == 0 &&
+	    strchr(c->buf + 7, ' ') == NULL) {
+		cmd_follow(c, name);
+		return;
 	}
 	drop_fds(c);
 	replyf(c->fd, "ERR unknown command");
@@ -1202,6 +1183,9 @@ sockets_rebind(void)
 			if (errno == EINTR)
 				continue;
 			syslog(LOG_WARNING, "kevent: %s", strerror(errno));
+			/* A dead queue is always readable to poll. Drop it. */
+			if (errno == EBADF)
+				kq_fd = -1;
 			return;
 		}
 		if (n == 0)
@@ -1315,7 +1299,17 @@ loop(void)
 			if (pfd[i].revents == 0)
 				continue;
 			if (slot_aux[i] == -3) {
-				kq_ready = 1;
+				if ((pfd[i].revents & POLLIN) != 0)
+					kq_ready = 1;
+				/*
+				 * fork(2) leaves this index closed. poll
+				 * reports POLLNVAL and returns at once.
+				 */
+				if ((pfd[i].revents & (POLLERR | POLLNVAL)) != 0) {
+					syslog(LOG_WARNING,
+					    "kqueue fd %d is not usable", kq_fd);
+					kq_fd = -1;
+				}
 				continue;
 			}
 			if (slot_client[i] >= 0) {
@@ -1524,9 +1518,6 @@ main(int argc, char **argv)
 
 	set_signals();
 	openlog("cbsdlogd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	kq_fd = kqueue();
-	if (kq_fd < 0)
-		err(1, "kqueue");
 	lock_pid();
 	listen_ctl();
 	if (!foreground) {
@@ -1536,6 +1527,13 @@ main(int argc, char **argv)
 		fprintf(stderr, "cbsdlogd: listening on %s, syslog %s\n",
 		    ctl_path, syslog_path);
 	}
+	/*
+	 * FreeBSD does not copy a kqueue into the child. The index stays
+	 * closed, poll() returns POLLNVAL immediately, and kevent() is EBADF.
+	 */
+	kq_fd = kqueue();
+	if (kq_fd < 0)
+		err(1, "kqueue");
 	write_pid();
 	loop();
 	shutdown_all();

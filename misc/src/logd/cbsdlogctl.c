@@ -4,7 +4,8 @@
  *   create <jail>
  *   destroy <jail>
  *   exec <jail> -- <command> [args...]
- *   console [--color auto|yes|no] [-t seconds] [--wait [seconds]] <jail>
+ *   console [-C|--color auto|yes|no] [-f|--follow] [-t|--timeout seconds]
+ *           [-W|--wait seconds] <jail>
  */
 
 #include <sys/socket.h>
@@ -14,6 +15,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
@@ -419,28 +421,52 @@ console_write(const char *buf, size_t n, int *in_line, int *to_err, int *painted
 	return (0);
 }
 
+static long
+mono_left_ms(const struct timespec *deadline)
+{
+	struct timespec now;
+	long left;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+		err(1, "clock_gettime");
+	left = (deadline->tv_sec - now.tv_sec) * 1000L +
+	    (deadline->tv_nsec - now.tv_nsec) / 1000000L;
+	return (left);
+}
+
+static void
+mono_arm(struct timespec *deadline, int sec)
+{
+	if (clock_gettime(CLOCK_MONOTONIC, deadline) < 0)
+		err(1, "clock_gettime");
+	deadline->tv_sec += sec;
+}
+
 /*
- * timeout_sec 0 follows until the console closes.
- * wait_mode asks the daemon to stay if the console is not open yet.
- * wait_sec is how long to wait for it to open; 0 waits without a limit.
- * After it opens, timeout_sec applies. Returns 2 if the open wait expires.
+ * The daemon answers FOLLOW with OK <nbytes> when the console is open, or
+ * OK <nbytes> closed when it is not. A closed console stays on this connection
+ * and sends one wake byte when it opens. --wait blocks only until that open,
+ * not until output arrives. --timeout starts then and limits the read.
  */
 static int
-cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int color_mode)
+cmd_console(const char *jail, int follow, int timeout_sec, int wait_mode,
+    int wait_sec, int color_mode)
 {
-	struct timespec deadline, open_deadline;
+	struct timespec show_dl, wait_dl;
 	char line[CBSDLOG_NAME_MAX + 32];
 	char reply[512];
+	char word[16];
 	char buf[4096];
-	int fd;
-	int limited = timeout_sec > 0;
-	int open_wait = 0;
-	int strip_mark = 0;
+	unsigned long nbody;
+	int fd = -1;
+	int closed = 0;
+	int timing = 0;
 	int in_line = 0;
 	int to_err = 0;
 	int painted = 0;
 	int color_out;
 	int color_err;
+	int rc = 0;
 
 	if (color_mode == COLOR_YES) {
 		color_out = color_err = 1;
@@ -453,10 +479,9 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int 
 
 	if (!cbsdlog_valid_jail(jail))
 		errx(1, "bad jail name");
-	if (wait_mode)
-		snprintf(line, sizeof(line), "FOLLOW %s wait\n", jail);
-	else
-		snprintf(line, sizeof(line), "FOLLOW %s\n", jail);
+	snprintf(line, sizeof(line), "FOLLOW %s\n", jail);
+	if (wait_mode && wait_sec > 0)
+		mono_arm(&wait_dl, wait_sec);
 	fd = connect_ctl();
 	if (write_all(fd, line, strlen(line)) < 0)
 		err(1, "write");
@@ -466,54 +491,100 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int 
 		fprintf(stderr, "%s", reply);
 		if (reply[0] != '\0' && reply[strlen(reply) - 1] != '\n')
 			fputc('\n', stderr);
-		close(fd);
-		return (1);
+		rc = 1;
+		goto out;
 	}
-	if (wait_mode && strncmp(reply, "OK wait", 7) == 0) {
-		open_wait = 1;
-		strip_mark = 1;
-		if (wait_sec > 0) {
-			if (clock_gettime(CLOCK_MONOTONIC, &open_deadline) < 0)
-				err(1, "clock_gettime");
-			open_deadline.tv_sec += wait_sec;
+	word[0] = '\0';
+	if (sscanf(reply, "OK %lu %15s", &nbody, word) < 1)
+		errx(1, "bad console reply");
+	if (strcmp(word, "closed") == 0)
+		closed = 1;
+	while (nbody > 0) {
+		size_t chunk = nbody > sizeof(buf) ? sizeof(buf) : (size_t)nbody;
+		ssize_t n = read(fd, buf, chunk);
+
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			err(1, "read");
 		}
-	} else if (wait_mode && strncmp(reply, "OK held", 7) != 0) {
-		/* A daemon without FOLLOW wait answers OK and drops the client. */
-		close(fd);
-		return (2);
+		if (n == 0)
+			errx(1, "short console reply");
+		if (console_write(buf, (size_t)n, &in_line, &to_err, &painted,
+		    color_out, color_err) < 0)
+			err(1, "write");
+		nbody -= (unsigned long)n;
 	}
-	if (limited) {
-		if (clock_gettime(CLOCK_MONOTONIC, &deadline) < 0)
-			err(1, "clock_gettime");
-		deadline.tv_sec += timeout_sec;
-	}
-	for (;;) {
-		struct pollfd pfd;
-		struct timespec now;
-		int ms = -1;
+	if (closed) {
 		ssize_t got;
 
-		if (open_wait && wait_sec > 0) {
+		if (!wait_mode)
+			goto out;
+		for (;;) {
+			struct pollfd pfd;
 			long left;
+			int ms;
 
-			if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
-				err(1, "clock_gettime");
-			left = (open_deadline.tv_sec - now.tv_sec) * 1000L +
-			    (open_deadline.tv_nsec - now.tv_nsec) / 1000000L;
-			if (left <= 0) {
-				close(fd);
-				return (2);
+			if (wait_sec <= 0) {
+				ms = 0;
+			} else {
+				left = mono_left_ms(&wait_dl);
+				if (left <= 0) {
+					rc = 2;
+					goto out;
+				}
+				ms = left > 1000000L ? 1000000 : (int)left;
 			}
-			ms = left > 1000000L ? 1000000 : (int)left;
-		} else if (limited) {
-			long left;
+			pfd.fd = fd;
+			pfd.events = POLLIN;
+			if (poll(&pfd, 1, ms) < 0) {
+				if (errno == EINTR)
+					continue;
+				err(1, "poll");
+			}
+			if ((pfd.revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
+				rc = 2;
+				goto out;
+			}
+			got = read(fd, buf, sizeof(buf));
+			if (got < 0) {
+				if (errno == EINTR)
+					continue;
+				err(1, "read");
+			}
+			if (got == 0) {
+				rc = 2;
+				goto out;
+			}
+			if (buf[0] == CBSDLOG_CONS_WAKE) {
+				memmove(buf, buf + 1, (size_t)got - 1);
+				got--;
+			}
+			if (timeout_sec > 0 && !timing) {
+				mono_arm(&show_dl, timeout_sec);
+				timing = 1;
+			}
+			if (got > 0 && console_write(buf, (size_t)got, &in_line,
+			    &to_err, &painted, color_out, color_err) < 0)
+				err(1, "write");
+			break;
+		}
+	} else if (timeout_sec > 0 && !timing) {
+		mono_arm(&show_dl, timeout_sec);
+		timing = 1;
+	}
+	if (!follow && timeout_sec <= 0)
+		goto out;
+	for (;;) {
+		struct pollfd pfd;
+		int ms = -1;
+		ssize_t got;
+		long left;
 
-			if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
-				err(1, "clock_gettime");
-			left = (deadline.tv_sec - now.tv_sec) * 1000L +
-			    (deadline.tv_nsec - now.tv_nsec) / 1000000L;
+		if (timing) {
+			left = mono_left_ms(&show_dl);
 			if (left <= 0)
-				break;
+				goto out;
 			ms = left > 1000000L ? 1000000 : (int)left;
 		}
 		pfd.fd = fd;
@@ -523,13 +594,8 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int 
 				continue;
 			err(1, "poll");
 		}
-		if ((pfd.revents & POLLIN) == 0) {
-			if (open_wait && wait_sec > 0) {
-				close(fd);
-				return (2);
-			}
-			break;
-		}
+		if ((pfd.revents & (POLLIN | POLLHUP | POLLERR)) == 0)
+			goto out;
 		got = read(fd, buf, sizeof(buf));
 		if (got < 0) {
 			if (errno == EINTR)
@@ -537,27 +603,20 @@ cmd_console(const char *jail, int timeout_sec, int wait_mode, int wait_sec, int 
 			err(1, "read");
 		}
 		if (got == 0)
-			break;
-		if (strip_mark) {
-			if (buf[0] == CBSDLOG_CONS_WAKE) {
-				memmove(buf, buf + 1, (size_t)got - 1);
-				got--;
-			}
-			strip_mark = 0;
-		}
-		if (got > 0)
-			open_wait = 0;
+			goto out;
 		if (console_write(buf, (size_t)got, &in_line, &to_err, &painted,
 		    color_out, color_err) < 0)
 			err(1, "write");
 	}
+out:
 	if (painted) {
-		int out = to_err ? STDERR_FILENO : STDOUT_FILENO;
+		int outfd = to_err ? STDERR_FILENO : STDOUT_FILENO;
 
-		write_all(out, col_reset, strlen(col_reset));
+		write_all(outfd, col_reset, strlen(col_reset));
 	}
-	close(fd);
-	return (0);
+	if (fd >= 0)
+		close(fd);
+	return (rc);
 }
 
 static void usage(void);
@@ -574,69 +633,67 @@ parse_color(const char *s)
 	errx(1, "bad color");
 }
 
-/* console [--color auto|yes|no] [-t seconds|--timeout seconds] [--wait [seconds]] <jail> */
+static int
+parse_sec(const char *s, const char *what)
+{
+	char *end;
+	long val;
+
+	errno = 0;
+	val = strtol(s, &end, 10);
+	if (end == s || *end != '\0' || errno != 0 || val < 0 || val > 86400)
+		errx(1, "bad %s", what);
+	return ((int)val);
+}
+
+/* argv[0] is the command name. -W is wait; -w is the global workdir. */
 static int
 cmd_console_args(int argc, char **argv)
 {
+	static const struct option longopts[] = {
+		{ "follow", no_argument, NULL, 'f' },
+		{ "timeout", required_argument, NULL, 't' },
+		{ "wait", required_argument, NULL, 'W' },
+		{ "color", required_argument, NULL, 'C' },
+		{ NULL, 0, NULL, 0 }
+	};
+	int follow = 0;
 	int timeout_sec = 0;
 	int wait_mode = 0;
 	int wait_sec = 0;
 	int color_mode = COLOR_AUTO;
-	int i = 0;
+	int ch;
 
-	while (i < argc && argv[i][0] == '-') {
-		char *end;
-		long val;
-
-		if (strcmp(argv[i], "-t") == 0 ||
-		    strcmp(argv[i], "--timeout") == 0) {
-			if (i + 1 >= argc)
-				usage();
-			errno = 0;
-			val = strtol(argv[i + 1], &end, 10);
-			if (end == argv[i + 1] || *end != '\0' || errno != 0 ||
-			    val < 0 || val > 86400)
-				errx(1, "bad timeout");
-			timeout_sec = (int)val;
-			i += 2;
-			continue;
-		}
-		if (strcmp(argv[i], "--color") == 0 ||
-		    strncmp(argv[i], "--color=", 8) == 0) {
-			const char *val;
-
-			if (argv[i][7] == '=')
-				val = argv[i] + 8;
-			else {
-				if (i + 1 >= argc)
-					usage();
-				val = argv[++i];
-			}
-			if (val[0] == '\0')
-				usage();
-			color_mode = parse_color(val);
-			i++;
-			continue;
-		}
-		if (strcmp(argv[i], "--wait") == 0) {
+	optreset = 1;
+	optind = 1;
+	opterr = 0;
+	while ((ch = getopt_long(argc, argv, "C:ft:W:", longopts, NULL)) != -1) {
+		switch (ch) {
+		case 'f':
+			follow = 1;
+			break;
+		case 't':
+			timeout_sec = parse_sec(optarg, "timeout");
+			break;
+		case 'W':
 			wait_mode = 1;
-			i++;
-			if (i < argc && argv[i][0] >= '0' && argv[i][0] <= '9') {
-				errno = 0;
-				val = strtol(argv[i], &end, 10);
-				if (end == argv[i] || *end != '\0' || errno != 0 ||
-				    val < 0 || val > 86400)
-					errx(1, "bad wait");
-				wait_sec = (int)val;
-				i++;
-			}
-			continue;
+			wait_sec = parse_sec(optarg, "wait");
+			break;
+		case 'C':
+			if (optarg[0] == '\0')
+				usage();
+			color_mode = parse_color(optarg);
+			break;
+		default:
+			usage();
 		}
-		usage();
 	}
-	if (argc - i != 1)
+	argc -= optind;
+	argv += optind;
+	if (argc != 1)
 		usage();
-	return (cmd_console(argv[i], timeout_sec, wait_mode, wait_sec, color_mode));
+	return (cmd_console(argv[0], follow, timeout_sec, wait_mode, wait_sec,
+	    color_mode));
 }
 
 static void
@@ -658,7 +715,7 @@ usage(void)
 	    "       create <jail>\n"
 	    "       destroy <jail>\n"
 	    "       exec <jail> -- <command> [args...]\n"
-	    "       console [--color auto|yes|no] [-t seconds] [--wait [seconds]] <jail>\n");
+	    "       console [-C|--color auto|yes|no] [-f|--follow] [-t|--timeout seconds] [-W|--wait seconds] <jail>\n");
 	exit(1);
 }
 
@@ -743,7 +800,7 @@ main(int argc, char **argv)
 		return (cmd_exec(argv[1], argv + 3));
 	}
 	if (strcmp(argv[0], "console") == 0)
-		return (cmd_console_args(argc - 1, argv + 1));
+		return (cmd_console_args(argc, argv));
 	usage();
 	return (1);
 }
