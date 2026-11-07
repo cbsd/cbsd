@@ -61,7 +61,8 @@ Environment variables are stored in the ~cbsd/jails-system/\$jname directory in 
   - environment ( usually this file is copied from system SKEL directory )
   - environment.local ( for custom user's env )
 
-If you use an environment= arguments, these values are added to ~cbsd/jails-system/\$jname/environment file 
+If you use an environment= arguments, these values are written to ~cbsd/jails-system/\$jname/environment.
+A key that is already present (for example from an OCI image) is replaced. 
 
 
 ${H3_COLOR}Options${N0_COLOR}:
@@ -361,32 +362,39 @@ else
 fi
 
 ## environment manage
+# "$@" keeps each environment=... argument intact, including spaces.
+# updateconf then sees one parameter, as in: updateconf file FEATURES_VNC="3 4"
 xenvironment=
-for i in ${CIX_OTHER_ARGS}; do
-	strpos --str="${i}" --search="="
-	_pos=$?
-
-	if [ ${_pos} -ne 0 ]; then
-		capture _arg_len strlen ${i}
-		_pref=$(( _arg_len - _pos ))
-		capture ARG substr --pos=0 --len=${_pos} --str="${i}"
-
-		case "${ARG}" in
-			environment)
-				capture VAL substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${i}"
-				VAL="${VAL%\"}"
-				VAL="${VAL#\"}"
-				if [ -z "${xenvironment}" ]; then
-					xenvironment="${VAL}"
-				else
-					xenvironment="${xenvironment} ${VAL}"
-				fi
-				;;
-		esac
-		shift
-		continue
-	fi
+for i in "$@"; do
+	case "${i}" in
+		environment=[a-zA-Z_]*=*)
+			VAL="${i#environment=}"
+			if [ -z "${xenvironment}" ]; then
+				xenvironment="${VAL}"
+			else
+				xenvironment="${xenvironment}
+${VAL}"
+			fi
+			;;
+	esac
 done
+
+# One updateconf call per assignment. The value is a single quoted argument,
+# so spaces stay inside it.
+apply_xenvironment()
+{
+	local _file="${1}" _ifs="${IFS}"
+	[ -n "${xenvironment}" ] || return 0
+
+	set -f
+	IFS="
+"
+	# shellcheck disable=SC2086
+	updateconf "${_file}" ${xenvironment}
+
+	set +f
+	IFS="${_ifs}"
+}
 
 # Nested jcreate for from=. Image invariants stay on the command line.
 # jprofile and an explicit customskel/jailsysskeldir go with them so the
@@ -533,12 +541,7 @@ if [ -n "${from}" ]; then
 		done
 	fi
 
-	if [ -n "${xenvironment}" ]; then
-		# save env
-		for i in ${xenvironment}; do
-			echo "${i}" >> ${jailsysdir}/${jname}/environment
-		done
-	fi
+	apply_xenvironment "${jailsysdir}/${jname}/environment"
 
 	for i in ${MYOPTARG}; do
 		eval T="\$o${i}"
@@ -873,12 +876,7 @@ if [ -n "${fstablocal}" ]; then
 	fi
 fi
 
-if [ -n "${xenvironment}" ]; then
-	# save env
-	for i in ${xenvironment}; do
-		echo "${i}" >> ${jailsysdir}/${jname}/environment
-	done
-fi
+apply_xenvironment "${jailsysdir}/${jname}/environment"
 
 # Finnaly export to SQLite
 jregister jname=${jname} mode=new progress=3
