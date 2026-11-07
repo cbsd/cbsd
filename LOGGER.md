@@ -95,10 +95,10 @@ timeout clock does not run during this wait.
 `<t>` seconds have passed, even if the console is still writing. `--follow` / `-f` without `--timeout` keeps
 reading until the daemon closes the connection instead. With both, the timeout ends the read. An OCI jail's
 entrypoint does not exit, so a non-quiet start shows `console -f -t 2`. A non-quiet `jstart` runs
-`console --follow --wait <parallel>` before `jail -c`, so `/etc/rc` is printed while it runs and the follow ends
-when that console closes. A vnet or zfs-attach jail runs `rc` from `jexec`, so `jstart` follows that session the
-same way. If that follow does not finish, `jstart` runs `console --follow --timeout <parallel>` once the jail is
-up.
+`console --follow --wait <parallel> --timeout <parallel>` before `jail -c`, so `/etc/rc` is printed while it runs.
+The follow ends when that console closes, or after `<parallel>` seconds if a service keeps it open. A vnet or
+zfs-attach jail runs `rc` from `jexec`, so `jstart` follows that session the same way. If that follow does not
+finish, `jstart` runs `console --follow --timeout <parallel>` once the jail is up.
 
 A jail property `syslog` (default `0`) turns this on. `jcreate` runs `cbsdlogctl create`. `jset` runs it when `syslog` changes to `1`. If `${data}/etc/rc.conf` exists, both also set `syslogd_enable="NO"` there. The jail's own `syslogd` would otherwise unlink `/var/run/log` and `/var/run/logpriv` and bind them itself. Linux and empty jails have no such file and are left alone. `jstart` runs `cbsdlogctl enable` with the socket directory `${data}/var/run`, then puts `cbsdlogctl exec` in front of `jail_env` or `jexec`. `jstop` runs `cbsdlogctl disable`. `jdestroy` runs `cbsdlogctl destroy`.
 
