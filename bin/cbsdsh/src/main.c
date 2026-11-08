@@ -691,6 +691,28 @@ static void cix_print_interpret_escapes(const char *s)
 	}
 }
 
+char * _escape_var(const char*s) {
+    static const char _to_escape[] = "\\\r\n \t\"'";
+    size_t l = 0;
+    char c;
+    for(const char *s1=s; (c=*s1++);) {
+        if (strchr(_to_escape, c)) {
+            l++;
+        }
+        l++;
+    }
+    char *ret = ckmalloc(l+1);
+    char *r1 = ret;
+    for(const char *s1=s; (c=*s1++);) {
+        if (strchr(_to_escape, c)) {
+            *r1++ = '\\';
+        }
+        *r1++ = c;
+    }
+    *r1 = 0;
+    return ret;
+}
+
 int
 cixinitcmd(int argc, char **argv)
 {
@@ -995,7 +1017,7 @@ cixinitcmd(int argc, char **argv)
 				if (skip_list && *skip_list && in_cix_list(param_name, skip_list)) {
 					/* Skip init: add p[i]..p[last_consumed] as-is to CIX_OTHER_ARGS */
 					size_t raw_len = 0;
-					char *raw;
+					char *raw, *raw_escaped;
 
 					for (j = i; j <= last_consumed && p[j]; j++)
 						raw_len += strlen(p[j]) + (j > i ? 1 : 0);
@@ -1006,16 +1028,18 @@ cixinitcmd(int argc, char **argv)
 							strcat(raw, " ");
 						strcat(raw, p[j]);
 					}
+					raw_escaped = _escape_var(raw);
 					new_other = old_other
-						? ckmalloc(strlen(old_other) + 1 + strlen(raw) + 1)
-						: ckmalloc(strlen(raw) + 1);
+						? ckmalloc(strlen(old_other) + 1 + strlen(raw_escaped) + 1)
+						: ckmalloc(strlen(raw_escaped) + 1);
 					if (old_other)
-						sprintf(new_other, "%s %s", old_other, raw);
+						sprintf(new_other, "%s '%s'", old_other, raw_escaped);
 					else
-						strcpy(new_other, raw);
+						strcpy(new_other, raw_escaped);
 					setvar("CIX_OTHER_ARGS", new_other, 0);
 					ckfree(new_other);
 					ckfree(raw);
+					ckfree(raw_escaped);
 					old_other = lookupvar("CIX_OTHER_ARGS");
 					if (val_parsed != (char *)(eq + 1))
 						ckfree(val_parsed);
@@ -1026,30 +1050,34 @@ cixinitcmd(int argc, char **argv)
 				}
 				i = last_consumed + 1;
 			} else {
+				char * raw_escaped = _escape_var(p[i]);
 				new_other = old_other
-					? ckmalloc(strlen(old_other) + 1 + strlen(p[i]) + 1)
-					: ckmalloc(strlen(p[i]) + 1);
+					? ckmalloc(strlen(old_other) + 1 + strlen(raw_escaped) + 1)
+					: ckmalloc(strlen(raw_escaped) + 1);
 				if (old_other)
-					sprintf(new_other, "%s %s", old_other, p[i]);
+					sprintf(new_other, "%s %s", old_other, raw_escaped);
 				else
-					strcpy(new_other, p[i]);
+					strcpy(new_other, raw_escaped);
 				setvar("CIX_OTHER_ARGS", new_other, 0);
 				ckfree(new_other);
+				ckfree(raw_escaped);
 				old_other = lookupvar("CIX_OTHER_ARGS");
 				i++;
 			}
 			ckfree(param_name);
 		} else {
 			/* No '=': add as-is to CIX_OTHER_ARGS */
+			char * raw_escaped = _escape_var(p[i]);
 			new_other = old_other
-				? ckmalloc(strlen(old_other) + 1 + strlen(p[i]) + 1)
-				: ckmalloc(strlen(p[i]) + 1);
+				? ckmalloc(strlen(old_other) + 1 + strlen(raw_escaped) + 1)
+				: ckmalloc(strlen(raw_escaped) + 1);
 			if (old_other)
-				sprintf(new_other, "%s %s", old_other, p[i]);
+				sprintf(new_other, "%s %s", old_other, raw_escaped);
 			else
-				strcpy(new_other, p[i]);
+				strcpy(new_other, raw_escaped);
 			setvar("CIX_OTHER_ARGS", new_other, 0);
 			ckfree(new_other);
+			ckfree(raw_escaped);
 			old_other = lookupvar("CIX_OTHER_ARGS");
 			i++;
 		}
@@ -1062,7 +1090,7 @@ cixinitcmd(int argc, char **argv)
 		while (tok) {
 			const char *val = lookupvar(tok);
 			if (!val || !*val) {
-				outfmt(out2, "param %s is mandatory\n", tok);
+				outfmt(out2, "param %s is mandatory (myarg_str='%s')\n", tok, myarg_str);
 				ckfree(copy);
 				exraise(EXEXIT);
 			}
