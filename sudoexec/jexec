@@ -324,111 +324,85 @@ else
 	esac
 
 	jexec_defaults
-	_first=
-	if [ "${_jexec_argc}" -gt 0 ]; then
-		_first="${CIX_JSON_ARGS@.argv[0]}"
-	elif [ -n "${cmd}" ]; then
-		_first=${cmd%% *}
+
+	# Set arguments into $@
+	set -- "${CIX_JSON_ARGS@.argv[]?}"
+
+	# Prefix with cmd= if set
+	if [ -n "$cmd" ]; then
+		set -- "${cmd}" "$@"
 	fi
 
+	# First command exec override
+	_first="$1"
 	if [ -n "${_first}" ] && [ -x "${jailsysdir}/${jname}/cmd/${_first}" ]; then
 		. ${subrdir}/jcreate.subr		# for export_jail_data_for_external_hook
 		export_jail_data_for_external_hook
-		if [ "${_jexec_argc}" -gt 0 ]; then
-			exec "${jailsysdir}/${jname}/cmd/${_first}" "${CIX_JSON_ARGS@.argv[1:][]}"
-		else
-			exec "${jailsysdir}/${jname}/cmd/${_first}"
-		fi
+
+		shift  # send all remained CLI arguments to the hook command
+		exec "${jailsysdir}/${jname}/cmd/${_first}" "$@"
 	fi
 
-	# Flags, then the jail, then the command.
-	# cmd is the script. -s no executes the arguments as given.
-	jexec_run()
-	{
-		_jexec_envfile=
-		_ret=0
+	_jexec_envfile=
+	ret=0
 
-		for _v in "${CIX_JSON_ARGS@.kw.environment[]?}"; do
-			[ -z "${_v}" ] && continue
-			if [ -z "${_jexec_envfile}" ]; then
-				capture _jexec_envfile ${MKTEMP_CMD}
-			fi
-			if [ -f "${_v}" ]; then
-				cat "${_v}" >> "${_jexec_envfile}"
-				printf '\n' >> "${_jexec_envfile}"
-			else
-				printf '%s\n' "${_v}" >> "${_jexec_envfile}"
-			fi
-		done
+	SETNICE="${NICE_CMD} -n ${nice}"
 
-		if [ -n "${LOGIN_STR}" ]; then
-			# qemu user-mode: LOGIN_STR is the program, not a -c string.
-			if [ $# -eq 0 ]; then
-				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}
-			else
-				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} "$@"
-			fi
-			_ret=$?
-		elif [ "${platform}" = "DragonFly" ]; then
-			if [ $# -eq 0 ]; then
-				case "${shell}" in
-					no|auto) ${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} /bin/sh ;;
-					*) ${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "${shell}" ;;
-				esac
-			elif [ "${_jexec_s}" != "no" ] && [ "${_jexec_s}" != "auto" ]; then
-				_shcmd=$1
-				shift
-				${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "${_jexec_s}" -c "${_shcmd}" "${_jexec_s}" "$@"
-			elif [ "${_jexec_s}" = "auto" ]; then
-				case "$1" in
-					*["${_jexec_meta}"]*)
-						_shcmd=$1
-						shift
-						${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} /bin/sh -c "${_shcmd}" /bin/sh "$@"
-						;;
-					*)
-						${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "$@"
-						;;
-				esac
-			else
-				${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "$@"
-			fi
-			_ret=$?
+	capture _jexec_envfile ${MKTEMP_CMD}
+
+	# Append environment= from CLI
+	for _v in "${CIX_JSON_ARGS@.kw.environment[]?}"; do
+		[ -z "${_v}" ] && continue
+		if [ -f "${_v}" ]; then
+			cat "${_v}" >> "${_jexec_envfile}"
+			printf '\n' >> "${_jexec_envfile}"
 		else
-			_uarg=
-			[ "${user}" != "root" ] && [ "${ver}" != "empty" ] && _uarg="-U ${user}"
-			if [ -n "${_jexec_envfile}" ]; then
-				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env \
-					${_uarg} -d "${dir}" -e "${_jexec_envfile}" -s "${_jexec_s}" \
-					"${jname}" -- "$@"
-			else
-				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env \
-					${_uarg} -d "${dir}" -s "${_jexec_s}" \
-					"${jname}" -- "$@"
-			fi
-			_ret=$?
+			printf '%s\n' "${_v}" >> "${_jexec_envfile}"
 		fi
-		[ -n "${_jexec_envfile}" ] && ${RM_CMD} -f "${_jexec_envfile}"
-		return ${_ret}
-	}
+	done
 
-	# cmd= is the script when set. Otherwise the first argument is.
-	# An explicit shell always runs -c. auto does that only if the script has metacharacters.
-	_jexec_s="${shell}"
-	if [ -n "${cmd}" ] && [ "${shell}" != "no" ]; then
-		if [ "${_jexec_argc}" -gt 0 ]; then
-			jexec_run "${cmd}" "${CIX_JSON_ARGS@.argv[]}"
-		else
-			jexec_run "${cmd}"
+	if [ -n "${LOGIN_STR}" ]; then
+		# qemu user-mode: LOGIN_STR is the program, not a -c string.
+		${SETNICE} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} "$@"
+		ret=$?
+	elif [ "${platform}" = "DragonFly" ]; then
+
+		if [ "${shell}" != "no" ] && [ "${shell}" != "auto" ]; then
+			# shell specified -> use it
+			_shcmd="${shell}"
+		elif [ "${shell}" = "auto" ]; then
+			case "$1" in
+				*["${_jexec_meta}"]*)
+					# $1 has metacharacters -> use default shell
+					_shcmd="/bin/sh"
+					;;
+				*)
+					# No shell program in $1 -> no shell required
+					_shcmd=""
+					;;
+			esac
 		fi
-	elif [ "${_jexec_argc}" -gt 0 ]; then
-		jexec_run "${CIX_JSON_ARGS@.argv[]}"
-	elif [ -n "${cmd}" ]; then
-		jexec_run "${cmd}"
+
+		if [ -n "${_shcmd}" ]; then
+			shell_script="$1"
+			shift
+			# sh -c 'shell-script' argv0 argv1 ...
+			set -- "${_shcmd}" "-c" "${shell_script}" "${_shcmd}" "$@"
+		fi
+
+		${SETNICE} ${SETFIB} ${JEXEC_CMD} ${jid} "$@"
+		ret=$?
 	else
-		jexec_run
+		_uarg=
+		[ "${user}" != "root" ] && _uarg="-U ${user}"
+
+		${SETNICE} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env \
+				${_uarg} -d "${dir}" -e "${_jexec_envfile}" -s "${shell}" \
+				"${jname}" -- "$@"
+		ret=$?
 	fi
-	ret=$?
+
+	[ -n "${_jexec_envfile}" ] && ${RM_CMD} -f "${_jexec_envfile}"
 fi
 
 exit ${ret}
