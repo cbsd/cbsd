@@ -64,6 +64,7 @@
 #include "exec.h"
 #include "cd.h"
 #include "about.h"
+#include <jv.h>
 
 #define PROFILE 0
 
@@ -530,9 +531,12 @@ static void cix_strip_type(char *buf, char **out_name)
 }
 
 /*
- * Parse key=value when value may span multiple argv[] (e.g. sysrc="a b c" split as sysrc="a, "b", "c").
- * If value starts with ", collect argv[start_idx] and following args until we see closing ".
- * Sets *out_value (caller must ckfree when != value_start) and *out_last_idx (last argv index consumed).
+ * Parse key=value when value may span multiple argv[] (e.g. sysrc="a b c"
+ * split as sysrc="a, b, c"). Not used by cixinit -j: there the value is the
+ * raw tail of that one parameter.
+ * If value starts with ", collect argv[start_idx] and following args until
+ * the closing ", then strip quotes and unescape \".
+ * Sets *out_value (caller must ckfree when != value_start) and *out_last_idx.
  */
 static void cix_parse_quoted_value_argv(char **argv, int nparam, int start_idx,
     const char *value_start, char **out_value, int *out_last_idx)
@@ -627,6 +631,90 @@ static int is_where(const char *s)
 	return strcmp(s, "WHERE") == 0;
 }
 
+/* kw[name] = value, or append to kw[name][] when multi is set. */
+static void cix_json_set_kw(jv *kw, const char *name, const char *value, int multi)
+{
+	jv key = jv_string(name);
+	jv val = jv_string(value ? value : "");
+	jv cur;
+
+	if (!multi) {
+		*kw = jv_object_set(*kw, key, val);
+		return;
+	}
+
+	cur = jv_object_get(jv_copy(*kw), jv_copy(key));
+	if (!jv_is_valid(cur) || jv_get_kind(cur) != JV_KIND_ARRAY) {
+		if (jv_is_valid(cur))
+			jv_free(cur);
+		cur = jv_array();
+	}
+	cur = jv_array_append(cur, val);
+	*kw = jv_object_set(*kw, key, cur);
+}
+
+static void cix_json_push_argv(jv *argv, const char *s)
+{
+	*argv = jv_array_append(*argv, jv_string(s ? s : ""));
+}
+
+/*
+ * Take an existing CIX_JSON_ARGS as the state of an already-parsed call.
+ * String kw names become shell variables. *kw and *argv are replaced by
+ * that document so later arguments of this call are applied on top.
+ * Invalid input leaves *kw and *argv unchanged.
+ */
+static void cix_json_restore(const char *json, jv *kw, jv *argv)
+{
+	jv root, loaded_kw, loaded_argv, key, val;
+	int it;
+
+	root = jv_parse(json);
+	if (!jv_is_valid(root) || jv_get_kind(root) != JV_KIND_OBJECT) {
+		jv_free(root);
+		return;
+	}
+	loaded_kw = jv_object_get(jv_copy(root), jv_string("kw"));
+	loaded_argv = jv_object_get(root, jv_string("argv"));
+	if (jv_is_valid(loaded_kw) && jv_get_kind(loaded_kw) == JV_KIND_OBJECT) {
+		jv_free(*kw);
+		*kw = loaded_kw;
+		for (it = jv_object_iter(*kw); jv_object_iter_valid(*kw, it);
+		    it = jv_object_iter_next(*kw, it)) {
+			key = jv_object_iter_key(*kw, it);
+			val = jv_object_iter_value(*kw, it);
+			if (jv_get_kind(key) == JV_KIND_STRING &&
+			    jv_get_kind(val) == JV_KIND_STRING &&
+			    goodname(jv_string_value(key)))
+				setvar(jv_string_value(key), jv_string_value(val), 0);
+			jv_free(key);
+			jv_free(val);
+		}
+	} else {
+		jv_free(loaded_kw);
+	}
+	if (jv_is_valid(loaded_argv) && jv_get_kind(loaded_argv) == JV_KIND_ARRAY) {
+		jv_free(*argv);
+		*argv = loaded_argv;
+	} else {
+		jv_free(loaded_argv);
+	}
+}
+
+/* Consumes kw and argv. Sets CIX_JSON_ARGS to the serialized object. */
+static void cix_json_finish(jv kw, jv argv)
+{
+	jv root = jv_object();
+	jv dumped;
+
+	root = jv_object_set(root, jv_string("kw"), kw);
+	root = jv_object_set(root, jv_string("argv"), argv);
+	dumped = jv_dump_string(root, 0);
+	if (jv_is_valid(dumped) && jv_get_kind(dumped) == JV_KIND_STRING)
+		setvar("CIX_JSON_ARGS", jv_string_value(dumped), 0);
+	jv_free(dumped);
+}
+
 /* Print string to out1 interpreting ANSI-style backslash escapes (\033, \e, \n, \t, \r, \\, \xHH, \0OOO) */
 static void cix_print_interpret_escapes(const char *s)
 {
@@ -706,9 +794,19 @@ cixinitcmd(int argc, char **argv)
 	char **exec_argv;
 	const char *old_other;
 	const char *skip_list;
+	const char *multi_list;
 	char *new_other;
+	int json_mode;
+	int optc;
+	jv jkw, jargv;
 	(void)argc;
 	(void)argv;
+
+	json_mode = 0;
+	while ((optc = nextopt("j")) != '\0') {
+		if (optc == 'j')
+			json_mode = 1;
+	}
 
 	nparam = shellparam.nparam;
 	p = shellparam.p;
@@ -965,7 +1063,22 @@ cixinitcmd(int argc, char **argv)
 
 	/* 9) Parse key=value; 10) mandatory check; 11) o-prefix; 12) CIX_OTHER_ARGS */
 	/* CIX_INIT_SKIP: params listed here are not initialized, added to CIX_OTHER_ARGS as-is */
+	/* cixinit -j: also fill CIX_JSON_ARGS {kw, argv}. CIXMULTIARG names are arrays. */
+	/* An existing CIX_JSON_ARGS is the base; this call's argv is applied on top. */
 	skip_list = lookupvar("CIX_INIT_SKIP");
+	multi_list = NULL;
+	jkw = jv_invalid();
+	jargv = jv_invalid();
+	if (json_mode) {
+		const char *existing;
+
+		multi_list = lookupvar("CIXMULTIARG");
+		jkw = jv_object();
+		jargv = jv_array();
+		existing = lookupvar("CIX_JSON_ARGS");
+		if (existing && *existing)
+			cix_json_restore(existing, &jkw, &jargv);
+	}
 	unsetvar("CIX_OTHER_ARGS");
 	old_other = NULL;
 
@@ -983,6 +1096,31 @@ cixinitcmd(int argc, char **argv)
 			continue; /* skip special flags */
 		}
 
+		/*
+		 * "--" ends option assignment. This token and everything after
+		 * it stay positional, so a later user= or environment= is not
+		 * taken as a flag. WHERE still closes the positional list.
+		 */
+		if (strcmp(p[i], "--") == 0) {
+			for (; i < nparam && p[i]; i++) {
+				if (where_idx >= 0 && i >= where_idx)
+					break;
+				if (json_mode && strcmp(p[i], "--") != 0)
+					cix_json_push_argv(&jargv, p[i]);
+				new_other = old_other
+					? ckmalloc(strlen(old_other) + 1 + strlen(p[i]) + 1)
+					: ckmalloc(strlen(p[i]) + 1);
+				if (old_other)
+					sprintf(new_other, "%s %s", old_other, p[i]);
+				else
+					strcpy(new_other, p[i]);
+				setvar("CIX_OTHER_ARGS", new_other, 0);
+				ckfree(new_other);
+				old_other = lookupvar("CIX_OTHER_ARGS");
+			}
+			break;
+		}
+
 		eq = strchr(p[i], '=');
 		if (eq) {
 			name_len = (size_t)(eq - p[i]);
@@ -991,7 +1129,16 @@ cixinitcmd(int argc, char **argv)
 			param_name[name_len] = '\0';
 
 			if (in_cix_list(param_name, myarg_str) || in_cix_list(param_name, myoptarg_str)) {
-				cix_parse_quoted_value_argv(p, nparam, i, eq + 1, &val_parsed, &last_consumed);
+				if (json_mode) {
+					val_parsed = (char *)(eq + 1);
+					last_consumed = i;
+				} else {
+					cix_parse_quoted_value_argv(p, nparam, i, eq + 1,
+					    &val_parsed, &last_consumed);
+				}
+				if (json_mode)
+					cix_json_set_kw(&jkw, param_name, val_parsed,
+					    multi_list && in_cix_list(param_name, multi_list));
 				if (skip_list && *skip_list && in_cix_list(param_name, skip_list)) {
 					/* Skip init: add p[i]..p[last_consumed] as-is to CIX_OTHER_ARGS */
 					size_t raw_len = 0;
@@ -1026,6 +1173,16 @@ cixinitcmd(int argc, char **argv)
 				}
 				i = last_consumed + 1;
 			} else {
+				/*
+				 * Not a declared flag. In JSON the whole shell
+				 * argument is one value: do not join later argv
+				 * pieces the way quoted flag values are joined.
+				 */
+				if (json_mode && name_len > 0)
+					cix_json_set_kw(&jkw, param_name, eq + 1,
+					    multi_list && in_cix_list(param_name, multi_list));
+				else if (json_mode)
+					cix_json_push_argv(&jargv, p[i]);
 				new_other = old_other
 					? ckmalloc(strlen(old_other) + 1 + strlen(p[i]) + 1)
 					: ckmalloc(strlen(p[i]) + 1);
@@ -1041,6 +1198,8 @@ cixinitcmd(int argc, char **argv)
 			ckfree(param_name);
 		} else {
 			/* No '=': add as-is to CIX_OTHER_ARGS */
+			if (json_mode)
+				cix_json_push_argv(&jargv, p[i]);
 			new_other = old_other
 				? ckmalloc(strlen(old_other) + 1 + strlen(p[i]) + 1)
 				: ckmalloc(strlen(p[i]) + 1);
@@ -1055,6 +1214,9 @@ cixinitcmd(int argc, char **argv)
 		}
 	}
 
+	if (json_mode)
+		cix_json_finish(jkw, jargv);
+
 	/* 10) Mandatory: every MYARG param must be present (non-empty) */
 	if (myarg_str && *myarg_str) {
 		char *copy = savestr(myarg_str);
@@ -1064,6 +1226,7 @@ cixinitcmd(int argc, char **argv)
 			if (!val || !*val) {
 				outfmt(out2, "param %s is mandatory\n", tok);
 				ckfree(copy);
+				exitstatus = 1;
 				exraise(EXEXIT);
 			}
 			tok = strtok(NULL, " \t");

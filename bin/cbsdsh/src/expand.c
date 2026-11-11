@@ -887,6 +887,80 @@ jq_eval_once(const char *json, const char *filter, int *ok)
 }
 
 /*
+ * Quoted ${var@expr} with EXP_FULL: each jq output is one field, separated
+ * the way "$@" separates parameters (a NUL, then a nul-only IFS region).
+ * Returns the number of fields written, or -1 if jq produced nothing because
+ * the filter or the input was invalid.
+ */
+static int
+jq_eval_fields(const char *json, const char *filter, int flags)
+{
+	jq_state *jq = NULL;
+	jv input, out, dumped;
+	int n = 0;
+
+	if (json == NULL)
+		json = "";
+	if (filter == NULL)
+		return -1;
+
+	jq = jq_init();
+	if (jq == NULL)
+		return -1;
+	if (!jq_compile(jq, filter)) {
+		jq_teardown(&jq);
+		return -1;
+	}
+
+	input = jv_parse(json);
+	if (!jv_is_valid(input)) {
+		jv_free(input);
+		jq_teardown(&jq);
+		return -1;
+	}
+
+	jq_start(jq, input, 0);
+	for (;;) {
+		const char *chunk = NULL;
+
+		out = jq_next(jq);
+		if (!jv_is_valid(out)) {
+			int err = jv_invalid_has_msg(out);
+
+			jv_free(out);
+			if (err && n == 0) {
+				jq_teardown(&jq);
+				return -1;
+			}
+			break;
+		}
+
+		dumped = jv_invalid();
+		if (jv_get_kind(out) == JV_KIND_STRING)
+			chunk = jv_string_value(out);
+		else {
+			dumped = jv_dump_string(jv_copy(out), 0);
+			if (jv_is_valid(dumped) && jv_get_kind(dumped) == JV_KIND_STRING)
+				chunk = jv_string_value(dumped);
+		}
+
+		if (chunk) {
+			if (n)
+				memtodest(nullstr, 1, flags | EXP_KEEPNUL);
+			strtodest(chunk, flags);
+			n++;
+		}
+
+		if (jv_is_valid(dumped))
+			jv_free(dumped);
+		jv_free(out);
+	}
+
+	jq_teardown(&jq);
+	return n;
+}
+
+/*
  * Expand a variable, and return a pointer to the next character in the
  * input string.
  */
@@ -902,11 +976,13 @@ evalvar(char *p, int flag)
 	int discard;
 	int quoted;
 	int mbchar;
+	int jq_fields;
 
 	varflags = *p++ & ~VSBIT;
 	subtype = varflags & VSTYPE;
 
 	quoted = flag & EXP_QUOTED;
+	jq_fields = -1;
 	var = p;
 	startloc = expdest - (char *)stackblock();
 	p = strchr(p, '=') + 1;
@@ -944,36 +1020,62 @@ again:
 		case VSJQEXPR: {
 			/* remember start offset in stack */
 			ptrdiff_t start = expdest - (char *)stackblock();
+			char *filt = NULL;
+			int split;
 
 			/* parse jq expression into expdest */
 			p = argstr(p, flag);
 
 			/* refresh base after argstr (stack may have moved) */
-			char *base = (char *)stackblock();
-			char *jqexpr = base + start;
+			{
+				char *base = (char *)stackblock();
+				char *jqexpr;
 
-			/* NUL-terminate expression */
-			STPUTC('\0', expdest);
-			rmescapes(jqexpr);
-
-			if (!(flag & EXP_DISCARD)) {
-				const char *val = lookupvar(var);
-				if (val == NULL) val = "";
-
-				int ok = 0;
-				char *result = jq_eval_once(val, jqexpr, &ok);
-
-				/* rollback expdest so jqexpr doesn't appear in output */
-				STADJUST((int)(start - (expdest - base)), expdest);
-
-				if (ok && result)
-					memtodest(result, strlen(result), flag);
-
-				free(result);
-			} else {
-				/* rollback even if discarding output */
+				STPUTC('\0', expdest);
+				base = (char *)stackblock();
+				jqexpr = base + start;
+				rmescapes(jqexpr);
+				filt = strdup(jqexpr);
+				base = (char *)stackblock();
+				/* rollback so the expression does not appear in the output */
 				STADJUST((int)(start - (expdest - base)), expdest);
 			}
+
+			/*
+			 * In quotes, during field splitting, each jq output is its
+			 * own parameter. A bare ${var@expr} stays one string.
+			 */
+			split = (flag & (EXP_QUOTED | EXP_FULL)) ==
+				(EXP_QUOTED | EXP_FULL);
+			if (!(flag & EXP_DISCARD) && filt) {
+				const char *val = lookupvar(var);
+
+				if (val == NULL)
+					val = "";
+				if (split) {
+					jq_fields = jq_eval_fields(val, filt, flag);
+					/*
+					 * No documents, and this expansion is the
+					 * whole quoted word: drop the quotes so the
+					 * word disappears, as "$@" does with no args.
+					 */
+					if (jq_fields == 0 && start > 0 &&
+					    (signed char)((char *)stackblock())[start - 1] ==
+					    CTLQUOTEMARK &&
+					    (signed char)*p == CTLQUOTEMARK) {
+						STADJUST(-1, expdest);
+						p++;
+					}
+				} else {
+					int ok = 0;
+					char *result = jq_eval_once(val, filt, &ok);
+
+					if (ok && result)
+						memtodest(result, strlen(result), flag);
+					free(result);
+				}
+			}
+			free(filt);
 		}
 		goto record;
 
@@ -1032,6 +1134,11 @@ again:
 record:
 	if ((flag | discard) & EXP_DISCARD)
 		return p;
+
+	if (jq_fields > 0) {
+		recordregion(startloc, expdest - (char *)stackblock(), 1);
+		return p;
+	}
 
 really_record:
 	if (quoted) {
