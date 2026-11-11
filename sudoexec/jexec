@@ -10,18 +10,29 @@ ${H3_COLOR}Description${N0_COLOR}:
  Run the command in the container from the master environment via jexec command
  If you are in the CBSDfile directory, these environments will always have priority.
 
+ Words after the options, or after --, are the program and its arguments inside
+ the jail. They are passed through unchanged, including spaces, newlines and "=".
+ When cmd= is set, those words are parameters of that script and are not joined
+ into it. A single jail passes standard input to the program. Several jails do
+ not accept standard input. With no program and no cmd=, /bin/sh reads standard input.
+
  This script supports the reserved word WHERE, which allows you to write SQL condition,
  please see 'schema jails' in ~cbsd/var/db/local SQLite3 DB for flexible queries.
 
 ${H3_COLOR}Options${N0_COLOR}:
 
- ${N2_COLOR}cmd${N0_COLOR}         - command to execute. Use quotes if there are spaces or several commands;
+ ${N2_COLOR}cmd${N0_COLOR}         - shell script. Arguments are its parameters and are not joined.
+               shell=auto runs cmd via /bin/sh -c when it has metacharacters;
  ${N2_COLOR}dir${N0_COLOR}         - change current directory in jail before execute ( default: '/' );
- ${N2_COLOR}environment${N0_COLOR} - pass environment, e.g.: 'environment=\"FOO=bar\" environment=\"VAR1=boo\"'
-               or path to 'env' file;
+ ${N2_COLOR}environment${N0_COLOR} - pass environment. Repeat the option for each variable:
+               environment=\"FOO=bar\" environment=\"VAR1=boo\"
+               A value may contain spaces, or be a path to an env file;
  ${N2_COLOR}jname${N0_COLOR}       - target jail. If jail='*' or jail='pri*' then execute command on all
                jails or in jails whose names begin with 'pri', e.g. 'prison1', 'prisonX'...;
- ${N2_COLOR}shell${N0_COLOR}       - shell by default. Default is '/bin/sh';
+ ${N2_COLOR}shell${N0_COLOR}       - no, auto (default), or a path.
+               no executes the program as given.
+               auto decides from cmd.
+               shell=/bin/bash is that shell: /bin/bash -c \"\$cmd\" plus parameters;
  ${N2_COLOR}user${N0_COLOR}        - execute a command as another user. Default is 'root';
 
 ${H3_COLOR}Examples${N0_COLOR}:
@@ -38,7 +49,9 @@ EOF
 
   # env ASSUME_ALWAYS_YES=yes cbsd jexec jname=test pkg bootstrap -f
   # cbsd jexec jname=test cmd=\"pwd; hostname; env ASSUME_ALWAYS_YES=yes pkg bootstrap -f\"
-  # cbsd jexec environment=\"VAR1=var1\" environment=\"VAR2=var2\" jname='*' \"hostname; ls -la\"
+  # cbsd jexec jname=test -- printf '%s' 'hello world'
+  # printf 'hello\\n' | cbsd jexec jname=test -- cat
+  # cbsd jexec environment=\"VAR1=var1\" environment=\"VAR2=var2\" jname='*' -- /bin/sh -c \"hostname; ls -la\"
 
 ${H3_COLOR}See also${N0_COLOR}:
 
@@ -61,7 +74,9 @@ user=
 ouser=
 
 . ${tools}
-cixinit
+# environment= may be repeated; cixinit -j keeps every value in CIX_JSON_ARGS.
+CIXMULTIARG="environment"
+cixinit -j
 
 if [ -z "${jname}" -a -n "${ojname}" ]; then
 	# inherit jname env
@@ -101,103 +116,30 @@ if [ -n "${ojname}" ]; then
 	unset jail_list
 fi
 
-xenvironment=
-if [ -z "${cmd}" ]; then
-	[ -n "${odir}" ] && dir="${odir}"
-	if [ -n "${dir}" ]; then
-		cmd0="cd ${dir}"
-	fi
-
-	cmd=
-	OIFS="${IFS}"
-	IFS="~"
-	for i in ${CIX_OTHER_ARGS}; do
-		strpos --str="${i}" --search="="
-		_pos=$?
-		if [ ${_pos} -eq 0 ]; then
-			# not params=value form
-			if [ -z "${cmd}" ]; then
-				cmd="${i}"
-			else
-				cmd="${cmd} ${i}"
-			fi
-			shift
-			continue
-		fi
-
-		capture _arg_len strlen "${i}"
-		_pref=$(( _arg_len - _pos ))
-		capture ARG substr --pos=0 --len=${_pos} --str="${i}"
-
-		case "${ARG}" in
-			environment)
-				capture _raw_val substr --pos=$(( _pos + 2 )) --len=${_pref} --str="${i}"
-				capture VAL strstrip --str="${_raw_val}" --chars='"'
-				if [ -z "${xenvironment}" ]; then
-					xenvironment="${VAL}"
-				else
-					xenvironment="${xenvironment} ${VAL}"
-				fi
-				shift
-				continue
-				;;
-			dir|jname|shell|user)
-				shift
-				continue
-				;;
-		esac
-
-		if [ -z "${cmd}" ]; then
-			cmd="${i}"
-		else
-			cmd="${cmd} ${i}"
-		fi
-
-	done
-	IFS="${OIFS}"
-fi
-
 emulator="jail"		# for jname_is_multiple
 [ -z "${jail_list}" ] && jname_is_multiple	# import jail_list if jname is mask
 
 _global_ret=0
+_jexec_argc="${CIX_JSON_ARGS@.argv|length}"
+[ -z "${_jexec_argc}" ] && _jexec_argc=0
 
-[ -n "${odir}" ] && dir="${odir}"
-if [ -z "${cmd}" ]; then
-	capture batchfile ${MKTEMP_CMD}
-	# todo: test/chec for stdin/blocked
-	# shellcheck disable=2162
-	while read _line; do
-		[ -n "${dir}" ] && echo "cd ${dir}" >> ${batchfile}
-		echo "${_line}" >> ${batchfile}
-	done
-
-	# set permission for all users due to 'user=' args
-	${CHMOD_CMD} 0555 ${batchfile}
-
+jexec_defaults()
+{
 	[ -n "${ouser}" ] && user="${ouser}"
 	[ -z "${user}" ] && user="root"
 	[ -n "${oshell}" ] && shell="${oshell}"
-	[ -z "${shell}" ] && shell="/bin/sh"
+	[ -z "${shell}" ] && shell="auto"
+	[ -n "${odir}" ] && dir="${odir}"
+	[ -z "${dir}" ] && dir="/"
+}
 
-	if [ -n "${jail_list}" ]; then
-		for jname in ${jail_list}; do
-			jscp ${batchfile} ${jname}:${batchfile}
-			jexec jname=${jname} user=${user} shell=${shell} ${batchfile}
-			_global_ret=$?
-		done
-	else
-		jscp ${batchfile} ${jname}:${batchfile}
-		jexec jname=${jname} user=${user} shell=${shell} ${batchfile}
-		_global_ret=$?
-	fi
-	${RM_CMD} -f ${batchfile}
-	#err 1 "${N1_COLOR}${CIX_APP}: empty command${N0_COLOR}"
-	exit ${_global_ret}
-fi
+# ']' is first so it belongs to the class. Same set as jexec_env shell_meta().
+_jexec_meta=$(printf '%b' '] \t\n|&;<>()$`"\047\\*?[{}!~')
 
-if [ -n "${dir}" ]; then
-	cmd="cd ${dir}; ${cmd}"
+# A pipe or a file on stdin cannot be shared by several jails, and reading it
+# here would consume it before we know whether the command wants it.
+if [ -n "${jail_list}" ] && { [ -p /dev/stdin ] || [ -f /dev/stdin ]; }; then
+	err 1 "${N1_COLOR}${CIX_APP}: stdin is not supported for multiple jails${N0_COLOR}"
 fi
 
 if [ -n "${jail_list}" ]; then
@@ -209,17 +151,19 @@ if [ -n "${jail_list}" ]; then
 	task_id=
 	task_id_cur=
 
-	[ -n "${ouser}" ] && user="${ouser}"
-	[ -z "${user}" ] && user="root"
-	[ -n "${oshell}" ] && shell="${oshell}"
-	[ -z "${shell}" ] && shell="/bin/sh"
-
-	# spawn command for all jail
+	# The task daemon does not inherit this process. The per-jail cixinit -j
+	# reads CIX_JSON_ARGS back and only jname= is applied on top, so argv,
+	# environment and the other named parameters stay intact.
+	export CIX_JSON_ARGS
 	for jname in ${jail_list}; do
 		. ${subrdir}/rcconf.subr
 		[ ${myjid} -eq 0 ] && continue
 
-		capture task_id_cur task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} ${ENV_CMD} NOCOLOR=1 /usr/local/bin/cbsd jexec dir="${dir}" user=${user} shell=${shell} jname=${jname} ${cmd}
+		_jsonfile="${tmpdir}/jexec.${jname}.$$.json"
+		_cbsd_bin="${CIX_BIN:-/usr/local/bin/cbsd}"
+		printf '%s\n' "${CIX_JSON_ARGS}" > "${_jsonfile}"
+		_taskcmd="export NOCOLOR=1; CIX_JSON_ARGS=\"\$(cat '${_jsonfile}')\"; export CIX_JSON_ARGS; rm -f '${_jsonfile}'; exec ${_cbsd_bin} jexec jname=${jname}"
+		capture task_id_cur task mode=new logfile=${tmpdir}/${task_owner}.${jname}.log.$$ client_id=${jname} autoflush=0 owner=${task_owner} "${_taskcmd}"
 		task_id="${task_id} ${task_id_cur}"
 	done
 
@@ -230,6 +174,13 @@ if [ -n "${jail_list}" ]; then
 	exit 0
 fi
 if [ ${cbsd_api} -eq 1 ]; then
+	_njails=0
+	for _j in ${all_jail_list}; do
+		_njails=$(( _njails + 1 ))
+	done
+	if [ "${_njails}" -gt 1 ] && { [ -p /dev/stdin ] || [ -f /dev/stdin ]; }; then
+		err 1 "${N1_COLOR}${CIX_APP}: stdin is not supported for multiple jails${N0_COLOR}"
+	fi
 	[ -z "${CURL_CMD}" ] && capture CURL_CMD which curl
 	[ -z "${CURL_CMD}" ] && err 1 "${N1_COLOR}cloud up requires curl, please install: ${N2_COLOR}pkg install -y curl${N0_COLOR}"
 	[ -z "${CBSDFILE_RECURSIVE}" ] && ${ECHO} "${N1_COLOR}main cloud api: ${N2_COLOR}${CLOUD_URL}${N0_COLOR}" 1>&2
@@ -269,9 +220,48 @@ if [ ${cbsd_api} -eq 1 ]; then
 		fi
 		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-		${jexec_cmd} <<CBSD_EOF
-${cmd}
-CBSD_EOF
+		jexec_defaults
+		if [ "${_jexec_argc}" -gt 0 ]; then
+			set -- "${CIX_JSON_ARGS@.argv[]}"
+		else
+			set --
+		fi
+		if [ -z "${cmd}" ] && [ $# -eq 0 ]; then
+			case "${shell}" in
+				no|auto) set -- /bin/sh ;;
+				*) set -- "${shell}" ;;
+			esac
+		elif [ "${shell}" != "no" ] && [ "${shell}" != "auto" ]; then
+			if [ -n "${cmd}" ]; then
+				set -- "${shell}" -c "${cmd}" "$@"
+			else
+				_shcmd=$1
+				shift
+				set -- "${shell}" -c "${_shcmd}" "$@"
+			fi
+		elif [ "${shell}" = "auto" ] && [ -n "${cmd}" ]; then
+			case "${cmd}" in
+				*["${_jexec_meta}"]*) set -- /bin/sh -c "${cmd}" "$@" ;;
+				*) set -- "${cmd}" "$@" ;;
+			esac
+		elif [ "${shell}" = "auto" ] && [ $# -gt 0 ]; then
+			case "$1" in
+				*["${_jexec_meta}"]*)
+					_shcmd=$1
+					shift
+					set -- /bin/sh -c "${_shcmd}" "$@"
+					;;
+			esac
+		elif [ $# -eq 0 ]; then
+			set -- "${cmd}"
+		fi
+		# Directory is jexec_env -d. -s no: the command above is already final.
+		# env keeps environment= after jexec_env clears its own environment.
+		# shellcheck disable=2086
+		${jexec_cmd} "${miscdir}/jexec_env" -d "${dir}" -s no "${jname}" -- \
+			env "${CIX_JSON_ARGS@.kw.environment[]?}" -- "$@"
+		_ret=$?
+		[ ${_ret} -ne 0 ] && _global_ret=$(( _global_ret + 1 ))
 	done
 	exit ${_global_ret}
 else
@@ -329,61 +319,116 @@ else
 			fi
 			;;
 		*)
-			true
+			LOGIN_STR=""
 			;;
 	esac
 
-	first_cmd=
-	for first_cmd in ${cmd}; do
-		break
-	done
+	jexec_defaults
+	_first=
+	if [ "${_jexec_argc}" -gt 0 ]; then
+		_first="${CIX_JSON_ARGS@.argv[0]}"
+	elif [ -n "${cmd}" ]; then
+		_first=${cmd%% *}
+	fi
 
-	if [ -x "${jailsysdir}/${jname}/cmd/${first_cmd}" ]; then
+	if [ -n "${_first}" ] && [ -x "${jailsysdir}/${jname}/cmd/${_first}" ]; then
 		. ${subrdir}/jcreate.subr		# for export_jail_data_for_external_hook
 		export_jail_data_for_external_hook
-		exec ${jailsysdir}/${jname}/cmd/${cmd}
+		if [ "${_jexec_argc}" -gt 0 ]; then
+			exec "${jailsysdir}/${jname}/cmd/${_first}" "${CIX_JSON_ARGS@.argv[1:][]}"
+		else
+			exec "${jailsysdir}/${jname}/cmd/${_first}"
+		fi
 	fi
 
+	# Flags, then the jail, then the command.
+	# cmd is the script. -s no executes the arguments as given.
+	jexec_run()
+	{
+		_jexec_envfile=
+		_ret=0
 
-	[ -n "${ouser}" ] && user="${ouser}"
-	[ -n "${odir}" ] && dir="${odir}"
-	[ -n "${oshell}" ] && shell="${oshell}"
-	[ -z "${user}" ] && user="root"
-	[ -z "${dir}" ] && dir="/"
-	[ -z "${shell}" ] && shell="/bin/sh"
+		for _v in "${CIX_JSON_ARGS@.kw.environment[]?}"; do
+			[ -z "${_v}" ] && continue
+			if [ -z "${_jexec_envfile}" ]; then
+				capture _jexec_envfile ${MKTEMP_CMD}
+			fi
+			if [ -f "${_v}" ]; then
+				cat "${_v}" >> "${_jexec_envfile}"
+				printf '\n' >> "${_jexec_envfile}"
+			else
+				printf '%s\n' "${_v}" >> "${_jexec_envfile}"
+			fi
+		done
 
-	if [ -z "${LOGIN_STR}" ]; then
-		if [ "${platform}" = "DragonFly" ]; then
-			# shellcheck disable=2153
-			exec ${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} /bin/sh -c "${cmd}"
-			ret=$?
-		elif [ "${ver}" = "empty" ]; then
-			# non-FreeBSD env, (-U) + $user not supported ?
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} /bin/sh -c "${cmd}"
-			ret=$?
+		if [ -n "${LOGIN_STR}" ]; then
+			# qemu user-mode: LOGIN_STR is the program, not a -c string.
+			if [ $# -eq 0 ]; then
+				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR}
+			else
+				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} "$@"
+			fi
+			_ret=$?
+		elif [ "${platform}" = "DragonFly" ]; then
+			if [ $# -eq 0 ]; then
+				case "${shell}" in
+					no|auto) ${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} /bin/sh ;;
+					*) ${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "${shell}" ;;
+				esac
+			elif [ "${_jexec_s}" != "no" ] && [ "${_jexec_s}" != "auto" ]; then
+				_shcmd=$1
+				shift
+				${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "${_jexec_s}" -c "${_shcmd}" "$@"
+			elif [ "${_jexec_s}" = "auto" ]; then
+				case "$1" in
+					*["${_jexec_meta}"]*)
+						_shcmd=$1
+						shift
+						${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} /bin/sh -c "${_shcmd}" "$@"
+						;;
+					*)
+						${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "$@"
+						;;
+				esac
+			else
+				${NICE_CMD} -n ${nice} ${JEXEC_CMD} ${jid} "$@"
+			fi
+			_ret=$?
 		else
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env ${jname} ${user} ${dir} ${shell} "${cmd}"
-			ret=$?
+			_uarg=
+			[ "${user}" != "root" ] && [ "${ver}" != "empty" ] && _uarg="-U ${user}"
+			if [ -n "${_jexec_envfile}" ]; then
+				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env \
+					${_uarg} -d "${dir}" -e "${_jexec_envfile}" -s "${_jexec_s}" \
+					"${jname}" -- "$@"
+			else
+				${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${miscdir}/jexec_env \
+					${_uarg} -d "${dir}" -s "${_jexec_s}" \
+					"${jname}" -- "$@"
+			fi
+			_ret=$?
 		fi
+		[ -n "${_jexec_envfile}" ] && ${RM_CMD} -f "${_jexec_envfile}"
+		return ${_ret}
+	}
+
+	# cmd= is the script when set. Otherwise the first argument is.
+	# An explicit shell always runs -c. auto does that only if the script has metacharacters.
+	_jexec_s="${shell}"
+	if [ -n "${cmd}" ] && [ "${shell}" != "no" ]; then
+		if [ "${_jexec_argc}" -gt 0 ]; then
+			jexec_run "${cmd}" "${CIX_JSON_ARGS@.argv[]}"
+		else
+			jexec_run "${cmd}"
+		fi
+	elif [ "${_jexec_argc}" -gt 0 ]; then
+		jexec_run "${CIX_JSON_ARGS@.argv[]}"
+	elif [ -n "${cmd}" ]; then
+		jexec_run "${cmd}"
 	else
-		if [ "${platform}" = "DragonFly" ]; then
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} <<CBSD_EOF
-${cmd}
-CBSD_EOF
-			ret=$?
-		elif [ "${ver}" = "empty" -o "${OSNAME}" != "freebsd" ]; then
-			# non-FreeBSD env, (-U) + $user not supported ?
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} ${jid} ${LOGIN_STR} <<CBSD_EOF
-${cmd}
-CBSD_EOF
-			ret=$?
-		else
-			exec ${NICE_CMD} -n ${nice} ${SETFIB} ${CPUSET} ${JEXEC_CMD} -U ${user} ${jid} ${LOGIN_STR} <<CBSD_EOF
-${cmd}
-CBSD_EOF
-			ret=$?
-		fi
+		jexec_run
 	fi
+	ret=$?
 fi
 
 exit ${ret}
