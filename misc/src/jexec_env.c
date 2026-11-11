@@ -1,5 +1,5 @@
 // Part of the CBSD Project
-// Exec cmd via jexec with clean environment
+// Enter a jail and exec a command with a clean environment.
 //
 // jexec_env [-l] [-U user] [-d dir] [-e envfile] [-s no|auto|/path] jname [cmd arg ...]
 // Flags, then the jail name, then the command. -s selects the shell:
@@ -10,7 +10,13 @@
 // Arguments are not joined. The first is the script, the rest are its
 // parameters. No command runs the shell so it can read stdin.
 // -l is an interactive login:
-// a shell exit is reported as 0, an execv failure is not.
+// a shell exit is reported as 0, an exec failure is not.
+//
+// Environment files live on the host and are read before jail_attach.
+// The directory (-d) is a path inside the jail, so chdir happens after
+// attach, while the process is still root. -U is looked up after attach,
+// in the jail's passwd.
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,16 +24,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef __FreeBSD__
+#include <sys/param.h>
+#include <sys/jail.h>
+#include <jail.h>
+#include <pwd.h>
+#include <login_cap.h>
+#endif
+
 #define ENV_PATH_LEN	512
-#define ELF_CMD_LEN	512
-#define ELF_BUF_LEN	128
 
-// FreeBSD 14.3+ supports jexec -d (homedir)
-#define FREEBSD_VER_14_3	1403000
-
-// Sentinel: distinguish execv failure from shell exit code.
-// Used only when cmd==NULL (interactive login) to decide whether
-// the non-zero exit came from execv failure or from the user's shell.
+// Sentinel: distinguish exec failure from a shell exit.
+// With -l, a shell exit is reported as 0 and this code is not.
 #define JEXEC_EXECV_FAIL_CODE	2
 
 static void
@@ -61,92 +69,108 @@ jname_putenv(const char *path)
 	fclose(fp);
 }
 
+#ifdef __FreeBSD__
+/* Attach, then chdir. -d is a path inside the jail, so it is resolved here. */
 static int
-get_freebsd_ver(const char *cix_distdir)
+enter_jail(const char *jname, const char *dir)
 {
-	char elf_cmd[ELF_CMD_LEN];
-	char buffer[ELF_BUF_LEN];
+	int jid;
 
-	snprintf(elf_cmd, sizeof(elf_cmd),
-	    "%s/misc/elf_tables --ver /bin/sh", cix_distdir);
-
-	FILE *fp = popen(elf_cmd, "r");
-	if (fp == NULL) {
-		fprintf(stderr, "jexec_env: popen failed: %s\n", elf_cmd);
-		return 0;
+	jid = jail_getid(jname);
+	if (jid < 0) {
+		fprintf(stderr, "jexec_env: %s\n", jail_errmsg);
+		return -1;
 	}
-
-	if (fgets(buffer, sizeof(buffer), fp) == NULL) {
-		pclose(fp);
-		return 0;
+	if (jail_attach(jid) < 0) {
+		perror("jexec_env: jail_attach");
+		return -1;
 	}
-	pclose(fp);
-
-	return atoi(buffer);
+	/* Attach sets cwd to the jail root. A relative -d starts from there. */
+	if (chdir("/") != 0) {
+		perror("jexec_env: chdir: /");
+		return -1;
+	}
+	if (dir != NULL && dir[0] != '\0' && chdir(dir) != 0) {
+		fprintf(stderr, "jexec_env: chdir: %s: %s\n",
+		    dir, strerror(errno));
+		return -1;
+	}
+	return 0;
 }
 
-static char **
-build_jexec_argv(char *jname, char *user, char *homedir, char **cmd,
-    int use_user, int use_homedir)
+/*
+ * Switch to the jail user. Called after attach, so passwd and login.conf
+ * are the jail's. Login class supplies limits, umask and priority.
+ * LOGIN_SETENV and LOGIN_SETPATH are omitted: they would replace the
+ * environment loaded on the host before attach.
+ */
+static int
+drop_privs(const char *user)
 {
-	int ncmd = 0;
-	int i, n;
-	char **av;
+	struct passwd *pwd;
+	login_cap_t *lcap;
+	uid_t uid;
+	gid_t gid;
+	char name[64];
+	unsigned int flags;
 
-	if (cmd != NULL)
-		for (; cmd[ncmd] != NULL; ncmd++)
-			;
-	n = 1 + (use_user ? 2 : 0) + (use_homedir ? 2 : 0) + 1 + ncmd + 1;
-	av = malloc(sizeof(char *) * (size_t)n);
-	if (av == NULL)
-		return NULL;
-	i = 0;
-	av[i++] = "jexec";
-	if (use_user) {
-		av[i++] = "-U";
-		av[i++] = user;
+	pwd = getpwnam(user);
+	if (pwd == NULL) {
+		fprintf(stderr, "jexec_env: %s: no such user\n", user);
+		return -1;
 	}
-	if (use_homedir) {
-		av[i++] = "-d";
-		av[i++] = homedir;
+	uid = pwd->pw_uid;
+	gid = pwd->pw_gid;
+	strlcpy(name, pwd->pw_name, sizeof(name));
+
+	lcap = login_getpwclass(pwd);
+	if (lcap != NULL) {
+		flags = LOGIN_SETALL & ~LOGIN_SETGROUP & ~LOGIN_SETLOGIN &
+		    ~LOGIN_SETUSER & ~LOGIN_SETENV & ~LOGIN_SETPATH;
+		if (setusercontext(lcap, pwd, uid, flags) != 0) {
+			perror("jexec_env: setusercontext");
+			login_close(lcap);
+			endpwent();
+			return -1;
+		}
+		login_close(lcap);
 	}
-	av[i++] = jname;
-	for (n = 0; n < ncmd; n++)
-		av[i++] = cmd[n];
-	av[i] = NULL;
-	return av;
+	if (initgroups(name, gid) != 0) {
+		perror("jexec_env: initgroups");
+		endpwent();
+		return -1;
+	}
+	if (setgid(gid) != 0) {
+		perror("jexec_env: setgid");
+		endpwent();
+		return -1;
+	}
+	if (setuid(uid) != 0) {
+		perror("jexec_env: setuid");
+		endpwent();
+		return -1;
+	}
+	endpwent();
+	return 0;
+}
+#else
+static int
+enter_jail(const char *jname, const char *dir)
+{
+	(void)jname;
+	(void)dir;
+	fprintf(stderr, "jexec_env: jail entry is supported on FreeBSD only\n");
+	return -1;
 }
 
-/* cd inside the jail, then exec the command. Used when jexec has no -d. */
-static char **
-cd_wrap(char *shell, char *dir, char **cmd)
+static int
+drop_privs(const char *user)
 {
-	static const char script[] = "cd \"$1\" && shift && exec \"$@\"";
-	int ncmd = 0;
-	int i;
-	char **av;
-
-	if (cmd != NULL)
-		while (cmd[ncmd] != NULL)
-			ncmd++;
-	av = malloc(sizeof(char *) * (size_t)(6 + (ncmd > 0 ? ncmd : 1)));
-	if (av == NULL)
-		return NULL;
-	av[0] = shell;
-	av[1] = "-c";
-	av[2] = (char *)script;
-	av[3] = "_";
-	av[4] = dir;
-	if (ncmd == 0) {
-		av[5] = shell;
-		av[6] = NULL;
-	} else {
-		for (i = 0; i < ncmd; i++)
-			av[5 + i] = cmd[i];
-		av[5 + ncmd] = NULL;
-	}
-	return av;
+	(void)user;
+	fprintf(stderr, "jexec_env: jail entry is supported on FreeBSD only\n");
+	return -1;
 }
+#endif
 
 enum {
 	SH_NO = 0,
@@ -190,9 +214,6 @@ static int
 execute_cmd(struct jopt *o)
 {
 	const char *workdir = getenv("workdir");
-	const char *cix_distdir_env = getenv("CIX_DISTDIR");
-	const char *cix_distdir;
-	int home_set = 0;
 	int status = 0;
 	int use_user;
 
@@ -205,18 +226,10 @@ execute_cmd(struct jopt *o)
 		exit(1);
 	}
 
-	cix_distdir = (cix_distdir_env != NULL) ? cix_distdir_env : "/usr/local/cbsd";
-
 	const char *term = getenv("TERM");
 	const char *blocksize = getenv("BLOCKSIZE");
 
 	use_user = (o->user != NULL && strcmp(o->user, "root") != 0);
-
-	if (o->dir != NULL && o->dir[0] != '\0') {
-		int freebsd_ver = get_freebsd_ver(cix_distdir);
-		if (freebsd_ver >= FREEBSD_VER_14_3)
-			home_set = 1;
-	}
 
 	pid_t pid = fork();
 
@@ -225,7 +238,6 @@ execute_cmd(struct jopt *o)
 		char *cleanenv[1] = { NULL };
 		char *sh_only[2];
 		char **run;
-		char **jexec_argv;
 
 		environ = cleanenv;
 
@@ -268,19 +280,14 @@ execute_cmd(struct jopt *o)
 			run[ncmd + 2] = NULL;
 		}
 
-		if (!home_set && o->dir != NULL && o->dir[0] != '\0') {
-			run = cd_wrap(o->shell_bin, o->dir, run);
-			if (run == NULL)
-				_exit(1);
-		}
-
-		jexec_argv = build_jexec_argv(o->jname, o->user, o->dir, run,
-		    use_user, home_set);
-		if (jexec_argv == NULL)
+		/* Env files are host paths. Attach only after they are loaded. */
+		if (enter_jail(o->jname, o->dir) != 0)
+			_exit(1);
+		if (use_user && drop_privs(o->user) != 0)
 			_exit(1);
 
-		execv("/usr/sbin/jexec", jexec_argv);
-		perror("jexec_env: execv failed");
+		execvp(run[0], run);
+		perror("jexec_env: execvp failed");
 		_exit(JEXEC_EXECV_FAIL_CODE);
 	} else if (pid > 0) {
 		waitpid(pid, &status, 0);
