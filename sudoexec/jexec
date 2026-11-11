@@ -136,6 +136,28 @@ jexec_defaults()
 # ']' is first so it belongs to the class. Same set as jexec_env shell_meta().
 _jexec_meta=$(printf '%b' '] \t\n|&;<>()$`"\047\\*?[{}!~')
 
+# Detect shell according to shell= and "$1", return shell path or empty
+jexec_detect_shell()
+{
+	_shcmd=""
+	if [ "${shell}" != "no" ] && [ "${shell}" != "auto" ]; then
+		# shell specified -> use it
+		_shcmd="${shell}"
+	elif [ "${shell}" = "auto" ]; then
+		case "$1" in
+			*["${_jexec_meta}"]*)
+				# $1 has metacharacters -> use default shell
+				_shcmd="/bin/sh"
+				;;
+			*)
+				# No shell program in $1 -> no shell required
+				_shcmd=""
+				;;
+		esac
+	fi
+	echo "${_shcmd}"
+}
+
 # A pipe or a file on stdin cannot be shared by several jails, and reading it
 # here would consume it before we know whether the command wants it.
 if [ -n "${jail_list}" ] && { [ -p /dev/stdin ] || [ -f /dev/stdin ]; }; then
@@ -173,6 +195,17 @@ if [ -n "${jail_list}" ]; then
 	echo
 	exit 0
 fi
+
+jexec_defaults
+
+# Set arguments into $@
+set -- "${CIX_JSON_ARGS@.argv[]?}"
+
+# Prefix with cmd= if set
+if [ -n "$cmd" ]; then
+	set -- "${cmd}" "$@"
+fi
+
 if [ ${cbsd_api} -eq 1 ]; then
 	_njails=0
 	for _j in ${all_jail_list}; do
@@ -218,47 +251,24 @@ if [ ${cbsd_api} -eq 1 ]; then
 				_ssh_sudo_arg="-oIdentityFile=/home/${SUDO_USER}/.ssh/id_rsa"
 			fi
 		fi
+
 		jexec_cmd="${SSH_CMD} -T -oStrictHostKeyChecking=no -oBatchMode=yes -oConnectTimeout=5 -oServerAliveInterval=10 ${_ssh_sudo_arg} ${_ssh_post}"
 
-		jexec_defaults
-		if [ "${_jexec_argc}" -gt 0 ]; then
-			set -- "${CIX_JSON_ARGS@.argv[]}"
-		else
-			set --
+		_uarg=
+		[ "${user}" != "root" ] && _uarg="-U ${user}"
+
+		capture _shcmd jexec_detect_shell "$1"
+		if [ -n "${_shcmd}" ]; then
+			shell_script="$1"
+			shift
+			# sh -c 'shell-script' argv0 argv1 ...
+			set -- "${_shcmd}" "-c" "${shell_script}" "${_shcmd}" "$@"
 		fi
-		if [ -z "${cmd}" ] && [ $# -eq 0 ]; then
-			case "${shell}" in
-				no|auto) set -- /bin/sh ;;
-				*) set -- "${shell}" ;;
-			esac
-		elif [ "${shell}" != "no" ] && [ "${shell}" != "auto" ]; then
-			if [ -n "${cmd}" ]; then
-				set -- "${shell}" -c "${cmd}" "${shell}" "$@"
-			else
-				_shcmd=$1
-				shift
-				set -- "${shell}" -c "${_shcmd}" "${shell}" "$@"
-			fi
-		elif [ "${shell}" = "auto" ] && [ -n "${cmd}" ]; then
-			case "${cmd}" in
-				*["${_jexec_meta}"]*) set -- /bin/sh -c "${cmd}" /bin/sh "$@" ;;
-				*) set -- "${cmd}" "$@" ;;
-			esac
-		elif [ "${shell}" = "auto" ] && [ $# -gt 0 ]; then
-			case "$1" in
-				*["${_jexec_meta}"]*)
-					_shcmd=$1
-					shift
-					set -- /bin/sh -c "${_shcmd}" /bin/sh "$@"
-					;;
-			esac
-		elif [ $# -eq 0 ]; then
-			set -- "${cmd}"
-		fi
+
 		# Directory is jexec_env -d. -s no: the command above is already final.
 		# env keeps environment= after jexec_env clears its own environment.
 		# shellcheck disable=2086
-		${jexec_cmd} "${miscdir}/jexec_env" -d "${dir}" -s no "${jname}" -- \
+		${jexec_cmd} "${miscdir}/jexec_env" -d "${dir}" -s no ${_uarg} "${jname}" -- \
 			env "${CIX_JSON_ARGS@.kw.environment[]?}" -- "$@"
 		_ret=$?
 		[ ${_ret} -ne 0 ] && _global_ret=$(( _global_ret + 1 ))
@@ -323,16 +333,6 @@ else
 			;;
 	esac
 
-	jexec_defaults
-
-	# Set arguments into $@
-	set -- "${CIX_JSON_ARGS@.argv[]?}"
-
-	# Prefix with cmd= if set
-	if [ -n "$cmd" ]; then
-		set -- "${cmd}" "$@"
-	fi
-
 	# First command exec override
 	_first="$1"
 	if [ -n "${_first}" ] && [ -x "${jailsysdir}/${jname}/cmd/${_first}" ]; then
@@ -367,22 +367,7 @@ else
 		ret=$?
 	elif [ "${platform}" = "DragonFly" ]; then
 
-		if [ "${shell}" != "no" ] && [ "${shell}" != "auto" ]; then
-			# shell specified -> use it
-			_shcmd="${shell}"
-		elif [ "${shell}" = "auto" ]; then
-			case "$1" in
-				*["${_jexec_meta}"]*)
-					# $1 has metacharacters -> use default shell
-					_shcmd="/bin/sh"
-					;;
-				*)
-					# No shell program in $1 -> no shell required
-					_shcmd=""
-					;;
-			esac
-		fi
-
+		capture _shcmd jexec_detect_shell "$1"
 		if [ -n "${_shcmd}" ]; then
 			shell_script="$1"
 			shift
