@@ -5,10 +5,12 @@
 // Flags, then the jail name, then the command. -s selects the shell:
 //   no    exec the command as given
 //   auto  if the first argument (the script, cmd) contains metacharacters,
-//         run /bin/sh -c <cmd> <params...>; otherwise exec the arguments
-//   /path /path -c <cmd> <params...> when a command is present
+//         run /bin/sh -c <script> /bin/sh <params...>; otherwise exec the arguments
+//   /path /path -c <script> /path <params...> when a command is present
 // Arguments are not joined. The first is the script, the rest are its
-// parameters. No command runs the shell so it can read stdin.
+// parameters ($1, $2, ...). The shell path is passed as $0, which sh -c
+// would otherwise take from the first parameter. No command runs the shell
+// so it can read stdin.
 // -l is an interactive login:
 // a shell exit is reported as 0, an exec failure is not.
 //
@@ -270,14 +272,17 @@ execute_cmd(struct jopt *o)
 
 			while (o->cmd[ncmd] != NULL)
 				ncmd++;
-			run = malloc(sizeof(char *) * (size_t)(ncmd + 3));
+			/* shell -c script $0 $1... — $0 is the shell, so cmd[1] is $1. */
+			run = malloc(sizeof(char *) * (size_t)(ncmd + 4));
 			if (run == NULL)
 				_exit(1);
 			run[0] = o->shell_bin;
 			run[1] = "-c";
-			for (i = 0; i < ncmd; i++)
-				run[i + 2] = o->cmd[i];
-			run[ncmd + 2] = NULL;
+			run[2] = o->cmd[0];
+			run[3] = o->shell_bin;
+			for (i = 1; i < ncmd; i++)
+				run[i + 3] = o->cmd[i];
+			run[ncmd + 3] = NULL;
 		}
 
 		/* Env files are host paths. Attach only after they are loaded. */

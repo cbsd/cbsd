@@ -81,6 +81,17 @@ testStdin()
 	assertEquals "hello-stdin" "${test}"
 }
 
+# $1 $2 $3 of a shell script. An empty parameter stays empty.
+testShellParams()
+{
+	test=$(${CIX_BIN} jexec jname=${jname} 'echo "[$1//$2//$3]"' 'aa bb' '' 'abcd
+efg
+ijk')
+	assertEquals "[aa bb////abcd
+efg
+ijk]" "${test}"
+}
+
 # cmd= is a shell string when no program arguments are given
 testCmdString()
 {
