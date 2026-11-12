@@ -195,8 +195,11 @@ cbsdlog_set_un(struct sockaddr_un *un, const char *path)
 	memset(un, 0, sizeof(*un));
 	un->sun_family = AF_UNIX;
 	strlcpy(un->sun_path, path, sizeof(un->sun_path));
+#ifndef __linux__
+	/* FreeBSD keeps the address length in a header byte. */
 #ifdef SUN_LEN
 	un->sun_len = SUN_LEN(un);
+#endif
 #endif
 	return (0);
 }

@@ -6,7 +6,12 @@
  *   FOLLOW <jail>
  */
 
+#ifdef __linux__
+#define _GNU_SOURCE /* struct ucred for SO_PEERCRED */
+#include <sys/inotify.h>
+#else
 #include <sys/event.h>
+#endif
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -43,6 +48,7 @@
 
 struct jsock {
 	int fd;
+	int wd; /* inotify watch descriptor (Linux) */
 	mode_t mode;
 	char path[104];
 };
@@ -650,18 +656,44 @@ parse_mode(const char *s, mode_t *mode)
 	return (0);
 }
 
-/* cleanvar unlinks the socket name. The fd stays open, but syslog looks up the path. */
+/* Watch for the socket file being removed: cleanvar unlinks the name.
+ * The fd stays open, but syslog looks up the path, so we rebind. */
 static void
-watch_sock(int fd)
+watch_sock(struct jsock *js)
 {
+#ifdef __linux__
+	char dir[sizeof(js->path)];
+	char *slash;
+	int wd;
+
+	if (kq_fd < 0 || js->fd < 0)
+		return;
+	strlcpy(dir, js->path, sizeof(dir));
+	slash = strrchr(dir, '/');
+	if (slash == NULL)
+		return;
+	if (slash == dir)
+		dir[1] = '\0';
+	else
+		slash[0] = '\0';
+	wd = inotify_add_watch(kq_fd, dir, IN_DELETE | IN_MOVED_FROM);
+	if (wd < 0) {
+		syslog(LOG_WARNING, "inotify_add_watch %s: %s", dir,
+		    strerror(errno));
+		return;
+	}
+	js->wd = wd;
+#else
 	struct kevent ev;
 
-	if (kq_fd < 0 || fd < 0)
+	if (kq_fd < 0 || js->fd < 0)
 		return;
-	EV_SET(&ev, (uintptr_t)fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+	EV_SET(&ev, (uintptr_t)js->fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
 	    NOTE_DELETE | NOTE_REVOKE, 0, NULL);
 	if (kevent(kq_fd, &ev, 1, NULL, 0, NULL) < 0)
-		syslog(LOG_WARNING, "kevent add fd %d: %s", fd, strerror(errno));
+		syslog(LOG_WARNING, "kevent add fd %d: %s", js->fd,
+		    strerror(errno));
+#endif
 }
 
 static int
@@ -734,8 +766,13 @@ bind_jail_sock(struct jent *j, const char *path, mode_t mode, char *err, size_t 
 		snprintf(err, errlen, "bind: %s", strerror(saved));
 		return (-1);
 	}
-	if (fchmod(fd, mode) < 0 && (errno != EINVAL || chmod(path, mode) < 0)) {
+	/* fchmod(2) on a socket fd succeeds on Linux but does not change
+	 * the socket file mode, so chmod(2) the path as well. */
+	if (fchmod(fd, mode) < 0 && errno != EINVAL)
 		saved = errno;
+	if (saved == 0 && chmod(path, mode) < 0)
+		saved = errno;
+	if (saved != 0) {
 		close(fd);
 		unlink(path);
 		snprintf(err, errlen, "chmod: %s", strerror(saved));
@@ -746,7 +783,7 @@ bind_jail_sock(struct jent *j, const char *path, mode_t mode, char *err, size_t 
 	strlcpy(j->sock[slot].path, path, sizeof(j->sock[slot].path));
 	if (is_new)
 		j->nsock++;
-	watch_sock(fd);
+	watch_sock(&j->sock[slot]);
 	return (0);
 }
 
@@ -1102,6 +1139,22 @@ dgram_read(struct jent *j, int slot)
 		syslog_send(out);
 }
 
+#ifdef __linux__
+/* Linux has no getpeereid(3): use SO_PEERCRED. */
+static int
+getpeereid(int fd, uid_t *uid, gid_t *gid)
+{
+	struct ucred cr;
+	socklen_t len = sizeof(cr);
+
+	if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cr, &len) < 0)
+		return (-1);
+	*uid = cr.uid;
+	*gid = cr.gid;
+	return (0);
+}
+#endif
+
 static int
 peer_ok(int fd)
 {
@@ -1148,6 +1201,7 @@ accept_client(void)
 	c->fds[0] = c->fds[1] = -1;
 }
 
+#ifndef __linux__
 static struct jsock *
 sock_by_fd(int fd, struct jent **jp)
 {
@@ -1166,11 +1220,74 @@ sock_by_fd(int fd, struct jent **jp)
 	}
 	return (NULL);
 }
+#endif /* __linux__ */
 
-/* NOTE_DELETE: the name is gone. Bind it again before later rc scripts connect. */
+/* The socket file name is gone. Bind it again before later rc scripts connect. */
 static void
 sockets_rebind(void)
 {
+	struct jent *j;
+	struct jsock *js;
+	char path[sizeof(jails[0].sock[0].path)];
+	char err[128];
+	mode_t mode;
+#ifndef __linux__
+	int fd;
+#endif
+
+#ifdef __linux__
+	char evbuf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+	const struct inotify_event *ev;
+	const char *base;
+	ssize_t n;
+	size_t off;
+	int ji;
+	int s;
+
+	for (;;) {
+		n = read(kq_fd, evbuf, sizeof(evbuf));
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN)
+				return;
+			syslog(LOG_WARNING, "inotify read: %s", strerror(errno));
+			/* A dead queue is always readable to poll. Drop it. */
+			if (errno == EBADF)
+				kq_fd = -1;
+			return;
+		}
+		break;
+	}
+	for (off = 0; off + sizeof(*ev) <= (size_t)n;
+	    off += sizeof(*ev) + ev->len) {
+		ev = (const struct inotify_event *)(evbuf + off);
+		if ((ev->mask & (IN_DELETE | IN_MOVED_FROM)) == 0 || ev->len == 0)
+			continue;
+		for (ji = 0; ji < njails; ji++) {
+			if (!jails[ji].used)
+				continue;
+			for (s = 0; s < jails[ji].nsock; s++) {
+				js = &jails[ji].sock[s];
+				if (js->fd < 0 || js->wd != ev->wd)
+					continue;
+				base = strrchr(js->path, '/');
+				base = (base != NULL) ? base + 1 : js->path;
+				if (strcmp(base, ev->name) != 0)
+					continue;
+				j = &jails[ji];
+				mode = js->mode;
+				strlcpy(path, js->path, sizeof(path));
+				if (bind_jail_sock(j, path, mode, err,
+					sizeof(err)) < 0)
+					syslog(LOG_WARNING, "rebind %s: %s",
+					    path, err);
+				else
+					syslog(LOG_INFO, "rebound %s", path);
+			}
+		}
+	}
+#else
 	struct kevent evs[16];
 	struct timespec zero;
 	int n;
@@ -1191,13 +1308,6 @@ sockets_rebind(void)
 		if (n == 0)
 			return;
 		for (i = 0; i < n; i++) {
-			struct jent *j;
-			struct jsock *js;
-			char path[sizeof(jails[0].sock[0].path)];
-			char err[128];
-			mode_t mode;
-			int fd;
-
 			if ((evs[i].flags & EV_ERROR) != 0)
 				continue;
 			if (evs[i].filter != EVFILT_VNODE)
@@ -1214,6 +1324,7 @@ sockets_rebind(void)
 				syslog(LOG_INFO, "rebound %s", path);
 		}
 	}
+#endif
 }
 
 static void
@@ -1528,12 +1639,23 @@ main(int argc, char **argv)
 		    ctl_path, syslog_path);
 	}
 	/*
+	 * The watch queue is created after fork(2) so the daemon owns it.
+	 * On Linux, inotify is used for the same purpose: watching the
+	 * socket file names for removal.
+	 */
+#ifdef __linux__
+	kq_fd = inotify_init1(IN_CLOEXEC);
+	if (kq_fd < 0)
+		err(1, "inotify_init");
+#else
+	/*
 	 * FreeBSD does not copy a kqueue into the child. The index stays
 	 * closed, poll() returns POLLNVAL immediately, and kevent() is EBADF.
 	 */
 	kq_fd = kqueue();
 	if (kq_fd < 0)
 		err(1, "kqueue");
+#endif
 	write_pid();
 	loop();
 	shutdown_all();

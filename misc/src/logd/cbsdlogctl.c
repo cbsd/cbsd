@@ -664,7 +664,9 @@ cmd_console_args(int argc, char **argv)
 	int color_mode = COLOR_AUTO;
 	int ch;
 
+#ifndef __linux__
 	optreset = 1;
+#endif
 	optind = 1;
 	opterr = 0;
 	while ((ch = getopt_long(argc, argv, "C:ft:W:", longopts, NULL)) != -1) {
