@@ -26,7 +26,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#ifdef __FreeBSD__
+/* DragonFly's compiler also defines __FreeBSD__ (as 4). It has no libjail
+ * and no login_cap, and the Makefile therefore does not link -ljail -lutil. */
+#if defined(__FreeBSD__) && !defined(__DragonFly__)
 #include <sys/param.h>
 #include <sys/jail.h>
 #include <jail.h>
@@ -71,7 +73,7 @@ jname_putenv(const char *path)
 	fclose(fp);
 }
 
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) && !defined(__DragonFly__)
 /* Attach, then chdir. -d is a path inside the jail, so it is resolved here. */
 static int
 enter_jail(const char *jname, const char *dir)
