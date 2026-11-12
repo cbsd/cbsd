@@ -132,7 +132,11 @@ cbsd: pkg-config-check
 	$(CC) misc/src/efivar2.c -o misc/efivar && $(STRIP) misc/efivar
 	$(CC) misc/src/merge.c -o misc/merge && $(STRIP) misc/merge
 	$(CC) misc/src/getch.c -o misc/getch && $(STRIP) misc/getch
+ifeq ($(OSTYPE),FreeBSD)
+	$(CC) misc/src/jexec_env.c -ljail -lutil -o misc/jexec_env && $(STRIP) misc/jexec_env
+else
 	$(CC) misc/src/jexec_env.c -o misc/jexec_env && $(STRIP) misc/jexec_env
+endif
 	$(CC) misc/src/jail_env.c -o misc/jail_env && $(STRIP) misc/jail_env
 	$(CC) misc/src/sqlcli.c `pkg-config sqlite3 --cflags --libs` -lm -o misc/sqlcli && $(STRIP) misc/sqlcli
 	$(CC) misc/src/cbsdlogtail.c -o misc/cbsdlogtail && $(STRIP) misc/cbsdlogtail
