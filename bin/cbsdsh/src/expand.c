@@ -2226,7 +2226,7 @@ static int pmatch(char *pattern, const char *string)
 			c = *p++;
 			do {
 				unsigned mbp = 0;
-				const char *mbs = &c;
+				const char *mbs = (const char *)&c;
 
 				if (!c) {
 					p = startp;

@@ -359,6 +359,12 @@ static int daemon_connect(void)
 	if (fd < 0)
 		return -1;
 
+	if (strlen(sockpath) >= sizeof(addr.sun_path)) {
+		fprintf(stderr, "cbsdsql: socket path too long: %s\n", sockpath);
+		close(fd);
+		return -1;
+	}
+
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
 	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockpath);
@@ -954,8 +960,11 @@ sqlitecmdro_vars(int argc, char **argv)
 				colnames[ncols][len] = '\0';
 				p = comma + 1;
 			} else {
-				snprintf(colnames[ncols], sizeof(colnames[ncols]), "%s", p);
-				p += strlen(p);
+				size_t len = strlen(p);
+				if (len >= sizeof(colnames[0])) len = sizeof(colnames[0]) - 1;
+				memcpy(colnames[ncols], p, len);
+				colnames[ncols][len] = '\0';
+				p += len;
 			}
 			ncols++;
 		}
@@ -1003,8 +1012,11 @@ sqlitecmdro_vars(int argc, char **argv)
 					val[vlen] = '\0';
 					pos = pipe + 1;
 				} else {
-					snprintf(val, sizeof(val), "%s", pos);
-					pos += strlen(pos);
+					size_t vlen = strlen(pos);
+					if (vlen >= sizeof(val)) vlen = sizeof(val) - 1;
+					memcpy(val, pos, vlen);
+					val[vlen] = '\0';
+					pos += vlen;
 				}
 
 				size_t vlen = strlen(val);
