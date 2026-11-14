@@ -38,7 +38,7 @@ cmd_status="${status}"
 SQL_GLOBAL="${workdir}/var/db/local.sqlite"
 SQL_LOCAL="${workdir}/jails-system/${id}/local.sqlite"
 
-jid=$( /usr/local/bin/sqlite3 ${SQL_GLOBAL} "SELECT jid FROM jails WHERE jname=\"${id}\"" )
+jid=$( /usr/local/bin/sqlite3 ${SQL_GLOBAL} "SELECT jid FROM jails WHERE jname='${id}'" )
 
 if [ -r ${SQL_LOCAL} ]; then
 	A=$( /usr/local/bin/sqlite3 ${SQL_LOCAL} "SELECT astart,vm_cpus,vm_ram,vm_os_type,vm_boot,vm_os_profile,vm_vnc_port,virtio_type,bhyve_vnc_tcp_bind,bhyve_vnc_resolution,cd_vnc_wait,protected,hidden,maintenance,ip4_addr,vnc_password,vm_hostbridge,vm_iso_path,vm_console,vm_efi,bhyve_generate_acpi,bhyve_wire_memory,bhyve_rts_keeps_utc,bhyve_force_msi_irq,bhyve_x2apic_mode,bhyve_mptable_gen,bhyve_ignore_msr_acc,bhyve_vnc_vgaconf,vm_cpu_topology,debug_engine FROM settings" )
@@ -63,7 +63,7 @@ else
 fi
 
 # start data field, open {
-data="{\"node\":\"${node}\""
+data="{'node':'${node}'"
 
 cat >>/tmp/${id}.json <<EOF
 {
