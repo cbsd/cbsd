@@ -19,6 +19,7 @@
 // attach, while the process is still root. -U is looked up after attach,
 // in the jail's passwd.
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -214,6 +215,69 @@ want_shell(int mode, char **cmd)
 	return shell_meta(cmd[0]);
 }
 
+/* Execvp-style PATH search report: where the command was looked up. */
+static void
+report_path_scan(const char *cmd, const char *path)
+{
+	char *dup;
+	char *p;
+	char *save = NULL;
+
+	dup = strdup(path);
+	if (dup == NULL)
+		return;
+	for (p = strtok_r(dup, ":", &save); p != NULL;
+	    p = strtok_r(NULL, ":", &save)) {
+		char cand[PATH_MAX];
+		const char *dir = (p[0] == '\0') ? "." : p;
+
+		snprintf(cand, sizeof(cand), "%s/%s", dir, cmd);
+		if (access(cand, X_OK) == 0)
+			fprintf(stderr, "jexec_env: PATH scan: %s: found and "
+			    "executable\n", cand);
+		else if (errno == EACCES)
+			fprintf(stderr, "jexec_env: PATH scan: %s: exists but "
+			    "not executable\n", cand);
+		else if (errno == ENOENT)
+			fprintf(stderr, "jexec_env: PATH scan: %s: not found\n",
+			    cand);
+		else
+			fprintf(stderr, "jexec_env: PATH scan: %s: %s\n", cand,
+			    strerror(errno));
+	}
+	free(dup);
+}
+
+/* Verbose execvp failure report: what was run, where, as whom, with what PATH. */
+static void
+report_exec_failure(char **run)
+{
+	int e = errno;
+	char cwd[PATH_MAX];
+	char *path = getenv("PATH");
+	int i;
+
+	fprintf(stderr, "jexec_env: execvp: %s: %s\n", run[0], strerror(e));
+	fprintf(stderr, "jexec_env: argv:");
+	for (i = 0; run[i] != NULL; i++)
+		fprintf(stderr, " '%s'", run[i]);
+	fprintf(stderr, "\n");
+	if (getcwd(cwd, sizeof(cwd)) != NULL)
+		fprintf(stderr, "jexec_env: cwd: %s\n", cwd);
+	fprintf(stderr, "jexec_env: uid=%d euid=%d gid=%d\n", (int)getuid(),
+	    (int)geteuid(), (int)getgid());
+	fprintf(stderr, "jexec_env: PATH: %s\n", path != NULL ? path : "<unset>");
+	if (strchr(run[0], '/') != NULL) {
+		if (access(run[0], F_OK) != 0)
+			fprintf(stderr, "jexec_env: %s: does not exist (in the "
+			    "jail)\n", run[0]);
+		else if (access(run[0], X_OK) != 0)
+			fprintf(stderr, "jexec_env: %s: exists but is not "
+			    "executable\n", run[0]);
+	} else if (e == ENOENT && path != NULL)
+		report_path_scan(run[0], path);
+}
+
 static int
 execute_cmd(struct jopt *o)
 {
@@ -294,7 +358,7 @@ execute_cmd(struct jopt *o)
 			_exit(1);
 
 		execvp(run[0], run);
-		perror("jexec_env: execvp failed");
+		report_exec_failure(run);
 		_exit(JEXEC_EXECV_FAIL_CODE);
 	} else if (pid > 0) {
 		waitpid(pid, &status, 0);
