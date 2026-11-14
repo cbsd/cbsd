@@ -50,6 +50,8 @@ distclean:
 	$(MAKE) -C bin/cbsdsh clean
 	$(RM) -f bin/cbsdsh/.depend*
 	$(RM) -f misc/chk_arp_byip
+	$(RM) -f misc/cbsdlogctl
+	$(RM) -f misc/cbsdlogd
 	$(RM) -f misc/cbsdtee
 	$(RM) -f misc/daemonize
 	$(RM) -f misc/pexec
@@ -75,6 +77,7 @@ distclean:
 	$(RM) -f misc/merge
 	$(RM) -f misc/mountpoint
 	$(RM) -f misc/updateconf
+
 # x86_64 for DFLY
 ifneq ($(filter amd64 i386 x86_64,$(ARCH)),)
 	$(RM) -f misc/x86-cpu-cap
