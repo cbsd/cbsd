@@ -2182,7 +2182,16 @@ static int pmatch(char *pattern, const char *string)
 				c = *++p;
 			if (!c)
 				return 1;
-			if (c == '?' || c != '[')
+			/*
+			 * Fast-scan the subject for the literal char c
+			 * only when c is a plain literal. Metachars
+			 * ('?', '[') and escaped literals (CTLESC) need
+			 * the matcher tried at every position: a strpbrk
+			 * for '[' would demand a literal '[' in the
+			 * subject and silently break patterns like
+			 * *\[0-9\]* (cbsd case with star + class).
+			 */
+			if (c == '?' || c == '[' || c == CTLESC)
 				c = CTLESC;
 			for (;;) {
 				if (c != CTLESC) {
