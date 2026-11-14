@@ -1077,6 +1077,7 @@ phase5()
 {
 	local _uncfg= _uninit= _checkme= _myfs= _ret=
 	local _val= _tmpval=
+	local _engdir= _engpair= _engschema= _engtable= _engfile=
 
 	${ECHO} "${N1_COLOR}[Stage 5: ${N2_COLOR}refreshing inventory${N1_COLOR}]${N0_COLOR}"
 
@@ -1224,6 +1225,24 @@ phase5()
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/storage_media.sqlite ${CIX_DISTDIR}/share/local-storage_media_map.schema media
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/images.sqlite ${CIX_DISTDIR}/share/local-images.schema images
 	env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${CIX_DISTDIR}/share/local-storage_pools.schema storage_pools
+
+	# register engine-owned tables via manifest.conf (plugin engines).
+	# Existing hardcoded updatesql lines above are the fast-path/legacy
+	# part; this loop adds any engine not registered there. Idempotent:
+	# updatesql uses CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN.
+	. ${subrdir}/engines.subr
+	scan_engines
+	for _engdir in ${ENGINES}; do
+		. ${_engdir}/manifest.conf
+		for _engpair in ${ENGINE_SCHEMAS}; do
+			_engschema=${_engpair%%:*}
+			_engtable=${_engpair#*:}
+			_engfile=$( engine_schema ${_engdir} local-${_engschema}.schema )
+			[ -z "${_engfile}" ] && continue
+			env workdir=${workdir} ${CIX_BIN} ${miscdir}/updatesql ${dbdir}/inv.${nodename}.sqlite ${_engfile} ${_engtable}
+		done
+	done
+	unset _engdir _engpair _engschema _engtable _engfile
 
 	_tmpval=$( ${miscdir}/sqlcli ${dbdir}/local.sqlite "SELECT id FROM storage_pools LIMIT 1" )
 	if [ -z "${_tmpval}" ]; then

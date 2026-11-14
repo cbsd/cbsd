@@ -1,0 +1,96 @@
+if [ ! "$_CBSD_ENGINES_SUBR" ]; then
+_CBSD_ENGINES_SUBR=1
+###
+
+# Engine manifest subsystem.
+# Each engine is a ${CIX_DISTDIR}/<name>ctl/ directory with optional
+# manifest.conf and engine-owned share/ subdir (SQL schemas, MYCOL confs).
+# Engine without manifest.conf behaves exactly as before (backward compat).
+
+# scan_engines: fill ENGINES (space-separated list of ${CIX_DISTDIR}/<dir>)
+# with engines whose manifest.conf matches current ${platform}.
+# Empty/absent ENGINE_PLATFORM in manifest means "any platform".
+scan_engines()
+{
+	local _d= _mf= _engplat= _e= _list=
+	[ -n "${_CIX_ENGINES_SCANNED}" ] && return 0
+	ENGINES=
+	# NB: cbsdsh runs with glob off (set -f): enumerate via builtin cix_read_dir.
+	# POSIX sh has no such builtin but has glob enabled: enumerate via glob.
+	if command -v cix_read_dir >/dev/null 2>&1; then
+		_list=$( cix_read_dir ${CIX_DISTDIR} )
+	else
+		_list=
+		for _e in ${CIX_DISTDIR}/*ctl; do
+			[ -d "${_e}" ] && _list="${_list:+${_list} }${_e}"
+		done
+	fi
+	for _e in ${_list}; do
+		case "${_e}" in
+			*/*)
+				# full path form (glob fallback): strip dir prefix
+				_e=${_e#${CIX_DISTDIR}/}
+				_e=${_e%/}
+				;;
+		esac
+		case "${_e}" in
+			*ctl) ;;
+			*) continue ;;
+		esac
+		_d="${CIX_DISTDIR}/${_e}"
+		[ ! -d "${_d}" ] && continue
+		_mf="${_d}/manifest.conf"
+		[ ! -f "${_mf}" ] && continue
+		_engplat=
+		. ${_mf}
+		_engplat="${ENGINE_PLATFORM}"
+		if [ -n "${_engplat}" ]; then
+			case " ${_engplat} " in
+				*" ${platform} "*) ;;
+				*) continue ;;
+			esac
+		fi
+		ENGINES="${ENGINES:+${ENGINES} }${_d}"
+	done
+	_CIX_ENGINES_SCANNED=1
+	return 0
+}
+
+# engine_manifest <enginedir> <var>: print manifest field, empty if absent
+engine_manifest()
+{
+	local _mf="${1}/manifest.conf" _field="${2}" _val=
+	[ ! -f "${_mf}" ] && return 1
+	_val=
+	. ${_mf}
+	eval _val="\${${_field}}"
+	echo "${_val}"
+	return 0
+}
+
+# engine_schema <enginedir> <schemafile>: resolve path of schema file,
+# engine-owned share/ first, then legacy ${distsharedir}
+engine_schema()
+{
+	local _d="${1}" _f="${2}"
+	[ -n "${_d}" ] && [ -f "${_d}/share/${_f}" ] && { echo "${_d}/share/${_f}"; return 0; }
+	[ -f "${distsharedir}/${_f}" ] && { echo "${distsharedir}/${_f}"; return 0; }
+	return 1
+}
+
+# engine_platform_ok <enginedir>: return 0 if engine applies to current platform
+engine_platform_ok()
+{
+	local _engplat=
+	[ ! -f "${1}/manifest.conf" ] && return 0
+	_engplat=
+	. ${1}/manifest.conf
+	[ -z "${_engplat}" ] && return 0
+	case " ${_engplat} " in
+		*" ${platform} "*) return 0 ;;
+	esac
+	return 1
+}
+
+###
+fi
