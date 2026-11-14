@@ -114,7 +114,15 @@ fi
 [ "${logtype}" = "auto" ] && logfile="/tmp/taskd.${id}.log"
 
 capture _st_time ${DATE_CMD} "+%Y%m%d%H%M%S"
-cbsdsqlrw cbsdtaskd "UPDATE taskd SET status='1',st_time='${_st_time}',logfile='${logfile}' WHERE id='${id}'"
+# Atomic claim: two dispatchers may SELECT the same pending task; only the
+# one whose UPDATE matches status='0' wins. SELECT changes() reports whether
+# this process was it. Without this, the same task runs twice and per-task
+# cleanup (e.g. jexec json files) breaks the loser.
+capture _claim ${miscdir}/sqlcli ${dbdir}/cbsdtaskd.sqlite "UPDATE taskd SET status='1',st_time='${_st_time}',logfile='${logfile}' WHERE id='${id}' AND status='0'; SELECT changes();"
+if [ "${_claim}" != "1" ]; then
+	# already claimed by another dispatcher
+	exit 0
+fi
 echo "spawntask ${id} ${logfile} ${cmd}"
 spawntask ${id} ${logfile} ${cmd} > /dev/null 2>&1
 _err=$?

@@ -877,14 +877,22 @@ static void dispatch_task(int task_id, const char *cmd,
     strftime(st_time, sizeof(st_time), "%Y%m%d%H%M%S", tm);
 
     snprintf(sql, sizeof(sql),
-        "UPDATE taskd SET status=%d, st_time='%s', logfile='%s' WHERE id=%d",
-        STATUS_RUNNING, st_time, actual_logfile, task_id);
+        "UPDATE taskd SET status=%d, st_time='%s', logfile='%s' WHERE id=%d AND status=%d",
+        STATUS_RUNNING, st_time, actual_logfile, task_id, STATUS_PENDING);
 
     char *errmsg = NULL;
     if (sqlite3_exec(g_db, sql, NULL, NULL, &errmsg) != SQLITE_OK) {
         cbsdlog(LOG_WARNING, "Failed to mark task %d as running: %s",
                 task_id, errmsg ? errmsg : "unknown");
         sqlite3_free(errmsg);
+        return;
+    }
+    /* Atomically claim the task: if another dispatcher (a second daemon
+     * instance, or a racing worker) already moved it out of pending,
+     * sqlite3_changes() reports 0 and we must not run it a second time. */
+    if (sqlite3_changes(g_db) != 1) {
+        cbsdlog(LOG_NOTICE, "Task %d already claimed by another dispatcher, skipping",
+                task_id);
         return;
     }
 
