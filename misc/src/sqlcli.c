@@ -101,34 +101,44 @@ main(int argc, char **argv)
 		tmp++;
 	}
 	tmp[-1] = '\0';
-	// Prepare statement with retry on SQLITE_BUSY
-	sqlite3_stmt *stmt = NULL;
-	int retry = 0;
-	int ret;
-	do {
-		ret = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-		if (ret == SQLITE_OK) break;
-		if (ret == SQLITE_BUSY) {
-			usleep(BUSY_SLEEP_US);
+	// Execute every statement in the string: sqlite3_prepare_v2() compiles
+	// only the first statement and leaves the rest in the tail. Scripts
+	// rely on multi-statement queries (e.g. "UPDATE ...; SELECT changes();").
+	const char *tail = query;
+	while (tail != NULL && *tail != '\0') {
+		// Prepare statement with retry on SQLITE_BUSY
+		sqlite3_stmt *stmt = NULL;
+		int retry = 0;
+		int ret;
+		do {
+			ret = sqlite3_prepare_v2(db, tail, -1, &stmt, &tail);
+			if (ret == SQLITE_OK) break;
+			if (ret == SQLITE_BUSY) {
+				usleep(BUSY_SLEEP_US);
+			}
+			retry++;
+		} while (ret == SQLITE_BUSY && retry <= MAX_RETRY);
+		if (ret != SQLITE_OK) {
+			fprintf(stderr, "%s: Failed to prepare statement. SQLite error: %s [%s]\n", nm(), sqlite3_errmsg(db), tail);
+			sqlite3_free(query);
+			sqlite3_close(db);
+			return EXIT_FAILURE;
 		}
-		retry++;
-	} while (ret == SQLITE_BUSY && retry <= MAX_RETRY);
-	if (ret != SQLITE_OK) {
-		fprintf(stderr, "%s: Failed to prepare statement. SQLite error: %s [%s]\n", nm(), sqlite3_errmsg(db), query);
-		sqlite3_free(query);
-		sqlite3_close(db);
-		return EXIT_FAILURE;
-	}
-	// Execute and print results
-	ret = sqlite3_step(stmt);
-	while (ret == SQLITE_ROW) {
-		sqlCB(stmt);
+		if (stmt == NULL) {
+			// whitespace or comment only
+			continue;
+		}
+		// Execute and print results
 		ret = sqlite3_step(stmt);
+		while (ret == SQLITE_ROW) {
+			sqlCB(stmt);
+			ret = sqlite3_step(stmt);
+		}
+		if (ret != SQLITE_DONE) {
+			fprintf(stderr, "%s: SQLite error during execution: %s\n", nm(), sqlite3_errmsg(db));
+		}
+		sqlite3_finalize(stmt);
 	}
-	if (ret != SQLITE_DONE) {
-		fprintf(stderr, "%s: SQLite error during execution: %s\n", nm(), sqlite3_errmsg(db));
-	}
-	sqlite3_finalize(stmt);
 	sqlite3_free(query);
 	sqlite3_close(db);
 	return EXIT_SUCCESS;
