@@ -105,6 +105,7 @@ static void usage(char *prog)
 "               unless -e and/or -o are specified.",
 "-c <dir>       Set daemon's working directory to <dir>.",
 "-e <stderr>    Send daemon's stderr to file <stderr>, instead of /dev/null.",
+"               \"-\" keeps the current stderr.",
 "-E var=value   Pass environment setting to daemon. May appear multiple times.",
 "-o <stdout>    Send daemon's stdout to file <stdout>, instead of /dev/null.",
 "-p <pidfile>   Save PID to <pidfile>.",
@@ -372,7 +373,14 @@ static void open_output_files()
 
         if (err_file != NULL)
         {
-            if ((out_file != NULL) && (strcmp(err_file, out_file) == 0))
+            if (strcmp(err_file, "-") == 0)
+            {
+                /* Dup before redirect closes stderr. */
+                if ((err_fd = dup(STDERR_FILENO)) == -1)
+                    die("Can't dup stderr: %s\n", strerror(errno));
+            }
+
+            else if ((out_file != NULL) && (strcmp(err_file, out_file) == 0))
                 err_fd = out_fd;
 
             else if ((err_fd = open_output_file(err_file)) == -1)

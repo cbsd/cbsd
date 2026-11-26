@@ -66,10 +66,12 @@ may later drop `console.info` from the jail's syslog block, and stdout would the
 `exec`s the command. The ctl process does not stay around. The command keeps its own stdin. Anything that inherits
 those descriptors, including `/etc/rc` or a long-running entrypoint, is the console stream.
 
-`jstart` inserts that command between `nice` and `jail_env`: `daemonize` still starts the jail, and `cbsdlogctl`
-replaces stdout and stderr before `jail_env` runs. `exec.start` inherits them, so `/etc/rc` writes the pipes from
-inside the jail. When `syslog` is off the inserted command is empty. A vnet or zfs-attach jail does not run `rc`
-inside `jail -c`; there the same prefix is placed between `cpuset` and `jexec`.
+`jstart` inserts that command between `nice` and `jail_env`. `daemonize` still starts the jail: it is the
+`setsid`, not just a place to catch stdout and stderr. `cbsdlogctl` writes a startup failure to stderr, then
+replaces stdout and stderr before `jail_env` runs, so this start uses `daemonize -e -` (the current stderr)
+and the same `-p` pid file. `exec.start` inherits the pipes, so `/etc/rc` writes them from inside the jail. When `syslog` is off
+the inserted command is empty and `daemonize -e <file> -p <pidfile>` stay. A vnet or zfs-attach jail does not run
+`rc` inside `jail -c`; there the same prefix is placed between `cpuset` and `jexec`.
 
 `FOLLOW <jail>` is answered `OK <nbytes>` when a process holds the console, or `OK <nbytes> closed` when it does
 not, and then exactly those bytes of the buffer. The count separates that snapshot from lines written later. An
@@ -126,11 +128,13 @@ those names are `/var/run/log` and `/var/run/logpriv`. `cleanvar` keeps sockets 
 `syslogd_enable="NO"` the jail's `syslogd` does not unlink them either. If the name still disappears, the
 daemon's file descriptor stays open, but `syslog()` looks up the path and does not find it.
 
-After each successful bind, `cbsdlogd` watches that descriptor with `kqueue` (`EVFILT_VNODE`, `NOTE_DELETE` and
-`NOTE_REVOKE`). When the name disappears, the daemon closes the old descriptor and binds the same path again at the
-same mode. The name is back before services that open syslog connect. A process
-that had already connected keeps the old inode until `send` fails and libc opens the path again. A failed rebind is
-reported to the host `syslogd` as `cbsdlogd`.
+After each successful bind, `cbsdlogd` watches the directory that contains the socket. On Linux that is `inotify`
+(`IN_DELETE`, `IN_MOVED_FROM`). A socket file descriptor is not a vnode, so on FreeBSD `EVFILT_VNODE` on the socket
+itself fails with `EINVAL`. The daemon opens the directory and watches that descriptor with `kqueue`
+(`NOTE_WRITE`, `NOTE_LINK`, `NOTE_RENAME`, `NOTE_DELETE`, `NOTE_REVOKE`). A directory event does not name the file.
+The daemon binds the path again only when that path is no longer a socket, at the same mode. The name is back
+before services that open syslog connect. A process that had already connected keeps the old inode until `send`
+fails and libc opens the path again. A failed rebind is reported to the host `syslogd` as `cbsdlogd`.
 
 ## Boot
 

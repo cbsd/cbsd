@@ -48,7 +48,7 @@
 
 struct jsock {
 	int fd;
-	int wd; /* inotify watch descriptor (Linux) */
+	int wd; /* inotify watch (Linux) or directory fd (FreeBSD); -1 if none */
 	mode_t mode;
 	char path[104];
 };
@@ -513,6 +513,17 @@ drop_fds(struct client *c)
 	c->nfds = 0;
 }
 
+/* Drop the directory watch. On FreeBSD the watch is a directory fd. */
+static void
+sock_unwatch(struct jsock *js)
+{
+#ifndef __linux__
+	if (js->wd >= 0)
+		close(js->wd);
+#endif
+	js->wd = -1;
+}
+
 static void
 jail_clear(struct jent *j)
 {
@@ -524,6 +535,8 @@ jail_clear(struct jent *j)
 			client_close(&clients[i]);
 	}
 	for (i = 0; i < j->nsock; i++) {
+		/* Unwatch before unlink, or the directory event rebinds. */
+		sock_unwatch(&j->sock[i]);
 		if (j->sock[i].fd >= 0)
 			close(j->sock[i].fd);
 		if (j->sock[i].path[0] != '\0')
@@ -537,6 +550,7 @@ jail_clear(struct jent *j)
 	memset(j, 0, sizeof(*j));
 	j->out_fd = j->err_fd = -1;
 	j->sock[0].fd = j->sock[1].fd = -1;
+	j->sock[0].wd = j->sock[1].wd = -1;
 }
 
 static struct jent *
@@ -571,6 +585,7 @@ jails_grow(void)
 		memset(&p[i], 0, sizeof(p[i]));
 		p[i].out_fd = p[i].err_fd = -1;
 		p[i].sock[0].fd = p[i].sock[1].fd = -1;
+		p[i].sock[0].wd = p[i].sock[1].wd = -1;
 	}
 	jails = p;
 	njails = n;
@@ -594,6 +609,7 @@ jail_add(const char *name)
 			jails[i].used = 1;
 			jails[i].out_fd = jails[i].err_fd = -1;
 			jails[i].sock[0].fd = jails[i].sock[1].fd = -1;
+			jails[i].sock[0].wd = jails[i].sock[1].wd = -1;
 			strlcpy(jails[i].name, name, sizeof(jails[i].name));
 			return (&jails[i]);
 		}
@@ -656,43 +672,72 @@ parse_mode(const char *s, mode_t *mode)
 	return (0);
 }
 
-/* Watch for the socket file being removed: cleanvar unlinks the name.
- * The fd stays open, but syslog looks up the path, so we rebind. */
+/* Directory that holds the socket name. Empty when path has no slash. */
 static void
-watch_sock(struct jsock *js)
+parent_dir(const char *path, char *dir, size_t dirlen)
 {
-#ifdef __linux__
-	char dir[sizeof(js->path)];
 	char *slash;
-	int wd;
 
-	if (kq_fd < 0 || js->fd < 0)
-		return;
-	strlcpy(dir, js->path, sizeof(dir));
+	strlcpy(dir, path, dirlen);
 	slash = strrchr(dir, '/');
-	if (slash == NULL)
+	if (slash == NULL) {
+		dir[0] = '\0';
 		return;
+	}
 	if (slash == dir)
 		dir[1] = '\0';
 	else
 		slash[0] = '\0';
-	wd = inotify_add_watch(kq_fd, dir, IN_DELETE | IN_MOVED_FROM);
-	if (wd < 0) {
-		syslog(LOG_WARNING, "inotify_add_watch %s: %s", dir,
-		    strerror(errno));
-		return;
-	}
-	js->wd = wd;
-#else
-	struct kevent ev;
+}
+
+/* Watch for the socket file being removed: cleanvar unlinks the name.
+ * The fd stays open, but syslog looks up the path, so we rebind.
+ * A socket fd is not a vnode. EVFILT_VNODE on it returns EINVAL, so
+ * FreeBSD watches the directory, the same way inotify does. */
+static void
+watch_sock(struct jsock *js)
+{
+	char dir[sizeof(js->path)];
 
 	if (kq_fd < 0 || js->fd < 0)
 		return;
-	EV_SET(&ev, (uintptr_t)js->fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
-	    NOTE_DELETE | NOTE_REVOKE, 0, NULL);
-	if (kevent(kq_fd, &ev, 1, NULL, 0, NULL) < 0)
-		syslog(LOG_WARNING, "kevent add fd %d: %s", js->fd,
-		    strerror(errno));
+	parent_dir(js->path, dir, sizeof(dir));
+	if (dir[0] == '\0')
+		return;
+#ifdef __linux__
+	{
+		int wd;
+
+		wd = inotify_add_watch(kq_fd, dir, IN_DELETE | IN_MOVED_FROM);
+		if (wd < 0) {
+			syslog(LOG_WARNING, "inotify_add_watch %s: %s", dir,
+			    strerror(errno));
+			return;
+		}
+		js->wd = wd;
+	}
+#else
+	{
+		struct kevent ev;
+		int dfd;
+
+		sock_unwatch(js);
+		dfd = open(dir, O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+		if (dfd < 0) {
+			syslog(LOG_WARNING, "watch %s: %s", dir, strerror(errno));
+			return;
+		}
+		EV_SET(&ev, (uintptr_t)dfd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+		    NOTE_DELETE | NOTE_WRITE | NOTE_LINK | NOTE_RENAME |
+		    NOTE_REVOKE, 0, NULL);
+		if (kevent(kq_fd, &ev, 1, NULL, 0, NULL) < 0) {
+			syslog(LOG_WARNING, "kevent add %s: %s", dir,
+			    strerror(errno));
+			close(dfd);
+			return;
+		}
+		js->wd = dfd;
+	}
 #endif
 }
 
@@ -729,6 +774,7 @@ bind_jail_sock(struct jent *j, const char *path, mode_t mode, char *err, size_t 
 	}
 	is_new = (slot == j->nsock);
 	if (!is_new && j->sock[slot].fd >= 0) {
+		sock_unwatch(&j->sock[slot]);
 		close(j->sock[slot].fd);
 		unlink(j->sock[slot].path);
 		j->sock[slot].fd = -1;
@@ -1203,16 +1249,19 @@ accept_client(void)
 
 #ifndef __linux__
 static struct jsock *
-sock_by_fd(int fd, struct jent **jp)
+sock_by_wd(int wd, struct jent **jp)
 {
 	int ji;
 	int s;
 
+	if (wd < 0)
+		return (NULL);
 	for (ji = 0; ji < njails; ji++) {
 		if (!jails[ji].used)
 			continue;
 		for (s = 0; s < jails[ji].nsock; s++) {
-			if (jails[ji].sock[s].fd == fd) {
+			if (jails[ji].sock[s].fd >= 0 &&
+			    jails[ji].sock[s].wd == wd) {
 				*jp = &jails[ji];
 				return (&jails[ji].sock[s]);
 			}
@@ -1231,9 +1280,6 @@ sockets_rebind(void)
 	char path[sizeof(jails[0].sock[0].path)];
 	char err[128];
 	mode_t mode;
-#ifndef __linux__
-	int fd;
-#endif
 
 #ifdef __linux__
 	char evbuf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
@@ -1308,13 +1354,17 @@ sockets_rebind(void)
 		if (n == 0)
 			return;
 		for (i = 0; i < n; i++) {
+			struct stat st;
+
 			if ((evs[i].flags & EV_ERROR) != 0)
 				continue;
 			if (evs[i].filter != EVFILT_VNODE)
 				continue;
-			fd = (int)evs[i].ident;
-			js = sock_by_fd(fd, &j);
+			js = sock_by_wd((int)evs[i].ident, &j);
 			if (js == NULL)
+				continue;
+			/* The event is on the directory, not one file. */
+			if (lstat(js->path, &st) == 0 && S_ISSOCK(st.st_mode))
 				continue;
 			mode = js->mode;
 			strlcpy(path, js->path, sizeof(path));
@@ -1640,8 +1690,9 @@ main(int argc, char **argv)
 	}
 	/*
 	 * The watch queue is created after fork(2) so the daemon owns it.
-	 * On Linux, inotify is used for the same purpose: watching the
-	 * socket file names for removal.
+	 * Socket names are watched via the parent directory: inotify on
+	 * Linux, a directory fd and EVFILT_VNODE on FreeBSD. The socket
+	 * fd itself is not a vnode.
 	 */
 #ifdef __linux__
 	kq_fd = inotify_init1(IN_CLOEXEC);
