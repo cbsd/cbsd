@@ -932,7 +932,14 @@ compile_nic_args()
 		if [ ${nic_persistent} -eq 1 ]; then
 			capture _pref3 substr --pos=0 --len=3 --str=${nic_parent}
 			[ "${_pref3}" != "tap" ] && err 1 "errmsg=\"only tap interface can persistent, not: ${nic_parent}\""
-			${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+			case "${platform}" in
+				Linux)
+					${IP_CMD} link show ${nic_parent} > /dev/null 2>&1
+					;;
+				*)
+					${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+					;;
+			esac
 			[ $? -ne 0 ] && err 1 "errmsg=\"interface ${nic_parent} marked as persistent but not exist\""
 			nic_hwaddr="0"
 			mytap="${nic_parent}"
@@ -980,7 +987,15 @@ compile_nic_args()
 						*)
 							if [ "${nic_parent}" != "0" -o "${nic_parent}" = "auto" ]; then
 								_is_bridge=
-								[ "${nic_parent}" != "auto" ] && _is_bridge=$( ${IFCONFIG_CMD} ${nic_parent} | ${AWK_CMD} '/groups:/{print $2}' | ${GREP_CMD} -o bridge )
+								case "${platform}" in
+									Linux)
+										# 'type bridge' filter: non-zero rc and empty output for non-bridge/non-existing iface
+										[ "${nic_parent}" != "auto" ] && ${IP_CMD} -d -o link show ${nic_parent} type bridge > /dev/null 2>&1 && _is_bridge="bridge"
+										;;
+									*)
+										[ "${nic_parent}" != "auto" ] && ${IFCONFIG_CMD} ${nic_parent} 2>/dev/null | ${GREP_CMD} -q 'groups:.*bridge' && _is_bridge="bridge"
+										;;
+								esac
 								if [ "${_is_bridge}" != "bridge" ]; then
 									# this is not bridge, detect uplink iface
 									cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: ${nic_parent} is not bridge
@@ -1009,7 +1024,14 @@ compile_nic_args()
 										mybridge="disable"
 									fi
 								else
-									${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+									case "${platform}" in
+										Linux)
+											${IP_CMD} link show ${nic_parent} > /dev/null 2>&1
+											;;
+										*)
+											${IFCONFIG_CMD} ${nic_parent} > /dev/null 2>&1
+											;;
+									esac
 									_ret=$?
 									[ ${_ret} -ne 0 ] && err 1 "errmsg=\"Error:no_such_bridge: ${nic_parent}. Please create it\""
 									mybridge="${nic_parent}"
@@ -1035,7 +1057,17 @@ compile_nic_args()
 						if [ ${_ret} -eq 0 ]; then
 							# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
 							# when MTU is same?
-							[ -n "${_parent_mtu}" ] && ${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1; _ret=$?
+							if [ -n "${_parent_mtu}" ]; then
+								case "${platform}" in
+									Linux)
+										${IP_CMD} link set ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1
+										;;
+									*)
+										${IFCONFIG_CMD} ${mytap} mtu ${_parent_mtu} > /dev/null 2>&1
+										;;
+								esac
+								_ret=$?
+							fi
 						fi
 					else
 						# Get parent MTU size
@@ -1048,7 +1080,15 @@ compile_nic_args()
 						[ "${nic_mtu}" = "0" ] && nic_mtu="1500"		# case when mybridge = "disable"
 						# always ifconfig: ioctl SIOCSIFMTU (set mtu): Operation not supported
 						# when MTU is same?
-						${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1; _ret=$?
+						case "${platform}" in
+							Linux)
+								${IP_CMD} link set ${mytap} mtu ${nic_mtu} > /dev/null 2>&1
+								;;
+							*)
+								${IFCONFIG_CMD} ${mytap} mtu ${nic_mtu} > /dev/null 2>&1
+								;;
+						esac
+						_ret=$?
 						cbsdlogger NOTICE ${CIX_APP}: compile_nic_args for ${jname}: MTU fixed: ${nic_mtu}
 					fi
 
@@ -1056,15 +1096,17 @@ compile_nic_args()
 					[ "${platform}" = "FreeBSD" ] && ${IFCONFIG_CMD} ${mytap} description "${jname}-nic${_id}" group vm-port up
 
 					if [ "${mybridge}" != "disable" ]; then
-						if [ "${autoconn_iface}" = "NO" ]; then
-							${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
-							# export in mytap_X_bridge= as bridge members
-							${ECHO} "export mytap_${mytap}_bridge=\"${mybridge}\";"
-						else
-							${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
-							# export in mytap_X_bridge= as bridge members
-							${ECHO} "export mytap_${mytap}_bridge=\"${mybridge}\";"
+						# Linux: tap is already attached to the bridge by get_my_tap ( brctl addif ),
+						# bridge 'private' member flag is also FreeBSD-specific
+						if [ "${platform}" != "Linux" ]; then
+							if [ "${autoconn_iface}" = "NO" ]; then
+								${IFCONFIG_CMD} ${mybridge} addm ${mytap} >/dev/null 2>&1
+							else
+								${IFCONFIG_CMD} ${mybridge} addm ${interface} addm ${mytap} >/dev/null 2>&1
+							fi
 						fi
+						# export in mytap_X_bridge= as bridge members
+						${ECHO} "export mytap_${mytap}_bridge=\"${mybridge}\";"
 
 						if [ "${nic_flags}" != "0" ]; then
 							OIFS="${IFS}"
@@ -1073,7 +1115,7 @@ compile_nic_args()
 								IFS="${OIFS}"
 								case "${_flag}" in
 									private)
-										${IFCONFIG_CMD} ${mybridge} private ${mytap}
+										[ "${platform}" != "Linux" ] && ${IFCONFIG_CMD} ${mybridge} private ${mytap}
 										;;
 								esac
 								IFS=","
