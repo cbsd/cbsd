@@ -924,6 +924,8 @@ EOF
 
 	bstart_logfile="${jailsysdir}/${jname}/bstart.log"
 	logfile_args="-l ${bstart_logfile}"
+	# guarantee existence for the pid_wait event loop ( bhyverun.sh creates it later, async )
+	[ -f ${bstart_logfile} ] || ${TOUCH_CMD} ${bstart_logfile}
 
 	case "${debug_engine}" in
 		gdb|lldb)
@@ -972,12 +974,21 @@ EOF
 
 	if [ ${pid_wait} -eq 1 ]; then
 		[ ${quiet} -ne 1 ] && printf "${N1_COLOR}Waiting for PID${N0_COLOR}"
-		for ((i=1; i<=10; i++)); do
+		for ((i=0; i<10; i++)); do
 			check_for_bhyve_process -j ${jname}
 			[ -n "${vm_pid}" ] && break
-			sleep 1
+			# event wait on wrapper log activity instead of blind sleep;
+			# wrapper writes to the log right before bhyve spawn; hard cap: 10 iterations
+			# wrapper may rm/recreate the log ( bhyverun.sh:228,237 ), fallback to sleep while it is absent
+			if [ -f ${bstart_logfile} ]; then
+				cbsd_fwatch --file=${bstart_logfile} --timeout=1
+			else
+				sleep 1
+			fi
 			[ ${quiet} -ne 1 ] && printf "."
 		done
+		# last chance check: pid may appear during the final event wait
+		[ -z "${vm_pid}" ] && check_for_bhyve_process -j ${jname}
 		echo
 	fi
 
